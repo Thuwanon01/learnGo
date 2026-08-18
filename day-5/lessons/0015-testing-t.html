@@ -106,13 +106,15 @@ t.<span class="f">Log</span>(<span class="s">"บรรทัดนี้จะ�
 }</code></pre>
 </div>
 
-<div class="warn">
-  <span class="label">ข้อจำกัดที่ต้องรู้</span>
+<div class="note">
+  <span class="label">มีข้อจำกัดหนึ่งข้อ — แต่ยังไม่ต้องกังวลตอนนี้</span>
   <p style="margin-bottom:0">
-    <code>t.Fatal</code> ต้องเรียกจาก <strong>goroutine ของเทสเอง</strong>
-    เท่านั้น — เรียกใน goroutine ที่แตกออกไปแล้ว มันจะหยุด goroutine นั้น
-    แต่<em>ไม่หยุดเทส</em> และผลลัพธ์จะเพี้ยน
-    <br>ใน goroutine ให้ใช้ <code>t.Error</code> แทน
+    <code>t.Fatal</code> หยุดได้เฉพาะโค้ดที่รันอยู่ใน<strong>สายการทำงานหลักของเทส</strong>เท่านั้น
+    วันที่คุณเรียนเรื่องรันงานหลายอย่างพร้อมกัน (concurrency / goroutine)
+    จะมีกรณีที่โค้ดบางส่วนแยกไปวิ่งอีกสาย ตรงนั้น <code>t.Fatal</code> จะหยุดได้แค่สายนั้น
+    ไม่หยุดทั้งเทส และต้องใช้ <code>t.Error</code> แทน
+    <br><strong>ตราบใดที่เทสของคุณยังเขียนเป็นลำดับบนลงล่างตามปกติ
+    ใช้ <code>t.Fatal</code> ได้สบาย ๆ</strong>
   </p>
 </div>
 
@@ -434,17 +436,31 @@ t.<span class="f">Logf</span>(<span class="s">"ใช้เวลาจริง
         ทำให้เทสพัง → จดเลขบรรทัดใน error ไว้</li>
     <li>ใส่ <code>t.Helper()</code> แล้วรันใหม่ → <strong>เลขบรรทัดเปลี่ยนเป็นอะไร</strong></li>
     <li>เขียน <code>newTempFile(t *testing.T) string</code> ที่สร้างไฟล์ชั่วคราว
-        แล้วลงทะเบียน <code>t.Cleanup</code> ให้ลบไฟล์ทิ้ง —
-        <strong>ลองเปลี่ยนเป็น <code>defer</code> ดูว่าพังยังไง</strong>
+        <strong>เขียนคำว่า <code>hello</code> ลงไป</strong>
+        แล้วลงทะเบียน <code>t.Cleanup</code> ให้ลบไฟล์ทิ้ง
+        <br>ในเทส ให้เรียก <code>newTempFile(t)</code> แล้ว
+        <code>os.ReadFile(path)</code> ต่อ — ต้องอ่านได้ว่า <code>hello</code>
+        <br>จากนั้น<strong>เปลี่ยน <code>t.Cleanup(...)</code> เป็น <code>defer ...</code></strong>
+        แล้วรันใหม่ → <strong>ต้องได้ <code>no such file or directory</code></strong>
+        เพราะ <code>defer</code> ลบไฟล์ทิ้งตั้งแต่ตอนออกจาก <code>newTempFile</code>
+        ยังไม่ทันกลับมาถึงบรรทัดที่จะอ่าน
         <br><em>คำใบ้: <code>os.CreateTemp("", "demo-*.txt")</code></em></li>
     <li><strong>ท้าทาย 1:</strong> ทำการทดลองเรื่อง <code>t.Parallel()</code> ซ้ำ
         ทั้งแบบวัดผิด (ในบล็อก) และวัดถูก (นอกบล็อก) —
         <strong>ตัวเลขของคุณตรงกับที่ผมได้ไหม</strong>
         (sequential ~1s · parallel ~200ms · วัดผิด ~100µs)</li>
-    <li><strong>ท้าทาย 2:</strong> เขียนเทสที่ใช้ตัวแปร global ร่วมกัน 2 ตัว
-        แล้วใส่ <code>t.Parallel()</code> ทั้งคู่ → รัน
-        <code>go test -race -count=10 .</code> →
-        <strong>เห็น <code>WARNING: DATA RACE</code> ไหม?</strong></li>
+    <li><strong>ท้าทาย 2 — ทำให้เทสสองตัวแย่งของชิ้นเดียวกัน:</strong>
+        ประกาศตัวแปรระดับไฟล์ <code>var counter int</code> แล้วเขียน subtest สองตัวที่ทั้งคู่
+        <strong>เขียนทับ</strong>ค่านั้น (เช่น <code>for i := 0; i &lt; 1000; i++ { counter++ }</code>)
+        และใส่ <code>t.Parallel()</code> ทั้งคู่
+        <br>รัน <code>go test -race -count=10 .</code>
+        <br><strong>ผ่านเมื่อ:</strong> เห็นบล็อกที่ขึ้นต้นด้วย <code>WARNING: DATA RACE</code>
+        ตามด้วยคู่บรรทัด <code>Read at 0x... by goroutine</code> และ
+        <code>Previous write at 0x... by goroutine</code> ที่ชี้กลับมาที่ subtest ทั้งสองตัวของคุณ
+        <br><em>"data race" คือสถานการณ์ที่โค้ดสองสายแตะตัวแปรตัวเดียวกันพร้อมกัน
+        โดยมีอย่างน้อยหนึ่งสายเป็นฝ่ายเขียน และไม่มีใครคุมคิว ผลลัพธ์จึงเดาไม่ได้ —
+        เรื่องนี้เรียนเต็ม ๆ ตอนสอน concurrency ตอนนี้แค่เห็นว่า
+        <code>-race</code> จับมันได้ก็พอ</em></li>
   </ol>
 </div>
 

@@ -154,7 +154,12 @@ admin_handler_test.go   <span class="c">← วางไว้คู่กัน
   <p class="ask">โค้ดนี้จะได้ error ว่าอะไร?</p>
   <button class="reveal">ดูเฉลย</button>
   <div class="answer">
-    <p><strong><code>name double not exported by package calc</code></strong> — ผมรันทดสอบแล้ว</p>
+    <p><strong><code>undefined: calc.double</code></strong> — ผมรันทดสอบแล้ว (Go 1.26)
+    เต็ม ๆ คือ <code>calc/calc_api_test.go:10:7: undefined: calc.double</code>
+    ตามด้วย <code>FAIL	myapp/calc [build failed]</code>
+    <br><em>คอมไพเลอร์ไม่พูดคำว่า "unexported" ตรง ๆ —
+    จากมุมของ <code>calc_test</code> ชื่อตัวเล็กมันมองไม่เห็นเลย
+    เลยรายงานว่า "ไม่มีชื่อนี้"</em></p>
     <p style="margin-bottom:0">
       นี่คือ<strong>ข้อดี</strong>ไม่ใช่ข้อจำกัด — external test บังคับให้คุณ
       ทดสอบผ่านประตูหน้าเหมือนผู้ใช้จริง ถ้าเทสผ่านแปลว่า
@@ -232,7 +237,11 @@ go test -v -run <span class="s">'TestUser|TestOrder'</span> .            <span c
     <strong>สังเกต <code>_</code> ในชื่อ subtest</strong> — ผมตั้งชื่อว่า
     <code>"ลด 10%"</code> (มีเว้นวรรค) แต่ Go แสดงเป็น <code>ลด_10%</code>
     <strong>Go แปลงเว้นวรรคเป็น <code>_</code> ให้อัตโนมัติ</strong>
-    เวลาจะ <code>-run</code> ต้องพิมพ์ตามที่แสดง ไม่ใช่ตามที่ตั้ง
+    <br>จริง ๆ แล้ว <code>-run</code> รับได้ทั้งสองแบบ
+    (Go แปลงเว้นวรรคใน pattern ให้ด้วย — ดูรายละเอียดในบทเรียน 16)
+    แต่<strong>ให้ติดนิสัยก็อปชื่อจากผลลัพธ์ <code>-v</code> มาวาง</strong> —
+    เพราะชื่อที่มีเว้นวรรคต้องใส่ quote ใน shell ให้ถูก
+    ลืมเมื่อไหร่คือหาเทสไม่เจอแบบเงียบ ๆ
   </p>
 </div>
 
@@ -277,11 +286,25 @@ total:                 (statements)          42.9%</code></pre>
     <span class="c">// เทสที่ต้องต่อ database จริง</span>
 }</code></pre>
 
-<pre><code>$ go test ./...                      <span class="c"># unit test เท่านั้น — เร็ว</span>
-ok  	day5check	[no tests to run]
+<pre><code>$ go test ./...                          <span class="c"># unit test เท่านั้น — เร็ว</span>
+ok  	day5check	0.433s                   <span class="c">← TestRealDatabase ไม่ถูกนับเข้ามาเลย</span>
 
-$ go test -tags integration ./...    <span class="c"># รวม integration ด้วย</span>
---- PASS: TestRealDatabase</code></pre>
+$ go test -v ./... | grep RealDatabase   <span class="c"># พิสูจน์ว่ามันหายไปจริง</span>
+<span class="c">(ไม่มีบรรทัดไหนออกมา)</span>
+
+$ go test -v -tags integration ./...     <span class="c"># รวม integration ด้วย</span>
+=== RUN   TestRealDatabase
+--- PASS: TestRealDatabase (0.00s)
+=== RUN   TestHi
+--- PASS: TestHi (0.00s)
+PASS
+ok  	day5check	0.434s</code></pre>
+
+<p>
+  <strong>วิธีเช็คที่ชัวร์ที่สุดคือดูว่าชื่อเทสโผล่ใน <code>-v</code> หรือไม่</strong> —
+  อย่าดูแค่บรรทัด <code>ok</code> เพราะถ้าใน package ยังมีเทสตัวอื่นอยู่
+  มันก็ขึ้น <code>ok</code> เหมือนเดิม
+</p>
 
 <div class="win">
   <span class="label">ทำไมต้องแยก</span>
@@ -341,7 +364,7 @@ $ go test -tags integration ./...    <span class="c"># รวม integration ด
   </div>
   <div class="explain">
     <p><code>calc_test</code> เป็นคนละ package กับ <code>calc</code> จริง ๆ —
-    error ที่ได้คือ <code>name double not exported by package calc</code>
+    error ที่ได้คือ <code>undefined: calc.double</code>
     <strong>นี่คือข้อดี</strong> มันบังคับให้เทสผ่านประตูหน้าเหมือนผู้ใช้จริง
     ถ้าอยากเทสของข้างในให้ใช้ internal test (<code>package calc</code>) แทน</p>
   </div>
@@ -390,10 +413,17 @@ $ go test -tags integration ./...    <span class="c"># รวม integration ด
         และ <code>func double(n int) int</code> (ตัวเล็ก)</li>
     <li>เขียน <code>calc_test.go</code> แบบ <strong>internal</strong>
         (<code>package calcdemo</code>) ที่เทส <code>double</code></li>
-    <li>เขียน <code>calc_api_test.go</code> แบบ <strong>external</strong>
-        (<code>package calcdemo_test</code>) ที่เทส <code>Discount</code></li>
-    <li>ลองเรียก <code>calcdemo.double(3)</code> จากไฟล์ external —
-        <strong>อ่าน error ให้ครบ</strong> แล้วลบออก</li>
+    <li>เขียน <code>calc_api_test.go</code> แบบ <strong>external</strong>:
+        บรรทัดแรกเป็น <code>package calcdemo_test</code> แล้ว
+        <strong><code>import ("testing"; "calcdemo")</code></strong>
+        — ชื่อที่ import คือชื่อ module ที่ตั้งไว้ตอน <code>go mod init</code> เป๊ะ ๆ
+        เพราะ package นี้อยู่ที่โฟลเดอร์รากของ module พอดี
+        (ไม่ใช่ <code>calcdemo/calcdemo</code>)
+        จากนั้นเทส <code>calcdemo.Discount(100, 10)</code></li>
+    <li>ลองเพิ่มบรรทัด <code>calcdemo.double(3)</code> ในไฟล์ external —
+        <strong>ต้องได้ <code>undefined: calcdemo.double</code></strong>
+        (ถ้าได้ <code>undefined: calcdemo</code> เฉย ๆ แปลว่ายังไม่ได้ import)
+        แล้วลบออก</li>
     <li>รันตามลำดับนี้แล้วเทียบผล:
       <pre style="margin:0.4rem 0"><code>go test ./...
 go test -v ./...

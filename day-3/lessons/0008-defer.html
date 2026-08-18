@@ -12,12 +12,13 @@
 <header>
   <p class="kicker">บทเรียน 08 · Resource Cleanup</p>
   <h1>defer: เปิดแล้วปิดให้ครบทุกทางออก</h1>
-  <p class="meta">~12 นาที · ต้องมี: <a href="./0007-value-vs-pointer.html">บทเรียน 02</a></p>
+  <p class="meta">~12 นาที · ต้องมี: <a href="./0007-value-vs-pointer.html">บทเรียน 07</a></p>
   <p class="standfirst">
     ฟังก์ชันหนึ่งมี <code>return</code> ได้ 5 จุด ถ้าต้องปิด file ทุกจุด คุณต้อง
     เขียน <code>Close()</code> 5 ครั้ง — และวันหนึ่งจะมีคนเพิ่ม <code>return</code>
-    ที่ 6 แล้วลืม <code>defer</code> ทำให้ปัญหานี้หายไปเลย
-    ด้วยกฎแค่ 3 ข้อ ซึ่งมีข้อหนึ่งที่หลอกคนเกือบทุกคน
+    จุดที่ 6 แล้วลืมเขียน <code>Close()</code> ตรงนั้น file ก็รั่วทันที
+    <strong><code>defer</code> ทำให้ปัญหานี้หายไปเลย</strong> ด้วยกฎแค่ 3 ข้อ
+    ซึ่งมีข้อหนึ่งที่หลอกคนเกือบทุกคน
   </p>
 </header>
 
@@ -103,6 +104,25 @@
   </div>
 </div>
 
+<div class="note">
+  <span class="label">แวะก่อน: <code>func(){ … }()</code> คืออะไร</span>
+  <p>
+    ใน Go เขียนฟังก์ชัน<em>ที่ไม่มีชื่อ</em> ตรงกลางโค้ดได้ เรียกว่า
+    <strong>anonymous function</strong> หน้าตาแบบนี้ <code>func(){ fmt.Println("hi") }</code>
+    — เขียนแค่นี้ยังไม่ทำงาน มันเป็นแค่ "ก้อนฟังก์ชัน" เฉย ๆ
+  </p>
+  <p>
+    ต้องเติมวงเล็บ <code>()</code> ต่อท้ายถึงจะ<em>เรียก</em>มัน:
+    <code>func(){ fmt.Println("hi") }()</code> ← สังเกตวงเล็บคู่สุดท้าย
+  </p>
+  <p style="margin-bottom:0">
+    และเพราะก้อนฟังก์ชันนี้ถูกเขียนอยู่<em>ข้างใน</em>ฟังก์ชันอื่น มันจึงมองเห็นและ
+    อ่านตัวแปรรอบ ๆ ตัวมันได้ (เช่น <code>i</code>) ฟังก์ชันที่ "จำตัวแปรรอบตัวได้"
+    แบบนี้ภาษาโปรแกรมเรียกว่า <strong>closure</strong> — และมันไป<em>อ่านค่าจริง</em>
+    ตอนที่มันทำงาน ไม่ใช่ตอนที่มันถูกเขียน
+  </p>
+</div>
+
 <p>ถ้าอยากได้ค่า <strong>ล่าสุด</strong> ให้ห่อด้วย closure แทน:</p>
 
 <pre><code>i := <span class="n">0</span>
@@ -157,13 +177,21 @@ i++</code></pre>
     <span class="k">if</span> _, err := tx.<span class="f">Exec</span>(<span class="s">"INSERT INTO orders ..."</span>); err != <span class="k">nil</span> {
         <span class="k">return</span> err          <span class="c">// rollback อัตโนมัติ</span>
     }
-    <span class="k">return</span> tx.<span class="f">Commit</span>()     <span class="c">// commit แล้ว Rollback ทีหลังไม่มีผล</span>
+    <span class="k">return</span> tx.<span class="f">Commit</span>()     <span class="c">// commit สำเร็จ → Rollback ที่ตามมากลายเป็น no-op</span>
 }</code></pre>
 
 <p>
   <code>defer tx.Rollback()</code> ทันทีหลัง <code>Begin()</code> แปลว่า
   <em>"ถ้าไม่ commit สำเร็จ ให้ย้อนกลับ"</em> — ไม่ต้องเขียน rollback ซ้ำในทุก
   error branch
+</p>
+
+<p>
+  แล้วถ้า <code>Commit()</code> สำเร็จล่ะ — <code>Rollback()</code> ที่ตั้ง defer ไว้
+  ก็ยังทำงานอยู่ดีไม่ใช่เหรอ? ใช่ มันทำงานจริง <strong>แต่ไม่มีอะไรให้ย้อนแล้ว</strong>
+  transaction หนึ่งจบได้ครั้งเดียว พอ commit ไปแล้ว <code>Rollback()</code>
+  จะคืน error <code>sql.ErrTxDone</code> กลับมาเฉย ๆ แล้วไม่แตะฐานข้อมูลเลย
+  — เราจงใจไม่รับ error ตัวนั้น เพราะมันคือกรณีปกติที่คาดไว้อยู่แล้ว
 </p>
 
 <h3>กฎ 3 — deferred function แก้ named return value ได้</h3>
@@ -183,9 +211,13 @@ i++</code></pre>
   <div class="answer">
     <p><strong><code>2</code></strong></p>
     <p style="margin-bottom:0">
-      <code>return 1</code> ทำงาน 2 ขั้น: (1) เอา 1 ใส่ <code>i</code> →
-      (2) รัน deferred → <code>i++</code> เป็น 2 → (3) ค่อยคืนค่าออกไปจริง
-      <strong>ต้องตั้งชื่อ return value เท่านั้นถึงจะทำได้</strong>
+      คำสั่ง <code>return 1</code> ในฟังก์ชันที่มี named return value ไม่ได้จบในก้าวเดียว
+      แต่ทำงาน <strong>3 ขั้นตามลำดับ</strong>:<br>
+      (1) เอาค่า <code>1</code> ไปใส่ในตัวแปร <code>i</code> → ตอนนี้ <code>i</code> = 1<br>
+      (2) รัน deferred function ทั้งหมด → <code>i++</code> ทำงาน → <code>i</code> = 2<br>
+      (3) ค่อยส่งค่าที่อยู่ใน <code>i</code> ณ ตอนนั้นออกไปจริง → คืน <code>2</code><br>
+      ขั้นที่ (2) แทรกอยู่ระหว่าง "ใส่ค่า" กับ "ส่งออก" นี่แหละคือช่องที่ deferred
+      แอบเข้าไปแก้ได้ <strong>และต้องตั้งชื่อ return value เท่านั้นถึงจะมีตัวแปรให้แก้</strong>
     </p>
   </div>
 </div>
@@ -201,6 +233,14 @@ i++</code></pre>
 
     <span class="c">// ...มี return err อยู่ 5 จุด ทุกจุดจะถูกห่อให้อัตโนมัติ</span>
 }</code></pre>
+
+<p>
+  <code>%w</code> คือ verb พิเศษที่มีเฉพาะใน <code>fmt.Errorf</code> —
+  หน้าตา output เหมือน <code>%v</code> ทุกอย่าง แต่มันเก็บ error ตัวเดิมติดไปด้วย
+  ทำให้โค้ดชั้นบนยังตรวจได้ว่า "ข้างในมัน error ตัวไหนกันแน่"
+  ถ้าใช้ <code>%v</code> ข้อความจะเหมือนกันเป๊ะแต่ error ตัวเดิมหายไป เหลือแค่ตัวหนังสือ
+  <strong>เวลาห่อ error ให้ใช้ <code>%w</code> เสมอ</strong>
+</p>
 
 <h2>3 · 2 กับดักที่ต้องรู้</h2>
 
@@ -221,8 +261,12 @@ i++</code></pre>
         <span class="c">// ...</span>
     }()
 }</code></pre>
-  <p style="margin-bottom:0">Go 1.22+ มี <code>go vet</code> ที่ช่วยเตือนบางกรณี
-  แต่อย่าพึ่งมัน</p>
+  <p style="margin-bottom:0">
+    <strong>ไม่มีเครื่องมือไหนจับกับดักนี้ให้อัตโนมัติ</strong> — compiler ไม่เตือน
+    <code>go vet</code> ก็ไม่เตือน วิธีเดียวคือใช้สายตา:
+    <em>เห็น <code>defer</code> อยู่ในบล็อกของ <code>for</code> เมื่อไหร่ ให้หยุดดูทันที</em>
+    ว่าลูปนี้วนกี่รอบ ถ้าจำนวนรอบไม่แน่นอน (มาจาก input/ฐานข้อมูล) ให้ครอบด้วยฟังก์ชันย่อยเสมอ
+  </p>
 </div>
 
 <div class="warn">
@@ -230,8 +274,12 @@ i++</code></pre>
   <pre style="margin-bottom:0.5rem"><code><span class="k">defer</span> fmt.<span class="f">Println</span>(<span class="s">"จะไม่ถูกพิมพ์"</span>)
 log.<span class="f">Fatal</span>(<span class="s">"boom"</span>)   <span class="c">// = log.Print + os.Exit(1) → ตายทันที</span></code></pre>
   <p style="margin-bottom:0">
-    ต่างจาก <code>panic</code> ซึ่ง <strong>รัน defer ครบทุกตัว</strong> ก่อนล้ม —
-    นั่นแหละที่ทำให้ <code>defer</code> เป็นเครื่องมือกู้คืน resource ที่ปลอดภัยที่สุด
+    เทียบกับอีกกรณีหนึ่ง: <strong>panic</strong> คือตอนที่โปรแกรมเจอความผิดพลาดร้ายแรง
+    จนไปต่อไม่ได้ (เช่น <code>s[10]</code> ทั้งที่ slice มี 3 ช่อง) แล้วมันเลิกทำงาน
+    ฟังก์ชันปัจจุบัน ถอยออกไปหาฟังก์ชันที่เรียกมัน แล้วถอยต่อไปเรื่อย ๆ จนสุดทาง
+    — ระหว่างที่<em>ถอยออกทีละชั้น</em>นั้น Go <strong>รัน defer ของทุกชั้นให้ครบ</strong>
+    ต่างจาก <code>os.Exit</code>/<code>log.Fatal</code> ที่ตัดไฟทิ้งทันทีไม่ถอยให้
+    นั่นแหละที่ทำให้ <code>defer</code> เป็นเครื่องมือคืน resource ที่ปลอดภัยที่สุด
   </p>
 </div>
 
@@ -306,7 +354,11 @@ log.<span class="f">Fatal</span>(<span class="s">"boom"</span>)   <span class="c
         <a href="https://go.dev/play/">Playground</a> ให้เห็นผลจริงด้วยตา</li>
     <li>แก้ตัวอย่างกฎ 1 ให้พิมพ์ <code>1</code> แทน <code>0</code>
         โดย<strong>ห้ามย้ายบรรทัด <code>defer</code></strong></li>
-    <li>สร้างฟังก์ชันนี้แล้วอธิบายให้ได้ว่าทำไมต้องมีวงเล็บ <strong>สองชุด</strong>:
+    <li>ก่อนอื่นสังเกตอย่างเดียว: <code>trackTime</code> ประกาศว่าคืนค่าชนิด
+        <code>func()</code> — แปลว่ามัน<em>คืนฟังก์ชันออกมาเป็นค่า</em> ไม่ได้คืนตัวเลขหรือ string
+        ก็อปโค้ดข้างล่างไปรัน แล้วเช็คว่า output มีบรรทัดที่ขึ้นต้นด้วย
+        <code>work took</code> ตามด้วยเวลาราว ๆ 500 ms
+        (ของผมรันได้ <code>work took 501.140125ms</code> — ตัวเลขทศนิยมของคุณจะไม่เท่ากันเป๊ะ):
         <pre style="margin:0.6rem 0 0"><code><span class="k">func</span> <span class="f">trackTime</span>(name <span class="n">string</span>) <span class="k">func</span>() {
     start := time.<span class="f">Now</span>()
     <span class="k">return</span> <span class="k">func</span>() {
@@ -318,7 +370,20 @@ log.<span class="f">Fatal</span>(<span class="s">"boom"</span>)   <span class="c
     <span class="k">defer</span> <span class="f">trackTime</span>(<span class="s">"work"</span>)()   <span class="c">// ← สองชุด!</span>
     time.<span class="f">Sleep</span>(<span class="n">500</span> * time.Millisecond)
 }</code></pre></li>
-    <li>ลองลบวงเล็บชุดหลังออก แล้วดูว่าเกิดอะไรขึ้น (คำใบ้: มันจะเงียบมาก)</li>
+    <li>ลบวงเล็บชุดหลังออกเหลือ <code>defer trackTime("work")</code> แล้วรันใหม่ —
+        <strong>ผลที่ควรเห็น: คอมไพล์ผ่าน แต่ไม่พิมพ์อะไรเลย</strong>
+        (<code>go vet</code> ก็ไม่ว่าอะไรด้วย)</li>
+    <li>ตรวจคำอธิบายของคุณกับเฉลยนี้ ต้องตรงกันทั้งสองบรรทัด:
+        <ul>
+          <li><strong>วงเล็บชุดแรก</strong> <code>trackTime("work")</code> ทำงาน
+              <em>ทันทีตอนเจอบรรทัด defer</em> (กฎ 1 — argument ถูกประเมินตรงนั้น)
+              มันจึงจับเวลาเริ่มต้นได้ถูกจุด แล้วคืน "ก้อนฟังก์ชัน" ออกมา</li>
+          <li><strong>วงเล็บชุดที่สอง</strong> คือตัวที่บอก <code>defer</code> ว่า
+              ก้อนฟังก์ชันที่ได้มานั่นแหละคือสิ่งที่ต้องเรียก<em>ตอนจบฟังก์ชัน</em>
+              ถ้าไม่มีชุดนี้ สิ่งที่ถูก defer จะกลายเป็นตัว <code>trackTime</code> เอง
+              → มันไปเริ่มจับเวลาตอน <code>work</code> จบพอดี แล้วโยนก้อนฟังก์ชันทิ้ง
+              ไม่มีใครเรียก จึงเงียบสนิท</li>
+        </ul></li>
     <li><strong>ท้าทาย:</strong> เขียนฟังก์ชันที่ใช้กฎ 3 ห่อ error —
         <code>func doWork() (err error)</code> ที่ไม่ว่าจะ return จากจุดไหน
         error จะถูกเติมคำว่า <code>"doWork: "</code> ข้างหน้าเสมอ</li>

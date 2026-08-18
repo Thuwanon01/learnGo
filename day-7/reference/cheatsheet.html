@@ -1,0 +1,1173 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheat Sheet — Go Day 7</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<style>
+  /* หน้านี้เป็นเอกสารอ้างอิง — แน่นกว่า lesson และออกแบบให้พิมพ์ลงกระดาษได้ */
+  body { font-size: 15.5px; }
+  main { max-width: 54rem; }
+  h2 { margin-top: 2.2rem; font-size: 1.2rem; }
+  h3 { margin-top: 1.4rem; font-size: 1rem; }
+  pre { font-size: 0.78rem; padding: 0.75rem 0.9rem; margin-bottom: 0.9rem; }
+  table { font-size: 0.86rem; }
+  p, ul, ol { margin-bottom: 0.8rem; }
+  .toc { columns: 2; font-size: 0.9rem; padding-left: 1.1rem; }
+  .toc li { break-inside: avoid; }
+  .rule { font-weight: 650; color: var(--accent-dk); }
+  @media print { body { font-size: 9.5pt; } main { max-width: none; } h2 { margin-top: 1.2rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Reference · เก็บไว้เปิดตอนเขียนเทส</p>
+  <h1>Go Day 7 — Cheat Sheet</h1>
+  <p class="meta">Mockery · Testcontainers · Goose · Redis · ทุก output ในหน้านี้คัดมาจากการรันจริงบน Go 1.26.5 darwin/arm64 · mockery v3.7.3 · testcontainers-go v0.44.0 · goose v3.27.3 · go-redis v9.22.0 · Redis 7.4.10 · postgres:16-alpine · พิมพ์ลงกระดาษได้</p>
+</header>
+
+<main>
+
+<h2>สารบัญ</h2>
+<ol class="toc">
+  <li><a href="#mockery-cli">Mockery — ติดตั้ง &amp; คำสั่ง</a></li>
+  <li><a href="#mockery-config">Mockery — <code>.mockery.yml</code></a></li>
+  <li><a href="#mockery-test">Mockery — เขียนเทสด้วย <code>EXPECT()</code></a></li>
+  <li><a href="#tc-setup">Testcontainers — ติดตั้ง &amp; environment</a></li>
+  <li><a href="#tc-code">Testcontainers — โครงที่ก็อปไปใช้ได้</a></li>
+  <li><a href="#tc-suite">Testcontainers — <code>sync.Once</code> + testify suite</a></li>
+  <li><a href="#goose-cli">Goose — คำสั่ง &amp; <code>.env</code></a></li>
+  <li><a href="#goose-file">Goose — โครงไฟล์ migration</a></li>
+  <li><a href="#redis-cli">Redis — คำสั่งใน <code>redis-cli</code></a></li>
+  <li><a href="#redis-go">Redis — cache-aside ใน Go</a></li>
+  <li><a href="#redis-scan">Redis — <code>KEYS</code> vs <code>SCAN</code></a></li>
+  <li><a href="#choose">อันไหนใช้เมื่อไหร่ — mock vs container จริง</a></li>
+  <li><a href="#errors">ตารางแปล error ที่เจอบ่อย</a></li>
+  <li><a href="#traps">ตารางกับดักรวม</a></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="mockery-cli">1 · Mockery — ติดตั้ง &amp; คำสั่ง</h2>
+
+<pre><code>go install github.com/vektra/mockery/v3@latest
+<span class="c">// → binary ชื่อ `mockery` เฉย ๆ ที่ $GOPATH/bin/mockery (ไม่มี v3 ต่อท้าย)</span>
+
+mockery version      <span class="c">// v3.7.3   ← subcommand ไม่ใช่ flag</span>
+mockery --version    <span class="c">// Error: unknown flag: --version</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>อยากทำอะไร</th><th>คำสั่ง v3</th><th>หมายเหตุ</th></tr>
+  <tr><td>ดูเวอร์ชัน</td><td><code>mockery version</code></td><td>ไม่มี <code>--version</code></td></tr>
+  <tr><td>สร้าง config</td><td><code>mockery init &lt;module_path&gt;</code></td><td>ได้ <code>.mockery.yml</code> · ทับของเดิมเงียบ ๆ</td></tr>
+  <tr><td><strong>generate mock</strong></td><td><code>mockery</code> <strong>เปล่า ๆ</strong></td><td><strong>ไม่มี subcommand <code>generate</code></strong></td></tr>
+  <tr><td>ดู config ที่ใช้จริง</td><td><code>mockery showconfig</code></td><td>รวมค่า default ที่ไม่ได้เขียนไว้</td></tr>
+  <tr><td>ระบุ config เอง</td><td><code>mockery --config &lt;file&gt;</code></td><td>ใช้ชื่อไฟล์อะไรก็ได้</td></tr>
+  <tr><td>ย้าย config v2 → v3</td><td><code>mockery migrate</code></td><td>—</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  v3 มี subcommand แค่ 5 ตัว: <code>completion · help · init · migrate · showconfig · version</code> —
+  <strong>ไม่มี <code>generate</code></strong> เพราะการ generate คือ root command
+</p>
+
+<h3>ขั้นตอนตั้งแต่ศูนย์</h3>
+
+<pre><code>cd app                                   <span class="c"># โฟลเดอร์ที่มี go.mod</span>
+mockery init example.com/shop            <span class="c"># ใส่ module path จาก go.mod ไม่ใช่ชื่อ package</span>
+<span class="c"># แก้ .mockery.yml เติม recursive: true  ← ขั้นที่คนลืมกันมากที่สุด</span>
+mockery                                  <span class="c"># generate</span>
+go mod tidy                              <span class="c"># testify ไม่ถูกเติมให้เอง ต้องรันเอง</span></code></pre>
+
+<p class="rule">
+  ✅ ยืนยันว่า generate สำเร็จ = ต้องเห็นบรรทัดนี้ใน log<br>
+  <code>INF adding interface to collection ... interface=UserRepository package-path=example.com/shop/user</code><br>
+  ⚠️ <strong>exit code เชื่อไม่ได้</strong> — package ผิดก็ยัง exit 0
+</p>
+
+<!-- ============================================================ -->
+<h2 id="mockery-config">2 · Mockery — <code>.mockery.yml</code></h2>
+
+<p>ไฟล์ที่ <code>mockery init</code> สร้างจริงมี <strong>28 บรรทัด</strong> · นี่คือฟิลด์ที่ต้องรู้จัก:</p>
+
+<pre><code>all: <span class="k">false</span>                          <span class="c"># ระดับบนสุดเป็น false (ไม่ใช่ true)</span>
+dir: <span class="s">'{{.InterfaceDir}}'</span>            <span class="c"># วางไฟล์ mock ข้าง ๆ interface</span>
+filename: mocks_test.go               <span class="c"># ← ใช้ข้าม package ไม่ได้ ดูข้อ 8 ในตารางกับดัก</span>
+force-file-write: <span class="k">true</span>               <span class="c"># อนุญาตเขียนทับ · false = FTL "outfile exists"</span>
+formatter: goimports
+generate: <span class="k">true</span>
+include-auto-generated: <span class="k">false</span>
+log-level: info
+structname: <span class="s">'{{.Mock}}{{.InterfaceName}}'</span>   <span class="c"># → MockUserRepository</span>
+pkgname: <span class="s">'{{.SrcPackageName}}'</span>
+recursive: <span class="k">false</span>                    <span class="c"># ← ตัวที่ทำให้ config เริ่มต้นใช้ไม่ได้</span>
+require-template-schema-exists: <span class="k">true</span>
+template: testify                     <span class="c"># ได้ EXPECT() แบบ type-safe</span>
+template-schema: <span class="s">'{{.Template}}.schema.json'</span>
+packages:
+  example.com/shop:
+    config:
+      all: <span class="k">true</span>
+      recursive: <span class="k">true</span>                <span class="c"># ← เติมบรรทัดนี้เอง ไม่งั้นไม่เจอ sub-package</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>อยากได้</th><th>ตั้งค่ายังไง</th></tr>
+  <tr><td>เห็น interface ใน sub-package</td><td><code>recursive: true</code> ใต้ <code>packages.&lt;module&gt;.config</code></td></tr>
+  <tr><td>(ทางเลือก) ชี้ package ตรง ๆ</td><td>เปลี่ยน key เป็น <code>example.com/shop/user:</code></td></tr>
+  <tr><td>ใช้ mock จาก package อื่น</td><td><code>filename: mocks.go</code> + <strong>ลบ <code>mocks_test.go</code> เดิมทิ้ง</strong></td></tr>
+  <tr><td>ใช้ mock เฉพาะใน package เดียวกัน</td><td>ปล่อย <code>filename: mocks_test.go</code> ตาม default</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  ชื่อไฟล์ที่ mockery หาเจอมีแค่ <code>.mockery.yml</code> และ <code>.mockery.yaml</code> —
+  <strong>ต้องมีจุดนำหน้า</strong> · <code>mockery.yml</code> เฉย ๆ = <code>file not found</code>
+  <br>มันไล่หาขึ้นไปตาม parent directory ด้วย → รันจากใน sub-package ก็เจอ config ที่ root
+</p>
+
+<!-- ============================================================ -->
+<h2 id="mockery-test">3 · Mockery — เขียนเทสด้วย <code>EXPECT()</code></h2>
+
+<pre><code><span class="k">func</span> <span class="f">TestDisplayName_OK</span>(t *testing.T) {
+    repo := <span class="f">NewMockUserRepository</span>(t)      <span class="c">// ← t.Cleanup + AssertExpectations ให้เอง</span>
+    repo.<span class="f">EXPECT</span>().<span class="f">GetByID</span>(<span class="n">7</span>).<span class="f">Return</span>(&amp;User{ID: <span class="n">7</span>, Name: <span class="s">"Somchai"</span>}, <span class="k">nil</span>)
+
+    svc := <span class="f">NewService</span>(repo)
+    got, err := svc.<span class="f">DisplayName</span>(<span class="n">7</span>)
+
+    assert.<span class="f">NoError</span>(t, err)
+    assert.<span class="f">Equal</span>(t, <span class="s">"Mr. Somchai"</span>, got)
+}</code></pre>
+
+<p class="rule">
+  <strong>ไม่ต้องเขียน <code>defer repo.AssertExpectations(t)</code> แล้ว</strong> —
+  constructor ลงทะเบียน <code>t.Cleanup(func(){ mock.AssertExpectations(t) })</code> ไว้ให้
+  (นี่คือความต่างจาก v2)
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>อยากได้</th><th>เขียนแบบนี้</th></tr>
+  <tr><td>ค่า argument ตรงเป๊ะ</td><td><code>repo.EXPECT().GetByID(7).Return(u, nil)</code></td></tr>
+  <tr><td>ไม่สนใจ argument</td><td><code>repo.EXPECT().Save(mock.Anything).Return(nil)</code></td></tr>
+  <tr><td>ตรวจ argument แบบมีเงื่อนไข</td><td><code>mock.MatchedBy(func(u *User) bool { ... })</code></td></tr>
+  <tr><td>คืน error</td><td><code>.Return(nil, ErrNotFound)</code></td></tr>
+  <tr><td>คำนวณค่า return ตอนถูกเรียก</td><td><code>.RunAndReturn(func(id int) (*User, error) { ... })</code></td></tr>
+  <tr><td>จำกัดจำนวนครั้ง</td><td><code>.Once()</code> · <code>.Times(n)</code> — ไม่ใส่ = กี่ครั้งก็ได้</td></tr>
+  <tr><td>ยืนยันว่า<em>ไม่</em>ถูกเรียก</td><td><code>repo.AssertNotCalled(t, "Save", mock.Anything)</code></td></tr>
+  <tr><td>สไตล์เดิมจาก v2</td><td><code>repo.On("GetByID", 1).Return(u, nil)</code> — ยังใช้ได้ ปนกันได้</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  <code>EXPECT()</code> เป็นแค่ syntactic sugar ที่ห่อ <code>mock.On("ชื่อ method", args...)</code> ไว้ ·
+  <code>.Return()</code> type-safe แต่ argument ยังรับ <code>any</code> เพื่อให้ส่ง <code>mock.Anything</code> ได้
+</p>
+
+<!-- ============================================================ -->
+<h2 id="tc-setup">4 · Testcontainers — ติดตั้ง &amp; environment</h2>
+
+<pre><code>go mod init tcdemo
+go get github.com/testcontainers/testcontainers-go
+go get github.com/testcontainers/testcontainers-go/modules/postgres   <span class="c"># ← คนละ module ต้อง get แยก</span>
+go get gorm.io/gorm gorm.io/driver/postgres
+go get github.com/stretchr/testify</code></pre>
+
+<p class="rule">
+  ลืมบรรทัดที่สอง → <code>no required module provides package .../modules/postgres</code> ตั้งแต่ compile
+</p>
+
+<h3>ถ้าไม่ได้ใช้ Docker Desktop (colima / Rancher / Podman บน macOS)</h3>
+
+<pre><code>export DOCKER_HOST=$(docker context inspect --format <span class="s">'{{.Endpoints.docker.Host}}'</span>)
+export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock</code></pre>
+
+<p class="rule">
+  testcontainers-go v0.44.0 <strong>ไม่อ่าน <code>docker context</code> ของ Docker CLI</strong> —
+  <code>docker ps</code> ใช้ได้ ไม่ได้แปลว่าเทสจะรันได้
+  <br>ตรวจจาก log 2 บรรทัดนี้: <code>Resolved Docker Host:</code> (path ฝั่ง mac) และ
+  <code>Resolved Docker Socket Path:</code> (path ฝั่ง VM) — <strong>สองค่านี้ต่างกันได้โดยตั้งใจ</strong>
+</p>
+
+<!-- ============================================================ -->
+<h2 id="tc-code">5 · Testcontainers — โครงที่ก็อปไปใช้ได้</h2>
+
+<pre><code><span class="k">func</span> <span class="f">StartPostgres</span>(ctx context.Context) (*tcpostgres.PostgresContainer, time.Duration, <span class="k">error</span>) {
+    start := time.<span class="f">Now</span>()
+    ctr, err := tcpostgres.<span class="f">Run</span>(ctx,
+        <span class="s">"postgres:16-alpine"</span>,
+        tcpostgres.<span class="f">WithDatabase</span>(<span class="s">"testdb"</span>),
+        tcpostgres.<span class="f">WithUsername</span>(<span class="s">"testuser"</span>),
+        tcpostgres.<span class="f">WithPassword</span>(<span class="s">"testpass"</span>),
+        tcpostgres.<span class="f">BasicWaitStrategies</span>(),      <span class="c">// ← ห้ามลืม</span>
+    )
+    <span class="k">return</span> ctr, time.<span class="f">Since</span>(start), err
+}
+
+<span class="k">func</span> <span class="f">OpenGorm</span>(ctx context.Context, ctr *tcpostgres.PostgresContainer) (*gorm.DB, <span class="k">string</span>, <span class="k">error</span>) {
+    dsn, err := ctr.<span class="f">ConnectionString</span>(ctx, <span class="s">"sslmode=disable"</span>)   <span class="c">// ← port สุ่มอยู่ในนี้</span>
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> <span class="k">nil</span>, <span class="s">""</span>, err }
+    db, err := gorm.<span class="f">Open</span>(postgres.<span class="f">Open</span>(dsn), &amp;gorm.Config{
+        Logger: logger.Default.<span class="f">LogMode</span>(logger.Silent),
+    })
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> <span class="k">nil</span>, dsn, err }
+    <span class="k">if</span> err := db.<span class="f">AutoMigrate</span>(&amp;model.User{}); err != <span class="k">nil</span> { <span class="k">return</span> <span class="k">nil</span>, dsn, err }
+    <span class="k">return</span> db, dsn, <span class="k">nil</span>
+}</code></pre>
+
+<h3>รูปแบบ cleanup ที่ถูกต้อง</h3>
+
+<div class="compare">
+  <div class="side bad">
+    <p class="label">❌ leak ได้ 2 ทาง</p>
+<pre><code>ctr, err := tcpostgres.<span class="f">Run</span>(ctx, ...)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    t.<span class="f">Fatal</span>(err)     <span class="c">// ออกก่อนถึง defer</span>
+}
+<span class="k">defer</span> ctr.<span class="f">Terminate</span>(ctx)  <span class="c">// panic ถ้า ctr = nil</span></code></pre>
+  </div>
+  <div class="side good">
+    <p class="label">✅ nil-safe + defer มาก่อน</p>
+<pre><code>ctr, err := tcpostgres.<span class="f">Run</span>(ctx, ...)
+<span class="k">defer</span> <span class="k">func</span>() {
+    _ = testcontainers.<span class="f">TerminateContainer</span>(ctr)
+}()
+<span class="k">if</span> err != <span class="k">nil</span> {
+    t.<span class="f">Fatal</span>(err)
+}</code></pre>
+  </div>
+</div>
+
+<p class="rule">
+  <code>Run</code> คืนค่าไม่เหมือนกันสองกรณี:
+  <strong>image tag ผิด → <code>ctr = nil</code></strong> ·
+  <strong>wait strategy timeout → <code>ctr ≠ nil</code> พร้อม error</strong>
+  (container start ไปแล้วจริง ๆ)
+  <br><code>testcontainers.TerminateContainer(ctr)</code> จัดการได้ทั้งคู่ — เรียกกับ typed nil ก็คืน <code>&lt;nil&gt;</code> ไม่ panic
+</p>
+
+<h3><code>BasicWaitStrategies()</code> คืออะไร</h3>
+
+<pre><code>wait.<span class="f">ForLog</span>(<span class="s">"database system is ready to accept connections"</span>).<span class="f">WithOccurrence</span>(<span class="n">2</span>)
+wait.<span class="f">ForListeningPort</span>(<span class="s">"5432/tcp"</span>)</code></pre>
+
+<p class="rule">
+  ทำไมต้อง 2 ครั้ง — postgres <strong>restart ตัวเองหลัง initdb</strong> ·
+  ทำไมต้องรอ port — macOS/Windows มี docker port-proxy แยก ถ้าไม่รอเทสจะ flaky
+</p>
+
+<!-- ============================================================ -->
+<h2 id="tc-suite">6 · Testcontainers — <code>sync.Once</code> + testify suite</h2>
+
+<pre><code><span class="k">var</span> (
+    sharedOnce sync.Once
+    sharedCtr  *tcpostgres.PostgresContainer
+    sharedDB   *gorm.DB
+    sharedErr  <span class="k">error</span>
+    SharedBoot time.Duration
+)
+
+<span class="k">func</span> <span class="f">SharedDB</span>(t *testing.T) (*gorm.DB, <span class="k">string</span>) {
+    t.<span class="f">Helper</span>()
+    sharedOnce.<span class="f">Do</span>(<span class="k">func</span>() {
+        ctx := context.<span class="f">Background</span>()
+        <span class="k">var</span> d time.Duration
+        sharedCtr, d, sharedErr = <span class="f">StartPostgres</span>(ctx)
+        SharedBoot = d
+        <span class="k">if</span> sharedErr != <span class="k">nil</span> { <span class="k">return</span> }
+        sharedDB, sharedDSN, sharedErr = <span class="f">OpenGorm</span>(ctx, sharedCtr)
+    })
+    <span class="k">if</span> sharedErr != <span class="k">nil</span> { t.<span class="f">Fatalf</span>(<span class="s">"shared container failed: %v"</span>, sharedErr) }
+    <span class="k">return</span> sharedDB, sharedDSN
+}
+
+<span class="c">// TestMain ทำแค่นี้ — ห้าม boot container ก่อน m.Run()</span>
+<span class="k">func</span> <span class="f">TestMain</span>(m *testing.M) {
+    code := m.<span class="f">Run</span>()
+    testutil.<span class="f">TerminateShared</span>()
+    os.<span class="f">Exit</span>(code)
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>4 เทสเดียวกันเป๊ะ</th><th>เวลารวม</th><th>ต้นทุนต่อเทสที่เพิ่ม</th></tr>
+  <tr><td>เปิด container ใหม่ทุกเทส</td><td>4.264s</td><td>~760 ms</td></tr>
+  <tr><td><strong><code>sync.Once</code> share ตัวเดียว</strong></td><td><strong>1.727s</strong></td><td><strong>~2 ms</strong></td></tr>
+</table>
+</div>
+
+<p class="rule">
+  เร็วขึ้น 2.47 เท่าที่ 4 เทส · ต้นทุนต่อเทสต่างกัน ~380 เท่า ·
+  boot ตัวแรกของ process ~1.0–1.3 วิ (รวมเวลา start Ryuk) ตัวถัดไป ~0.75–0.80 วิ
+</p>
+
+<h3><code>-short</code> ต้องไม่แตะ Docker</h3>
+
+<pre><code><span class="k">func</span> (s *UserRepoSuite) <span class="f">SetupSuite</span>() {
+    <span class="k">if</span> testing.<span class="f">Short</span>() { s.<span class="f">T</span>().<span class="f">Skip</span>(<span class="s">"skipping integration suite in -short mode"</span>) }
+    s.db, s.dsn = testutil.<span class="f">SharedDB</span>(s.<span class="f">T</span>())
+    s.repo = repository.<span class="f">NewUserRepository</span>(s.db)
+}
+
+<span class="k">func</span> (s *UserRepoSuite) <span class="f">SetupTest</span>() {          <span class="c">// ก่อนทุกเทส: ล้างตาราง ไม่เปิด container ใหม่</span>
+    testutil.<span class="f">TruncateUsers</span>(s.<span class="f">T</span>(), s.db)
+}
+
+<span class="k">func</span> <span class="f">TestUserRepoSuite</span>(t *testing.T) { suite.<span class="f">Run</span>(t, <span class="k">new</span>(UserRepoSuite)) }</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เขียน TestMain แบบไหน</th><th><code>go test -short</code></th><th>boot time</th></tr>
+  <tr><td>boot container ก่อน <code>m.Run()</code></td><td>1.673s · <strong>ยังต้องมี Docker</strong></td><td>1.047s (เสียเปล่า)</td></tr>
+  <tr><td><strong>lazy <code>sync.Once</code></strong></td><td><strong>0.353s · ไม่แตะ Docker</strong></td><td><strong>0s</strong></td></tr>
+</table>
+</div>
+
+<h3>ลำดับ hook ของ testify suite</h3>
+
+<pre><code>SetupSuite
+  SetupTest → BeforeTest(suite, test) → body → AfterTest(suite, test) → TearDownTest
+  ... วนซ้ำทุกเทส ...
+TearDownSuite</code></pre>
+
+<p class="rule">
+  ⚠️ suite รัน method <strong>เรียงตามตัวอักษร</strong> ไม่ใช่ลำดับที่ประกาศ —
+  ประกาศ <code>TestZebra</code> ก่อน <code>TestApple</code> แต่ <code>TestApple</code> รันก่อน
+  <br>→ <strong>ห้ามเขียนเทสที่พึ่งพาลำดับ</strong>
+</p>
+
+<h3>nil slice — จำเป็นเฉพาะบางเส้นทาง</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เขียนแบบไหน · 0 rows</th><th><code>isNil</code></th><th>JSON</th></tr>
+  <tr><td>GORM <code>Find</code> เข้า <code>var []T</code></td><td>false</td><td><code>[]</code></td></tr>
+  <tr><td>GORM <code>Find</code> เข้า <code>make([]T,0)</code></td><td>false</td><td><code>[]</code></td></tr>
+  <tr><td><strong>GORM <code>Raw().Scan()</code></strong></td><td><strong>true</strong></td><td><strong><code>null</code></strong></td></tr>
+  <tr><td><strong><code>database/sql</code> + <code>rows.Next()</code></strong></td><td><strong>true</strong></td><td><strong><code>null</code></strong></td></tr>
+</table>
+</div>
+
+<p class="rule">
+  GORM <code>Find</code> reflect-allocate slice ให้เอง → ปัญหา <code>null</code> ไม่เกิด ·
+  เกิดจริงกับ <code>Raw().Scan()</code> และ repository ที่เขียน <code>rows.Next()</code> เอง — แก้ด้วย <code>make([]T, 0)</code>
+</p>
+
+<!-- ============================================================ -->
+<h2 id="goose-cli">7 · Goose — คำสั่ง &amp; <code>.env</code></h2>
+
+<pre><code>go install github.com/pressly/goose/v3/cmd/goose@latest
+goose --version      <span class="c"># goose version: v3.27.3</span></code></pre>
+
+<p>วาง <code>.env</code> ที่ราก repo — goose อ่านให้เอง (flag <code>-env</code> default คือ <code>.env</code>):</p>
+
+<pre><code>GOOSE_DRIVER=postgres
+GOOSE_DBSTRING=postgres://postgres:secret@localhost:55433/shopdb?sslmode=disable
+GOOSE_MIGRATION_DIR=./migrations</code></pre>
+
+<p class="rule">
+  ⚠️ <code>-dir</code> default คือ <code>"."</code> <strong>ไม่ใช่ <code>./migrations</code></strong> —
+  ไม่ตั้ง <code>GOOSE_MIGRATION_DIR</code> ไฟล์จะไปโผล่ที่ราก repo ทั้งที่มีโฟลเดอร์ <code>migrations/</code> อยู่
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>คำสั่ง</th><th>ทำอะไร</th><th>output ตัวอย่างจริง</th></tr>
+  <tr><td><code>goose create &lt;name&gt; sql</code></td><td>สร้างไฟล์ SQL</td><td><code>Created new file: migrations/20260818125033_create_products_table.sql</code></td></tr>
+  <tr><td><code>goose -s create &lt;name&gt; sql</code></td><td>เลขเรียง <code>00001</code> แทน timestamp</td><td><code>Created new file: migrations/00001_init.sql</code></td></tr>
+  <tr><td><code>goose create &lt;name&gt; go</code></td><td>migration แบบ Go (<code>AddMigrationContext</code>)</td><td>—</td></tr>
+  <tr><td><code>goose up</code></td><td>รันที่ค้างทั้งหมด</td><td><code>goose: successfully migrated database to version: 20260818125035</code></td></tr>
+  <tr><td><code>goose up</code> (ซ้ำ)</td><td>ไม่ทำอะไร</td><td><code>goose: no migrations to run. current version: 20260818125201</code></td></tr>
+  <tr><td><code>goose up-by-one</code></td><td>ขึ้นทีละไฟล์</td><td><code>OK   20260818125033_create_products_table.sql (3.37ms)</code></td></tr>
+  <tr><td><code>goose up-to &lt;ver&gt;</code></td><td>ขึ้นถึง version ที่ระบุ</td><td>—</td></tr>
+  <tr><td><code>goose down</code></td><td>ย้อน 1 ขั้น</td><td><code>OK   20260818125035_add_index_products_name.sql (11.81ms)</code></td></tr>
+  <tr><td><code>goose redo</code></td><td>down แล้ว up ไฟล์เดิม</td><td>พิมพ์ชื่อไฟล์เดิม <strong>2 บรรทัด</strong> ไม่บอกว่าอันไหน down/up</td></tr>
+  <tr><td><code>goose reset</code></td><td>ย้อนทั้งหมด (ใหม่ → เก่า)</td><td>—</td></tr>
+  <tr><td><code>goose status</code></td><td>ดูว่าอันไหน Pending</td><td><strong>เขียน DB ด้วย</strong> — สร้าง <code>goose_db_version</code> ทันที</td></tr>
+  <tr><td><code>goose version</code></td><td>เลข version ปัจจุบัน</td><td><code>goose: version 20260818125035</code> · ยังไม่ up = <code>version 0</code></td></tr>
+  <tr><td><code>goose validate</code></td><td>ตรวจ syntax/annotation</td><td>ไม่แตะ DB → เอาไปใส่ CI ได้</td></tr>
+  <tr><td><code>goose -allow-missing up</code></td><td>ยอมรัน migration ที่ timestamp เก่ากว่า</td><td>⚠️ ทำ <code>goose version</code> เพี้ยน</td></tr>
+</table>
+</div>
+
+<h3>ตาราง <code>goose_db_version</code></h3>
+
+<pre><code> Column     | Type                        | Nullable | Default
+------------+-----------------------------+----------+----------------------------------
+ id         | integer                     | not null | generated by default as identity
+ version_id | bigint                      | not null |
+ is_applied | boolean                     | not null |
+ tstamp     | timestamp without time zone | not null | now()</code></pre>
+
+<p class="rule">
+  goose เก็บแค่ <strong>เลข version + เวลา</strong> — <strong>ไม่มี checksum ของไฟล์</strong>
+  (ต่างจาก Flyway/Liquibase) นี่คือรากของกับดัก "แก้ไฟล์ย้อนหลัง" และ "dev/prod แตกกัน"
+  <br><code>goose down</code> = <strong>DELETE แถวทิ้ง</strong> ไม่ใช่ set <code>is_applied = false</code>
+  (ทุกแถวเป็น <code>t</code> เสมอ · id จึงไม่ต่อเนื่องหลัง down/up หลายรอบ)
+</p>
+
+<p class="rule">
+  🕐 output มี <strong>สองโซนเวลาปนกัน</strong> — prefix ของ log เป็นเวลาเครื่อง (19:51)
+  ส่วนชื่อไฟล์และคอลัมน์ <code>Applied At</code> เป็น <strong>UTC</strong> (12:51)
+</p>
+
+<!-- ============================================================ -->
+<h2 id="goose-file">8 · Goose — โครงไฟล์ migration</h2>
+
+<p>template ที่ <code>goose create ... sql</code> สร้างให้มี <strong>แค่ 4 บรรทัด</strong>
+(ไม่มี <code>StatementBegin/End</code> มาให้ — ต้องพิมพ์เอง):</p>
+
+<pre><code>-- +goose Up
+SELECT 'up SQL query';
+
+-- +goose Down
+SELECT 'down SQL query';</code></pre>
+
+<h3>DDL ปกติ</h3>
+
+<pre><code>-- +goose Up
+CREATE TABLE products (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    price      NUMERIC(10,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- +goose Down
+DROP TABLE products;</code></pre>
+
+<h3>function / trigger — ต้องครอบ <code>StatementBegin/End</code></h3>
+
+<pre><code>-- +goose Up
+ALTER TABLE products ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+
+CREATE TRIGGER trg_products_updated_at
+BEFORE UPDATE ON products
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- +goose Down
+DROP TRIGGER trg_products_updated_at ON products;
+DROP FUNCTION set_updated_at();
+ALTER TABLE products DROP COLUMN updated_at;</code></pre>
+
+<p class="rule">
+  goose แบ่ง statement ด้วย <code>;</code> แบบง่าย ๆ ไม่รู้จัก dollar-quoted string —
+  ครอบ<strong>เฉพาะ block ที่มี <code>;</code> ข้างใน</strong>ก็พอ statement อื่นในไฟล์เดียวกันปล่อยไว้ได้
+</p>
+
+<h3><code>CREATE INDEX CONCURRENTLY</code> — ต้องปิด transaction</h3>
+
+<pre><code>-- +goose NO TRANSACTION
+-- +goose Up
+CREATE INDEX CONCURRENTLY idx_items_sku ON items (sku);
+
+-- +goose Down
+DROP INDEX CONCURRENTLY idx_items_sku;</code></pre>
+
+<p class="rule">
+  goose ห่อทุกไฟล์ด้วย transaction โดย default (ไฟล์ที่พังกลางทางจึง rollback ทั้งไฟล์ ไม่มี state ค้าง)
+  แต่ Postgres ห้าม <code>CONCURRENTLY</code> อยู่ใน transaction block
+  <br>ใส่ <code>NO TRANSACTION</code> แล้ว = <strong>ไฟล์นั้นไม่มี rollback อัตโนมัติ</strong> → ใส่ statement เดียวต่อไฟล์
+</p>
+
+<h3>seed master data = migration ตัวหนึ่ง</h3>
+
+<pre><code>-- +goose Up
+INSERT INTO categories (code, name) VALUES
+    ('ELEC', 'Electronics'),
+    ('BOOK', 'Books'),
+    ('FOOD', 'Food &amp; Drink');
+
+-- +goose Down
+DELETE FROM categories WHERE code IN ('ELEC','BOOK','FOOD');</code></pre>
+
+<p class="rule">
+  รัน <code>goose up</code> ซ้ำ 3 รอบ ข้อมูลยังเป็น 3 แถว —
+  <strong>ตัวที่กันซ้ำคือ <code>goose_db_version</code> ไม่ใช่ SQL</strong>
+  (<code>INSERT</code> ธรรมดาไม่มี <code>ON CONFLICT</code> ก็ไม่ซ้ำ เพราะ goose ไม่รันไฟล์นั้นอีกเลย)
+</p>
+
+<h3>goose vs GORM <code>AutoMigrate</code></h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>งาน</th><th><code>AutoMigrate</code></th><th>goose</th></tr>
+  <tr><td>สร้างตาราง / เพิ่มคอลัมน์</td><td>✅ ได้</td><td>✅ ได้</td></tr>
+  <tr><td>เปลี่ยน type คอลัมน์เดิม</td><td>✅ ได้ (สั่ง <code>ALTER ... USING</code> ให้เอง)</td><td>✅ เขียนเอง คุมได้</td></tr>
+  <tr><td><strong>rename คอลัมน์</strong></td><td>❌ สร้างคอลัมน์ใหม่ <strong>ข้อมูลไม่ตามมา</strong></td><td>✅ <code>RENAME COLUMN</code> ข้อมูลอยู่ครบ</td></tr>
+  <tr><td><strong>ลบคอลัมน์</strong></td><td>❌ ไม่ลบให้ (โดยตั้งใจ)</td><td>✅ <code>DROP COLUMN</code></td></tr>
+  <tr><td><strong>เพิ่ม <code>NOT NULL</code> บนคอลัมน์เดิม</strong></td><td>❌ <strong>บอก OK แต่ไม่ทำ</strong></td><td>✅ <code>SET NOT NULL</code> (มี NULL ค้าง → error ให้เห็น)</td></tr>
+  <tr><td>ตาราง version / rollback</td><td>❌ ไม่มีเลย</td><td>✅ <code>goose_db_version</code></td></tr>
+  <tr><td>รีวิว SQL ก่อน deploy</td><td>❌ SQL เกิดตอน runtime</td><td>✅ เป็นไฟล์ใน git</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  ⚠️ <strong>rollback = ย้อน schema ไม่ใช่ย้อนข้อมูล</strong> ·
+  <code>Down</code> ที่ <code>DROP COLUMN</code> แล้ว <code>up</code> ใหม่ → ค่าเดิม 42, 7 กลายเป็น 0, 0 ถาวร
+</p>
+
+<!-- ============================================================ -->
+<h2 id="redis-cli">9 · Redis — คำสั่งใน <code>redis-cli</code></h2>
+
+<pre><code>docker run -d --name day7-redis -p 55379:6379 redis:7-alpine
+docker exec day7-redis redis-cli INFO server   <span class="c"># redis_version:7.4.10</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>คำสั่ง</th><th>คืนอะไร</th><th>ตอน key ไม่มี</th></tr>
+  <tr><td><code>SET k v</code></td><td><code>OK</code></td><td>—</td></tr>
+  <tr><td><code>SET k v EX 3</code></td><td><code>OK</code> + ตั้ง TTL ในคำสั่งเดียว</td><td>—</td></tr>
+  <tr><td><code>GET k</code></td><td>ค่า</td><td>ว่าง / <code>(nil)</code></td></tr>
+  <tr><td><code>EXISTS k</code></td><td><code>1</code></td><td><code>0</code></td></tr>
+  <tr><td><code>TYPE k</code></td><td><code>string</code> · <code>list</code> · …</td><td><code>none</code></td></tr>
+  <tr><td><code>DEL k</code></td><td><strong>จำนวน key ที่ลบได้</strong> (ไม่ใช่ <code>OK</code>)</td><td><code>0</code> — ลบซ้ำไม่ error</td></tr>
+  <tr><td><code>TTL k</code></td><td>วินาทีที่เหลือ · <code>-1</code> = ไม่มี expire</td><td><code>-2</code></td></tr>
+  <tr><td><code>EXPIRE k 100</code></td><td><code>1</code></td><td><code>0</code> — <strong>ไม่ error</strong></td></tr>
+  <tr><td><code>PERSIST k</code></td><td><code>1</code> (ถอด expire → TTL กลับเป็น <code>-1</code>)</td><td><code>0</code></td></tr>
+  <tr><td><code>DBSIZE</code></td><td>จำนวน key ทั้ง db</td><td>—</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  TTL สามค่าที่ต้องจำ: <strong><code>-2</code> = ไม่มี key</strong> ·
+  <strong><code>-1</code> = มี key แต่ไม่มีวันหมดอายุ</strong> · เลขบวก = วินาทีที่เหลือ
+  <br>หมดอายุแล้ว key หายจริง (<code>TTL -2</code> · <code>EXISTS 0</code> · <code>TYPE none</code>) —
+  <strong>แยกไม่ออกจาก key ที่ไม่เคยมี</strong>
+</p>
+
+<p class="rule">
+  ⚠️ output ของ <code>redis-cli</code> ต่างกันเมื่อมี TTY กับตอน pipe —
+  ในเทอร์มินัลเห็น <code>(nil)</code> / <code>(integer) 1</code> แต่ตอน pipe ได้บรรทัดว่างกับเลขเปล่า ·
+  script ที่เช็คผลต้องเขียนตามแบบหลัง
+</p>
+
+<h3>เรื่อง persistence ที่มักเข้าใจผิด</h3>
+
+<pre><code>CONFIG GET save          <span class="c"># 3600 1 300 100 60 10000   ← RDB เปิดอยู่ default</span>
+CONFIG GET appendonly    <span class="c"># no                        ← AOF ปิดอยู่ default</span></code></pre>
+
+<p class="rule">
+  Redis ทำงานบน RAM แต่ <strong>persist ลงดิสก์ได้และ default เปิด RDB ไว้</strong> —
+  ข้อมูลรอด <code>docker restart</code> (SIGTERM = save ก่อนตาย)
+  แต่ <strong>หายถ้าโดน SIGKILL</strong> (สิ่งที่เขียนหลัง save ล่าสุด)
+</p>
+
+<!-- ============================================================ -->
+<h2 id="redis-go">10 · Redis — cache-aside ใน Go</h2>
+
+<pre><code>go get github.com/redis/go-redis/v9   <span class="c">// v9.22.0</span>
+
+rdb := redis.<span class="f">NewClient</span>(&amp;redis.Options{Addr: <span class="s">"127.0.0.1:55379"</span>})
+<span class="k">defer</span> rdb.<span class="f">Close</span>()
+<span class="k">if</span> err := rdb.<span class="f">Ping</span>(ctx).<span class="f">Err</span>(); err != <span class="k">nil</span> {   <span class="c">// ← NewClient เป็น lazy ไม่เคย error</span>
+    log.<span class="f">Fatal</span>(err)
+}</code></pre>
+
+<pre><code><span class="k">func</span> <span class="f">getUser</span>(ctx context.Context, rdb *redis.Client, id <span class="k">int</span>) (User, <span class="k">string</span>, <span class="k">error</span>) {
+    key := fmt.<span class="f">Sprintf</span>(<span class="s">"user:%d"</span>, id)
+
+    val, err := rdb.<span class="f">Get</span>(ctx, key).<span class="f">Result</span>()
+    <span class="k">if</span> err == <span class="k">nil</span> {                          <span class="c">// HIT</span>
+        <span class="k">var</span> u User
+        <span class="k">if</span> err := json.<span class="f">Unmarshal</span>([]<span class="k">byte</span>(val), &amp;u); err != <span class="k">nil</span> {
+            <span class="k">return</span> User{}, <span class="s">""</span>, err
+        }
+        <span class="k">return</span> u, <span class="s">"HIT"</span>, <span class="k">nil</span>
+    }
+    <span class="k">if</span> !errors.<span class="f">Is</span>(err, redis.Nil) {           <span class="c">// error จริง — ต้องแยกจาก cache miss</span>
+        <span class="k">return</span> User{}, <span class="s">""</span>, fmt.<span class="f">Errorf</span>(<span class="s">"redis error: %w"</span>, err)
+    }
+
+    u := <span class="f">queryDB</span>(id)                          <span class="c">// MISS</span>
+    b, err := json.<span class="f">Marshal</span>(u)                  <span class="c">// ← อย่าใส่ _ ทิ้ง error</span>
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> User{}, <span class="s">""</span>, err }
+    <span class="k">if</span> err := rdb.<span class="f">Set</span>(ctx, key, b, <span class="n">60</span>*time.Second).<span class="f">Err</span>(); err != <span class="k">nil</span> {
+        <span class="k">return</span> User{}, <span class="s">""</span>, err
+    }
+    <span class="k">return</span> u, <span class="s">"MISS"</span>, <span class="k">nil</span>
+}</code></pre>
+
+<div class="compare">
+  <div class="side bad">
+    <p class="label">❌ 500 ทุก cache miss</p>
+<pre><code>val, err := rdb.<span class="f">Get</span>(ctx, k).<span class="f">Result</span>()
+<span class="k">if</span> err != <span class="k">nil</span> {
+    <span class="k">return</span> err      <span class="c">// redis: nil ก็เข้าตรงนี้</span>
+}</code></pre>
+  </div>
+  <div class="side good">
+    <p class="label">✅ แยก miss ออกจาก error</p>
+<pre><code>val, err := rdb.<span class="f">Get</span>(ctx, k).<span class="f">Result</span>()
+<span class="k">switch</span> {
+<span class="k">case</span> errors.<span class="f">Is</span>(err, redis.Nil):  <span class="c">// miss</span>
+<span class="k">case</span> err != <span class="k">nil</span>:                 <span class="c">// error จริง</span>
+<span class="k">default</span>:                        <span class="c">// hit</span>
+}</code></pre>
+  </div>
+</div>
+
+<p class="rule">
+  ใช้ <code>errors.Is</code> ไม่ใช่ <code>==</code>
+  (<a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>) เพราะโค้ดชั้นบนอาจ <code>%w</code> ห่อไว้
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>วัดจริง</th><th>เวลา</th></tr>
+  <tr><td>MISS (DB จำลอง sleep 200 ms)</td><td>202.9 ms</td></tr>
+  <tr><td>HIT (หลัง connection pool warm)</td><td>0.73 ms → <strong>เร็วขึ้น ~278 เท่า</strong></td></tr>
+  <tr><td>HIT ครั้งแรก (pool ยังไม่ warm)</td><td>1.83 ms — <strong>อย่าเอาไปคิดเป็น benchmark</strong></td></tr>
+</table>
+</div>
+
+<h3>ชนิดที่ <code>Set</code> รับได้</h3>
+
+<pre><code><span class="c">// ✅ string · int · float64 · bool (เก็บเป็น "1") · []byte · time.Duration (nanosecond)</span>
+<span class="c">// ❌ struct · *struct · map · slice  →  redis: can't marshal ...</span>
+
+b, err := json.<span class="f">Marshal</span>(u)
+rdb.<span class="f">Set</span>(ctx, key, b, ttl)      <span class="c">// marshal เองก่อนเสมอ</span></code></pre>
+
+<h3>cache stampede</h3>
+
+<pre><code><span class="k">var</span> mu sync.Mutex
+
+<span class="k">func</span> <span class="f">getGuarded</span>(ctx context.Context, rdb *redis.Client) <span class="k">string</span> {
+    <span class="k">if</span> v, err := rdb.<span class="f">Get</span>(ctx, <span class="s">"hot"</span>).<span class="f">Result</span>(); err == <span class="k">nil</span> { <span class="k">return</span> v }
+    mu.<span class="f">Lock</span>()
+    <span class="k">defer</span> mu.<span class="f">Unlock</span>()
+    <span class="c">// เช็คซ้ำหลังได้ lock — คนอื่นอาจเติม cache ไปแล้ว</span>
+    <span class="k">if</span> v, err := rdb.<span class="f">Get</span>(ctx, <span class="s">"hot"</span>).<span class="f">Result</span>(); err == <span class="k">nil</span> { <span class="k">return</span> v }
+    v := <span class="f">queryDB</span>()
+    rdb.<span class="f">Set</span>(ctx, <span class="s">"hot"</span>, v, <span class="n">60</span>*time.Second)
+    <span class="k">return</span> v
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>100 request พร้อมกันตอน cache ว่าง</th><th>DB ถูกยิง</th><th>เวลา</th></tr>
+  <tr><td>ไม่มี lock</td><td><strong>100 ครั้ง</strong></td><td>269 ms</td></tr>
+  <tr><td><code>mutex</code> + double-check</td><td><strong>1 ครั้ง</strong></td><td>282 ms</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  ต้นทุนแทบเป็นศูนย์ (269 vs 282 ms) — แต่ <code>sync.Mutex</code>
+  (<a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a>)
+  กันได้แค่<strong>ภายในโปรเซสเดียว</strong> · หลาย instance ต้องใช้ distributed lock
+</p>
+
+<!-- ============================================================ -->
+<h2 id="redis-scan">11 · Redis — <code>KEYS</code> vs <code>SCAN</code></h2>
+
+<pre><code><span class="k">var</span> cursor <span class="k">uint64</span>
+<span class="k">for</span> {
+    batch, cur, err := rdb.<span class="f">Scan</span>(ctx, cursor, <span class="s">"user:*"</span>, <span class="n">1000</span>).<span class="f">Result</span>()
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+    <span class="c">// ใช้ len(batch) จริง อย่ายึด COUNT เป็นขนาดตายตัว</span>
+    cursor = cur
+    <span class="k">if</span> cursor == <span class="n">0</span> { <span class="k">break</span> }      <span class="c">// ← cursor 0 เท่านั้นที่แปลว่าจบ</span>
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>บน 1,000,000 keys</th><th><code>KEYS *</code></th><th><code>SCAN</code></th></tr>
+  <tr><td>เวลาที่ Redis ใช้ต่อคำสั่ง (SLOWLOG)</td><td><strong>146,086 µs</strong></td><td><strong>57 µs</strong></td></tr>
+  <tr><td>เวลารวมฝั่ง Go</td><td>150 ms</td><td>862 ms (วน 1,000 รอบ)</td></tr>
+  <tr><td>latency ของ client อื่น (max)</td><td><strong>274 ms</strong></td><td><strong>2 ms</strong> (เท่า baseline)</td></tr>
+  <tr><td>หน่วยความจำฝั่ง client</td><td>+30.5 MB ในครั้งเดียว</td><td>ถือทีละ ~1,000 key</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  ⚠️ <strong><code>SCAN</code> ไม่ได้ "เร็วกว่า" — มันช้ากว่า 5.7 เท่าในแง่เวลารวม</strong>
+  <br>เหตุผลที่ต้องใช้คือ Redis ประมวลผลทีละคำสั่งบน thread เดียว →
+  <code>KEYS</code> แช่แข็ง client ทุกคน 146 ms ส่วน <code>SCAN</code> ตัดงานเป็นชิ้นละ 57 µs
+</p>
+
+<p class="rule">
+  <code>COUNT</code> เป็นแค่ <strong>hint ไม่ใช่ limit</strong> — ขอ 1000 ได้กลับมา 1004 ·
+  ขอ <code>COUNT 2</code> อาจได้ key 1 ตัวพร้อม cursor <code>3</code> (ยังไม่จบ)
+</p>
+
+<p class="rule">
+  🛠 อยากสร้าง key เยอะ ๆ ทดสอบ — <code>DEBUG POPULATE</code> ถูกปิดใน Redis 7 ให้ใช้ Lua แทน:<br>
+  <code>redis-cli EVAL "for i=1,100000 do redis.call('SET', KEYS[1]..i, i) end return 1" 1 "bulk:0:"</code>
+</p>
+
+<!-- ============================================================ -->
+<h2 id="choose">12 · อันไหนใช้เมื่อไหร่ — mock vs container จริง</h2>
+
+<p>คำถามเดียวที่ต้องถามกับเทสทุกตัว:</p>
+
+<div class="diagram">
+<pre>  <strong>"สิ่งที่เทสนี้จะพัง คือ logic ของเรา หรือ สัญญากับของข้างนอก?"</strong>
+
+        logic ของเรา                        สัญญากับของข้างนอก
+   (if/else · การคำนวณ · error path)   (column · ตาราง · constraint · type · migration)
+              │                                        │
+              ▼                                        ▼
+     <strong>mock (mockery)</strong>                       <strong>container จริง (testcontainers)</strong>
+        ~1.25 ms/เทส                    boot 1.03 วิ ครั้งเดียว แล้ว ~2 ms/เทส</pre>
+</div>
+
+<h3>หลักฐานว่าทำไมต้องมีทั้งคู่</h3>
+
+<p>ฟังก์ชันเดียวกัน <code>SearchByCity</code> ที่ query column <code>city</code> ซึ่ง<strong>ไม่มีในตาราง</strong>:</p>
+
+<div class="compare">
+  <div class="side bad">
+    <p class="label">mock (go-sqlmock) — ไม่จับ</p>
+<pre><code>=== RUN   TestMockedSearchByCity_PASSES_WITH_A_BUG
+    MOCK RESULT: len=1 first=Ploy  (took 166.042µs)
+--- PASS  (0.00s)</code></pre>
+  </div>
+  <div class="side good">
+    <p class="label">postgres จริง — จับได้</p>
+<pre><code>=== RUN   TestSearchByCity_CaughtByRealPostgres
+    VERBATIM real-postgres error:
+    ERROR: column "city" does not exist (SQLSTATE 42703)
+--- PASS  (1.07s)</code></pre>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เทสสิ่งนี้</th><th>ใช้</th><th>เพราะ</th></tr>
+  <tr><td>service เรียก repository ด้วย argument ถูกไหม</td><td><strong>mock</strong></td><td>เป็น logic ล้วน · <code>EXPECT()</code> เช็ค argument ให้ฟรี</td></tr>
+  <tr><td>โค้ดจัดการ error จาก dependency ยังไง</td><td><strong>mock</strong></td><td>สร้าง error ตามใจได้ · DB จริงบังคับให้พังยาก</td></tr>
+  <tr><td>เส้นทางที่ <em>ไม่</em> ควรเรียก dependency</td><td><strong>mock</strong></td><td><code>AssertNotCalled</code> · container พิสูจน์ไม่ได้</td></tr>
+  <tr><td>dependency ที่เป็น API ภายนอก / payment</td><td><strong>mock</strong></td><td>ยิงของจริงไม่ได้</td></tr>
+  <tr><td><strong>SQL ใช้ได้กับ schema จริงไหม</strong></td><td><strong>container</strong></td><td>mock ไม่มี parser ไม่รู้จัก schema</td></tr>
+  <tr><td><strong>column / ตาราง สะกดถูกไหม</strong></td><td><strong>container</strong></td><td><code>42703</code> · <code>42P01</code> จับได้ทันที</td></tr>
+  <tr><td><strong>unique index มีจริงไหม</strong></td><td><strong>container</strong></td><td>เป็น DDL · <code>23505</code> เท่านั้นที่พิสูจน์ได้</td></tr>
+  <tr><td>migration ของ goose รันผ่านไหม</td><td><strong>container</strong></td><td>ต้องมี DB จริงถึงจะรัน</td></tr>
+  <tr><td>type ที่ scan กลับมาตรงไหม / nil slice</td><td><strong>container</strong></td><td>ขึ้นกับ driver ตัวจริง</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  <strong>ไม่ใช่คำถาม "อันไหนดีกว่า" แต่เป็น "อันไหนตอบคำถามอะไร"</strong><br>
+  mock ตรวจว่า <em>logic ของเราเรียกถูกไหม</em> · container ตรวจว่า <em>SQL ใช้ได้กับของจริงไหม</em>
+  <br>ทุกอย่างที่เป็นสัญญากับ DB — column, ตาราง, constraint, type, migration —
+  <strong>ต้องมี integration test</strong> ไม่มีทางลัด
+</p>
+
+<h3>ราคาที่จ่ายจริง</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>แบบ</th><th>ต้นทุน</th><th>วิธีคุมไม่ให้แพง</th></tr>
+  <tr><td>mock</td><td>~1.25 ms/เทส</td><td>—</td></tr>
+  <tr><td>container ตัวแรก</td><td>~1.0–1.3 วิ</td><td>จ่ายครั้งเดียวด้วย <code>sync.Once</code></td></tr>
+  <tr><td>container เทสถัดไป</td><td><strong>~2 ms</strong> (พอ ๆ กับ mock)</td><td><code>TRUNCATE</code> ใน <code>SetupTest</code> แทนการเปิดใหม่</td></tr>
+  <tr><td>เครื่องที่ไม่มี Docker / CI เร็ว ๆ</td><td>—</td><td><code>testing.Short()</code> + <code>t.Skip</code> + boot แบบ lazy</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  ⚠️ ข้อจำกัดของ <code>sync.Once</code> ที่ต้องรู้ — ทุกเทสใช้ DB ตัวเดียวกัน
+  ดังนั้น <code>TRUNCATE</code> ใน <code>SetupTest</code> จะชนกันทันทีถ้าเปิด <code>t.Parallel()</code>
+</p>
+
+<!-- ============================================================ -->
+<h2 id="errors">13 · ตารางแปล error ที่เจอบ่อย</h2>
+
+<h3>Redis / go-redis</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เห็นแบบนี้</th><th>แปลว่า</th><th>ทำอะไรต่อ</th></tr>
+  <tr><td><code>redis: nil</code></td><td><strong>cache miss</strong> — เหตุการณ์ปกติ ไม่ใช่ error</td><td><code>errors.Is(err, redis.Nil)</code> แล้วไปอ่าน DB</td></tr>
+  <tr><td><code>dial tcp 127.0.0.1:55999: connect: connection refused</code></td><td>Redis ไม่ได้เปิด / addr ผิด</td><td><code>Ping</code> ตอน startup แล้ว fail fast</td></tr>
+  <tr><td><code>redis: can't marshal main.User (implement encoding.BinaryMarshaler)</code></td><td>ส่ง struct ให้ <code>Set</code> ตรง ๆ · <strong>ไม่มีอะไรถูกเขียนเลย</strong></td><td><code>json.Marshal</code> ก่อน</td></tr>
+  <tr><td><code>WRONGTYPE Operation against a key holding the wrong kind of value</code></td><td>ใช้คำสั่งผิด type (เช่น <code>GET</code> กับ list)</td><td><code>TYPE k</code> ดูก่อน · ไม่ใช่ <code>redis.Nil</code></td></tr>
+  <tr><td><code>OOM command not allowed when used memory &gt; 'maxmemory'.</code></td><td>เต็มและ policy เป็น <code>noeviction</code> (default) · อ่าน/ลบยังได้</td><td><code>CONFIG SET maxmemory-policy allkeys-lru</code></td></tr>
+  <tr><td><code>ERR DEBUG command not allowed...</code></td><td><code>DEBUG</code> ถูกปิดตั้งแต่ Redis 7</td><td>ใช้ Lua <code>EVAL</code> สร้าง key แทน</td></tr>
+  <tr><td><code>TTL</code> ใน Go ได้ <code>-2ns</code> / <code>-1ns</code></td><td>go-redis เอาเลขดิบใส่ <code>time.Duration</code> → หน่วยเป็น ns ไม่ใช่วินาที</td><td>เทียบ <code>ttl == -2</code> / <code>ttl == -1</code> ตรง ๆ ก่อนคำนวณ</td></tr>
+</table>
+</div>
+
+<h3>testcontainers-go</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เห็นแบบนี้</th><th>แปลว่า</th><th>ทำอะไรต่อ</th></tr>
+  <tr><td><code>get provider: rootless Docker not found, failed to create Docker provider</code></td><td>หา Docker host ไม่เจอ — <strong>ไม่ได้แปลว่าปัญหาอยู่ที่ rootless</strong></td><td><code>export DOCKER_HOST=$(docker context inspect ...)</code></td></tr>
+  <tr><td><code>check host "&lt;ค่าที่ตั้ง&gt;": ...</code></td><td>ค่าที่ลองแล้วพัง — <strong>อ่านบรรทัดแรกพอ</strong> ที่เหลือเป็น noise</td><td>แก้ค่าใน <code>DOCKER_HOST</code> ตามที่บอก</td></tr>
+  <tr><td><code>reaper: new reaper: ... error while creating mount source path '/Users/.../docker.sock': mkdir ...: operation not supported</code></td><td>Ryuk mount socket ไม่ได้ — path ฝั่ง mac ไม่มีใน VM</td><td><code>export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock</code></td></tr>
+  <tr><td><code>wait until ready: "..." matched 0 times, expected 1</code></td><td>wait strategy timeout · <strong>container start ไปแล้ว (ไม่ nil)</strong></td><td>ต้องมี <code>defer TerminateContainer</code> ก่อนเช็ค err</td></tr>
+  <tr><td><code>wait until ready: no wait strategy supplied</code></td><td>เรียก <code>WithWaitStrategy()</code> เปล่า ๆ · log ขึ้น <code>Waiting for: all of: (none)</code></td><td>ใช้ <code>BasicWaitStrategies()</code></td></tr>
+  <tr><td><code>failed to resolve reference "docker.io/library/postgres:999-doesnotexist": ... not found</code></td><td>image tag ผิด · <strong>คืน <code>ctr = nil</code></strong></td><td>อ่านท้ายสุด <code>: not found</code> · ต้องใช้ API ที่ nil-safe</td></tr>
+  <tr><td><code>no required module provides package .../modules/postgres</code></td><td>ลืม <code>go get</code> module postgres แยก</td><td><code>go get github.com/testcontainers/testcontainers-go/modules/postgres</code></td></tr>
+  <tr><td><code>panic: testing: Short called before Parse</code></td><td>เรียก <code>testing.Short()</code> ใน <code>TestMain</code> ก่อน <code>m.Run()</code></td><td>เช็คในตัวเทส/<code>SetupSuite</code> แทน</td></tr>
+</table>
+</div>
+
+<h3>goose / PostgreSQL SQLSTATE</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เห็นแบบนี้</th><th>แปลว่า</th><th>ทำอะไรต่อ</th></tr>
+  <tr><td><code>Usage: goose DRIVER DBSTRING [OPTIONS] COMMAND</code> (พ่นทั้งหน้า)</td><td>ขาด driver/dbstring — goose ถือว่า <strong>ใช้คำสั่งผิด ไม่ใช่ error</strong></td><td>วาง <code>.env</code> ที่ราก repo</td></tr>
+  <tr><td><code>goose run: no migration files found</code></td><td>เชื่อม DB ได้แล้ว แต่ <code>-dir</code> ยังเป็น <code>"."</code></td><td>ตั้ง <code>GOOSE_MIGRATION_DIR=./migrations</code></td></tr>
+  <tr><td><code>goose run: ./nope directory does not exist</code></td><td><code>-dir</code> ชี้ path ที่ไม่มีจริง</td><td>เช็ค path</td></tr>
+  <tr><td><code>failed to parse migration: unexpected state 0 on line "..."</code></td><td>ลืม <code>-- +goose Up</code> · state 0 = ยังไม่เจอ annotation</td><td>ใส่ annotation · <code>goose validate</code> จับได้ก่อนแตะ DB</td></tr>
+  <tr><td><code>unterminated dollar-quoted string at or near "$$ ..." (SQLSTATE 42601)</code></td><td>goose ตัด SQL ตรง <code>;</code> ตัวแรกใน body ของ function</td><td>ครอบ <code>-- +goose StatementBegin/End</code></td></tr>
+  <tr><td><code>CREATE INDEX CONCURRENTLY cannot run inside a transaction block (SQLSTATE 25001)</code></td><td>goose ห่อ transaction ให้โดย default</td><td>ใส่ <code>-- +goose NO TRANSACTION</code> บรรทัดแรก</td></tr>
+  <tr><td><code>found 1 missing migrations before current version ...</code></td><td>merge migration ที่ timestamp เก่ากว่าตัวที่ apply แล้ว</td><td>rebase เปลี่ยนชื่อไฟล์ · หรือ <code>-allow-missing</code> (ทำ version เพี้ยน)</td></tr>
+  <tr><td><code>EMPTY 20260818130000_....sql</code> + exit 0</td><td><strong>ไม่มี block <code>Down</code></strong> — ลบแถว version แต่ DB ไม่ย้อน</td><td>เขียน <code>Down</code> เสมอ · ติดหล่มแล้วต้องแก้ด้วยมือ</td></tr>
+  <tr><td><code>outfile exists</code> (FTL) — <em>mockery</em></td><td><code>force-file-write: false</code> และไฟล์ mock มีอยู่แล้ว</td><td>ปล่อยไว้ที่ <code>true</code> ตามที่ init ให้มา</td></tr>
+  <tr><td><code>SQLSTATE 42703</code></td><td><code>undefined_column</code> — column ไม่มีจริง</td><td>mock จับไม่ได้ ต้อง integration test</td></tr>
+  <tr><td><code>SQLSTATE 42P01</code></td><td><code>undefined_table</code> — ตาราง/relation ไม่มีจริง</td><td>เช็คชื่อตาราง · migration รันครบหรือยัง</td></tr>
+  <tr><td><code>SQLSTATE 23505</code></td><td><code>unique_violation</code> — ชน unique constraint</td><td>ดูชื่อ index ในข้อความ (เช่น <code>idx_users_email</code>)</td></tr>
+  <tr><td><code>SQLSTATE 22P02</code></td><td><code>invalid_text_representation</code> — แปลง type ไม่ได้</td><td>เขียน migration แปลงข้อมูลเป็นขั้น ๆ</td></tr>
+  <tr><td><code>SQLSTATE 42601</code></td><td><code>syntax_error</code></td><td>ดู SQL ที่ถูกส่งจริงในข้อความ — มักโดนตัดกลางคัน</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="traps">14 · ตารางกับดักรวม</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>อาการ</th><th>error ที่เห็น</th><th>สาเหตุ</th><th>วิธีแก้</th></tr>
+
+  <tr><td colspan="4"><strong>Mockery</strong></td></tr>
+
+  <tr>
+    <td>รัน <code>mockery</code> แล้วตายทันที ไม่ generate อะไร</td>
+    <td><code>FTL app failed error="getting config: discovering mockery config: file not found"</code></td>
+    <td>v3 บังคับต้องมี config เสมอ ไม่มี flag <code>--name/--dir</code> แล้ว</td>
+    <td><code>mockery init &lt;module_path&gt;</code> ก่อน</td>
+  </tr>
+  <tr>
+    <td><strong>รันแล้วเงียบ exit 0 แต่ไม่มีไฟล์ mock</strong></td>
+    <td><code>INF Done parsing configured packages.</code> แล้วจบ · <code>EXITCODE=0</code></td>
+    <td>config ชี้ module root ที่ไม่มีไฟล์ <code>.go</code> — และ <code>mockery init</code> สร้างแบบนี้มาให้เอง</td>
+    <td>เติม <code>recursive: true</code> · หรือเปลี่ยน key เป็น package path เต็ม</td>
+  </tr>
+  <tr>
+    <td>เทสตกโดยไม่ได้เขียน assert เอง · ชี้ไป <code>mocks_test.go</code></td>
+    <td><code>FAIL: 0 out of 1 expectation(s) were met. The code you are testing needs to make 1 more call(s).</code></td>
+    <td>constructor ลงทะเบียน <code>t.Cleanup(AssertExpectations)</code> ไว้ให้</td>
+    <td>อ่าน <strong>ตัวท้ายสุดใน <code>[]</code> ตัวแรก</strong> = บรรทัดที่ตั้ง EXPECT ไว้</td>
+  </tr>
+  <tr>
+    <td>เทสตก + panic หยุดกลางคัน + error ซ้อน 3 ก้อน</td>
+    <td><code>mock: Unexpected Method Call</code> · <code>Diff: 0: FAIL:  (int=8) != (int=7)</code></td>
+    <td>testify จับคู่ call ด้วยค่า argument ทุกตัว ไม่ตรงเป๊ะ = call ที่ไม่คาดคิด</td>
+    <td>เลข <code>0</code> = index ของ arg · ซ้าย = ค่าจริง ขวา = ที่ตั้งไว้ · ไม่สนใจให้ใช้ <code>mock.Anything</code></td>
+  </tr>
+  <tr>
+    <td>เทส panic ทั้ง binary พร้อม stack trace ยาว</td>
+    <td><code>panic: no return value specified for CountActive</code></td>
+    <td><code>EXPECT()</code> แล้วลืม <code>.Return()</code> — mock คืน zero value อย่างปลอดภัยไม่ได้</td>
+    <td>ต่อ <code>.Return(...)</code> ครบทุก <code>EXPECT</code> · อ่านคำหลัง <code>specified for</code></td>
+  </tr>
+  <tr>
+    <td>เทสไม่ทันได้รัน พังตั้งแต่ compile</td>
+    <td><code>*MockUserRepository does not implement UserRepository (missing method Delete)</code></td>
+    <td>แก้ interface แล้วลืม generate ใหม่ — mock เป็นโค้ด static</td>
+    <td>รัน <code>mockery</code> ใหม่ · เจอคำว่า <code>missing method</code> ให้นึกถึง mockery ก่อน</td>
+  </tr>
+  <tr>
+    <td>เห็น mock อยู่ในโค้ดชัด ๆ แต่ compile ไม่ผ่าน</td>
+    <td><code>undefined: user.NewMockUserRepository</code></td>
+    <td><code>filename: mocks_test.go</code> เป็น test file — package อื่นมองไม่เห็น</td>
+    <td>เปลี่ยนเป็น <code>filename: mocks.go</code></td>
+  </tr>
+  <tr>
+    <td>เปลี่ยน filename แล้วพังเป็นสิบบรรทัด</td>
+    <td><code>NewMockUserRepository redeclared in this block</code></td>
+    <td>mockery เขียนไฟล์ใหม่เฉย ๆ ไม่ลบไฟล์ชื่อเก่าให้</td>
+    <td><code>rm user/mocks_test.go</code> ก่อนเปลี่ยนชื่อ</td>
+  </tr>
+  <tr>
+    <td>config ที่แก้ไว้หายเกลี้ยง กลับเป็น default</td>
+    <td>ไม่มี error · <code>INF writing to file file=.mockery.yml</code> · <code>EXITCODE=0</code></td>
+    <td><code>mockery init</code> ทับไฟล์เดิมโดยไม่เช็คและไม่เตือน</td>
+    <td>รัน <code>init</code> ครั้งเดียวตอนเริ่มโปรเจกต์ · ไม่มี <code>--force</code> ให้กัน</td>
+  </tr>
+  <tr>
+    <td>เรียกซ้ำแล้วเทสตก</td>
+    <td><code>assert: mock: The method has been called over 1 times.</code></td>
+    <td><code>Once()</code> = <code>Times(1)</code> เกินโควตาแล้วหา expectation เหลือไม่เจอ</td>
+    <td>ใช้ <code>.Times(n)</code> หรือไม่ใส่ <code>Once()</code> เลย</td>
+  </tr>
+  <tr>
+    <td>ไฟล์ config วางอยู่ตรงหน้าแต่หาไม่เจอ</td>
+    <td><code>discovering mockery config: file not found</code></td>
+    <td>ตั้งชื่อ <code>mockery.yml</code> (ไม่มีจุด) — v3 หาเฉพาะ <code>.mockery.yml/.yaml</code></td>
+    <td>เติมจุดนำหน้า · หรือ <code>mockery --config mockery.yml</code></td>
+  </tr>
+  <tr>
+    <td>compile ผ่านแต่ mock ใช้ไม่ได้</td>
+    <td><code>go: finding module for package github.com/stretchr/testify/mock</code></td>
+    <td>mockery ไม่เติม <code>go.mod</code> ให้</td>
+    <td><code>go mod tidy</code></td>
+  </tr>
+
+  <tr><td colspan="4"><strong>Testcontainers</strong></td></tr>
+
+  <tr>
+    <td><code>docker ps</code> ใช้ได้ แต่เทสล้มใน 0.00 วินาที</td>
+    <td><code>get provider: rootless Docker not found, failed to create Docker provider</code></td>
+    <td>testcontainers ไม่อ่าน <code>docker context</code> ของ Docker CLI เลย</td>
+    <td><code>export DOCKER_HOST=$(docker context inspect --format '{{.Endpoints.docker.Host}}')</code></td>
+  </tr>
+  <tr>
+    <td>ตั้ง <code>DOCKER_HOST</code> ถูกแล้วแต่ยังสร้าง container ไม่ได้</td>
+    <td><code>reaper: new reaper: ... mkdir /Users/.../docker.sock: operation not supported</code></td>
+    <td>Ryuk ต้อง mount socket แต่ path ฝั่ง mac ไม่มีอยู่ใน VM</td>
+    <td><code>export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock</code></td>
+  </tr>
+  <tr>
+    <td>ต่อ DB ไม่ติดแบบสุ่ม — เครื่องแรงพังบ่อย เครื่องช้าผ่าน</td>
+    <td><code>[::1]:32800: connect: connection refused</code> + <code>127.0.0.1:32800: failed to receive message: unexpected EOF</code></td>
+    <td>ไม่ใส่ <code>BasicWaitStrategies()</code> — postgres restart ตัวเองหลัง initdb</td>
+    <td>ใส่เสมอ · <strong><code>unexpected EOF</code> = ต่อเร็วเกินไป</strong> ไม่ใช่ "ยังไม่มีอะไรฟัง"</td>
+  </tr>
+  <tr>
+    <td>เทสที่ควรเร็ว กลับใช้เวลา 11 วินาที</td>
+    <td>ไม่มี error — <code>Stopping container</code> 20:00:27 → <code>Container stopped</code> 20:00:38</td>
+    <td>terminate container ที่ยังไม่ ready · postgres ไม่ตอบ SIGTERM ต้องรอ SIGKILL 10 วิ</td>
+    <td>รอ ready ก่อนเสมอ — <code>BasicWaitStrategies()</code> กัน teardown ช้าด้วย</td>
+  </tr>
+  <tr>
+    <td>container ขึ้นเรียบร้อยแต่ต่อไม่ติดเลยสักครั้ง</td>
+    <td><code>dial tcp 127.0.0.1:5432: connect: connection refused</code> (ทั้ง <code>[::1]</code> และ <code>127.0.0.1</code>)</td>
+    <td>hardcode port 5432 · testcontainers map ไป port สุ่ม (เห็น 32769–32812)</td>
+    <td>ใช้ <code>ConnectionString(ctx, "sslmode=disable")</code> เสมอ · <strong>อันตรายกว่า: ถ้าเครื่องมี postgres จริงที่ 5432 เทสจะ "ผ่าน" โดยเขียนทับ DB จริง</strong></td>
+  </tr>
+  <tr>
+    <td>เทส fail แล้ว container ค้างทุกครั้ง</td>
+    <td><code>wait until ready: "..." matched 0 times, expected 1</code> · <code>returned container is nil? false</code></td>
+    <td><code>t.Fatal(err)</code> อยู่ก่อนบรรทัด <code>defer</code> · และ Run คืน container ที่ไม่ nil พร้อม error</td>
+    <td>วาง <code>defer func(){ _ = testcontainers.TerminateContainer(ctr) }()</code> <strong>ก่อน</strong>เช็ค err</td>
+  </tr>
+  <tr>
+    <td><code>go test -short</code> ยังช้าและยังต้องมี Docker ทั้งที่ SKIP ครบ</td>
+    <td>ไม่มี error — <code>[eager TestMain] container booted BEFORE m.Run() in 1.047302208s</code></td>
+    <td>boot container ใน <code>TestMain</code> ก่อน <code>m.Run()</code> — มันรันก่อนเทสทุกตัวเสมอ</td>
+    <td>ย้าย boot ไป <code>sync.Once</code> ที่ถูกเรียกจากในตัวเทส (1.673s → 0.353s)</td>
+  </tr>
+  <tr>
+    <td>เช็ค <code>-short</code> ใน <code>TestMain</code> แล้ว panic</td>
+    <td><code>panic: testing: Short called before Parse</code></td>
+    <td>flag ถูก parse ตอน <code>m.Run()</code> ไม่ใช่ก่อนหน้า</td>
+    <td>เช็คในตัวเทส/<code>SetupSuite</code> ซึ่ง flag parse แล้วแน่นอน</td>
+  </tr>
+  <tr>
+    <td>เทสจบแล้ว <code>docker ps</code> ยังเห็น container ค้าง</td>
+    <td>ไม่มี error — <code>t+9s running_pg=1</code> · <code>t+10s running_pg=0</code></td>
+    <td>Ryuk รอ 10 วินาทีหลัง test process ตายแล้วค่อยลบ (รวม anonymous volume ด้วย)</td>
+    <td>ยัง<strong>ต้อง</strong>เขียน <code>Terminate</code> เอง — Ryuk คือ safety net ไม่ใช่แผนหลัก · ปิด Ryuk = ค้างถาวร</td>
+  </tr>
+  <tr>
+    <td>CI เขียว 100% แต่ deploy แล้ว endpoint พังทันที</td>
+    <td>mock: <code>--- PASS</code> · จริง: <code>ERROR: column "city" does not exist (SQLSTATE 42703)</code></td>
+    <td>go-sqlmock จับคู่ SQL ด้วย regex ไม่มี parser ไม่รู้จัก schema</td>
+    <td>ทุกอย่างที่เป็นสัญญากับ DB ต้องมี integration test</td>
+  </tr>
+  <tr>
+    <td>JSON ของ endpoint เป็น <code>null</code> แทน <code>[]</code></td>
+    <td>ไม่มี error — <code>len=0 isNil=true json=null</code></td>
+    <td>ใช้ <code>Raw().Scan()</code> หรือ <code>rows.Next()</code> เอง (GORM <code>Find</code> ไม่เป็น)</td>
+    <td><code>users := make([]T, 0)</code></td>
+  </tr>
+  <tr>
+    <td>เทสตกแล้ว error ชี้บรรทัดเดียวกันหมดทุกเคส</td>
+    <td><code>helper_test.go:16: got "a" want "b"</code> (บรรทัดในฟังก์ชันช่วย)</td>
+    <td>ฟังก์ชันช่วยไม่ได้เรียก <code>t.Helper()</code></td>
+    <td>ใส่ <code>t.Helper()</code> บรรทัดแรก → error ชี้บรรทัดที่ 21 ของคนเรียกแทน</td>
+  </tr>
+
+  <tr><td colspan="4"><strong>Goose</strong></td></tr>
+
+  <tr>
+    <td>SQL ที่รันใน <code>psql</code> ได้ แต่ <code>goose up</code> พัง</td>
+    <td><code>unterminated dollar-quoted string at or near "$$ ..." (SQLSTATE 42601)</code></td>
+    <td>goose แบ่ง statement ด้วย <code>;</code> ไม่รู้จัก dollar-quoted string</td>
+    <td>ครอบ <code>-- +goose StatementBegin/End</code> เฉพาะ block ที่มี <code>;</code> ข้างใน</td>
+  </tr>
+  <tr>
+    <td>สร้างโฟลเดอร์ <code>migrations/</code> ไว้แล้ว แต่หาไฟล์ไม่เจอ</td>
+    <td>ไม่มี error — <code>Created new file: 20260818125016_create_products_table.sql</code></td>
+    <td><code>-dir</code> default = <code>"."</code> · goose ไม่เดาว่ามีโฟลเดอร์ <code>migrations/</code></td>
+    <td>ตั้ง <code>GOOSE_MIGRATION_DIR=./migrations</code> ใน <code>.env</code></td>
+  </tr>
+  <tr>
+    <td><code>goose down</code> แล้ว <code>up</code> ใหม่ ข้อมูลกลายเป็น 0</td>
+    <td>ไม่มี error — goose รายงาน <code>OK</code> ทั้งสองครั้ง</td>
+    <td><code>Down</code> ที่ <code>DROP COLUMN</code> ทำลายข้อมูลถาวร · <code>up</code> เติมค่า default ให้ทุกแถว</td>
+    <td>อย่ารัน <code>down</code> บน production กับ migration ที่ทำลายข้อมูล — เขียนไฟล์ใหม่ (forward-only)</td>
+  </tr>
+  <tr>
+    <td>แก้ไฟล์ที่ apply แล้ว รัน <code>up</code> ใหม่ ข้อมูลไม่เพิ่ม แต่เครื่องเพื่อนได้ครบ</td>
+    <td>ไม่มี error — <code>goose: no migrations to run. current version: ...</code> · <code>EXITCODE=0</code></td>
+    <td><code>goose_db_version</code> <strong>ไม่มี checksum</strong> · <code>goose validate</code> ก็ไม่ช่วย (เช็คแค่ syntax)</td>
+    <td><strong>ไฟล์ที่ commit + apply แล้ว ห้ามแก้เด็ดขาด</strong> — สร้างไฟล์ใหม่เสมอ</td>
+  </tr>
+  <tr>
+    <td>pull โค้ดมาแล้ว <code>goose up</code> ไม่รันอะไรเลย ทั้งที่ status บอก Pending</td>
+    <td><code>goose run: error: found 1 missing migrations before current version 20260818125201</code></td>
+    <td>branch แยกนาน timestamp เลยเก่ากว่าตัวที่ main รันไปแล้ว</td>
+    <td><code>goose -allow-missing up</code> (⚠️ ทำ <code>goose version</code> เพี้ยน) · ปลอดภัยกว่าคือ rebase เปลี่ยนชื่อไฟล์</td>
+  </tr>
+  <tr>
+    <td><code>goose down</code> ผ่าน exit 0 แต่ตารางยังอยู่ แล้ว <code>up</code> ใหม่พัง</td>
+    <td><code>EMPTY 20260818130000_no_annotation.sql</code> แล้ว <code>relation "t1" already exists (SQLSTATE 42P07)</code></td>
+    <td>ไม่มี block <code>Down</code> → goose ลบแถว version ทิ้งแล้วรายงานสำเร็จ · DB กับ version ไม่ตรงกัน</td>
+    <td>เขียน <code>Down</code> เสมอแม้แค่ <code>DROP TABLE</code> · ติดหล่มแล้วต้อง <code>DROP</code> ด้วยมือก่อน</td>
+  </tr>
+  <tr>
+    <td>สร้าง index บนตารางใหญ่แบบไม่ล็อกไม่ได้</td>
+    <td><code>CREATE INDEX CONCURRENTLY cannot run inside a transaction block (SQLSTATE 25001)</code></td>
+    <td>goose ห่อทุกไฟล์ด้วย <code>BEGIN/COMMIT</code> โดย default</td>
+    <td><code>-- +goose NO TRANSACTION</code> บรรทัดแรก · แลกกับไม่มี rollback → 1 statement/ไฟล์</td>
+  </tr>
+  <tr>
+    <td>เปลี่ยนชื่อ field แล้ว <code>AutoMigrate</code> — query ผ่าน GORM ได้ 0 หมด</td>
+    <td>ไม่มี error — <code>AutoMigrate step2 OK</code> · ตารางมีทั้ง <code>price</code> และ <code>cost</code></td>
+    <td><code>AutoMigrate</code> "เติมสิ่งที่ขาด" อย่างเดียว ไม่รู้ว่า <code>cost</code> คือ <code>price</code> ที่เปลี่ยนชื่อ</td>
+    <td>ใช้ goose: <code>ALTER TABLE products RENAME COLUMN price TO unit_price;</code> ข้อมูลอยู่ครบ</td>
+  </tr>
+  <tr>
+    <td>เติม tag <code>not null</code> แล้ว <code>AutoMigrate</code> ขึ้น OK แต่ DB ไม่มี constraint</td>
+    <td>ไม่มี error — <code>AutoMigrate step3 OK</code> · <code>EXITCODE=0</code> · คอลัมน์ Nullable ยังว่าง</td>
+    <td><code>AutoMigrate</code> ไม่ยุ่งกับ <code>NOT NULL</code> บนคอลัมน์เดิม และไม่เตือนเลย</td>
+    <td><strong>อันตรายที่สุด</strong> — โค้ดคิดว่ามี constraint แต่ DB ไม่มี · ใช้ goose <code>SET NOT NULL</code></td>
+  </tr>
+  <tr>
+    <td>แอปพังตอน start หลังเปลี่ยน type ใน struct</td>
+    <td><code>invalid input syntax for type bigint: "ten" (SQLSTATE 22P02)</code></td>
+    <td>GORM สั่ง <code>ALTER ... USING "stock"::bigint</code> เองโดยไม่ถามว่าข้อมูลเดิมแปลงได้ไหม</td>
+    <td>เขียน goose migration เป็นขั้น: เพิ่มคอลัมน์ใหม่ → <code>UPDATE</code> แปลง → drop ของเก่า</td>
+  </tr>
+
+  <tr><td colspan="4"><strong>Redis</strong></td></tr>
+
+  <tr>
+    <td>ระบบ 500 ทุกครั้งที่ cache miss (หนักสุดตอน deploy ใหม่)</td>
+    <td><code>redis: nil</code></td>
+    <td>go-redis คืน <code>redis.Nil</code> เป็น error ทั้งที่ miss เป็นเหตุการณ์ปกติ</td>
+    <td><code>errors.Is(err, redis.Nil)</code> ก่อนเสมอ แล้วค่อยเช็ค <code>err != nil</code></td>
+  </tr>
+  <tr>
+    <td>แอป start ปกติ แล้วพังตอน request แรก + log ท่วม stderr</td>
+    <td><code>redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:55999: connect: connection refused</code></td>
+    <td><code>NewClient</code> เป็น lazy connect — ไม่เปิด TCP จนกว่าจะมีคำสั่งแรก</td>
+    <td><code>rdb.Ping(ctx)</code> ตอน startup แล้ว fail fast · <strong>connection error ≠ <code>redis.Nil</code></strong></td>
+  </tr>
+  <tr>
+    <td>เขียน cache แล้วไม่มีอะไรอยู่ใน Redis (<code>EXISTS</code> = 0)</td>
+    <td><code>redis: can't marshal main.User (implement encoding.BinaryMarshaler)</code></td>
+    <td><code>Set</code> รับ <code>any</code> จึง compile ผ่าน แต่แปลง struct/map/slice ไม่ได้</td>
+    <td><code>json.Marshal</code> ก่อน แล้วเช็ค err ของ <strong><code>Set</code></strong> ด้วย (error เกิดที่นี่)</td>
+  </tr>
+  <tr>
+    <td>ลูกค้าเห็นราคาเก่า รีเฟรชกี่ครั้งก็เหมือนเดิม แล้วอยู่ ๆ ก็หายเอง</td>
+    <td><strong>ไม่มี error เลย</strong> — <code>[HIT] ลูกค้าเห็นราคา 300 บาท &lt;-- DB บอก 500</code></td>
+    <td>เส้นทางเขียนกับเส้นทางอ่านแยกกัน cache ไม่มีทางรู้ว่าต้นทางเปลี่ยน</td>
+    <td>ทุกจุดที่เขียนข้อมูลต้อง <code>rdb.Del(ctx, key)</code> ด้วย · TTL เป็นแค่ตาข่ายกันพลาด</td>
+  </tr>
+  <tr>
+    <td>ทุกครั้งที่ deploy หรือ Redis restart DB CPU พุ่ง 100%</td>
+    <td>ไม่มี error — <code>request=100 DB ถูกยิง 100 ครั้ง</code></td>
+    <td>cache-aside ไม่มีอะไรกัน goroutine ที่ miss พร้อมกันวิ่งไป DB พร้อมกัน</td>
+    <td><code>mutex</code> + <strong>double-check หลังได้ lock</strong> → เหลือ 1 ครั้ง เวลารวมแทบไม่ต่าง</td>
+  </tr>
+  <tr>
+    <td>API ที่ไม่เกี่ยวกันเลย latency พุ่งเป็นระลอก</td>
+    <td>ไม่มี error — SLOWLOG: <code>146086</code> µs สำหรับ <code>KEYS *</code></td>
+    <td>Redis ประมวลผลทีละคำสั่งบน thread เดียว · <code>KEYS</code> ต้องเดินทั้ง keyspace ให้จบ</td>
+    <td>ใช้ <code>SCAN</code> วน cursor · max latency 274 ms → 2 ms</td>
+  </tr>
+  <tr>
+    <td>job ที่ไล่ลบ key ตาม pattern ลบได้ไม่ครบทุกครั้ง</td>
+    <td>ไม่มี error — <code>SCAN 0 MATCH "u:*" COUNT 2</code> คืน cursor <code>3</code> + key 1 ตัว</td>
+    <td>บรรทัดแรกของผล SCAN คือ <strong>cursor</strong> · <code>COUNT</code> เป็น hint ไม่ใช่ limit</td>
+    <td>วนจน <code>cursor == 0</code> · อ่าน <code>len()</code> จริงไม่ยึด COUNT (ขอ 1000 ได้ 1004)</td>
+  </tr>
+  <tr>
+    <td>ตั้ง TTL 1 ชั่วโมง แต่ข้อมูลหายในไม่กี่วินาที</td>
+    <td>ไม่มี error — <code>EXISTS 0</code> · <code>TTL -2</code> · <code>evicted_keys:190824</code></td>
+    <td>ชน <code>maxmemory</code> + policy <code>allkeys-lru</code> → ทิ้ง key โดยไม่สนใจ TTL ที่เหลือ</td>
+    <td>อย่าถือว่า TTL เป็นสัญญา — cache ต้อง reconstruct ได้เสมอ · เฝ้า <code>evicted_keys</code></td>
+  </tr>
+  <tr>
+    <td>cache เต็มแล้วเขียนไม่ได้เลย แต่ยังอ่านได้ปกติ</td>
+    <td><code>OOM command not allowed when used memory &gt; 'maxmemory'.</code> · Go: <code>*proto.OOMError</code></td>
+    <td>default <code>maxmemory-policy</code> คือ <code>noeviction</code> — เหมาะกับ database ไม่ใช่ cache</td>
+    <td><code>CONFIG SET maxmemory-policy allkeys-lru</code> · จับ <code>*proto.OOMError</code> แล้ว alert</td>
+  </tr>
+  <tr>
+    <td>เอา TTL ไปตั้ง timer แล้วมันยิงทันที</td>
+    <td>ไม่มี error — <code>TTL = -2ns (-0 วินาที), err = &lt;nil&gt;</code></td>
+    <td>go-redis เอาเลขดิบ <code>-2</code> ใส่ <code>time.Duration</code> ซึ่งหน่วยเป็น nanosecond</td>
+    <td>เทียบ <code>ttl == -2</code> / <code>ttl == -1</code> ตรง ๆ ก่อน · อย่าเรียก <code>.Seconds()</code> แล้วเทียบ</td>
+  </tr>
+  <tr>
+    <td>เทสเทียบ cache กับ DB fail ทั้งที่พิมพ์ออกมาเหมือนกันเป๊ะ</td>
+    <td>ไม่มี error — <code>== ? false   Equal()? true</code> · <code>DeepEqual: false</code></td>
+    <td><code>time.Time</code> พก monotonic clock (<code>m=+0.000815209</code>) ที่ JSON ไม่มีที่เก็บ · unexported field หายเงียบ</td>
+    <td>ใช้ <code>.Equal()</code> เทียบ <code>time.Time</code> เสมอ ห้ามใช้ <code>==</code> · <code>.Truncate(0)</code> ก่อนเก็บ</td>
+  </tr>
+  <tr>
+    <td>ID ที่อ่านผ่าน cache ต่างจาก DB หลักสุดท้าย</td>
+    <td>ไม่มี error — <code>9007199254740993</code> → <code>9007199254740992</code></td>
+    <td>unmarshal ลง <code>map[string]any</code> → JSON number กลายเป็น <code>float64</code> (แม่นถึง 2^53)</td>
+    <td>unmarshal ลง struct ที่ประกาศ <code>int64</code> · หรือ <code>UseNumber()</code> · หรือส่ง ID เป็น string</td>
+  </tr>
+  <tr>
+    <td>cache write หายเฉพาะบางเรคอร์ด ไม่มี log อะไรเลย</td>
+    <td><code>json: unsupported value: +Inf</code> (ถ้าเช็ค err)</td>
+    <td>คำนวณหารด้วยศูนย์ได้ <code>+Inf</code>/<code>NaN</code> ซึ่ง JSON ไม่รองรับ · คนส่วนใหญ่เขียน <code>b, _ :=</code></td>
+    <td>เช็ค err ของ <code>json.Marshal</code> ทุกครั้ง · sanitize ด้วย <code>math.IsInf</code>/<code>math.IsNaN</code></td>
+  </tr>
+  <tr>
+    <td>สคริปต์ทดลอง Redis พังทุกบรรทัด ทั้งที่ก๊อปคำสั่งไปวางตรง ๆ ได้</td>
+    <td><code>zsh: command not found: docker exec day7-redis redis-cli</code></td>
+    <td>zsh ไม่ word-split ตัวแปรแบบ bash — <code>$R</code> ทั้งก้อนถูกมองเป็นชื่อคำสั่งเดียว</td>
+    <td>ใช้ฟังก์ชันแทนตัวแปร: <code>R() { docker exec day7-redis redis-cli "$@"; }</code></td>
+  </tr>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../lessons/0028-mockery.html">บทเรียน 28</a>
+  <a href="../../day-6/reference/cheatsheet.html">Cheat sheet Day 6</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://vektra.github.io/mockery/latest/">Mockery Documentation</a> (v3)</li>
+  <li><a href="https://golang.testcontainers.org/">Testcontainers for Go</a> — <a href="https://golang.testcontainers.org/modules/postgres/">PostgreSQL module</a></li>
+  <li><a href="https://pkg.go.dev/github.com/stretchr/testify/suite">testify/suite</a> — hook ของ suite</li>
+  <li><a href="https://pressly.github.io/goose/">Goose Documentation</a></li>
+  <li><a href="https://www.postgresql.org/docs/current/errcodes-appendix.html">PostgreSQL Error Codes</a> — ตาราง SQLSTATE ฉบับเต็ม</li>
+  <li><a href="https://redis.io/docs/latest/commands/scan/">Redis <code>SCAN</code></a> — cursor semantics และข้อรับประกัน</li>
+  <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/config/">Redis configuration</a> — <code>maxmemory-policy</code>, <code>save</code>, <code>appendonly</code></li>
+  <li><a href="https://redis.uptrace.dev/">go-redis Documentation</a></li>
+</ul>
+
+</main>
+
+</body>
+</html>

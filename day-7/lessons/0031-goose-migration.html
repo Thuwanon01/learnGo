@@ -1,0 +1,1006 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 31 — Goose: เปลี่ยน schema แบบย้อนกลับได้</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 31 · Day 7 · Goose</p>
+  <h1>Goose — เปลี่ยน schema แบบย้อนกลับได้</h1>
+  <p class="meta">~18 นาที · ต้องมี: <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> (GORM + <code>AutoMigrate</code>) · Docker + PostgreSQL</p>
+  <p class="standfirst">
+    ในบทเรียน 27 คุณใช้ <code>db.AutoMigrate(&amp;Product{})</code> แล้วตารางก็โผล่มาเอง — สะดวกมาก
+    <br>บทนี้จะพาไปดูว่า <strong>ความสะดวกนั้นแลกมาด้วยอะไร</strong> ด้วยการทดลองจริง 5 แบบบน PostgreSQL
+    แล้วค่อยมาดูว่า <code>goose</code> แก้เรื่องไหนให้บ้าง
+    <br>จุดที่ต้องเข้าใจให้ได้ในบทนี้มีจุดเดียว: <strong>ตารางชื่อ <code>goose_db_version</code> เก็บอะไรไว้บ้าง</strong>
+    เพราะทุกกับดักในบทนี้อธิบายได้จากตารางนั้นตารางเดียว
+  </p>
+</header>
+
+<main>
+
+<h2>1 · migration กับ seed ต่างกันตรงไหน</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th>migration</th><th>seed</th></tr>
+  <tr><td>เปลี่ยนอะไร</td><td><strong>โครงสร้าง</strong> — ตาราง คอลัมน์ index constraint trigger</td><td><strong>ข้อมูล</strong> — แถวที่อยู่ในตาราง</td></tr>
+  <tr><td>ตัวอย่าง SQL</td><td><code>CREATE TABLE</code> · <code>ALTER TABLE</code> · <code>CREATE INDEX</code></td><td><code>INSERT INTO</code></td></tr>
+  <tr><td>ต้องรันกี่ครั้ง</td><td>ครั้งเดียวต่อ database</td><td>แล้วแต่ว่าเป็นข้อมูลชนิดไหน</td></tr>
+</table>
+</div>
+
+<p>
+  แต่คำว่า "seed" ในโลกจริงหมายถึงสองอย่างที่ต่างกันคนละเรื่อง และนี่คือจุดที่คนสับสนที่สุด:
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ master data — เป็น migration</h4>
+    <p style="margin-bottom:0">
+      ข้อมูลที่<strong>ระบบขาดไม่ได้</strong> เช่น ตาราง <code>categories</code>
+      ที่มี ELEC / BOOK / FOOD
+      <br>ทุก environment ต้องมีเหมือนกันเป๊ะ · ต้องอยู่ใน git · ต้องรันครั้งเดียว
+      <br><strong>→ เขียนเป็นไฟล์ migration ปกติ</strong>
+    </p>
+  </div>
+  <div class="side bad">
+    <h4>❌ ข้อมูลทดสอบ — ไม่ใช่ migration</h4>
+    <p style="margin-bottom:0">
+      user ปลอม 100 คน สินค้า mock สำหรับเล่นในเครื่องตัวเอง
+      <br>ไม่ควรโผล่ไปที่ production เด็ดขาด และรันซ้ำได้ไม่จำกัด
+      <br><strong>→ แยกเป็นสคริปต์ต่างหาก อยู่นอก goose</strong>
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong>ประโยคที่ต้องจำ:</strong> "migration เปลี่ยน schema · seed ใส่ข้อมูล" ถูกแค่ครึ่งเดียว
+    <br>ที่ถูกกว่าคือ <strong>migration = "การเปลี่ยนแปลงที่ต้องเกิดขึ้นครั้งเดียวและต้องเกิดเหมือนกันทุกเครื่อง"</strong>
+    ไม่ว่าสิ่งที่เปลี่ยนจะเป็นโครงสร้างหรือข้อมูล
+    <br>เดี๋ยวหัวข้อ 7 จะพิสูจน์ให้ดูว่า <code>INSERT</code> ธรรมดาที่ไม่มี <code>ON CONFLICT</code> เลย
+    ก็รันซ้ำแล้วข้อมูลไม่ซ้ำ — เพราะอะไร
+  </p>
+</div>
+
+<h2>2 · ทำไมห้าม migrate ด้วยมือ</h2>
+
+<p>
+  "ก็แค่เข้า psql แล้วพิมพ์ <code>ALTER TABLE</code> เอง จะยากอะไร" — มันยากตรงสองข้อนี้:
+</p>
+
+<div class="diagram">
+<pre>   <strong>1) DB ที่คุณกำลังจะแก้ มีข้อมูลของคนอื่นอยู่แล้ว</strong>
+
+      ALTER TABLE products ADD COLUMN stock INT NOT NULL;
+                                            ▲
+                                            └── แถวเก่า 50,000 แถวจะเอาค่าอะไรใส่?
+                                                (ไม่มี DEFAULT = Postgres ปฏิเสธ)
+
+   <strong>2) พิมพ์ไปแล้วในเครื่อง dev — ใครจำได้ว่าต้องไปพิมพ์ซ้ำที่ไหนอีก?</strong>
+
+      dev   ──▶ ALTER แล้ว
+      staging ─▶ ?
+      prod  ──▶ ?          ไม่มีใครรู้ว่า DB ตัวไหนอยู่สถานะไหน</pre>
+</div>
+
+<p>
+  เครื่องมือ migration แก้สองข้อนี้ด้วยวิธีเดียวกัน: <strong>เปลี่ยนคำสั่ง SQL ให้กลายเป็น "ไฟล์ที่อยู่ใน git"</strong>
+  แล้วให้ database จำเองว่ารันไฟล์ไหนไปแล้วบ้าง
+  <br>พอเป็นไฟล์ ก็ได้ของแถมมาสองอย่าง: <strong>รีวิวได้ก่อน merge</strong> และ <strong>เขียนวิธีย้อนกลับติดไว้ในไฟล์เดียวกัน</strong>
+</p>
+
+<h2>3 · <code>AutoMigrate</code> ของบทเรียน 27 ทำอะไรไม่ได้บ้าง</h2>
+
+<p>
+  ก่อนจะไปที่ goose ต้องตอบให้ได้ก่อนว่า <strong>ทำไมของที่มีอยู่แล้วถึงไม่พอ</strong>
+  <br>ผมเปิด PostgreSQL 16 ขึ้นมาหนึ่งตัว แล้วรัน <code>AutoMigrate</code> จริง 5 รอบ รอบละ struct ที่ต่างกันนิดเดียว
+</p>
+
+<div class="predict">
+  <pre><code><span class="c">// step1 — รันครั้งแรก สร้างตาราง แล้ว insert Keyboard 1200 กับ Mouse 590</span>
+<span class="k">type</span> Product <span class="k">struct</span> {
+    ID    <span class="k">uint</span>   <span class="s">`gorm:"primaryKey"`</span>
+    Name  <span class="k">string</span> <span class="s">`gorm:"not null"`</span>
+    Price <span class="k">float64</span>
+}
+
+<span class="c">// step2 — เปลี่ยนชื่อ field จาก Price เป็น Cost แล้วรัน AutoMigrate อีกที</span>
+<span class="k">type</span> Product <span class="k">struct</span> {
+    ID    <span class="k">uint</span>   <span class="s">`gorm:"primaryKey"`</span>
+    Name  <span class="k">string</span> <span class="s">`gorm:"not null"`</span>
+    Cost  <span class="k">float64</span>
+    Stock <span class="k">int</span>
+}
+
+db.<span class="f">AutoMigrate</span>(&amp;Product{})</code></pre>
+  <p class="ask">
+    หลังรัน step2 — ตาราง <code>products</code> มีคอลัมน์อะไรบ้าง และราคา 1200 / 590 ไปอยู่ที่ไหน?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>AutoMigrate step2 OK
+
+                            Table "public.products"
+ Column |  Type   | Collation | Nullable |               Default
+--------+---------+-----------+----------+--------------------------------------
+ id     | bigint  |           | not null | nextval('products_id_seq'::regclass)
+ name   | text    |           | not null |
+ <strong>price</strong>  | numeric |           |          |
+ <strong>cost</strong>   | numeric |           |          |
+ stock  | bigint  |           |          |
+
+ id |   name   | price | cost | stock
+----+----------+-------+------+-------
+  1 | Keyboard |  1200 |      |
+  2 | Mouse    |   590 |      |
+(2 rows)</code></pre>
+    <p>
+      <strong>ได้คอลัมน์ <code>cost</code> ว่างเปล่ามาเพิ่ม ส่วน <code>price</code> ยังอยู่ที่เดิมพร้อมข้อมูลครบ</strong>
+      <br>ไม่มี error ไม่มี warning — พิมพ์ <code>OK</code> ด้วยซ้ำ
+      แต่โค้ดที่อ่าน <code>Cost</code> จะเห็นค่าว่างหมด
+    </p>
+    <p style="margin-bottom:0">
+      สาเหตุ: <code>AutoMigrate</code> เทียบ struct กับ schema แล้ว <strong>"เติมสิ่งที่ขาด" อย่างเดียว</strong>
+      <br>มันไม่มีทางรู้ว่า <code>cost</code> คือ <code>price</code> ที่เปลี่ยนชื่อ หรือเป็นคอลัมน์ใหม่จริง ๆ —
+      เพราะมัน<strong>ไม่มีประวัติให้ดู</strong> เห็นแค่ "ตอนนี้ DB เป็นแบบนี้ struct เป็นแบบนี้"
+    </p>
+  </div>
+</div>
+
+<p>ผมไล่ทดลองต่อจนครบ นี่คือสิ่งที่ <code>AutoMigrate</code> ทำได้และทำไม่ได้ ทั้งหมดยืนยันด้วยการรันจริง:</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>ผลจริง</th></tr>
+  <tr><td>สร้างตารางใหม่ · เพิ่ม field ใหม่</td><td>✅ ทำให้ครบ</td></tr>
+  <tr><td>เปลี่ยน type ของคอลัมน์เดิม (<code>int</code> → <code>string</code>)</td><td>✅ ทำได้จริง — ได้ <code>stock | text</code> และ <code>name | character varying(20)</code></td></tr>
+  <tr><td><strong>เปลี่ยนชื่อ</strong> field</td><td>❌ สร้างคอลัมน์ใหม่ ทิ้งของเก่าไว้ ข้อมูลไม่ตามมา</td></tr>
+  <tr><td><strong>ลบ</strong> field ออกจาก struct</td><td>❌ คอลัมน์ยังอยู่ตลอดไป — เอกสาร GORM ระบุเองว่าจะไม่ลบคอลัมน์ที่ไม่ได้ใช้</td></tr>
+  <tr><td>เพิ่ม <code>gorm:"not null"</code> บนคอลัมน์<em>เดิม</em></td><td>❌ พิมพ์ <code>OK</code> · exit 0 · <strong>แต่ไม่ทำอะไรเลย</strong> — <code>Nullable</code> ยังว่าง</td></tr>
+  <tr><td>มี version table ให้รู้ว่า DB ไหนอยู่สถานะไหน</td><td>❌ ไม่มีเลย — <code>\dt</code> เห็นแค่ <code>products</code> ตารางเดียว</td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    ⚠️ <strong>ข้อที่อันตรายที่สุดคือข้อ "เพิ่ม <code>not null</code>"</strong>
+    <br>คุณเติม tag เข้าไป โค้ดคอมไพล์ผ่าน <code>AutoMigrate</code> บอก OK
+    <strong>โค้ดฝั่ง Go จึงเชื่อว่า field นี้ไม่มีวันว่าง</strong> แต่ DB ยังรับ <code>NULL</code> ได้อยู่
+    <br>ข้อมูลสกปรกไหลเข้าเงียบ ๆ แล้วไปโผล่เป็น nil pointer ตอนอ่านออกมาอีกทีหนึ่ง
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>AutoMigrate step3 OK
+EXIT=0
+ Column |  Type   | Collation | Nullable |               Default
+--------+---------+-----------+----------+--------------------------------------
+ cost   | numeric |           |          |</code></pre>
+</div>
+
+<p>
+  และเมื่อ <code>AutoMigrate</code> ตัดสินใจผิด <strong>คุณไม่มีทางย้อน</strong> เพราะไม่มีที่ไหนบันทึกไว้ว่ามันทำอะไรไป
+  ลองดูตอนที่มันเจอข้อมูลแปลงไม่ได้ (คอลัมน์ <code>stock</code> เป็น text แล้วมีคำว่า <code>ten</code> อยู่ พอเปลี่ยน struct กลับเป็น <code>int</code>):
+</p>
+
+<pre><code>2026/08/18 19:54:58 /..../step5/main.go:20 ERROR: invalid input syntax for type bigint: "ten" (SQLSTATE 22P02)
+[3.165ms] [rows:0] ALTER TABLE "products" ALTER COLUMN "stock" TYPE bigint USING "stock"::bigint
+AutoMigrate ERROR: ERROR: invalid input syntax for type bigint: "ten" (SQLSTATE 22P02)</code></pre>
+
+<p>
+  สังเกตบรรทัดกลาง — <strong><code>ALTER TABLE ... USING "stock"::bigint</code> คือ SQL ที่ GORM แต่งขึ้นเองตอน runtime</strong>
+  โดยไม่มีใครเคยเห็นมาก่อน
+  <br>นี่คือความต่างที่แท้จริง: <strong>migration ของ goose คือ "สคริปต์ที่รีวิวได้ก่อน merge" ส่วน <code>AutoMigrate</code> คือ "SQL ลึกลับที่เกิดตอนแอป start"</strong>
+  <br>แอปตัวนี้พังตอน boot บน production โดยที่ไม่มีใครเคยเห็น <code>ALTER</code> บรรทัดนั้นในโค้ดรีวิวเลยสักครั้ง
+</p>
+
+<h2>4 · ติดตั้ง goose แล้วสร้างไฟล์แรก</h2>
+
+<pre><code>go install github.com/pressly/goose/v3/cmd/goose@latest
+goose --version</code></pre>
+
+<pre><code>/Users/tuwanon/go/bin/goose
+goose version: v3.27.3</code></pre>
+
+<p>
+  <code>goose</code> เป็น CLI แยกต่างหาก ไม่ใช่ library ที่ import เข้าโปรเจกต์ —
+  binary ไปอยู่ที่ <code>$GOPATH/bin</code> เหมือนเครื่องมือ Go ตัวอื่น ๆ
+  <br>ก่อนใช้ต้องบอกมันสามอย่าง: <strong>driver อะไร · ต่อ DB ไหน · ไฟล์อยู่โฟลเดอร์ไหน</strong>
+  ซึ่งวิธีที่สบายที่สุดคือไฟล์ <code>.env</code> ที่ goose อ่านให้เองอัตโนมัติ
+</p>
+
+<pre><code><span class="c"># .env ที่รากโปรเจกต์ — goose อ่านให้เอง (flag -env ค่า default คือ .env)</span>
+GOOSE_DRIVER=postgres
+GOOSE_DBSTRING=postgres://postgres:secret@localhost:55433/shopdb?sslmode=disable
+GOOSE_MIGRATION_DIR=./migrations</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    ⚠️ <strong>ถ้าไม่มี <code>.env</code> แล้วพิมพ์ <code>goose up</code> เฉย ๆ มันไม่บอกว่าคุณขาดอะไร</strong>
+    — มันพ่นหน้า usage ทั้งหน้าออกมาแทน โดยไม่มีคำว่า error สักคำ (exit 1)
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>Usage: goose DRIVER DBSTRING [OPTIONS] COMMAND
+
+or
+
+Set environment key
+GOOSE_DRIVER=DRIVER
+GOOSE_DBSTRING=DBSTRING
+GOOSE_MIGRATION_DIR=MIGRATION_DIR
+(EXIT=1)</code></pre>
+  <p style="margin:0.6rem 0 0">
+    error อีกสามแบบที่หน้าตาไม่เหมือนกันเลย แยกให้ออกจะประหยัดเวลามาก:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code><span class="c"># ต่อ DB ได้ แต่ลืมบอกโฟลเดอร์ (ค่า default ของ -dir คือ "." ไม่ใช่ "./migrations")</span>
+2026/08/18 19:52:49 goose run: no migration files found
+
+<span class="c"># -dir ชี้ไปที่ที่ไม่มีอยู่จริง</span>
+2026/08/18 19:52:49 goose run: ./nope directory does not exist
+
+<span class="c"># dbstring ผิด port (ข้อความซ้ำสองรอบเพราะ pgx ลองทั้ง IPv6 และ IPv4)</span>
+2026/08/18 19:52:49 goose run: failed to connect to `user=postgres database=shopdb`:
+	[::1]:59999 (localhost): dial error: dial tcp [::1]:59999: connect: connection refused
+	127.0.0.1:59999 (localhost): dial error: dial tcp 127.0.0.1:59999: connect: connection refused</code></pre>
+</div>
+
+<p>พอมี <code>.env</code> แล้วก็สร้างไฟล์แรกได้:</p>
+
+<pre><code>$ goose create create_products_table sql
+2026/08/18 19:50:33 Created new file: migrations/20260818125033_create_products_table.sql</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🕐 <strong>ทำไมเลขในชื่อไฟล์ไม่ตรงกับนาฬิกาบนจอ?</strong>
+    <br>ตอนรันคำสั่งนี้นาฬิกาเครื่องคือ <code>19:50</code> (เวลาไทย) แต่ชื่อไฟล์เขียนว่า <code>...125033</code> คือ <strong>12:50:33 UTC</strong>
+    <br>goose ตั้งชื่อด้วย <strong>timestamp UTC รูปแบบ <code>YYYYMMDDHHMMSS</code></strong> เสมอ
+    เพื่อให้ไฟล์ของคนที่อยู่คนละโซนเวลา<strong>เรียงลำดับถูกต้อง</strong> เมื่อ merge เข้ามาในโฟลเดอร์เดียวกัน
+    <br>ส่วนตัวเลข <code>2026/08/18 19:50:33</code> ที่นำหน้าทุกบรรทัด คือ prefix ของ log ซึ่งใช้เวลาเครื่อง —
+    <strong>บรรทัดเดียวมีสองโซนเวลาปนกัน</strong> อย่าเพิ่งคิดว่าตัวเองอ่านผิด
+  </p>
+</div>
+
+<p>
+  ถ้าทีมเล็กและอยากได้เลขอ่านง่าย มี flag <code>-s</code> (sequential) ให้:
+</p>
+
+<pre><code>$ goose -s create init sql
+2026/08/18 19:53:42 Created new file: migrations/00001_init.sql
+$ goose -s create add_users sql
+2026/08/18 19:53:42 Created new file: migrations/00002_add_users.sql</code></pre>
+
+<p>
+  อ่านง่ายกว่าจริง แต่แลกมาด้วยความเสี่ยง: <strong>สองคนสร้างไฟล์พร้อมกันในคนละ branch จะได้เลขเดียวกัน</strong>
+  แล้วชน conflict ตอน merge — ทีมใหญ่จึงใช้ timestamp
+</p>
+
+<h2>5 · โครงไฟล์ migration — annotation ที่ต้องพิมพ์เอง</h2>
+
+<p>ไฟล์ที่ <code>goose create</code> สร้างให้ มีแค่นี้จริง ๆ:</p>
+
+<pre><code>-- +goose Up
+SELECT 'up SQL query';
+
+-- +goose Down
+SELECT 'down SQL query';</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    ⚠️ <strong>ไม่มี <code>StatementBegin</code> / <code>StatementEnd</code> มาให้ในไฟล์</strong>
+    — สไลด์หลายชุดเขียนเหมือนว่าเป็นของที่มาพร้อม template
+    ความจริงคือมี annotation แค่ 2 ตัว (<code>Up</code> กับ <code>Down</code>) ที่เหลือ<strong>ต้องพิมพ์เองเฉพาะตอนที่ต้องใช้</strong>
+  </p>
+</div>
+
+<p>ทีนี้มาดูว่าแต่ละ annotation ทำอะไร:</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>annotation</th><th>หน้าที่</th><th>ต้องมีไหม</th></tr>
+  <tr><td><code>-- +goose Up</code></td><td>SQL ต่อจากนี้คือส่วนที่รันตอน <code>goose up</code></td><td><strong>ต้องมี</strong> ไม่งั้น parse ไม่ผ่าน</td></tr>
+  <tr><td><code>-- +goose Down</code></td><td>SQL ที่รันตอน <code>goose down</code> เพื่อย้อนกลับ</td><td>ควรมีทุกไฟล์ (ดูกับดักหัวข้อ 8)</td></tr>
+  <tr><td><code>-- +goose StatementBegin</code> / <code>StatementEnd</code></td><td>บอก goose ว่า block นี้เป็น statement เดียว ห้ามตัดที่ <code>;</code></td><td>เฉพาะ block ที่มี <code>;</code> อยู่ข้างใน</td></tr>
+  <tr><td><code>-- +goose NO TRANSACTION</code></td><td>ไม่ต้องห่อไฟล์นี้ด้วย transaction</td><td>เฉพาะคำสั่งที่ Postgres ห้ามอยู่ใน transaction</td></tr>
+</table>
+</div>
+
+<p>ไฟล์แรกจริง ๆ ของโปรเจกต์เรา:</p>
+
+<pre><code><span class="c">-- 20260818125033_create_products_table.sql</span>
+-- +goose Up
+<span class="k">CREATE TABLE</span> products (
+    id         BIGSERIAL <span class="k">PRIMARY KEY</span>,
+    name       TEXT <span class="k">NOT NULL</span>,
+    price      NUMERIC(10,2) <span class="k">NOT NULL</span> <span class="k">DEFAULT</span> <span class="n">0</span>,
+    created_at TIMESTAMPTZ <span class="k">NOT NULL</span> <span class="k">DEFAULT</span> now()
+);
+
+-- +goose Down
+<span class="k">DROP TABLE</span> products;</code></pre>
+
+<p>
+  สังเกตว่า <strong>ทุกอย่างที่ <code>Up</code> ทำ <code>Down</code> ต้องมีคำสั่งย้อนคู่กัน</strong>
+  — สร้างตารางคู่กับลบตาราง เพิ่มคอลัมน์คู่กับลบคอลัมน์ สร้าง index คู่กับลบ index
+</p>
+
+<h3 style="margin-top:1.4rem">เมื่อไหร่ที่ต้องใช้ <code>StatementBegin</code></h3>
+
+<p>
+  ผมเขียน trigger ที่อัปเดต <code>updated_at</code> อัตโนมัติแบบตรงไปตรงมา
+  — SQL ชุดนี้ copy ไปวางใน <code>psql</code> รันผ่านฉลุย แต่ <code>goose up</code> พัง:
+</p>
+
+<pre><code>2026/08/18 19:51:38 goose run: ERROR 20260818125138_add_updated_at_trigger.sql: failed to run SQL migration:
+failed to execute SQL query "CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$\nBEGIN\n    NEW.updated_at = now();":
+ERROR: unterminated dollar-quoted string at or near "$$
+BEGIN
+    NEW.updated_at = now();" (SQLSTATE 42601)</code></pre>
+
+<p>
+  อ่าน error ให้ดี — <strong>SQL ที่ goose ส่งไปที่ DB จบลงที่ <code>NEW.updated_at = now();</code> พอดี</strong>
+  <br>เพราะ goose แบ่ง statement ด้วยการมอง <code>;</code> แบบง่าย ๆ <strong>มันไม่รู้จัก dollar-quoted string (<code>$$</code>) ของ Postgres</strong>
+  เลยตัด function ขาดครึ่งกลางตัว
+</p>
+
+<pre><code><span class="c">-- 20260818125138_add_updated_at_trigger.sql</span>
+-- +goose Up
+<span class="k">ALTER TABLE</span> products <span class="k">ADD COLUMN</span> updated_at TIMESTAMPTZ <span class="k">NOT NULL</span> <span class="k">DEFAULT</span> now();
+
+-- +goose StatementBegin      <span class="c">← ครอบเฉพาะ block ที่มี ; อยู่ข้างใน</span>
+<span class="k">CREATE OR REPLACE FUNCTION</span> set_updated_at() <span class="k">RETURNS</span> trigger <span class="k">AS</span> $$
+<span class="k">BEGIN</span>
+    NEW.updated_at = now();
+    <span class="k">RETURN</span> NEW;
+<span class="k">END</span>;
+$$ <span class="k">LANGUAGE</span> plpgsql;
+-- +goose StatementEnd
+
+<span class="k">CREATE TRIGGER</span> trg_products_updated_at
+<span class="k">BEFORE UPDATE ON</span> products
+<span class="k">FOR EACH ROW EXECUTE FUNCTION</span> set_updated_at();
+
+-- +goose Down
+<span class="k">DROP TRIGGER</span> trg_products_updated_at <span class="k">ON</span> products;
+<span class="k">DROP FUNCTION</span> set_updated_at();
+<span class="k">ALTER TABLE</span> products <span class="k">DROP COLUMN</span> updated_at;</code></pre>
+
+<pre><code>2026/08/18 19:51:54 OK   20260818125138_add_updated_at_trigger.sql (3.77ms)
+2026/08/18 19:51:54 goose: successfully migrated database to version: 20260818125138</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ครอบแค่ block ที่จำเป็นพอ</strong> — <code>ALTER TABLE</code> กับ <code>CREATE TRIGGER</code> ในไฟล์เดียวกัน
+    ไม่ต้องครอบเลย เพราะไม่มี <code>;</code> ซ่อนอยู่ข้างใน
+    <br>ครอบทุก statement ก็ไม่ผิด แต่ไฟล์จะรกเปล่า ๆ
+    <br>กฎง่าย ๆ: <strong>เห็น <code>$$</code> เมื่อไหร่ (function · <code>DO</code> block) ครอบเมื่อนั้น</strong>
+  </p>
+</div>
+
+<h2>6 · <code>up</code> · <code>down</code> · <code>status</code> · <code>version</code></h2>
+
+<p>สมมติมี 3 ไฟล์ในโฟลเดอร์ <code>migrations/</code> แล้วยังไม่เคยรันอะไรเลย:</p>
+
+<pre><code>$ goose status
+2026/08/18 19:50:50     Applied At                  Migration
+2026/08/18 19:50:50     =======================================
+2026/08/18 19:50:50     Pending                  -- 20260818125033_create_products_table.sql
+2026/08/18 19:50:50     Pending                  -- 20260818125034_add_stock_to_products.sql
+2026/08/18 19:50:50     Pending                  -- 20260818125035_add_index_products_name.sql
+
+$ goose version
+2026/08/18 19:50:50 goose: version 0</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    ⚠️ <strong><code>goose status</code> ไม่ใช่คำสั่งอ่านอย่างเดียว — มันเขียน DB</strong>
+    <br>แค่รัน <code>status</code> คำสั่งเดียว goose ก็สร้างตาราง <code>goose_db_version</code> และ insert แถวแรกให้แล้ว
+    ทั้งที่ยังไม่ได้ <code>up</code> อะไรเลย
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>              List of relations
+ Schema |       Name       | Type  |  Owner
+--------+------------------+-------+----------
+ public | goose_db_version | table | postgres
+(1 row)
+
+ id | version_id | is_applied |           tstamp
+----+------------+------------+----------------------------
+  1 |          0 | t          | 2026-08-18 12:50:50.954417
+(1 row)</code></pre>
+  <p style="margin:0.6rem 0 0">
+    ถ้าเผลอชี้ <code>GOOSE_DBSTRING</code> ไปที่ production แล้วรัน <code>status</code> เพื่อ "แค่ดูเฉย ๆ"
+    <strong>ก็มีตารางโผล่ขึ้นมาแล้วเรียบร้อย</strong>
+  </p>
+</div>
+
+<pre><code>$ goose up
+2026/08/18 19:51:01 OK   20260818125033_create_products_table.sql (17.69ms)
+2026/08/18 19:51:01 OK   20260818125034_add_stock_to_products.sql (5.54ms)
+2026/08/18 19:51:01 OK   20260818125035_add_index_products_name.sql (5.95ms)
+2026/08/18 19:51:01 goose: successfully migrated database to version: 20260818125035
+
+$ goose version
+2026/08/18 19:51:01 goose: version 20260818125035
+
+$ goose status
+2026/08/18 19:51:01     Applied At                  Migration
+2026/08/18 19:51:01     =======================================
+2026/08/18 19:51:01     Tue Aug 18 12:51:01 2026 -- 20260818125033_create_products_table.sql
+2026/08/18 19:51:01     Tue Aug 18 12:51:01 2026 -- 20260818125034_add_stock_to_products.sql
+2026/08/18 19:51:01     Tue Aug 18 12:51:01 2026 -- 20260818125035_add_index_products_name.sql</code></pre>
+
+<p>
+  <code>up</code> รันเรียงตามเลข version จากน้อยไปมาก ปิดท้ายด้วยบรรทัดสรุป version ล่าสุด
+  <br>สังเกตอีกครั้ง: prefix ซ้ายมือคือ <strong>19:51 (เวลาไทย)</strong> แต่คอลัมน์ <code>Applied At</code> คือ
+  <strong>12:51 (UTC)</strong> — บรรทัดเดียวสองโซนเวลา
+</p>
+
+<p><code>goose down</code> ย้อนกลับ <strong>ทีละหนึ่งไฟล์</strong> จากบนสุดลงมา:</p>
+
+<pre><code>$ goose down
+2026/08/18 19:51:19 OK   20260818125035_add_index_products_name.sql (11.81ms)</code></pre>
+
+<pre><code><span class="c">-- ก่อน down</span>
+Indexes:
+    "products_pkey" PRIMARY KEY, btree (id)
+    "idx_products_name" btree (name)
+
+<span class="c">-- หลัง down — index หายไปจริง</span>
+Indexes:
+    "products_pkey" PRIMARY KEY, btree (id)</code></pre>
+
+<p>นอกจาก 4 คำสั่งหลัก ยังมีคำสั่งที่ใช้บ่อยพอควรอีกชุด (ทั้งหมดรันจริงแล้ว):</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>คำสั่ง</th><th>ทำอะไร</th></tr>
+  <tr><td><code>goose up-by-one</code></td><td>ขึ้นทีละไฟล์ ใช้ตอนอยากดูผลทีละขั้น</td></tr>
+  <tr><td><code>goose up-to &lt;version&gt;</code></td><td>ขึ้นถึงเลขที่ระบุแล้วหยุด</td></tr>
+  <tr><td><code>goose down-to &lt;version&gt;</code></td><td>ย้อนลงมาถึงเลขที่ระบุ</td></tr>
+  <tr><td><code>goose redo</code></td><td>down แล้ว up ไฟล์ล่าสุดใหม่ — ใช้ตอนกำลังเขียนไฟล์นั้นอยู่</td></tr>
+  <tr><td><code>goose reset</code></td><td>ย้อนหมดทุกไฟล์ เรียงจากใหม่ไปเก่า</td></tr>
+  <tr><td><code>goose validate</code></td><td>ตรวจ syntax/annotation ของไฟล์ <strong>โดยไม่แตะ DB</strong> — เอาไปใส่ CI ได้</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🙃 <strong><code>goose redo</code> พิมพ์ชื่อไฟล์เดิมสองบรรทัดติดกัน โดยไม่บอกว่าบรรทัดไหน down บรรทัดไหน up</strong>
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>2026/08/18 19:55:27 OK   20260818125100_add_sku_to_products.sql (2.67ms)
+2026/08/18 19:55:27 OK   20260818125100_add_sku_to_products.sql (2.14ms)</code></pre>
+  <p style="margin:0.6rem 0 0">
+    บรรทัดแรกคือ down บรรทัดสองคือ up · อ่านเผิน ๆ จะนึกว่ารันซ้ำผิด
+  </p>
+</div>
+
+<h2>7 · เปิดตาราง <code>goose_db_version</code> — จุดที่ทำให้เข้าใจทั้งบท</h2>
+
+<p>
+  ทุกอย่างในบทนี้ตัดสินด้วยตารางเดียว มาดูกันว่ามันเก็บอะไรบ้าง:
+</p>
+
+<pre><code>$ psql -c '\d goose_db_version'
+
+                                  Table "public.goose_db_version"
+   Column   |            Type             | Collation | Nullable |             Default
+------------+-----------------------------+-----------+----------+----------------------------------
+ id         | integer                     |           | not null | generated by default as identity
+ version_id | bigint                      |           | not null |
+ is_applied | boolean                     |           | not null |
+ tstamp     | timestamp without time zone |           | not null | now()
+Indexes:
+    "goose_db_version_pkey" PRIMARY KEY, btree (id)</code></pre>
+
+<div class="win">
+  <span class="label">🔑 อ่านตารางนี้แล้วจะเดาพฤติกรรม goose ได้ทุกกรณี</span>
+  <p style="margin-bottom:0">
+    <strong>มีแค่ 4 คอลัมน์ — และสิ่งที่<em>ไม่มี</em> สำคัญกว่าสิ่งที่มี</strong>
+    <br>❌ ไม่มี checksum / hash ของไฟล์
+    <br>❌ ไม่มี SQL ที่รันไป
+    <br>❌ ไม่มีชื่อไฟล์ด้วยซ้ำ — เก็บแค่ตัวเลขหน้าไฟล์
+    <br><br>
+    เท่ากับว่าคำถามเดียวที่ goose ตอบได้คือ <strong>"เลข version นี้เคยรันไปแล้วหรือยัง"</strong>
+    <br>มันไม่มีทางรู้ว่าไฟล์ที่เคยรันไปนั้น <em>ตอนนี้</em> หน้าตายังเหมือนเดิมไหม
+  </p>
+</div>
+
+<p>หลัง <code>goose up</code> 3 ไฟล์ ข้อมูลในตารางเป็นแบบนี้:</p>
+
+<pre><code> id |   version_id   | is_applied |           tstamp
+----+----------------+------------+----------------------------
+  1 |              0 | t          | 2026-08-18 12:50:50.954417
+  2 | 20260818125033 | t          | 2026-08-18 12:51:01.789388
+  3 | 20260818125034 | t          | 2026-08-18 12:51:01.80727
+  4 | 20260818125035 | t          | 2026-08-18 12:51:01.812882
+(4 rows)</code></pre>
+
+<p>
+  <code>version_id</code> คือตัวเลขหน้าชื่อไฟล์ตรง ๆ · แถว <code>version_id = 0</code> คือแถวเริ่มต้นที่ goose ใส่ให้ตอนสร้างตาราง
+</p>
+
+<p>ทีนี้คำถามสำคัญ — <code>goose down</code> ทำอะไรกับตารางนี้?</p>
+
+<pre><code>$ goose down
+2026/08/18 19:51:19 OK   20260818125035_add_index_products_name.sql (11.81ms)
+
+ id |   version_id   | is_applied |           tstamp
+----+----------------+------------+----------------------------
+  1 |              0 | t          | 2026-08-18 12:50:50.954417
+  2 | 20260818125033 | t          | 2026-08-18 12:51:01.789388
+  3 | 20260818125034 | t          | 2026-08-18 12:51:01.80727
+(3 rows)</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>แถวหายไปเลย — เป็น <code>DELETE</code> ไม่ใช่การ set <code>is_applied = false</code></strong>
+    <br>ชื่อคอลัมน์ <code>is_applied</code> ชวนให้เข้าใจผิดมาก ความจริงคือ<strong>ทุกแถวเป็น <code>t</code> เสมอ</strong>
+    ไม่มีวันเจอ <code>f</code>
+    <br>ผลข้างเคียงที่ต้องรู้ไว้: หลังผ่าน down/up หลายรอบ <strong><code>id</code> จะกระโดด</strong> เช่น 1, 2, 5, 6
+    เพราะ identity column ไม่ย้อนเลข — ไม่ได้มีอะไรพัง
+  </p>
+</div>
+
+<h2>8 · seed ที่รันซ้ำแล้วข้อมูลไม่ซ้ำ</h2>
+
+<p>กลับมาที่หัวข้อ 1 — ผมเขียน seed master data เป็น migration ธรรมดา <strong>ไม่มี <code>ON CONFLICT</code> ไม่มีอะไรกันซ้ำเลย</strong>:</p>
+
+<pre><code><span class="c">-- 20260818125201_seed_categories.sql</span>
+-- +goose Up
+<span class="k">INSERT INTO</span> categories (code, name) <span class="k">VALUES</span>
+    (<span class="s">'ELEC'</span>, <span class="s">'Electronics'</span>),
+    (<span class="s">'BOOK'</span>, <span class="s">'Books'</span>),
+    (<span class="s">'FOOD'</span>, <span class="s">'Food &amp; Drink'</span>);
+
+-- +goose Down
+<span class="k">DELETE FROM</span> categories <span class="k">WHERE</span> code <span class="k">IN</span> (<span class="s">'ELEC'</span>,<span class="s">'BOOK'</span>,<span class="s">'FOOD'</span>);</code></pre>
+
+<pre><code>$ goose up   <span class="c"># รอบ 1</span>
+2026/08/18 19:52:09 OK   20260818125159_create_categories_table.sql (16.95ms)
+2026/08/18 19:52:09 OK   20260818125201_seed_categories.sql (2.68ms)
+2026/08/18 19:52:09 goose: successfully migrated database to version: 20260818125201
+
+$ goose up   <span class="c"># รอบ 2</span>
+2026/08/18 19:52:14 goose: no migrations to run. current version: 20260818125201
+
+$ goose up   <span class="c"># รอบ 3</span>
+2026/08/18 19:52:14 goose: no migrations to run. current version: 20260818125201
+
+$ psql -c 'SELECT count(*) FROM categories;'
+ count
+-------
+     3
+(1 row)</code></pre>
+
+<p>
+  <strong>3 แถวเท่าเดิม — แต่เหตุผลไม่ใช่ที่คนส่วนใหญ่คิด</strong>
+  <br>ไม่ใช่เพราะ SQL ฉลาด ไม่ใช่เพราะ <code>UNIQUE</code> constraint ดักไว้ (ถ้าเป็นแบบนั้นต้องมี error โผล่)
+  <br>แต่เป็นเพราะ <strong>goose เห็นว่า <code>version_id = 20260818125201</code> มีอยู่ในตารางแล้ว จึงไม่เปิดไฟล์นั้นอ่านด้วยซ้ำ</strong>
+</p>
+
+<p>
+  นี่คือคำตอบของหัวข้อ 1: <strong>สิ่งที่กันข้อมูลซ้ำคือ <code>goose_db_version</code> ไม่ใช่ตัว SQL</strong>
+  <br>ซึ่งแปลว่าถ้าคุณเอา seed ไปวางในสคริปต์ที่รันทุกครั้งตอนแอป start (แบบเดียวกับ <code>AutoMigrate</code>)
+  คุณต้องเขียน <code>ON CONFLICT DO NOTHING</code> เองทุกที่ ไม่งั้นข้อมูลบานทันที
+</p>
+
+<h2>9 · กับดัก 3 ข้อที่ทำ production พังจริง</h2>
+
+<h3 style="margin-top:1.4rem">กับดัก 1 — แก้ไฟล์ migration ที่ <code>up</code> ไปแล้ว</h3>
+
+<div class="predict">
+  <pre><code><span class="c"># สถานการณ์: seed_categories.sql ถูก up ไปแล้วเมื่อวาน (มี 3 แถวใน DB)</span>
+<span class="c"># วันนี้ PM ขอเพิ่ม category ใหม่ คุณเลยเปิดไฟล์เดิมมาเติมบรรทัด</span>
+
+-- +goose Up
+INSERT INTO categories (code, name) VALUES
+    ('ELEC', 'Electronics'),
+    ('BOOK', 'Books'),
+    ('FOOD', 'Food &amp; Drink'),
+    ('TOYS', 'Toys');        <span class="c">← เพิ่มบรรทัดนี้เข้าไป</span>
+
+$ goose up
+$ goose validate
+$ psql -c 'SELECT * FROM categories;'</code></pre>
+  <p class="ask">
+    รัน 3 คำสั่งนี้แล้วเห็นอะไร? มี error ไหม · <code>validate</code> ฟ้องไหม · ในตารางมีกี่แถว
+    <br>และถ้าเพื่อนอีกคนที่ DB ยังว่างอยู่ pull โค้ดชุดเดียวกันนี้ไปรัน <code>goose up</code> เขาจะได้กี่แถว?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ goose up
+2026/08/18 19:52:24 goose: no migrations to run. current version: 20260818125201
+EXIT=0
+
+$ goose validate
+EXIT=0</code></pre>
+    <p>
+      <strong>ไม่มี error · ไม่มี warning · exit 0 ทั้งคู่</strong> —
+      แม้แต่คำสั่งที่ชื่อ <code>validate</code> ก็เงียบสนิท
+    </p>
+    <pre style="margin:0.6rem 0"><code><span class="c">=== เครื่องคุณ (DB เดิม) ===</span>
+ id | code |     name
+----+------+--------------
+  1 | ELEC | Electronics
+  2 | BOOK | Books
+  3 | FOOD | Food &amp; Drink
+(3 rows)
+
+<span class="c">=== เครื่องเพื่อน (DB เปล่า รันไฟล์ชุดเดียวกัน) ===</span>
+2026/08/18 19:52:34 OK   20260818125159_create_categories_table.sql (4.01ms)
+2026/08/18 19:52:34 OK   20260818125201_seed_categories.sql (1.3ms)
+
+ id | code |     name
+----+------+--------------
+  1 | ELEC | Electronics
+  2 | BOOK | Books
+  3 | FOOD | Food &amp; Drink
+  4 | TOYS | Toys
+(4 rows)</code></pre>
+    <p>
+      <strong>โค้ดชุดเดียวกัน · คำสั่งเดียวกัน · ได้ DB คนละแบบ</strong>
+      <br>เครื่องคุณ 3 แถว เครื่องเพื่อน 4 แถว และ<strong>ไม่มีเครื่องมือตัวไหนบอกคุณเลย</strong>
+    </p>
+    <p>
+      ย้อนกลับไปดูหัวข้อ 7: <code>goose_db_version</code> เก็บแค่ <code>version_id</code>
+      <strong>ไม่มี checksum ของไฟล์</strong> goose จึงเทียบได้แค่ "เลขนี้เคยรันยัง"
+      ไม่มีทางรู้ว่าเนื้อไฟล์เปลี่ยนไปแล้ว
+      <br>ส่วน <code>goose validate</code> ตรวจแค่ syntax กับ annotation ในไฟล์ — <strong>มันไม่ได้เทียบกับ DB เลย</strong>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>กฎเหล็ก: ไฟล์ที่ commit แล้วและ apply ไปแล้ว ห้ามแก้เด็ดขาด ต้องสร้างไฟล์ใหม่เสมอ</strong>
+      <br>(ถ้าเผลอแก้แล้วแต่ยังไม่ push และเป็นเครื่องตัวเองเครื่องเดียว → <code>goose down</code> ก่อน แล้วค่อยแก้ แล้ว <code>up</code> ใหม่)
+      <br><em>เครื่องมืออื่นอย่าง Flyway/Liquibase เก็บ checksum ไว้ จึง fail ให้เห็นทันที — goose ไม่มี ต้องอาศัยวินัยของทีมล้วน ๆ</em>
+    </p>
+  </div>
+</div>
+
+<h3 style="margin-top:1.4rem">กับดัก 2 — <code>Down</code> ที่ย้อน schema ได้ แต่ย้อนข้อมูลไม่ได้</h3>
+
+<p>ไฟล์นี้ดูสมมาตรสมบูรณ์แบบ ไม่มีอะไรน่าสงสัย:</p>
+
+<pre><code>-- +goose Up
+<span class="k">ALTER TABLE</span> products <span class="k">ADD COLUMN</span> stock INTEGER <span class="k">NOT NULL</span> <span class="k">DEFAULT</span> <span class="n">0</span>;
+
+-- +goose Down
+<span class="k">ALTER TABLE</span> products <span class="k">DROP COLUMN</span> stock;</code></pre>
+
+<pre><code><span class="c">=== ข้อมูลก่อน down ===</span>
+ id |   name   | stock
+----+----------+-------
+  1 | Keyboard |    42
+  2 | Mouse    |     7
+(2 rows)
+
+$ goose down
+2026/08/18 19:51:29 OK   20260818125034_add_stock_to_products.sql (7.8ms)
+
+$ goose up
+2026/08/18 19:51:29 OK   20260818125034_add_stock_to_products.sql (2.59ms)
+2026/08/18 19:51:29 OK   20260818125035_add_index_products_name.sql (2.44ms)
+2026/08/18 19:51:29 goose: successfully migrated database to version: 20260818125035
+
+<span class="c">=== ข้อมูลหลัง up ===</span>
+ id |   name   | stock
+----+----------+-------
+  1 | Keyboard |     <strong>0</strong>
+  2 | Mouse    |     <strong>0</strong>
+(2 rows)</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    ⚠️ <strong>goose รายงาน <code>OK</code> ทุกบรรทัด ไม่มี error สักตัว — แต่ 42 กับ 7 หายไปตลอดกาล</strong>
+    <br><strong><code>goose down</code> ไม่ใช่ undo และไม่ใช่ snapshot</strong> — มันคือ "รัน SQL ที่อยู่ใน block <code>Down</code>" เท่านั้น
+    <br>คุณเขียนว่า <code>DROP COLUMN</code> มันก็ <code>DROP COLUMN</code> ซึ่งทำลายข้อมูลถาวร
+    พอ <code>up</code> ใหม่ <code>ADD COLUMN ... DEFAULT 0</code> ก็เติมศูนย์ให้ทุกแถว
+    <br><strong>สรุป: rollback ย้อนได้แค่ <em>schema</em> ไม่เคยย้อน <em>ข้อมูล</em></strong>
+  </p>
+</div>
+
+<p>ในทางปฏิบัติจึงมีกฎ 3 ข้อ:</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>ทำยังไง</th></tr>
+  <tr><td>อยากย้อน migration บน production</td><td><strong>อย่าใช้ <code>down</code></strong> — เขียนไฟล์ migration ใหม่ที่แก้ไปข้างหน้า (forward-only)</td></tr>
+  <tr><td>จะลบคอลัมน์จริง ๆ</td><td>แยกเป็น 2 deploy: รอบแรกเลิกใช้คอลัมน์นั้นในโค้ด · รอบสอง (หลัง backup) ค่อย <code>DROP</code></td></tr>
+  <tr><td>ต้องย้อนได้จริงแบบมีข้อมูล</td><td><code>Down</code> ต้อง copy ข้อมูลไปตารางสำรอง<strong>ก่อน</strong> <code>DROP</code></td></tr>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">✅ แล้ว <code>down</code> มีไว้ทำอะไร</span>
+  <p style="margin-bottom:0">
+    มีไว้ใช้<strong>ตอนกำลังพัฒนาในเครื่องตัวเอง</strong> — เขียนไฟล์ผิด <code>down</code> แก้ <code>up</code> ใหม่ วนไปจนพอใจ
+    <br>และมีไว้เป็น<strong>เอกสาร</strong>: การบังคับตัวเองให้เขียน <code>Down</code> ทุกไฟล์
+    ทำให้คุณต้องคิดตั้งแต่ตอนเขียนว่า "ถ้าอันนี้พัง จะย้อนยังไง" — ซึ่งบางทีคำตอบคือ "ย้อนไม่ได้"
+    และนั่นคือข้อมูลที่มีค่าที่สุด
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">กับดัก 3 — ลืมเขียน block <code>Down</code></h3>
+
+<p>
+  ถ้าไฟล์มีแต่ <code>-- +goose Up</code> แล้วสั่ง <code>goose down</code> คุณอาจคิดว่ามันจะฟ้อง — เปล่าเลย:
+</p>
+
+<pre><code>$ goose down
+2026/08/18 19:53:29 EMPTY 20260818130000_no_annotation.sql (1.71ms)
+EXIT=0
+
+$ psql -c '\dt'
+ public | goose_db_version | table | postgres
+ public | <strong>t1</strong>               | table | postgres      ← ตารางยังอยู่!
+(2 rows)
+
+$ psql -c 'SELECT * FROM goose_db_version;'
+ id | version_id | is_applied |           tstamp
+----+------------+------------+----------------------------
+  1 |          0 | t          | 2026-08-18 12:53:29.160615
+(1 row)                                          ← แต่แถว version หายไปแล้ว</code></pre>
+
+<p>
+  ตอนนี้ <strong>DB จริงกับ version table ไม่ตรงกัน</strong> — ตาราง <code>t1</code> มีอยู่ แต่ goose คิดว่ายังไม่เคยสร้าง
+  <br>พอสั่ง <code>up</code> เพื่อกู้สถานการณ์:
+</p>
+
+<pre><code>2026/08/18 19:53:36 goose run: ERROR 20260818130000_no_annotation.sql: failed to run SQL migration:
+failed to execute SQL query "CREATE TABLE t1 (id int);": ERROR: relation "t1" already exists (SQLSTATE 42P07)
+EXIT=1</code></pre>
+
+<p>
+  <strong>ติดหล่มสมบูรณ์: <code>up</code> ก็พัง <code>down</code> ก็ไม่ช่วย</strong>
+  ทางออกเดียวคือเข้าไป <code>DROP TABLE t1;</code> ด้วยมือ แล้วค่อย <code>goose up</code> ใหม่
+  <br>→ <strong>เขียน <code>Down</code> เสมอ แม้จะเป็นแค่ <code>DROP TABLE</code> บรรทัดเดียว</strong>
+</p>
+
+<h3 style="margin-top:1.4rem">โบนัส — ข่าวดีข้อเดียวของบทนี้</h3>
+
+<p>
+  ถ้า migration พังกลางไฟล์ <strong>ไม่มี state ค้าง</strong> เพราะ goose ห่อแต่ละไฟล์ไว้ใน transaction เดียว
+  ทั้ง DDL และการ <code>INSERT</code> ลง <code>goose_db_version</code> อยู่ใน transaction เดียวกัน
+  <br>ตอนที่ไฟล์ trigger พังเพราะลืม <code>StatementBegin</code> ผมเช็คทันทีหลังจากนั้น:
+</p>
+
+<pre><code>$ goose version
+2026/08/18 19:51:44 goose: version 20260818125035     <span class="c">← ยังอยู่ที่ไฟล์ก่อนหน้า</span>
+
+$ psql -c '\df'
+                       List of functions
+ Schema | Name | Result data type | Argument data types | Type
+--------+------+------------------+---------------------+------
+(0 rows)                                              <span class="c">← function ไม่ถูกสร้างเลย</span></code></pre>
+
+<p>
+  แก้ไฟล์แล้วรัน <code>goose up</code> ใหม่ได้เลย ไม่ต้องตามเก็บกวาดอะไร
+  <br><strong>แต่ข้อนี้เป็นจริงเฉพาะ Postgres (และ MySQL InnoDB) ที่ DDL อยู่ใน transaction ได้</strong> —
+  MySQL รุ่นที่ DDL auto-commit ห้ามเหมารวม
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔧 <strong>ข้อยกเว้น: <code>CREATE INDEX CONCURRENTLY</code></strong>
+    <br>คำสั่งนี้มีไว้สร้าง index บนตารางใหญ่โดยไม่ล็อกตาราง แต่ Postgres ห้ามมันอยู่ใน transaction:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>2026/08/18 19:55:42 goose run: ERROR 00002_concurrent_index.sql: failed to run SQL migration:
+failed to execute SQL query "CREATE INDEX CONCURRENTLY idx_items_sku ON items (sku);":
+ERROR: CREATE INDEX CONCURRENTLY cannot run inside a transaction block (SQLSTATE 25001)</code></pre>
+  <p style="margin:0.6rem 0 0">
+    ทางแก้คือใส่ <code>-- +goose NO TRANSACTION</code> เป็นบรรทัดแรกของไฟล์ (<strong>ก่อน</strong> <code>-- +goose Up</code>)
+    → <code>OK   00002_concurrent_index.sql (2.79ms)</code>
+    <br>แลกมาด้วยว่า<strong>ไฟล์นั้นไม่มี rollback อัตโนมัติแล้ว</strong> พังกลางทางต้องตามเก็บเอง
+    → <strong>ใส่ statement เดียวต่อไฟล์เท่านั้น</strong>
+  </p>
+</div>
+
+<h2>10 · goose ทำสิ่งที่ <code>AutoMigrate</code> ทำไม่ได้ยังไง</h2>
+
+<p>
+  ปิดวงกลับไปที่หัวข้อ 3 — ผมเอา <strong>DB ตัวเดียวกันที่ GORM สร้างไว้</strong> มาให้ goose จัดการต่อ
+  แล้วสั่งเปลี่ยนชื่อคอลัมน์ที่ <code>AutoMigrate</code> ทำไม่ได้:
+</p>
+
+<pre><code><span class="c">-- 00001_rename_price_to_cost.sql</span>
+-- +goose Up
+<span class="k">ALTER TABLE</span> products <span class="k">RENAME COLUMN</span> price <span class="k">TO</span> unit_price;
+
+-- +goose Down
+<span class="k">ALTER TABLE</span> products <span class="k">RENAME COLUMN</span> unit_price <span class="k">TO</span> price;</code></pre>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ AutoMigrate เปลี่ยนชื่อ</h4>
+    <pre><code> id |   name   | price | cost
+----+----------+-------+------
+  1 | Keyboard |  1200 |
+  2 | Mouse    |   590 |</code></pre>
+    <p style="margin-bottom:0">
+      ได้คอลัมน์ใหม่ว่าง ๆ · ของเก่ายังอยู่ · <strong>ข้อมูลไม่ตามมา</strong>
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ goose <code>RENAME COLUMN</code></h4>
+    <pre><code> id |   name   | unit_price
+----+----------+------------
+  1 | Keyboard |       1200
+  2 | Mouse    |        590</code></pre>
+    <p style="margin-bottom:0">
+      คอลัมน์เดิมเปลี่ยนชื่อ · <strong>ข้อมูลติดไปด้วย</strong> · <code>down</code> ย้อนชื่อกลับได้
+    </p>
+  </div>
+</div>
+
+<p>
+  ไม่ใช่เพราะ goose ฉลาดกว่า — แต่เพราะ <strong>goose ให้คุณเขียน SQL เอง</strong>
+  คุณเป็นคนเดียวที่รู้ว่า <code>cost</code> คือ <code>price</code> ที่เปลี่ยนชื่อ ไม่ใช่คอลัมน์ใหม่
+  และ goose แค่ทำให้ความรู้นั้น<strong>กลายเป็นไฟล์ที่รีวิวได้ · เก็บใน git ได้ · รันเหมือนกันทุกเครื่อง</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🤝 <strong>ใช้ทั้งคู่พร้อมกันได้ไหม?</strong> ได้ และหลายทีมทำแบบนี้:
+    <strong>ให้ goose เป็นเจ้าของ schema แต่เพียงผู้เดียว · ใช้ GORM แค่ query ไม่เรียก <code>AutoMigrate</code> เลย</strong>
+    <br>ส่วน struct ของ GORM ก็ยังต้องแก้ให้ตรงกับ schema เอง — <strong>ไม่มีใครซิงก์ให้อัตโนมัติ</strong>
+    ถ้าไม่ตรงจะรู้ตอน query แล้ว error เท่านั้น (เป็นอีกเหตุผลที่ต้องมี integration test — บทถัดไป)
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ตาราง <code>goose_db_version</code> เก็บอะไรไว้บ้าง?</p>
+  <div class="opts">
+    <button class="opt">เลข version ชื่อไฟล์ และ SQL ทั้งหมดที่เคยรันไปแล้ว</button>
+    <button class="opt">เลข version พร้อม checksum ของไฟล์เพื่อตรวจว่าถูกแก้ไหม</button>
+    <button class="opt">เลข version สถานะ และเวลาที่รัน เท่านั้น ไม่มี checksum</button>
+    <button class="opt">snapshot ของ schema ทั้งหมดก่อนและหลังรัน migration</button>
+  </div>
+  <div class="explain">
+    <p>เปิดดูจริงมี 4 คอลัมน์: <code>id</code> · <code>version_id</code> · <code>is_applied</code> · <code>tstamp</code>
+    <br><strong>ไม่มี checksum ไม่มี SQL ไม่มีแม้แต่ชื่อไฟล์</strong> — เก็บแค่ตัวเลขหน้าไฟล์
+    <br>ข้อ 2 คือสิ่งที่ Flyway/Liquibase ทำ แต่ goose ไม่ทำ → เป็นสาเหตุโดยตรงที่แก้ไฟล์ที่ apply แล้ว
+    goose ตรวจไม่เจอ · ข้อ 1 กับ 4 ไม่มีอะไรมาเก็บได้ในตาราง 4 คอลัมน์</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. แก้ไฟล์ที่ <code>up</code> ไปแล้ว เพิ่ม <code>INSERT</code> อีกหนึ่งบรรทัด แล้วรัน <code>goose up</code> ใหม่?</p>
+  <div class="opts">
+    <button class="opt">goose ตรวจเจอว่าไฟล์เปลี่ยน แล้วรันเฉพาะส่วนที่เพิ่มเข้ามา</button>
+    <button class="opt">goose หยุดพร้อม error ว่าไฟล์ไม่ตรงกับที่เคยรัน (exit 1)</button>
+    <button class="opt">goose รันไฟล์นั้นซ้ำทั้งไฟล์ ทำให้ข้อมูลเดิมซ้ำขึ้นมาสองชุด</button>
+    <button class="opt">goose บอกว่าไม่มีอะไรต้องรัน exit 0 และข้อมูลไม่เพิ่มเลย</button>
+  </div>
+  <div class="explain">
+    <p>ผลจริง: <code>goose: no migrations to run. current version: 20260818125201</code> · <code>EXIT=0</code>
+    <br>แม้แต่ <code>goose validate</code> ก็ <code>EXIT=0</code> เพราะมันตรวจแค่ syntax ไม่ได้เทียบกับ DB
+    <br>ข้อ 2 คือพฤติกรรมของ Flyway ที่มี checksum · ข้อ 1 และ 3 เป็นไปไม่ได้เพราะ goose
+    <strong>ไม่เปิดไฟล์นั้นอ่านด้วยซ้ำ</strong> เมื่อเห็นว่า <code>version_id</code> อยู่ในตารางแล้ว
+    <br>อันตรายจริงคือ DB เพื่อนที่ยังว่างจะได้ 4 แถว ส่วนของคุณค้างที่ 3 แถว — <strong>แตกกันเงียบ ๆ</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">3. <code>Up</code> คือ <code>ADD COLUMN stock DEFAULT 0</code> · <code>Down</code> คือ <code>DROP COLUMN stock</code> — สั่ง <code>down</code> แล้ว <code>up</code> ใหม่ ข้อมูล <code>stock</code> เป็นอะไร?</p>
+  <div class="opts">
+    <button class="opt">กลับมาเป็นค่าเดิม เพราะ goose เก็บข้อมูลไว้ก่อนย้อนอยู่แล้ว</button>
+    <button class="opt">กลายเป็น 0 ทุกแถว เพราะ DROP ทำลายข้อมูลไปถาวรแล้ว</button>
+    <button class="opt">กลายเป็น NULL ทุกแถว เพราะคอลัมน์ถูกสร้างใหม่แบบว่างเปล่า</button>
+    <button class="opt">goose ปฏิเสธไม่ยอมรัน down เพราะตรวจเจอว่าจะทำข้อมูลหาย</button>
+  </div>
+  <div class="explain">
+    <p>ก่อน down มี 42 กับ 7 · หลัง down แล้ว up ใหม่ ได้ <strong>0 ทั้งสองแถว</strong>
+    และ goose พิมพ์ <code>OK</code> ทุกบรรทัด ไม่มี error เลย
+    <br><code>goose down</code> คือ<strong>การรัน SQL ใน block <code>Down</code></strong> เท่านั้น ไม่ใช่ snapshot ไม่ใช่ undo
+    <br>ไม่ใช่ NULL เพราะ <code>Up</code> ระบุ <code>NOT NULL DEFAULT 0</code> → ทุกแถวได้ค่า default
+    <br>ข้อ 4 ผิดชัดเจน: goose ไม่มีกลไกตรวจว่า SQL ของคุณอันตรายไหม มันแค่รันตามที่เขียน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. เปลี่ยนชื่อ struct field จาก <code>Price</code> เป็น <code>Cost</code> แล้วรัน <code>AutoMigrate</code>?</p>
+  <div class="opts">
+    <button class="opt">ได้คอลัมน์ <code>cost</code> เปล่า ๆ เพิ่มมา ส่วน <code>price</code> ยังอยู่พร้อมข้อมูล</button>
+    <button class="opt">คอลัมน์ <code>price</code> ถูกเปลี่ยนชื่อเป็น <code>cost</code> โดยข้อมูลตามไปด้วย</button>
+    <button class="opt">AutoMigrate คืน error ว่าตรวจพบคอลัมน์ที่ไม่มีใน struct แล้ว</button>
+    <button class="opt">คอลัมน์ <code>price</code> ถูกลบทิ้ง แล้วสร้าง <code>cost</code> ว่างขึ้นมาแทน</button>
+  </div>
+  <div class="explain">
+    <p>ผลจริง: ตารางมีทั้ง <code>price</code> (1200, 590) และ <code>cost</code> (ว่าง) — พิมพ์ <code>AutoMigrate step2 OK</code> ไม่มี error
+    <br><code>AutoMigrate</code> <strong>เติมสิ่งที่ขาดอย่างเดียว</strong> มันไม่มีประวัติให้ดู
+    จึงไม่มีทางรู้ว่า <code>cost</code> คือ <code>price</code> ที่เปลี่ยนชื่อ
+    <br>ข้อ 4 ผิดเพราะเอกสาร GORM ระบุเองว่า <strong>จะไม่ลบคอลัมน์ที่ไม่ได้ใช้</strong> (กันข้อมูลหาย)
+    <br>สิ่งที่ต้องทำจริงคือ <code>ALTER TABLE products RENAME COLUMN price TO unit_price;</code> ผ่าน goose
+    ซึ่งพิสูจน์แล้วว่าข้อมูลอยู่ครบและ <code>down</code> ย้อนชื่อกลับได้</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำ migration ชุดแรกของโปรเจกต์คุณเอง</span>
+  <p>
+    <strong>ต่อยอดจากภารกิจบทเรียน 27</strong> — โปรเจกต์ที่มี <code>internal/repository</code> และ <code>AutoMigrate</code> อยู่
+    <br>เป้าหมายวันนี้: <strong>ย้ายความรับผิดชอบเรื่อง schema จาก GORM มาที่ goose ให้หมด</strong>
+  </p>
+  <ol>
+    <li>เปิด PostgreSQL ใน Docker แล้ววาง <code>.env</code> ที่รากโปรเจกต์
+        (<code>GOOSE_DRIVER</code> · <code>GOOSE_DBSTRING</code> · <code>GOOSE_MIGRATION_DIR</code>)
+        <br>ทดสอบว่าตั้งถูกด้วย <code>goose status</code> — ต้องขึ้น <code>Pending</code> ไม่ใช่หน้า usage</li>
+    <li>สร้าง migration 3 ไฟล์: สร้างตาราง · เพิ่มคอลัมน์ · เพิ่ม index
+        <br><strong>ทุกไฟล์ต้องมี <code>Down</code> ที่ย้อนได้จริง</strong></li>
+    <li><code>goose up</code> แล้วเปิด <code>SELECT * FROM goose_db_version;</code> ดู
+        <br><strong>มีกี่แถว · เลข <code>version_id</code> ตรงกับอะไร</strong></li>
+    <li><code>goose down</code> หนึ่งครั้ง แล้วเปิดตารางเดิมดูอีกที —
+        <strong>แถวหายไป หรือ <code>is_applied</code> เปลี่ยนเป็น <code>f</code>?</strong></li>
+    <li>เขียน seed master data เป็น migration (ไม่ต้องใส่ <code>ON CONFLICT</code>)
+        แล้วรัน <code>goose up</code> <strong>3 รอบติดกัน</strong> — นับแถวว่าซ้ำไหม แล้วอธิบายให้ได้ว่าทำไม</li>
+    <li>ปิด <code>AutoMigrate</code> ในโค้ดแอป ให้เหลือแค่ <code>gorm.Open</code> อย่างเดียว
+        <br>รันแอป — ยังทำงานได้ไหม? ถ้าลืมสร้างตารางไหนใน migration จะรู้ตอนไหน?</li>
+    <li><strong>ท้าทาย 1 — trigger:</strong> เขียน migration ที่สร้าง function
+        <code>set_updated_at()</code> พร้อม trigger <strong>โดยยังไม่ใส่ <code>StatementBegin</code></strong>
+        รันดูให้เห็น error เต็ม ๆ ก่อน แล้วค่อยใส่ครอบ</li>
+    <li><strong>ท้าทาย 2 — ทำลาย DB ตัวเองให้ดู:</strong> แก้ไฟล์ seed ที่ <code>up</code> ไปแล้ว
+        เพิ่มอีกหนึ่งแถว แล้วรัน <code>goose up</code> · <code>goose validate</code>
+        <br>จากนั้น <code>createdb</code> ตัวใหม่ ชี้ <code>GOOSE_DBSTRING</code> ไปที่นั่น รัน <code>goose up</code>
+        <br><strong>เทียบจำนวนแถวสอง DB</strong> แล้วเขียนกฎของทีมคุณเองหนึ่งบรรทัดว่าจะกันเรื่องนี้ยังไง</li>
+    <li><strong>ท้าทาย 3:</strong> ลองลบ block <code>-- +goose Down</code> ออกจากไฟล์หนึ่ง
+        แล้วสั่ง <code>goose down</code> — ได้คำว่าอะไร exit เท่าไหร่
+        แล้วสั่ง <code>goose up</code> ต่อทันที <strong>เกิดอะไรขึ้น และจะกู้ยังไง?</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 6</button>
+  <div class="answer">
+    <p>
+      <strong>แอปยังรันได้ปกติ — ตราบใดที่ schema ตรงกับ struct</strong>
+      <br>เพราะ <code>AutoMigrate</code> ไม่ได้เกี่ยวกับการ query เลย มันแค่พยายามแก้ schema ตอน start
+    </p>
+    <p>
+      แต่ถ้าลืมสร้างคอลัมน์ไหนใน migration <strong>คุณจะไม่รู้ตอน start</strong> —
+      คุณจะรู้ตอนมี request แรกวิ่งเข้ามาแล้ว query พังกลาง production
+      <br>นี่คือข้อแลกเปลี่ยนที่ต้องรับให้ได้: <strong>ปิด <code>AutoMigrate</code> = ย้ายจุดที่พังจาก "ตอน deploy"
+      ไปเป็น "ตอนมี traffic"</strong>
+    </p>
+    <p style="margin-bottom:0">
+      ทางแก้ไม่ใช่เปิด <code>AutoMigrate</code> กลับ แต่คือ <strong>เขียน integration test ที่รันบน schema จริง
+      แล้วยิงทุก query ของ repository ให้ครบ</strong> — ถ้า struct ไม่ตรง schema เทสจะแดงตั้งแต่ใน CI
+      ก่อนถึง production · เป็นเนื้อหาของบทถัดไป
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 3 กับข้อ 4 คือสองข้อที่ผมอยากให้ทำที่สุด</strong> —
+    เพราะถ้าคุณเห็นด้วยตาตัวเองว่าตารางนั้นมีแค่ 4 คอลัมน์ และ <code>down</code> คือการลบแถวทิ้ง
+    <strong>คุณจะเดาพฤติกรรมของ goose ได้เองทุกกรณีโดยไม่ต้องท่อง</strong> รวมถึงกับดักที่บทนี้ยังไม่ได้พูดถึง
+    <br>มีอะไรที่ลองแล้วผลไม่เหมือนในบท ส่งมาได้เลย — โดยเฉพาะถ้าคุณใช้ MySQL แทน Postgres
+    เพราะเรื่อง transaction ต่างกันมาก
+    <br>บทถัดไป: ทำให้ Redis เข้ามาอยู่ระหว่างแอปกับ database โดยไม่ทำให้ข้อมูลเพี้ยน
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0030-testcontainers-suite.html">← บทเรียน 30</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0032-redis-cache.html">บทเรียน 32 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://github.com/pressly/goose">pressly/goose</a> — repo หลัก · หัวข้อ <a href="https://github.com/pressly/goose#sql-migrations">SQL Migrations</a> คือที่ที่ error message ของ parser ชี้ไป</li>
+  <li><a href="https://pressly.github.io/goose/">goose documentation</a> — รายการ command และ flag ทั้งหมด</li>
+  <li><a href="https://gorm.io/docs/migration.html">GORM — Migration</a> — เอกสารที่ระบุเองว่า <code>AutoMigrate</code> จะไม่ลบคอลัมน์ที่ไม่ได้ใช้</li>
+  <li><a href="https://www.postgresql.org/docs/16/sql-altertable.html">PostgreSQL — ALTER TABLE</a> · <a href="https://www.postgresql.org/docs/16/sql-createindex.html">CREATE INDEX</a> (หัวข้อ <code>CONCURRENTLY</code>)</li>
+  <li><a href="https://www.postgresql.org/docs/16/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING">PostgreSQL — Dollar-Quoted String Constants</a> — ต้นเหตุที่ต้องมี <code>StatementBegin</code></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

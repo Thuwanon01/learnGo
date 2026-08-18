@@ -394,8 +394,13 @@ mu.<span class="f">Unlock</span>()</code></pre>
   <ol>
     <li><strong>พิสูจน์ก่อนว่าพัง:</strong> เขียนเทสที่ยิง 100 goroutine
         <code>Set</code> คนละ key พร้อมกัน แล้วเช็ค <code>Len() == 100</code>
-        <br>รัน <code>go test</code> ธรรมดา — <strong>ผ่านหรือพัง?</strong>
-        <br>รัน <code>go test -race</code> — <strong>ผลต่างกันไหม?</strong></li>
+        <br>รัน <code>go test</code> ธรรมดา — น่าจะได้
+        <code>fatal error: concurrent map writes</code> เพราะข้างใน
+        <code>Cache</code> เป็น <strong>map</strong> (หัวข้อ 2) ไม่ใช่ <code>int</code>
+        <br>ถ้าบังเอิญผ่าน ให้รันซ้ำอีก 5 ครั้ง แล้ว<strong>จดว่าผ่านกี่ครั้ง พังกี่ครั้ง</strong>
+        <br>จากนั้นรัน <code>go test -race</code> — คราวนี้ได้
+        <code>WARNING: DATA RACE</code> ที่ชี้บรรทัดชนกันตรง ๆ
+        <strong>ต่างกันตรงไหน?</strong></li>
     <li>เพิ่ม <code>mu sync.RWMutex</code> เข้าไปใน struct</li>
     <li><code>Set</code> และ <code>Delete</code> ใช้ <code>Lock</code>/<code>Unlock</code>
         · <code>Get</code> และ <code>Len</code> ใช้ <code>RLock</code>/<code>RUnlock</code>
@@ -438,14 +443,33 @@ goroutine 1 [<strong>sync.RWMutex.RLock</strong>]:</code></pre>
     c.mu.<span class="f">RLock</span>()
     <span class="k">defer</span> c.mu.<span class="f">RUnlock</span>()
     <span class="k">return</span> c.<span class="f">get</span>(k)
+}
+
+<span class="k">func</span> (c *Cache[K, V]) <span class="f">GetOrSet</span>(k K, v V) (V, <span class="k">bool</span>) {
+    c.mu.<span class="f">Lock</span>()                      <span class="c">// ล็อกครั้งเดียวคลุมทั้งอ่านและเขียน</span>
+    <span class="k">defer</span> c.mu.<span class="f">Unlock</span>()
+
+    <span class="k">if</span> old, ok := c.<span class="f">get</span>(k); ok {   <span class="c">// เรียกตัวที่ไม่ล็อก จึงไม่ขอ lock ซ้ำ</span>
+        <span class="k">return</span> old, <span class="k">true</span>
+    }
+    c.data[k] = v
+    <span class="k">return</span> v, <span class="k">false</span>
 }</code></pre>
+    <p style="margin-bottom:0"><strong>กฎที่ถอดออกมาได้:</strong>
+    <br>• method ตัวใหญ่ (<em>exported</em>) เป็นคนล็อก
+    <br>• method ตัวเล็ก (<em>unexported</em>) ไม่ล็อกเลย และห้ามเรียกจากข้างนอก
+    <br>• <strong>method ที่ล็อกแล้ว ห้ามเรียก method ที่ล็อกด้วยกันเอง</strong></p>
   </div>
 </div>
 
 <div class="note">
   <p style="margin-bottom:0">
     💬 <strong>ข้อ 1 คือข้อที่ผมอยากเห็นผลที่สุด</strong> —
-    เทสแบบไม่มี <code>-race</code> มักจะ<em>ผ่าน</em> ทั้งที่โค้ดผิด
+    สังเกตว่าเทสธรรมดาบอกได้แค่ "<em>พัง</em>" แต่ไม่บอกว่าบรรทัดไหนชนกับบรรทัดไหน
+    ส่วน <code>-race</code> ชี้ให้เห็นทั้งคู่
+    <br>และถ้าของกลางเป็น <code>int</code> แทน <code>map</code>
+    <strong>เทสธรรมดาจะผ่านเงียบ ๆ ทั้งที่โค้ดผิด</strong>
+    — นั่นคือเหตุผลที่ต้องใส่ <code>-race</code> ทุกครั้ง
     ถ้าคุณเห็นความต่างนั้นด้วยตาตัวเอง คุณจะไม่มีวันลืมใส่ <code>-race</code> อีกเลย
     <br>บทถัดไป: วิธีบอก goroutine ที่กระจายไป 10 ชั้นว่า "งานนี้ไม่ต้องทำต่อแล้ว"
   </p>

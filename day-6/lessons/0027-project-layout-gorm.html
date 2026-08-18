@@ -303,6 +303,41 @@ go mod tidy      <span class="c">← อย่าลืมบรรทัดน�
   </p>
 </div>
 
+<h2>6.5 · ต่อ Postgres ด้วย GORM</h2>
+
+<p>
+  ติดตั้งแล้วแต่ยังไม่ได้ต่ออะไรเลย — โค้ดที่ทำให้โปรแกรมคุยกับ database
+  ได้จริงมีแค่นี้:
+</p>
+
+<pre><code><span class="c">// internal/platform/database/postgres.go</span>
+<span class="k">package</span> database
+
+<span class="k">import</span> (
+    <span class="s">"gorm.io/driver/postgres"</span>
+    <span class="s">"gorm.io/gorm"</span>
+)
+
+<span class="k">func</span> <span class="f">Connect</span>() (*gorm.DB, <span class="k">error</span>) {
+    <span class="c">// DSN = สายอักขระบอกว่าจะต่อไปที่ไหน ด้วยชื่อใคร รหัสอะไร</span>
+    dsn := <span class="s">"host=localhost user=postgres password=Pe@devp00l dbname=postgres port=5432 sslmode=disable TimeZone=Asia/Bangkok"</span>
+    <span class="k">return</span> gorm.<span class="f">Open</span>(postgres.<span class="f">Open</span>(dsn), &amp;gorm.Config{})
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทำไม <code>user</code> กับ <code>dbname</code> เป็น
+    <code>postgres</code> ทั้งคู่</strong> — เพราะ <code>compose.yml</code> ข้างบน
+    ตั้งแค่ <code>POSTGRES_PASSWORD</code> ไม่ได้ตั้ง
+    <code>POSTGRES_USER</code> / <code>POSTGRES_DB</code>
+    image จึงใช้ค่าเริ่มต้นชื่อ <code>postgres</code> ให้ทั้งสองอย่าง
+    <br><code>sslmode=disable</code> เพราะต่อกับ Postgres ในเครื่องตัวเอง
+    (ขึ้น production ค่อยเปลี่ยน)
+    <br><strong>รู้ว่าต่อติดแล้วเมื่อ <code>Connect()</code> คืน
+    <code>err</code> เป็น <code>nil</code></strong>
+  </p>
+</div>
+
 <h2>7 · GORM Model และ CRUD</h2>
 
 <pre><code><span class="k">type</span> User <span class="k">struct</span> {
@@ -316,6 +351,23 @@ go mod tidy      <span class="c">← อย่าลืมบรรทัดน�
   ที่เรียนในบทเรียน 13 แต่ทำงานแบบเดียวกัน:
   เป็น metadata ที่ library อ่านตอนรัน
   <br>struct หนึ่งตัวมีได้ทั้งสอง tag พร้อมกัน
+</p>
+
+<p>
+  <strong>ตอนนี้เรามีแค่ struct ในโค้ด — ตารางจริงในฐานข้อมูลยังไม่มี</strong>
+  <br><code>AutoMigrate</code> คือคำสั่งที่ให้ GORM อ่าน struct
+  แล้วสร้าง/ปรับตารางให้ตรงกัน:
+</p>
+
+<pre><code>db.<span class="f">AutoMigrate</span>(&amp;User{})
+<span class="c">// GORM จะ CREATE TABLE users ให้ถ้ายังไม่มี</span>
+<span class="c">// ถ้ามีแล้วแต่ struct เพิ่ม field ใหม่ มันจะ ADD COLUMN ให้</span>
+<span class="c">// แต่มันไม่เคยลบคอลัมน์ทิ้ง — ปลอดภัยไว้ก่อน</span></code></pre>
+
+<p>
+  เรียก<strong>ครั้งเดียวตอนโปรแกรมเริ่ม</strong> (ใน <code>main.go</code>
+  หลังต่อ database สำเร็จ) พอสำหรับตอนเรียน
+  <br>ระบบ production จริงใช้เครื่องมือ migration แยกแทน ซึ่งเป็นเนื้อหา Day 7
 </p>
 
 <div class="predict">
@@ -375,6 +427,29 @@ db.<span class="f">Delete</span>(&amp;user, <span class="n">1</span>)</code></pr
   </p>
 </div>
 
+<p>
+  <strong>ผูก <code>ctx</code> เข้ากับ query</strong> — ทุกคำสั่งที่ยิง database
+  ควรพก <code>ctx</code> ไปด้วย ตามที่เรียนใน
+  <a href="./0025-context.html">บทเรียน 25</a>:
+</p>
+
+<pre><code><span class="k">func</span> (r *Repository) <span class="f">FindByID</span>(ctx context.Context, id <span class="k">uint</span>) (*User, <span class="k">error</span>) {
+    <span class="k">var</span> u User
+    err := r.db.<span class="f">WithContext</span>(ctx).<span class="f">First</span>(&amp;u, id).Error
+    <span class="k">return</span> &amp;u, err
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <code>WithContext(ctx)</code> <strong>ต้องมาก่อนคำสั่งจริง</strong>
+    (<code>First</code> / <code>Find</code> / <code>Create</code>) เสมอ
+    เพราะมันคืน <code>*gorm.DB</code> ตัวใหม่ที่ถือ <code>ctx</code> ไว้
+    แล้วค่อยเอาตัวนั้นไปยิง query
+    <br>ผลคือ<strong>ถ้าผู้ใช้ปิดหน้าเว็บกลางคัน query ที่ยังค้างอยู่จะถูกยกเลิกไปด้วย</strong>
+    ไม่ปล่อยให้ database ทำงานให้คนที่ไม่รออยู่แล้ว
+  </p>
+</div>
+
 <h2>8 · สี่กับดักของ GORM ที่ผมเจอตอนทดสอบ</h2>
 
 <h3 style="margin-top:1.3rem">8.1 <code>First</code> ฟ้องว่าไม่เจอ แต่ <code>Find</code> ไม่ฟ้อง</h3>
@@ -419,10 +494,26 @@ db.<span class="f">Delete</span>(&amp;User{}).Error
 
 <pre><code>err := db.<span class="f">Transaction</span>(<span class="k">func</span>(tx *gorm.DB) <span class="k">error</span> {
     tx.<span class="f">Model</span>(&amp;Account{}).<span class="f">Where</span>(<span class="s">"owner = ?"</span>, <span class="s">"A"</span>).
-        <span class="f">Update</span>(<span class="s">"balance"</span>, gorm.<span class="f">Expr</span>(<span class="s">"balance - ?"</span>, <span class="n">50</span>))
+        <span class="f">Update</span>(<span class="s">"balance"</span>, gorm.<span class="f">Expr</span>(<span class="s">"balance - ?"</span>, <span class="n">50</span>))   <span class="c">// ← ให้ database เป็นคนลบเอง</span>
 
     <span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"ระบบพังกลางคัน"</span>)   <span class="c">// ← คืน error = rollback</span>
 })</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong><code>gorm.Expr</code> แปลว่า "อย่าเอาค่านี้ไปเป็นตัวเลข
+    ให้ส่งเป็นสูตรลงไปให้ database คิดเอง"</strong> —
+    SQL ที่ออกมาจึงเป็น <code>SET balance = balance - 50</code>
+    <br>ถ้าเขียน <code>Update("balance", balance-50)</code> โดยเอาค่า
+    <code>balance</code> ที่อ่านมาก่อนหน้ามาลบในโค้ด Go
+    มันจะกลายเป็น <code>SET balance = 50</code>
+    <strong>ซึ่งทับค่าที่คนอื่นเพิ่งแก้ไปทั้งก้อน</strong>
+    <br>เป็น <strong>data race เวอร์ชัน database</strong>
+    แบบเดียวกับ <code>counter++</code> ใน
+    <a href="./0024-data-race-mutex.html">บทเรียน 24</a> เป๊ะ ๆ
+    — อ่าน แล้วคิด แล้วเขียนกลับ โดยมีคนอื่นแทรกกลางทางได้
+  </p>
+</div>
 
 <p>ผมทดสอบกับยอดเงิน A = 100:</p>
 
@@ -554,15 +645,23 @@ db.<span class="f">Delete</span>(&amp;User{}).Error
         <br><code>go mod init myapp</code> แล้วรัน <code>go build ./...</code>
         ให้ผ่านก่อนเขียนอะไร</li>
     <li>เปิด Postgres ด้วย <code>compose.yml</code> ข้างบน แล้วต่อด้วย GORM
-        ใน <code>internal/platform/database/postgres.go</code></li>
+        ใน <code>internal/platform/database/postgres.go</code>
+        <em>(โค้ดเต็มอยู่ในหัวข้อ 6.5)</em>
+        <br>รู้ว่าสำเร็จเมื่อ <code>Connect()</code> คืน <code>err</code>
+        เป็น <code>nil</code></li>
     <li><code>model.go</code>: <code>User{ID, Name, Email, PasswordHash}</code>
-        พร้อม <code>gorm</code> tag · <code>AutoMigrate</code> ให้เรียบร้อย</li>
+        พร้อม <code>gorm</code> tag
+        <br>เรียก <code>db.AutoMigrate(&amp;User{})</code> ใน <code>main.go</code>
+        หลังต่อ database สำเร็จ
+        <br>รู้ว่าสำเร็จเมื่อเปิด TablePlus แล้ว<strong>เห็นตาราง
+        <code>users</code> โผล่มา</strong></li>
     <li><code>dto.go</code>: <code>CreateUserRequest</code> และ
         <code>UserResponse</code> — <strong><code>UserResponse</code>
         ต้องไม่มี <code>PasswordHash</code></strong></li>
     <li><code>repository.go</code>: <code>Create</code> · <code>FindByID</code> ·
         <code>FindAll</code> — <strong>ทุกตัวรับ <code>ctx context.Context</code>
-        เป็น parameter ตัวแรก</strong> แล้วใช้ <code>db.WithContext(ctx)</code></li>
+        เป็น parameter ตัวแรก</strong> แล้วใช้ <code>db.WithContext(ctx)</code>
+        <em>(หน้าตาโค้ดอยู่ท้ายหัวข้อ 7)</em></li>
     <li><code>service.go</code>: <code>Register</code> ที่ตรวจว่า
         <code>name</code> ไม่ว่าง และ <code>email</code> มี <code>@</code>
         ก่อนเรียก repository</li>
@@ -625,6 +724,7 @@ db.<span class="f">Delete</span>(&amp;User{}).Error
   <a href="./0026-worker-pool.html">← บทเรียน 26</a>
   <a href="../../index.html">🏠 หน้าแรก</a>
   <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 6</a>
+  <a href="../../day-7/lessons/0028-mockery.html">บทเรียน 28 → Mockery</a>
 </nav>
 
 <h2>อ้างอิง</h2>

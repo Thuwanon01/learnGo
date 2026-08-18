@@ -1,0 +1,1022 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 28 — Mockery: เลิกเขียน mock ด้วยมือ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 28 · Day 7 · Mockery</p>
+  <h1>Mockery — เลิกเขียน mock ด้วยมือ</h1>
+  <p class="meta">~17 นาที · ต้องมี: <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a> (interface), <a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a> (testify), <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> (layout + repository)</p>
+  <p class="standfirst">
+    ตั้งแต่บทเรียน 15 มา คุณจ่ายค่าผ่านทางเดิมทุกครั้งที่อยากเทส service:
+    <strong>ประกาศ interface · รับ dependency ทางพารามิเตอร์ · แล้วนั่งเขียน struct ปลอมขึ้นมาเอง</strong>
+    <br>บทนี้เอาขั้นที่สามออก — แต่ไม่ใช่เพราะ "ประหยัดบรรทัด" อย่างที่มักเคลมกัน
+    <strong>ตัวเลขจริงบอกตรงข้าม</strong> และเหตุผลที่แท้จริงดีกว่านั้นเยอะ
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ทบทวน: ราคาที่เราจ่ายมาตลอดบท 15–17</h2>
+
+<p>
+  สูตรที่ใช้มาตั้งแต่ <a href="../../day-5/lessons/0015-testing-t.html">บทเรียน 15</a>
+  จนถึง <a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a> มีสามชิ้นเสมอ:
+</p>
+
+<div class="diagram">
+<pre>  <strong>1) interface</strong>            <strong>2) DI</strong>                  <strong>3) mock เขียนมือ</strong>
+
+  type UserRepository    func NewService(         type FakeUserRepository struct {
+      interface {            repo UserRepository      GetByIDFunc  func(...) ...
+      GetByID(...)       ) *Service {                 GetByIDCalls []int
+      Save(...)              ...                      ...
+      CountActive()      }                        }
+  }                                               func (f *Fake) GetByID(...) {...}
+       ▲                        ▲                 func (f *Fake) Save(...)    {...}
+       │                        │                 func (f *Fake) CountActive(){...}
+  โค้ดจริงพึ่งพา            เทสยัดของปลอม                     ▲
+  "สัญญา" ไม่ใช่ตัวจริง        เข้ามาแทนได้         <strong>ชิ้นนี้เราพิมพ์เองทุกตัวอักษร</strong></pre>
+</div>
+
+<p>
+  ชิ้นที่ 1 กับ 2 เป็นการออกแบบ — เราได้ประโยชน์จากมันตรง ๆ
+  (<a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a>)
+  <br><strong>ชิ้นที่ 3 ไม่ใช่การออกแบบ มันคืองานถอดแบบ</strong> —
+  อ่าน interface แล้วพิมพ์ struct ที่มี method ชื่อเดียวกัน signature เดียวกัน ครบทุกตัว
+  ถ้าพิมพ์ตกไปตัวหนึ่ง compiler ก็ฟ้องว่าไม่ implement interface
+</p>
+
+<p>นี่คือ mock เขียนมือของ interface ที่มีแค่ <strong>3 method</strong>:</p>
+
+<pre><code><span class="c">// mock เขียนมือ: struct + field เก็บค่า return + field เก็บ arg ที่ถูกเรียก</span>
+<span class="k">type</span> FakeUserRepository <span class="k">struct</span> {
+    GetByIDFunc     <span class="k">func</span>(id <span class="k">int</span>) (*User, <span class="k">error</span>)
+    GetByIDCalls    []<span class="k">int</span>
+    SaveFunc        <span class="k">func</span>(u *User) <span class="k">error</span>
+    SaveCalls       []*User
+    CountActiveFunc <span class="k">func</span>() <span class="k">int</span>
+    CountActiveHits <span class="k">int</span>
+}
+
+<span class="k">func</span> (f *FakeUserRepository) <span class="f">GetByID</span>(id <span class="k">int</span>) (*User, <span class="k">error</span>) {
+    f.GetByIDCalls = <span class="f">append</span>(f.GetByIDCalls, id)
+    <span class="k">if</span> f.GetByIDFunc == <span class="k">nil</span> {
+        <span class="k">return</span> <span class="k">nil</span>, <span class="k">nil</span>
+    }
+    <span class="k">return</span> f.<span class="f">GetByIDFunc</span>(id)
+}
+
+<span class="k">func</span> (f *FakeUserRepository) <span class="f">Save</span>(u *User) <span class="k">error</span> {
+    f.SaveCalls = <span class="f">append</span>(f.SaveCalls, u)
+    <span class="k">if</span> f.SaveFunc == <span class="k">nil</span> {
+        <span class="k">return</span> <span class="k">nil</span>
+    }
+    <span class="k">return</span> f.<span class="f">SaveFunc</span>(u)
+}
+
+<span class="k">func</span> (f *FakeUserRepository) <span class="f">CountActive</span>() <span class="k">int</span> {
+    f.CountActiveHits++
+    <span class="k">if</span> f.CountActiveFunc == <span class="k">nil</span> {
+        <span class="k">return</span> <span class="n">0</span>
+    }
+    <span class="k">return</span> f.<span class="f">CountActiveFunc</span>()
+}</code></pre>
+
+<p>
+  <strong>35 บรรทัด · 3 method · pattern เดียวกันเป๊ะทั้งสามอัน</strong>
+  (บันทึก arg → เช็ค nil → เรียก func)
+  <br>เพิ่ม method ที่ 4 ในวันหลัง = กลับมาพิมพ์ pattern เดิมอีกรอบ
+</p>
+
+<h2>2 · ความเจ็บปวดที่แท้จริงไม่ใช่ "เยอะ" แต่คือ "มันเงียบ"</h2>
+
+<p>
+  ถ้าปัญหามีแค่ "พิมพ์เยอะ" มันก็แค่น่าเบื่อ ไม่ถึงกับอันตราย
+  <br>แต่ mock เขียนมือมีรูโหว่ที่ใหญ่กว่านั้นมาก — ลองอ่านเทสข้างล่างนี้ก่อน
+</p>
+
+<div class="predict">
+  <pre><code><span class="c">// mock เขียนมือ: GetByIDFunc คืน user id 7 เสมอ</span>
+<span class="k">func</span> <span class="f">TestManual_WrongArgSilentlyPasses</span>(t *testing.T) {
+    repo := &amp;FakeUserRepository{
+        GetByIDFunc: <span class="k">func</span>(id <span class="k">int</span>) (*User, <span class="k">error</span>) {
+            <span class="k">return</span> &amp;User{ID: <span class="n">7</span>, Name: <span class="s">"Somchai"</span>}, <span class="k">nil</span>
+        },
+    }
+    svc := <span class="f">NewService</span>(repo)
+    got, err := svc.<span class="f">DisplayName</span>(<span class="n">999</span>) <span class="c">// ควรจะเรียกด้วย 7 แต่เรียก 999</span>
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        t.<span class="f">Fatal</span>(err)
+    }
+    <span class="k">if</span> got != <span class="s">"Mr. Somchai"</span> {
+        t.<span class="f">Fatalf</span>(<span class="s">"got %q"</span>, got)
+    }
+    <span class="c">// ไม่มี assert เรื่อง arg</span>
+}</code></pre>
+  <p class="ask">
+    โค้ดเรียก repository ด้วย id <code>999</code> ทั้งที่ตั้งใจจะเทส id <code>7</code>
+    — <strong>เทสนี้ผ่านหรือตก?</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ผ่านสบาย ๆ</strong>:</p>
+    <pre style="margin:0.6rem 0"><code>=== RUN   TestManual_WrongArgSilentlyPasses
+--- PASS: TestManual_WrongArgSilentlyPasses (0.00s)
+PASS
+ok  	example.com/manual/user	0.435s</code></pre>
+    <p>
+      เพราะ <code>GetByIDFunc</code> คืนค่าเดิมไม่ว่าใครส่ง id อะไรมา
+      <strong>mock เขียนมือไม่รู้จักคำว่า "คาดหวัง"</strong> มันรู้จักแค่ "คืนค่านี้"
+      <br>ถ้าอยากให้จับได้ ต้องเขียน assert เรื่อง argument <em>เองทุกครั้ง</em> —
+      นั่นคือเหตุผลที่ field <code>GetByIDCalls []int</code> ถึงมีอยู่ในโค้ดหัวข้อ 1
+      แต่มีไว้เฉย ๆ ไม่ได้แปลว่ามีคนใช้
+    </p>
+    <p style="margin-bottom:0">
+      <strong>นี่คือบั๊กที่ไม่มีใครเห็น</strong> — โค้ด production ส่ง id ผิด
+      เทสยังเขียว CI ยังผ่าน
+      <br>เก็บความรู้สึกนี้ไว้ แล้วไปดูหัวข้อ 8 ว่า mockery เจอกรณีเดียวกันแล้วทำอะไร
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ รูโหว่ที่สองคือชื่อ method ที่เป็น string</strong> —
+    testify แบบดั้งเดิมตั้ง expectation ด้วย <code>mock.On("GetByID", 7)</code>
+    ซึ่งชื่อ method อยู่ในเครื่องหมายคำพูด
+    <strong>compiler ไม่ได้ตรวจอะไรให้เลย</strong>
+    พิมพ์ <code>"GetById"</code> (d เล็ก) ก็ยังคอมไพล์ผ่าน
+    แล้วไปพังตอนรันเป็นข้อความยาว ๆ ที่มือใหม่อ่านไม่ออก
+  </p>
+</div>
+
+<h2>3 · ส่วนประกอบของ mockery — สไลด์บอก 3 แต่จริง ๆ มี 4</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>#</th><th>ชิ้นส่วน</th><th>หน้าที่</th></tr>
+  <tr><td>1</td><td><strong>interface ในโค้ด</strong></td><td>ต้นแบบ — mockery อ่านจากตรงนี้ ไม่มี interface ก็ไม่มีอะไรให้ generate</td></tr>
+  <tr><td>2</td><td><strong><code>.mockery.yml</code></strong></td><td>บอกว่าอ่าน package ไหน · เขียนไฟล์ที่ไหน · ตั้งชื่ออะไร</td></tr>
+  <tr><td>3</td><td><strong>คำสั่ง <code>mockery</code></strong></td><td>รันแล้วได้ไฟล์ mock ออกมา</td></tr>
+  <tr><td>4</td><td><strong><code>github.com/stretchr/testify</code></strong></td><td><strong>ที่สไลด์ไม่ได้พูดถึง</strong> — mock ที่ generate ออกมา import testify แต่ mockery ไม่เติม <code>go.mod</code> ให้</td></tr>
+</table>
+</div>
+
+<p>ชิ้นที่ 4 ต้องเติมเอง ด้วยคำสั่งที่คุ้นจาก <a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a>:</p>
+
+<pre><code>$ go mod tidy
+go: finding module for package github.com/stretchr/testify/mock
+go: finding module for package github.com/stretchr/testify/assert
+go: found github.com/stretchr/testify/assert in github.com/stretchr/testify v1.12.0
+go: found github.com/stretchr/testify/mock in github.com/stretchr/testify v1.12.0
+go: downloading github.com/stretchr/objx v0.5.3</code></pre>
+
+<h2>4 · ติดตั้ง — และคำสั่งสองอันที่สไลด์เขียนผิด</h2>
+
+<pre><code>$ go install github.com/vektra/mockery/v3@latest
+$ which mockery
+/Users/tuwanon/go/bin/mockery</code></pre>
+
+<p>
+  binary ชื่อ <code>mockery</code> เฉย ๆ ไม่มี <code>v3</code> ต่อท้าย
+  <br>ทีนี้เช็คเวอร์ชัน — และนี่คือจุดแรกที่สไลด์พาหลงทาง:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ตามสไลด์</h4>
+    <pre><code>$ mockery --version
+Error: unknown flag: --version</code></pre>
+    <p style="margin-bottom:0">
+      exit 1 ตั้งแต่ก้าวแรก
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ ของจริง</h4>
+    <pre><code>$ mockery version
+v3.7.3</code></pre>
+    <p style="margin-bottom:0">
+      <code>version</code> เป็น <strong>subcommand</strong> ไม่ใช่ flag
+    </p>
+  </div>
+</div>
+
+<p>จุดที่สองอยู่ตรงคำสั่ง generate — ลองดู help ทั้งหมดที่ v3 มี:</p>
+
+<pre><code>$ mockery --help
+Generate mock objects for your Go interfaces
+
+Usage:
+  mockery [flags]
+  mockery [command]
+
+Available Commands:
+  completion  Generate the autocompletion script for the specified shell
+  help        Help about any command
+  init        Generate a basic .mockery.yml file
+  migrate     Migrate v2 config to v3.
+  showconfig  Show the yaml config
+  version     Print the version of mockery
+
+Flags:
+      --config string      config file to use
+  -h, --help               help for mockery
+      --log-level string   Level of logging</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ไม่มีคำว่า <code>generate</code> ในรายการนั้นเลย</strong>
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>$ mockery generate mock
+Error: unknown command "generate" for "mockery"
+Run 'mockery --help' for usage.</code></pre>
+  <p style="margin:0.6rem 0 0">
+    <strong>การ generate ใน v3 คือรัน <code>mockery</code> เปล่า ๆ</strong> —
+    บรรทัด <code>Usage: mockery [flags]</code> ในหน้า help คือสิ่งที่กำลังบอกอยู่
+    <br>สังเกตว่ามันบอกวิธีให้แล้วตั้งแต่บรรทัดที่ 4 แต่คนอ่านมักกวาดสายตาไปที่รายการ command แทน
+  </p>
+</div>
+
+<h2>5 · <code>mockery init</code> — argument ที่ใส่ผิดกันบ่อยที่สุด</h2>
+
+<pre><code>$ mockery init --help
+This command generates a basic .mockery.yml file that can be used as a
+starting point for your config.
+
+Usage:
+  mockery init [module_name] [flags]</code></pre>
+
+<p>
+  คำในวงเล็บคือ <strong><code>module_name</code> ไม่ใช่ <code>package_name</code></strong>
+  — ต้องเป็น module path จากบรรทัดแรกของ <code>go.mod</code>
+  (<a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a>)
+  ไม่ใช่ชื่อ package ย่อยอย่าง <code>user</code> หรือ <code>repository</code>
+  <br>และมันบังคับหนึ่งตัวเสมอ:
+</p>
+
+<pre><code>$ mockery init
+Error: accepts 1 arg(s), received 0</code></pre>
+
+<pre><code>$ mockery init example.com/shop
+INF writing to file file=.mockery.yml version=v3.7.3
+INF done version=v3.7.3</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ชื่อไฟล์มีจุดนำหน้า: <code>.mockery.yml</code></strong>
+    <br><code>ls</code> เปล่า ๆ มองไม่เห็น ต้อง <code>ls -a</code>
+    — คนจำนวนไม่น้อยรันคำสั่งซ้ำเพราะคิดว่ามันไม่ทำงาน
+    <br>และ mockery <strong>ค้นหา config ขึ้นไปตาม parent directory</strong>
+    รันจากใน sub-package ก็ยังเจอไฟล์ที่ root:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>$ cd app/user &amp;&amp; mockery
+INF Starting mockery config-file=/.../app/.mockery.yml version=v3.7.3</code></pre>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ชื่อไฟล์ต้องมีจุด ห้ามพลาด</strong> — v3.7.3 มองหาเฉพาะ
+    <code>.mockery.yml</code> และ <code>.mockery.yaml</code> เท่านั้น
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>=== ชื่อไฟล์: mockery.yml ===
+FTL app failed error="getting config: discovering mockery config: file not found"
+=== ชื่อไฟล์: .mockery.yaml ===
+INF Starting mockery config-file=/.../app/.mockery.yaml version=v3.7.3
+=== ชื่อไฟล์: mockery.yaml ===
+FTL app failed error="getting config: discovering mockery config: file not found"</code></pre>
+  <p style="margin:0.6rem 0 0">
+    ถ้าสไลด์ของคุณเขียนว่า <code>mockery.yml</code> (ไม่มีจุด) —
+    <strong>นั่นคือชื่อที่ mockery หาไม่เจอ</strong>
+    ถ้าจำเป็นต้องใช้ชื่อนั้นจริง ๆ ให้ระบุเอง: <code>mockery --config mockery.yml</code>
+  </p>
+</div>
+
+<h2>6 · config ที่ init สร้างจริง — 28 บรรทัด ไม่ใช่ 8 ฟิลด์</h2>
+
+<pre><code>$ cat .mockery.yml
+all: false
+dir: '{{.InterfaceDir}}'
+filename: mocks_test.go
+force-file-write: true
+formatter: goimports
+formatter-options:
+  goimports:
+    all-errors: false
+    comments: true
+    format-only: true
+    fragment: false
+    local-prefix: ""
+    tab-indent: true
+    tab-width: 8
+generate: true
+include-auto-generated: false
+log-level: info
+structname: '{{.Mock}}{{.InterfaceName}}'
+pkgname: '{{.SrcPackageName}}'
+recursive: false
+require-template-schema-exists: true
+template: testify
+template-schema: '{{.Template}}.schema.json'
+packages:
+  example.com/shop:
+    config:
+      all: true</code></pre>
+
+<p>อ่านทีละบรรทัดเฉพาะตัวที่เปลี่ยนชีวิตคุณจริง ๆ:</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ฟิลด์</th><th>ค่าที่ init ให้</th><th>แปลว่าอะไร</th></tr>
+  <tr><td><code>template</code></td><td><code>testify</code></td><td>ให้ mock ที่ต่อยอดจาก <code>mock.Mock</code> ของ testify — คือของที่คุณรู้จักแล้วจากบท 17</td></tr>
+  <tr><td><code>dir</code></td><td><code>{{.InterfaceDir}}</code></td><td>วางไฟล์ mock <strong>ในโฟลเดอร์เดียวกับ interface</strong> ไม่ใช่โฟลเดอร์ <code>mocks/</code> กลาง</td></tr>
+  <tr><td><code>filename</code></td><td><code>mocks_test.go</code></td><td>ลงท้าย <code>_test.go</code> → <strong>package อื่นมองไม่เห็น</strong> (ดูกับดักหัวข้อ 9)</td></tr>
+  <tr><td><code>pkgname</code></td><td><code>{{.SrcPackageName}}</code></td><td>ไฟล์ mock อยู่ package เดียวกับโค้ดต้นทาง → เรียกใช้ได้โดยไม่ต้อง import</td></tr>
+  <tr><td><code>structname</code></td><td><code>{{.Mock}}{{.InterfaceName}}</code></td><td>interface ชื่อ <code>UserRepository</code> → struct ชื่อ <code>MockUserRepository</code></td></tr>
+  <tr><td><code>packages</code></td><td>module root + <code>all: true</code></td><td>อ่าน interface ทุกตัวที่เจอใน package นั้น</td></tr>
+  <tr><td><code>force-file-write</code></td><td><code>true</code></td><td>อนุญาตเขียนทับไฟล์ mock เดิม — ถ้าเป็น <code>false</code> จะตายด้วย <code>error="outfile exists"</code></td></tr>
+  <tr><td><code>recursive</code></td><td><code>false</code></td><td><strong>ตัวที่ทำให้ config เริ่มต้นใช้ไม่ได้กับโปรเจกต์จริง</strong> — อ่านต่อหัวข้อ 7</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>สังเกตว่า <code>all</code> ปรากฏสองที่ และค่าไม่เหมือนกัน</strong>
+    <br>บนสุดคือ <code>all: false</code> · ส่วน <code>all: true</code> อยู่ใต้
+    <code>packages.example.com/shop.config</code>
+    <br>โครงของ config คือ <strong>ค่า default ระดับบนสุด แล้ว override รายแพ็กเกจข้างล่าง</strong>
+    — ถ้าอ่านเจอ <code>all</code> แล้วไม่ดูว่าอยู่ระดับไหน จะสรุปผิดทันที
+  </p>
+</div>
+
+<h2>7 · รัน mockery แล้วรู้ได้ยังไงว่าสำเร็จ</h2>
+
+<p>คำตอบที่คนส่วนใหญ่ใช้คือ exit code — และมัน<strong>ใช้ไม่ได้</strong>กับเครื่องมือตัวนี้</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ log แบบนี้ = ไม่ได้อะไรเลย</h4>
+    <pre><code>INF Starting mockery config-file=...
+INF Parsing configured packages...
+INF Done parsing configured packages.
+EXITCODE=0</code></pre>
+    <p style="margin-bottom:0">
+      "Done" + exit 0 แต่<strong>ไม่มีไฟล์ mock เกิดขึ้นเลย</strong>
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ log แบบนี้ = สำเร็จจริง</h4>
+    <pre><code>INF Parsing configured packages...
+INF Done parsing configured packages.
+INF <strong>adding interface to collection</strong>
+    interface=UserRepository
+INF Executing template file=.../mocks_test.go
+INF Writing template to file file=.../mocks_test.go</code></pre>
+    <p style="margin-bottom:0">
+      บรรทัด <strong><code>adding interface to collection</code></strong> คือหลักฐานเดียว
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ กับดักที่ร้ายที่สุดของบทนี้</strong> — ผมทดลอง 3 แบบ:
+    (ก) ชี้ที่ module root ที่ไม่มีไฟล์ <code>.go</code>
+    (ข) ชี้ที่ <code>example.com/shop/repository</code> ที่ไม่มีอยู่จริง
+    (ค) ชี้ที่ <code>github.com/vektra/doesnotexist123</code> ที่ไม่มีในโลก
+    <br><strong>mockery v3.7.3 ไม่ error สักกรณี — exit 0 ทั้งสามแบบ</strong>
+    <br>และที่แสบคือ <code>mockery init &lt;module&gt;</code> สร้าง config ชี้ module root มาให้เอง
+    ซึ่งเป็นกรณี (ก) พอดี — <strong>ถ้า interface ของคุณอยู่ใน sub-package
+    (คือแทบทุกโปรเจกต์จริง) คุณจะเจอกับดักนี้ตั้งแต่ครั้งแรกที่รัน</strong>
+  </p>
+</div>
+
+<p>แก้ได้สองทาง ยืนยันแล้วทั้งคู่ — ทางที่ผมชอบกว่าคือเติมบรรทัดเดียว:</p>
+
+<pre><code>packages:
+  example.com/shop:
+    config:
+      all: <span class="k">true</span>
+      recursive: <span class="k">true</span>      <span class="c">// ← บรรทัดที่เปลี่ยน "รันแล้วเงียบ" เป็น "ใช้งานได้"</span></code></pre>
+
+<pre><code>$ mockery
+INF adding interface to collection collection=/.../app/user/mocks_test.go
+    interface=UserRepository package-path=example.com/shop/user version=v3.7.3
+INF Writing template to file file=/.../app/user/mocks_test.go</code></pre>
+
+<p>
+  อีกทางคือเปลี่ยน key ให้เป็น package path เต็ม เช่น
+  <code>example.com/shop/user:</code> แทน module root —
+  ตรงกว่าแต่ต้องมาเติมทุกครั้งที่มี package ใหม่
+</p>
+
+<h2>8 · mock ที่ได้ออกมา หน้าตาเป็นยังไง</h2>
+
+<p>
+  ไฟล์ที่ generate มา <strong>193 บรรทัด</strong> ขึ้นต้นด้วยบรรทัดที่บอกชัดว่าอย่าไปแก้:
+</p>
+
+<pre><code><span class="c">// Code generated by mockery; DO NOT EDIT.</span>
+<span class="c">// github.com/vektra/mockery</span>
+<span class="c">// template: testify</span>
+
+<span class="k">package</span> user
+
+<span class="k">import</span> (
+    mock <span class="s">"github.com/stretchr/testify/mock"</span>
+)
+
+<span class="c">// NewMockUserRepository creates a new instance of MockUserRepository. It also</span>
+<span class="c">// registers a testing interface on the mock and a cleanup function to assert</span>
+<span class="c">// the mocks expectations.</span>
+<span class="k">func</span> <span class="f">NewMockUserRepository</span>(t <span class="k">interface</span> {
+    mock.TestingT
+    <span class="f">Cleanup</span>(<span class="k">func</span>())
+}) *MockUserRepository {
+    mock := &amp;MockUserRepository{}
+    mock.Mock.<span class="f">Test</span>(t)
+
+    t.<span class="f">Cleanup</span>(<span class="k">func</span>() { mock.<span class="f">AssertExpectations</span>(t) })
+
+    <span class="k">return</span> mock
+}
+
+<span class="k">type</span> MockUserRepository <span class="k">struct</span> {
+    mock.Mock
+}</code></pre>
+
+<div class="win">
+  <span class="label">✅ ของฟรีชิ้นที่ 1 — ไม่ต้องเขียน <code>AssertExpectations</code> เองแล้ว</span>
+  <p style="margin-bottom:0">
+    บรรทัด <code>t.Cleanup(func() { mock.AssertExpectations(t) })</code> อยู่ใน constructor
+    <br>แปลว่าทุกเทสที่สร้าง mock ด้วย <code>NewMockUserRepository(t)</code>
+    <strong>จะถูกตรวจให้อัตโนมัติตอนจบเทส</strong> ว่า expectation ที่ตั้งไว้ถูกเรียกครบไหม
+    <br>ถ้าคุณเคยพิมพ์ <code>defer repo.AssertExpectations(t)</code> ตามสไตล์ v2 —
+    <strong>ใน v3 เป็นการเรียกซ้ำโดยไม่จำเป็น</strong>
+    <br><em>นี่คือ <code>t.Cleanup</code> ตัวเดียวกับที่คุณเจอใน
+    <a href="../../day-5/lessons/0015-testing-t.html">บทเรียน 15</a></em>
+  </p>
+</div>
+
+<p>ถัดมาคือ method จริงที่ implement interface ให้:</p>
+
+<pre><code><span class="k">func</span> (_mock *MockUserRepository) <span class="f">GetByID</span>(id <span class="k">int</span>) (*User, <span class="k">error</span>) {
+    ret := _mock.<span class="f">Called</span>(id)
+
+    <span class="k">if</span> <span class="f">len</span>(ret) == <span class="n">0</span> {
+        <span class="f">panic</span>(<span class="s">"no return value specified for GetByID"</span>)
+    }
+    ...
+}</code></pre>
+
+<p>
+  และชั้น <code>EXPECT()</code> ที่เป็นพระเอกของ v3:
+</p>
+
+<pre><code><span class="k">func</span> (_m *MockUserRepository) <span class="f">EXPECT</span>() *MockUserRepository_Expecter {
+    <span class="k">return</span> &amp;MockUserRepository_Expecter{mock: &amp;_m.Mock}
+}
+
+<span class="c">// GetByID is a helper method to define mock.On call</span>
+<span class="c">//   - id int</span>
+<span class="k">func</span> (_e *MockUserRepository_Expecter) <span class="f">GetByID</span>(id <span class="k">any</span>) *MockUserRepository_GetByID_Call {
+    <span class="k">return</span> &amp;MockUserRepository_GetByID_Call{Call: _e.mock.<span class="f">On</span>(<span class="s">"GetByID"</span>, id)}
+}
+
+<span class="k">func</span> (_c *MockUserRepository_GetByID_Call) <span class="f">Return</span>(user *User, err <span class="k">error</span>) *MockUserRepository_GetByID_Call {
+    _c.Call.<span class="f">Return</span>(user, err)
+    <span class="k">return</span> _c
+}
+
+<span class="k">func</span> (_c *MockUserRepository_GetByID_Call) <span class="f">RunAndReturn</span>(run <span class="k">func</span>(id <span class="k">int</span>) (*User, <span class="k">error</span>)) *MockUserRepository_GetByID_Call {
+    _c.Call.<span class="f">Return</span>(run)
+    <span class="k">return</span> _c
+}</code></pre>
+
+<div class="win">
+  <span class="label">✅ ของฟรีชิ้นที่ 2 — ชื่อ method กลับมาให้ compiler ตรวจ</span>
+  <p style="margin-bottom:0">
+    ดูบรรทัดในสุด: <code>_e.mock.On("GetByID", id)</code>
+    <br><strong><code>EXPECT()</code> คือ syntactic sugar ที่ห่อ <code>mock.On("ชื่อ method", args...)</code> เอาไว้</strong>
+    — string ยังอยู่ แต่<strong>ย้ายไปอยู่ในไฟล์ที่เครื่องสร้าง ไม่ใช่ไฟล์ที่คุณพิมพ์</strong>
+    <br>ฝั่งที่คุณเขียนกลายเป็น <code>repo.EXPECT().GetByID(7)</code> ซึ่งเป็น method จริง →
+    พิมพ์ชื่อผิดคือ compile error
+    <br>ส่วน <code>.Return(user *User, err error)</code> เป็น type-safe เต็มตัว
+    ใส่ประเภทผิดไม่ผ่านตั้งแต่ compile
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทำไม argument ของ <code>EXPECT().GetByID(id any)</code> ถึงเป็น <code>any</code> ไม่ใช่ <code>int</code>?</strong>
+    <br>เพราะต้องเปิดช่องให้ส่ง <code>mock.Anything</code> และ <code>mock.MatchedBy(...)</code> เข้าไปได้
+    (<a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a>)
+    ซึ่งไม่ใช่ <code>int</code>
+    <br><strong>แลกกันตรงนี้:</strong> ยืดหยุ่นเรื่อง matcher แต่ไม่ได้ type-check ฝั่ง argument
+  </p>
+</div>
+
+<h2>9 · เขียนเทสจริงด้วย mock ที่ได้มา</h2>
+
+<p>นี่คือ interface ต้นทางทั้งหมด — 3 method เท่าที่เห็นในหัวข้อ 1:</p>
+
+<pre><code><span class="k">type</span> UserRepository <span class="k">interface</span> {
+    <span class="f">GetByID</span>(id <span class="k">int</span>) (*User, <span class="k">error</span>)
+    <span class="f">Save</span>(u *User) <span class="k">error</span>
+    <span class="f">CountActive</span>() <span class="k">int</span>
+}
+
+<span class="k">func</span> (s *Service) <span class="f">DisplayName</span>(id <span class="k">int</span>) (<span class="k">string</span>, <span class="k">error</span>) {
+    u, err := s.repo.<span class="f">GetByID</span>(id)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> <span class="s">""</span>, err
+    }
+    <span class="k">return</span> <span class="s">"Mr. "</span> + u.Name, <span class="k">nil</span>
+}
+
+<span class="k">func</span> (s *Service) <span class="f">Register</span>(name, email <span class="k">string</span>) <span class="k">error</span> {
+    <span class="k">if</span> email == <span class="s">""</span> {
+        <span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"email required"</span>)
+    }
+    <span class="k">return</span> s.repo.<span class="f">Save</span>(&amp;User{Name: name, Email: email})
+}</code></pre>
+
+<p>และนี่คือเทส 5 เคสที่รันผ่านจริง — <strong>สังเกตว่าไม่มี <code>AssertExpectations</code> สักบรรทัด</strong>:</p>
+
+<pre><code><span class="k">func</span> <span class="f">TestDisplayName_OK</span>(t *testing.T) {
+    repo := <span class="f">NewMockUserRepository</span>(t)
+    repo.<span class="f">EXPECT</span>().<span class="f">GetByID</span>(<span class="n">7</span>).<span class="f">Return</span>(&amp;User{ID: <span class="n">7</span>, Name: <span class="s">"Somchai"</span>}, <span class="k">nil</span>)
+
+    svc := <span class="f">NewService</span>(repo)
+    got, err := svc.<span class="f">DisplayName</span>(<span class="n">7</span>)
+
+    assert.<span class="f">NoError</span>(t, err)
+    assert.<span class="f">Equal</span>(t, <span class="s">"Mr. Somchai"</span>, got)
+}
+
+<span class="k">func</span> <span class="f">TestDisplayName_RepoError</span>(t *testing.T) {
+    repo := <span class="f">NewMockUserRepository</span>(t)
+    repo.<span class="f">EXPECT</span>().<span class="f">GetByID</span>(<span class="n">99</span>).<span class="f">Return</span>(<span class="k">nil</span>, ErrNotFound)
+
+    svc := <span class="f">NewService</span>(repo)
+    _, err := svc.<span class="f">DisplayName</span>(<span class="n">99</span>)
+
+    assert.<span class="f">ErrorIs</span>(t, err, ErrNotFound)   <span class="c">// errors.Is จากบทเรียน 12</span>
+}
+
+<span class="k">func</span> <span class="f">TestRegister_UsesMatcher</span>(t *testing.T) {
+    repo := <span class="f">NewMockUserRepository</span>(t)
+    repo.<span class="f">EXPECT</span>().<span class="f">Save</span>(mock.<span class="f">MatchedBy</span>(<span class="k">func</span>(u *User) <span class="k">bool</span> {
+        <span class="k">return</span> u.Email == <span class="s">"a@b.com"</span>
+    })).<span class="f">Return</span>(<span class="k">nil</span>)
+
+    svc := <span class="f">NewService</span>(repo)
+    assert.<span class="f">NoError</span>(t, svc.<span class="f">Register</span>(<span class="s">"Ann"</span>, <span class="s">"a@b.com"</span>))
+}
+
+<span class="k">func</span> <span class="f">TestRegister_NoEmail_RepoNeverCalled</span>(t *testing.T) {
+    repo := <span class="f">NewMockUserRepository</span>(t)
+    <span class="c">// ไม่ตั้ง expectation เลย</span>
+    svc := <span class="f">NewService</span>(repo)
+    err := svc.<span class="f">Register</span>(<span class="s">"Ann"</span>, <span class="s">""</span>)
+    assert.<span class="f">Error</span>(t, err)
+    repo.<span class="f">AssertNotCalled</span>(t, <span class="s">"Save"</span>, mock.Anything)
+}
+
+<span class="k">func</span> <span class="f">TestOldStyle_OnStillWorks</span>(t *testing.T) {
+    repo := <span class="f">NewMockUserRepository</span>(t)
+    repo.<span class="f">On</span>(<span class="s">"GetByID"</span>, <span class="n">1</span>).<span class="f">Return</span>(&amp;User{ID: <span class="n">1</span>, Name: <span class="s">"Old"</span>}, <span class="k">nil</span>)
+
+    svc := <span class="f">NewService</span>(repo)
+    got, err := svc.<span class="f">DisplayName</span>(<span class="n">1</span>)
+    assert.<span class="f">NoError</span>(t, err)
+    assert.<span class="f">Equal</span>(t, <span class="s">"Mr. Old"</span>, got)
+}</code></pre>
+
+<pre><code>$ go test ./... -v
+=== RUN   TestDisplayName_OK
+--- PASS: TestDisplayName_OK (0.00s)
+=== RUN   TestDisplayName_RepoError
+--- PASS: TestDisplayName_RepoError (0.00s)
+=== RUN   TestRegister_UsesMatcher
+--- PASS: TestRegister_UsesMatcher (0.00s)
+=== RUN   TestRegister_NoEmail_RepoNeverCalled
+--- PASS: TestRegister_NoEmail_RepoNeverCalled (0.00s)
+=== RUN   TestOldStyle_OnStillWorks
+--- PASS: TestOldStyle_OnStillWorks (0.00s)
+PASS
+ok  	example.com/shop/user	0.245s</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>เคสสุดท้ายพิสูจน์ว่า <code>On()</code> แบบเดิมยังใช้ได้</strong> —
+    ปนกับ <code>EXPECT()</code> ในไฟล์เดียวได้ด้วย
+    <br>เพราะ <code>EXPECT()</code> ก็แค่ห่อ <code>On()</code> ไว้ (หัวข้อ 8)
+    <strong>ไม่ต้องรีบไปแก้เทสเก่าทั้งหมด</strong> เขียนของใหม่ด้วย <code>EXPECT()</code> ก็พอ
+  </p>
+</div>
+
+<h2>10 · กับดัก — อาการที่ทำให้มือใหม่งงที่สุด</h2>
+
+<p>
+  เทสตกทั้งที่โค้ด production ถูก · error ชี้ไปที่ไฟล์ที่เราไม่ได้เขียน ·
+  <strong>ขึ้นมาสามก้อนพร้อมกัน</strong> — นี่คือกับดักที่คุณจะเจอบ่อยที่สุด
+</p>
+
+<div class="predict">
+  <pre><code><span class="k">func</span> <span class="f">TestTrap_WrongArgument</span>(t *testing.T) {
+    repo := <span class="f">NewMockUserRepository</span>(t)
+    repo.<span class="f">EXPECT</span>().<span class="f">GetByID</span>(<span class="n">7</span>).<span class="f">Return</span>(&amp;User{ID: <span class="n">7</span>, Name: <span class="s">"Somchai"</span>}, <span class="k">nil</span>)
+
+    svc := <span class="f">NewService</span>(repo)
+    _, _ = svc.<span class="f">DisplayName</span>(<span class="n">8</span>)   <span class="c">// ← ส่ง 8 แต่ตั้ง expectation ไว้ที่ 7</span>
+}</code></pre>
+  <p class="ask">
+    <code>DisplayName</code> ทำงานถูกต้องทุกประการ · <code>GetByID</code> ก็ถูกเรียกจริง
+    · แค่ค่าไม่ตรงกับที่ตั้งไว้
+    <br><strong>เทสนี้ได้ output อะไร?</strong>
+    (เทียบกับเคสเดียวกันของ mock เขียนมือในหัวข้อ 2 ที่ผ่านฉลุย)
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== RUN   TestTrap_WrongArgument
+    mock.go:361:
+
+        mock: Unexpected Method Call
+        -----------------------------
+
+        GetByID(int)
+        		0: 8
+
+        The closest call I have is:
+
+        GetByID(int)
+        		0: 7
+
+
+        <strong>Diff: 0: FAIL:  (int=8) != (int=7)</strong>
+        at: [/.../app/user/mocks_test.go:84 /.../app/user/user.go:29 /.../app/user/fail2_test.go:11]
+    mocks_test.go:20: FAIL:	GetByID(int)
+        		at: [/.../app/user/mocks_test.go:118 /.../app/user/fail2_test.go:8]
+    mocks_test.go:20: FAIL: 0 out of 1 expectation(s) were met.
+        	The code you are testing needs to make 1 more call(s).
+--- FAIL: TestTrap_WrongArgument (0.00s)
+FAIL
+FAIL	example.com/shop/user	0.440s</code></pre>
+    <p>
+      <strong>บั๊กเดียวกับหัวข้อ 2 เป๊ะ ๆ แต่คราวนี้จับได้</strong> —
+      ไม่ต้องเขียน assert เรื่อง argument เองสักบรรทัด
+    </p>
+    <p><strong>วิธีอ่านทีละบรรทัด:</strong></p>
+    <ul>
+      <li><code>mock: Unexpected Method Call</code> — testify จับคู่ call ด้วยการเทียบ
+          argument ทุกตัวแบบตรงเป๊ะ ไม่ตรง = ถือว่าเป็น call ที่ไม่คาดคิด</li>
+      <li><code>The closest call I have is</code> — expectation ที่ใกล้เคียงที่สุดที่คุณตั้งไว้</li>
+      <li><strong><code>Diff: 0: FAIL:  (int=8) != (int=7)</code></strong> —
+          บรรทัดที่ต้องอ่าน · <code>0</code> คือ index ของ argument ·
+          <strong>ซ้ายคือค่าที่โค้ดส่งจริง ขวาคือค่าที่คุณตั้งไว้</strong></li>
+      <li><code>at: [... user.go:29 ... fail2_test.go:11]</code> —
+          ตัวสุดท้ายในวงเล็บคือบรรทัดในเทสของคุณ ตัวก่อนหน้าคือบรรทัดในโค้ด production ที่เรียก</li>
+    </ul>
+    <p>
+      <strong>ทำไมถึงมี FAIL สามก้อน?</strong>
+      <br>testify เจอ call ที่ไม่คาดคิด → เรียก <code>t.FailNow</code> (panic) หยุดเทสตรงนั้น →
+      <code>t.Cleanup</code> จาก constructor ทำงานต่อ พบว่า expectation ที่ตั้งไว้ยังไม่ถูกใช้ →
+      ฟ้องเพิ่มอีกสองก้อน
+      <br><strong>ก้อนแรกคือต้นเหตุจริงเสมอ อีกสองก้อนเป็นผลพลอยได้ อย่าตกใจ</strong>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>ทางแก้:</strong> ถ้าเลข 7 คือสิ่งที่ถูก → โค้ด production ส่งผิด แก้โค้ด ·
+      ถ้าไม่สนใจค่านั้นจริง ๆ → ใช้ <code>mock.Anything</code> หรือ
+      <code>mock.MatchedBy(func(u *User) bool { ... })</code>
+      <br><em>อย่าเผลอเปลี่ยน expectation เป็น 8 เพื่อให้เทสเขียว — นั่นคือการลบเทสทิ้ง</em>
+    </p>
+  </div>
+</div>
+
+<h3 style="margin-top:1.4rem">กับดักฝาแฝด: ตั้ง expectation แล้วไม่ถูกเรียกเลย</h3>
+
+<p>
+  อาการคล้ายกันแต่คนละสาเหตุ — และหน้าตา error ต่างกันชัดเจน
+  ถ้าอ่านเป็นจะแยกออกทันที
+</p>
+
+<pre><code>=== RUN   TestTrap_ExpectationNeverCalled
+    mocks_test.go:20: FAIL:	Save(*user.User)
+        		at: [/.../app/user/mocks_test.go:169 /.../app/user/fail1_test.go:8]
+    mocks_test.go:20: FAIL: 0 out of 1 expectation(s) were met.
+        	The code you are testing needs to make 1 more call(s).
+        	at: [/.../app/user/mocks_test.go:20 .../testing/testing.go:1317 ...]
+--- FAIL: TestTrap_ExpectationNeverCalled (0.00s)
+FAIL
+FAIL	example.com/shop/user	0.457s</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th>argument ไม่ตรง</th><th>ตั้งแล้วไม่ถูกเรียก</th></tr>
+  <tr><td>ก้อนแรกของ error</td><td><code>mock: Unexpected Method Call</code></td><td><code>FAIL: Save(*user.User)</code></td></tr>
+  <tr><td>มี <code>Diff:</code> ไหม</td><td>มี — บอกค่าที่ต่างกัน</td><td>ไม่มี — เพราะไม่มี call ให้เทียบ</td></tr>
+  <tr><td>ต้นเหตุ</td><td>โค้ดเรียกด้วยค่าที่ไม่ตรง</td><td>โค้ดไม่เรียก method นั้นเลย</td></tr>
+  <tr><td>อ่านที่ไหน</td><td>บรรทัด <code>Diff:</code></td><td>ตัวท้ายสุดใน <code>[]</code> ก้อนแรก</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทั้งสองกรณี error ชี้ไปที่ <code>mocks_test.go:20</code> — ไฟล์ที่ generate มา</strong>
+    ไม่ใช่ไฟล์เทสของเรา
+    <br>อย่าไปตามอ่านบรรทัดนั้น มันคือ <code>t.Cleanup</code> ใน constructor
+    <strong>ให้ไปอ่านชื่อไฟล์ที่ลงท้ายด้วย <code>_test.go</code> ใน <code>[]</code> แทน</strong>
+    — นั่นคือบรรทัดของคุณ
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">กับดักที่เหลือ ซึ่งเจอแน่ระหว่างทาง</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>อาการที่เห็น</th><th>สาเหตุ</th><th>แก้</th></tr>
+  <tr>
+    <td><code>panic: no return value specified for CountActive</code></td>
+    <td><code>EXPECT()</code> แล้วลืมต่อ <code>.Return()</code> — mock ไม่รู้จะคืนอะไร</td>
+    <td>อ่านคำหลัง <code>specified for</code> คือชื่อ method ที่ลืม แล้วต่อ <code>.Return(...)</code></td>
+  </tr>
+  <tr>
+    <td><code>*MockUserRepository does not implement UserRepository (missing method Delete)</code></td>
+    <td>แก้ interface แล้วลืมรัน mockery ใหม่ — mock เป็นโค้ด static ไม่ sync เอง</td>
+    <td>รัน <code>mockery</code> ใหม่ · เจอคำว่า <code>missing method</code> ให้นึกถึงข้อนี้ก่อน</td>
+  </tr>
+  <tr>
+    <td><code>undefined: user.NewMockUserRepository</code> จาก package อื่น</td>
+    <td><code>filename</code> default คือ <code>mocks_test.go</code> → Go คอมไพล์ให้เฉพาะ test binary ของ package นั้น</td>
+    <td>เปลี่ยนเป็น <code>filename: mocks.go</code> <strong>แล้วลบไฟล์เก่าทิ้งด้วย</strong></td>
+  </tr>
+  <tr>
+    <td><code>NewMockUserRepository redeclared in this block</code></td>
+    <td>เปลี่ยน <code>filename</code> แล้วไฟล์เก่าค้าง — mockery ไม่ลบของเดิมให้</td>
+    <td><code>rm user/mocks_test.go</code> ก่อนรันใหม่</td>
+  </tr>
+  <tr>
+    <td><code>assert: mock: The method has been called over 1 times.</code></td>
+    <td>ตั้ง <code>Once()</code> ไว้ แต่โค้ดเรียกซ้ำ</td>
+    <td>ใช้ <code>.Times(n)</code> หรือไม่ใส่ <code>Once()</code> เลย (default คือกี่ครั้งก็ได้)</td>
+  </tr>
+  <tr>
+    <td>config ที่แก้ไว้หายเกลี้ยง กลับเป็น default</td>
+    <td>รัน <code>mockery init</code> ซ้ำ — มันเขียนทับตรง ๆ ไม่เตือน ไม่มี prompt</td>
+    <td>รัน <code>init</code> ครั้งเดียวตอนเริ่มโปรเจกต์ · จะรันซ้ำต้อง backup เอง</td>
+  </tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ <code>Writing template to file</code> ไม่ได้แปลว่าสำเร็จ</strong> —
+    ถ้าตั้ง <code>force-file-write: false</code> แล้วไฟล์มีอยู่แล้ว log จะเป็นแบบนี้:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>INF Executing template file=/.../app/user/mocks_test.go
+INF Writing template to file file=/.../app/user/mocks_test.go
+ERR output file exists, can't write mocks file=/.../app/user/mocks_test.go force-file-write=false
+FTL app failed error="outfile exists"</code></pre>
+  <p style="margin:0.6rem 0 0">
+    มันขึ้น "Writing" ก่อนแล้วค่อย ERR —
+    <strong>อ่าน log ให้ถึงบรรทัดสุดท้ายเสมอ</strong>
+  </p>
+</div>
+
+<h2>11 · แล้วตกลง mockery คุ้มไหม — ตัวเลขจริง</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สิ่งที่วัด</th><th>บรรทัด</th></tr>
+  <tr><td>mock ที่ mockery generate (<code>mocks.go</code>)</td><td><strong>193</strong></td></tr>
+  <tr><td>mock เขียนมือให้ครอบคลุมงานเดียวกัน</td><td><strong>35</strong></td></tr>
+  <tr><td><code>.mockery.yml</code> ที่เพิ่มเข้ามา</td><td><strong>28</strong></td></tr>
+  <tr><td>interface ต้นทาง</td><td>3 method (ทั้งไฟล์ 41)</td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ mockery ไม่ได้ "ลดจำนวนบรรทัดในโปรเจกต์" — มันเพิ่มขึ้นกว่า 5.5 เท่า</strong>
+    (193 vs 35 บรรทัด) แถมยังบวก config อีก 28 บรรทัด
+    <br>ถ้าใครเคลมว่า "ประหยัดโค้ด" ต้องพูดให้ตรงว่า
+    <strong>ประหยัดบรรทัดที่มนุษย์ต้องพิมพ์และดูแลเอง: 35 → 0</strong>
+    ไม่ใช่บรรทัดในไฟล์
+  </p>
+</div>
+
+<div class="win">
+  <span class="label">📊 คุณค่าจริงที่วัดได้คือ assertion ที่ได้ฟรี</span>
+  <p style="margin-bottom:0">
+    เทียบเคสเดียวกันตรง ๆ — โค้ดส่ง argument ผิด:
+  </p>
+  <pre style="margin:0.6rem 0"><code>mock เขียนมือ  →  --- PASS  (บั๊กหลุดออก production)
+mockery       →  Diff: 0: FAIL:  (int=8) != (int=7)</code></pre>
+  <p style="margin:0.6rem 0 0">
+    เพราะ mock เขียนมือต้องเขียน assert เรื่อง argument เองทุกครั้ง
+    (ต้องมี field <code>GetByIDCalls []int</code> + <code>if</code> เช็คอีกราว 4 บรรทัดต่อ method)
+    ส่วน mockery ได้มาพร้อม <code>EXPECT()</code> และได้
+    <code>AssertExpectations</code> อัตโนมัติจาก <code>t.Cleanup</code> ใน constructor
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>เลือกยังไงแบบไม่โม้:</strong>
+    <br>✅ <strong>ยิ่ง interface มี method เยอะ + ยิ่งต้อง assert argument ละเอียด mockery ยิ่งคุ้ม</strong>
+    — ซึ่งคือ repository ทุกตัวที่คุณจะเขียนหลัง
+    <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a>
+    <br>⚖️ <strong>interface 1–2 method ที่แค่ stub ค่า return เฉย ๆ เขียนมือยังคุ้มกว่า</strong>
+    เพราะไม่ต้องแบก config + toolchain + ขั้นตอน "อย่าลืมรัน mockery" ในทีม
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ใน mockery v3 คำสั่งที่ใช้ generate mock คืออะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>mockery generate</code> โดยต้องระบุชื่อ interface ต่อท้ายเสมอ</button>
+    <button class="opt"><code>mockery init</code> เพราะมันสร้าง config พร้อม mock ให้ในคราวเดียว</button>
+    <button class="opt"><code>mockery</code> เปล่า ๆ ไม่ต้องมี subcommand ใด ๆ ต่อท้าย</button>
+    <button class="opt"><code>mockery build</code> โดยอ่านค่าที่ต้องใช้จากไฟล์ config ให้เอง</button>
+  </div>
+  <div class="explain">
+    <p><code>mockery --help</code> แสดง subcommand ทั้งหมดแค่ 6 ตัว —
+    <strong>completion · help · init · migrate · showconfig · version</strong>
+    <strong>ไม่มี <code>generate</code> และไม่มี <code>build</code></strong>
+    <br>พิมพ์ตามนิสัย v2 จะได้ <code>Error: unknown command "generate" for "mockery"</code> exit 1
+    <br>บรรทัด <code>Usage: mockery [flags]</code> คือคำตอบ: root command <em>คือ</em> ตัว generate
+    <br>ส่วน <code>init</code> สร้างแค่ <code>.mockery.yml</code> ไม่ได้ generate mock ให้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. รัน <code>mockery</code> แล้ว log จบที่ <code>Done parsing configured packages.</code> exit code 0 แต่ไม่มีไฟล์ mock — แปลว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">สำเร็จแล้วแต่ไฟล์ถูก cache ไว้ ต้องลบ cache แล้วรันใหม่อีกรอบ</button>
+    <button class="opt">ไม่ได้ generate อะไรเลย เพราะ config ชี้ package ที่หา interface ไม่เจอ</button>
+    <button class="opt">generate สำเร็จแต่ไฟล์ถูกเขียนไปที่โฟลเดอร์ mocks กลางของโปรเจกต์</button>
+    <button class="opt">มี interface แต่ยังไม่ได้ลง testify จึงข้ามขั้นตอนเขียนไฟล์ไป</button>
+  </div>
+  <div class="explain">
+    <p><strong>exit code ของ mockery v3.7.3 เชื่อไม่ได้</strong> — ผมทดสอบ 3 แบบ
+    (module root ที่ไม่มีไฟล์ <code>.go</code> · package ที่ไม่มีอยู่จริง ·
+    package ที่ไม่มีในโลก) <strong>ได้ exit 0 ทั้งสามกรณี ไม่ error สักอัน</strong>
+    <br>หลักฐานเดียวที่เชื่อได้คือบรรทัด
+    <code>INF adding interface to collection ... interface=&lt;ชื่อ&gt;</code>
+    <br>สาเหตุที่พบบ่อยสุด: <code>mockery init</code> สร้าง config ชี้ module root มาให้
+    แต่ interface อยู่ใน sub-package → เติม <code>recursive: true</code> ใต้
+    <code>packages.&lt;module&gt;.config</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. เทสตกด้วยบรรทัด <code>Diff: 0: FAIL:  (int=8) != (int=7)</code> — อ่านว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">mock คืนค่า 8 ออกมา แต่โค้ดที่เทสคาดว่าจะได้ค่า 7 กลับมา</button>
+    <button class="opt">method ถูกเรียก 8 ครั้ง ทั้งที่ตั้ง expectation ไว้แค่ 7 ครั้ง</button>
+    <button class="opt">interface เปลี่ยนไปแล้ว ต้องรัน mockery ใหม่ให้ signature ตรงกัน</button>
+    <button class="opt">โค้ดเรียก method ด้วยค่า 8 แต่ expectation ถูกตั้งไว้ที่ค่า 7</button>
+  </div>
+  <div class="explain">
+    <p>เลข <code>0</code> ข้างหน้าคือ <strong>index ของ argument</strong> (ตัวแรก)
+    <br><strong>ซ้ายคือค่าที่โค้ดส่งมาจริง ขวาคือค่าที่เราตั้งไว้ใน <code>EXPECT()</code>/<code>On()</code></strong>
+    <br>testify จับคู่ call ด้วยการเทียบ argument ทุกตัวแบบตรงเป๊ะ ไม่ตรง =
+    <code>mock: Unexpected Method Call</code> แล้ว panic หยุดเทสทันที
+    <br>ตัวเลือกเรื่องจำนวนครั้งผิด — กรณีนั้นข้อความจะเป็น
+    <code>The method has been called over 1 times.</code> ซึ่งหน้าตาต่างกันชัดเจน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. ทำไมเทสในหัวข้อ 9 ถึงไม่มี <code>defer repo.AssertExpectations(t)</code> เลยสักบรรทัด?</p>
+  <div class="opts">
+    <button class="opt">constructor ลงทะเบียน <code>t.Cleanup</code> ที่เรียกให้เองตอนจบเทสแล้ว</button>
+    <button class="opt"><code>EXPECT()</code> ตรวจ expectation ให้ทันทีตั้งแต่บรรทัดที่ตั้งค่า</button>
+    <button class="opt">template <code>testify</code> ปิดการตรวจ expectation ไว้เป็นค่าเริ่มต้น</button>
+    <button class="opt">mockery v3 ย้ายการตรวจไปทำตอน compile จึงไม่ต้องเรียกตอนรัน</button>
+  </div>
+  <div class="explain">
+    <p>ใน <code>NewMockUserRepository(t)</code> ที่ generate ออกมามีบรรทัดนี้อยู่:
+    <code>t.Cleanup(func() { mock.AssertExpectations(t) })</code>
+    <br>เป็น <code>t.Cleanup</code> ตัวเดียวกับที่เรียนไปในบทเรียน 15 —
+    <strong>ทำงานอัตโนมัติตอนเทสจบ ไม่ว่าจะจบแบบ pass หรือ fail</strong>
+    <br>นี่คือความต่างสำคัญจาก v2 · ถ้ายังพิมพ์ <code>defer AssertExpectations</code>
+    ตามนิสัยเดิม จะกลายเป็นเรียกซ้ำโดยไม่จำเป็น
+    <br>และเพราะมันทำงานเสมอนี่เอง กับดัก "ตั้งแล้วไม่ถูกเรียก" ถึงฟ้องได้
+    ทั้งที่เราไม่ได้เขียน assert อะไรเลย</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ยก repository จากบทเรียน 27 มาเข้าโรงงาน</span>
+  <p>
+    ใช้โปรเจกต์ที่คุณทำไว้ในบทเรียน 27 (มี <code>internal/</code> · repository · service)
+    ถ้ายังไม่มี ให้สร้าง interface สัก 3 method ขึ้นมาใหม่ตามตัวอย่างในหัวข้อ 9
+  </p>
+  <ol>
+    <li><strong>เขียน mock ด้วยมือก่อน:</strong> ทำ <code>FakeXxxRepository</code>
+        ให้ครบทุก method แล้ว <code>wc -l</code> ดูว่ากี่บรรทัด
+        <br>เขียนเทส 1 เคสที่ <strong>โค้ดส่ง argument ผิด แต่เทสยังผ่าน</strong> —
+        พิสูจน์ให้ตัวเองเห็นว่ารูโหว่นี้มีจริง</li>
+    <li>ติดตั้ง: <code>go install github.com/vektra/mockery/v3@latest</code>
+        แล้วเช็คด้วย <code>mockery version</code>
+        <br><strong>ลองพิมพ์ <code>mockery --version</code> ด้วยหนึ่งครั้ง</strong> เพื่อจำ error ให้ขึ้นใจ</li>
+    <li><strong>รัน <code>mockery</code> ก่อนสร้าง config</strong> — จดข้อความ
+        <code>FTL</code> ที่ได้ แล้วค่อย <code>mockery init &lt;module จาก go.mod&gt;</code></li>
+    <li>เปิด <code>.mockery.yml</code> (<code>ls -a</code> ถึงจะเห็น) แล้วรัน <code>mockery</code>
+        <br><strong>มีบรรทัด <code>adding interface to collection</code> ไหม?</strong>
+        ถ้าไม่มี → เติม <code>recursive: true</code> แล้วรันใหม่</li>
+    <li><code>go mod tidy</code> แล้วเขียนเทสใหม่ 3 เคสด้วย <code>EXPECT()</code>:
+        เคสปกติ · เคส repository คืน error (ยืนยันด้วย <code>assert.ErrorIs</code>
+        จาก <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>) ·
+        เคสใช้ <code>mock.MatchedBy</code></li>
+    <li><strong>สร้างกับดักที่ 1:</strong> เอาเทสข้อ 1 (argument ผิด) มาเขียนใหม่ด้วย mock ของ mockery
+        <br>คราวนี้ตกไหม? ชี้ให้ได้ว่าบรรทัด <code>Diff:</code> บอกอะไร</li>
+    <li><strong>สร้างกับดักที่ 2:</strong> ตั้ง <code>EXPECT()</code> ไว้แต่ไม่เรียก
+        <br>error ต่างจากข้อ 6 ตรงไหน? ตอบให้ได้โดยไม่ต้องเปิดย้อนกลับมาดู</li>
+    <li><strong>สร้างกับดักที่ 3:</strong> เพิ่ม method ใหม่ใน interface แล้ว
+        <strong>อย่าเพิ่ง</strong>รัน mockery — <code>go test ./...</code> ก่อน
+        แล้วดูว่าพังที่ขั้นไหน (compile หรือ run?)</li>
+    <li><strong>ท้าทาย 1:</strong> ตั้ง <code>EXPECT()</code> แล้วจงใจไม่ต่อ <code>.Return()</code>
+        — เดาก่อนว่าจะได้ FAIL ธรรมดาหรืออย่างอื่น แล้วค่อยรัน (กดเฉลยด้านล่างเทียบได้)</li>
+    <li><strong>ท้าทาย 2:</strong> เปลี่ยน <code>filename</code> เป็น <code>mocks.go</code>
+        แล้วเขียนเทสใน package อื่นที่ใช้ mock ตัวนี้
+        <br>รันครั้งแรกจะเจอ <code>redeclared in this block</code> — <strong>รู้อยู่แล้วว่าทำไม แก้เลย</strong></li>
+  </ol>
+  <button class="reveal">เฉลยท้าทาย 1</button>
+  <div class="answer">
+    <p><strong>ไม่ใช่ assertion failure ธรรมดา — มัน panic ทั้ง test binary</strong>:</p>
+    <pre style="margin:0.6rem 0"><code>=== RUN   TestTrap_ForgotReturn
+--- FAIL: TestTrap_ForgotReturn (0.00s)
+panic: no return value specified for CountActive [recovered, repanicked]
+
+goroutine 35 [running]:
+testing.tRunner.func1.2({0x1029efc20, 0x102a43f40})
+	/Users/.../go/1.26.5/src/testing/testing.go:1974 +0x1a0
+...
+example.com/shop/user.(*MockUserRepository).CountActive(0x2baf863d6460?)
+	/.../app/user/mocks_test.go:43 +0xb4
+example.com/shop/user.TestTrap_ForgotReturn(0x2baf863fc6c8?)
+	/.../app/user/fail3_test.go:9 +0x5c
+FAIL	example.com/shop/user	0.547s</code></pre>
+    <p>
+      เหตุผลอยู่ในโค้ดที่ generate มาเอง (หัวข้อ 8):
+      <br><code>if len(ret) == 0 { panic("no return value specified for CountActive") }</code>
+      <br>เพราะ mock ไม่รู้จะคืนอะไร และคืน zero value มั่ว ๆ ก็อันตรายกว่า —
+      <strong>เลือกพังเสียงดังดีกว่าปล่อยค่าผิดออกไป</strong>
+      (เหตุผลเดียวกับที่ Go runtime ฆ่าโปรแกรมทิ้งเมื่อเจอ concurrent map writes
+      ใน <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a>)
+    </p>
+    <p style="margin-bottom:0">
+      <strong>วิธีอ่าน stack trace ยาว ๆ นี้:</strong> อย่าอ่านจากบนลงล่าง
+      <br>อ่านคำหลัง <code>specified for</code> → ได้ชื่อ method ที่ลืม ·
+      แล้วมองหาบรรทัดที่ลงท้าย <code>_test.go</code> ตัวสุดท้าย
+      (<code>fail3_test.go:9</code>) → ได้บรรทัดของคุณ
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 1 กับข้อ 6 คือคู่ที่ผมอยากให้ทำติดกันที่สุด</strong> —
+    บั๊กเดียวกัน โค้ดเดียวกัน ต่างกันแค่ mock มาจากไหน
+    แล้วผลลัพธ์คือ PASS กับ FAIL
+    <br>ถ้าคุณเห็นความต่างนั้นด้วยตาตัวเอง คุณจะไม่ต้องท่องว่า "mockery ดียังไง" อีกเลย
+    <br>บทถัดไป: เทสที่ mock ช่วยไม่ได้ — เพราะมันต้องคุยกับของจริง
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="../../day-6/lessons/0027-project-layout-gorm.html">← บทเรียน 27</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0029-integration-test.html">บทเรียน 29 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://vektra.github.io/mockery/latest/">Mockery — เอกสารทางการ</a> · <a href="https://vektra.github.io/mockery/latest/configuration/">Configuration</a> — รายการฟิลด์ทั้งหมดใน <code>.mockery.yml</code></li>
+  <li><a href="https://github.com/vektra/mockery">github.com/vektra/mockery</a> — source · เวอร์ชันที่ใช้ในบทนี้คือ <strong>v3.7.3</strong></li>
+  <li><a href="https://pkg.go.dev/github.com/stretchr/testify/mock">pkg.go.dev — testify/mock</a> — <code>On</code> · <code>Return</code> · <code>Times</code> · <code>MatchedBy</code> · <code>Anything</code> · <code>AssertExpectations</code></li>
+  <li><a href="https://pkg.go.dev/testing#T.Cleanup">pkg.go.dev — testing.T.Cleanup</a> — กลไกที่ทำให้ constructor ตรวจ expectation ให้เอง</li>
+  <li><a href="https://go.dev/ref/mod#go-install">Go Modules Reference — <code>go install</code></a> — ทำไม binary ถึงไปอยู่ที่ <code>$GOPATH/bin</code></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

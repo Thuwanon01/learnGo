@@ -51,7 +51,7 @@
 <pre><code><span class="k">func</span> <span class="f">main</span>() {
     ctx, cancel := context.<span class="f">WithCancel</span>(context.<span class="f">Background</span>())
 
-    <span class="k">go</span> <span class="f">worker</span>(ctx)
+    <span class="k">go</span> <span class="f">worker</span>(ctx, <span class="s">"A"</span>)               <span class="c">// ตัว worker เขียนยังไง ดูหัวข้อ 3</span>
 
     time.<span class="f">Sleep</span>(<span class="n">2</span> * time.Second)
     fmt.<span class="f">Println</span>(<span class="s">"สั่งยกเลิก..."</span>)
@@ -194,7 +194,26 @@ DeadlineExceeded? true</code></pre>
   </div>
 </div>
 
-<p>รอให้ worker หยุดจริง ๆ ต้องใช้ <code>WaitGroup</code> คู่กับ context:</p>
+<p>
+  รอให้ worker หยุดจริง ๆ ต้องใช้ <code>WaitGroup</code> คู่กับ context
+  — <code>worker</code> จึงต้องรับ <code>wg</code> เพิ่มอีกตัว
+  <strong>เพิ่มจากเวอร์ชันหัวข้อ 3 แค่สองบรรทัด</strong> ที่เหลือเหมือนเดิมทุกอย่าง:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">worker</span>(ctx context.Context, name <span class="k">string</span>, wg *sync.WaitGroup) {
+    <span class="k">defer</span> wg.<span class="f">Done</span>()              <span class="c">// ← เพิ่มบรรทัดนี้</span>
+    <span class="k">for</span> {
+        <span class="k">select</span> {
+        <span class="k">case</span> &lt;-ctx.<span class="f">Done</span>():
+            fmt.<span class="f">Printf</span>(<span class="s">"[%s] ได้รับสัญญาณ หยุด: %v\n"</span>, name, ctx.<span class="f">Err</span>())
+            <span class="k">return</span>
+
+        <span class="k">default</span>:
+            fmt.<span class="f">Printf</span>(<span class="s">"[%s] ทำงาน...\n"</span>, name)
+            time.<span class="f">Sleep</span>(<span class="n">400</span> * time.Millisecond)
+        }
+    }
+}</code></pre>
 
 <pre><code><span class="k">var</span> wg sync.WaitGroup
 wg.<span class="f">Add</span>(<span class="n">2</span>)
@@ -237,6 +256,13 @@ fmt.<span class="f">Println</span>(<span class="s">"ทุก worker หยุ�
     <br>1. <code>ctx context.Context</code> เป็น <strong>parameter ตัวแรก</strong> เสมอ
     <br>2. ชื่อตัวแปรคือ <code>ctx</code> — ไม่ใช่ <code>c</code> หรือ <code>context</code>
     <br>3. <strong>ห้ามเก็บ context ไว้ใน struct</strong> — ส่งผ่าน parameter อย่างเดียว
+    <br><span style="padding-left:1.2rem">เพราะ <code>ctx</code> ผูกกับ
+    <strong>"หนึ่ง request"</strong> แต่ struct อย่าง repository ถูกสร้าง
+    <em>ครั้งเดียว</em> แล้วใช้ร่วมกันทุก request</span>
+    <br><span style="padding-left:1.2rem">ถ้าเก็บ <code>ctx</code> ของ request แรก
+    ไว้ใน struct request ที่ 2, 3, 4 จะได้ <code>ctx</code> ของคนอื่นไปใช้ —
+    พอ request แรกถูก cancel <strong>ทุกคนที่มาทีหลังจะถูกยกเลิกตามไปด้วย</strong>
+    ทั้งที่ไม่เกี่ยวอะไรเลย</span>
     <br>4. ห้ามส่ง <code>nil</code> — ถ้ายังไม่มีให้ใช้ <code>context.TODO()</code>
     <br><br>
     ใน HTTP handler คุณได้ context มาฟรีจาก <code>r.Context()</code>
@@ -295,7 +321,12 @@ fmt.<span class="f">Println</span>(<span class="s">"ทุก worker หยุ�
 fmt.<span class="f">Println</span>(<span class="s">"ได้รับสัญญาณปิด:"</span>, ctx.<span class="f">Err</span>())
 
 <span class="c">// เก็บงานให้เรียบร้อยก่อนจบ</span>
-srv.<span class="f">Shutdown</span>(shutdownCtx)</code></pre>
+<span class="c">// context ตัวที่สอง: ให้เวลาเก็บงานค้าง 30 วินาที ไม่เสร็จก็ตัดจบ</span>
+shutdownCtx, cancelShutdown := context.<span class="f">WithTimeout</span>(
+    context.<span class="f">Background</span>(), <span class="n">30</span>*time.Second)
+<span class="k">defer</span> <span class="f">cancelShutdown</span>()
+
+srv.<span class="f">Shutdown</span>(shutdownCtx)   <span class="c">// srv คือ *http.Server ที่เปิดไว้ข้างบน — ชั้น HTTP เรียนสัปดาห์ที่ 3</span></code></pre>
 
 <p>
   <code>signal.NotifyContext</code> ทำให้สัญญาณจากระบบปฏิบัติการ

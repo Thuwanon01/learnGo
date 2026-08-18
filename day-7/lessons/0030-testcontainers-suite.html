@@ -1,0 +1,778 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 30 — Testcontainers ใช้จริง: TestMain, suite และ sync.Once</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 30 · Day 7 · Testcontainers</p>
+  <h1>Testcontainers ใช้จริง — TestMain, suite และ <code>sync.Once</code></h1>
+  <p class="meta">~18 นาที · ต้องมี: <a href="./0029-integration-test.html">บทเรียน 29</a>, <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a> (<code>sync</code>), <a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a> (testify)</p>
+  <p class="standfirst">
+    บทที่แล้วคุณเปิด container ของจริงได้แล้ว และเห็นว่ามันจับบั๊กที่ mock จับไม่ได้
+    <br>ปัญหาคือ <strong>ถ้าเขียนตามตรง ๆ ทุกเทสจะเปิด container ของตัวเอง</strong> —
+    ผมวัดจริง: 4 เทสใช้เวลา <strong>4.264 วินาที</strong> ทั้งที่งานจริงในเทสใช้เวลาไม่ถึงเสี้ยววินาที
+    <br>บทนี้คือวิธีทำให้ 4 เทสเดียวกันเหลือ <strong>1.727 วินาที</strong>
+    และทำให้ <code>go test -short</code> ไม่ต้องมี Docker เลย
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ต้นทุนที่แท้จริงของ "container ต่อหนึ่งเทส"</h2>
+
+<p>
+  ผมเขียนเทส 4 ตัวที่<strong>เหมือนกันเป๊ะ</strong> ต่างกันแค่วิธีจัดการ container
+  แบบแรกคือแบบที่ทุกคนเขียนโดยธรรมชาติ — <code>Run</code> ต้นเทส <code>Terminate</code> ท้ายเทส:
+</p>
+
+<pre><code>=== RUN   TestFreshA
+    percontainer_test.go:42: fresh container boot=1.015561625s dsn=postgres://testuser:testpass@localhost:<strong>32778</strong>/testdb?sslmode=disable
+--- PASS: TestFreshA (1.16s)
+=== RUN   TestFreshB
+    percontainer_test.go:52: fresh container boot=755.348ms dsn=postgres://testuser:testpass@localhost:<strong>32779</strong>/testdb?sslmode=disable
+--- PASS: TestFreshB (0.90s)
+=== RUN   TestFreshC
+    percontainer_test.go:62: fresh container boot=752.309917ms dsn=postgres://testuser:testpass@localhost:<strong>32780</strong>/testdb?sslmode=disable
+--- PASS: TestFreshC (0.88s)
+=== RUN   TestFreshD
+    percontainer_test.go:72: fresh container boot=761.385084ms dsn=postgres://testuser:testpass@localhost:<strong>32781</strong>/testdb?sslmode=disable
+--- PASS: TestFreshD (0.91s)
+PASS
+ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
+
+<p>
+  อ่านตัวเลขให้ออก: <strong>ตัวแรกแพงกว่าเพื่อน (1.01s)</strong> เพราะรวมเวลา start
+  Ryuk reaper เข้าไปด้วย ตัวถัด ๆ ไปประมาณ 0.75 วินาทีเท่ากันหมด
+  <br>แปลว่า<strong>ต้นทุนของการเพิ่มเทสอีก 1 ตัว คือ ~760 มิลลิวินาที</strong> —
+  โปรเจกต์ที่มี 60 เทสก็คือรอ 45 วินาทีทุกครั้งที่กด save
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    สังเกต port: <code>32778 / 32779 / 32780 / 32781</code> ไม่ซ้ำกันเลยสักตัว —
+    นี่คือ dynamic port ที่คุณเจอในบทที่แล้ว โผล่มาให้เห็นอีกรอบ
+    <br>ตลอดการตรวจครั้งนี้ผมเจอ port ที่ถูกสุ่มมา 32769 ถึง 32812 <strong>ไม่เคยซ้ำ</strong>
+  </p>
+</div>
+
+<h2>2 · <code>sync.Once</code> — เปิดครั้งเดียว ใช้ทั้ง package</h2>
+
+<p>
+  ใน <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a> คุณเรียนว่า
+  package <code>sync</code> มีไว้ประสานงานระหว่าง goroutine
+  <br><code>sync.Once</code> คืออีกตัวในตระกูลเดียวกัน สัญญาของมันสั้นมาก:
+  <strong>โค้ดใน <code>Do(f)</code> จะรันแค่ครั้งเดียวตลอดอายุของ process</strong>
+  ต่อให้ถูกเรียกพร้อมกันจากหลาย goroutine ก็ตาม — คนที่มาทีหลังจะ<em>รอ</em>จนตัวแรกทำเสร็จ
+</p>
+
+<pre><code><span class="k">var</span> (
+    sharedOnce sync.Once
+    sharedCtr  *tcpostgres.PostgresContainer
+    sharedDB   *gorm.DB
+    sharedDSN  <span class="k">string</span>
+    sharedErr  <span class="k">error</span>
+    SharedBoot time.Duration
+)
+
+<span class="c">// SharedDB คืน DB ที่ใช้ร่วมกันทั้ง process โดย boot container แค่ครั้งเดียว</span>
+<span class="k">func</span> <span class="f">SharedDB</span>(t *testing.T) (*gorm.DB, <span class="k">string</span>) {
+    t.<span class="f">Helper</span>()
+    sharedOnce.<span class="f">Do</span>(<span class="k">func</span>() {
+        ctx := context.<span class="f">Background</span>()
+        <span class="k">var</span> d time.Duration
+        sharedCtr, d, sharedErr = <span class="f">StartPostgres</span>(ctx)
+        SharedBoot = d
+        <span class="k">if</span> sharedErr != <span class="k">nil</span> {
+            <span class="k">return</span>
+        }
+        sharedDB, sharedDSN, sharedErr = <span class="f">OpenGorm</span>(ctx, sharedCtr)
+        log.<span class="f">Printf</span>(<span class="s">"[sync.Once] container booted in %v dsn=%s"</span>, d, sharedDSN)
+    })
+    <span class="k">if</span> sharedErr != <span class="k">nil</span> {
+        t.<span class="f">Fatalf</span>(<span class="s">"shared container failed: %v"</span>, sharedErr)
+    }
+    <span class="k">return</span> sharedDB, sharedDSN
+}</code></pre>
+
+<p>
+  จุดที่คนมักพลาด: <strong>ต้องเก็บ <code>sharedErr</code> ไว้นอก <code>Do</code></strong>
+  <br>เพราะถ้า container พังในการเรียกครั้งแรก <code>Do</code> จะ<em>ไม่รันซ้ำ</em>ให้เทสตัวที่สอง —
+  เทสตัวที่สองต้องรู้ว่า "ตัวแรกพังไปแล้ว" จาก error ที่เก็บไว้ ไม่งั้นมันจะได้ <code>nil</code> แล้ว panic แทน
+</p>
+
+<p>เอาโค้ดเทส 4 ตัวเดิมเป๊ะ ๆ มาเปลี่ยนแค่บรรทัดที่ขอ DB:</p>
+
+<pre><code>=== RUN   TestSharedA
+2026/08/18 19:55:05 [sync.Once] container booted in <strong>1.03324475s</strong> dsn=postgres://testuser:testpass@localhost:<strong>32783</strong>/testdb?sslmode=disable
+    sharedcontainer_test.go:41: A total=1.056020208s
+--- PASS: TestSharedA (1.06s)
+=== RUN   TestSharedB
+    sharedcontainer_test.go:36: shared dsn=postgres://testuser:testpass@localhost:<strong>32783</strong>/testdb?sslmode=disable
+    sharedcontainer_test.go:41: B total=<strong>2.067417ms</strong>
+--- PASS: TestSharedB (0.00s)
+=== RUN   TestSharedC
+    sharedcontainer_test.go:41: C total=1.95025ms
+--- PASS: TestSharedC (0.00s)
+=== RUN   TestSharedD
+    sharedcontainer_test.go:41: D total=1.747666ms
+--- PASS: TestSharedD (0.00s)
+PASS
+[TestMain] shared boot = 1.03324475s
+ok  	tcdemo/test/sharedcontainer	<strong>1.727s</strong></code></pre>
+
+<div class="win">
+  <span class="label">📊 หลักฐานว่าเป็น container ตัวเดียวจริง</span>
+  <p style="margin-bottom:0">
+    <strong>ทุกเทสได้ dsn ที่ port <code>32783</code> เหมือนกันหมด</strong> —
+    ถ้ามันเปิดใหม่ port จะต้องเปลี่ยนเหมือนหัวข้อ 1
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>container ใหม่ทุกเทส : 4.264s   (boot 1.015 / 0.755 / 0.752 / 0.761)
+sync.Once ตัวเดียว   : 1.727s   (boot 1.033 ครั้งเดียว · เทสถัดไป 2.07 / 1.95 / 1.75 ms)
+
+                       เร็วขึ้น <strong>2.47 เท่า</strong> ที่ 4 เทส
+ต้นทุนต่อเทสที่เพิ่มมา : 760 ms  →  2 ms   (<strong>ต่างกัน ~380 เท่า</strong>)</code></pre>
+  <p style="margin:0.6rem 0 0">
+    ตัวเลข 2.47 เท่ายังดูไม่หวือหวาเพราะมีแค่ 4 เทส —
+    <strong>ที่ต้องมองคือคอลัมน์ขวา</strong> ยิ่งเพิ่มเทส ความต่างยิ่งถ่างออก
+    เพราะฝั่งซ้ายจ่าย 760ms ทุกครั้ง ฝั่งขวาจ่าย 2ms
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>เทียบกับ mock ให้เห็นภาพ:</strong> unit test ที่ mock ด้วย go-sqlmock
+    ทำงานใน <code>1.251167ms</code>
+    <br>นั่นแปลว่า <strong>เทสตัวที่ 2 เป็นต้นไปของ container ที่ share กัน (~2ms) เร็วพอ ๆ กับ mock แล้ว</strong>
+    — ราคาที่คุณจ่ายจริง ๆ คือ 1 วินาทีแรกครั้งเดียวต่อการรัน <code>go test</code> หนึ่งครั้ง
+  </p>
+</div>
+
+<h2>3 · <code>TestMain</code> — ประตูเข้าออกของทั้ง package</h2>
+
+<p>
+  <code>sync.Once</code> ตอบเรื่อง "เปิดครั้งเดียว" ได้ แต่ยังเหลือคำถามว่า
+  <strong>แล้วใครปิด?</strong> — <code>defer</code> ในเทสตัวไหนก็ผิดหมด
+  เพราะเทสตัวอื่นยังใช้ container นั้นอยู่
+  <br>Go มีฟังก์ชันพิเศษชื่อ <code>TestMain</code> ให้ครอบการรันเทสทั้ง package:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">TestMain</span>(m *testing.M) {
+    code := m.<span class="f">Run</span>()          <span class="c">// ← เทสทุกตัวใน package รันตรงบรรทัดนี้</span>
+    testutil.<span class="f">TerminateShared</span>()  <span class="c">// ← cleanup หลังเทสจบครบแล้ว</span>
+    fmt.<span class="f">Printf</span>(<span class="s">"[TestMain] shared container boot time = %v\n"</span>, testutil.SharedBoot)
+    os.<span class="f">Exit</span>(code)             <span class="c">// ← ส่งผลแพ้ชนะออกไปเป็น exit code</span>
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>บรรทัด</th><th>เกิดอะไรขึ้น</th></tr>
+  <tr><td><code>m.Run()</code></td><td>รันเทสทุกตัวใน package นี้จนจบ แล้ว<strong>คืนค่า exit code</strong> (0 = ผ่านหมด)</td></tr>
+  <tr><td>cleanup</td><td>ต้องอยู่<strong>หลัง</strong> <code>m.Run()</code> เพราะก่อนหน้านั้นยังมีเทสใช้ของอยู่</td></tr>
+  <tr><td><code>os.Exit(code)</code></td><td>ทำให้ <code>go test</code> และ CI รู้ว่าผ่านหรือไม่ผ่าน</td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ทำไม cleanup ต้องอยู่ก่อน <code>os.Exit</code> — ห้ามใช้ <code>defer</code></strong>
+    <br><code>os.Exit</code> <strong>ฆ่า process ทันทีโดยไม่รัน <code>defer</code> ที่ค้างอยู่</strong>
+    (กฎเดียวกับที่คุณเรียนใน <a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a>)
+    <br>ถ้าเขียน <code>defer testutil.TerminateShared()</code> ไว้บนสุดแล้วปิดท้ายด้วย
+    <code>os.Exit(code)</code> → <strong>ฟังก์ชัน cleanup จะไม่ถูกเรียกเลย</strong>
+    <br>นี่คือที่เดียวใน Go ที่ "เขียน <code>defer</code> ไว้ก่อนเพื่อความปลอดภัย" กลายเป็นคำแนะนำที่ผิด
+  </p>
+</div>
+
+<h2>4 · <code>-short</code> ที่ได้ผลจริง ๆ กับที่ได้ผลแค่ในสไลด์</h2>
+
+<p>
+  <code>testing.Short()</code> คืนค่า <code>true</code> เมื่อรันด้วย <code>go test -short</code>
+  ใช้คู่กับ <code>t.Skip</code> เพื่อบอกว่า "เทสนี้หนัก ข้ามไปก่อน":
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">TestWrongTable</span>(t *testing.T) {
+    <span class="k">if</span> testing.<span class="f">Short</span>() {
+        t.<span class="f">Skip</span>(<span class="s">"short mode: no docker"</span>)
+    }
+    ...
+}</code></pre>
+
+<p>แต่ก่อนจะเชื่อว่ามันช่วยจริง ลองอ่านโค้ดนี้ให้ดี:</p>
+
+<div class="predict">
+  <pre><code><span class="c">// main_test.go — คนเขียนอยากประหยัด จึงเช็ค -short ตั้งแต่ TestMain</span>
+<span class="k">func</span> <span class="f">TestMain</span>(m *testing.M) {
+    fmt.<span class="f">Println</span>(<span class="s">"about to call testing.Short() before m.Run()..."</span>)
+
+    <span class="k">if</span> !testing.<span class="f">Short</span>() {          <span class="c">// ← บรรทัดนี้</span>
+        <span class="f">bootContainer</span>()
+    }
+
+    code := m.<span class="f">Run</span>()
+    os.<span class="f">Exit</span>(code)
+}</code></pre>
+  <p class="ask">
+    ตรรกะดูสมเหตุสมผลมาก — ถ้าเป็น <code>-short</code> ก็ไม่ต้องเปิด container
+    <br>รัน <code>go test</code> แล้วได้อะไร?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>โปรแกรมตายทันที ยังไม่ทันได้รันเทสสักตัว:</strong></p>
+    <pre style="margin:0.6rem 0"><code>about to call testing.Short() before m.Run()...
+<strong>panic: testing: Short called before Parse</strong>
+
+goroutine 1 [running]:
+testing.Short(...)
+	/Users/tuwanon/.local/share/mise/installs/go/1.26.5/src/testing/testing.go:693
+tcdemo/test/eager.TestMain(0x6e0a31b128c0)
+	/private/tmp/.../test/eager/eager_test.go:23 +0x27c
+main.main()
+	_testmain.go:48 +0x88
+FAIL	tcdemo/test/eager	0.304s</code></pre>
+    <p>
+      <strong>flag ของ <code>testing</code> ถูก parse ตอน <code>m.Run()</code> ไม่ใช่ก่อนหน้านั้น</strong>
+      <br><code>testing.Short()</code> จึงยังอ่านค่าไม่ได้ และทีมงาน Go
+      <em>ตั้งใจให้ panic</em> แทนที่จะคืนค่าผิด ๆ ให้คุณเข้าใจผิดเงียบ ๆ
+    </p>
+    <p style="margin-bottom:0">
+      แก้ได้โดยเรียก <code>flag.Parse()</code> เองก่อน — <strong>แต่อย่าทำ</strong>
+      <br>ทางที่ถูกกว่าคืออย่าตัดสินใจใน <code>TestMain</code> เลย
+      ให้ boot แบบ lazy ใน <code>sync.Once</code> แล้วเช็ค <code>testing.Short()</code>
+      ในตัวเทส ซึ่งตอนนั้น flag ถูก parse แน่นอนแล้ว (หัวข้อถัดไป)
+    </p>
+  </div>
+</div>
+
+<h3 style="margin-top:1.4rem">eager vs lazy — ต่างกันตรงไหน</h3>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ boot ใน TestMain (eager)</h4>
+    <pre><code><span class="k">func</span> <span class="f">TestMain</span>(m *testing.M) {
+    ctr, _ := tcpostgres.<span class="f">Run</span>(...)
+    code := m.<span class="f">Run</span>()
+    ctr.<span class="f">Terminate</span>(ctx)
+    os.<span class="f">Exit</span>(code)
+}</code></pre>
+    <p style="margin-bottom:0">
+      เป็นวิธีที่คนอ่านสไลด์เขียนตามโดยธรรมชาติ เพราะ <code>Terminate</code> อยู่ตรงนี้
+      <br><strong>container ถูกเปิดเสมอ ไม่ว่าจะ <code>-short</code> หรือไม่</strong>
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ boot ใน sync.Once (lazy)</h4>
+    <pre><code><span class="k">func</span> <span class="f">TestMain</span>(m *testing.M) {
+    code := m.<span class="f">Run</span>()
+    testutil.<span class="f">TerminateShared</span>()
+    os.<span class="f">Exit</span>(code)
+}</code></pre>
+    <p style="margin-bottom:0">
+      <code>TerminateShared</code> เช็คเองว่ามี container ให้ปิดไหม
+      <br><strong>ถ้าทุกเทส skip → ไม่มีใครเรียก <code>Do</code> → ไม่มีการแตะ Docker</strong>
+    </p>
+  </div>
+</div>
+
+<pre><code><span class="c">// go test -short -v ./test/eager/      ← eager</span>
+[eager TestMain] container booted BEFORE m.Run() in <strong>1.047302208s</strong>
+=== RUN   TestEagerOne
+    eager_test.go:45: short mode: skipped, but the container was ALREADY started
+--- SKIP: TestEagerOne (0.00s)
+PASS
+ok  	tcdemo/test/eager	<strong>1.673s</strong>
+
+<span class="c">// go test -short -v ./test/integration/   ← lazy</span>
+--- SKIP: TestSearchByCity_CaughtByRealPostgres (0.00s)
+--- SKIP: TestTypoInColumn (0.00s)
+--- SKIP: TestWrongTable (0.00s)
+--- SKIP: TestNilSliceMatrix (0.00s)
+--- SKIP: TestSharedA (0.00s)
+--- SKIP: TestSharedB (0.00s)
+--- SKIP: TestSharedC (0.00s)
+--- SKIP: TestUserRepoSuite (0.00s)
+PASS
+[TestMain] shared container boot time = <strong>0s</strong>
+ok  	tcdemo/test/integration	<strong>0.353s</strong></code></pre>
+
+<div class="win">
+  <span class="label">✅ บรรทัดที่พิสูจน์ทุกอย่างคือ <code>boot time = 0s</code></span>
+  <p style="margin-bottom:0">
+    ตัวเลข <code>0s</code> แปลว่า <code>sharedOnce.Do</code> <strong>ไม่เคยถูกเรียกเลย</strong>
+    — ไม่ใช่แค่ "เร็วขึ้น" แต่คือ<strong>ไม่แตะ Docker เลยแม้แต่ครั้งเดียว</strong>
+    <br>ผลคือเพื่อนร่วมทีมที่ยังไม่ได้ลง Docker ก็ยังรัน <code>go test -short ./...</code> ได้
+    และ CI ขั้น lint/unit ก็ไม่ต้องมี docker daemon
+  </p>
+</div>
+
+<h2>5 · testify suite — <code>SetupSuite</code> ไม่ใช่ <code>SetupTest</code></h2>
+
+<p>
+  ใน <a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a> คุณใช้ testify แค่ฝั่ง
+  <code>assert</code>/<code>require</code> — <strong>package <code>suite</code> คืออีกครึ่งที่ยังไม่ได้แตะ</strong>
+  มันให้ struct หนึ่งตัวถือ state ร่วม (db, repo, ctx) แล้วมี hook ให้แขวนงานเตรียมของ
+</p>
+
+<pre><code><span class="k">type</span> UserRepoSuite <span class="k">struct</span> {
+    suite.Suite
+    db   *gorm.DB
+    dsn  <span class="k">string</span>
+    repo *repository.UserRepository
+    ctx  context.Context
+}
+
+<span class="c">// SetupSuite — รันครั้งเดียวทั้ง suite: ขอ container ที่ share ไว้</span>
+<span class="k">func</span> (s *UserRepoSuite) <span class="f">SetupSuite</span>() {
+    <span class="k">if</span> testing.<span class="f">Short</span>() {
+        s.<span class="f">T</span>().<span class="f">Skip</span>(<span class="s">"skipping integration suite in -short mode"</span>)
+    }
+    s.ctx = context.<span class="f">Background</span>()
+    s.db, s.dsn = testutil.<span class="f">SharedDB</span>(s.<span class="f">T</span>())
+    s.repo = repository.<span class="f">NewUserRepository</span>(s.db)
+}
+
+<span class="c">// SetupTest — รันก่อนทุกเทส: ล้างตาราง ไม่ต้องเปิด container ใหม่</span>
+<span class="k">func</span> (s *UserRepoSuite) <span class="f">SetupTest</span>() {
+    testutil.<span class="f">TruncateUsers</span>(s.<span class="f">T</span>(), s.db)
+}
+
+<span class="k">func</span> <span class="f">TestUserRepoSuite</span>(t *testing.T) {
+    suite.<span class="f">Run</span>(t, <span class="f">new</span>(UserRepoSuite))
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>SetupSuite</code> (ครั้งเดียว)</th><th><code>SetupTest</code> (ทุกเทส)</th></tr>
+  <tr><td>ควรใส่อะไร</td><td>ของที่<strong>แพงและใช้ซ้ำได้</strong> — container, <code>gorm.Open</code>, <code>AutoMigrate</code>, สร้าง repo</td><td>ของที่<strong>ถูกและต้องสะอาดใหม่</strong> — <code>TRUNCATE</code>, seed ข้อมูลตั้งต้น</td></tr>
+  <tr><td>ถ้าใส่ผิดฝั่ง</td><td>เอา TRUNCATE มาไว้ตรงนี้ → เทสตัวที่ 2 เห็นข้อมูลที่ตัวแรกทิ้งไว้</td><td>เอา container มาไว้ตรงนี้ → กลับไปจ่าย 760ms ต่อเทสเหมือนหัวข้อ 1</td></tr>
+  <tr><td>คู่ปิดท้าย</td><td><code>TearDownSuite</code></td><td><code>TearDownTest</code></td></tr>
+</table>
+</div>
+
+<p>ลำดับ hook ทั้งหมด ผมรันจริงกับ suite ที่มี 2 เทส ได้แบบนี้:</p>
+
+<div class="diagram">
+<pre>  SetupSuite                          ←  1 ครั้ง
+    SetupTest                         ┐
+      BeforeTest(OrderSuite, TestApple)│
+        &gt;&gt; body TestApple             │ ← ทุกเทส
+      AfterTest(OrderSuite, TestApple) │
+    TearDownTest                      ┘
+    SetupTest
+      BeforeTest(OrderSuite, TestZebra)
+        &gt;&gt; body TestZebra
+      AfterTest(OrderSuite, TestZebra)
+    TearDownTest
+  TearDownSuite                       ←  1 ครั้ง</pre>
+</div>
+
+<p>
+  <code>BeforeTest</code>/<code>AfterTest</code> เป็นของแถมที่สไลด์ไม่ได้พูดถึง —
+  มันรับ <code>(suiteName, testName string)</code> เข้ามาด้วย เอาไว้ log
+  หรือตั้งชื่อ schema แยกต่อเทสได้
+</p>
+
+<div class="predict">
+  <pre><code><span class="c">// ในไฟล์ ผมประกาศ TestZebra ไว้ "ก่อน" TestApple</span>
+
+<span class="k">func</span> (s *OrderSuite) <span class="f">TestZebra</span>() { ... }   <span class="c">// บรรทัดที่ 30</span>
+<span class="k">func</span> (s *OrderSuite) <span class="f">TestApple</span>() { ... }   <span class="c">// บรรทัดที่ 40</span></code></pre>
+  <p class="ask">
+    <code>go test -v</code> จะรันตัวไหนก่อน — และทำไมคำตอบนี้ถึงเปลี่ยนวิธีเขียนเทสของคุณ?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== RUN   TestOrderSuite
+=== RUN   TestOrderSuite/<strong>TestApple</strong>
+=== RUN   TestOrderSuite/<strong>TestZebra</strong>
+--- PASS: TestOrderSuite (0.00s)
+    --- PASS: TestOrderSuite/TestApple (0.00s)
+    --- PASS: TestOrderSuite/TestZebra (0.00s)</code></pre>
+    <p>
+      <strong><code>TestApple</code> รันก่อน ทั้งที่ประกาศทีหลัง</strong> —
+      testify เก็บ method ผ่าน reflection ซึ่งเรียงตาม<strong>ตัวอักษร</strong>
+      ไม่ใช่ลำดับที่คุณเขียน
+    </p>
+    <p style="margin-bottom:0">
+      ผลที่ตามมา: <strong>ห้ามเขียนเทสที่พึ่งพาลำดับ</strong>
+      เช่น "<code>TestCreate</code> สร้าง user ไว้ให้ <code>TestUpdate</code> ใช้"
+      — วันที่คุณเปลี่ยนชื่อเทสจาก <code>TestUpdate</code> เป็น <code>TestAmend</code>
+      มันจะรันก่อนแล้วพังโดยที่คุณไม่ได้แตะ logic เลย
+      <br>ทุกเทสต้องเตรียมข้อมูลของตัวเองใน <code>SetupTest</code> เสมอ
+    </p>
+  </div>
+</div>
+
+<p>พอประกอบครบ นี่คือหน้าตาของการรัน integration suite เต็ม ๆ:</p>
+
+<pre><code>=== RUN   TestSearchByCity_CaughtByRealPostgres
+    badsql_test.go:24: VERBATIM real-postgres error: ERROR: column "city" does not exist (SQLSTATE 42703)
+--- PASS: TestSearchByCity_CaughtByRealPostgres (1.23s)
+...
+=== RUN   TestUserRepoSuite
+    user_suite_test.go:33: SetupSuite: got DB in <strong>3.292µs</strong>  dsn=postgres://testuser:testpass@localhost:32812/testdb?sslmode=disable
+=== RUN   TestUserRepoSuite/TestCreateAndGet
+=== RUN   TestUserRepoSuite/TestDelete
+=== RUN   TestUserRepoSuite/TestDeleteMissingReturnsNotFound
+=== RUN   TestUserRepoSuite/TestNilSliceVsEmptySlice
+=== RUN   TestUserRepoSuite/TestUniqueIndexIsRealDDL
+    user_suite_test.go:85: VERBATIM duplicate-key error: ERROR: duplicate key value violates unique constraint "idx_users_email" (SQLSTATE 23505)
+=== RUN   TestUserRepoSuite/TestUpdate
+--- PASS: TestUserRepoSuite (0.02s)
+PASS
+[TestMain] shared container boot time = 1.203335125s
+ok  	tcdemo/test/integration	<strong>1.757s</strong></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>อ่านบรรทัด <code>SetupSuite: got DB in 3.292µs</code> ให้ออก</strong> —
+    3 ไมโครวินาที ไม่ใช่ 1 วินาที
+    <br>เพราะ <code>TestSearchByCity</code> ที่รันก่อนหน้า (เรียงตามไฟล์/ตัวอักษรเหมือนกัน)
+    ไป trigger <code>sync.Once</code> ไปแล้ว
+    <br>นี่คือหลักฐานว่า <strong><code>sync.Once</code> ทำงานข้ามทั้ง plain test และ testify suite
+    ตราบใดที่อยู่ package เดียวกัน</strong> — ทั้งหมด 8 top-level test + 6 sub-test ใช้ container ตัวเดียว
+  </p>
+</div>
+
+<h2>6 · <code>t.Helper()</code> — บรรทัดเดียวที่ทำให้ error ชี้ถูกที่</h2>
+
+<p>
+  ฟังก์ชันอย่าง <code>TruncateUsers(t, db)</code> หรือ <code>SharedDB(t)</code>
+  คือ "ฟังก์ชันช่วยเทส" ที่ถูกเรียกจากหลายที่ ถ้ามันฟ้อง error
+  <strong>คุณอยากรู้ว่าเทสตัวไหนเรียก ไม่ใช่ว่ามันฟ้องที่บรรทัดไหนในตัวเอง</strong>
+</p>
+
+<pre><code> 6	<span class="k">func</span> <span class="f">mustEqualWithHelper</span>(t *testing.T, got, want <span class="k">string</span>) {
+ 7		t.<span class="f">Helper</span>()
+ 8		<span class="k">if</span> got != want {
+ 9			t.<span class="f">Errorf</span>(<span class="s">"got %q want %q"</span>, got, want)
+10		}
+11	}
+12
+14	<span class="k">func</span> <span class="f">mustEqualNoHelper</span>(t *testing.T, got, want <span class="k">string</span>) {
+15		<span class="k">if</span> got != want {
+16			t.<span class="f">Errorf</span>(<span class="s">"got %q want %q"</span>, got, want)
+17		}
+18	}
+19
+20	<span class="k">func</span> <span class="f">TestWithHelper</span>(t *testing.T) {
+21		<span class="f">mustEqualWithHelper</span>(t, <span class="s">"a"</span>, <span class="s">"b"</span>)
+22	}
+23
+24	<span class="k">func</span> <span class="f">TestWithoutHelper</span>(t *testing.T) {
+25		<span class="f">mustEqualNoHelper</span>(t, <span class="s">"a"</span>, <span class="s">"b"</span>)
+26	}</code></pre>
+
+<pre><code>=== RUN   TestWithHelper
+    helper_test.go:<strong>21</strong>: got "a" want "b"      <span class="c">← จุดที่ "เรียก" ในเทส</span>
+--- FAIL: TestWithHelper (0.00s)
+=== RUN   TestWithoutHelper
+    helper_test.go:<strong>16</strong>: got "a" want "b"      <span class="c">← t.Errorf ข้างในฟังก์ชันช่วย</span>
+--- FAIL: TestWithoutHelper (0.00s)
+FAIL	tcdemo/test/helper	0.729s</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ทำไมเรื่องนี้ใหญ่กว่าที่คิด</strong> —
+    ถ้ามี 10 เทสเรียก helper ตัวเดียวกัน แล้วไม่มี <code>t.Helper()</code>
+    <strong>ทุกความล้มเหลวจะชี้ไปที่บรรทัด 16 เหมือนกันหมด</strong>
+    <br>คุณจะรู้แค่ว่า "มีบางอย่างพัง" แต่ไม่รู้ว่าพังจากเทสไหน —
+    ต้องไล่หาเอง ซึ่งเสียเวลาที่สุดเวลา CI แดง
+    <br><strong>กฎง่าย ๆ: ฟังก์ชันไหนรับ <code>*testing.T</code> เป็น argument ให้ใส่
+    <code>t.Helper()</code> เป็นบรรทัดแรกเสมอ</strong>
+  </p>
+</div>
+
+<h2>7 · cleanup — Ryuk เก็บกวาดให้จริงไหม</h2>
+
+<p>
+  คำถามที่ควรถามคือ "ถ้าผมลืม <code>Terminate</code> จะมี container ค้างกิน RAM กับ disk ไหม"
+  <br>ผมทดลองแล้ว: ปล่อยให้เทสจบโดยไม่ <code>Terminate</code> แล้วนั่งจับเวลาดู
+  <code>docker ps</code> ทุกไม่กี่วินาที
+</p>
+
+<pre><code><span class="c">// ลืม Terminate โดย Ryuk เปิดอยู่ (ค่า default)</span>
+test process exited at t=0
+t+0s   running_pg=1 all_pg=1 running_ryuk=1
+t+3s   running_pg=1 all_pg=1 running_ryuk=1
+t+9s   running_pg=1 all_pg=1 running_ryuk=1
+t+10s  running_pg=<strong>0</strong> all_pg=<strong>0</strong> running_ryuk=<strong>0</strong>
+t+23s  running_pg=0 all_pg=0 running_ryuk=0
+
+<span class="c">// TESTCONTAINERS_RYUK_DISABLED=true + ลืม Terminate</span>
+t+0s:  1 postgres running
+t+10s: 1 postgres running
+t+25s: 1 postgres running
+=== final docker ps ===
+e43f38657fa3	postgres:16-alpine	thirsty_curie	<strong>Up 28 seconds</strong></code></pre>
+
+<p>
+  Ryuk คือ container ตัวเล็ก ๆ ที่ testcontainers เปิดให้อัตโนมัติ
+  <strong>หนึ่งตัวต่อหนึ่ง test process</strong> (ไม่ใช่ต่อหนึ่ง container)
+  มันถือ TCP connection กับ test process ไว้ พอ process ตายก็เริ่มนับถอยหลัง
+  <strong>ประมาณ 10 วินาที</strong> แล้วลบทุก container ที่มี label ของ session นั้น รวมถึงลบตัวเองด้วย
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>คำถาม</th><th>ผลที่วัดได้</th></tr>
+  <tr><td>container ถูกลบจริง หรือแค่ stop?</td><td><strong>ลบจริง</strong> — <code>docker ps -a</code> ก็ได้ <code>all_pg=0</code></td></tr>
+  <tr><td>anonymous volume ของ postgres ค้างไหม</td><td><strong>ไม่ค้าง</strong> — วัด dangling volume ก่อน/หลัง ได้ delta 0 ทั้งกรณี <code>Terminate</code> ปกติ และกรณี Ryuk เก็บ</td></tr>
+  <tr><td>ปิด Ryuk แล้วลืม <code>Terminate</code></td><td><strong>ค้างถาวร</strong> — วัดถึง 28 วินาทีก็ยัง <code>Up</code></td></tr>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">🧯 สรุปนโยบาย cleanup</span>
+  <p style="margin-bottom:0">
+    <strong>เขียน <code>Terminate</code> เสมอ — Ryuk คือ safety net ไม่ใช่แผนหลัก</strong>
+    <br>เหตุผล: 10 วินาทีนั้นเกิด<em>หลัง</em> process ตาย ระหว่างนั้น port ยังถูกจอง
+    RAM ยังถูกใช้ และถ้าใครไปตั้ง <code>TESTCONTAINERS_RYUK_DISABLED=true</code>
+    (ซึ่งมีเหตุผลบางอย่างที่คนทำ) แผนของคุณจะเหลือศูนย์
+    <br>อีกเรื่อง: ถ้าคุณตามเก็บเองด้วย <code>docker rm -f &lt;id&gt;</code>
+    <strong>ต้องใส่ <code>-v</code> ด้วย</strong> ไม่งั้น volume ค้าง (ผมพลาดเองมาแล้วตอนตรวจ ต้องตาม <code>docker volume rm</code>)
+  </p>
+</div>
+
+<h2>8 · กับดักที่เหลือ</h2>
+
+<h3 style="margin-top:1.4rem">8.1 <code>Run</code> คืน error <em>พร้อมกับ</em> container ที่ไม่ใช่ nil</h3>
+
+<p>
+  บทที่แล้วสอนรูปแบบ cleanup ที่ถูกไปแล้ว ตรงนี้คือหลักฐานว่าทำไมมันสำคัญ —
+  เมื่อ wait strategy timeout, <code>Run</code> <strong>คืนทั้ง error และ container ที่ start ไปแล้วจริง ๆ</strong>:
+</p>
+
+<pre><code>    waittimeout_test.go:28: VERBATIM wait-timeout error: run postgres: generic container: start container: started hook: wait until ready: "this log line will never appear" matched 0 times, expected 1
+    waittimeout_test.go:29: returned container is nil? <strong>false</strong>
+    waittimeout_test.go:31: container id = 6116d6c24184482b076d1c70a39046ad846920da81381698a84b52b9070ccca9
+    waittimeout_test.go:37: TerminateContainer: &lt;nil&gt; (cleaned up)</code></pre>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ leak ทุกครั้งที่ wait timeout</h4>
+    <pre><code>ctr, err := tcpostgres.<span class="f">Run</span>(ctx, ...)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    t.<span class="f">Fatal</span>(err)   <span class="c">// ออกก่อนถึง defer</span>
+}
+<span class="k">defer</span> ctr.<span class="f">Terminate</span>(ctx)</code></pre>
+    <p style="margin-bottom:0">
+      <code>t.Fatal</code> จบเทสทันที บรรทัด <code>defer</code> ไม่เคยถูกรัน →
+      container ที่ start แล้วค้าง
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ defer ก่อนเช็ค err</h4>
+    <pre><code>ctr, err := tcpostgres.<span class="f">Run</span>(ctx, ...)
+<span class="k">defer</span> <span class="k">func</span>() {
+    _ = testcontainers.<span class="f">TerminateContainer</span>(ctr)
+}()
+<span class="k">if</span> err != <span class="k">nil</span> {
+    t.<span class="f">Fatal</span>(err)
+}</code></pre>
+    <p style="margin-bottom:0">
+      <code>TerminateContainer</code> เป็น nil-safe — ผมทดสอบแล้วส่ง typed nil เข้าไปก็คืน
+      <code>&lt;nil&gt;</code> ไม่ panic
+    </p>
+  </div>
+</div>
+
+<h3 style="margin-top:1.4rem">8.2 terminate container ที่ยัง<em>ไม่</em> ready = รอฟรี 10 วินาที</h3>
+
+<pre><code>    nowait_test.go:53: VERBATIM early-connect error after <strong>3.590916ms</strong>: ...
+2026/08/18 20:00:27 🐳 Stopping container: 3270a343e678
+2026/08/18 <strong>20:00:38</strong> ✅ Container stopped: 3270a343e678
+2026/08/18 20:00:38 🐳 Terminating container: 3270a343e678
+2026/08/18 20:00:38 🚫 Container terminated: 3270a343e678
+--- PASS: TestNoWaitStrategy (<strong>11.04s</strong>)</code></pre>
+
+<p>
+  เทสล้มตั้งแต่มิลลิวินาทีที่ 3.6 แต่ใช้เวลารวม 11 วินาที —
+  ดู timestamp: <code>20:00:27</code> สั่ง stop แต่ <code>20:00:38</code> ถึงหยุดได้
+  <br>เพราะ postgres ที่กำลัง initdb อยู่<strong>ไม่ตอบ SIGTERM</strong>
+  Docker จึงรอครบ stop timeout (10 วินาที) แล้วค่อย SIGKILL
+  <br><strong>นี่คือเหตุผลที่สองว่าทำไมต้องใส่ <code>BasicWaitStrategies()</code></strong> —
+  ไม่ใช่แค่กันเทส flaky แต่กัน teardown ช้าด้วย
+</p>
+
+<h3 style="margin-top:1.4rem">8.3 <code>sync.Once</code> กับ <code>t.Parallel()</code> — เตือนไว้ก่อน</h3>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <code>sync.Once</code> เองปลอดภัยกับหลาย goroutine อยู่แล้วโดยธรรมชาติ (บทเรียน 24)
+    <br>แต่ <code>TruncateUsers</code> ใน <code>SetupTest</code> <strong>ไม่ปลอดภัย</strong> —
+    ถ้าเทสสองตัวรันขนานกันบน DB เดียวกัน ตัวหนึ่งจะล้างตารางกลางคันของอีกตัว
+    <br><strong>ข้อจำกัดข้อนี้ผมยังไม่ได้พิสูจน์ด้วยการรันจริง</strong> จึงไม่มี output มาให้ดู
+    — เอาไว้เป็นข้อควรระวังว่าถ้าจะใช้ <code>t.Parallel()</code>
+    ต้องแยก schema หรือแยกตารางต่อเทส ไม่ใช่ใช้ <code>TRUNCATE</code> ร่วมกัน
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ทำไม <code>go test -short</code> ของแบบ lazy ถึงได้ <code>boot time = 0s</code> แต่แบบ eager ยังเสีย 1.047s?</p>
+  <div class="opts">
+    <button class="opt"><code>-short</code> สั่ง testcontainers ให้ข้ามการเปิด container ให้เองอัตโนมัติ</button>
+    <button class="opt">แบบ eager ใช้ image คนละตัวจึงต้องรอ pull ก่อนทุกครั้งที่รัน</button>
+    <button class="opt">แบบ lazy boot ใน <code>sync.Once</code> ที่เทสเรียก ถ้าทุกเทส skip ก็ไม่มีใครเรียก</button>
+    <button class="opt">แบบ lazy เก็บ container ที่รันค้างไว้จากรอบก่อน จึงไม่ต้องเปิดใหม่</button>
+  </div>
+  <div class="explain">
+    <p><code>TestMain</code> ทำงาน<strong>ก่อน</strong>เทสทุกตัว — โค้ดที่ boot container ไว้ตรงนั้นจะรันเสมอ
+    ไม่ว่า flag จะเป็นอะไร (วัดได้ 1.673s ทั้งที่ทุกเทส SKIP)
+    <br>ส่วน lazy ย้าย boot ไปอยู่ใน <code>sync.Once</code> ที่ถูก trigger จาก<em>ในตัวเทส</em>
+    เมื่อทุกเทส <code>t.Skip</code> ก็ไม่มีใครเรียก <code>Do</code> → ไม่แตะ Docker เลย (0.353s)
+    <br>ข้อ 1 ผิดเพราะ <code>-short</code> เป็นแค่ flag ที่<em>คุณ</em>ต้องเช็คเอง testcontainers ไม่รู้จักมัน
+    · ข้อ 4 ผิดเพราะไม่มี container ค้าง Ryuk เก็บกวาดตั้งแต่ 10 วินาทีหลัง process ตาย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. <code>AutoMigrate</code> และ <code>TRUNCATE TABLE users</code> ควรอยู่ที่ไหนใน testify suite?</p>
+  <div class="opts">
+    <button class="opt"><code>AutoMigrate</code> ใน <code>SetupTest</code> · <code>TRUNCATE</code> ใน <code>SetupSuite</code></button>
+    <button class="opt"><code>AutoMigrate</code> ใน <code>SetupSuite</code> · <code>TRUNCATE</code> ใน <code>SetupTest</code></button>
+    <button class="opt">ทั้งสองอย่างใน <code>SetupTest</code> เพื่อให้ทุกเทสได้ schema ที่สะอาดใหม่</button>
+    <button class="opt">ทั้งสองอย่างใน <code>SetupSuite</code> เพื่อให้ทั้ง suite จ่ายต้นทุนแค่ครั้งเดียว</button>
+  </div>
+  <div class="explain">
+    <p><strong><code>SetupSuite</code> = ของแพงที่ใช้ซ้ำได้</strong> (container, <code>gorm.Open</code>, <code>AutoMigrate</code>)
+    · <strong><code>SetupTest</code> = ของถูกที่ต้องสดใหม่ทุกครั้ง</strong> (<code>TRUNCATE</code>, seed)
+    <br>ข้อ 1 กลับหัวกลับหาง: TRUNCATE ครั้งเดียวต้นเทส แปลว่าเทสตัวที่สองเห็นข้อมูลที่ตัวแรกทิ้งไว้
+    → เทสพึ่งพาลำดับ ซึ่งอันตรายมากเพราะ testify รันตามตัวอักษร ไม่ใช่ลำดับที่เขียน
+    <br>ข้อ 3 ทำให้จ่ายค่า DDL ทุกเทสโดยไม่จำเป็น · ข้อ 4 คือไม่มีอะไรล้างตารางเลย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. เทสจบแล้วลืม <code>Terminate</code> โดยไม่ได้ปิด Ryuk — <code>docker ps</code> จะเห็นอะไร?</p>
+  <div class="opts">
+    <button class="opt">ไม่เห็นอะไรเลยตั้งแต่วินาทีที่ test process ตาย เพราะ Docker ลบให้ทันที</button>
+    <button class="opt">เห็น container สถานะ Exited ค้างไว้ ต้องตามลบเองด้วย <code>docker rm</code></button>
+    <button class="opt">เห็น container รันค้างถาวรจนกว่าจะ restart docker daemon เอง</button>
+    <button class="opt">เห็นค้างอยู่ราว 10 วินาทีหลัง process ตาย แล้ว Ryuk ลบทิ้งให้พร้อม volume</button>
+  </div>
+  <div class="explain">
+    <p>ผม poll ดูจริง: <code>t+9s</code> ยังเห็น <code>running_pg=1</code> · <code>t+10s</code> ได้ <code>running_pg=0 all_pg=0</code>
+    <br><code>all_pg</code> มาจาก <code>docker ps -a</code> — ค่า 0 พิสูจน์ว่า<strong>ถูกลบจริง ไม่ใช่แค่ stop</strong> (ข้อ 2 จึงผิด)
+    และ dangling volume วัดได้ delta 0 คือ anonymous volume ถูกเก็บด้วย
+    <br>ข้อ 3 จะจริงก็ต่อเมื่อตั้ง <code>TESTCONTAINERS_RYUK_DISABLED=true</code> ซึ่งผมทดสอบแยกแล้วได้ <code>Up 28 seconds</code>
+    <br>อย่างไรก็ตาม <strong>ยังต้องเขียน <code>Terminate</code> เสมอ</strong> — Ryuk คือ safety net ไม่ใช่แผนหลัก</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. ทำไมต้องวาง <code>defer</code> cleanup ไว้<strong>ก่อน</strong>บรรทัดเช็ค <code>err</code> ของ <code>Run</code>?</p>
+  <div class="opts">
+    <button class="opt">เพราะ wait timeout คืน error พร้อม container ที่ start แล้ว ถ้า <code>t.Fatal</code> ก่อนจะ leak</button>
+    <button class="opt">เพราะ Go บังคับให้ <code>defer</code> ต้องอยู่ก่อนการเช็ค error ทุกกรณีในเทส</button>
+    <button class="opt">เพราะ <code>defer</code> ที่วางทีหลังจะทำงานช้ากว่าเดิมราวสิบวินาทีเสมอ</button>
+    <button class="opt">เพราะ container ต้องถูกลงทะเบียนกับ Ryuk ก่อนที่จะเช็ค error ได้</button>
+  </div>
+  <div class="explain">
+    <p>ผมวัดจริง: ตอน wait strategy timeout ได้ <code>returned container is nil? <strong>false</strong></code>
+    พร้อม container id ยาว ๆ — แปลว่า<strong>ของถูกสร้างและ start ไปแล้ว แค่ wait ไม่ผ่าน</strong>
+    <br><code>t.Fatal(err)</code> จบเทสทันทีที่บรรทัดนั้น <code>defer</code> ที่เขียนไว้ข้างล่าง<strong>ไม่เคยถูกลงทะเบียน</strong> → container ค้าง
+    <br>และต้องใช้ <code>testcontainers.TerminateContainer(ctr)</code> ไม่ใช่ <code>ctr.Terminate(ctx)</code>
+    เพราะกรณี image tag ผิดจะได้ <code>returned container is nil? true</code> — ตัวแรก nil-safe ตัวหลังไม่</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — เอา repository ของคุณเองมาเทสให้ครบวงจร</span>
+  <p>
+    <strong>ใช้ repository จาก <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a></strong>
+    (<code>internal/repository/</code> ที่คุณเขียนไว้) — บทนี้คือการทำให้มันมี integration test จริง
+    ไม่ใช่ demo ใน sandbox ของผม
+  </p>
+  <ol>
+    <li><strong>ตั้ง helper ก่อน:</strong> สร้าง <code>internal/testutil/container.go</code> ที่มี
+        <code>StartPostgres</code>, <code>OpenGorm</code>, <code>SharedDB</code> (ห่อด้วย <code>sync.Once</code>),
+        <code>TerminateShared</code>, <code>TruncateUsers</code>
+        <br><strong>ทุกฟังก์ชันที่รับ <code>*testing.T</code> ต้องมี <code>t.Helper()</code> บรรทัดแรก</strong></li>
+    <li>เขียน <code>TestMain</code> ในไฟล์ <code>main_test.go</code> ของ package เทส:
+        <code>m.Run()</code> → <code>TerminateShared()</code> → พิมพ์เวลา boot → <code>os.Exit(code)</code>
+        <br><strong>ห้ามใช้ <code>defer</code> สำหรับ cleanup ตรงนี้</strong> — อธิบายในคอมเมนต์ได้ว่าทำไม</li>
+    <li>ย้าย CRUD ทั้งหมดของ repository มาเป็น testify suite:
+        <code>SetupSuite</code> ขอ DB · <code>SetupTest</code> <code>TRUNCATE</code>
+        · เขียนอย่างน้อย <code>TestCreateAndGet</code>, <code>TestUpdate</code>, <code>TestDelete</code>,
+        <code>TestDeleteMissingReturnsNotFound</code></li>
+    <li><strong>เทสสิ่งที่ mock ทำไม่ได้:</strong> ใส่ <code>uniqueIndex</code> บน field ที่ควรไม่ซ้ำ
+        แล้วเขียนเทสที่ insert ซ้ำ — <code>require.Error</code> แล้ว <code>t.Logf</code> ตัว error ออกมาดู
+        <br>คุณควรเห็น <code>SQLSTATE 23505</code> และชื่อ index ที่ GORM ตั้งให้เอง</li>
+    <li><strong>วัดว่าคุ้มไหม:</strong> ทำ package เทสอีกอันที่เปิด container ใหม่ทุกเทส (โค้ดเทสเหมือนกันเป๊ะ)
+        แล้วเทียบเวลาสองฝั่ง — <strong>ของคุณเร็วขึ้นกี่เท่า?</strong> (ของผม 4.264s → 1.727s)</li>
+    <li><strong>ทำให้ <code>-short</code> ได้ผลจริง:</strong> ใส่ <code>testing.Short()</code> + <code>t.Skip</code> ครบทุกเทส
+        แล้วรัน <code>go test -short -v ./...</code>
+        <br>ต้องเห็นเวลา boot เป็น <strong>0s</strong> เท่านั้น ถ้าไม่ใช่ แปลว่าคุณ boot ผิดที่</li>
+    <li><strong>ท้าทาย 1 — พิสูจน์ <code>t.Helper()</code> ด้วยตัวเอง:</strong>
+        ลบ <code>t.Helper()</code> ออกจาก <code>TruncateUsers</code> แล้วทำให้มันพังโดยตั้งใจ
+        (เช่นเปลี่ยนชื่อตารางเป็น <code>userz</code>) — เลขบรรทัดที่ฟ้องเปลี่ยนไปไหม?</li>
+    <li><strong>ท้าทาย 2 — จับ leak ให้เห็น:</strong> เขียนเทสที่ <code>t.Fatal(err)</code>
+        <em>ก่อน</em>บรรทัด <code>defer</code> แล้วรัน จากนั้นดู <code>docker ps</code> ทันที
+        และดูอีกทีตอน 15 วินาที — เห็นอะไรทั้งสองครั้ง?</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 6 — ตัวเลขที่ควรเห็น</button>
+  <div class="answer">
+    <p>ถ้าทำถูก <code>go test -short</code> จะได้หน้าตาแบบนี้ — สังเกตสองบรรทัดล่างสุด:</p>
+    <pre style="margin:0.6rem 0"><code>--- SKIP: TestSearchByCity_CaughtByRealPostgres (0.00s)
+--- SKIP: TestTypoInColumn (0.00s)
+--- SKIP: TestWrongTable (0.00s)
+--- SKIP: TestUserRepoSuite (0.00s)
+PASS
+[TestMain] shared container boot time = <strong>0s</strong>
+ok  	tcdemo/test/integration	<strong>0.353s</strong></code></pre>
+    <p>
+      ถ้าคุณได้ตัวเลข boot ที่<strong>ไม่ใช่ 0s</strong> แปลว่า container ถูกเปิดไปแล้วทั้งที่ทุกเทส skip
+      — ให้ไปดูว่ามีใครเรียก <code>StartPostgres</code> นอก <code>sync.Once</code> หรือเปล่า
+      โดยเฉพาะใน <code>TestMain</code> เอง ผลของแบบนั้นคือ:
+    </p>
+    <pre style="margin:0.6rem 0 0"><code>[eager TestMain] container booted BEFORE m.Run() in 1.047302208s
+--- SKIP: TestEagerOne (0.00s)
+ok  	tcdemo/test/eager	1.673s   <span class="c">← จ่าย 1 วินาทีฟรี ๆ และยังต้องมี Docker</span></code></pre>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 5 คือข้อที่ผมอยากเห็นตัวเลขของคุณที่สุด</strong> —
+    เพราะมันเปลี่ยน integration test จาก "ของหรูที่รันสัปดาห์ละครั้ง"
+    เป็น "ของที่รันทุกครั้งที่กด save" ซึ่งเป็นคนละโปรเจกต์กันเลย
+    <br>ถ้าเทสของคุณยังช้ากว่าที่คิด ส่งผล <code>go test -v</code> มาให้ดูได้ —
+    ตัวเลข <code>boot=</code> ของแต่ละเทสจะบอกเองว่าเปิดกี่ตัว
+    <br>บทถัดไป: schema ที่ <code>AutoMigrate</code> สร้างให้ ใช้ขึ้น production ไม่ได้ — แล้วต้องใช้อะไร
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0029-integration-test.html">← บทเรียน 29</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0031-goose-migration.html">บทเรียน 31 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/testing#hdr-Main">pkg.go.dev — testing: Main</a> — สัญญาของ <code>TestMain</code> และ <code>m.Run()</code></li>
+  <li><a href="https://pkg.go.dev/testing#T.Helper">pkg.go.dev — testing.T.Helper</a> · <a href="https://pkg.go.dev/testing#Short">testing.Short</a></li>
+  <li><a href="https://pkg.go.dev/sync#Once">pkg.go.dev — sync.Once</a> — ต่อจาก <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a></li>
+  <li><a href="https://pkg.go.dev/github.com/stretchr/testify/suite">testify/suite</a> — รายการ hook ทั้งหมด รวม <code>BeforeTest</code>/<code>AfterTest</code></li>
+  <li><a href="https://golang.testcontainers.org/features/garbage_collector/">Testcontainers for Go — Garbage Collector (Ryuk)</a></li>
+  <li><a href="https://pkg.go.dev/github.com/testcontainers/testcontainers-go/modules/postgres">modules/postgres v0.44.0</a> — <code>Run</code>, <code>ConnectionString</code>, <code>BasicWaitStrategies</code></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

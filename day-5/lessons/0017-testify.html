@@ -346,6 +346,34 @@ mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, mock.Anything
 mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, mock.Anything).<span class="f">Return</span>(<span class="k">nil</span>).<span class="f">Times</span>(<span class="n">3</span>)</code></pre>
 
 <div class="warn">
+  <span class="label">สตริงใน <code>AnythingOfType</code> ต้องเปลี่ยนตามโปรเจกต์คุณ</span>
+  <p>
+    รูปแบบคือ <code>"ชื่อpackage.ชื่อType"</code> —
+    ตัวอย่างข้างบนอยู่ใน <code>package main</code> จึงเขียน <code>"main.Result"</code>
+    ถ้าโค้ดคุณอยู่ใน <code>package calcdemo</code> ต้องเขียน <code>"calcdemo.Result"</code>
+    <strong>ใส่ผิด = mock หาคู่ไม่เจอ แล้ว panic</strong> (ไม่ใช่ fail ธรรมดา)
+  </p>
+  <p>ไม่ต้องเดา — ปล่อยให้ panic ครั้งแรกไปเลย มันพิมพ์ชื่อเต็มที่ถูกต้องมาให้:</p>
+  <pre style="margin:0.4rem 0"><code>panic:
+	mock: Unexpected Method Call
+	-----------------------------
+
+	Save(day5check.Result)
+			0: day5check.Result{A:2, B:3, Sum:5}
+
+	The closest call I have is:
+
+	Save(mock.anythingOfTypeArgument)
+			0: "main.Result"
+
+	Diff: 0: FAIL:  type main.Result != type Result - (day5check.Result={2 3 5})</code></pre>
+  <p style="margin-bottom:0">
+    บรรทัด <code>Save(day5check.Result)</code> คือชื่อจริงที่ควรใส่ —
+    ก็อปมาวางใน <code>AnythingOfType</code> ได้ตรง ๆ
+  </p>
+</div>
+
+<div class="warn">
   <span class="label">อย่า mock ทุกอย่าง</span>
   <p style="margin-bottom:0">
     mock เยอะเกินไป = เทสกลายเป็นการ<strong>ยืนยันว่าโค้ดเรียกฟังก์ชันตามลำดับที่คุณเขียนไว้</strong>
@@ -387,6 +415,30 @@ mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, mock.Anything
 <span class="k">func</span> <span class="f">TestUserServiceSuite</span>(t *testing.T) {
     suite.<span class="f">Run</span>(t, <span class="f">new</span>(UserServiceSuite))
 }</code></pre>
+
+<div class="warn">
+  <span class="label">กฎการตั้งชื่อใน suite — พลาดแล้วเงียบ</span>
+  <p>
+    <code>suite.Run</code> จะหยิบมาเป็นเทสเฉพาะ method ที่
+    <strong>ชื่อขึ้นต้นด้วย <code>Test</code></strong> เท่านั้น
+    (เป็นกฎเดียวกับชื่อฟังก์ชันเทสในบทเรียน 14)
+    <br>ตั้งชื่อว่า <code>HappyPath()</code> → <strong>ไม่ถูกรันเลย</strong>
+    และ <code>go test</code> จะขึ้น <code>PASS</code> เฉย ๆ ไม่มีคำเตือน
+    เพราะมันไม่รู้ว่าคุณตั้งใจให้เป็นเทส — ผมรันทดสอบแล้ว ได้แค่นี้:
+  </p>
+  <pre style="margin:0.4rem 0"><code>$ go test -v ./...
+=== RUN   TestUserServiceSuite
+--- PASS: TestUserServiceSuite (0.00s)
+PASS
+ok  	day5check	0.480s</code></pre>
+  <p style="margin-bottom:0">
+    <strong>วิธีเช็ค: รัน <code>-v</code> แล้วนับว่าเห็น
+    <code>=== RUN TestUserServiceSuite/&lt;ชื่อเทส&gt;</code> ครบทุกตัวไหม</strong>
+    ถ้าเห็นแต่บรรทัดของ suite เปล่า ๆ แบบข้างบน = ไม่มีเทสไหนได้รันเลย
+    <br>ส่วน <code>SetupTest</code>/<code>TearDownTest</code> เป็นชื่อสงวนของ hook
+    ไม่ต้องขึ้นต้นด้วย Test
+  </p>
+</div>
 
 <h3>Hook ทั้งหมด</h3>
 
@@ -525,18 +577,23 @@ mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, mock.Anything
         ไม่ใช่ <code>assert.X(t, ...)</code></strong></li>
     <li>เพิ่ม <code>SetupSuite</code>/<code>TearDownSuite</code> ที่ <code>t.Log</code>
         แล้วรัน <code>-v</code> เพื่อ<strong>ดูลำดับ hook และลำดับเทสด้วยตาตัวเอง</strong></li>
-    <li><strong>ท้าทาย 1:</strong> ลบ <code>mockStore.On("Save", ...)</code> ออก
-        แต่ยังเรียก <code>calc.Add(2,3)</code> อยู่ → <strong>ได้อะไร?</strong>
-        <br><em>สปอยล์ผลรันจริง — mock <strong>panic</strong> พร้อมข้อความที่บอกวิธีแก้ให้เลย:</em>
-        <pre style="margin:0.4rem 0"><code>panic:
-  assert: mock: I don't know what to return because
-  the method call was unexpected.
-    Either do Mock.On("Save").Return(...) first,
-    or remove the Save() call.
-  This method was unexpected:
-    Save(day5check.Result)
-    0: day5check.Result{A:2, B:3, Sum:5}</code></pre>
-        <strong>สังเกตว่ามันบอกค่า argument ที่ได้รับจริงมาให้ด้วย</strong> —
+    <li><strong>ท้าทาย 1 — ดูว่า mock บ่นยังไงเมื่อไม่มีใครสอนมัน:</strong>
+        ใน<strong>เทส happy path ที่คุณเพิ่งเขียน</strong> ให้คอมเมนต์บรรทัด
+        <code>s.store.On("GetByID", 1).Return(...)</code> ทิ้งไป
+        แต่ยังเรียก <code>s.svc.FindUser(1)</code> เหมือนเดิม → รัน
+        <br><strong>ต้องได้ <code>test panicked</code> ไม่ใช่ assertion ที่ fail ธรรมดา</strong>
+        เพราะ mock ไม่รู้ว่าจะคืนค่าอะไร —
+        <em>สปอยล์ผลรันจริง (suite จะดักและรายงานเป็น FAIL ให้):</em>
+        <pre style="margin:0.4rem 0"><code>--- FAIL: TestUserServiceSuite (0.00s)
+    --- FAIL: TestUserServiceSuite/TestFindUser_ReturnsUser (0.00s)
+        mock.go:359: test panicked:
+            assert: mock: I don't know what to return because the method call was unexpected.
+            	Either do Mock.On("GetByID").Return(...) first, or remove the GetByID() call.
+            	This method was unexpected:
+            		GetByID(int)
+            		0: 1</code></pre>
+        <strong>อ่านให้ครบ — มันบอกค่า argument ที่ได้รับจริงมาให้ด้วย</strong>
+        (<code>0: 1</code> คือ argument ตัวที่ 0 มีค่า <code>1</code>)
         เอาไปวางใน <code>.On()</code> ได้ตรง ๆ</li>
     <li><strong>ท้าทาย 2:</strong> เขียนเทสที่มี <code>assert.InDelta</code>
         เทียบ float แล้วลองเปลี่ยนเป็น <code>assert.Equal</code> —

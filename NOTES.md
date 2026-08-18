@@ -23,7 +23,7 @@ assets/lesson.css             ← ทุกหน้าใช้ร่วมก�
 assets/quiz.js                ← quiz + predict + ปุ่มเฉลย + ติ๊ก "เรียนจบบทนี้"
 assets/progress.js            ← ติ๊กบทที่ทำเสร็จในหน้าแรก (localStorage)
 assets/md.js                  ← markdown → HTML ใช้โดย docs.html เท่านั้น
-day-N/lessons/NNNN-slug.html  ← เลขบทเรียนต่อเนื่องข้ามวัน (global)
+day-N/lessons/NNNN-slug.html  ← เลขบทเรียนต่อเนื่องข้ามวัน (global) ตอนนี้ day-1..day-7
 day-N/reference/cheatsheet.html
 vercel.json  .gitignore  robots.txt  README.md   ← สำหรับ deploy
 from_teacher/                 ← PDF ต้นฉบับจากผู้สอน · gitignore ไว้ ไม่ push ขึ้น repo
@@ -31,7 +31,7 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
 
 **เวลาเพิ่มวันใหม่:**
 1. `mkdir -p day-N/lessons day-N/reference`
-2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0027)
+2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0032)
 3. เขียน `day-N/reference/cheatsheet.html` ครอบคลุมสไลด์ทั้งวัน
 4. เพิ่ม `<section class="day">` ใน `index.html` + อัปเดตตัวเลขใน `.progress-summary`
    + แก้การ์ด `.upcoming` ให้เป็นวันถัดไป
@@ -82,8 +82,8 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
    *หน้าที่* ของ handler แต่ภารกิจหยุดที่ service/repository ·
    **เป็นช่องว่างที่ใหญ่ที่สุดตอนนี้** และเป็นเนื้อหาสัปดาห์ที่ 3
 2. **`httptest`** — จำเป็นทันทีที่เริ่ม REST API · ต่อยอดจากบท 14–17
-3. **เขียนเทสให้ repository ที่ต่อ database จริง** — ผู้เรียนมี Docker
-   และ Postgres พร้อมแล้วหลังบท 27 · ใช้ `t.Cleanup` (บท 15) + transaction rollback
+3. ~~**เขียนเทสให้ repository ที่ต่อ database จริง**~~ — **ทำแล้วในบท 29–30**
+   ด้วย Testcontainers (container จริง ไม่ใช่ DB ที่ลงในเครื่อง)
 4. **Closure + first-class function** — ยังอยู่ใน cheat sheet Day 3 อย่างเดียว
    รอดูว่าภารกิจ `trackTime` (วงเล็บ 2 ชุด) ในบท 08 ผ่านไหม ถ้าไม่ผ่าน → ทำทันที
 5. **Struct embedding & promotion** — ควรมีบทที่ให้ทำนายว่า method ไหนถูกเรียก
@@ -102,8 +102,9 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
     เพราะใช้วัดผล worker pool ได้จริง (ต่อยอดจากบท 26)
 11. **`sync.Once` · `errgroup` · `atomic`** — ไม่มีในสไลด์ Day 6 แต่เจอแน่ในโค้ดจริง ·
     `errgroup` คือ WaitGroup ที่รวบ error ได้ ต่อยอดจากบท 21+25 ตรง ๆ
-12. รอสไลด์ Day 7 — ตาม roadmap เหลือสัปดาห์ที่ 3:
-    build / secure / test / deploy RESTful API
+12. ~~รอสไลด์ Day 7~~ — **มาแล้ว ทำเป็นบท 28–32**
+    (Mockery · Testcontainers · Goose · Redis) · ครึ่งแรกของสไลด์ซ้ำกับบท 27 จึงข้าม
+13. รอสไลด์ Day 8 — เหลือส่วนที่เป็น API จริง ๆ: build / secure / deploy RESTful API
 
 ## เรื่องที่ต้องถามผู้เรียน (ยังค้าง)
 
@@ -123,6 +124,13 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
   แล้ว **ลบ container ทิ้งเมื่อตรวจเสร็จ** · ใช้ port 55432 กันชนกับของผู้เรียน
 - **โค้ดฝั่ง "วิธีเก่าที่แย่" ในสไลด์ต้องรันด้วยเสมอ** — Day 6 เจอ 2 จุดที่พังจริง
   กลายเป็น predict-the-output ที่ดีที่สุดของบท 19
+- ⚠️ **ผลตรวจจาก subagent ห้ามเชื่อทันทีเรื่อง "สไลด์ผิด"** (บทเรียนจาก Day 7) —
+  agent รายงานมา 21 จุด คัดแล้วจริง 5 จุด · มันเห็นแต่ผลรันของตัวเอง ไม่ได้อ่านสไลด์ทั้งหน้า
+  จึงเก่งเรื่อง *กับดักของเครื่องมือ* แต่ตัดสิน *สไลด์เขียนว่าอะไร* ไม่ได้
+  **→ ทุกจุดที่จะลง learning record 0002 ต้องรันซ้ำเองและเปิดสไลด์เทียบเอง**
+- **ก่อนยิง workflow ยาว ๆ ให้ `node --check` สคริปต์ก่อน** — Day 7 ลืมประกาศตัวแปร
+  ทำให้เฟส Write พังทั้งหมด · กู้ได้ด้วย `resumeFromRunId` (ผลตรวจที่แพงถูก cache ไว้)
+  แต่เสียเวลารอบหนึ่งฟรี ๆ
 - เพิ่ม component ใหม่ให้ใส่ใน `assets/` **อย่า inline ในบทเรียน**
 - **ปุ่ม `.reveal` ใช้ได้ทั้งใน `.predict` และ `.task`** (เพิ่มตอน Day 6) —
   contract: `button.reveal` + `div.answer` เป็นลูกของ card **หนึ่งปุ่มต่อหนึ่ง card**

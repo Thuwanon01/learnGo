@@ -1,6 +1,6 @@
 # สไลด์ของคอร์สมีจุดผิด — ต้องรันโค้ดยืนยันก่อนสอนทุกครั้ง
 
-ตรวจสไลด์เทียบกับการรันจริงบน Go 1.26.5 แล้วพบจุดที่สไลด์ผิด 11 จุด
+ตรวจสไลด์เทียบกับการรันจริงบน Go 1.26.5 แล้วพบจุดที่สไลด์ผิด 16 จุด
 จึงตั้งเป็นกฎของ workspace นี้ว่า **ตัวอย่างโค้ดทุกอันต้องรันจริงก่อนใส่ในบทเรียน**
 
 **Evidence — จุดที่พบ:**
@@ -18,6 +18,11 @@
 | 6 | Problem before Generics → ฝั่ง "ใช้ any" | `func Sum(values []any) any` ที่มี `var total any` แล้ว `total.(int) + v` | **panic ตอนรัน** — `interface conversion: interface {} is nil, not int` · `var total any` ได้ `nil` ไม่ใช่ `0` · สไลด์ยกมาเป็น "ทางเลือกที่ใช้ได้แต่ไม่สวย" ทั้งที่มันใช้ไม่ได้เลย (ทำให้เหตุผลของ generics แข็งแรงกว่าที่สไลด์ตั้งใจ) |
 | 6 | Generics Struct → API Response | ประกาศ `type Result[T any] struct { Data T; Success bool }` แต่ใช้งานด้วย `Result[User]{Data: ..., Count: 29301}` | **คอมไพล์ไม่ผ่าน** — `unknown field Count in struct literal of type Result[User]` · `Count` ค้างมาจากสไลด์หน้าก่อนที่ struct ยังมี field นั้น |
 | 6 | `time.Sleep()` | `import "fmt"` อย่างเดียว แต่เรียก `time.Sleep(time.Second)` | `undefined: time` — ขาด `import "time"` |
+| 7 | Advance Mock With Mockery | `mockery --version` | `Error: unknown flag: --version` — v3.7.3 ใช้ subcommand `mockery version` |
+| 7 | Advance Mock With Mockery | `mockery generate mock` | `Error: unknown command "generate" for "mockery"` — v3 สั่ง generate ด้วยการรัน `mockery` เปล่า ๆ |
+| 7 | Advance Mock With Mockery | config ชื่อ `mockery.yml` | `getting config: discovering mockery config: file not found` — **ต้องมีจุดนำหน้า** `.mockery.yml` (หรือ `.mockery.yaml`) เท่านั้น · ตัว `mockery init` เองก็สร้างไฟล์ที่มีจุด |
+| 7 | Migrate and Seed → Goose | แสดงไฟล์ migration ที่มี `-- +goose StatementBegin` / `StatementEnd` ราวกับเป็นสิ่งที่ `goose create` สร้างให้ | template จริงของ v3.27.3 มีแค่ `-- +goose Up` กับ `-- +goose Down` · `StatementBegin/End` ต้องพิมพ์เพิ่มเอง และจำเป็นเฉพาะตอน statement มี `;` ข้างใน (function / trigger / DO block) |
+| 7 | Integration test → TestContainer | `go get github.com/testcontainers/testcontainers-go` บรรทัดเดียว แล้วใช้ `tcpostgres.Run` ได้เลย | `no required module provides package github.com/testcontainers/testcontainers-go/modules/postgres` — **module postgres เป็นคนละ Go module** ต้อง `go get` แยกอีกบรรทัด |
 
 **จุดที่ยังไม่สรุปว่าผิด:**
 
@@ -34,6 +39,25 @@
 - **Day 6 — GOMAXPROCS** สไลด์นิยามว่า "จำนวน goroutine ที่กำลังประมวลผลบน CPU
   จริง ๆ พร้อมกัน" ซึ่งถูกในเชิงผลลัพธ์ แต่ตัวมันคือ**จำนวน P** ใน GMP model
   (เพดานของการ execute) ไม่ใช่ตัวนับ goroutine · ไม่ผิดพอจะเข้าตาราง
+
+**เรื่องที่ agent รายงานมาแต่ตัดออก (ไม่นับเป็น "สไลด์ผิด"):**
+
+ตอนทำ Day 7 ใช้ subagent ตรวจเครื่องมือแล้วมันรายงานกลับมา **21 จุด**
+คัดแล้วเหลือ 5 จุดที่เป็นความผิดจริง ที่เหลือคือ:
+
+- **ข้อสังเกตที่ดีแต่สไลด์ไม่ได้เขียนผิด** — เช่น "Redis เก็บใน RAM" (สไลด์เขียน
+  *"เป็นหลัก"* ไว้แล้ว) · "cache invalidation มี TTL กับ purge" (สไลด์ปิดท้ายด้วย *"Etc."*)
+  · "KEYS ช้ากว่า SCAN" (สไลด์ไม่ได้อ้างเหตุผลนั้น แค่ลิสต์คำสั่ง)
+- **สิ่งที่สไลด์ไม่ได้พูดถึง** — ไม่ใช่ความผิด เป็นช่องว่าง เช่น `GOOSE_DRIVER`/`-dir`,
+  การตั้ง `DOCKER_HOST` สำหรับคนใช้ colima/Podman
+- **agent อ่านสไลด์คลาดเคลื่อนเอง 2 จุด** — อ้างว่าสไลด์ตั้ง `all` ผิดระดับ
+  ทั้งที่สไลด์เขียน `all: false` ข้างบนกับ `all: true` ใต้ `packages` ถูกต้องแล้ว ·
+  และอ้างว่าสไลด์บอก config มี 8 ฟิลด์ ทั้งที่สไลด์แสดง 13 บรรทัด
+
+**บทเรียนของเรื่องนี้:** subagent ที่รันของจริงเก่งมากในการหา *กับดัก*
+แต่มันตัดสิน *"สไลด์ผิดไหม"* ได้ไม่ดี เพราะมันไม่ได้อ่านสไลด์ทั้งหน้า
+→ **ผลตรวจจาก agent ต้องเอามาเทียบกับสไลด์เองทุกครั้งก่อนบันทึก**
+ทั้ง 5 จุดข้างบนผมรันซ้ำด้วยมือเองก่อนใส่ตาราง
 
 **Implications:**
 - เวลาสอนสไลด์วันอื่น (Day 1, 2 และวันที่จะมาถึง) ต้องตรวจแบบเดียวกัน

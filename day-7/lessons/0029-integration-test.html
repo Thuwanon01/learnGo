@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 29 — Integration test: ทำไม unit test อย่างเดียวไม่พอ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 29 · Day 7 · Integration test</p>
+  <h1>Integration test — ทำไม unit test อย่างเดียวไม่พอ</h1>
+  <p class="meta">~17 นาที · ต้องมี: <a href="./0028-mockery.html">บทเรียน 28</a> (mock), <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> (GORM + repository), <a href="../../day-5/lessons/0015-testing-t.html">บทเรียน 15</a> (<code>t.Cleanup</code>)</p>
+  <p class="standfirst">
+    บทที่แล้วคุณ mock repository ได้แล้ว เทสเร็วขึ้น ไม่ต้องมี database
+    ทุกอย่างเขียวสวยงาม
+    <br>บทนี้ผมจะเอา<strong>โค้ดที่ query column ที่ไม่มีอยู่จริง</strong>
+    มาให้ดู — แล้วให้คุณดูว่า unit test ที่ mock ไว้บอกว่า
+    <strong>ผ่าน</strong> ส่วน production พังตอนถูกเรียกครั้งแรก
+  </p>
+</header>
+
+<main>
+
+<h2>1 · integration test อยู่ตรงไหนของ test pyramid</h2>
+
+<div class="diagram">
+<pre>            ▲  แพงขึ้น · ช้าลง · เปราะขึ้น
+            │
+      ┌─────────────┐
+      │   E2E test  │   ยิงทั้งระบบผ่าน HTTP จริง ของจริงทุกชิ้น
+      └─────────────┘
+    ┌───────────────────┐
+    │ <strong>Integration test</strong> │   ← <strong>ชั้นที่ 2 · บทนี้อยู่ตรงนี้</strong>
+    │  <strong>ทดสอบ "รอยต่อ"</strong>    │      code ของเรา ↔ ของจริงอีก 1 ระบบ
+    │  <strong>ของ 2 system</strong>      │      (postgres · redis · message queue)
+    └───────────────────┘
+  ┌─────────────────────────┐
+  │       Unit test         │   ฟังก์ชันเดียว · ของรอบข้าง mock หมด
+  └─────────────────────────┘
+            │
+            ▼  ถูกลง · เร็วขึ้น · เขียนง่ายขึ้น</pre>
+</div>
+
+<p>
+  จุดที่คนสับสนบ่อยคือคิดว่า integration test = "เทสที่ช้า"
+  ซึ่งไม่ใช่นิยามของมัน <strong>นิยามคือ "เทสที่ไม่ mock รอยต่อ"</strong>
+  <br>บทที่ 28 คุณ mock <code>UserRepository</code> เพื่อเทส service
+  — รอยต่อ service ↔ repository ถูกปิดด้วยของปลอม
+  บทนี้เราจะเปิดมันออก แล้วให้ repository คุยกับ <strong>PostgreSQL ตัวจริง</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ไม่แพงสุด ไม่ถูกสุด</strong> — นี่คือเหตุผลที่มันอยู่ชั้นกลาง
+    <br>ตัวเลขจริงจากเครื่องผม (อยู่ในหัวข้อ 8): unit test ที่ mock ไว้ทำงานใน
+    <code>1.251ms</code> ส่วน integration test ต้องรอ container ขึ้นก่อน
+    <code>~1.03s</code> — ต่างกันประมาณ 820 เท่า
+    <br><strong>แต่จ่ายครั้งเดียว</strong> ไม่ใช่จ่ายต่อเทส (เรื่องนี้เป็นของบทหน้า)
+  </p>
+</div>
+
+<h2>2 · หัวใจของบทนี้ — mock ที่ผ่านฉลุยทั้งที่ SQL ผิด</h2>
+
+<p>
+  สมมติคุณเขียน method นี้ต่อจาก repository ในบทเรียน 27
+  โดยลืมไปว่าตาราง <code>users</code> ของคุณ<strong>ไม่มี column ชื่อ <code>city</code></strong>:
+</p>
+
+<pre><code><span class="c">// internal/repository/user_repository.go</span>
+<span class="k">func</span> (r *UserRepository) <span class="f">SearchByCity</span>(ctx context.Context, city <span class="k">string</span>) ([]model.User, <span class="k">error</span>) {
+    <span class="k">var</span> users []model.User
+    err := r.db.<span class="f">WithContext</span>(ctx).
+        <span class="f">Raw</span>(<span class="s">"SELECT * FROM users WHERE city = ?"</span>, city).
+        <span class="f">Scan</span>(&amp;users).Error
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> <span class="k">nil</span>, err
+    }
+    <span class="k">return</span> users, <span class="k">nil</span>
+}</code></pre>
+
+<div class="predict">
+  <pre><code><span class="c">// unit test ด้วย go-sqlmock — mock database ทั้งตัว</span>
+rows := sqlmock.<span class="f">NewRows</span>([]<span class="k">string</span>{<span class="s">"id"</span>, <span class="s">"name"</span>, <span class="s">"email"</span>, <span class="s">"age"</span>, <span class="s">"created_at"</span>}).
+    <span class="f">AddRow</span>(<span class="n">7</span>, <span class="s">"Ploy"</span>, <span class="s">"ploy@example.com"</span>, <span class="n">28</span>, time.<span class="f">Now</span>())
+
+mock.<span class="f">ExpectQuery</span>(<span class="s">`SELECT \* FROM users WHERE city = .*`</span>).<span class="f">WillReturnRows</span>(rows)
+
+users, err := repo.<span class="f">SearchByCity</span>(context.<span class="f">Background</span>(), <span class="s">"Bangkok"</span>)
+t.<span class="f">Logf</span>(<span class="s">"MOCK RESULT: len=%d first=%s"</span>, <span class="f">len</span>(users), users[<span class="n">0</span>].Name)</code></pre>
+  <p class="ask">
+    ตาราง <code>users</code> <strong>ไม่มี column <code>city</code></strong> จริง ๆ
+    — <code>go test</code> ตัวนี้ PASS หรือ FAIL?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>PASS</strong> — และผ่านแบบไม่มีคำเตือนอะไรเลย:</p>
+    <pre style="margin:0.6rem 0"><code>=== RUN   TestMockedSearchByCity_PASSES_WITH_A_BUG
+    unitmock_test.go:72: MOCK RESULT: len=1 first=Ploy  (took 166.042µs)
+    unitmock_test.go:73: =&gt; mocked unit test is GREEN even though column `city` does not exist
+--- PASS: TestMockedSearchByCity_PASSES_WITH_A_BUG (0.00s)</code></pre>
+    <p>
+      <strong>go-sqlmock จับคู่ SQL ด้วย regex แล้วคืน rows ที่เราป้อนให้</strong>
+      มันไม่มี SQL parser และไม่รู้จัก schema ของคุณเลยแม้แต่นิดเดียว
+      <br>คุณเขียน regex ว่า <code>SELECT \* FROM users WHERE city = .*</code>
+      มันก็แค่ match แล้วคืนของที่คุณเตรียมไว้ —
+      <strong>คุณกำลังเทสว่า "regex ที่ผมเขียน ตรงกับ string ที่ผมเขียน"</strong>
+    </p>
+    <p style="margin-bottom:0">
+      ทีนี้เอา <em>ฟังก์ชันตัวเดียวกันเป๊ะ</em> ไปยิง PostgreSQL ของจริง:
+    </p>
+    <pre style="margin:0.6rem 0 0"><code>=== RUN   TestSearchByCity_CaughtByRealPostgres
+    badsql_test.go:24: VERBATIM real-postgres error: ERROR: column "city" does not exist (SQLSTATE 42703)
+--- PASS: TestSearchByCity_CaughtByRealPostgres (1.07s)</code></pre>
+  </div>
+</div>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ สิ่งที่ mock ตรวจได้</h4>
+    <p style="margin-bottom:0">
+      "logic ของเราเรียกถูกไหม" — เรียกกี่ครั้ง · ส่ง argument อะไร ·
+      แปลงผลลัพธ์ถูกไหม · จัดการ error ที่คืนมาถูกไหม
+      <br><strong>ทั้งหมดนี้อยู่ในหัวของเราฝ่ายเดียว</strong>
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ สิ่งที่มีแต่ DB จริงตรวจได้</h4>
+    <p style="margin-bottom:0">
+      "SQL ใช้ได้กับ schema จริงไหม" — column มีอยู่จริงไหม ·
+      ตารางชื่อถูกไหม · constraint ทำงานไหม · type ตรงไหม · migration ครบไหม
+      <br><strong>ทั้งหมดนี้เป็นสัญญากับระบบอื่น</strong>
+    </p>
+  </div>
+</div>
+
+<h3 style="margin-top:1.4rem">error ตรงตัวอีก 3 แบบที่ DB จริงจับได้</h3>
+
+<pre><code>badsql_test.go:24: VERBATIM real-postgres error: ERROR: column <span class="s">"city"</span> does not exist (SQLSTATE <strong>42703</strong>)
+badsql_test.go:38: VERBATIM typo error:          ERROR: column <span class="s">"naem"</span> does not exist (SQLSTATE <strong>42703</strong>)
+badsql_test.go:52: VERBATIM missing-table error: ERROR: relation <span class="s">"userz"</span> does not exist (SQLSTATE <strong>42P01</strong>)</code></pre>
+
+<p>
+  และอันนี้คือ unique index ที่ <code>AutoMigrate</code> สร้างจาก tag
+  <code>gorm:"uniqueIndex"</code> บน field <code>Email</code> (บทเรียน 27) —
+  ลอง insert email ซ้ำแล้วได้:
+</p>
+
+<pre><code>user_suite_test.go:85: VERBATIM duplicate-key error: ERROR: duplicate key value violates unique constraint <span class="s">"idx_users_email"</span> (SQLSTATE <strong>23505</strong>)</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>SQLSTATE</th><th>แปลว่า</th><th>เจอเมื่อ</th></tr>
+  <tr><td><code>42703</code></td><td>undefined_column</td><td>column ไม่มี · พิมพ์ชื่อผิด · ลืม migration</td></tr>
+  <tr><td><code>42P01</code></td><td>undefined_table</td><td>ตารางไม่มี · พิมพ์ชื่อตารางผิด</td></tr>
+  <tr><td><code>23505</code></td><td>unique_violation</td><td>ค่าซ้ำในคอลัมน์ที่มี unique index</td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ อย่าอ่านบทนี้เป็น "mock ไม่ดี ทิ้งไปเลย"</strong>
+    <br>ใช้<strong>ทั้งคู่</strong> คนละหน้าที่: mock สำหรับ business logic
+    (<code>1.25ms</code> ต่อเทส เอาไปวนหลายร้อยเคสได้)
+    · container สำหรับ SQL/schema/constraint
+    <br><strong>กฎง่าย ๆ: ทุกอย่างที่เป็น "สัญญากับ database" ต้องมี integration test</strong>
+    — column, ตาราง, constraint, type, migration
+  </p>
+</div>
+
+<h2>3 · nil slice ที่คืนจากหลังบ้าน — <code>[]</code> หรือ <code>null</code></h2>
+
+<p>
+  คำถามคลาสสิก: repository ที่ query แล้ว<strong>ไม่เจอแถวเลย</strong>
+  คืนอะไรออกมา แล้วพอ <code>json.Marshal</code> ต่อ frontend ได้อะไร
+  <br>คำตอบ<strong>ไม่ใช่ขาวดำ</strong> — ขึ้นกับว่าคุณใช้ทางไหนอ่านข้อมูล
+  ผมรันทั้ง 5 กรณีบน postgres จริง:
+</p>
+
+<pre><code><span class="c">// 1. GORM Find เข้า nil slice</span>
+<span class="k">var</span> a []model.User
+db.<span class="f">WithContext</span>(ctx).<span class="f">Where</span>(<span class="s">"age &gt;= ?"</span>, <span class="n">18</span>).<span class="f">Find</span>(&amp;a)
+
+<span class="c">// 2. GORM Find เข้า make([]T,0)</span>
+b := <span class="f">make</span>([]model.User, <span class="n">0</span>)
+db.<span class="f">WithContext</span>(ctx).<span class="f">Where</span>(<span class="s">"age &gt;= ?"</span>, <span class="n">18</span>).<span class="f">Find</span>(&amp;b)
+
+<span class="c">// 3. GORM Raw + Scan เข้า nil slice</span>
+<span class="k">var</span> c []model.User
+db.<span class="f">WithContext</span>(ctx).<span class="f">Raw</span>(<span class="s">"SELECT * FROM users WHERE age &gt;= ?"</span>, <span class="n">18</span>).<span class="f">Scan</span>(&amp;c)
+
+<span class="c">// 4. database/sql เขียน loop เอง</span>
+<span class="k">var</span> users []model.User   <span class="c">// nil slice</span>
+<span class="k">for</span> rows.<span class="f">Next</span>() { ... users = <span class="f">append</span>(users, u) }</code></pre>
+
+<p>ผลจริงที่รันบน container (<code>isNil</code> คือ <code>s == nil</code>):</p>
+
+<pre><code>nilslice_test.go:24: GORM Find, var []T, 0 rows             len=0 isNil=<strong>false</strong> json=<strong>[]</strong>
+nilslice_test.go:24: GORM Find, make([]T,0), 0 rows         len=0 isNil=<strong>false</strong> json=<strong>[]</strong>
+nilslice_test.go:24: GORM Raw+Scan, var []T, 0 rows         len=0 isNil=<strong>true</strong>  json=<strong>null</strong>
+nilslice_test.go:24: database/sql rows.Next loop, 0 rows    len=0 isNil=<strong>true</strong>  json=<strong>null</strong>
+nilslice_test.go:24: GORM Find, var []T, 1 row              len=1 isNil=false json=[{"id":1,"name":"X",...}]</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ทางที่ใช้อ่าน</th><th><code>len()</code></th><th><code>== nil</code></th><th>JSON</th></tr>
+  <tr><td><code>GORM Find</code> (ทั้ง <code>var</code> และ <code>make</code>)</td><td>0</td><td>false</td><td><code>[]</code> ✅</td></tr>
+  <tr><td><code>GORM Raw().Scan()</code></td><td>0</td><td><strong>true</strong></td><td><code>null</code> ⚠️</td></tr>
+  <tr><td><code>database/sql</code> + <code>rows.Next()</code></td><td>0</td><td><strong>true</strong></td><td><code>null</code> ⚠️</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>อ่านตารางนี้ยังไง</strong>
+    <br><code>len(s) == 0</code> ตรวจไม่ได้ว่า slice เป็น nil หรือเปล่า —
+    <strong>nil slice กับ empty slice มี <code>len</code> เท่ากันคือ 0</strong>
+    ต่างกันที่ <code>s == nil</code> และต่างกันที่ <code>encoding/json</code> มองคนละอย่าง
+    <br>ที่น่าสนใจคือ <code>GORM Find</code> <strong>ไม่คืน nil เลย</strong>
+    ต่อให้คุณส่ง <code>var users []T</code> ที่เป็น nil เข้าไป —
+    มัน reflect แล้ว allocate slice ให้เอง ปัญหา <code>null</code> จึงไม่เกิดบนเส้นทางนี้
+    <br><strong>ปัญหาเกิดจริงกับ <code>Raw().Scan()</code> และ repository ที่เขียน
+    <code>rows.Next()</code> เอง</strong> — ซึ่งเป็นสองทางที่คุณจะใช้เมื่อ query
+    ซับซ้อนเกิน GORM
+  </p>
+</div>
+
+<p>
+  <strong>วิธีแก้เหมือนกันทั้งสองกรณี</strong> คือประกาศด้วย
+  <code>users := make([]model.User, 0)</code> แทน <code>var users []model.User</code>
+  แล้ว <code>append</code> ต่อ — <code>append</code> ทำงานกับ empty slice ได้ปกติ
+  ผลคือ frontend ได้ <code>[]</code> เสมอ ไม่ต้องเขียน
+  <code>if (data === null)</code> ทุกหน้า
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ นี่คือเหตุผลว่าทำไมเรื่องนี้ต้องอยู่ในบท integration test</strong>
+    <br>ถ้าคุณ mock ไว้ คุณ<em>เลือกเอง</em>ว่าจะให้ mock คืน nil หรือ empty slice
+    — เทสจึงยืนยันแค่สิ่งที่คุณสมมติไว้ ไม่ได้ยืนยันว่า GORM ทำอะไรจริง
+    <br><strong>คำตอบข้างบนทุกบรรทัดมาจากการรันกับ postgres จริง</strong>
+  </p>
+</div>
+
+<h2>4 · Testcontainers คืออะไร และทำไมไม่ใช้ DB ที่ลงไว้ในเครื่อง</h2>
+
+<p>
+  <strong>Testcontainers คือ library ที่สั่ง Docker เปิด container ให้จาก<em>ในโค้ดเทส</em></strong>
+  ไม่ใช่จาก <code>docker-compose up</code> ที่คุณต้องจำไปรันเอง
+  เทสเริ่ม → container ขึ้น · เทสจบ → container ถูกลบทิ้ง
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ postgres ที่ลงไว้ในเครื่อง</h4>
+    <ul style="margin:0;padding-left:1.1rem">
+      <li>เพื่อนในทีมต้องลงเองให้ version ตรงกัน</li>
+      <li>ข้อมูลจากเทสรอบก่อนค้างอยู่ → เทสรอบนี้ผลเพี้ยน</li>
+      <li>เทสเผลอลบข้อมูลที่คุณใช้ dev อยู่</li>
+      <li>CI ต้องมี service ที่ตั้งค่าแยกอีกชุด</li>
+    </ul>
+  </div>
+  <div class="side good">
+    <h4>✅ Testcontainers</h4>
+    <ul style="margin:0;padding-left:1.1rem">
+      <li>version เขียนอยู่ในโค้ด (<code>postgres:16-alpine</code>)</li>
+      <li>ทุกรอบเริ่มจาก DB เปล่า ไม่มีของค้าง</li>
+      <li>แยกขาดจาก DB ที่คุณใช้ dev</li>
+      <li>CI ที่มี Docker ก็รันได้เลย ไม่ต้องตั้งอะไรเพิ่ม</li>
+    </ul>
+  </div>
+</div>
+
+<p>
+  ตัว library ยังเปิด container ผู้ช่วยชื่อ <strong>Ryuk</strong> ให้อัตโนมัติด้วย
+  (<code>testcontainers/ryuk:0.14.0</code>) หนึ่งตัวต่อหนึ่ง test process
+  หน้าที่ของมันคือตามลบ container ที่คุณลืมลบ —
+  เป็น<strong>ตาข่ายกันตก ไม่ใช่แผนหลัก</strong> คุณยังต้องเขียน cleanup เองอยู่ดี
+</p>
+
+<h2>5 · ติดตั้ง — จุดที่คนติดกันหมด</h2>
+
+<p>
+  สไลด์บอกให้ <code>go get</code> บรรทัดเดียว แต่<strong>ไม่พอ</strong>
+  เพราะ module ของ postgres เป็น <em>คนละ Go module</em> กับตัวหลัก
+  ผม <code>go get</code> แค่ตัวหลักแล้ว build ได้แบบนี้:
+</p>
+
+<pre><code>main.go:7:2: no required module provides package github.com/testcontainers/testcontainers-go/modules/postgres; to add it:
+	go get github.com/testcontainers/testcontainers-go/modules/postgres
+(exit 1)</code></pre>
+
+<pre><code>go mod init tcdemo
+go get github.com/testcontainers/testcontainers-go
+go get github.com/testcontainers/testcontainers-go/modules/postgres   <span class="c"># ← บรรทัดที่สไลด์ลืม</span>
+go get gorm.io/gorm gorm.io/driver/postgres
+go get github.com/stretchr/testify</code></pre>
+
+<p>ได้ <code>v0.44.0</code> ทั้งคู่ · หลัง <code>go mod tidy</code> ใน <code>go.mod</code> จะเห็น:</p>
+
+<pre><code>require (
+	github.com/stretchr/testify v1.12.0
+	github.com/testcontainers/testcontainers-go v0.44.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
+	gorm.io/driver/postgres v1.6.2
+	gorm.io/gorm v1.31.2
+)</code></pre>
+
+<h3 style="margin-top:1.4rem">ถ้าไม่ได้ใช้ Docker Desktop ต้องตั้ง env อีก 2 ตัว</h3>
+
+<p>
+  <strong>testcontainers-go v0.44.0 ไม่อ่าน <code>docker context</code> ของ Docker CLI เลย</strong>
+  — แปลว่า <code>docker ps</code> ของคุณใช้ได้ปกติ แต่เทสพังตั้งแต่บรรทัดแรก
+  ถ้าคุณใช้ colima / Rancher Desktop / Podman บน macOS
+</p>
+
+<pre><code>shared_test.go:17: shared container failed: run postgres: generic container: get provider: rootless Docker not found, failed to create Docker provider
+--- FAIL: TestSharedA (0.00s)</code></pre>
+
+<pre><code><span class="c"># แก้ด้วย 2 บรรทัดนี้ (รันก่อน go test)</span>
+export DOCKER_HOST=$(docker context inspect --format '{{.Endpoints.docker.Host}}')
+export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock</code></pre>
+
+<p>
+  ตัวที่สองจำเป็นเพราะ Ryuk ต้อง bind-mount docker socket เข้า container
+  แต่ path ฝั่ง macOS ไม่มีอยู่ใน VM — ถ้าตั้งแค่ตัวแรกจะได้ error นี้:
+</p>
+
+<pre><code>shared_test.go:17: shared container failed: run postgres: generic container: create container: reaper: new reaper: run container: container start: Error response from daemon: error while creating mount source path '/Users/tuwanon/.colima/default/docker.sock': mkdir /Users/tuwanon/.colima/default/docker.sock: operation not supported: could not start container</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>วิธีเช็คว่าตั้งถูกแล้ว</strong> — ดู log 2 บรรทัดนี้ตอนเทสเริ่ม
+    <strong>สองค่านี้ตั้งใจให้ต่างกันได้</strong> (อันแรกคือ path ฝั่งเครื่องคุณ อันหลังคือ path ฝั่ง VM):
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>  Resolved Docker Host: unix:///Users/tuwanon/.colima/default/docker.sock
+  Resolved Docker Socket Path: /var/run/docker.sock</code></pre>
+  <p style="margin:0.6rem 0 0">
+    ถ้าคุณใช้ <strong>Docker Desktop</strong> มักไม่ต้องตั้งอะไรเลย
+    (library มีทางลัดเช็คจาก daemon ให้เอง) — แต่ผมทดสอบกรณีนั้นไม่ได้
+    เพราะเครื่องที่ตรวจใช้ colima
+  </p>
+</div>
+
+<h2>6 · เปิด postgres container จากในเทสจริง</h2>
+
+<pre><code><span class="k">import</span> (
+    tcpostgres <span class="s">"github.com/testcontainers/testcontainers-go/modules/postgres"</span>
+)
+
+<span class="k">func</span> <span class="f">StartPostgres</span>(ctx context.Context) (*tcpostgres.PostgresContainer, time.Duration, <span class="k">error</span>) {
+    start := time.<span class="f">Now</span>()
+    ctr, err := tcpostgres.<span class="f">Run</span>(ctx,
+        <span class="s">"postgres:16-alpine"</span>,
+        tcpostgres.<span class="f">WithDatabase</span>(<span class="s">"testdb"</span>),
+        tcpostgres.<span class="f">WithUsername</span>(<span class="s">"testuser"</span>),
+        tcpostgres.<span class="f">WithPassword</span>(<span class="s">"testpass"</span>),
+        tcpostgres.<span class="f">BasicWaitStrategies</span>(),
+    )
+    <span class="k">return</span> ctr, time.<span class="f">Since</span>(start), err
+}</code></pre>
+
+<p>
+  ต่อ GORM แล้ว <code>AutoMigrate</code> ตามที่ทำในบทเรียน 27 ได้เลย —
+  ต่างกันแค่ DSN มาจาก container ไม่ใช่จาก config file:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">OpenGorm</span>(ctx context.Context, ctr *tcpostgres.PostgresContainer) (*gorm.DB, <span class="k">string</span>, <span class="k">error</span>) {
+    dsn, err := ctr.<span class="f">ConnectionString</span>(ctx, <span class="s">"sslmode=disable"</span>)   <span class="c">// ← port สุ่มอยู่ในนี้</span>
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> <span class="k">nil</span>, <span class="s">""</span>, err
+    }
+    db, err := gorm.<span class="f">Open</span>(postgres.<span class="f">Open</span>(dsn), &amp;gorm.Config{
+        Logger: logger.Default.<span class="f">LogMode</span>(logger.Silent),
+    })
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> <span class="k">nil</span>, dsn, err
+    }
+    <span class="k">if</span> err := db.<span class="f">AutoMigrate</span>(&amp;model.User{}); err != <span class="k">nil</span> {
+        <span class="k">return</span> <span class="k">nil</span>, dsn, err
+    }
+    <span class="k">return</span> db, dsn, <span class="k">nil</span>
+}</code></pre>
+
+<h3 style="margin-top:1.4rem"><code>BasicWaitStrategies()</code> — บรรทัดที่ห้ามลืม</h3>
+
+<p>
+  บรรทัดนี้แหละคือความต่างระหว่าง "เทสผ่าน" กับ "เทสผ่านบ้างไม่ผ่านบ้าง"
+  ผมเปิด source ของ v0.44.0 มาดูว่ามันทำอะไร:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">BasicWaitStrategies</span>() testcontainers.CustomizeRequestOption {
+	<span class="k">return</span> testcontainers.<span class="f">WithAdditionalWaitStrategy</span>(
+		<span class="c">// First, we wait for the container to log readiness twice.</span>
+		<span class="c">// This is because it will restart itself after the first startup.</span>
+		wait.<span class="f">ForLog</span>(<span class="s">"database system is ready to accept connections"</span>).<span class="f">WithOccurrence</span>(<span class="n">2</span>),
+		<span class="c">// Then, we wait for docker to actually serve the port on localhost.</span>
+		<span class="c">// For non-linux OSes like Mac and Windows, Docker or Rancher Desktop will have to start a separate proxy.</span>
+		<span class="c">// Without this, the tests will be flaky on those OSes!</span>
+		wait.<span class="f">ForListeningPort</span>(<span class="s">"5432/tcp"</span>),
+	)
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เงื่อนไข</th><th>ทำไมต้องมี</th></tr>
+  <tr><td>รอ log ครบ <strong>2 ครั้ง</strong></td><td>postgres พิมพ์บรรทัดนี้ครั้งแรกตอน <code>initdb</code> เสร็จ แล้ว<strong>ปิดตัวเองแล้วเปิดใหม่</strong> — ครั้งที่ 2 ถึงจะพร้อมจริง</td></tr>
+  <tr><td>รอ port <code>5432/tcp</code> listening</td><td>บน macOS/Windows ตัว Docker ต้องเปิด proxy แยกอีกชั้น — คอมเมนต์ใน source เขียนตรง ๆ ว่าถ้าไม่รอ <em>"tests will be flaky on those OSes"</em></td></tr>
+</table>
+</div>
+
+<p>ถ้ารอแค่ log ครั้งเดียว (ไม่ใส่ <code>BasicWaitStrategies</code>) ผมต่อ DB แล้วได้:</p>
+
+<pre><code>nowait_test.go:53: VERBATIM early-connect error after 3.590916ms: failed to connect to `user=testuser database=testdb`:
+	[::1]:32800 (localhost): dial error: dial tcp [::1]:32800: connect: connection refused
+	127.0.0.1:32800 (localhost): failed to receive message: <strong>unexpected EOF</strong></code></pre>
+
+<p>
+  สังเกตสองบรรทัดล่างให้ดี เพราะมันบอกอาการคนละอย่าง:
+  <code>[::1]</code> ได้ <code>connection refused</code> = ไม่มีอะไรฟังอยู่
+  ส่วน <code>127.0.0.1</code> ได้ <code>unexpected EOF</code> =
+  <strong>ต่อ TCP ติดแล้ว แต่ postgres ตัดสายกลางคัน</strong>
+  — นั่นคือลายเซ็นของ "ต่อเร็วเกินไป" ไม่ใช่ "ยังไม่มีอะไรฟัง"
+</p>
+
+<h3 style="margin-top:1.4rem">cleanup ให้ถูกรูปแบบ</h3>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ แบบที่สไลด์เขียน</h4>
+    <pre><code>ctr, err := tcpostgres.<span class="f">Run</span>(ctx, ...)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    t.<span class="f">Fatal</span>(err)   <span class="c">// ออกก่อนถึง defer</span>
+}
+<span class="k">defer</span> ctr.<span class="f">Terminate</span>(ctx)</code></pre>
+    <p style="margin-bottom:0">
+      พังได้ 2 ทาง — และทั้งสองทางผมรันเจอจริง
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ แบบที่ปลอดภัย</h4>
+    <pre><code>ctr, err := tcpostgres.<span class="f">Run</span>(ctx, ...)
+<span class="k">defer</span> <span class="k">func</span>() {
+    _ = testcontainers.<span class="f">TerminateContainer</span>(ctr)
+}()
+<span class="k">if</span> err != <span class="k">nil</span> {
+    t.<span class="f">Fatal</span>(err)
+}</code></pre>
+    <p style="margin-bottom:0">
+      <code>defer</code> วาง<strong>ก่อน</strong>เช็ค err · ใช้ตัวที่ nil-safe
+    </p>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เมื่อ <code>Run</code> ล้มเพราะ</th><th><code>ctr</code> เป็น nil ไหม</th><th>แบบซ้ายพังยังไง</th></tr>
+  <tr><td>image tag ไม่มีจริง</td><td><strong>nil</strong></td><td><code>ctr.Terminate</code> บน nil</td></tr>
+  <tr><td>wait strategy timeout</td><td><strong>ไม่ nil</strong> (container start ไปแล้ว)</td><td><code>t.Fatal</code> ออกก่อน → container ค้าง</td></tr>
+</table>
+</div>
+
+<pre><code>waittimeout_test.go:28: VERBATIM wait-timeout error: run postgres: generic container: start container: started hook: wait until ready: "this log line will never appear" matched 0 times, expected 1
+waittimeout_test.go:29: <strong>returned container is nil? false</strong>
+waittimeout_test.go:31: container id = 6116d6c24184482b076d1c70a39046ad846920da81381698a84b52b9070ccca9
+waittimeout_test.go:37: TerminateContainer: &lt;nil&gt; (cleaned up)
+
+badimage_test.go:23: VERBATIM bad-image error: run postgres: generic container: create container: Error response from daemon: failed to resolve reference "docker.io/library/postgres:999-doesnotexist": docker.io/library/postgres:999-doesnotexist: not found
+badimage_test.go:24: <strong>returned container is nil? true</strong>
+badimage_test.go:38: TerminateContainer(typed nil) = &lt;nil&gt;</code></pre>
+
+<p>
+  <code>testcontainers.TerminateContainer(ctr)</code> รับ nil ได้โดยไม่ panic
+  คืน <code>&lt;nil&gt;</code> เฉย ๆ — เหตุผลเดียวกับที่<a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a> สอนว่า
+  <strong><code>defer</code> ต้องวางให้ครอบทุกทางออกของฟังก์ชัน</strong>
+</p>
+
+<h2>7 · dynamic connection string — ห้าม hardcode port</h2>
+
+<p>
+  Testcontainers map port <code>5432</code> ในตัว container
+  ไปยัง <strong>port ว่างสุ่มบนเครื่องคุณ</strong> เพื่อให้เปิดหลายตัวพร้อมกันได้
+  โดยไม่ชนกัน ผมเขียนโปรแกรมสั้น ๆ เปิด-ปิด container 2 รอบติดกัน:
+</p>
+
+<pre><code>run #1  boot=1.294s         host=localhost mappedPort=<strong>32803</strong>
+run #1  dsn=postgres://testuser:testpass@localhost:<strong>32803</strong>/testdb?sslmode=disable
+run #2  boot=756ms          host=localhost mappedPort=<strong>32804</strong>
+run #2  dsn=postgres://testuser:testpass@localhost:<strong>32804</strong>/testdb?sslmode=disable</code></pre>
+
+<p>
+  ตลอดการตรวจครั้งนี้ผมเห็น port ที่ถูกสุ่มมาแบบนี้:
+  <code>32769 · 32778 · 32779 · 32780 · 32781 · 32783 · 32792 · 32795 · 32797 · 32800 · 32803 · 32804 · 32808 · 32810 · 32812</code>
+  — <strong>ไม่เคยซ้ำเลยสักครั้ง</strong>
+</p>
+
+<div class="predict">
+  <pre><code>ctr, _, _ := testutil.<span class="f">StartPostgres</span>(ctx)
+
+<span class="c">// เห็น dsn จริงแล้ว แต่ขอเขียนเองให้อ่านง่าย</span>
+dsn := <span class="s">"postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable"</span>
+
+db, err := sql.<span class="f">Open</span>(<span class="s">"pgx"</span>, dsn)
+err = db.<span class="f">PingContext</span>(ctx)</code></pre>
+  <p class="ask">
+    container ขึ้นสำเร็จเรียบร้อยแล้ว แต่ DSN เขียน port <code>5432</code> ตายตัว
+    — <code>Ping</code> ได้ผลอะไร และ<strong>อะไรคือกรณีที่อันตรายกว่านั้น</strong>?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรันจริงแล้วได้:</p>
+    <pre style="margin:0.6rem 0"><code>hardcoded_test.go:27: actual dsn      = postgres://testuser:testpass@localhost:<strong>32810</strong>/testdb?sslmode=disable
+hardcoded_test.go:30: hardcoded dsn   = postgres://testuser:testpass@localhost:<strong>5432</strong>/testdb?sslmode=disable
+hardcoded_test.go:39: VERBATIM hardcoded-port error: failed to connect to `user=testuser database=testdb`:
+	[::1]:5432 (localhost): dial error: dial tcp [::1]:5432: connect: connection refused
+	127.0.0.1:5432 (localhost): dial error: dial tcp 127.0.0.1:5432: connect: connection refused</code></pre>
+    <p>
+      คราวนี้<strong>ทั้งสองบรรทัดได้ <code>connection refused</code> เหมือนกัน</strong>
+      (ต่างจากเคส "ต่อเร็วเกินไป" ในหัวข้อ 6 ที่ได้ <code>unexpected EOF</code>)
+      = ไม่มีอะไรฟังอยู่ที่ 5432 จริง ๆ
+    </p>
+    <p style="margin-bottom:0">
+      <strong>กรณีที่อันตรายกว่า: ถ้าเครื่อง dev ของคุณมี postgres ของตัวเองรันอยู่ที่ 5432</strong>
+      เทสจะ<em>ผ่าน</em> — โดยไปสร้างตาราง ลบข้อมูล และ <code>TRUNCATE</code>
+      ทับ database จริงที่คุณใช้ทำงานอยู่
+      <br>ใช้ <code>ctr.ConnectionString(ctx, "sslmode=disable")</code>
+      หรือ <code>ctr.MappedPort(ctx, "5432/tcp")</code> เสมอ
+    </p>
+  </div>
+</div>
+
+<h2>8 · ราคาที่จ่าย — วัดจริงกี่วินาที</h2>
+
+<p>
+  ทุกอย่างข้างบนมีราคา และเราต้องรู้ราคาก่อนตัดสินใจ
+  นี่คือตัวเลขจริงบน Go 1.26.5 darwin/arm64 + colima
+  โดย image <code>postgres:16-alpine</code> ถูก cache ไว้แล้ว:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ทำอะไร</th><th>ใช้เวลา</th><th>เทียบกับ mock</th></tr>
+  <tr><td>unit test ที่ mock ด้วย go-sqlmock</td><td><code>1.251ms</code></td><td>ฐาน</td></tr>
+  <tr><td>boot container ตัวแรกของ process (รวม start Ryuk)</td><td><code>~1.01 – 1.29s</code></td><td>ช้ากว่า ~820 เท่า</td></tr>
+  <tr><td>boot container ตัวถัด ๆ ไป (Ryuk ขึ้นแล้ว)</td><td><code>~0.75 – 0.80s</code></td><td>ช้ากว่า ~600 เท่า</td></tr>
+</table>
+</div>
+
+<p>
+  และนี่คือสิ่งที่เกิดขึ้นเมื่อ<strong>เปิด container ใหม่ทุกเทส</strong> —
+  4 เทสธรรมดา ๆ ที่แต่ละตัวแค่ต่อ DB แล้วเช็คว่าต่อติด:
+</p>
+
+<pre><code>=== RUN   TestFreshA
+    percontainer_test.go:42: fresh container boot=1.015561625s dsn=postgres://testuser:testpass@localhost:<strong>32778</strong>/testdb?sslmode=disable
+--- PASS: TestFreshA (1.16s)
+=== RUN   TestFreshB
+    percontainer_test.go:52: fresh container boot=755.348ms dsn=postgres://testuser:testpass@localhost:<strong>32779</strong>/testdb?sslmode=disable
+--- PASS: TestFreshB (0.90s)
+=== RUN   TestFreshC
+    percontainer_test.go:62: fresh container boot=752.309917ms dsn=postgres://testuser:testpass@localhost:<strong>32780</strong>/testdb?sslmode=disable
+--- PASS: TestFreshC (0.88s)
+=== RUN   TestFreshD
+    percontainer_test.go:72: fresh container boot=761.385084ms dsn=postgres://testuser:testpass@localhost:<strong>32781</strong>/testdb?sslmode=disable
+--- PASS: TestFreshD (0.91s)
+PASS
+ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
+
+<div class="win">
+  <span class="label">📊 อ่านตัวเลขนี้ให้เป็น</span>
+  <p style="margin-bottom:0">
+    port ต่างกันทุกตัว (<code>32778 · 32779 · 32780 · 32781</code>) —
+    <strong>นี่คือหลักฐานซ้ำอีกทางว่าเป็น container คนละตัวจริง ๆ</strong>
+    <br>ตัวแรกแพงกว่าเพื่อน (1.015s vs ~0.75s) เพราะรวมเวลา start Ryuk ไว้ด้วย
+    <br><strong>4 เทส = 4.264 วินาที</strong> · แล้วถ้าคุณมี 40 เทสล่ะ?
+  </p>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ตัวเลขทั้งหมดนี้คือกรณีที่ image ถูก cache แล้ว</strong>
+    <br>รอบแรกสุดบน CI ที่ยังไม่มี image ต้องบวกเวลา pull
+    <code>postgres:16-alpine</code> ขนาด <strong>411MB</strong> เข้าไปด้วย —
+    <em>ตัวเลขนั้นผมยังไม่ได้วัด อย่าเอาไปอ้าง</em>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. unit test ที่ mock ด้วย go-sqlmock ตรวจอะไร<strong>ไม่ได้</strong>?</p>
+  <div class="opts">
+    <button class="opt">ว่า service เรียก repository ครบตามจำนวนครั้งที่ควรเรียก</button>
+    <button class="opt">ว่าโค้ดจัดการ error ที่ layer ล่างคืนขึ้นมาถูกต้องหรือเปล่า</button>
+    <button class="opt">ว่า column ที่ SQL อ้างถึงมีอยู่จริงใน schema ของ database</button>
+    <button class="opt">ว่าฟังก์ชันแปลงผลลัพธ์เป็น struct ที่ layer บนต้องการถูกไหม</button>
+  </div>
+  <div class="explain">
+    <p>go-sqlmock จับคู่ SQL ด้วย <strong>regex</strong> แล้วคืน rows ที่เราป้อนให้
+    — ไม่มี parser ไม่รู้จัก schema
+    <br>ผมรันฟังก์ชันที่ query <code>WHERE city = ?</code> ทั้งที่ตารางไม่มี column นี้:
+    mock บอก <code>len=1 first=Ploy</code> <strong>PASS</strong>
+    ส่วน postgres จริงบอก <code>ERROR: column "city" does not exist (SQLSTATE 42703)</code>
+    <br>อีกสามข้อ mock ตรวจได้หมด เพราะเป็นเรื่องของ logic ฝั่งเราล้วน ๆ
+    ไม่ใช่สัญญากับ database</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. GORM <code>Find()</code> เข้า <code>var users []User</code> แล้วไม่เจอแถวเลย JSON ออกมาเป็นอะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>null</code> เพราะ slice ยังเป็น nil ตามที่ประกาศไว้ตอนแรก</button>
+    <button class="opt"><code>null</code> เฉพาะตอนใช้ <code>var</code> แต่เป็น <code>[]</code> ตอนใช้ <code>make</code></button>
+    <button class="opt"><code>[]</code> เพราะ <code>encoding/json</code> แปลง nil slice เป็น array ว่างให้</button>
+    <button class="opt"><code>[]</code> เพราะ GORM allocate slice ให้เอง ผลคือไม่เป็น nil</button>
+  </div>
+  <div class="explain">
+    <p>ผลจริงจาก container: <code>GORM Find, var []T, 0 rows → len=0 isNil=<strong>false</strong> json=[]</code>
+    และ <code>make([]T,0)</code> ก็ได้เหมือนกันเป๊ะ
+    — <strong>GORM reflect แล้ว allocate ให้ ไม่ว่าคุณส่งอะไรเข้าไป</strong>
+    <br>ข้อ 3 ผิดที่เหตุผล: <code>encoding/json</code> แปลง nil slice เป็น <code>null</code> ไม่ใช่ <code>[]</code>
+    — พิสูจน์ได้จากบรรทัด <code>GORM Raw+Scan → isNil=true json=null</code>
+    <br>ปัญหา <code>null</code> จึงเกิดเฉพาะกับ <code>Raw().Scan()</code>
+    และ <code>database/sql</code> ที่เขียน <code>rows.Next()</code> เอง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. ทำไม <code>BasicWaitStrategies()</code> ถึงรอ log บรรทัดเดิม <strong>2 ครั้ง</strong>?</p>
+  <div class="opts">
+    <button class="opt">เพราะ postgres ปิดแล้วเปิดตัวเองใหม่หลัง initdb เสร็จ ครั้งที่ 2 ถึงพร้อมจริง</button>
+    <button class="opt">เพราะ Docker บนเครื่อง mac ส่ง log ซ้ำสองรอบเสมอเวลาผ่าน proxy</button>
+    <button class="opt">เพราะต้องรอทั้ง Ryuk container และ postgres container พร้อมทั้งคู่</button>
+    <button class="opt">เพราะรอครั้งเดียวจะได้ log ของรอบก่อนหน้าที่ค้างอยู่ใน buffer</button>
+  </div>
+  <div class="explain">
+    <p>คอมเมนต์ใน source ของ v0.44.0 เขียนไว้ตรง ๆ:
+    <em>"we wait for the container to log readiness twice. This is because it will restart itself after the first startup."</em>
+    <br>log ครั้งแรกออกตอน <code>initdb</code> เสร็จ ตอนนั้น postgres ยังฟังแค่ unix socket
+    ยังไม่เปิด TCP แล้วมันก็ shutdown แล้ว start ใหม่
+    <br>ถ้ารอครั้งเดียวแล้วรีบต่อ จะได้ <code>unexpected EOF</code> ใน ~3.6ms
+    <br>ส่วนเงื่อนไขที่สอง (<code>ForListeningPort</code>) ต่างหากที่แก้เรื่อง
+    docker proxy บน macOS/Windows</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. เขียน DSN ด้วย port <code>5432</code> ตายตัว อันตรายที่สุดตรงไหน?</p>
+  <div class="opts">
+    <button class="opt">container จะ start ไม่ขึ้นเพราะ port 5432 ถูกจองไว้แล้วในเครื่อง</button>
+    <button class="opt">ถ้าเครื่องมี postgres ของตัวเองอยู่ เทสจะผ่านโดยไปเขียนทับ DB จริง</button>
+    <button class="opt">testcontainers จะ map port ใหม่ให้ทุกครั้งจนกว่าจะได้ 5432 ตามที่ขอ</button>
+    <button class="opt">เทสจะช้าลงมากเพราะต้องรอ Docker เปิด proxy ตัวใหม่ให้ทุกรอบ</button>
+  </div>
+  <div class="explain">
+    <p>ถ้าไม่มีอะไรฟังที่ 5432 คุณจะได้ <code>connection refused</code> ทั้ง
+    <code>[::1]</code> และ <code>127.0.0.1</code> — <strong>เทสแดง ซึ่งยัง<em>โชคดี</em></strong>
+    <br>กรณีเลวร้ายคือเครื่อง dev มี postgres ของตัวเองรันอยู่ที่ 5432:
+    เทส<strong>ผ่าน</strong> แต่ไป <code>AutoMigrate</code> และ <code>TRUNCATE</code>
+    ทับ database ที่คุณใช้ทำงานจริง
+    <br>ผมเห็น port ที่ถูกสุ่มมา 15 ค่า (32769 – 32812) <strong>ไม่ซ้ำเลย</strong>
+    — ใช้ <code>ConnectionString()</code> หรือ <code>MappedPort()</code> เสมอ</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำให้ repository ของคุณเจอบั๊กที่ mock ปล่อยผ่าน</span>
+  <p>
+    <strong>ต่อยอดจาก project layout ในบทเรียน 27</strong> —
+    ใช้ <code>UserRepository</code> ตัวเดิม ไม่ต้องเขียนใหม่
+  </p>
+  <ol>
+    <li><strong>ติดตั้งให้ครบ 2 module:</strong> <code>go get</code> ทั้ง
+        <code>testcontainers-go</code> และ <code>.../modules/postgres</code>
+        <br>ลองข้ามบรรทัดที่สองดูก่อน แล้ว <code>go build ./...</code> —
+        <strong>ได้ error ว่าอะไร?</strong></li>
+    <li><strong>เช็ค Docker ก่อน:</strong> รัน <code>docker ps</code> ให้ได้
+        ถ้าใช้ colima/Rancher/Podman ให้ตั้ง <code>DOCKER_HOST</code> +
+        <code>TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE</code>
+        แล้วยืนยันจาก log บรรทัด <code>Resolved Docker Host:</code></li>
+    <li>เขียน <code>StartPostgres</code> + <code>OpenGorm</code> ตามหัวข้อ 6
+        แล้วเขียนเทสตัวแรก: <code>Create</code> user 1 คน แล้ว <code>GetByID</code> กลับมา
+        <strong>เช็คว่า <code>ID</code> ไม่เป็นศูนย์</strong> (GORM เติม serial PK ให้)</li>
+    <li><strong>พิสูจน์ dynamic port:</strong> <code>t.Logf</code> ค่า
+        <code>ctr.MappedPort(ctx, "5432/tcp")</code> ออกมา
+        แล้วรัน <code>go test -count=1</code> <strong>สองรอบ</strong>
+        — ได้ port เดียวกันไหม?</li>
+    <li><strong>พิสูจน์ว่ามันจับบั๊กได้จริง:</strong> เพิ่ม method
+        <code>SearchByCity</code> ที่ query column <code>city</code> ซึ่งไม่มีในตาราง
+        <br>เขียน<strong>สองเทส</strong>: ตัวหนึ่ง mock ตัวหนึ่งยิง container
+        — <strong>ทั้งคู่ให้ผลต่างกันไหม เอา error ตรงตัวมาอ่าน</strong></li>
+    <li><strong>ท้าทาย 1 — nil slice:</strong> เขียน method ที่ไม่เจอแถวเลย
+        สองเวอร์ชัน (<code>Find</code> กับ <code>Raw().Scan()</code>)
+        แล้ว <code>t.Logf</code> ทั้ง <code>len()</code>, <code>s == nil</code>
+        และ <code>json.Marshal</code> ของทั้งคู่</li>
+    <li><strong>ท้าทาย 2 — cleanup ที่พัง:</strong> เปลี่ยน image tag เป็น
+        <code>postgres:999-doesnotexist</code> แล้วใช้รูปแบบ
+        <code>defer ctr.Terminate(ctx)</code> ที่วางไว้<em>หลัง</em>
+        <code>if err != nil { t.Fatal(err) }</code>
+        → รันแล้วเกิดอะไร แล้วเปลี่ยนเป็น
+        <code>testcontainers.TerminateContainer</code> ที่วางไว้ก่อน — ต่างกันยังไง</li>
+    <li><strong>ท้าทาย 3 — จับเวลา:</strong> ทำ 4 เทสที่<em>เปิด container ใหม่ทุกตัว</em>
+        แล้วดู <code>ok ... Ns</code> ท้ายผลลัพธ์
+        <strong>เก็บตัวเลขนี้ไว้ เดี๋ยวบทหน้าเอามาเทียบ</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 1</button>
+  <div class="answer">
+    <p>Go ตั้งแต่ 1.16 ใช้ <code>-mod=readonly</code> เป็นค่า default
+    มันจึงไม่แอบเติม dependency ให้ แต่บอกคุณตรง ๆ ว่าต้องพิมพ์อะไร:</p>
+    <pre style="margin:0.6rem 0"><code>main.go:7:2: no required module provides package github.com/testcontainers/testcontainers-go/modules/postgres; to add it:
+	go get github.com/testcontainers/testcontainers-go/modules/postgres
+(exit 1)</code></pre>
+    <p style="margin-bottom:0">
+      สาเหตุคือ <strong><code>modules/postgres</code> เป็น Go module แยกต่างหาก</strong>
+      มี <code>go.mod</code> ของตัวเอง (เห็นได้จาก <code>go.mod</code> ของคุณ
+      ที่มีทั้งสองบรรทัด ที่ <code>v0.44.0</code> เท่ากัน)
+      — โครงแบบนี้ทำให้คุณลงเฉพาะ module ของ database ที่ใช้จริง ไม่ต้องลากทั้งหมดมา
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>บทหน้าแก้ปัญหาที่คุณเพิ่งวัดได้จากท้าทาย 3</strong>
+    <br>ตอนนี้เทสของคุณเปิด container ใหม่ทุกตัว — <strong>4 เทส = 4.264 วินาที</strong>
+    และต้นทุนของ "เพิ่มอีก 1 เทส" คือ ~760ms คงที่
+    ซึ่งแปลว่า 40 เทสก็ประมาณ 40 วินาที ทุกครั้งที่คุณกด save
+    <br>บทเรียน 30 จะเอา container ตัวเดียวมาใช้ร่วมกันทั้ง package ด้วย
+    <code>sync.Once</code> + <code>TestMain</code> + testify suite
+    แล้ววัดผลเทียบให้ดูด้วยเทสชุดเดิมเป๊ะ ๆ:
+    <strong>4.264s เหลือ 1.727s</strong> และต้นทุนต่อเทสที่เพิ่มเหลือ ~2ms
+    <br>พร้อมกับวิธีสั่ง <code>go test -short</code> ให้ข้าม Docker ไปเลยตอนที่คุณรีบ
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0028-mockery.html">← บทเรียน 28</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0030-testcontainers-suite.html">บทเรียน 30 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://golang.testcontainers.org/">Testcontainers for Go</a> — เอกสารทางการ · บทนี้ใช้ <code>v0.44.0</code></li>
+  <li><a href="https://golang.testcontainers.org/modules/postgres/">Testcontainers — PostgreSQL module</a> — <code>Run</code>, <code>WithDatabase</code>, <code>ConnectionString</code>, <code>BasicWaitStrategies</code></li>
+  <li><a href="https://www.postgresql.org/docs/16/errcodes-appendix.html">PostgreSQL — Error Codes</a> — ที่มาของ <code>42703</code>, <code>42P01</code>, <code>23505</code></li>
+  <li><a href="https://pkg.go.dev/encoding/json#Marshal">pkg.go.dev — encoding/json.Marshal</a> — nil slice ออกมาเป็น <code>null</code> ตรงนี้</li>
+  <li><a href="https://gorm.io/docs/query.html">GORM — Query</a> · <a href="https://github.com/DATA-DOG/go-sqlmock">DATA-DOG/go-sqlmock</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

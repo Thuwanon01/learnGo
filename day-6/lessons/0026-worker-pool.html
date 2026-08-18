@@ -55,7 +55,7 @@
     <span class="k">defer</span> wg.<span class="f">Done</span>()
 
     <span class="k">for</span> job := <span class="k">range</span> jobs {     <span class="c">// วนจนกว่า jobs จะถูกปิด</span>
-        time.<span class="f">Sleep</span>(<span class="n">500</span> * time.Millisecond)
+        time.<span class="f">Sleep</span>(<span class="n">200</span> * time.Millisecond)   <span class="c">// สมมติว่างานหนึ่งชิ้นใช้ 200ms</span>
         results &lt;- job * <span class="n">2</span>
     }
 
@@ -210,6 +210,15 @@ worker  60 →  1.60s</code></pre>
 
 <div class="win">
   <span class="label">📊 กฎการตั้งจำนวน worker</span>
+  <p style="margin:0.6rem 0 0">
+    <strong>ก่อนอ่านแถวสุดท้าย</strong> — <code>connection</code> คือ "สายเชื่อม"
+    หนึ่งเส้นที่โปรแกรมเปิดค้างไว้กับ database เพื่อส่งคำสั่ง SQL
+    การเปิดใหม่ทุกครั้งช้ามาก โปรแกรมจึงเปิดไว้ล่วงหน้าจำนวนหนึ่งแล้วหมุนเวียนใช้
+    <br>กองสายที่เตรียมไว้นั้นเรียกว่า <strong>connection pool</strong>
+    และมีเพดานที่เราตั้งเองได้ (ใน Go คือ <code>db.SetMaxOpenConns(25)</code>)
+    — <a href="./0027-project-layout-gorm.html">บทเรียน 27</a> จะได้ต่อ database
+    จริง แล้วเห็นตัวเลขนี้ด้วยตาตัวเอง
+  </p>
   <div class="table-wrap" style="margin-top:0.6rem">
   <table>
     <tr><th>งานแบบไหน</th><th>ตั้งเท่าไหร่</th><th>ตัวจำกัดจริง ๆ คือ</th></tr>
@@ -263,9 +272,15 @@ runtime.<span class="f">NumCPU</span>()         <span class="c">// จำนว�
     <p>ถ้า <code>main</code> ค้างที่ <code>wg.Wait()</code> ก็ไปไม่ถึง
     <code>for range results</code> — แต่ worker ค้างอยู่ที่
     <code>results &lt;- ...</code> รอคนรับ
-    <strong>ทุกคนรอกันเอง → deadlock</strong>
-    <br><code>goroutine 1 [chan receive]</code>
-    <br>ย้ายการรอไปไว้ข้างหลัง <code>main</code> จึงว่างมารับผลได้</p>
+    <strong>ทุกคนรอกันเอง → deadlock</strong> — <code>main</code> ค้างที่
+    <code>wg.Wait()</code> จึงขึ้นว่า
+    <code>goroutine 1 [sync.WaitGroup.Wait]</code> ตรงกับผลรันจริงในหัวข้อ 4
+    <br>ย้ายการรอไปไว้ข้างหลัง <code>main</code> จึงว่างมารับผลได้
+    <br><strong>ทำไมข้ออื่นผิด:</strong> <code>close</code> เรียกจากที่ไหนก็ได้
+    ไม่ได้จำกัดว่าต้องเป็น goroutine · <code>wg.Wait()</code> เรียกใน
+    <code>main</code> ได้ปกติ ปัญหาคือเรียก<em>ก่อน</em>มารับผลต่างหาก ·
+    และไม่มีกฎเรื่อง "ต้องปิดหลัง <code>close(jobs)</code> กี่รอบ" เลย
+    ลำดับที่สำคัญคือ <em>ใคร</em>รอ ไม่ใช่ <em>เมื่อไหร่</em></p>
   </div>
 </div>
 
@@ -332,6 +347,12 @@ runtime.<span class="f">NumCPU</span>()         <span class="c">// จำนว�
 ✅ Bubble Tea ready
 
 All orders completed 🎉</code></pre>
+  <p>
+    <strong>ลำดับของสามบรรทัดแรกสลับได้ทุกครั้งที่รัน</strong> เพราะ worker 2 ตัว
+    แย่งงานกัน — เห็น Pizza ขึ้นก่อน Burger <em>ไม่ได้ผิด</em>
+    <br>เกณฑ์ว่าถูกคือ <strong>ครบ 3 บรรทัด ไม่ซ้ำ ไม่ขาด</strong>
+    และ <code>All orders completed 🎉</code> ต้องอยู่ท้ายสุดเสมอ
+  </p>
   <ol>
     <li>สร้าง <code>type Order struct { ID int; Menu string }</code>
         และ <code>type Result struct { Order Order; Ready bool }</code></li>
@@ -345,8 +366,14 @@ All orders completed 🎉</code></pre>
     <li>ใช้ <strong>directional channel</strong> ที่ทุก parameter</li>
     <li>รัน <code>go vet ./...</code> และ <code>go run -race .</code> —
         <strong>ต้องเงียบทั้งคู่</strong></li>
-    <li><strong>ท้าทาย 1:</strong> เอา <code>go func(){ wg.Wait(); close(results) }()</code>
-        ออกแล้วเรียกตรง ๆ → จดคำในวงเล็บเหลี่ยม</li>
+    <li><strong>ท้าทาย 1:</strong> ตั้ง <code>results := make(chan Result)</code>
+        <strong>แบบไม่มี buffer</strong> ก่อน แล้วค่อยเอา
+        <code>go func(){ wg.Wait(); close(results) }()</code> ออก
+        เรียก <code>wg.Wait()</code> ตรง ๆ แทน
+        → โปรแกรมต้องค้าง <strong>จดคำในวงเล็บเหลี่ยมมา</strong>
+        <br>จากนั้นเปลี่ยนเป็น <code>make(chan Result, 3)</code> โดยไม่แก้อย่างอื่น
+        แล้วรันใหม่ — คราวนี้มันไม่ค้าง <strong>ทำไม?</strong>
+        <em>(ใบ้: กับดักซ้อนในหัวข้อ 4)</em></li>
     <li><strong>ท้าทาย 2 — นับให้ปลอดภัย:</strong> เพิ่มตัวนับ
         <code>completed</code> ที่ทุก worker เพิ่มค่าเอง
         <br>ทำ<strong>สองเวอร์ชัน</strong>: แบบไม่ล็อก กับแบบใส่ <code>sync.Mutex</code>

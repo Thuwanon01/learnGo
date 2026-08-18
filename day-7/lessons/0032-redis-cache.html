@@ -1,0 +1,1050 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 32 — Redis: cache ที่ไม่โกหก</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 32 · Day 7 · Redis</p>
+  <h1>Redis — cache ที่ไม่โกหก</h1>
+  <p class="meta">~18 นาที · ต้องมี: <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a> (<code>errors.Is</code>), <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> (<code>json.Marshal</code>), <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a> (<code>sync.Mutex</code>)</p>
+  <p class="standfirst">
+    cache คือการยอม<strong>ตอบด้วยสำเนา</strong> เพื่อแลกกับความเร็ว —
+    ผมวัดได้ว่ามันเร็วขึ้น <strong>278 เท่า</strong> จริง
+    <br>แต่ราคาที่จ่ายไม่ใช่ RAM — ราคาคือ<strong>ช่วงเวลาที่ระบบของคุณตอบผิด
+    โดยไม่มี error สักบรรทัด</strong> บทนี้จะทำให้ cache โกหกให้ดูกับตา แล้วค่อยแก้
+  </p>
+</header>
+
+<main>
+
+<h2>1 · cache คืออะไร และ Redis อยู่ตรงไหน</h2>
+
+<p>
+  cache ไม่ใช่เทคโนโลยี มันคือ<strong>กลยุทธ์เดียวที่ถูกทำซ้ำหลายชั้น</strong>:
+  <em>ถ้าคำตอบนี้แพงที่จะหามาใหม่ และมันไม่ค่อยเปลี่ยน — เก็บสำเนาไว้ใกล้ ๆ คนถาม</em>
+</p>
+
+<div class="diagram">
+<pre>   ผู้ใช้กดปุ่ม
+      │
+      ├─▶ <strong>browser cache</strong>      สำเนาอยู่ในเครื่องผู้ใช้      เร็วสุด · เราสั่งลบไม่ได้
+      │
+      ├─▶ <strong>CDN</strong>                สำเนาอยู่ใกล้ผู้ใช้ทางภูมิศาสตร์  แชร์กันทั้งประเทศ
+      │
+      ├─▶ <strong>in-process cache</strong>   สำเนาอยู่ใน RAM ของ service   เร็วมาก · แต่<em>แต่ละ instance เห็นไม่เหมือนกัน</em>
+      │
+      ├─▶ <strong>Redis</strong>              สำเนาอยู่ในเครื่องกลาง        <strong>ทุก instance เห็นชุดเดียวกัน</strong>
+      │
+      └─▶ <strong>database</strong>           แหล่งความจริง                ช้าที่สุด · ถูกต้องที่สุด</pre>
+</div>
+
+<p>
+  จุดขายของ Redis จึงไม่ใช่ "เร็ว" เฉย ๆ — <code>map</code> ใน Go ก็เร็วกว่าอีก
+  <br>จุดขายคือ <strong>เร็วและ "ของกลาง"</strong>: pod ที่ 1 เขียน pod ที่ 7 อ่านเห็นทันที
+  และ restart แอปแล้ว cache ไม่หายตามไปด้วย
+  <br>นี่คือเหตุผลที่ <code>sync.RWMutex</code> + <code>map</code> จาก
+  <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a>
+  ใช้แทน Redis ไม่ได้ทันทีที่คุณ deploy มากกว่าหนึ่ง instance
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ขอบเขตของบทนี้</strong> — ตัวเลขทุกตัวในหน้านี้วัดจาก
+    <strong>Redis กับ Go เท่านั้น</strong> (Redis 7.4.10 บน <code>redis:7-alpine</code>,
+    <code>github.com/redis/go-redis/v9</code> v9.22.0, Go 1.26.5)
+    <br>ชั้น browser / CDN ผมไม่ได้วัด จึงจะไม่มีตัวเลขของสองชั้นนั้นในบทนี้เลย —
+    <strong>เชื่อได้เฉพาะสิ่งที่รันให้ดู</strong>
+  </p>
+</div>
+
+<h2>2 · Redis อยู่ใน RAM — อย่าใช้เป็นแหล่งความจริง</h2>
+
+<p>
+  ประโยคที่ได้ยินบ่อยคือ "Redis = data store ที่เก็บใน RAM"
+  ถูกครึ่งเดียว และครึ่งที่ขาดเป็นครึ่งที่อันตราย ผมเลยไปเปิดดู config ของจริง:
+</p>
+
+<pre><code>$ redis-cli CONFIG GET save
+save
+<strong>3600 1 300 100 60 10000</strong>
+
+$ redis-cli CONFIG GET appendonly
+appendonly
+<strong>no</strong></code></pre>
+
+<p>
+  แปลว่า image <code>redis:7-alpine</code> <strong>เขียนไฟล์ลงดิสก์ให้เองอยู่แล้ว</strong>
+  (RDB snapshot: เปลี่ยน 1 คีย์ใน 3600 วิ หรือ 100 คีย์ใน 300 วิ หรือ 10000 คีย์ใน 60 วิ)
+  ส่วน AOF ปิดอยู่ ผมเลยทดลองสองแบบ:
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ restart แบบสุภาพ (SIGTERM)</h4>
+    <pre><code>$ docker restart day7-redis
+
+$ GET survivor
+ฉันจะรอดไหม
+$ DBSIZE
+5
+$ LASTSAVE
+1787057770</code></pre>
+    <p style="margin-bottom:0">
+      Redis เขียน RDB ก่อนตาย <strong>ข้อมูลรอด</strong>
+    </p>
+  </div>
+  <div class="side bad">
+    <h4>❌ ถูกฆ่า (SIGKILL)</h4>
+    <pre><code>$ SET after_save "เขียนหลัง save ล่าสุด"
+$ docker kill day7-redis
+$ docker start day7-redis
+
+$ GET after_save
+                  <span class="c">← ว่าง</span>
+$ EXISTS after_save
+0</code></pre>
+    <p style="margin-bottom:0">
+      ทุกอย่างหลัง save ล่าสุด <strong>หายจริง</strong>
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ สรุปที่ถูกคือ: Redis ทำงานบน RAM และ persist ลงดิสก์แบบ best-effort</strong>
+    <br>คนที่คิดว่า "RAM ล้วน" จะงงว่าทำไมข้อมูลเก่ายังอยู่หลัง restart ·
+    คนที่คิดว่า "persist แล้วปลอดภัย" จะเสียข้อมูลตอน crash
+    <br>ทั้งสองความเข้าใจนำไปสู่ข้อสรุปเดียวกัน:
+    <strong>ของที่หายไม่ได้ ห้ามมีอยู่แค่ใน Redis</strong> —
+    cache ต้อง<strong>สร้างใหม่จากต้นทางได้เสมอ</strong>
+  </p>
+</div>
+
+<h2>3 · 8 command ที่ต้องคล่อง</h2>
+
+<p>ทั้งหมดนี้รันจริงผ่าน <code>redis-cli</code> บน Redis 7.4.10 — output คือของจริง ไม่ใช่ของแต่ง</p>
+
+<pre><code>$ SET user:1 "Somchai"
+OK
+$ GET user:1
+Somchai
+$ GET user:999        <span class="c"># key ไม่มี → ว่างเปล่า</span>
+
+$ EXISTS user:1
+1
+$ EXISTS user:999
+0
+$ TYPE user:1
+string
+$ TYPE user:999       <span class="c"># key ไม่มี → none ไม่ใช่ nil</span>
+none
+
+$ LPUSH mylist a b c
+3
+$ TYPE mylist
+list
+$ GET mylist          <span class="c"># อ่าน list ด้วย GET</span>
+WRONGTYPE Operation against a key holding the wrong kind of value
+
+$ DEL user:1
+1
+$ DEL user:1          <span class="c"># ลบซ้ำ</span>
+0
+$ EXISTS user:1
+0</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>command</th><th>ทำอะไร</th><th>คืนอะไร (ของจริง)</th></tr>
+  <tr><td><code>SET</code></td><td>เขียนค่า (ทับของเดิมเสมอ)</td><td><code>OK</code></td></tr>
+  <tr><td><code>GET</code></td><td>อ่านค่า</td><td>ค่า · ว่างเปล่าถ้าไม่มี key</td></tr>
+  <tr><td><code>DEL</code></td><td>ลบ key — <strong>คือปุ่ม invalidate</strong></td><td><strong>จำนวน key ที่ลบได้จริง</strong> (<code>1</code> / <code>0</code>)</td></tr>
+  <tr><td><code>EXPIRE</code></td><td>ตั้งวันหมดอายุให้ key ที่มีอยู่แล้ว</td><td><code>1</code> ถ้าตั้งได้ · <code>0</code> ถ้าไม่มี key</td></tr>
+  <tr><td><code>TTL</code></td><td>ถามว่าเหลืออายุเท่าไหร่</td><td>วินาที · <code>-1</code> · <code>-2</code> (หัวข้อ 4)</td></tr>
+  <tr><td><code>EXISTS</code></td><td>มี key นี้ไหม</td><td><code>1</code> / <code>0</code></td></tr>
+  <tr><td><code>TYPE</code></td><td>key นี้เก็บชนิดอะไร</td><td><code>string</code> · <code>list</code> · <code>none</code></td></tr>
+  <tr><td><code>SCAN</code></td><td>ไล่ดู key ทีละชุด</td><td><strong>cursor</strong> แล้วตามด้วยรายชื่อ key</td></tr>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">🔍 สามอย่างที่คนอ่านผ่านแล้วพลาดทีหลัง</span>
+  <p style="margin-bottom:0">
+    <strong>1. <code>DEL</code> ไม่คืน <code>OK</code></strong> — มันคืน<em>จำนวน</em> ลบ key
+    ที่ไม่มีได้ <code>0</code> เฉย ๆ <strong>ไม่ error</strong>
+    → ถ้าคุณสะกดชื่อ key ผิดตอน invalidate จะไม่มีอะไรเตือนคุณเลย
+    <br><strong>2. <code>TYPE</code> ของ key ที่ไม่มีคือ <code>none</code></strong> ไม่ใช่ค่าว่าง
+    <br><strong>3. อ่านผิดชนิดได้ <code>WRONGTYPE</code></strong> ซึ่งเป็น error จริง
+    ไม่ใช่ค่าว่าง — ต่อไปในหัวข้อ 8 จะเห็นว่าฝั่ง Go ต้องแยกมันออกจาก cache miss
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong>ทำไม output ข้างบนไม่มี <code>(nil)</code> กับ <code>(integer)</code></strong>
+    <br>เพราะผม pipe ผลลัพธ์ออกมา ถ้าพิมพ์ในเทอร์มินัลตรง ๆ (มี TTY) <code>redis-cli</code>
+    จะตกแต่งให้:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>(nil)
+(integer) -2
+(integer) 1</code></pre>
+  <p style="margin:0.6rem 0 0">
+    <strong>หน้าตาต่างกัน แต่เป็นค่าเดียวกัน</strong> — สำคัญตอนคุณเขียน shell script
+    เช็คผล เพราะ script จะเห็นบรรทัดว่างกับเลขเปล่า ไม่ใช่ <code>(nil)</code>
+  </p>
+</div>
+
+<h2>4 · <code>TTL</code> คืน <code>-1</code> กับ <code>-2</code> ต่างกันยังไง</h2>
+
+<div class="predict">
+  <pre><code>$ TTL nokey:xyz
+$ SET plain "no-expire"
+$ TTL plain
+$ EXPIRE plain 100
+$ TTL plain
+$ EXPIRE nokey:xyz 100
+$ PERSIST plain
+$ TTL plain
+$ PERSIST plain</code></pre>
+  <p class="ask">
+    <code>nokey:xyz</code> คือ key ที่ไม่เคยมี · <code>PERSIST</code> คือคำสั่งถอดวันหมดอายุออก
+    — แต่ละบรรทัดคืนเลขอะไร? และ <strong>มีบรรทัดไหน error ไหม</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ TTL nokey:xyz            <span class="c"># key ไม่มีเลย</span>
+<strong>-2</strong>
+$ SET plain "no-expire"
+$ TTL plain                <span class="c"># มี key แต่ไม่ได้ตั้ง expire</span>
+<strong>-1</strong>
+$ EXPIRE plain 100
+1
+$ TTL plain                <span class="c"># มี expire แล้ว</span>
+<strong>100</strong>
+
+$ EXPIRE nokey:xyz 100     <span class="c"># ตั้ง expire ให้ key ที่ไม่มี</span>
+<strong>0</strong>
+$ PERSIST plain            <span class="c"># ถอด expire ออก</span>
+1
+$ TTL plain                <span class="c"># กลับเป็นอมตะ</span>
+<strong>-1</strong>
+$ PERSIST plain            <span class="c"># ถอดซ้ำ</span>
+0</code></pre>
+    <p>
+      <strong>ไม่มีบรรทัดไหน error เลยสักบรรทัด</strong> — นี่คือประเด็นหลัก
+      <br><code>EXPIRE</code> กับ key ที่ไม่มีคืน <code>0</code> เงียบ ๆ
+    </p>
+    <p style="margin-bottom:0">
+      ผลตามมาที่ต้องจำ: โค้ดที่เขียน <code>SET</code> แล้วค่อย <code>EXPIRE</code>
+      <strong>แยกกันสองคำสั่ง</strong> ถ้า key หายไประหว่างนั้น (โดน evict / มีคน
+      <code>DEL</code>) จะได้ key ที่<strong>ไม่มีวันหมดอายุ</strong> โดยไม่มีใครรู้
+      <br>→ ใช้ <code>SET k v EX 60</code> คำสั่งเดียวจบ (ฝั่ง Go คือ
+      <code>rdb.Set(ctx, k, v, 60*time.Second)</code>)
+    </p>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th><code>TTL</code> คืน</th><th>แปลว่า</th><th>cache ควรทำยังไงต่อ</th></tr>
+  <tr><td><strong><code>-2</code></strong></td><td><strong>ไม่มี key นี้</strong> — ไม่เคยมี / หมดอายุไปแล้ว / โดน evict</td><td>ถือเป็น miss → ไปอ่านต้นทาง</td></tr>
+  <tr><td><strong><code>-1</code></strong></td><td><strong>มี key แต่ไม่มีวันหมดอายุ</strong> — อมตะ</td><td>สงสัยไว้ก่อน: cache ที่ไม่มี TTL คือ cache ที่โกหกได้ตลอดกาล</td></tr>
+  <tr><td>เลขบวก</td><td>เหลืออีกกี่<strong>วินาที</strong></td><td>ปกติ</td></tr>
+</table>
+</div>
+
+<p>
+  <strong>ที่ต้องเน้นคือ <code>-2</code> ตอบได้แค่ "ตอนนี้ไม่มี" ไม่ได้บอกว่าทำไม</strong>
+  — ผมทดสอบ key ที่ตั้ง <code>EX 3</code> แล้วรอให้หมดอายุ ได้แบบนี้:
+</p>
+
+<pre><code>$ SET session:abc "logged-in" EX 3
+OK
+$ TTL session:abc
+3
+$ GET session:abc
+logged-in
+<span class="c">--- sleep 2 ---</span>
+$ TTL session:abc
+1
+$ GET session:abc
+logged-in
+<span class="c">--- sleep 2 (รวม 4 วิ &gt; TTL 3) ---</span>
+$ TTL session:abc
+<strong>-2</strong>
+$ GET session:abc          <span class="c">← ว่างเปล่า</span>
+
+$ EXISTS session:abc
+0
+$ TYPE session:abc
+none</code></pre>
+
+<p>
+  หลังหมดอายุ key มีสถานะ<strong>เหมือนไม่เคยถูกสร้าง</strong>ทุกประการ
+  (<code>TTL -2</code> · <code>EXISTS 0</code> · <code>TYPE none</code>)
+  <br>Redis <em>ไม่เก็บหลักฐาน</em>ว่าเคยมี — เดี๋ยวหัวข้อ 7 จะเห็นว่าเรื่องนี้ทำให้
+  debug ยากขึ้นแค่ไหน
+</p>
+
+<h2>5 · cache-aside — pattern เดียวที่ต้องจำ</h2>
+
+<p>
+  <strong>cache-aside</strong> แปลตรงตัวว่า "cache อยู่ข้าง ๆ" —
+  ตัว cache ไม่รู้จัก database เลย <strong>โค้ดของเราเป็นคนเดินให้ทั้งสองฝั่ง</strong>:
+</p>
+
+<div class="diagram">
+<pre>   <strong>อ่าน</strong>:  ถาม Redis ──┬── เจอ (HIT)  ──▶ ตอบเลย
+                          │
+                          └── ไม่เจอ (MISS) ──▶ ถาม DB ──▶ <strong>เขียนกลับเข้า Redis พร้อม TTL</strong> ──▶ ตอบ
+
+   <strong>เขียน</strong>: เขียน DB ──▶ <strong>?????</strong>   ← ช่องว่างตรงนี้คือทั้งบทเรียน</pre>
+</div>
+
+<pre><code><span class="k">func</span> <span class="f">getUser</span>(ctx context.Context, rdb *redis.Client, id <span class="k">int</span>) (User, <span class="k">string</span>, <span class="k">error</span>) {
+    key := fmt.<span class="f">Sprintf</span>(<span class="s">"user:%d"</span>, id)
+
+    val, err := rdb.<span class="f">Get</span>(ctx, key).<span class="f">Result</span>()
+    <span class="k">if</span> err == <span class="k">nil</span> {                                  <span class="c">// ── HIT</span>
+        <span class="k">var</span> u User
+        <span class="k">if</span> err := json.<span class="f">Unmarshal</span>([]<span class="k">byte</span>(val), &amp;u); err != <span class="k">nil</span> {
+            <span class="k">return</span> User{}, <span class="s">""</span>, err
+        }
+        <span class="k">return</span> u, <span class="s">"HIT"</span>, <span class="k">nil</span>
+    }
+    <span class="k">if</span> !errors.<span class="f">Is</span>(err, redis.Nil) {                  <span class="c">// ── error จริง (เน็ตหลุด / redis ตาย)</span>
+        <span class="k">return</span> User{}, <span class="s">""</span>, fmt.<span class="f">Errorf</span>(<span class="s">"redis error: %w"</span>, err)
+    }
+
+    u := <span class="f">queryDB</span>(id)                                <span class="c">// ── MISS → ไปอ่านของจริง</span>
+    b, _ := json.<span class="f">Marshal</span>(u)
+    <span class="k">if</span> err := rdb.<span class="f">Set</span>(ctx, key, b, <span class="n">60</span>*time.Second).<span class="f">Err</span>(); err != <span class="k">nil</span> {
+        <span class="k">return</span> User{}, <span class="s">""</span>, err
+    }
+    <span class="k">return</span> u, <span class="s">"MISS"</span>, <span class="k">nil</span>
+}</code></pre>
+
+<p>
+  <strong>สามทาง ไม่ใช่สองทาง</strong> — HIT / MISS / error จริง
+  นี่คือรูปทรงเดียวกับที่ฝึกใน
+  <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>:
+  <em>อย่าถามแค่ว่า "มี error ไหม" ให้ถามว่า "error ตัวไหน"</em>
+  <br>ทุกคำสั่งรับ <code>ctx</code> เป็นตัวแรก — เหตุผลเดียวกับ
+  <a href="../../day-6/lessons/0025-context.html">บทเรียน 25</a>:
+  ถ้าผู้ใช้ปิดหน้าเว็บไปแล้ว การรอ Redis ต่อก็ไม่มีประโยชน์
+</p>
+
+<div class="win">
+  <span class="label">📊 วัดจริง: DB จำลอง <code>sleep 200ms</code> · เรียก 5 ครั้ง</span>
+  <pre style="margin:0.6rem 0"><code>call #1  MISS  205.699084ms  name=Somchai
+call #2  HIT   1.826875ms  name=Somchai
+call #3  HIT   800.417µs  name=Somchai
+call #4  HIT   636.333µs  name=Somchai
+call #5  HIT   692.833µs  name=Somchai
+
+MISS = 205.699084ms
+HIT  = 1.826875ms
+<strong>เร็วขึ้น 112.6 เท่า</strong></code></pre>
+  <p style="margin:0.6rem 0 0">
+    สังเกต <strong>HIT ครั้งแรก (1.8ms) ช้ากว่า HIT ครั้งถัดไป (0.6–0.8ms) ราวสองเท่า</strong>
+    เพราะ connection pool ยังต้องเปิด connection ใหม่
+    <br>ผมเลยรันรอบยืนยันแบบ warm-up ก่อน:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>MISS = 202.910542ms
+HIT  = 730.666µs
+<strong>เร็วขึ้น 277.7 เท่า</strong></code></pre>
+  <p style="margin:0.6rem 0 0">
+    <strong>ตัวเลขที่ควรจำคือ ~278 เท่า ไม่ใช่ 112 เท่า</strong> —
+    และบทเรียนที่ติดตัวไปได้ทุก benchmark คือ
+    <strong>อย่าเอาการวัดครั้งแรกมาสรุป</strong> (บทเรียนเดียวกับ
+    <a href="../../day-5/lessons/0014-test-in-go.html">Day 5</a>: วัดสิ่งที่คุณตั้งใจวัดจริง ๆ)
+  </p>
+</div>
+
+<h2>6 · หัวใจของบท — cache โกหกได้</h2>
+
+<p>
+  กลับไปดูแผนภาพหัวข้อ 5 ตรง <strong><code>?????</code></strong>
+  <br>สมมติทีมการตลาดขึ้นราคาสินค้าผ่านหน้าแอดมิน โค้ดฝั่งนั้น
+  <code>UPDATE</code> ลง database เรียบร้อย <strong>แต่ไม่รู้จัก Redis</strong> — จะเกิดอะไร
+</p>
+
+<div class="predict">
+  <pre><code><span class="c">// 1) อ่านครั้งแรก — cache ยังว่าง</span>
+p, s := <span class="f">getProduct</span>(ctx, rdb, <span class="n">1</span>)     <span class="c">// เสื้อยืด ราคา 300</span>
+
+<span class="c">// 2) ฝ่ายการตลาดขึ้นราคาใน DB เป็น 500 — ไม่แตะ Redis เลย</span>
+db[<span class="n">1</span>] = Product{ID: <span class="n">1</span>, Name: <span class="s">"เสื้อยืด"</span>, Price: <span class="n">500</span>}
+
+<span class="c">// 3) ลูกค้าอ่านผ่าน cache สามครั้ง</span>
+<span class="k">for</span> i := <span class="n">1</span>; i &lt;= <span class="n">3</span>; i++ {
+    p, s := <span class="f">getProduct</span>(ctx, rdb, <span class="n">1</span>)
+    fmt.<span class="f">Printf</span>(<span class="s">"[%s] ลูกค้าเห็นราคา %d บาท   &lt;-- DB บอก %d\n"</span>, s, p.Price, db[<span class="n">1</span>].Price)
+}</code></pre>
+  <p class="ask">
+    <code>getProduct</code> คือ cache-aside ที่<strong>เขียนถูกต้องทุกบรรทัด</strong>
+    (แยก <code>redis.Nil</code> ครบ · ตั้ง TTL 60 วิ)
+    — ลูกค้าเห็นราคาเท่าไหร่ และมี error หรือ warning โผล่มาไหม?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== 1) อ่านครั้งแรก (cache miss -&gt; โหลดเข้า cache) ===
+[MISS] เสื้อยืด ราคา 300 บาท
+
+=== 2) ฝ่ายการตลาดขึ้นราคาใน DB เป็น 500 (ไม่ invalidate cache) ===
+ค่าใน DB ตอนนี้  = 500 บาท
+
+=== 3) ลูกค้าอ่านผ่าน cache ===
+<strong>[HIT] ลูกค้าเห็นราคา 300 บาท   &lt;-- DB บอก 500
+[HIT] ลูกค้าเห็นราคา 300 บาท   &lt;-- DB บอก 500
+[HIT] ลูกค้าเห็นราคา 300 บาท   &lt;-- DB บอก 500</strong>
+
+ค่าดิบใน Redis = {"id":1,"name":"เสื้อยืด","price":300}
+TTL เหลือ      = 1m0s  (อีกเท่านี้ถึงจะเลิกโกหกเอง)</code></pre>
+    <p>
+      <strong>ไม่มี error ไม่มี warning ไม่มี log</strong> — ทุก request คือ
+      HTTP 200 ที่เร็วสวยงาม แต่ตัวเลขที่ลูกค้าเห็น<strong>ผิด</strong>
+    </p>
+    <p>
+      สังเกตอีกจุด: <code>TTL เหลือ = 1m0s</code> <strong>เท่าเดิมทุกครั้งที่ HIT</strong>
+      → <code>GET</code> <em>ไม่</em>ต่ออายุ TTL
+      ข่าวดีคือมันจะเลิกโกหกเองแน่นอน · ข่าวร้ายคือ<strong>คุณควบคุมไม่ได้ว่าเมื่อไหร่</strong>
+    </p>
+    <p style="margin-bottom:0">แล้ว <code>DEL</code> หนึ่งบรรทัดแก้ได้จริง:</p>
+    <pre style="margin:0.6rem 0 0"><code>=== 4) แก้ด้วยการ invalidate: DEL key ===
+DEL product:1 -&gt; ลบไป 1 key
+<strong>[MISS] ลูกค้าเห็นราคา 500 บาท   &lt;-- ตรงกับ DB แล้ว</strong></code></pre>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ นี่คือบั๊กสายพันธุ์เดียวกับ data race ใน
+    <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a></strong> —
+    โปรแกรม "ทำงานสำเร็จ" ทุกครั้ง แค่<strong>คำตอบผิด</strong>
+    <br>ต่างกันตรงที่ data race ยังจับได้ด้วย <code>-race</code> แต่
+    <strong>cache ที่โกหกไม่มีเครื่องมือไหนจับให้</strong>
+    เพราะในมุมของโปรแกรม มันไม่ได้ทำอะไรผิดเลย
+    <br>อาการที่ผู้ใช้รายงานจะเป็น: <em>"แก้ราคาไปแล้วนะ แต่หน้าเว็บยังเป็นอันเก่า
+    รีเฟรชกี่ทีก็เหมือนเดิม... เอ๊ะ เดี๋ยวนี้มันถูกแล้ว"</em>
+    — คำว่า "เดี๋ยวมันหายเอง" คือลายเซ็นของบั๊ก cache
+  </p>
+</div>
+
+<h2>7 · ทำยังไงให้ cache ไม่โกหก</h2>
+
+<p>มีสองทางที่คุณ<em>เลือก</em>ได้ และทางที่สามที่<em>เลือกไม่ได้</em></p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>⏳ TTL — ปล่อยให้หมดอายุเอง</h4>
+    <pre><code>rdb.<span class="f">Set</span>(ctx, key, b, <span class="n">60</span>*time.Second)</code></pre>
+    <p style="margin-bottom:0">
+      <strong>ดี:</strong> ทำงานเองโดยไม่ต้องแก้โค้ดฝั่งเขียนสักบรรทัด ·
+      ต่อให้ลืมทุกอย่าง ข้อมูลก็ยังสดใหม่ภายในเวลาที่กำหนด ·
+      ใช้ได้แม้ต้นทางถูกแก้จากที่ที่เราคุมไม่ได้ (เช่น คนแก้ DB ตรง ๆ)
+      <br><br>
+      <strong>เสีย:</strong> <strong>ยอมรับล่วงหน้าว่าจะโกหกได้นานถึง TTL</strong> ·
+      TTL สั้น = hit rate ตก DB โดนหนัก · TTL ยาว = โกหกนาน ·
+      ไม่มีตัวเลขไหน "ถูก" มีแต่ตัวเลขที่คุณยอมรับได้
+    </p>
+  </div>
+  <div class="side good">
+    <h4>🗑️ purge / invalidate — สั่งลบทันที</h4>
+    <pre><code>rdb.<span class="f">Del</span>(ctx, <span class="s">"product:1"</span>)</code></pre>
+    <p style="margin-bottom:0">
+      <strong>ดี:</strong> <strong>ตรงทันที</strong> — อ่านครั้งถัดไปเป็น MISS
+      แล้วได้ค่าใหม่จาก DB (พิสูจน์แล้วในหัวข้อ 6) ·
+      ตั้ง TTL ยาวได้โดยไม่ต้องกลัว → hit rate สูง
+      <br><br>
+      <strong>เสีย:</strong> ต้องไล่ใส่<strong>ทุกจุดที่เขียนข้อมูล</strong> ·
+      ลืมที่เดียว = โกหกที่เดียว · และ <code>DEL</code> key ที่สะกดผิด
+      <strong>คืน <code>0</code> เฉย ๆ ไม่ error</strong> —
+      คุณจะไม่มีทางรู้ว่าลบไม่โดน
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ในโค้ดจริงใช้ทั้งคู่ ไม่ใช่เลือกอย่างใดอย่างหนึ่ง</strong>
+    <br><code>DEL</code> คือ<strong>ทางหลัก</strong> (ทำให้ถูกทันที) ·
+    TTL คือ<strong>ตาข่ายนิรภัย</strong> (จำกัดความเสียหายตอนคุณลืม)
+    <br>วิธีคิดที่ใช้ได้จริง: <em>"ถ้าลืม invalidate ทุกจุด ระบบจะผิดได้นานที่สุดกี่นาที —
+    ตัวเลขนั้นคือ TTL ของคุณ"</em>
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">ทางที่สาม: key หายเองโดยที่คุณไม่ได้สั่ง</h3>
+
+<p>
+  ผมตั้ง <code>maxmemory 3mb</code> กับ policy <code>allkeys-lru</code>
+  แล้วสร้าง key ที่มี <strong>TTL 3600 วินาที</strong> จากนั้นยัดข้อมูลขยะเข้าไปจนเต็ม
+  โดย<strong>ไม่แตะ key นั้นอีกเลย</strong>:
+</p>
+
+<pre><code>ตั้ง important:1 TTL 3600 แล้ว *ไม่แตะอีกเลย* (ให้เป็น least-recently-used)
+=== ยัด junk 3 รอบ รอบละ 50k ===
+รอบ 1: 1
+รอบ 2: 0
+รอบ 3: 0
+
+$ EXISTS important:1
+0
+$ GET important:1
+
+$ TTL important:1   <span class="c">&lt;-- -2 ทั้งที่ยังไม่ถึงเวลาหมดอายุ</span>
+<strong>-2</strong>
+evicted_keys:190824</code></pre>
+
+<p>
+  ตั้งไว้ 1 ชั่วโมง หายไปในไม่กี่วินาที และ <code>TTL</code> คืน <code>-2</code>
+  <strong>เหมือนหมดอายุตามปกติเป๊ะ</strong>
+  — นี่คือเหตุผลที่หัวข้อ 4 บอกว่า <code>-2</code> ตอบได้แค่ "ตอนนี้ไม่มี":
+  หมดอายุ · โดน evict · หรือไม่เคยมี ให้ผลเหมือนกันหมดทั้งสามกรณี
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ แล้ว default ของ Redis 7 ยังไม่ใช่ <code>allkeys-lru</code> ด้วย</strong>
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ CONFIG GET maxmemory-policy
+maxmemory-policy
+<strong>noeviction</strong>
+
+$ SET newkey "เขียนได้ไหม"
+<strong>OOM command not allowed when used memory &gt; 'maxmemory'.</strong>
+
+$ GET fill:1   <span class="c">&lt;-- อ่านยังได้อยู่</span>
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+$ DEL fill:1   <span class="c">&lt;-- ลบยังได้</span>
+1</code></pre>
+  <p style="margin:0.6rem 0 0">
+    <code>noeviction</code> เหมาะกับการใช้ Redis เป็น <em>database</em> ไม่ใช่ <em>cache</em>:
+    เต็มแล้ว<strong>ปฏิเสธการเขียน</strong> แทนที่จะทิ้งของเก่า
+    — ตรงข้ามกับที่ทุกคนคาดหวังจาก cache
+    <br>อาการคือ cache <strong>ค้างอยู่กับข้อมูลชุดเดิมตลอดไป</strong> เพราะเขียนใหม่ไม่ได้
+    ส่วนอ่านยังปกติ ระบบจึงดูเหมือนไม่มีอะไรผิด
+    <br><strong>ใช้เป็น cache ต้องตั้งเอง:</strong>
+    <code>CONFIG SET maxmemory-policy allkeys-lru</code>
+  </p>
+</div>
+
+<p>
+  บทสรุปของหัวข้อนี้จึงไม่ใช่ "ตั้ง TTL ให้ดี" แต่คือ
+  <strong>อย่าถือว่า TTL เป็นสัญญา</strong> —
+  key หายได้ตลอดเวลาโดยไม่บอกล่วงหน้า
+  <br>ซึ่งวนกลับไปกฎเดียวกับหัวข้อ 2: <strong>cache ต้องสร้างใหม่จากต้นทางได้เสมอ</strong>
+</p>
+
+<h3 style="margin-top:1.4rem">ผลข้างเคียงที่ต้องรู้: cache stampede</h3>
+
+<p>
+  ถ้า cache หายพร้อมกันหลาย key (deploy ใหม่ · Redis restart · โดน evict ยกชุด)
+  แล้ว request วิ่งเข้ามาพร้อมกัน — ทุกตัวจะ miss พร้อมกัน แล้ว<strong>แห่ไป DB พร้อมกัน</strong>
+  ผมยิง 100 request พร้อมกันตอน cache ว่าง:
+</p>
+
+<pre><code>=== cache stampede: 100 request พร้อมกันตอน cache ว่าง ===
+(อุดมคติคือ DB ควรโดนยิงแค่ 1 ครั้ง)
+
+แบบไร้เดียงสา (ไม่มี lock)    request=100  <strong>DB ถูกยิง 100 ครั้ง</strong>  ใช้เวลา 269ms
+แบบมี mutex + double-check    request=100  <strong>DB ถูกยิง   1 ครั้ง</strong>  ใช้เวลา 282ms</code></pre>
+
+<p>
+  ตัวแก้คือ <code>sync.Mutex</code> จาก
+  <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a>
+  + <strong>เช็ค cache ซ้ำอีกครั้งหลังได้ lock</strong> (คนก่อนหน้าอาจเติมให้แล้ว)
+  — ต้นทุนแทบเป็นศูนย์: 269ms กับ 282ms
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    ⚠️ <strong>ข้อจำกัดที่ต้องพูดให้ตรง</strong> — ผมทดสอบเฉพาะ <code>sync.Mutex</code>
+    ซึ่งกันได้แค่<strong>ภายในโปรเซสเดียว</strong>
+    <br>ถ้า deploy หลาย pod แต่ละ pod มี mutex ของตัวเอง → ยังแห่ไป DB พร้อมกันได้อยู่
+    วิธีสำหรับหลาย instance (distributed lock ด้วย <code>SET NX</code>,
+    <code>singleflight</code>) <strong>ผมยังไม่ได้รันพิสูจน์ จึงไม่เขียนเป็นข้อสรุปในบทนี้</strong>
+  </p>
+</div>
+
+<h2>8 · สามกับดักที่คนใหม่เจอทุกคน</h2>
+
+<h3 style="margin-top:1.2rem">กับดัก 1 — <code>redis.Nil</code> ไม่ใช่ error จริง</h3>
+
+<p>
+  cache miss คือ<strong>เหตุการณ์ปกติที่สุด</strong>ของ cache
+  แต่ go-redis รายงานมันเป็น <code>error</code>:
+</p>
+
+<pre><code>val        = ""
+err        = redis: nil
+err != nil = <strong>true</strong>
+err == redis.Nil        = true
+errors.Is(err,redis.Nil)= true
+redis.Nil ตัวมันเอง     = "redis: nil"  (type proto.RedisError)</code></pre>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ตามสัญชาตญาณ Go</h4>
+    <pre><code>val, err := rdb.<span class="f">Get</span>(ctx, key).<span class="f">Result</span>()
+<span class="k">if</span> err != <span class="k">nil</span> {
+    <span class="k">return</span> err       <span class="c">// → HTTP 500</span>
+}</code></pre>
+    <p style="margin-bottom:0">
+      <code>โค้ดจะคิดว่า 'Redis พัง' แล้ว return 500 ทั้งที่แค่ cache miss: redis: nil</code>
+      <br><strong>พังหนักที่สุดตอน deploy ใหม่</strong> ตอนที่ cache ยังว่างทั้งหมด
+      = ทุก request เป็น 500
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ ถามว่า error ตัวไหน</h4>
+    <pre><code>val, err := rdb.<span class="f">Get</span>(ctx, key).<span class="f">Result</span>()
+<span class="k">switch</span> {
+<span class="k">case</span> errors.<span class="f">Is</span>(err, redis.Nil):
+    <span class="c">// miss → ไปอ่าน DB ต่อ</span>
+<span class="k">case</span> err != <span class="k">nil</span>:
+    <span class="c">// error จริง</span>
+<span class="k">default</span>:
+    <span class="c">// hit → ใช้ val</span>
+}</code></pre>
+    <p style="margin-bottom:0">
+      <code>cache miss -&gt; ไปอ่าน DB ต่อ (ไม่ใช่ error)</code>
+      <br>ใช้ <code>errors.Is</code> ไม่ใช่ <code>==</code> เพราะชั้นบนอาจ
+      <code>%w</code> ห่อไว้ (<a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>)
+    </p>
+  </div>
+</div>
+
+<p>
+  โครง <code>switch</code> ฝั่งขวารับมือ error อื่นได้ถูกต้องด้วย เพราะทั้ง OOM และ
+  <code>WRONGTYPE</code> <strong>ไม่ใช่</strong> <code>redis.Nil</code>:
+</p>
+
+<pre><code>Set err                  = OOM command not allowed when used memory &gt; 'maxmemory'.
+errors.Is(err, redis.Nil)= <strong>false</strong>
+type                     = *proto.OOMError
+
+Get(list) val="" err=WRONGTYPE Operation against a key holding the wrong kind of value
+errors.Is(err, redis.Nil)= <strong>false</strong></code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ญาติสนิทของกับดักนี้: <code>NewClient</code> ไม่เคย error</strong>
+    <br>ผมต่อไปที่ port ที่ไม่มีอะไรฟังเลย:
+  </p>
+  <pre style="margin:0.6rem 0"><code>NewClient สำเร็จทันที ไม่ error เลย (lazy connect)
+Ping -&gt; "", err = dial tcp 127.0.0.1:55999: connect: connection refused
+Get  -&gt; err = dial tcp 127.0.0.1:55999: connect: connection refused
+<strong>errors.Is(err, redis.Nil) = false</strong>   &lt;-- ระวัง! connection error ไม่ใช่ cache miss</code></pre>
+  <p style="margin:0.6rem 0 0">
+    <code>NewClient</code> แค่สร้าง struct ไม่ได้เปิด TCP จริง → <strong>config ผิดจะไม่รู้ตัวตอน
+    startup</strong> แต่ไปพังตอน request แรก
+    <br><strong>ทางแก้:</strong> <code>Ping</code> ตอน startup แล้ว fail fast —
+    <code>if err := rdb.Ping(ctx).Err(); err != nil { log.Fatal(err) }</code>
+    <br>และสังเกตบรรทัดสุดท้าย: ถ้าคุณเขียนโค้ดแบบ "err ไหนก็ถือเป็น miss"
+    ระบบจะไปยิง DB รัว ๆ ตอน Redis ล่ม ซึ่งคือตอนที่ DB ต้องการความเมตตาที่สุด
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">กับดัก 2 — โยน struct ลง Redis ตรง ๆ</h3>
+
+<p>
+  <code>rdb.Set</code> รับพารามิเตอร์เป็น <code>any</code> → <strong>compile ผ่านสบายมาก</strong>
+  แล้วไปพังตอน runtime:
+</p>
+
+<pre><code>Set(struct) err  = redis: can't marshal main.User (implement encoding.BinaryMarshaler)
+Set(&amp;struct) err = redis: can't marshal *main.User (implement encoding.BinaryMarshaler)
+Set(map) err     = redis: can't marshal map[string]int (implement encoding.BinaryMarshaler)
+Set(slice) err   = redis: can't marshal []int (implement encoding.BinaryMarshaler)
+<strong>EXISTS ทั้ง 4 key -&gt; 0  (ไม่มีอะไรถูกเขียนเลย)</strong></code></pre>
+
+<p>ชนิดที่ go-redis รับได้ตรง ๆ มีเท่านี้:</p>
+
+<pre><code>  string     -&gt; err=&lt;nil&gt;  stored="str"
+  int        -&gt; err=&lt;nil&gt;  stored="42"
+  float64    -&gt; err=&lt;nil&gt;  stored="3.14"
+  bool       -&gt; err=&lt;nil&gt;  stored=<strong>"1"</strong>
+  []uint8    -&gt; err=&lt;nil&gt;  stored="bytes"
+  time.Duration -&gt; err=&lt;nil&gt;  stored=<strong>"1000000000"</strong></code></pre>
+
+<p>
+  ทางแก้คือ marshal เองก่อน — <code>json.Marshal</code> จาก
+  <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a>:
+</p>
+
+<pre><code>b, err := json.<span class="f">Marshal</span>(u)
+<span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+rdb.<span class="f">Set</span>(ctx, key, b, ttl)     <span class="c">// []byte ผ่านฉลุย</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ข่าวดีของกับดักนี้: มัน error ชัด และไม่เขียนขยะลง Redis</strong>
+    (<code>EXISTS</code> ได้ <code>0</code> ทั้งสี่ key)
+    <br>ข่าวร้ายคือมันจะเงียบทันทีถ้าคุณเขียน <code>rdb.Set(...)</code> โดยไม่รับ error
+    — <strong>error ของเคสนี้เกิดที่ <code>Set</code> ไม่ใช่ที่ <code>Marshal</code></strong>
+    <br>สังเกตด้วยว่า <code>bool true</code> ถูกเก็บเป็น <code>"1"</code> และ
+    <code>time.Duration</code> เป็น nanosecond — <strong>อ่านกลับมาต้องแปลงเอง</strong>
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">กับดัก 3 — <code>KEYS *</code> เทียบกับ <code>SCAN</code></h3>
+
+<div class="predict">
+  <pre><code>$ MSET u:1 a u:2 b u:3 c p:1 x p:2 y
+
+$ SCAN 0 MATCH "u:*"
+...
+
+$ SCAN 0 MATCH "u:*" COUNT 2
+...</code></pre>
+  <p class="ask">
+    มี key ที่ขึ้นต้นด้วย <code>u:</code> อยู่ 3 ตัว —
+    สองคำสั่งนี้พิมพ์อะไรออกมาบ้าง? <strong>ต่างกันตรงไหน</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ SCAN 0 MATCH "u:*"
+<strong>0</strong>
+u:1
+u:2
+u:3
+
+$ SCAN 0 MATCH "u:*" COUNT 2   <span class="c"># COUNT เป็นแค่ hint</span>
+<strong>3</strong>
+u:1</code></pre>
+    <p>
+      <strong>บรรทัดแรกของ <code>SCAN</code> คือ cursor ไม่ใช่ key</strong>
+      <br>เคสแรก cursor = <code>0</code> แปลว่า<em>วนครบแล้ว</em> ·
+      เคสที่สอง cursor = <code>3</code> แปลว่า<strong>ยังไม่จบ</strong>
+      และได้ key มาแค่ตัวเดียวจากสามตัวที่ match
+    </p>
+    <p style="margin-bottom:0">
+      ถ้าเขียนโค้ดเรียก <code>SCAN 0</code> ครั้งเดียวแล้วคิดว่าได้ครบ
+      <strong>job ไล่ลบ key ของคุณจะลบไม่ครบแบบสุ่ม ๆ ทุกครั้งที่รัน</strong>
+      โดยไม่มี error เลย
+      <br>และ <code>COUNT</code> ไม่ใช่ limit — ผมขอ <code>COUNT 1000</code>
+      แต่ได้ batch กลับมาสูงสุด <strong>1004</strong> ตัว
+      → <strong>อ่าน <code>len()</code> ของ slice จริงเสมอ อย่ายึด COUNT</strong>
+    </p>
+  </div>
+</div>
+
+<pre><code><span class="c">// KEYS: ดึงหมดในคำสั่งเดียว</span>
+keys, err := rdb.<span class="f">Keys</span>(ctx, <span class="s">"*"</span>).<span class="f">Result</span>()
+
+<span class="c">// SCAN: ต้องวนจน cursor == 0 เท่านั้น</span>
+<span class="k">var</span> cursor <span class="k">uint64</span>
+<span class="k">for</span> {
+    batch, cur, err := rdb.<span class="f">Scan</span>(ctx, cursor, <span class="s">"*"</span>, <span class="n">1000</span>).<span class="f">Result</span>()
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">break</span> }
+    <span class="k">for</span> _, k := <span class="k">range</span> batch { <span class="c">/* ... */</span> }
+    cursor = cur
+    <span class="k">if</span> cursor == <span class="n">0</span> { <span class="k">break</span> }   <span class="c">// ← เงื่อนไขเดียวที่ถูกต้อง</span>
+}</code></pre>
+
+<p>
+  ตำราส่วนใหญ่บอกว่า "ใช้ <code>SCAN</code> เพราะ <code>KEYS</code> ช้า"
+  — <strong>ผมวัดแล้วพบว่าเหตุผลนี้ผิด</strong> บน 1,000,000 key:
+</p>
+
+<pre><code>=== KEYS * (ดึงมาทีเดียวหมด) ===
+ได้ 1000000 keys ใน <strong>150.375625ms</strong>
+heap ขณะถือผลลัพธ์ = 30.9 MB  (โต +30.5 MB)
+
+=== SCAN (ทยอยดึงทีละ batch 1000) ===
+ได้ 1000000 keys (นับซ้ำ) ใน <strong>862.022875ms</strong>
+วน 1000 รอบ, batch ใหญ่สุด 1004 keys</code></pre>
+
+<p>
+  <strong><code>KEYS</code> เร็วกว่า 5.7 เท่า</strong> เพราะ <code>SCAN</code>
+  ต้อง round-trip 1,000 รอบ
+  <br>ถ้าเราสอนว่า "SCAN เร็วกว่า" ผู้เรียนจะไป benchmark เองแล้วสรุปว่าอาจารย์ผิด
+  แล้วกลับไปใช้ <code>KEYS</code> — <strong>เหตุผลที่ถูกต้องอยู่ที่อื่น</strong>:
+</p>
+
+<div class="win">
+  <span class="label">📊 เหตุผลจริง — Redis ทำงานทีละคำสั่งบน thread เดียว</span>
+  <p style="margin-bottom:0">เวลาที่ Redis ใช้ฝั่ง server (จาก <code>SLOWLOG</code>, หน่วยไมโครวินาที):</p>
+  <pre style="margin:0.6rem 0"><code><strong>146086</strong>      <span class="c">← KEYS *   = 146 ms</span>
+KEYS
+*
+
+<strong>57</strong>          <span class="c">← SCAN 0 COUNT 100 = 57 µs</span>
+SCAN
+0
+COUNT
+100</code></pre>
+  <p style="margin:0.6rem 0 0">
+    146 ms นั้นคือเวลาที่ <strong>client อื่นทั้งหมดถูกแช่แข็ง</strong>
+    ผมวัดผลกระทบด้วย <code>redis-cli --latency</code> (หน่วย ms):
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>A) baseline (ไม่มีอะไรกวน)  : min: 0, max: <strong>2</strong>,   avg: 0.38 (447 samples)
+B) ขณะมี KEYS * ยิงรัว ๆ    : min: 0, max: <strong>274</strong>, avg: 12.47 (<strong>245</strong> samples)
+C) ขณะมี SCAN ยิงรัว ๆ      : min: 0, max: <strong>2</strong>,   avg: 0.38 (449 samples)</code></pre>
+  <p style="margin:0.6rem 0 0">
+    <strong>latency ของ API ที่ไม่เกี่ยวข้องกันเลยพุ่งจาก 2 ms เป็น 274 ms</strong>
+    ส่วน <code>SCAN</code> ที่ยิงจำนวนเท่ากันไม่กระทบเลยสักนิด
+    <br>สังเกตจำนวน sample ตอน <code>KEYS</code> เหลือ 245 จาก 447 —
+    <strong>เครื่องมือวัด latency เองก็โดนบล็อกไปด้วย</strong>
+    <br><strong>ประโยคที่ถูกคือ "SCAN ไม่บล็อกคนอื่น" ไม่ใช่ "SCAN เร็วกว่า"</strong>
+  </p>
+</div>
+
+<h2>9 · ปิด Day 7 — เครื่องมือสี่ตัว คำถามเดียว</h2>
+
+<p>
+  ทั้งวันนี้เราเจอเครื่องมือสี่ตัวที่ดูไม่เกี่ยวกันเลย
+  แต่ทุกตัวตอบคำถามเดียวกัน: <strong>"ระหว่างเร็วกับจริง คุณกำลังแลกอะไรกับอะไร"</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เครื่องมือ</th><th>ได้อะไร</th><th>เสียอะไร</th><th>หลักฐานที่ต้องเห็น</th></tr>
+  <tr>
+    <td><strong><a href="./0028-mockery.html">mock</a></strong><br>บท 28</td>
+    <td>เทสเร็ว ไม่ต้องมี infra</td>
+    <td><strong>เร็วแต่ไม่จริง</strong> — mock ตอบตามที่เราสั่ง ไม่ใช่ตามที่ระบบจริงตอบ</td>
+    <td>เทสผ่านหมด แต่ของจริงพัง</td>
+  </tr>
+  <tr>
+    <td><strong><a href="./0029-integration-test.html">container จริง</a></strong><br>บท 29–<a href="./0030-testcontainers-suite.html">30</a></td>
+    <td>เทสกับของจริง เจอบั๊กที่ mock ไม่มีวันเจอ</td>
+    <td><strong>จริงแต่ช้า</strong> — ต้องรอ container พร้อม</td>
+    <td>เวลาเทสที่ต่างกันชัดเจน</td>
+  </tr>
+  <tr>
+    <td><strong><a href="./0031-goose-migration.html">migration</a></strong><br>บท 31</td>
+    <td>schema ทุกเครื่องตามทันโค้ด และย้อนกลับได้</td>
+    <td>ต้องมีวินัย — ทุกการเปลี่ยน schema ต้องมีไฟล์</td>
+    <td>รันซ้ำแล้วผลเหมือนเดิม</td>
+  </tr>
+  <tr>
+    <td><strong>cache</strong><br>บทนี้</td>
+    <td>เร็วขึ้น <strong>~278 เท่า</strong></td>
+    <td><strong>เร็วแต่โกหกได้</strong> — ตอบผิดโดยไม่มี error</td>
+    <td>DB บอก 500 · ลูกค้าเห็น 300</td>
+  </tr>
+</table>
+</div>
+
+<p>
+  สังเกตว่าคอลัมน์ "เสียอะไร" ของทั้งสี่แถวไม่มี error message เลยสักตัว —
+  <strong>ราคาของความเร็วไม่เคยจ่ายเป็น crash มันจ่ายเป็นความไม่ตรงกับความจริง</strong>
+  <br>และนั่นคือทักษะที่ Day 7 พยายามสร้าง:
+  <strong>รู้ว่าตอนนี้กำลังมองของจริงหรือมองสำเนาอยู่</strong>
+  — mock คือสำเนาของ dependency · cache คือสำเนาของข้อมูล ·
+  container คือของจริงที่แพงกว่า · migration คือสิ่งที่ทำให้ "ของจริง" ของทุกคนเป็นอันเดียวกัน
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📄 <strong>สรุปทั้งวันในหน้าเดียว</strong> — คำสั่ง, ตารางเทียบ, error ที่เจอบ่อย
+    และตารางกับดักรวมทั้งวันอยู่ที่
+    <a href="../reference/cheatsheet.html">Cheat sheet Day 7</a>
+    <br>บทก่อนหน้า: <a href="./0031-goose-migration.html">บทเรียน 31 — Goose migration</a>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. <code>TTL mykey</code> คืน <code>-1</code> แปลว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">ไม่มี key นี้อยู่ใน Redis แล้ว ต้องไปอ่านจากต้นทางใหม่</button>
+    <button class="opt">key หมดอายุไปแล้วเมื่อวินาทีที่แล้ว แต่ยังไม่ถูกลบทิ้ง</button>
+    <button class="opt">มี key นี้อยู่ แต่ไม่ได้ตั้งวันหมดอายุไว้ จึงอยู่ตลอดไป</button>
+    <button class="opt">มี key นี้อยู่ และเหลืออายุอีกน้อยกว่าหนึ่งวินาทีเต็ม</button>
+  </div>
+  <div class="explain">
+    <p><strong><code>-1</code> = มี key แต่เป็นอมตะ</strong> · <strong><code>-2</code> = ไม่มี key</strong>
+    · เลขบวก = วินาทีที่เหลือ
+    <br>ผมรันครบสามเคส: <code>TTL nokey:xyz</code> → <code>-2</code> ·
+    <code>SET plain</code> แล้ว <code>TTL plain</code> → <code>-1</code> ·
+    <code>EXPIRE plain 100</code> แล้ว <code>TTL plain</code> → <code>100</code>
+    <br>ตัวเลือกที่ 1 คือความหมายของ <code>-2</code> ไม่ใช่ <code>-1</code> ·
+    ตัวเลือกที่ 2 ผิดเพราะพอหมดอายุแล้ว <code>EXISTS</code> ได้ <code>0</code>
+    และ <code>TYPE</code> ได้ <code>none</code> ทันที ไม่มีสถานะ "ค้าง" ·
+    ตัวเลือกที่ 4 ผิดเพราะ TTL ไม่เคยคืนเลขติดลบเพื่อบอกเศษวินาที</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. ทำไมโค้ด production ถึงควรใช้ <code>SCAN</code> แทน <code>KEYS *</code>?</p>
+  <div class="opts">
+    <button class="opt">เพราะ <code>SCAN</code> ดึง key ทั้งหมดได้เร็วกว่า <code>KEYS</code> หลายเท่า</button>
+    <button class="opt">เพราะ <code>KEYS</code> ถูกปิดไว้เป็น default ตั้งแต่ Redis 7 เป็นต้นมา</button>
+    <button class="opt">เพราะ <code>KEYS</code> คืน key ซ้ำได้ ส่วน <code>SCAN</code> รับประกันว่าไม่ซ้ำ</button>
+    <button class="opt">เพราะ <code>KEYS</code> บล็อก Redis ทั้งตัว ทำให้ client อื่นทุกคนค้างรอ</button>
+  </div>
+  <div class="explain">
+    <p>Redis ประมวลผล<strong>ทีละคำสั่งบน thread เดียว</strong> —
+    <code>SLOWLOG</code> บอกว่า <code>KEYS *</code> บน 1 ล้าน key ใช้ <strong>146,086 µs</strong>
+    ส่วน <code>SCAN</code> หนึ่งครั้งใช้ <strong>57 µs</strong>
+    <br>วัดผลกระทบต่อคนอื่นด้วย <code>--latency</code>:
+    baseline <strong>max 2 ms</strong> → ระหว่างมี <code>KEYS</code> <strong>max 274 ms</strong>
+    → ระหว่างมี <code>SCAN</code> กลับมา <strong>max 2 ms</strong>
+    <br>ตัวเลือกที่ 1 <strong>ผิดกลับด้าน</strong>: ผมวัดแล้ว <code>KEYS</code> เร็วกว่า
+    (150 ms vs 862 ms) เพราะ <code>SCAN</code> ต้อง round-trip 1,000 รอบ ·
+    ตัวเลือกที่ 3 ผิดสลับกัน — <code>SCAN</code> ต่างหากที่คืนซ้ำได้ ถ้าต้องการ unique ต้อง dedup เอง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">3. <code>rdb.Get()</code> กับ key ที่ไม่มี แล้วโค้ดเขียน <code>if err != nil { return err }</code> จะเกิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">ไม่เกิดอะไร เพราะ key ที่ไม่มีคืน <code>err == nil</code> กับค่าว่าง</button>
+    <button class="opt">cache miss ทุกครั้งกลายเป็น error หนักสุดตอน deploy ที่ cache ว่าง</button>
+    <button class="opt">โปรแกรม panic ทันทีเพราะ <code>redis.Nil</code> เป็น error ที่ recover ไม่ได้</button>
+    <button class="opt">go-redis ไปอ่าน DB ให้เองอัตโนมัติ แล้วเติมค่ากลับเข้า cache ให้</button>
+  </div>
+  <div class="explain">
+    <p>go-redis คืน <code>redis.Nil</code> (type <code>proto.RedisError</code>) เป็น error
+    เมื่อไม่มี key → <code>err != nil</code> เป็น <strong><code>true</code></strong>
+    ทั้งที่นี่คือเหตุการณ์ปกติที่สุดของ cache
+    <br>ผลคือ <em>โค้ดจะคิดว่า 'Redis พัง' แล้ว return 500 ทั้งที่แค่ cache miss</em>
+    และพังหนักสุดตอน cache ว่างทั้งหมด = ทุก request เป็น 500 พร้อมกัน
+    <br>ตัวเลือกที่ 1 ผิด (นั่นคือพฤติกรรมของ <code>database/sql</code> คนละแบบ) ·
+    ตัวเลือกที่ 3 ผิดเพราะไม่มี panic เลย มันเป็นแค่ค่า error ธรรมดา ·
+    ตัวเลือกที่ 4 ผิดเพราะ go-redis ไม่รู้จัก database ของคุณ — คนที่ต้องเดินให้สองฝั่งคือโค้ด cache-aside ของเราเอง
+    <br>ทางแก้: <code>errors.Is(err, redis.Nil)</code> ก่อนเสมอ
+    (<a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. แอดมินแก้ราคาใน DB จาก 300 เป็น 500 แต่ cache ยังเสิร์ฟ 300 อยู่ — วิธีไหนทำให้ตรงทันที?</p>
+  <div class="opts">
+    <button class="opt"><code>DEL product:1</code> ทุกครั้งที่เขียนข้อมูล แล้วให้ TTL เป็นตาข่ายกันลืม</button>
+    <button class="opt">ลด TTL ให้เหลือหนึ่งวินาที เพื่อให้ cache รีเฟรชตัวเองถี่ที่สุด</button>
+    <button class="opt">เรียก <code>GET</code> ซ้ำหลายครั้ง เพราะการอ่านจะไปต่ออายุและดึงค่าใหม่มา</button>
+    <button class="opt">ตั้ง <code>maxmemory-policy</code> เป็น <code>allkeys-lru</code> ให้ evict ค่าเก่าทิ้ง</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันจริง: <code>DEL product:1 -&gt; ลบไป 1 key</code> แล้วอ่านครั้งถัดไปได้
+    <code>[MISS] ลูกค้าเห็นราคา 500 บาท</code> — <strong>ตรงกับ DB ทันที</strong>
+    <br>ตัวเลือกที่ 2 ไม่ผิดทั้งหมดแต่<strong>ไม่ใช่ "ทันที"</strong> — มันแค่<em>ย่น</em>เวลาโกหก
+    และแลกมาด้วย hit rate ที่ตกจน DB โดนหนัก TTL จึงควรเป็นตาข่ายกันพลาด ไม่ใช่ทางแก้หลัก ·
+    ตัวเลือกที่ 3 ผิดชัดเจน: ผมพิมพ์ TTL ทุกครั้งที่ HIT ได้ <code>1m0s</code> เท่าเดิม —
+    <strong><code>GET</code> ไม่ต่ออายุ TTL และไม่ไปดู DB</strong> ·
+    ตัวเลือกที่ 4 ผิดเพราะ eviction เลือก key ตามความ<em>ไม่ค่อยถูกใช้</em> ไม่ได้เลือกตามความเก่าของข้อมูล
+    — key ที่ลูกค้าอ่านบ่อยคือ key ที่ปลอดภัยจาก evict มากที่สุด</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำ cache แล้วจับมันโกหกให้ได้</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำ cache ให้ทำงาน" — เป้าหมายคือ
+    <strong>ทำให้มันโกหกให้ดูก่อน แล้วค่อยแก้ และเขียนเทสที่จับการโกหกได้</strong>
+  </p>
+  <ol>
+    <li><strong>เปิด Redis:</strong>
+        <code>docker run -d --name day7-redis -p 55379:6379 redis:7-alpine</code>
+        <br>แล้วยืนยันเวอร์ชันด้วย <code>redis-cli INFO server</code> —
+        <strong>ต้องตอบให้ได้ว่าเลขที่เห็นคืออะไร ทำไมไม่ใช่ "7-alpine"</strong></li>
+    <li><strong>คุม TTL ให้ครบสามเคส:</strong> ทำให้ <code>TTL</code> คืน
+        <code>-2</code> · <code>-1</code> · เลขบวก อย่างละครั้งด้วย <code>redis-cli</code>
+        <br>แล้วลอง <code>EXPIRE</code> กับ key ที่ไม่มี — <strong>ได้ error ไหม</strong></li>
+    <li><strong>เขียน cache-aside ใน Go</strong> (<code>go-redis/v9</code>) สำหรับ
+        <code>Product</code> โดย <strong>แยกสามทาง</strong> HIT / <code>redis.Nil</code> / error จริง
+        <br>วัดเวลาด้วย <code>time.Since</code> แล้วเรียก 5 ครั้ง —
+        <strong>อธิบายให้ได้ว่าทำไม HIT ครั้งที่ 2 ช้ากว่าครั้งที่ 3</strong></li>
+    <li><strong>ทำให้มันโกหก:</strong> แก้ราคาในต้นทางโดยไม่แตะ Redis แล้วอ่านผ่าน cache 3 ครั้ง
+        <br>พิมพ์ <code>rdb.TTL(...)</code> ทุกครั้งที่ HIT — <strong>ตัวเลขลดลงไหม</strong></li>
+    <li><strong>แก้:</strong> เพิ่ม <code>rdb.Del</code> ในเส้นทางเขียน แล้วพิสูจน์ว่าอ่านครั้งถัดไปเป็น
+        MISS และได้ค่าใหม่</li>
+    <li><strong>เขียนเทสพิสูจน์</strong> (ต่อยอด <a href="../../day-5/lessons/0016-table-driven-test.html">Day 5</a>):
+        เทสที่ <code>updatePrice</code> → <code>getProduct</code> แล้ว assert ราคาใหม่
+        <br><strong>เทสนี้ต้อง fail ถ้าคุณลบบรรทัด <code>Del</code> ออก</strong> —
+        ถ้าลบแล้วยังผ่าน แปลว่าเทสยังไม่ได้เทสอะไร (ลอง <code>t.Cleanup</code> ล้าง key ก่อนทุกเทส)</li>
+    <li><strong>ท้าทาย 1:</strong> ลอง <code>rdb.Set(ctx, "x", myStruct, time.Minute)</code>
+        โดยไม่ marshal — <strong>ทายก่อนรัน</strong> ว่า compile ผ่านไหม, error ว่าอะไร,
+        และ <code>EXISTS x</code> ได้เท่าไหร่</li>
+    <li><strong>ท้าทาย 2:</strong> เปลี่ยน <code>Addr</code> เป็น <code>127.0.0.1:55999</code>
+        (ไม่มีอะไรฟัง) แล้วตอบสามข้อ: <code>NewClient</code> error ไหม ·
+        error โผล่ตอนไหน · <code>errors.Is(err, redis.Nil)</code> ได้อะไร</li>
+    <li><strong>ท้าทาย 3:</strong> เขียนลูป <code>SCAN</code> ที่วนจน <code>cursor == 0</code>
+        เทียบกับเรียก <code>SCAN 0</code> ครั้งเดียว — ใส่ key สัก 5,000 ตัวแล้วนับดูว่าได้ครบไหม</li>
+    <li><strong>เก็บกวาด:</strong> <code>docker stop day7-redis &amp;&amp; docker rm day7-redis</code></li>
+  </ol>
+  <button class="reveal">เฉลยท้าทาย 2</button>
+  <div class="answer">
+    <p><code>NewClient</code> <strong>ไม่ error เลย</strong> เพราะมันเป็น lazy connect —
+    แค่สร้าง struct ไม่ได้เปิด TCP จริง ผมรันได้แบบนี้:</p>
+    <pre style="margin:0.6rem 0"><code>NewClient สำเร็จทันที ไม่ error เลย (lazy connect)
+redis: 2026/08/18 19:53:47 pool.go:762: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:55999: connect: connection refused
+redis: 2026/08/18 19:53:48 pool.go:762: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:55999: connect: connection refused
+Ping -&gt; "", err = dial tcp 127.0.0.1:55999: connect: connection refused
+Get  -&gt; err = dial tcp 127.0.0.1:55999: connect: connection refused
+<strong>errors.Is(err, redis.Nil) = false</strong></code></pre>
+    <p>สามข้อสรุปที่ต้องเก็บไป:</p>
+    <p style="margin-bottom:0">
+      <strong>1.</strong> config ผิดจะเงียบตอน startup แล้วไปพังตอน request แรก →
+      <code>Ping</code> แล้ว <code>log.Fatal</code> ตั้งแต่ตอนบูตดีกว่า
+      <br><strong>2.</strong> go-redis <strong>พ่น log ลง stderr เอง</strong>
+      โดยไม่ผ่าน logger ของแอป (retry dial 5 ครั้งต่อคำสั่ง) — Redis ล่มจริงเมื่อไหร่ log จะท่วมทันที
+      <br><strong>3.</strong> <code>errors.Is(err, redis.Nil)</code> เป็น <code>false</code> —
+      แปลว่าโครง <code>switch</code> สามทางในหัวข้อ 8 จัดการถูกต้อง
+      <strong>มันจะไม่เผลอถล่ม DB ราวกับว่าเป็น cache miss</strong>
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💻 <strong>เกร็ดสำหรับ macOS (zsh)</strong> — ถ้าคุณจะย่อคำสั่งไว้ในตัวแปรแบบ
+    <code>R="docker exec day7-redis redis-cli"</code> แล้วเรียก <code>$R SET k v</code>
+    จะได้ <code>zsh: command not found: docker exec day7-redis redis-cli</code> ทั้งสคริปต์
+    <br>เพราะ zsh <strong>ไม่ทำ word splitting</strong> กับตัวแปรที่ไม่ได้ quote (ต่างจาก bash)
+    <br>ใช้ฟังก์ชันแทน ได้ทั้งสอง shell:
+    <code>R() { docker exec day7-redis redis-cli "$@"; }</code>
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 6 คือข้อที่ผมอยากเห็นผลที่สุดของทั้งวัน</strong> —
+    เพราะเทสที่ "ผ่านทั้งที่ลบ <code>Del</code> ออกแล้ว" คือเทสที่หลอกคุณอยู่
+    ซึ่งเป็นบทเรียนเดียวกับเรื่อง mock ตอนต้นวัน
+    <br>จบ Day 7 แล้ว — ถ้ามีจุดไหนที่รันแล้วได้ผลไม่ตรงกับในบทเรียน
+    <strong>ส่ง output มาได้เลย</strong> ผมอยากรู้ว่าเครื่องคุณต่างจากเครื่องผมตรงไหน
+    (ตัวเลขทั้งหมดในบทนี้วัดบน Docker Desktop macOS ARM64
+    <strong>อัตราส่วนน่าเชื่อถือกว่าตัวเลขดิบ</strong>)
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0031-goose-migration.html">← บทเรียน 31</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <!-- บทสุดท้ายของวัน ไม่มีถัดไป -->
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://redis.io/docs/latest/commands/ttl/">Redis — <code>TTL</code></a> · <a href="https://redis.io/docs/latest/commands/expire/">EXPIRE</a> — นิยามของ <code>-1</code> / <code>-2</code> อย่างเป็นทางการ</li>
+  <li><a href="https://redis.io/docs/latest/commands/scan/">Redis — <code>SCAN</code></a> — <strong>อ่านหัวข้อ guarantees</strong>: SCAN การันตีแค่ว่า key ที่อยู่ตลอดการวนจะถูกคืนอย่างน้อยหนึ่งครั้ง (ซ้ำได้)</li>
+  <li><a href="https://redis.io/docs/latest/commands/keys/">Redis — <code>KEYS</code></a> — เอกสารทางการเตือนเองว่าอย่าใช้ใน production</li>
+  <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/">Redis Persistence</a> — RDB กับ AOF ต่างกันยังไง และ default คืออะไร</li>
+  <li><a href="https://pkg.go.dev/github.com/redis/go-redis/v9">pkg.go.dev — go-redis v9</a> · <a href="https://github.com/redis/go-redis">repo + ตัวอย่าง</a></li>
+  <li><a href="https://pkg.go.dev/golang.org/x/sync/singleflight">golang.org/x/sync/singleflight</a> — ทางเลือกที่สะอาดกว่า mutex สำหรับ stampede (บทนี้ยังไม่ได้ทดสอบให้)</li>
+  <li><a href="../reference/cheatsheet.html">Cheat sheet Day 7</a> — คำสั่งและตารางกับดักรวมทั้งวัน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>
