@@ -23,6 +23,22 @@
 
 <main>
 
+<div class="note">
+  <p><strong>🧰 เตรียมเครื่องก่อนอ่าน</strong> — บทนี้รันของจริงทั้งบท ถ้าจะพิมพ์ตามต้องมีสามอย่าง</p>
+  <ol>
+    <li><strong>Docker Desktop เปิดอยู่</strong> แล้วรัน:<br>
+        <code>docker run -d --name day7-redis -p 55379:6379 redis:7-alpine</code></li>
+    <li><strong>วิธีเรียก redis-cli</strong> — ไม่ต้องลง redis-cli ในเครื่อง ใช้ตัวที่อยู่ใน container ได้เลย
+        ตั้งฟังก์ชันย่อไว้หนึ่งครั้ง (ใช้ได้ทั้ง zsh และ bash):<br>
+        <code>R() { docker exec -i day7-redis redis-cli "$@"; }</code><br>
+        ต่อไปในบทนี้ บรรทัดที่เขียนว่า <code>$ redis-cli GET k</code> ให้พิมพ์ <code>R GET k</code></li>
+    <li><strong>ฝั่ง Go</strong> (ใช้ตั้งแต่หัวข้อ 5 เป็นต้นไป) ต้องต่อเน็ตครั้งเดียวเพื่อโหลด client:<br>
+        <code>go get github.com/redis/go-redis/v9</code> — และฝั่ง Go จะต่อที่
+        <code>127.0.0.1:55379</code> ไม่ใช่ 6379</li>
+  </ol>
+  <p style="margin-bottom:0">เสร็จบทแล้วเก็บกวาดด้วย <code>docker stop day7-redis &amp;&amp; docker rm day7-redis</code></p>
+</div>
+
 <h2>1 · cache คืออะไร และ Redis อยู่ตรงไหน</h2>
 
 <p>
@@ -30,8 +46,16 @@
   <em>ถ้าคำตอบนี้แพงที่จะหามาใหม่ และมันไม่ค่อยเปลี่ยน — เก็บสำเนาไว้ใกล้ ๆ คนถาม</em>
 </p>
 
+<p>
+  <strong>วิธีอ่านแผนภาพข้างล่าง:</strong> ไล่จากบนลงล่างทีละชั้น —
+  <strong>ชั้นไหนมีสำเนาอยู่แล้วก็ตอบจากชั้นนั้นเลย ไม่ลงชั้นถัดไป</strong>
+  ยิ่งอยู่บนยิ่งเร็วแต่ยิ่งเสี่ยงเป็นของเก่า · ยิ่งลงล่างยิ่งช้าแต่ยิ่งตรงกับความจริง
+  <br>คอลัมน์กลางบอกว่า<em>สำเนาไปนั่งอยู่ที่ไหน</em> · คอลัมน์ขวาบอกว่า<em>ข้อดี/ข้อจำกัดของชั้นนั้น</em>
+</p>
+
 <div class="diagram">
 <pre>   ผู้ใช้กดปุ่ม
+      │   (ไล่ลงทีละชั้น — เจอสำเนาที่ชั้นไหน ตอบกลับจากชั้นนั้นทันที)
       │
       ├─▶ <strong>browser cache</strong>      สำเนาอยู่ในเครื่องผู้ใช้      เร็วสุด · เราสั่งลบไม่ได้
       │
@@ -46,7 +70,13 @@
 
 <p>
   จุดขายของ Redis จึงไม่ใช่ "เร็ว" เฉย ๆ — <code>map</code> ใน Go ก็เร็วกว่าอีก
-  <br>จุดขายคือ <strong>เร็วและ "ของกลาง"</strong>: pod ที่ 1 เขียน pod ที่ 7 อ่านเห็นทันที
+  <br>จุดขายคือ <strong>เร็วและ "ของกลาง"</strong>:
+  ของจริงเวลา deploy เราไม่ได้รันโปรแกรมตัวเดียว แต่รัน<strong>สำเนาของโปรแกรมเดียวกันหลายตัวพร้อมกัน</strong>
+  เพื่อรับ request ได้เยอะขึ้น (แต่ละตัวเรียกว่า instance หรือ pod) — และแต่ละตัวมี RAM ของตัวเอง
+  ไม่เห็น <code>map</code> ของกัน
+  <br>ถ้าเก็บ cache ไว้ใน <code>map</code> ของแต่ละตัว ลูกค้าคนเดียวกันกด 2 ครั้งอาจได้คนละคำตอบ
+  เพราะไปโดนคนละ instance · ส่วน Redis เป็นเครื่องกลาง:
+  <strong>instance ที่ 1 เขียน instance ที่ 7 อ่านเห็นทันที</strong>
   และ restart แอปแล้ว cache ไม่หายตามไปด้วย
   <br>นี่คือเหตุผลที่ <code>sync.RWMutex</code> + <code>map</code> จาก
   <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a>
@@ -80,20 +110,27 @@ appendonly
 
 <p>
   แปลว่า image <code>redis:7-alpine</code> <strong>เขียนไฟล์ลงดิสก์ให้เองอยู่แล้ว</strong>
-  (RDB snapshot: เปลี่ยน 1 คีย์ใน 3600 วิ หรือ 100 คีย์ใน 300 วิ หรือ 10000 คีย์ใน 60 วิ)
-  ส่วน AOF ปิดอยู่ ผมเลยทดลองสองแบบ:
+  <br>Redis มีวิธีเก็บลงดิสก์สองแบบ:
+  <strong>RDB</strong> = ถ่ายรูปข้อมูลทั้งก้อนเป็นครั้ง ๆ (snapshot) ตามเงื่อนไขข้างบน —
+  เปลี่ยน 1 คีย์ใน 3600 วิ หรือ 100 คีย์ใน 300 วิ หรือ 10000 คีย์ใน 60 วิ ถึงจะถ่ายหนึ่งครั้ง
+  <br><strong>AOF</strong> (append-only file) = จดทุกคำสั่งที่เขียนลงไฟล์ทันทีทีละคำสั่ง — ละเอียดกว่ามาก
+  แต่ค่า <code>appendonly no</code> ข้างบนแปลว่า<strong>ปิดอยู่</strong>
+  <br>สรุปคือตอนนี้มีแค่ "รูปถ่ายเป็นครั้ง ๆ" ไม่มีสมุดจดรายคำสั่ง —
+  ทุกอย่างที่เขียนหลังรูปล่าสุดจึงไม่มีหลักฐานบนดิสก์ ผมเลยทดลองสองแบบ:
 </p>
 
 <div class="compare">
   <div class="side good">
     <h4>✅ restart แบบสุภาพ (SIGTERM)</h4>
-    <pre><code>$ docker restart day7-redis
+    <pre><code>$ SET survivor "ฉันจะรอดไหม"     <span class="c"># เขียนไว้ก่อน แล้วสั่ง restart</span>
+OK
+$ docker restart day7-redis
 
 $ GET survivor
 ฉันจะรอดไหม
-$ DBSIZE
+$ DBSIZE            <span class="c"># DBSIZE = นับจำนวน key ทั้งหมดที่เหลืออยู่</span>
 5
-$ LASTSAVE
+$ LASTSAVE          <span class="c"># เวลาที่ save ล่าสุด (Unix timestamp = วินาทีนับจากปี 1970)</span>
 1787057770</code></pre>
     <p style="margin-bottom:0">
       Redis เขียน RDB ก่อนตาย <strong>ข้อมูลรอด</strong>
@@ -145,11 +182,11 @@ string
 $ TYPE user:999       <span class="c"># key ไม่มี → none ไม่ใช่ nil</span>
 none
 
-$ LPUSH mylist a b c
-3
+$ LPUSH mylist a b c  <span class="c"># Redis ไม่ได้เก็บได้แค่ string — LPUSH สร้าง "list" ใส่ 3 ค่า</span>
+3                     <span class="c"># คืนจำนวนสมาชิกใน list ตอนนี้ (บทนี้ใช้ list แค่เพื่อโชว์ WRONGTYPE)</span>
 $ TYPE mylist
 list
-$ GET mylist          <span class="c"># อ่าน list ด้วย GET</span>
+$ GET mylist          <span class="c"># GET ใช้กับ string เท่านั้น เอาไปอ่าน list ไม่ได้</span>
 WRONGTYPE Operation against a key holding the wrong kind of value
 
 $ DEL user:1
@@ -242,8 +279,10 @@ $ PERSIST plain            <span class="c"># ถอดซ้ำ</span>
     </p>
     <p style="margin-bottom:0">
       ผลตามมาที่ต้องจำ: โค้ดที่เขียน <code>SET</code> แล้วค่อย <code>EXPIRE</code>
-      <strong>แยกกันสองคำสั่ง</strong> ถ้า key หายไประหว่างนั้น (โดน evict / มีคน
-      <code>DEL</code>) จะได้ key ที่<strong>ไม่มีวันหมดอายุ</strong> โดยไม่มีใครรู้
+      <strong>แยกกันสองคำสั่ง</strong> ถ้า key หายไประหว่างนั้น
+      (โดน <strong>evict</strong> = Redis ทิ้ง key ทิ้งเองตอน RAM เต็ม ทั้งที่ยังไม่หมดอายุ —
+      รายละเอียดอยู่หัวข้อ 7 / หรือมีคน <code>DEL</code>)
+      จะได้ key ที่<strong>ไม่มีวันหมดอายุ</strong> โดยไม่มีใครรู้
       <br>→ ใช้ <code>SET k v EX 60</code> คำสั่งเดียวจบ (ฝั่ง Go คือ
       <code>rdb.Set(ctx, k, v, 60*time.Second)</code>)
     </p>
@@ -306,6 +345,16 @@ none</code></pre>
 
    <strong>เขียน</strong>: เขียน DB ──▶ <strong>?????</strong>   ← ช่องว่างตรงนี้คือทั้งบทเรียน</pre>
 </div>
+
+<p>
+  ก่อนอ่านโค้ด มีเรื่องเดียวที่ต้องรู้ก่อน: <strong>go-redis รายงาน "ไม่มี key" เป็น error</strong>
+  ไม่ใช่ค่าว่าง โดยใช้ error สำเร็จรูปชื่อ <code>redis.Nil</code> — เป็น sentinel error
+  ตัวเดียวกับที่ฝึกใน <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>
+  <br>แปลว่าเวลา <code>Get</code> คืน error มา เราต้องแยกให้ออกว่าเป็น
+  <strong>"ไม่มีของใน cache" (<code>redis.Nil</code> = เรื่องปกติ ไปอ่าน DB ต่อ)</strong> หรือ
+  <strong>"Redis มีปัญหา" (error ตัวอื่น = ต้องรายงานขึ้นไป)</strong>
+  รายละเอียดว่าทำไมเขาออกแบบแบบนี้ และพลาดแล้วเกิดอะไร อยู่ในหัวข้อ 8 กับดัก 1
+</p>
 
 <pre><code><span class="k">func</span> <span class="f">getUser</span>(ctx context.Context, rdb *redis.Client, id <span class="k">int</span>) (User, <span class="k">string</span>, <span class="k">error</span>) {
     key := fmt.<span class="f">Sprintf</span>(<span class="s">"user:%d"</span>, id)
@@ -490,9 +539,10 @@ DEL product:1 -&gt; ลบไป 1 key
 </p>
 
 <pre><code>ตั้ง important:1 TTL 3600 แล้ว *ไม่แตะอีกเลย* (ให้เป็น least-recently-used)
-=== ยัด junk 3 รอบ รอบละ 50k ===
-รอบ 1: 1
-รอบ 2: 0
+=== ยัด junk 3 รอบ รอบละ 50k (SET junk:N ...) ===
+<span class="c"># ตัวเลขแต่ละรอบคือผลของ EXISTS important:1 หลังยัดจบรอบนั้น</span>
+รอบ 1: 1     <span class="c">← ยังอยู่</span>
+รอบ 2: 0     <span class="c">← หายแล้ว ทั้งที่ TTL ยังเหลืออีก ~3600 วิ</span>
 รอบ 3: 0
 
 $ EXISTS important:1
@@ -512,7 +562,9 @@ evicted_keys:190824</code></pre>
 
 <div class="warn">
   <p style="margin-bottom:0">
-    <strong>⚠️ แล้ว default ของ Redis 7 ยังไม่ใช่ <code>allkeys-lru</code> ด้วย</strong>
+    <strong>⚠️ เดี๋ยวก่อน — การทดลองข้างบนผม <em>ตั้ง</em> <code>allkeys-lru</code> เอง</strong>
+    <br>ผมเลยรีสตาร์ท container ให้ค่ากลับเป็น default แล้วถามมันตรง ๆ ว่า default จริง ๆ คืออะไร
+    คำตอบคือ <strong>ไม่ใช่ <code>allkeys-lru</code></strong>:
   </p>
   <pre style="margin:0.6rem 0"><code>$ CONFIG GET maxmemory-policy
 maxmemory-policy
@@ -560,7 +612,22 @@ $ DEL fill:1   <span class="c">&lt;-- ลบยังได้</span>
 <p>
   ตัวแก้คือ <code>sync.Mutex</code> จาก
   <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a>
-  + <strong>เช็ค cache ซ้ำอีกครั้งหลังได้ lock</strong> (คนก่อนหน้าอาจเติมให้แล้ว)
+  + <strong>เช็ค cache ซ้ำอีกครั้งหลังได้ lock</strong> — เพราะระหว่างที่เรายืนรอคิว
+  คนที่เข้าไปก่อนหน้าอาจอ่าน DB แล้วเติม cache ให้เรียบร้อยแล้ว เราจึงไม่ต้องไปยิง DB ซ้ำ:
+</p>
+
+<pre><code>val, err := rdb.<span class="f">Get</span>(ctx, key).<span class="f">Result</span>()   <span class="c">// เช็ครอบแรก (ไม่ต้องรอคิว)</span>
+<span class="k">if</span> err == <span class="k">nil</span> { <span class="k">return</span> decode(val) }
+
+mu.<span class="f">Lock</span>()                                  <span class="c">// miss → เข้าคิว ทีละคนเท่านั้น</span>
+<span class="k">defer</span> mu.<span class="f">Unlock</span>()
+val, err = rdb.<span class="f">Get</span>(ctx, key).<span class="f">Result</span>()    <span class="c">// ← double-check: เช็คซ้ำหลังได้คิว</span>
+<span class="k">if</span> err == <span class="k">nil</span> { <span class="k">return</span> decode(val) }  <span class="c">//   คนก่อนหน้าเติมให้แล้ว จบเลย</span>
+
+u := <span class="f">queryDB</span>(id)                          <span class="c">// คนแรกคนเดียวที่ได้ยิง DB</span>
+rdb.<span class="f">Set</span>(ctx, key, encode(u), <span class="n">60</span>*time.Second)</code></pre>
+
+<p>
   — ต้นทุนแทบเป็นศูนย์: 269ms กับ 282ms
 </p>
 
@@ -893,6 +960,9 @@ C) ขณะมี SCAN ยิงรัว ๆ      : min: 0, max: <strong>2</st
     → ระหว่างมี <code>SCAN</code> กลับมา <strong>max 2 ms</strong>
     <br>ตัวเลือกที่ 1 <strong>ผิดกลับด้าน</strong>: ผมวัดแล้ว <code>KEYS</code> เร็วกว่า
     (150 ms vs 862 ms) เพราะ <code>SCAN</code> ต้อง round-trip 1,000 รอบ ·
+    ตัวเลือกที่ 2 ผิดเพราะ <code>KEYS</code> <strong>ยังใช้ได้ปกติทุกเวอร์ชัน</strong> —
+    ผมเพิ่งรันมันบน Redis 7.4.10 ได้ 1,000,000 key ในบทนี้เอง เอกสารทางการแค่<em>เตือน</em>
+    ไม่ได้ปิดมันทิ้ง (และนี่แหละคืออันตราย: มันทำงานได้เสมอ จนวันที่ข้อมูลเยอะพอ) ·
     ตัวเลือกที่ 3 ผิดสลับกัน — <code>SCAN</code> ต่างหากที่คืนซ้ำได้ ถ้าต้องการ unique ต้อง dedup เอง</p>
   </div>
 </div>
@@ -948,7 +1018,11 @@ C) ขณะมี SCAN ยิงรัว ๆ      : min: 0, max: <strong>2</st
   <ol>
     <li><strong>เปิด Redis:</strong>
         <code>docker run -d --name day7-redis -p 55379:6379 redis:7-alpine</code>
-        <br>แล้วยืนยันเวอร์ชันด้วย <code>redis-cli INFO server</code> —
+        <br>ตั้งฟังก์ชันย่อไว้ก่อน (ไม่ต้องลง redis-cli ในเครื่อง — ใช้ตัวใน container):
+        <code>R() { docker exec -i day7-redis redis-cli "$@"; }</code>
+        <br>ถ้าจะใช้ redis-cli ของเครื่องตัวเองต้องระบุ port ที่ map ไว้เสมอ: <code>redis-cli -p 55379</code>
+        (พิมพ์ <code>redis-cli</code> เปล่า ๆ จะไปต่อ 6379 แล้วได้ connection refused)
+        <br>แล้วยืนยันเวอร์ชันด้วย <code>R INFO server</code> —
         <strong>ต้องตอบให้ได้ว่าเลขที่เห็นคืออะไร ทำไมไม่ใช่ "7-alpine"</strong></li>
     <li><strong>คุม TTL ให้ครบสามเคส:</strong> ทำให้ <code>TTL</code> คืน
         <code>-2</code> · <code>-1</code> · เลขบวก อย่างละครั้งด้วย <code>redis-cli</code>

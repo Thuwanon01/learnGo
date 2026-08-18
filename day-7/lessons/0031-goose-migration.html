@@ -12,7 +12,7 @@
 <header>
   <p class="kicker">บทเรียน 31 · Day 7 · Goose</p>
   <h1>Goose — เปลี่ยน schema แบบย้อนกลับได้</h1>
-  <p class="meta">~18 นาที · ต้องมี: <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> (GORM + <code>AutoMigrate</code>) · Docker + PostgreSQL</p>
+  <p class="meta">~18 นาที · ต้องมี: <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> (GORM + <code>AutoMigrate</code>)</p>
   <p class="standfirst">
     ในบทเรียน 27 คุณใช้ <code>db.AutoMigrate(&amp;Product{})</code> แล้วตารางก็โผล่มาเอง — สะดวกมาก
     <br>บทนี้จะพาไปดูว่า <strong>ความสะดวกนั้นแลกมาด้วยอะไร</strong> ด้วยการทดลองจริง 5 แบบบน PostgreSQL
@@ -24,15 +24,43 @@
 
 <main>
 
+<div class="warn">
+  <p><strong>⚙️ เตรียมเครื่องก่อนเริ่ม — ทำให้ครบ 4 ข้อนี้ ไม่งั้นจะติดกลางทาง</strong></p>
+  <p style="margin:0.4rem 0 0"><strong>1) ต้องมี Docker เปิดอยู่ + ต่อ internet ได้</strong> (บทนี้ต้องโหลด image และ <code>go install</code> จาก network)</p>
+  <p style="margin:0.4rem 0 0"><strong>2) เปิด PostgreSQL ขึ้นมาหนึ่งตัว</strong> — บทนี้ผูก port <code>55433</code> ไว้ที่เครื่องเรา (ไม่ใช่ 5432 ตามปกติ) เพื่อไม่ให้ชนกับ Postgres ตัวอื่นที่อาจเปิดอยู่แล้ว</p>
+  <pre style="margin:0.4rem 0 0"><code>docker run -d --name pg-shop \
+  -e POSTGRES_PASSWORD=secret \
+  -e POSTGRES_DB=shopdb \
+  -p 55433:5432 \
+  postgres:16
+
+# เช็คว่าขึ้นแล้วจริง
+docker exec -it pg-shop psql -U postgres -d shopdb -c 'SELECT 1;'</code></pre>
+  <p style="margin:0.4rem 0 0"><strong>3) <code>psql</code> คืออะไร</strong> — เป็นโปรแกรม command line ของ PostgreSQL ไว้พิมพ์ SQL ใส่ DB ตรง ๆ บทนี้ใช้มันตรวจผลตลอด ถ้าเครื่องคุณยังไม่มี ไม่ต้องติดตั้ง ใช้ตัวที่อยู่ใน container ได้เลย โดยแทน <code>psql</code> ทุกที่ในบทนี้ด้วย:</p>
+  <pre style="margin:0.4rem 0 0"><code>docker exec -it pg-shop psql -U postgres -d shopdb</code></pre>
+  <p style="margin:0.4rem 0 0">คำสั่งที่ขึ้นต้นด้วย backslash คือคำสั่งของ psql เอง ไม่ใช่ SQL: <code>\dt</code> = ดูรายชื่อตาราง · <code>\d ชื่อตาราง</code> = ดูโครงสร้างตาราง · <code>\df</code> = ดูรายชื่อ function · <code>\q</code> = ออก</p>
+  <p style="margin:0.4rem 0 0"><strong>4) หลัง <code>go install</code> ต้องพิมพ์ <code>goose</code> ได้</strong> — ถ้าขึ้น <code>command not found</code> แปลว่า <code>$GOPATH/bin</code> ยังไม่อยู่ใน PATH ให้เพิ่มบรรทัดนี้ใน <code>~/.zshrc</code> แล้วเปิด terminal ใหม่:</p>
+  <pre style="margin:0.4rem 0 0"><code>export PATH="$PATH:$(go env GOPATH)/bin"</code></pre>
+</div>
+
 <h2>1 · migration กับ seed ต่างกันตรงไหน</h2>
 
 <div class="table-wrap">
 <table>
   <tr><th></th><th>migration</th><th>seed</th></tr>
-  <tr><td>เปลี่ยนอะไร</td><td><strong>โครงสร้าง</strong> — ตาราง คอลัมน์ index constraint trigger</td><td><strong>ข้อมูล</strong> — แถวที่อยู่ในตาราง</td></tr>
+  <tr><td>เปลี่ยนอะไร</td><td><strong>โครงสร้าง</strong> — ตาราง · คอลัมน์ · index · constraint · trigger</td><td><strong>ข้อมูล</strong> — แถวที่อยู่ในตาราง</td></tr>
   <tr><td>ตัวอย่าง SQL</td><td><code>CREATE TABLE</code> · <code>ALTER TABLE</code> · <code>CREATE INDEX</code></td><td><code>INSERT INTO</code></td></tr>
   <tr><td>ต้องรันกี่ครั้ง</td><td>ครั้งเดียวต่อ database</td><td>แล้วแต่ว่าเป็นข้อมูลชนิดไหน</td></tr>
 </table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📘 <strong>3 คำนี้จะใช้ทั้งบท รู้จักกันก่อน</strong> (ใน <code>AutoMigrate</code> คุณไม่เคยเห็นเพราะ GORM ทำให้เงียบ ๆ)
+    <br><strong>index</strong> = สารบัญของตาราง สร้างไว้ให้ค้นหาคอลัมน์นั้นเร็วขึ้น เช่นสร้าง index บน <code>name</code> แล้ว <code>WHERE name = 'Mouse'</code> จะเร็วขึ้นมาก · ไม่เปลี่ยนข้อมูล เปลี่ยนแค่ความเร็ว
+    <br><strong>constraint</strong> = กฎที่ DB บังคับกับข้อมูล เช่น <code>NOT NULL</code> (ห้ามว่าง) · <code>UNIQUE</code> (ห้ามซ้ำ) · <code>PRIMARY KEY</code> ถ้าข้อมูลผิดกฎ DB จะปฏิเสธไม่ยอมบันทึกให้
+    <br><strong>trigger</strong> = โค้ดที่ DB สั่งรันเองอัตโนมัติทุกครั้งที่มีการ insert/update/delete แถว เช่นให้อัปเดตคอลัมน์ <code>updated_at</code> ให้เองโดยที่ Go ไม่ต้องสั่ง
+  </p>
 </div>
 
 <p>
@@ -64,8 +92,8 @@
     💡 <strong>ประโยคที่ต้องจำ:</strong> "migration เปลี่ยน schema · seed ใส่ข้อมูล" ถูกแค่ครึ่งเดียว
     <br>ที่ถูกกว่าคือ <strong>migration = "การเปลี่ยนแปลงที่ต้องเกิดขึ้นครั้งเดียวและต้องเกิดเหมือนกันทุกเครื่อง"</strong>
     ไม่ว่าสิ่งที่เปลี่ยนจะเป็นโครงสร้างหรือข้อมูล
-    <br>เดี๋ยวหัวข้อ 7 จะพิสูจน์ให้ดูว่า <code>INSERT</code> ธรรมดาที่ไม่มี <code>ON CONFLICT</code> เลย
-    ก็รันซ้ำแล้วข้อมูลไม่ซ้ำ — เพราะอะไร
+    <br>เดี๋ยว<strong>หัวข้อ 8</strong> จะพิสูจน์ให้ดูว่า <code>INSERT</code> ธรรมดา ๆ ที่ไม่มีอะไรกันข้อมูลซ้ำเลย ก็รันซ้ำแล้วข้อมูลไม่ซ้ำ — เพราะอะไร
+    <br>(<code>ON CONFLICT DO NOTHING</code> คือท่อนที่ต่อท้าย <code>INSERT</code> ของ Postgres แปลว่า "ถ้าแถวนี้ชนของเดิมอยู่แล้ว ก็ข้ามไปเงียบ ๆ อย่าเพิ่ง error" — เป็นวิธีมาตรฐานที่คนใช้กันข้อมูลซ้ำ แต่หัวข้อ 8 จะให้ดูว่าในโลกของ goose เราไม่ต้องใช้มันเลย)
   </p>
 </div>
 
@@ -79,9 +107,17 @@
 <pre>   <strong>1) DB ที่คุณกำลังจะแก้ มีข้อมูลของคนอื่นอยู่แล้ว</strong>
 
       ALTER TABLE products ADD COLUMN stock INT NOT NULL;
+      └───┬────┘ └──┬───┘ └────┬────┘ └─┬─┘ └───┬────┘
+       แก้ตาราง  ชื่อตาราง  เพิ่มคอลัมน์  ชนิด  ห้ามเป็นค่าว่าง
                                             ▲
-                                            └── แถวเก่า 50,000 แถวจะเอาค่าอะไรใส่?
-                                                (ไม่มี DEFAULT = Postgres ปฏิเสธ)
+                                            └── แถวเก่า 50,000 แถวที่มีอยู่แล้ว
+                                                จะเอาค่าอะไรใส่ในคอลัมน์ใหม่นี้?
+                                                เราสั่งว่า "ห้ามว่าง" แต่ไม่ได้บอกว่า
+                                                ถ้าไม่มีค่าให้ใช้อะไรแทน (DEFAULT)
+                                                → Postgres ปฏิเสธทั้งคำสั่ง ตารางไม่เปลี่ยน
+
+      แก้ได้ด้วยการบอกค่าตั้งต้นไปด้วย:
+      ALTER TABLE products ADD COLUMN stock INT NOT NULL DEFAULT 0;
 
    <strong>2) พิมพ์ไปแล้วในเครื่อง dev — ใครจำได้ว่าต้องไปพิมพ์ซ้ำที่ไหนอีก?</strong>
 
@@ -160,7 +196,7 @@ db.<span class="f">AutoMigrate</span>(&amp;Product{})</code></pre>
 <table>
   <tr><th>สถานการณ์</th><th>ผลจริง</th></tr>
   <tr><td>สร้างตารางใหม่ · เพิ่ม field ใหม่</td><td>✅ ทำให้ครบ</td></tr>
-  <tr><td>เปลี่ยน type ของคอลัมน์เดิม (<code>int</code> → <code>string</code>)</td><td>✅ ทำได้จริง — ได้ <code>stock | text</code> และ <code>name | character varying(20)</code></td></tr>
+  <tr><td>เปลี่ยน type ของคอลัมน์เดิม (<code>int</code> → <code>string</code>)</td><td>✅ ทำได้จริง — เปลี่ยน <code>Stock int</code> เป็น <code>Stock string</code> ได้ <code>stock | text</code> · และถ้าใส่ tag <code>gorm:"size:20"</code> บน <code>Name</code> ก็ได้ <code>name | character varying(20)</code> (<code>character varying(20)</code> = ข้อความยาวไม่เกิน 20 ตัวอักษร)</td></tr>
   <tr><td><strong>เปลี่ยนชื่อ</strong> field</td><td>❌ สร้างคอลัมน์ใหม่ ทิ้งของเก่าไว้ ข้อมูลไม่ตามมา</td></tr>
   <tr><td><strong>ลบ</strong> field ออกจาก struct</td><td>❌ คอลัมน์ยังอยู่ตลอดไป — เอกสาร GORM ระบุเองว่าจะไม่ลบคอลัมน์ที่ไม่ได้ใช้</td></tr>
   <tr><td>เพิ่ม <code>gorm:"not null"</code> บนคอลัมน์<em>เดิม</em></td><td>❌ พิมพ์ <code>OK</code> · exit 0 · <strong>แต่ไม่ทำอะไรเลย</strong> — <code>Nullable</code> ยังว่าง</td></tr>
@@ -201,7 +237,8 @@ AutoMigrate ERROR: ERROR: invalid input syntax for type bigint: "ten" (SQLSTATE 
 <h2>4 · ติดตั้ง goose แล้วสร้างไฟล์แรก</h2>
 
 <pre><code>go install github.com/pressly/goose/v3/cmd/goose@latest
-goose --version</code></pre>
+which goose      <span class="c"># ติดตั้งลงที่ไหน</span>
+goose --version  <span class="c"># ได้เวอร์ชันไหนมา</span></code></pre>
 
 <pre><code>/Users/tuwanon/go/bin/goose
 goose version: v3.27.3</code></pre>
@@ -301,7 +338,7 @@ SELECT 'down SQL query';</code></pre>
 <table>
   <tr><th>annotation</th><th>หน้าที่</th><th>ต้องมีไหม</th></tr>
   <tr><td><code>-- +goose Up</code></td><td>SQL ต่อจากนี้คือส่วนที่รันตอน <code>goose up</code></td><td><strong>ต้องมี</strong> ไม่งั้น parse ไม่ผ่าน</td></tr>
-  <tr><td><code>-- +goose Down</code></td><td>SQL ที่รันตอน <code>goose down</code> เพื่อย้อนกลับ</td><td>ควรมีทุกไฟล์ (ดูกับดักหัวข้อ 8)</td></tr>
+  <tr><td><code>-- +goose Down</code></td><td>SQL ที่รันตอน <code>goose down</code> เพื่อย้อนกลับ</td><td>ควรมีทุกไฟล์ (ดูกับดัก 3 ในหัวข้อ 9)</td></tr>
   <tr><td><code>-- +goose StatementBegin</code> / <code>StatementEnd</code></td><td>บอก goose ว่า block นี้เป็น statement เดียว ห้ามตัดที่ <code>;</code></td><td>เฉพาะ block ที่มี <code>;</code> อยู่ข้างใน</td></tr>
   <tr><td><code>-- +goose NO TRANSACTION</code></td><td>ไม่ต้องห่อไฟล์นี้ด้วย transaction</td><td>เฉพาะคำสั่งที่ Postgres ห้ามอยู่ใน transaction</td></tr>
 </table>
@@ -498,7 +535,7 @@ Indexes:
   <span class="label">🔑 อ่านตารางนี้แล้วจะเดาพฤติกรรม goose ได้ทุกกรณี</span>
   <p style="margin-bottom:0">
     <strong>มีแค่ 4 คอลัมน์ — และสิ่งที่<em>ไม่มี</em> สำคัญกว่าสิ่งที่มี</strong>
-    <br>❌ ไม่มี checksum / hash ของไฟล์
+    <br>❌ ไม่มี <strong>checksum</strong> ของไฟล์ (checksum = ตัวเลขสั้น ๆ ที่คำนวณจากเนื้อไฟล์ ถ้าเนื้อไฟล์เปลี่ยนแม้แต่ตัวอักษรเดียว ตัวเลขนี้จะเปลี่ยนตาม เครื่องมือบางตัวเก็บค่านี้ไว้ตอนรัน เพื่อจับได้ทันทีว่าไฟล์ถูกแก้ทีหลัง)
     <br>❌ ไม่มี SQL ที่รันไป
     <br>❌ ไม่มีชื่อไฟล์ด้วยซ้ำ — เก็บแค่ตัวเลขหน้าไฟล์
     <br><br>
@@ -760,7 +797,8 @@ EXIT=1</code></pre>
 
 <p>
   ถ้า migration พังกลางไฟล์ <strong>ไม่มี state ค้าง</strong> เพราะ goose ห่อแต่ละไฟล์ไว้ใน transaction เดียว
-  ทั้ง DDL และการ <code>INSERT</code> ลง <code>goose_db_version</code> อยู่ใน transaction เดียวกัน
+  ทั้งคำสั่งที่เปลี่ยนโครงสร้าง (เรียกรวม ๆ ว่า <strong>DDL</strong> = คำสั่งกลุ่ม <code>CREATE</code> / <code>ALTER</code> / <code>DROP</code>) และการ <code>INSERT</code> ลง <code>goose_db_version</code> อยู่ใน transaction เดียวกัน
+  <br>แปลว่าถ้าพังกลางทาง Postgres จะย้อนคืนให้หมดทั้งชุด เหมือนไม่เคยรันเลย
   <br>ตอนที่ไฟล์ trigger พังเพราะลืม <code>StatementBegin</code> ผมเช็คทันทีหลังจากนั้น:
 </p>
 
@@ -802,7 +840,7 @@ ERROR: CREATE INDEX CONCURRENTLY cannot run inside a transaction block (SQLSTATE
   แล้วสั่งเปลี่ยนชื่อคอลัมน์ที่ <code>AutoMigrate</code> ทำไม่ได้:
 </p>
 
-<pre><code><span class="c">-- 00001_rename_price_to_cost.sql</span>
+<pre><code><span class="c">-- 00001_rename_price_to_unit_price.sql</span>
 -- +goose Up
 <span class="k">ALTER TABLE</span> products <span class="k">RENAME COLUMN</span> price <span class="k">TO</span> unit_price;
 
@@ -927,8 +965,22 @@ ERROR: CREATE INDEX CONCURRENTLY cannot run inside a transaction block (SQLSTATE
     <li>เปิด PostgreSQL ใน Docker แล้ววาง <code>.env</code> ที่รากโปรเจกต์
         (<code>GOOSE_DRIVER</code> · <code>GOOSE_DBSTRING</code> · <code>GOOSE_MIGRATION_DIR</code>)
         <br>ทดสอบว่าตั้งถูกด้วย <code>goose status</code> — ต้องขึ้น <code>Pending</code> ไม่ใช่หน้า usage</li>
-    <li>สร้าง migration 3 ไฟล์: สร้างตาราง · เพิ่มคอลัมน์ · เพิ่ม index
-        <br><strong>ทุกไฟล์ต้องมี <code>Down</code> ที่ย้อนได้จริง</strong></li>
+    <li>สร้าง migration 3 ไฟล์ ด้วย <code>goose create &lt;ชื่อ&gt; sql</code> ทีละไฟล์:
+        <br>① สร้างตาราง ② เพิ่มคอลัมน์ ③ เพิ่ม index
+        <br><strong>ทุกไฟล์ต้องมี <code>Down</code> ที่ย้อนได้จริง</strong>
+        <br>ถ้ายังไม่เคยเขียน SQL 3 แบบนี้ นี่คือหน้าตาของมัน (แก้ชื่อตาราง/คอลัมน์เป็นของโปรเจกต์คุณ):
+        <pre style="margin:0.4rem 0"><code>-- ① สร้างตาราง
+CREATE TABLE products (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL);
+DROP TABLE products;                              -- คู่ Down
+
+-- ② เพิ่มคอลัมน์
+ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE products DROP COLUMN stock;           -- คู่ Down
+
+-- ③ เพิ่ม index
+CREATE INDEX idx_products_name ON products (name);
+DROP INDEX idx_products_name;                     -- คู่ Down</code></pre>
+        <strong>รู้ได้ยังไงว่าทำถูก:</strong> <code>goose status</code> ต้องขึ้น <code>Pending</code> ครบ 3 บรรทัด และ <code>goose validate</code> ต้อง exit 0</li>
     <li><code>goose up</code> แล้วเปิด <code>SELECT * FROM goose_db_version;</code> ดู
         <br><strong>มีกี่แถว · เลข <code>version_id</code> ตรงกับอะไร</strong></li>
     <li><code>goose down</code> หนึ่งครั้ง แล้วเปิดตารางเดิมดูอีกที —
@@ -942,7 +994,15 @@ ERROR: CREATE INDEX CONCURRENTLY cannot run inside a transaction block (SQLSTATE
         รันดูให้เห็น error เต็ม ๆ ก่อน แล้วค่อยใส่ครอบ</li>
     <li><strong>ท้าทาย 2 — ทำลาย DB ตัวเองให้ดู:</strong> แก้ไฟล์ seed ที่ <code>up</code> ไปแล้ว
         เพิ่มอีกหนึ่งแถว แล้วรัน <code>goose up</code> · <code>goose validate</code>
-        <br>จากนั้น <code>createdb</code> ตัวใหม่ ชี้ <code>GOOSE_DBSTRING</code> ไปที่นั่น รัน <code>goose up</code>
+        <br>จากนั้นสร้าง database เปล่าตัวใหม่ขึ้นมา (จำลองว่าเป็นเครื่องเพื่อน) แล้วชี้ <code>GOOSE_DBSTRING</code> ไปที่นั่น รัน <code>goose up</code>
+        <pre style="margin:0.4rem 0"><code># สร้าง database เปล่าชื่อ shopdb2 ใน container เดิม
+docker exec -it pg-shop psql -U postgres -c 'CREATE DATABASE shopdb2;'
+
+# แก้ .env ให้ชี้ไปที่ตัวใหม่ (เปลี่ยนแค่ชื่อ database ท้าย URL)
+# GOOSE_DBSTRING=postgres://postgres:secret@localhost:55433/shopdb2?sslmode=disable
+
+goose up</code></pre>
+        <strong>รู้ได้ยังไงว่าทำถูก:</strong> <code>SELECT count(*) FROM categories;</code> บน <code>shopdb</code> กับ <code>shopdb2</code> ต้องได้เลข<strong>ไม่เท่ากัน</strong> ทั้งที่ไฟล์ใน git ชุดเดียวกันเป๊ะ
         <br><strong>เทียบจำนวนแถวสอง DB</strong> แล้วเขียนกฎของทีมคุณเองหนึ่งบรรทัดว่าจะกันเรื่องนี้ยังไง</li>
     <li><strong>ท้าทาย 3:</strong> ลองลบ block <code>-- +goose Down</code> ออกจากไฟล์หนึ่ง
         แล้วสั่ง <code>goose down</code> — ได้คำว่าอะไร exit เท่าไหร่

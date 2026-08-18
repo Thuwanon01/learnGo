@@ -20,6 +20,17 @@
     มาให้ดู — แล้วให้คุณดูว่า unit test ที่ mock ไว้บอกว่า
     <strong>ผ่าน</strong> ส่วน production พังตอนถูกเรียกครั้งแรก
   </p>
+
+  <div class="warn">
+    <p style="margin-bottom:0">
+      <strong>⚠️ เตรียมเครื่องก่อนอ่าน — บทนี้ไม่ใช่บทที่อ่านอย่างเดียวจบ</strong>
+      <br>1. ต้องมี <strong>Docker รันอยู่</strong> (Docker Desktop / colima / Rancher / Podman ก็ได้) — เช็คด้วย <code>docker ps</code> ต้องไม่ error
+      <br>2. ต้องต่อ <strong>internet</strong> รอบแรกเพื่อ pull image <code>postgres:16-alpine</code> (ขนาดหลายร้อย MB) — รอบต่อ ๆ ไปใช้ของที่ cache ไว้
+      <br>3. ถ้า<strong>ไม่ได้ใช้ Docker Desktop</strong> ต้อง export env เพิ่ม 2 ตัว (วิธีอยู่ในหัวข้อ 5) ไม่งั้นเทสพังตั้งแต่บรรทัดแรกทั้งที่ <code>docker ps</code> ใช้ได้ปกติ
+      <br>4. ต้อง <code>go get</code> เพิ่ม 3 ตัว: <code>testcontainers-go</code>, <code>.../modules/postgres</code>, <code>go-sqlmock</code>
+      <br>ถ้าตอนนี้ยังไม่มี Docker อ่านผ่านได้ถึงหัวข้อ 4 — ตั้งแต่หัวข้อ 5 เป็นต้นไปต้องลงมือรันตาม
+    </p>
+  </div>
 </header>
 
 <main>
@@ -58,7 +69,9 @@
     <br>ตัวเลขจริงจากเครื่องผม (อยู่ในหัวข้อ 8): unit test ที่ mock ไว้ทำงานใน
     <code>1.251ms</code> ส่วน integration test ต้องรอ container ขึ้นก่อน
     <code>~1.03s</code> — ต่างกันประมาณ 820 เท่า
-    <br><strong>แต่จ่ายครั้งเดียว</strong> ไม่ใช่จ่ายต่อเทส (เรื่องนี้เป็นของบทหน้า)
+    <br><strong>ราคานี้ทำให้จ่ายครั้งเดียวได้ — แต่ยังไม่ใช่ในบทนี้</strong>
+    บทนี้เราจะเปิด container ใหม่ทุกเทสก่อน เพื่อให้เห็นราคาเต็ม ๆ ด้วยตาตัวเอง (หัวข้อ 8)
+    ส่วนวิธีแชร์ container ตัวเดียวให้ทั้ง package จนเหลือจ่ายครั้งเดียว เป็นของบทเรียน 30
   </p>
 </div>
 
@@ -80,6 +93,27 @@
     }
     <span class="k">return</span> users, <span class="k">nil</span>
 }</code></pre>
+
+<p>
+  ก่อนไปต่อ ขอแนะนำเครื่องมืออีกตัวก่อน — <strong>go-sqlmock</strong>
+  <br>บท 28 คุณใช้ mockery ปลอม <em>interface ของ repository</em> (ชั้นบนของ repository)
+  แต่คราวนี้เราอยากดูว่า repository ตัวจริงที่ยิง SQL ออกไปนั้นถูกหรือผิด
+  จึงต้องปลอม<strong>ตัว database เอง</strong> ที่อยู่<em>ใต้</em> repository
+  — นั่นคือหน้าที่ของ go-sqlmock: มันสร้าง <code>*sql.DB</code> ปลอมที่รอรับ SQL string
+  เอาไปเทียบกับ regex ที่เราเขียนไว้ ถ้าตรงก็คืน rows ที่เราป้อนให้
+</p>
+
+<pre><code><span class="c"># ติดตั้งเพิ่ม 1 บรรทัด</span>
+go get github.com/DATA-DOG/go-sqlmock</code></pre>
+
+<pre><code><span class="c">// setup: เอา *sql.DB ปลอม ยัดเข้า GORM แทน postgres จริง</span>
+sqlDB, mock, err := sqlmock.<span class="f">New</span>()
+require.<span class="f">NoError</span>(t, err)
+<span class="k">defer</span> sqlDB.<span class="f">Close</span>()
+
+gdb, err := gorm.<span class="f">Open</span>(postgres.<span class="f">New</span>(postgres.Config{Conn: sqlDB}), &amp;gorm.Config{})
+require.<span class="f">NoError</span>(t, err)
+repo := repository.<span class="f">NewUserRepository</span>(gdb)   <span class="c">// repository ตัวเดิมจากบท 27</span></code></pre>
 
 <div class="predict">
   <pre><code><span class="c">// unit test ด้วย go-sqlmock — mock database ทั้งตัว</span>
@@ -109,7 +143,11 @@ t.<span class="f">Logf</span>(<span class="s">"MOCK RESULT: len=%d first=%s"</sp
       <strong>คุณกำลังเทสว่า "regex ที่ผมเขียน ตรงกับ string ที่ผมเขียน"</strong>
     </p>
     <p style="margin-bottom:0">
-      ทีนี้เอา <em>ฟังก์ชันตัวเดียวกันเป๊ะ</em> ไปยิง PostgreSQL ของจริง:
+      ทีนี้เอา <em>ฟังก์ชันตัวเดียวกันเป๊ะ</em> ไปยิง PostgreSQL ของจริง
+      <br><strong>ระวังอ่านผิด:</strong> เทสตัวล่างก็ขึ้น <code>PASS</code> เหมือนกัน
+      แต่คนละความหมายกัน — ตัวล่างผมเขียนว่า <code>require.Error(t, err)</code>
+      คือ <em>คาดหวังว่าต้องได้ error</em> มันจึง PASS ก็ต่อเมื่อ postgres ด่ากลับมาจริง
+      <br>สรุปสั้น ๆ: mock PASS = <strong>บั๊กหลุด</strong> · postgres จริง PASS = <strong>จับบั๊กได้</strong>
     </p>
     <pre style="margin:0.6rem 0 0"><code>=== RUN   TestSearchByCity_CaughtByRealPostgres
     badsql_test.go:24: VERBATIM real-postgres error: ERROR: column "city" does not exist (SQLSTATE 42703)
@@ -149,6 +187,15 @@ badsql_test.go:52: VERBATIM missing-table error: ERROR: relation <span class="s"
 </p>
 
 <pre><code>user_suite_test.go:85: VERBATIM duplicate-key error: ERROR: duplicate key value violates unique constraint <span class="s">"idx_users_email"</span> (SQLSTATE <strong>23505</strong>)</code></pre>
+
+<p>
+  <strong>SQLSTATE คืออะไร</strong> — คือรหัส error <strong>5 ตัวอักษร</strong> ที่เป็นมาตรฐานของภาษา SQL
+  ไม่ใช่ของ postgres ไม่ใช่ของ GORM และไม่ใช่ของ testcontainers
+  ข้อความภาษาอังกฤษข้างหน้าอาจเปลี่ยนตามเวอร์ชันหรือภาษาที่ตั้งไว้ แต่รหัสนี้คงที่
+  <br>เวลาเจอ error จาก DB ให้<strong>อ่านรหัสก่อนข้อความ</strong> แล้วเอาไปค้นได้ตรง ๆ
+  (รายชื่อทั้งหมดอยู่ในลิงก์ PostgreSQL — Error Codes ท้ายบท)
+  สามตัวที่คุณจะเจอบ่อยที่สุดคือ:
+</p>
 
 <div class="table-wrap">
 <table>
@@ -282,6 +329,16 @@ nilslice_test.go:24: GORM Find, var []T, 1 row              len=1 isNil=false js
 
 <h2>5 · ติดตั้ง — จุดที่คนติดกันหมด</h2>
 
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>คำสั่งที่ใช้รันตลอดบทนี้</strong> — <code>go test -v -count=1 ./...</code>
+    <br><code>-v</code> จำเป็น เพราะ output ทุกอันในบทนี้มาจาก <code>t.Logf</code> และ log ของ testcontainers
+    ถ้ารัน <code>go test</code> เฉย ๆ คุณจะเห็นแค่ <code>ok</code> บรรทัดเดียว
+    <br><code>-count=1</code> จำเป็น เพราะ Go จะ cache ผลเทสไว้ ถ้าโค้ดไม่เปลี่ยน มันจะไม่รันซ้ำจริง
+    (คุณจะเห็นคำว่า <code>(cached)</code> แทนเวลาที่ใช้) — ซึ่งทำให้เทียบ port หรือจับเวลาไม่ได้เลย
+  </p>
+</div>
+
 <p>
   สไลด์บอกให้ <code>go get</code> บรรทัดเดียว แต่<strong>ไม่พอ</strong>
   เพราะ module ของ postgres เป็น <em>คนละ Go module</em> กับตัวหลัก
@@ -296,7 +353,8 @@ nilslice_test.go:24: GORM Find, var []T, 1 row              len=1 isNil=false js
 go get github.com/testcontainers/testcontainers-go
 go get github.com/testcontainers/testcontainers-go/modules/postgres   <span class="c"># ← บรรทัดที่สไลด์ลืม</span>
 go get gorm.io/gorm gorm.io/driver/postgres
-go get github.com/stretchr/testify</code></pre>
+go get github.com/stretchr/testify
+go get github.com/DATA-DOG/go-sqlmock   <span class="c"># ← ตัวที่ใช้ mock database ในหัวข้อ 2</span></code></pre>
 
 <p>ได้ <code>v0.44.0</code> ทั้งคู่ · หลัง <code>go mod tidy</code> ใน <code>go.mod</code> จะเห็น:</p>
 
@@ -620,8 +678,13 @@ ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
     <p>ผลจริงจาก container: <code>GORM Find, var []T, 0 rows → len=0 isNil=<strong>false</strong> json=[]</code>
     และ <code>make([]T,0)</code> ก็ได้เหมือนกันเป๊ะ
     — <strong>GORM reflect แล้ว allocate ให้ ไม่ว่าคุณส่งอะไรเข้าไป</strong>
-    <br>ข้อ 3 ผิดที่เหตุผล: <code>encoding/json</code> แปลง nil slice เป็น <code>null</code> ไม่ใช่ <code>[]</code>
-    — พิสูจน์ได้จากบรรทัด <code>GORM Raw+Scan → isNil=true json=null</code>
+    <br><strong>ตัวเลือกที่ 3</strong> ("<code>[]</code> เพราะ <code>encoding/json</code> แปลง nil slice เป็น array ว่าง")
+    เดาคำตอบถูกแต่เหตุผลผิด — <code>encoding/json</code> แปลง nil slice เป็น <code>null</code> ต่างหาก
+    พิสูจน์ได้จากบรรทัด <code>GORM Raw+Scan → isNil=true json=null</code> ในหัวข้อ 3
+    <br><strong>ตัวเลือกที่ 1 และ 2</strong> ผิดทั้งคู่เพราะเชื่อว่า slice ยังเป็น nil อยู่หลัง <code>Find</code>
+    — ผลจริงบอกว่า <code>isNil=false</code> ทั้งกรณี <code>var</code> และ <code>make</code>
+    ตัวเลือกที่ 2 ยังผิดซ้ำตรงที่คิดว่าวิธี<em>ประกาศตัวแปร</em>เป็นตัวชี้ขาด
+    ทั้งที่ตัวชี้ขาดจริงคือ<em>ทางที่ใช้อ่าน</em> (<code>Find</code> เทียบกับ <code>Raw().Scan()</code>)
     <br>ปัญหา <code>null</code> จึงเกิดเฉพาะกับ <code>Raw().Scan()</code>
     และ <code>database/sql</code> ที่เขียน <code>rows.Next()</code> เอง</p>
   </div>
@@ -674,8 +737,10 @@ ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
   <ol>
     <li><strong>ติดตั้งให้ครบ 2 module:</strong> <code>go get</code> ทั้ง
         <code>testcontainers-go</code> และ <code>.../modules/postgres</code>
-        <br>ลองข้ามบรรทัดที่สองดูก่อน แล้ว <code>go build ./...</code> —
-        <strong>ได้ error ว่าอะไร?</strong></li>
+        <br>ลองข้ามบรรทัดที่สองดูก่อน แล้วสั่ง <code>go vet ./...</code> (หรือ <code>go test ./...</code>)
+        — <strong>ได้ error ว่าอะไร?</strong>
+        <br><em>หมายเหตุ:</em> อย่าใช้ <code>go build</code> ตรวจข้อนี้ ถ้า import อยู่ในไฟล์ <code>_test.go</code>
+        เพราะ <code>go build</code> ข้ามไฟล์เทสทั้งหมด มันจะขึ้นสำเร็จเงียบ ๆ ทั้งที่ยังขาด module</li>
     <li><strong>เช็ค Docker ก่อน:</strong> รัน <code>docker ps</code> ให้ได้
         ถ้าใช้ colima/Rancher/Podman ให้ตั้ง <code>DOCKER_HOST</code> +
         <code>TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE</code>
@@ -726,7 +791,8 @@ ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
     💬 <strong>บทหน้าแก้ปัญหาที่คุณเพิ่งวัดได้จากท้าทาย 3</strong>
     <br>ตอนนี้เทสของคุณเปิด container ใหม่ทุกตัว — <strong>4 เทส = 4.264 วินาที</strong>
     และต้นทุนของ "เพิ่มอีก 1 เทส" คือ ~760ms คงที่
-    ซึ่งแปลว่า 40 เทสก็ประมาณ 40 วินาที ทุกครั้งที่คุณกด save
+    ซึ่งแปลว่า 40 เทสก็ราว ๆ ครึ่งนาที
+    (4.264s + อีก 36 ตัว × ~760ms &asymp; <strong>32 วินาที</strong>) ทุกครั้งที่คุณกด save
     <br>บทเรียน 30 จะเอา container ตัวเดียวมาใช้ร่วมกันทั้ง package ด้วย
     <code>sync.Once</code> + <code>TestMain</code> + testify suite
     แล้ววัดผลเทียบให้ดูด้วยเทสชุดเดิมเป๊ะ ๆ:

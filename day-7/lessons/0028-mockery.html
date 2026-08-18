@@ -23,6 +23,30 @@
 
 <main>
 
+<div class="note">
+  <p>
+    <strong>🧰 เตรียมก่อนเริ่ม — เช็คให้ครบก่อนถึงหัวข้อ 4</strong>
+    <br>1) <strong>ต้องต่อเน็ตได้</strong> — บทนี้โหลดของจากอินเทอร์เน็ตสองรอบ:
+    ตัวเครื่องมือ <code>mockery</code> และ library <code>testify</code>
+    (บทนี้ไม่ต้องใช้ Docker)
+    <br>2) <code>go version</code> ต้องได้ Go 1.21 ขึ้นไป
+    <br>3) <strong>รู้จัก <code>go install</code> ก่อน</strong> —
+    <code>go install &lt;path&gt;@&lt;version&gt;</code> คือคำสั่งที่ไปดาวน์โหลดซอร์สของ "โปรแกรม"
+    ตัวหนึ่งที่เขียนด้วย Go มาคอมไพล์ แล้ววาง binary ไว้ที่
+    <code>$(go env GOPATH)/bin</code> (ปกติคือ <code>~/go/bin</code>)
+    <br>ต่างจาก <code>go get</code>/<code>go mod tidy</code> ตรงที่
+    <strong>มันไม่แตะ <code>go.mod</code> ของโปรเจกต์เรา และไม่ทำให้โปรเจกต์เรามี dependency เพิ่ม</strong>
+    — เราแค่ได้คำสั่งใหม่ไว้พิมพ์ใน terminal
+    <br>4) <strong>shell ต้องมองเห็นโฟลเดอร์นั้น</strong> ไม่งั้นพิมพ์ <code>mockery</code>
+    แล้วจะเจอ <code>command not found</code> ทั้งที่ติดตั้งสำเร็จ:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ echo 'export PATH="$PATH:$(go env GOPATH)/bin"' &gt;&gt; ~/.zshrc &amp;&amp; source ~/.zshrc</code></pre>
+  <p style="margin-bottom:0">
+    เช็คด้วย <code>which mockery</code> — ต้องได้ path ที่ลงท้ายด้วย <code>/go/bin/mockery</code>
+    (ส่วนหน้าเป็นชื่อ user ของคุณเอง ไม่ต้องตรงกับของผม)
+  </p>
+</div>
+
 <h2>1 · ทบทวน: ราคาที่เราจ่ายมาตลอดบท 15–17</h2>
 
 <p>
@@ -102,6 +126,25 @@
   <br>แต่ mock เขียนมือมีรูโหว่ที่ใหญ่กว่านั้นมาก — ลองอ่านเทสข้างล่างนี้ก่อน
 </p>
 
+<p>
+  โค้ดที่กำลังจะเทสมีแค่นี้ — จำไว้ว่ามันเอา <code>Name</code> ที่ repository คืนมา
+  ต่อหน้าด้วย <code>"Mr. "</code>:
+</p>
+
+<pre><code><span class="k">type</span> UserRepository <span class="k">interface</span> {
+    <span class="f">GetByID</span>(id <span class="k">int</span>) (*User, <span class="k">error</span>)
+    <span class="f">Save</span>(u *User) <span class="k">error</span>
+    <span class="f">CountActive</span>() <span class="k">int</span>
+}
+
+<span class="k">func</span> (s *Service) <span class="f">DisplayName</span>(id <span class="k">int</span>) (<span class="k">string</span>, <span class="k">error</span>) {
+    u, err := s.repo.<span class="f">GetByID</span>(id)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> <span class="s">""</span>, err
+    }
+    <span class="k">return</span> <span class="s">"Mr. "</span> + u.Name, <span class="k">nil</span>
+}</code></pre>
+
 <div class="predict">
   <pre><code><span class="c">// mock เขียนมือ: GetByIDFunc คืน user id 7 เสมอ</span>
 <span class="k">func</span> <span class="f">TestManual_WrongArgSilentlyPasses</span>(t *testing.T) {
@@ -147,15 +190,39 @@ ok  	example.com/manual/user	0.435s</code></pre>
 </div>
 
 <div class="warn">
-  <p style="margin-bottom:0">
-    <strong>⚠️ รูโหว่ที่สองคือชื่อ method ที่เป็น string</strong> —
-    testify แบบดั้งเดิมตั้ง expectation ด้วย <code>mock.On("GetByID", 7)</code>
-    ซึ่งชื่อ method อยู่ในเครื่องหมายคำพูด
-    <strong>compiler ไม่ได้ตรวจอะไรให้เลย</strong>
+  <p>
+    <strong>⚠️ รูโหว่ที่สอง — อยู่ในการเขียน mock อีกสไตล์หนึ่ง</strong>
+    <br>นอกจากแบบ field <code>func</code> ข้างบน ยังมีอีกสไตล์ที่คุณเจอมาแล้วใน
+    <a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a> —
+    คือฝัง <code>mock.Mock</code> ของ testify ไว้ใน struct
+    แล้วตั้งความคาดหวังด้วย <code>mock.On("GetByID", 7)</code>
+    <br>สไตล์นี้ดักเรื่อง argument ได้ (ดีกว่าแบบแรก) แต่แลกมาด้วยรูโหว่ใหม่:
+    ชื่อ method อยู่ในเครื่องหมายคำพูด <strong>compiler ไม่ได้ตรวจอะไรให้เลย</strong>
     พิมพ์ <code>"GetById"</code> (d เล็ก) ก็ยังคอมไพล์ผ่าน
     แล้วไปพังตอนรันเป็นข้อความยาว ๆ ที่มือใหม่อ่านไม่ออก
   </p>
+  <p style="margin-bottom:0">
+    จำรูโหว่นี้ไว้ เดี๋ยวหัวข้อ 8 จะบอกว่า mockery ปิดมันยังไง
+  </p>
 </div>
+
+<p>
+  ก่อนไปต่อ ขอปูคำเดียวที่จะใช้ทั้งบท: <strong>code generation (การสร้างโค้ดอัตโนมัติ)</strong>
+  <br>mockery ไม่ใช่ library ที่เรา import แล้วมันเสกของปลอมให้ตอนโปรแกรมรัน แต่เป็น
+  <strong>โปรแกรมแยกอีกตัวที่เรารันเองจาก terminal</strong>
+  มันอ่านไฟล์ <code>.go</code> ของเรา เห็นว่ามี interface ชื่ออะไร มี method อะไรบ้าง แล้ว
+  <strong>เขียนไฟล์ <code>.go</code> ใหม่ขึ้นมาให้</strong>
+  ซึ่งหน้าตาเหมือนเรานั่งพิมพ์เองทุกตัวอักษร
+</p>
+
+<p>จำสามข้อนี้ไว้ เดี๋ยวมันจะอธิบายเกือบทุกเหตุการณ์ในบทนี้:</p>
+
+<ol>
+  <li>ไฟล์ที่ได้เป็น<strong>โค้ด Go ธรรมดา</strong> เปิดอ่านได้ คอมไพล์รวมกับโปรเจกต์ตามปกติ</li>
+  <li><strong>มันคือภาพนิ่ง ณ เวลาที่รัน</strong> — แก้ interface แล้วไฟล์เก่าไม่อัปเดตให้เอง
+      ต้องรัน mockery ใหม่</li>
+  <li><strong>เราไม่แก้ไฟล์นั้นด้วยมือ</strong> เพราะรันครั้งหน้ามันจะถูกเขียนทับทิ้ง</li>
+</ol>
 
 <h2>3 · ส่วนประกอบของ mockery — สไลด์บอก 3 แต่จริง ๆ มี 4</h2>
 
@@ -193,9 +260,14 @@ $ which mockery
   <div class="side bad">
     <h4>❌ ตามสไลด์</h4>
     <pre><code>$ mockery --version
-Error: unknown flag: --version</code></pre>
+Error: unknown flag: --version
+Usage:
+  mockery [flags]
+  mockery [command]
+<span class="c">... (ตามด้วยรายการ command ทั้งหมด)</span></code></pre>
     <p style="margin-bottom:0">
-      exit 1 ตั้งแต่ก้าวแรก
+      exit 1 ตั้งแต่ก้าวแรก — แต่มันใจดีพอที่จะพิมพ์รายการคำสั่งที่มีจริงตามมาให้
+      ในนั้นมี <code>version</code> อยู่ด้วย
     </p>
   </div>
   <div class="side good">
@@ -298,7 +370,29 @@ FTL app failed error="getting config: discovering mockery config: file not found
   </p>
 </div>
 
-<h2>6 · config ที่ init สร้างจริง — 28 บรรทัด ไม่ใช่ 8 ฟิลด์</h2>
+<h2>6 · config ที่ init สร้างจริง — 27 บรรทัด ไม่ใช่ 8 ฟิลด์</h2>
+
+<div class="note">
+  <p>
+    <strong>📄 อ่าน YAML ให้ออกก่อน — สามข้อพอ</strong>
+    <br>• หนึ่งบรรทัดคือ <code>ชื่อ: ค่า</code> เช่น <code>recursive: false</code>
+    (ไม่มีเครื่องหมายคำพูด = ตัวเลข/<code>true</code>/<code>false</code> ·
+    มีเครื่องหมายคำพูด = ข้อความ)
+    <br>• <strong>การเว้นวรรคหน้าบรรทัด (ย่อหน้า) แปลว่า "อันนี้อยู่ข้างในของบรรทัดบนที่ย่อหน้าน้อยกว่า"</strong>
+    เหมือน field ที่ซ้อนอยู่ใน struct — ใช้ space เท่านั้น ห้าม Tab
+    <br>• คอมเมนต์ขึ้นต้นด้วย <code>#</code> ไม่ใช่ <code>//</code>
+  </p>
+  <p style="margin-bottom:0">
+    ส่วน <code>{{ ... }}</code> ไม่ใช่ข้อความตรงตัว แต่เป็น
+    <strong>ช่องว่างที่ mockery เติมค่าให้เองตอนรัน</strong>
+    (Go template — เจอครั้งแรกในบทนี้):
+    <br>• <code>{{.InterfaceDir}}</code> → โฟลเดอร์ของ interface ตัวที่กำลัง generate อยู่
+    <br>• <code>{{.InterfaceName}}</code> → ชื่อ interface เช่น <code>UserRepository</code>
+    <br>• <code>{{.SrcPackageName}}</code> → ชื่อ package ของโค้ดต้นทาง เช่น <code>user</code>
+    <br>ดังนั้น <code>structname: '{{.Mock}}{{.InterfaceName}}'</code> แปลว่า
+    "เอาคำว่า <code>Mock</code> ต่อหน้าชื่อ interface" = <code>MockUserRepository</code>
+  </p>
+</div>
 
 <pre><code>$ cat .mockery.yml
 all: false
@@ -341,7 +435,7 @@ packages:
   <tr><td><code>structname</code></td><td><code>{{.Mock}}{{.InterfaceName}}</code></td><td>interface ชื่อ <code>UserRepository</code> → struct ชื่อ <code>MockUserRepository</code></td></tr>
   <tr><td><code>packages</code></td><td>module root + <code>all: true</code></td><td>อ่าน interface ทุกตัวที่เจอใน package นั้น</td></tr>
   <tr><td><code>force-file-write</code></td><td><code>true</code></td><td>อนุญาตเขียนทับไฟล์ mock เดิม — ถ้าเป็น <code>false</code> จะตายด้วย <code>error="outfile exists"</code></td></tr>
-  <tr><td><code>recursive</code></td><td><code>false</code></td><td><strong>ตัวที่ทำให้ config เริ่มต้นใช้ไม่ได้กับโปรเจกต์จริง</strong> — อ่านต่อหัวข้อ 7</td></tr>
+  <tr><td><code>recursive</code></td><td><code>false</code></td><td><code>false</code> = มองหา interface เฉพาะในโฟลเดอร์ที่ระบุใน <code>packages</code> ตรง ๆ เท่านั้น ไม่ไล่ลงไปในโฟลเดอร์ย่อย · <code>true</code> = ไล่ลงไปทุกโฟลเดอร์ย่อยใต้ package นั้นด้วย — <strong>ตัวที่ทำให้ config เริ่มต้นใช้ไม่ได้กับโปรเจกต์จริง</strong> อ่านต่อหัวข้อ 7</td></tr>
 </table>
 </div>
 
@@ -403,7 +497,21 @@ INF Writing template to file file=.../mocks_test.go</code></pre>
   example.com/shop:
     config:
       all: <span class="k">true</span>
-      recursive: <span class="k">true</span>      <span class="c">// ← บรรทัดที่เปลี่ยน "รันแล้วเงียบ" เป็น "ใช้งานได้"</span></code></pre>
+      <span class="c"># ← บรรทัดที่เปลี่ยน "รันแล้วเงียบ" เป็น "ใช้งานได้"</span>
+      recursive: <span class="k">true</span></code></pre>
+
+<p>
+  (คอมเมนต์ในไฟล์ YAML ขึ้นต้นด้วย <code>#</code> ไม่ใช่ <code>//</code> แบบ Go —
+  ใส่ <code>//</code> ลงไปจะกลายเป็นส่วนหนึ่งของค่า แล้ว <code>recursive</code> จะไม่ทำงาน)
+</p>
+
+<p>
+  <strong>เหตุผลที่ต้องเติม:</strong> <code>mockery init</code> เขียน key เป็น module root
+  (<code>example.com/shop</code>) ซึ่งคือโฟลเดอร์บนสุด ที่มักมีแต่ <code>go.mod</code>
+  กับโฟลเดอร์ย่อย ไม่มีไฟล์ <code>.go</code> เลย
+  พอ <code>recursive: false</code> mockery จึงมองแค่ชั้นนั้นชั้นเดียว
+  ไม่เจอ interface ที่อยู่ใน <code>internal/user</code> แล้วก็จบงานเงียบ ๆ
+</p>
 
 <pre><code>$ mockery
 INF adding interface to collection collection=/.../app/user/mocks_test.go
@@ -450,6 +558,21 @@ INF Writing template to file file=/.../app/user/mocks_test.go</code></pre>
 <span class="k">type</span> MockUserRepository <span class="k">struct</span> {
     mock.Mock
 }</code></pre>
+
+<p>
+  อ่านบรรทัดพารามิเตอร์ก่อน มันหน้าตาแปลกกว่า interface ที่เคยเจอใน
+  <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a>:
+  <code>t interface { mock.TestingT; Cleanup(func()) }</code>
+  คือการ <strong>ประกาศ interface คาไว้ตรงนั้นเลยโดยไม่ตั้งชื่อ</strong>
+  อ่านว่า "รับอะไรก็ได้ที่ทำได้สองอย่าง: ทำสิ่งที่ <code>mock.TestingT</code> ต้องการ
+  (<code>Errorf</code>, <code>FailNow</code>) และมี method <code>Cleanup(func())</code>"
+  <br>แล้วอะไรที่เข้าเงื่อนไขนี้? <code>*testing.T</code> ที่คุณใช้มาตั้งแต่
+  <a href="../../day-5/lessons/0015-testing-t.html">บทเรียน 15</a> นั่นเอง —
+  ตาม duck typing ของบทเรียน 10 มันเข้าเงื่อนไขโดยไม่ต้องประกาศอะไรเพิ่ม
+  เวลาใช้จริงจึงเขียนแค่ <code>NewMockUserRepository(t)</code>
+  <br>เหตุผลที่ mockery เขียนแบบนี้แทนที่จะรับ <code>*testing.T</code> ตรง ๆ
+  คือจะได้รับ <code>*testing.B</code> (benchmark) หรือ mock ตัวอื่นได้ด้วย
+</p>
 
 <div class="win">
   <span class="label">✅ ของฟรีชิ้นที่ 1 — ไม่ต้องเขียน <code>AssertExpectations</code> เองแล้ว</span>
@@ -795,7 +918,7 @@ FTL app failed error="outfile exists"</code></pre>
 <div class="table-wrap">
 <table>
   <tr><th>สิ่งที่วัด</th><th>บรรทัด</th></tr>
-  <tr><td>mock ที่ mockery generate (<code>mocks.go</code>)</td><td><strong>193</strong></td></tr>
+  <tr><td>mock ที่ mockery generate (<code>mocks_test.go</code>)</td><td><strong>193</strong></td></tr>
   <tr><td>mock เขียนมือให้ครอบคลุมงานเดียวกัน</td><td><strong>35</strong></td></tr>
   <tr><td><code>.mockery.yml</code> ที่เพิ่มเข้ามา</td><td><strong>28</strong></td></tr>
   <tr><td>interface ต้นทาง</td><td>3 method (ทั้งไฟล์ 41)</td></tr>
@@ -805,7 +928,7 @@ FTL app failed error="outfile exists"</code></pre>
 <div class="warn">
   <p style="margin-bottom:0">
     <strong>⚠️ mockery ไม่ได้ "ลดจำนวนบรรทัดในโปรเจกต์" — มันเพิ่มขึ้นกว่า 5.5 เท่า</strong>
-    (193 vs 35 บรรทัด) แถมยังบวก config อีก 28 บรรทัด
+    (193 vs 35 บรรทัด) แถมยังบวก config อีก 27 บรรทัด
     <br>ถ้าใครเคลมว่า "ประหยัดโค้ด" ต้องพูดให้ตรงว่า
     <strong>ประหยัดบรรทัดที่มนุษย์ต้องพิมพ์และดูแลเอง: 35 → 0</strong>
     ไม่ใช่บรรทัดในไฟล์
@@ -875,6 +998,13 @@ mockery       →  Diff: 0: FAIL:  (int=8) != (int=7)</code></pre>
     <br>สาเหตุที่พบบ่อยสุด: <code>mockery init</code> สร้าง config ชี้ module root มาให้
     แต่ interface อยู่ใน sub-package → เติม <code>recursive: true</code> ใต้
     <code>packages.&lt;module&gt;.config</code></p>
+    <p style="margin-bottom:0"><strong>ทำไมข้ออื่นผิด:</strong>
+    mockery ไม่มีระบบ cache ไฟล์ผลลัพธ์เลย รันซ้ำก็เขียนใหม่ทุกครั้ง ·
+    การเขียนลงโฟลเดอร์ <code>mocks/</code> กลางเป็นพฤติกรรมของ v2 ส่วน v3 ใช้
+    <code>dir: {{.InterfaceDir}}</code> คือวางข้าง interface (หัวข้อ 6)
+    และถ้าเขียนไฟล์จริงจะต้องมี log <code>Writing template to file</code> โผล่มาด้วยเสมอ ·
+    การไม่ได้ลง testify ไม่เกี่ยวกับขั้นตอน generate เลย mockery เขียนไฟล์ออกมาได้ตามปกติ
+    แล้วค่อยไปพังตอน <code>go test</code> ว่าหา package ไม่เจอ</p>
   </div>
 </div>
 
@@ -893,6 +1023,12 @@ mockery       →  Diff: 0: FAIL:  (int=8) != (int=7)</code></pre>
     <code>mock: Unexpected Method Call</code> แล้ว panic หยุดเทสทันที
     <br>ตัวเลือกเรื่องจำนวนครั้งผิด — กรณีนั้นข้อความจะเป็น
     <code>The method has been called over 1 times.</code> ซึ่งหน้าตาต่างกันชัดเจน</p>
+    <p style="margin-bottom:0"><strong>ทำไมข้ออื่นผิด:</strong>
+    บรรทัด <code>Diff:</code> เทียบ <strong>argument ที่ส่งเข้าไป</strong>
+    ไม่ใช่ค่าที่ mock คืนออกมา (ค่าที่คืนถูกกำหนดด้วย <code>.Return()</code>
+    ซึ่ง testify ไม่เอามาเทียบ) ·
+    ส่วนเรื่อง signature ไม่ตรงเพราะลืมรัน mockery จะพังตั้งแต่ compile
+    ไม่มีทางรันมาถึงบรรทัด <code>Diff:</code> ได้</p>
   </div>
 </div>
 
@@ -913,6 +1049,13 @@ mockery       →  Diff: 0: FAIL:  (int=8) != (int=7)</code></pre>
     ตามนิสัยเดิม จะกลายเป็นเรียกซ้ำโดยไม่จำเป็น
     <br>และเพราะมันทำงานเสมอนี่เอง กับดัก "ตั้งแล้วไม่ถูกเรียก" ถึงฟ้องได้
     ทั้งที่เราไม่ได้เขียน assert อะไรเลย</p>
+    <p style="margin-bottom:0"><strong>ทำไมข้ออื่นผิด:</strong>
+    <code>EXPECT()</code> แค่ลงทะเบียนความคาดหวังไว้เฉย ๆ
+    ตอนนั้นยังไม่มีอะไรให้ตรวจเพราะโค้ดยังไม่ทันเรียก ·
+    template <code>testify</code> ไม่ได้ปิดการตรวจ ตรงข้าม
+    มันเป็นตัวที่ใส่ <code>t.Cleanup</code> ให้ ·
+    และการตรวจว่า method ถูกเรียกครบไหมเป็นเรื่องที่รู้ได้ตอนรันเท่านั้น
+    compiler ไม่มีทางรู้</p>
   </div>
 </div>
 
@@ -948,9 +1091,17 @@ mockery       →  Diff: 0: FAIL:  (int=8) != (int=7)</code></pre>
         แล้วดูว่าพังที่ขั้นไหน (compile หรือ run?)</li>
     <li><strong>ท้าทาย 1:</strong> ตั้ง <code>EXPECT()</code> แล้วจงใจไม่ต่อ <code>.Return()</code>
         — เดาก่อนว่าจะได้ FAIL ธรรมดาหรืออย่างอื่น แล้วค่อยรัน (กดเฉลยด้านล่างเทียบได้)</li>
-    <li><strong>ท้าทาย 2:</strong> เปลี่ยน <code>filename</code> เป็น <code>mocks.go</code>
-        แล้วเขียนเทสใน package อื่นที่ใช้ mock ตัวนี้
-        <br>รันครั้งแรกจะเจอ <code>redeclared in this block</code> — <strong>รู้อยู่แล้วว่าทำไม แก้เลย</strong></li>
+    <li><strong>ท้าทาย 2:</strong> แก้ <code>filename: mocks_test.go</code> เป็น
+        <code>filename: mocks.go</code> ใน <code>.mockery.yml</code> แล้วรัน <code>mockery</code> ใหม่
+        <br>• รันครั้งแรกจะเจอ <code>NewMockUserRepository redeclared in this block</code>
+        — <strong>รู้อยู่แล้วว่าทำไม (ไฟล์เก่ายังอยู่ mockery ไม่ลบให้) แก้เลย</strong>
+        <br>• จากนั้นสร้าง package ใหม่ (เช่น <code>internal/report</code>) เขียนเทสที่
+        <code>import "&lt;module&gt;/internal/user"</code> แล้วเรียก <code>user.NewMockUserRepository(t)</code>
+        <br>• <strong>ถือว่าสำเร็จเมื่อ</strong> <code>go test ./...</code> ผ่านทั้งสอง package
+        และ <code>go build ./...</code> ยังผ่าน
+        <br>• เสร็จแล้วตอบตัวเองให้ได้ว่า <strong>ทำไมค่าเริ่มต้นถึงเป็น <code>mocks_test.go</code></strong>:
+        เพราะเมื่อเป็น <code>mocks.go</code> ไฟล์ mock กับ testify จะถูกคอมไพล์ติดไปกับโปรแกรมจริงด้วย
+        ไม่ใช่เฉพาะตอนเทส — ให้เปลี่ยนเฉพาะตอนที่จำเป็นต้องใช้ข้าม package จริง ๆ</li>
   </ol>
   <button class="reveal">เฉลยท้าทาย 1</button>
   <div class="answer">

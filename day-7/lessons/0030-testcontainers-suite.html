@@ -20,6 +20,19 @@
     <br>บทนี้คือวิธีทำให้ 4 เทสเดียวกันเหลือ <strong>1.727 วินาที</strong>
     และทำให้ <code>go test -short</code> ไม่ต้องมี Docker เลย
   </p>
+
+  <div class="warn">
+    <p style="margin-bottom:0">
+      <strong>⚠️ เตรียมของก่อนเริ่ม — เช็ค 4 ข้อนี้ก่อน ไม่งั้นจะไปติดกลางภารกิจ</strong>
+      <br>1. <strong>Docker ต้องรันอยู่</strong> เช็คด้วย <code>docker info</code> ถ้าขึ้น <code>Cannot connect to the Docker daemon</code> ให้เปิด Docker Desktop ก่อน
+      <br>2. <strong>รอบแรกต้องต่อเน็ต</strong> เพราะต้องดึง image <code>postgres:16-alpine</code> ลงมาก่อน รอบถัด ๆ ไปใช้ของที่ cache ไว้แล้ว
+      <br>3. <strong>เพิ่ม dependency ในโปรเจกต์บทเรียน 27 ของคุณ</strong> (โปรเจกต์นั้นยังไม่มี):
+      <br><code>go get github.com/testcontainers/testcontainers-go/modules/postgres@v0.44.0</code>
+      <br><code>go get github.com/stretchr/testify</code> — package <code>suite</code> อยู่ในโมดูลเดียวกับ <code>assert</code> ที่คุณใช้ในบทเรียน 17 ไม่ต้องลงเพิ่ม
+      <br>ปิดท้ายด้วย <code>go mod tidy</code>
+      <br>4. ระหว่างรัน testcontainers จะแอบเปิด container ผู้ช่วยอีกตัวชื่อ <strong>Ryuk</strong> ขึ้นมาเอง (หัวข้อ 7 อธิบายว่ามันคืออะไร) เห็นใน <code>docker ps</code> ได้ ไม่ต้องตกใจ
+    </p>
+  </div>
 </header>
 
 <main>
@@ -47,8 +60,11 @@ PASS
 ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
 
 <p>
-  อ่านตัวเลขให้ออก: <strong>ตัวแรกแพงกว่าเพื่อน (1.01s)</strong> เพราะรวมเวลา start
-  Ryuk reaper เข้าไปด้วย ตัวถัด ๆ ไปประมาณ 0.75 วินาทีเท่ากันหมด
+  อ่านตัวเลขให้ออก: <strong>ตัวแรกแพงกว่าเพื่อน (1.01s)</strong> เพราะครั้งแรกของการรันหนึ่งครั้ง
+  testcontainers จะแอบเปิด container ผู้ช่วยอีกตัวชื่อ <strong>Ryuk</strong> ขึ้นมาด้วย
+  (Ryuk คือ container ตัวจิ๋วที่คอยตามลบ container ที่เราลืมปิด — หัวข้อ 7 จะพิสูจน์ให้ดูว่ามันทำงานยังไง
+  ตอนนี้รู้แค่ว่ามันกินเวลาของเทสตัวแรกไปราว 0.25 วินาทีก็พอ)
+  <br>ตัวถัด ๆ ไปไม่ต้องเปิด Ryuk ซ้ำ จึงเหลือประมาณ 0.75 วินาทีเท่ากันหมด
   <br>แปลว่า<strong>ต้นทุนของการเพิ่มเทสอีก 1 ตัว คือ ~760 มิลลิวินาที</strong> —
   โปรเจกต์ที่มี 60 เทสก็คือรอ 45 วินาทีทุกครั้งที่กด save
 </p>
@@ -82,7 +98,7 @@ ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
 
 <span class="c">// SharedDB คืน DB ที่ใช้ร่วมกันทั้ง process โดย boot container แค่ครั้งเดียว</span>
 <span class="k">func</span> <span class="f">SharedDB</span>(t *testing.T) (*gorm.DB, <span class="k">string</span>) {
-    t.<span class="f">Helper</span>()
+    t.<span class="f">Helper</span>()  <span class="c">// ทำให้ error ชี้ไปที่เทสที่เรียก ไม่ใช่ชี้มาที่ฟังก์ชันนี้ — หัวข้อ 6 จะพิสูจน์ให้ดู</span>
     sharedOnce.<span class="f">Do</span>(<span class="k">func</span>() {
         ctx := context.<span class="f">Background</span>()
         <span class="k">var</span> d time.Duration
@@ -129,8 +145,10 @@ ok  	tcdemo/test/sharedcontainer	<strong>1.727s</strong></code></pre>
 <div class="win">
   <span class="label">📊 หลักฐานว่าเป็น container ตัวเดียวจริง</span>
   <p style="margin-bottom:0">
-    <strong>ทุกเทสได้ dsn ที่ port <code>32783</code> เหมือนกันหมด</strong> —
-    ถ้ามันเปิดใหม่ port จะต้องเปลี่ยนเหมือนหัวข้อ 1
+    <strong>เทสที่พิมพ์ dsn ออกมา (A กับ B) ได้ port <code>32783</code> ตัวเดียวกัน</strong> —
+    ถ้ามันเปิด container ใหม่ port ต้องเปลี่ยนทุกตัวเหมือนหัวข้อ 1
+    <br>ส่วน C กับ D ให้ดูที่เวลาแทน: <code>1.95ms</code> / <code>1.75ms</code> —
+    เร็วขนาดนี้แปลว่าไม่ได้ boot อะไรใหม่แน่นอน
   </p>
   <pre style="margin:0.6rem 0 0"><code>container ใหม่ทุกเทส : 4.264s   (boot 1.015 / 0.755 / 0.752 / 0.761)
 sync.Once ตัวเดียว   : 1.727s   (boot 1.033 ครั้งเดียว · เทสถัดไป 2.07 / 1.95 / 1.75 ms)
@@ -241,7 +259,10 @@ FAIL	tcdemo/test/eager	0.304s</code></pre>
       <em>ตั้งใจให้ panic</em> แทนที่จะคืนค่าผิด ๆ ให้คุณเข้าใจผิดเงียบ ๆ
     </p>
     <p style="margin-bottom:0">
-      แก้ได้โดยเรียก <code>flag.Parse()</code> เองก่อน — <strong>แต่อย่าทำ</strong>
+      มีคนแก้ด้วยการเรียก <code>flag.Parse()</code> เองก่อน <code>m.Run()</code> — <strong>อย่าทำ</strong>
+      เพราะ flag ตระกูล <code>-test.*</code> (รวม <code>-test.short</code>) ถูกลงทะเบียนโดย package
+      <code>testing</code> ตอน <code>m.Run()</code> การ parse ก่อนหน้านั้นคือการ parse ตอนที่ยังไม่มีใครรู้จัก flag พวกนี้
+      แล้วจะพังคนละแบบแทน
       <br>ทางที่ถูกกว่าคืออย่าตัดสินใจใน <code>TestMain</code> เลย
       ให้ boot แบบ lazy ใน <code>sync.Once</code> แล้วเช็ค <code>testing.Short()</code>
       ในตัวเทส ซึ่งตอนนั้น flag ถูก parse แน่นอนแล้ว (หัวข้อถัดไป)
@@ -279,7 +300,13 @@ FAIL	tcdemo/test/eager	0.304s</code></pre>
   </div>
 </div>
 
-<pre><code><span class="c">// go test -short -v ./test/eager/      ← eager</span>
+<p>
+  ทีนี้เอา <code>TestMain</code> ฝั่ง eager มาแก้ให้รันได้จริงก่อน —
+  เอาบรรทัด <code>testing.Short()</code> ที่ทำให้ panic ออก เหลือแค่ boot container ตรง ๆ
+  แล้วเทียบกับฝั่ง lazy ด้วยคำสั่งเดียวกัน:
+</p>
+
+<pre><code><span class="c">// go test -short -v ./test/eager/      ← eager (แก้ให้ไม่เรียก testing.Short() แล้ว)</span>
 [eager TestMain] container booted BEFORE m.Run() in <strong>1.047302208s</strong>
 === RUN   TestEagerOne
     eager_test.go:45: short mode: skipped, but the container was ALREADY started
@@ -316,6 +343,17 @@ ok  	tcdemo/test/integration	<strong>0.353s</strong></code></pre>
   ใน <a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a> คุณใช้ testify แค่ฝั่ง
   <code>assert</code>/<code>require</code> — <strong>package <code>suite</code> คืออีกครึ่งที่ยังไม่ได้แตะ</strong>
   มันให้ struct หนึ่งตัวถือ state ร่วม (db, repo, ctx) แล้วมี hook ให้แขวนงานเตรียมของ
+  <br>มีกติกา 3 ข้อที่ต้องรู้ก่อนอ่านโค้ดข้างล่าง:
+  <br>1. บรรทัด <code>suite.Suite</code> ที่เขียนลอย ๆ ไม่มีชื่อ field คือการ<em>ฝัง</em> struct ของ testify
+  เข้ามาในของเรา ผลคือ struct ของคุณได้ method ของ testify ติดมาฟรี ตัวที่ใช้บ่อยที่สุดคือ
+  <code>s.T()</code> ซึ่งคืน <code>*testing.T</code> ของเทสที่กำลังรันอยู่ตอนนั้น
+  เอาไว้ส่งต่อให้ฟังก์ชันที่ต้องการ <code>*testing.T</code> เช่น <code>testutil.SharedDB(s.T())</code>
+  <br>2. <strong>เฉพาะ method ที่ชื่อขึ้นต้นด้วย <code>Test</code> เท่านั้นที่จะถูกรันเป็นเทส</strong>
+  ถ้าตั้งชื่อว่า <code>CreateAndGet</code> เฉย ๆ จะไม่มีอะไรเกิดขึ้นและ<em>ไม่มี error ฟ้องเลย</em>
+  — เทสหายไปเงียบ ๆ แล้วขึ้น PASS
+  <br>3. testify ไม่ได้ถูก <code>go test</code> เห็นเอง ต้องมีเทสธรรมดา 1 ตัว
+  (<code>func TestUserRepoSuite(t *testing.T)</code>) เรียก <code>suite.Run(t, new(UserRepoSuite))</code>
+  เป็นประตูเข้า อย่างที่เห็นบรรทัดสุดท้ายของโค้ด
 </p>
 
 <pre><code><span class="k">type</span> UserRepoSuite <span class="k">struct</span> {
@@ -432,7 +470,9 @@ ok  	tcdemo/test/integration	<strong>1.757s</strong></code></pre>
   <p style="margin-bottom:0">
     <strong>อ่านบรรทัด <code>SetupSuite: got DB in 3.292µs</code> ให้ออก</strong> —
     3 ไมโครวินาที ไม่ใช่ 1 วินาที
-    <br>เพราะ <code>TestSearchByCity</code> ที่รันก่อนหน้า (เรียงตามไฟล์/ตัวอักษรเหมือนกัน)
+    <br>เพราะ <code>TestSearchByCity</code> อยู่ก่อนในลำดับการรัน (เทส top-level ของ Go
+    รันตาม<strong>ลำดับที่เขียนไว้ในไฟล์</strong> โดยไล่ไฟล์ตามชื่อ — <em>ไม่ใช่</em>เรียงตามชื่อเทส
+    กติกาเรียงตามตัวอักษรที่เพิ่งเห็นไปใช้กับ method ใน testify suite เท่านั้น)
     ไป trigger <code>sync.Once</code> ไปแล้ว
     <br>นี่คือหลักฐานว่า <strong><code>sync.Once</code> ทำงานข้ามทั้ง plain test และ testify suite
     ตราบใดที่อยู่ package เดียวกัน</strong> — ทั้งหมด 8 top-level test + 6 sub-test ใช้ container ตัวเดียว
@@ -497,6 +537,7 @@ FAIL	tcdemo/test/helper	0.729s</code></pre>
 </p>
 
 <pre><code><span class="c">// ลืม Terminate โดย Ryuk เปิดอยู่ (ค่า default)</span>
+<span class="c">// running_pg = postgres ที่ยังรันอยู่ (docker ps) · all_pg = นับรวมตัวที่ตายแล้วแต่ยังไม่ถูกลบด้วย (docker ps -a) · running_ryuk = ตัว Ryuk เอง</span>
 test process exited at t=0
 t+0s   running_pg=1 all_pg=1 running_ryuk=1
 t+3s   running_pg=1 all_pg=1 running_ryuk=1
@@ -695,6 +736,14 @@ e43f38657fa3	postgres:16-alpine	thirsty_curie	<strong>Up 28 seconds</strong></co
     <li><strong>ตั้ง helper ก่อน:</strong> สร้าง <code>internal/testutil/container.go</code> ที่มี
         <code>StartPostgres</code>, <code>OpenGorm</code>, <code>SharedDB</code> (ห่อด้วย <code>sync.Once</code>),
         <code>TerminateShared</code>, <code>TruncateUsers</code>
+        <br>ลายเซ็นที่ควรได้ (ดูวิธีใช้จากโค้ดหัวข้อ 2 และ 5 ประกอบ):
+        <br><code>func StartPostgres(ctx context.Context) (*tcpostgres.PostgresContainer, time.Duration, error)</code>
+        <br><code>func OpenGorm(ctx context.Context, ctr *tcpostgres.PostgresContainer) (*gorm.DB, string, error)</code>
+        <br><code>func SharedDB(t *testing.T) (*gorm.DB, string)</code>
+        <br><code>func TerminateShared()</code> — ต้องเช็คก่อนว่า <code>sharedCtr == nil</code> หรือเปล่า
+        (กรณีทุกเทส skip จะไม่มี container ให้ปิด) แล้วค่อยเรียก <code>testcontainers.TerminateContainer(sharedCtr)</code>
+        <br><code>func TruncateUsers(t *testing.T, db *gorm.DB)</code> — ยิง
+        <code>db.Exec("TRUNCATE TABLE users RESTART IDENTITY CASCADE")</code> แล้ว <code>require.NoError</code>
         <br><strong>ทุกฟังก์ชันที่รับ <code>*testing.T</code> ต้องมี <code>t.Helper()</code> บรรทัดแรก</strong></li>
     <li>เขียน <code>TestMain</code> ในไฟล์ <code>main_test.go</code> ของ package เทส:
         <code>m.Run()</code> → <code>TerminateShared()</code> → พิมพ์เวลา boot → <code>os.Exit(code)</code>
@@ -714,9 +763,16 @@ e43f38657fa3	postgres:16-alpine	thirsty_curie	<strong>Up 28 seconds</strong></co
     <li><strong>ท้าทาย 1 — พิสูจน์ <code>t.Helper()</code> ด้วยตัวเอง:</strong>
         ลบ <code>t.Helper()</code> ออกจาก <code>TruncateUsers</code> แล้วทำให้มันพังโดยตั้งใจ
         (เช่นเปลี่ยนชื่อตารางเป็น <code>userz</code>) — เลขบรรทัดที่ฟ้องเปลี่ยนไปไหม?</li>
-    <li><strong>ท้าทาย 2 — จับ leak ให้เห็น:</strong> เขียนเทสที่ <code>t.Fatal(err)</code>
-        <em>ก่อน</em>บรรทัด <code>defer</code> แล้วรัน จากนั้นดู <code>docker ps</code> ทันที
-        และดูอีกทีตอน 15 วินาที — เห็นอะไรทั้งสองครั้ง?</li>
+    <li><strong>ท้าทาย 2 — จับ leak ให้เห็น:</strong> ทำให้ <code>Run</code> พังโดยตั้งใจ
+        ด้วยการใส่ wait strategy ที่รอ log ที่ไม่มีวันโผล่:
+        <code>testcontainers.WithWaitStrategy(wait.ForLog("this log line will never appear").WithStartupTimeout(10*time.Second))</code>
+        <br>แล้วเขียนแบบ<em>ผิด</em>ตามกล่องแดงในหัวข้อ 8.1 คือ <code>t.Fatal(err)</code>
+        ไว้<em>ก่อน</em>บรรทัด <code>defer</code>
+        <br>รันด้วย <code>go test -run TestLeak -v ./test/leak/</code> จากนั้นเปิดอีกเทอร์มินัลดู
+        <code>docker ps</code> ทันทีที่เทสจบ แล้วดูซ้ำอีกครั้งตอนวินาทีที่ 15
+        <br><strong>ถูกแล้วคือ:</strong> ครั้งแรกยังเห็น <code>postgres:16-alpine</code> สถานะ <code>Up</code>
+        ค้างอยู่ (นี่คือตัวที่ leak) · ครั้งที่สองหายไปแล้วเพราะ Ryuk ตามเก็บให้ —
+        ซึ่งแปลว่าถ้าใครไปปิด Ryuk มันจะค้างถาวร</li>
   </ol>
   <button class="reveal">เฉลยข้อ 6 — ตัวเลขที่ควรเห็น</button>
   <div class="answer">
