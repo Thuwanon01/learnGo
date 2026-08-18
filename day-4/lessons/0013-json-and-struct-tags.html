@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 13 — JSON และ Struct Tags: ทำไม password ถึงหลุด (หรือหายไปเฉย ๆ)</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 13 · Day 4 · JSON</p>
+  <h1>JSON และ Struct Tags: ทำไม password ถึงหลุด (หรือหายไปเฉย ๆ)</h1>
+  <p class="meta">~16 นาที · ต้องมี: <a href="../../day-3/lessons/0007-value-vs-pointer.html">บทเรียน 07</a> (struct &amp; pointer), <a href="./0012-error-architecture.html">บทเรียน 12</a></p>
+  <p class="standfirst">
+    JSON คือภาษากลางระหว่างระบบ — REST API, config, message queue, webhook, log
+    ทั้งหมดใช้มัน Go แปลง struct ↔ JSON ให้อัตโนมัติ แต่มี<strong>กฎเงียบ ๆ
+    หลายข้อที่ทำให้ข้อมูลหายไปโดยไม่มี error</strong> บทนี้เอามาเปิดเผยให้ครบ
+  </p>
+</header>
+
+<main>
+
+<h2>1 · สองทิศทาง: Marshal และ Unmarshal</h2>
+
+<div class="diagram">
+<pre>       <strong>JSON</strong>                                <strong>Go struct</strong>
+  {                                    type Product struct {
+    "id": 101,      ──Unmarshal()──▶       ID    int
+    "name": "…",                           Name  string
+    "price": 2590                          Price int
+  }                 ◀──Marshal()───    }</pre>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ฟังก์ชัน</th><th>ทิศทาง</th><th>จำง่าย ๆ</th></tr>
+  <tr><td><code>json.Marshal(v)</code></td><td>Go → JSON (<code>[]byte</code>)</td><td><strong>ส่งออก</strong> เช่นตอบ API</td></tr>
+  <tr><td><code>json.Unmarshal(data, &amp;v)</code></td><td>JSON → Go</td><td><strong>รับเข้า</strong> เช่นอ่าน request body</td></tr>
+</table>
+</div>
+
+<h2>2 · Struct Tag คือคำสั่งที่แปะไว้ท้าย field</h2>
+
+<pre><code><span class="k">type</span> User <span class="k">struct</span> {
+    UserID   <span class="n">int</span>    <span class="s">`json:"userId"`</span>
+    FullName <span class="n">string</span> <span class="s">`json:"fullName"`</span>
+    Email    <span class="n">string</span> <span class="s">`json:"email"`</span>
+}
+
+<span class="c">// json.Marshal ได้:</span>
+{
+  <span class="s">"userId"</span>: <span class="n">101</span>,
+  <span class="s">"fullName"</span>: <span class="s">"Alice Smith"</span>,
+  <span class="s">"email"</span>: <span class="s">"alice@email.com"</span>
+}</code></pre>
+
+<p>ถ้าไม่ใส่ tag เลย Go ใช้<strong>ชื่อ field ตรง ๆ</strong>:</p>
+
+<pre><code><span class="c">// ผลรันจริงเมื่อไม่มี tag:</span>
+{<span class="s">"UserID"</span>:<span class="n">101</span>,<span class="s">"FullName"</span>:<span class="s">"Alice Smith"</span>,<span class="s">"Email"</span>:<span class="s">"alice@email.com"</span>}</code></pre>
+
+<p>
+  ซึ่ง<strong>ผิดธรรมเนียมของฝั่ง JSON</strong> — Google JSON Style Guide
+  บอกว่า property name ควรเป็น <code>camelCase</code> ส่วน Go บังคับให้ field
+  ที่จะ export ต้องขึ้นต้นตัวใหญ่ (<code>PascalCase</code>)
+  <strong>struct tag คือสะพานเชื่อมสองธรรมเนียมนี้</strong>
+</p>
+
+<div class="note">
+  <p>
+    <strong>tag ใส่ได้หลาย package พร้อมกัน</strong> คั่นด้วยเว้นวรรค —
+    แต่ละ library อ่านเฉพาะส่วนของตัวเอง:
+  </p>
+  <pre style="margin-bottom:0"><code>UserID <span class="n">int</span> <span class="s">`json:"userId" xml:"userId" validate:"required"`</span></code></pre>
+</div>
+
+<h2>3 · กับดักที่ 1: field ตัวเล็กหายไปเงียบ ๆ</h2>
+
+<div class="predict">
+  <pre><code><span class="k">type</span> User <span class="k">struct</span> {
+    ID       <span class="n">int</span>    <span class="s">`json:"id"`</span>
+    Name     <span class="n">string</span> <span class="s">`json:"name"`</span>
+    password <span class="n">string</span> <span class="s">`json:"password"`</span>   <span class="c">// ← p ตัวเล็ก</span>
+}
+
+user := User{ID: <span class="n">101</span>, Name: <span class="s">"Alice"</span>, password: <span class="s">"secret123"</span>}
+data, _ := json.<span class="f">Marshal</span>(user)
+fmt.<span class="f">Println</span>(<span class="f">string</span>(data))</code></pre>
+  <p class="ask">พิมพ์อะไรออกมา?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>{"id":101,"name":"Alice"}</code></strong> — ผมรันทดสอบแล้ว</p>
+    <p style="margin-bottom:0">
+      <code>password</code> ขึ้นต้นด้วยตัวเล็ก = <strong>unexported field</strong>
+      → package <code>encoding/json</code> ซึ่งอยู่คนละ package
+      <strong>มองไม่เห็นเลย</strong> ต่อให้แปะ tag ไว้ก็ไม่มีผล
+      <br>ไม่มี error ไม่มี warning — <strong>เงียบสนิท</strong>
+    </p>
+  </div>
+</div>
+
+<h3>ด้านกลับ: อันตรายกว่ามาก</h3>
+
+<pre><code><span class="k">type</span> LoginRequest <span class="k">struct</span> {
+    Email    <span class="n">string</span> <span class="s">`json:"email"`</span>
+    password <span class="n">string</span> <span class="s">`json:"password"`</span>   <span class="c">// ← ตัวเล็ก</span>
+}
+
+<span class="c">// รับ JSON: {"email":"peter@email.com","password":"123456"}</span>
+<span class="c">// หลัง json.Unmarshal:</span>
+req.Email      <span class="c">// "peter@email.com"</span>
+req.password   <span class="c">// ""  ← ว่างเปล่า! รหัสผ่านที่ผู้ใช้ส่งมาหายไปหมด</span></code></pre>
+
+<div class="warn">
+  <span class="label">ทำไมถึงอันตราย</span>
+  <p style="margin-bottom:0">
+    <code>Unmarshal</code> <strong>ไม่คืน error</strong> — มันมองว่า field นั้นไม่มี
+    แล้วปล่อยเป็น zero value ผลคือ login ทุกคนด้วยรหัสว่าง
+    ถ้าโค้ดตรวจรหัสเขียนไว้หลวม ๆ <strong>ประตูเปิดพอดี</strong>
+    <br><strong>กฎ: field ที่ต้องเข้า/ออก JSON ต้องขึ้นต้นด้วยตัวใหญ่เสมอ</strong>
+  </p>
+</div>
+
+<h2>4 · <code>omitempty</code> — และเหตุผลที่มันหลอกคน</h2>
+
+<pre><code><span class="k">type</span> User <span class="k">struct</span> {
+    ID       <span class="n">int</span>    <span class="s">`json:"id"`</span>
+    Nickname <span class="n">string</span> <span class="s">`json:"nickname,omitempty"`</span>
+}
+
+user := User{ID: <span class="n">101</span>, Nickname: <span class="s">""</span>}
+<span class="c">// ได้: {"id":101}     ← nickname หายไปเพราะว่าง</span></code></pre>
+
+<p>ดูสมเหตุสมผล จนกระทั่งเจอกรณีนี้:</p>
+
+<div class="predict">
+  <pre><code><span class="k">type</span> Item <span class="k">struct</span> {
+    Price  <span class="n">int</span>  <span class="s">`json:"price,omitempty"`</span>
+    Active <span class="n">bool</span> <span class="s">`json:"active,omitempty"`</span>
+}
+
+item := Item{Price: <span class="n">0</span>, Active: <span class="k">false</span>}
+data, _ := json.<span class="f">Marshal</span>(item)
+fmt.<span class="f">Println</span>(<span class="f">string</span>(data))</code></pre>
+  <p class="ask">ได้ JSON หน้าตายังไง?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>{}</code></strong> — ว่างเปล่าทั้งก้อน ผมรันทดสอบแล้ว</p>
+    <p style="margin-bottom:0">
+      <code>omitempty</code> ตัดทิ้งเมื่อค่าเป็น <strong>zero value</strong> —
+      ซึ่งรวมถึง <code>0</code>, <code>false</code>, <code>""</code>,
+      <code>nil</code>, slice/map ที่ว่าง
+      <br><strong>แต่ "สินค้าราคา 0 บาท" กับ "ปิดใช้งาน" เป็นข้อมูลที่มีความหมาย!</strong>
+      ฝั่งรับจะแยกไม่ออกว่า "ไม่ได้ส่งมา" กับ "ส่งมาว่าเป็น 0"
+    </p>
+  </div>
+</div>
+
+<h3>ทางแก้: ใช้ pointer</h3>
+
+<pre><code><span class="k">type</span> Item <span class="k">struct</span> {
+    Price  *<span class="n">int</span>  <span class="s">`json:"price,omitempty"`</span>
+    Active *<span class="n">bool</span> <span class="s">`json:"active,omitempty"`</span>
+}
+
+<span class="c">// ไม่ต้องการส่งจริง ๆ — ปล่อยเป็น nil:</span>
+Item{}
+<span class="c">// ได้: {}</span>
+
+<span class="c">// ต้องการส่งค่า zero จริง ๆ:</span>
+<span class="k">var</span> price <span class="n">int</span>
+<span class="k">var</span> active <span class="n">bool</span>
+Item{Price: &amp;price, Active: &amp;active}
+<span class="c">// ได้: {"price":0,"active":false}   ← ส่งออกไปครบ</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>pointer แยกได้ 3 สถานะ</strong> ในขณะที่ค่าธรรมดาแยกได้แค่ 2:
+    <code>nil</code> = "ไม่ได้ส่ง" · <code>&amp;0</code> = "ส่งมาว่า 0" ·
+    <code>&amp;5</code> = "ส่งมาว่า 5" — สำคัญมากตอนทำ <code>PATCH</code> API
+    ที่ต้องแยก "ไม่แก้ field นี้" กับ "แก้เป็นศูนย์"
+  </p>
+</div>
+
+<h2>5 · <code>json:"-"</code> — ห้าม field นี้เข้าออก JSON</h2>
+
+<pre><code><span class="k">type</span> User <span class="k">struct</span> {
+    ID           <span class="n">int</span>    <span class="s">`json:"id"`</span>
+    Email        <span class="n">string</span> <span class="s">`json:"email"`</span>
+    PasswordHash <span class="n">string</span> <span class="s">`json:"-"`</span>     <span class="c">// ← ไม่ออกไปแน่นอน</span>
+}
+
+<span class="c">// ผลรันจริง: {"id":101,"email":"alice@example.com"}</span></code></pre>
+
+<div class="win">
+  <span class="label">แนวทางที่ปลอดภัยกว่า — แยก struct</span>
+  <p>
+    <code>json:"-"</code> ใช้ได้ แต่วันไหนมีคนเผลอลบ tag ออก
+    <strong>ข้อมูลลับหลุดทันทีโดยไม่มีอะไรเตือน</strong>
+    ทีมส่วนใหญ่จึงแยกเป็นคนละ struct ไปเลย:
+  </p>
+  <div class="compare" style="margin-bottom:0">
+    <div class="side">
+      <h4>ใช้ในระบบ — ไม่มี json tag เลย</h4>
+      <pre><code><span class="k">type</span> UserModel <span class="k">struct</span> {
+    ID           <span class="n">int</span>
+    Email        <span class="n">string</span>
+    PasswordHash <span class="n">string</span>
+}</code></pre>
+    </div>
+    <div class="side good">
+      <h4>ส่งออกไปข้างนอกเท่านั้น</h4>
+      <pre><code><span class="k">type</span> UserResponse <span class="k">struct</span> {
+    ID    <span class="n">int</span>    <span class="s">`json:"id"`</span>
+    Email <span class="n">string</span> <span class="s">`json:"email"`</span>
+}</code></pre>
+    </div>
+  </div>
+</div>
+
+<h2>6 · กฎของ <code>json.Unmarshal()</code> ที่ต้องรู้ครบ</h2>
+
+<h3>6.1 ลืม <code>&amp;</code> = ไม่ทำงาน แต่ได้ error บอก</h3>
+
+<pre><code>json.<span class="f">Unmarshal</span>(data, &amp;product)   <span class="c">// ✅</span>
+json.<span class="f">Unmarshal</span>(data, product)    <span class="c">// ❌</span>
+
+<span class="c">// error จริงที่ได้:</span>
+<span class="c">// json: Unmarshal(non-pointer main.ProductPrice)</span></code></pre>
+
+<p>
+  เหตุผลย้อนไปที่ <a href="../../day-3/lessons/0007-value-vs-pointer.html">บทเรียน 07</a>:
+  <strong>Go ส่งค่าแบบ pass by value 100%</strong> —
+  ถ้าไม่ส่ง pointer ไป <code>Unmarshal</code> จะแก้ได้แค่ copy
+  อันนี้ยังดีที่มี error เตือน ไม่เหมือนกับดักอื่นในบทนี้
+</p>
+
+<h3>6.2 field ที่ JSON ไม่ได้ส่งมา → zero value</h3>
+
+<pre><code><span class="c">// JSON: {"name":"Alice"}</span>
+<span class="k">type</span> User <span class="k">struct</span> {
+    Name   <span class="n">string</span> <span class="s">`json:"name"`</span>
+    Age    <span class="n">int</span>    <span class="s">`json:"age"`</span>
+    Active <span class="n">bool</span>   <span class="s">`json:"active"`</span>
+}
+
+<span class="c">// ผลรันจริง: {Name:Alice Age:0 Active:false}  — ไม่มี error</span></code></pre>
+
+<h3>6.3 field ส่วนเกินใน JSON → ถูกทิ้งเงียบ ๆ</h3>
+
+<pre><code><span class="c">// JSON: {"email":"alice@example.com","admin":true}</span>
+<span class="k">type</span> LoginRequest <span class="k">struct</span> {
+    Email <span class="n">string</span> <span class="s">`json:"email"`</span>
+}
+
+<span class="c">// ผลรันจริง: err = &lt;nil&gt;  ← ผ่านฉลุย "admin" หายไปเฉย ๆ</span></code></pre>
+
+<h3>6.4 type ไม่ตรง → อันนี้มี error</h3>
+
+<pre><code><span class="c">// Struct ต้องการ int แต่ JSON ส่ง string มา</span>
+<span class="k">type</span> Product <span class="k">struct</span> {
+    Price <span class="n">int</span> <span class="s">`json:"price"`</span>
+}
+<span class="c">// JSON: {"price":"2590"}</span>
+
+<span class="c">// error จริง:</span>
+<span class="c">// json: cannot unmarshal string into Go struct field
+//       ProductPrice.price of type int</span></code></pre>
+
+<h2>7 · เรื่องที่สไลด์ไม่ได้บอก: การจับคู่ key <em>ไม่</em> สนตัวพิมพ์</h2>
+
+<div class="predict">
+  <pre><code><span class="k">type</span> StrictUser <span class="k">struct</span> {
+    ID   <span class="n">string</span> <span class="s">`json:"id"`</span>
+    Name <span class="n">string</span> <span class="s">`json:"name"`</span>
+}
+
+<span class="c">// JSON ส่งมาเป็นตัวพิมพ์ใหญ่:</span>
+json.<span class="f">Unmarshal</span>([]<span class="n">byte</span>(<span class="s">`{"ID":"P001","NAME":"Keyboard"}`</span>), &amp;u)</code></pre>
+  <p class="ask">ได้ค่าเข้า struct ไหม หรือได้ค่าว่าง?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ได้ครบ</strong> — <code>{ID:P001 Name:Keyboard}</code> ผมรันทดสอบแล้ว</p>
+    <p style="margin-bottom:0">
+      <code>encoding/json</code> จับคู่แบบ <strong>case-insensitive</strong> เมื่อหา
+      exact match ไม่เจอ ข้อดีคือทนต่อ API ที่ตั้งชื่อไม่สม่ำเสมอ
+      <strong>ข้อเสียคือมันปิดบังบั๊ก</strong> — โค้ดทำงานได้ทั้งที่ contract
+      ระหว่างสองระบบไม่ตรงกันจริง ๆ วันหนึ่งอีกฝั่งเปลี่ยนไปใช้ชื่ออื่น
+      คุณจะเพิ่งรู้ว่าไม่เคยตกลงกันชัดเจน
+    </p>
+  </div>
+</div>
+
+<h2>8 · <code>json.NewDecoder()</code> — เมื่อ Unmarshal ไม่พอ</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>os.ReadFile</code> + <code>Unmarshal</code></th><th><code>json.NewDecoder</code></th></tr>
+  <tr><td>อ่านข้อมูล</td><td>โหลด<strong>ทั้งไฟล์เข้า RAM ก่อน</strong></td><td>อ่านทีละส่วนแบบ stream</td></tr>
+  <tr><td>ไฟล์ 2 GB</td><td>กิน RAM 2 GB</td><td>กิน RAM คงที่</td></tr>
+  <tr><td>รับจาก network</td><td>ต้องรออ่านให้ครบก่อน</td><td>เริ่มแกะได้เลย</td></tr>
+  <tr><td>กัน field แปลกปลอม</td><td>❌ ไม่มีทางเลือก</td><td>✅ <code>DisallowUnknownFields()</code></td></tr>
+</table>
+</div>
+
+<pre><code>file, err := os.<span class="f">Open</span>(<span class="s">"product.json"</span>)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    <span class="k">return</span> err
+}
+<span class="k">defer</span> file.<span class="f">Close</span>()          <span class="c">// ← บทเรียน 08</span>
+
+<span class="k">var</span> product Product
+decoder := json.<span class="f">NewDecoder</span>(file)
+
+<span class="k">if</span> err := decoder.<span class="f">Decode</span>(&amp;product); err != <span class="k">nil</span> {
+    <span class="k">return</span> err
+}</code></pre>
+
+<h3>ปิดช่องโหว่ 6.3 ด้วย <code>DisallowUnknownFields()</code></h3>
+
+<pre><code><span class="k">type</span> User <span class="k">struct</span> {
+    ID   <span class="n">string</span> <span class="s">`json:"id"`</span>
+    Name <span class="n">string</span> <span class="s">`json:"name"`</span>
+}
+
+raw := <span class="s">`{"name":"admin","isAdmin":true}`</span>
+
+decoder := json.<span class="f">NewDecoder</span>(strings.<span class="f">NewReader</span>(raw))
+decoder.<span class="f">DisallowUnknownFields</span>()      <span class="c">// ← เปิดโหมดเข้มงวด</span>
+
+<span class="k">if</span> err := decoder.<span class="f">Decode</span>(&amp;user); err != <span class="k">nil</span> {
+    fmt.<span class="f">Println</span>(<span class="s">"error"</span>, err)
+    <span class="k">return</span>
+}
+<span class="c">// ผลรันจริง: error json: unknown field "isAdmin"</span></code></pre>
+
+<div class="win">
+  <span class="label">ควรเปิดเมื่อไหร่</span>
+  <p style="margin-bottom:0">
+    <strong>เปิดเสมอสำหรับ config file และ request body ที่รับจากภายนอก</strong> —
+    ผู้ใช้พิมพ์ <code>"tiemout"</code> แทน <code>"timeout"</code> ใน config
+    ถ้าไม่เปิดโหมดนี้ ระบบจะใช้ค่า default เงียบ ๆ แล้วคุณจะหาสาเหตุไม่เจอ
+    ส่วนตอน<em>รับ</em> response จาก API ภายนอก ไม่ควรเปิด
+    เพราะเขาอาจเพิ่ม field ใหม่เมื่อไหร่ก็ได้ แล้วระบบคุณจะพังทันที
+  </p>
+</div>
+
+<h2>9 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="3">
+  <p class="q">1. field ชื่อ <code>password</code> (ตัวเล็ก) ที่มี <code>json:"password"</code> จะเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">ออก JSON ปกติ เพราะมี tag กำกับไว้</button>
+    <button class="opt">ออก JSON แต่ค่าจะถูกแทนด้วยดาว</button>
+    <button class="opt">คอมไพล์ไม่ผ่าน เพราะ tag ผิดที่</button>
+    <button class="opt">ถูกข้ามไปเงียบ ๆ ทั้งเข้าและออก</button>
+  </div>
+  <div class="explain">
+    <p>field ตัวเล็ก = unexported → <code>encoding/json</code> ซึ่งอยู่คนละ package
+    เข้าถึงไม่ได้ <strong>ไม่มี error ไม่มี warning</strong> ขา Marshal ก็หาย
+    ขา Unmarshal ก็ได้ค่าว่าง — <strong>เคยเป็นสาเหตุของช่องโหว่ login มาแล้วจริง</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. <code>Price int</code> + <code>omitempty</code> เมื่อค่าเป็น <code>0</code> จะได้ JSON แบบไหน?</p>
+  <div class="opts">
+    <button class="opt">ได้ price เป็น 0 ตามค่าที่ใส่ไว้</button>
+    <button class="opt">ไม่มี price ในผลลัพธ์เลยแม้แต่นิด</button>
+    <button class="opt">ได้ price เป็น null แทนตัวเลข</button>
+    <button class="opt">ได้ price เป็นสตริงว่างเปล่า</button>
+  </div>
+  <div class="explain">
+    <p><code>omitempty</code> ตัดทิ้งทุกอย่างที่เป็น <strong>zero value</strong> —
+    <code>0</code>, <code>false</code>, <code>""</code>, <code>nil</code>
+    ทั้งที่บางครั้งค่าเหล่านี้<em>มีความหมาย</em>
+    <strong>ทางแก้: เปลี่ยนเป็น <code>*int</code></strong> ซึ่งแยก "ไม่ส่ง"
+    (<code>nil</code>) ออกจาก "ส่งค่า 0" ได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. JSON มี field เกินกว่าที่ struct ประกาศไว้ — <code>Unmarshal</code> ทำยังไง?</p>
+  <div class="opts">
+    <button class="opt">คืน error บอกว่ามี field เกินมา</button>
+    <button class="opt">เก็บใส่ map ที่ซ่อนไว้ในโครงสร้าง</button>
+    <button class="opt">ทิ้งไปเงียบ ๆ ไม่มี error ใด ๆ</button>
+    <button class="opt">เกิด panic ทันทีตอนแกะข้อมูล</button>
+  </div>
+  <div class="explain">
+    <p>เป็นค่าเริ่มต้นของ <code>encoding/json</code> — ออกแบบมาให้ทนต่อ API
+    ที่เพิ่ม field ใหม่ <strong>ถ้าต้องการเข้มงวด ต้องใช้
+    <code>json.NewDecoder(...)</code> แล้วเรียก <code>DisallowUnknownFields()</code></strong>
+    ซึ่งจะได้ <code>json: unknown field "isAdmin"</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. ทำไมถึงควรใช้ <code>json.NewDecoder</code> แทน <code>ReadFile</code>+<code>Unmarshal</code>?</p>
+  <div class="opts">
+    <button class="opt">ไม่ต้องโหลดทั้งไฟล์เข้าหน่วยความจำก่อน</button>
+    <button class="opt">แปลงข้อมูลได้เร็วกว่าอย่างมีนัยสำคัญ</button>
+    <button class="opt">รองรับรูปแบบ JSON ที่มากกว่าเดิม</button>
+    <button class="opt">ไม่จำเป็นต้องส่ง pointer เข้าไปแล้ว</button>
+  </div>
+  <div class="explain">
+    <p>เหตุผลหลักคือ <strong>stream</strong> — อ่านทีละส่วน ไม่กิน RAM ตามขนาดไฟล์
+    เหมาะกับ HTTP request body และไฟล์ใหญ่ ของแถมคือได้
+    <code>DisallowUnknownFields()</code> มาด้วย
+    <br>(<code>Decode</code> ยังต้องส่ง <code>&amp;</code> เหมือนเดิมนะ)</p>
+  </div>
+</div>
+
+<h2>10 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: ค้นหาโปรไฟล์ผู้เล่นและแปลงเป็น JSON (workshop จากสไลด์)</h3>
+  <ol>
+    <li>สร้าง <code>type Player struct</code> ที่มี <code>ID</code>,
+        <code>UserName</code>, <code>NickName</code>, <code>Password</code></li>
+    <li>เขียน <code>findPlayer(id int) (Player, error)</code> — ไม่พบให้คืน
+        <code>ErrPlayerNotFound</code> (sentinel จาก
+        <a href="./0012-error-architecture.html">บทเรียน 12</a>)</li>
+    <li>ถ้าพบ ให้แปลงเป็น JSON โดยมีเงื่อนไข:
+      <ul>
+        <li>key ต้องเป็น <strong>camelCase</strong> (<code>playerId</code>, <code>userName</code>)</li>
+        <li><code>Password</code> <strong>ห้ามหลุด</strong>ออกไปใน JSON</li>
+        <li><code>NickName</code> ถ้าไม่มีค่า <strong>ไม่ต้องแสดง</strong></li>
+      </ul>
+    </li>
+    <li>ผลลัพธ์ที่ต้องได้:
+      <pre style="margin:0.4rem 0"><code>findPlayer(101) → {"playerId":101,"userName":"go_master"}
+findPlayer(999) → error: player not found</code></pre>
+    </li>
+    <li><strong>ตรวจงานตัวเอง:</strong> ทำข้อ "Password ห้ามหลุด" ด้วย
+        <code>json:"-"</code> ไปแล้วใช่ไหม — ลองทำ<strong>อีกวิธี</strong>
+        ด้วยการแยก <code>PlayerResponse</code> ออกมา
+        แล้วตอบตัวเองว่า<strong>แบบไหนที่เพื่อนร่วมทีมเผลอทำพังยากกว่า</strong></li>
+    <li><strong>ท้าทาย 1:</strong> ทำให้ <code>findPlayer(101)</code> ที่<em>มี</em>
+        nickname กับ<em>ไม่มี</em> nickname ให้ JSON ต่างกันจริง — พิสูจน์ว่า
+        <code>omitempty</code> ทำงาน</li>
+    <li><strong>ท้าทาย 2:</strong> เขียนขากลับ — รับ JSON
+        <code>{"playerId":101,"userName":"go_master","isAdmin":true}</code>
+        แล้ว <code>Unmarshal</code> กลับเป็น <code>Player</code>
+        <ul>
+          <li>ใช้ <code>json.Unmarshal</code> ธรรมดา → <strong>เกิดอะไรกับ <code>isAdmin</code>?</strong></li>
+          <li>เปลี่ยนไปใช้ <code>json.NewDecoder</code> + <code>DisallowUnknownFields()</code>
+              → <strong>ต่างกันยังไง?</strong></li>
+        </ul>
+    </li>
+    <li><strong>ท้าทาย 3:</strong> ลอง <code>Unmarshal</code>
+        <code>{"PLAYERID":999}</code> (ตัวพิมพ์ใหญ่หมด) เข้า <code>Player</code>
+        — <strong>เข้าไหม?</strong> ถ้าเข้า อธิบายว่าทำไม
+        (ย้อนดูหัวข้อ 7)</li>
+  </ol>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://go.dev/blog/json">JSON and Go</a> — บทความทางการที่อธิบาย
+  ทั้ง Marshal/Unmarshal/Decoder และเคสที่ไม่รู้โครงสร้างล่วงหน้า
+  (<code>map[string]any</code>) ประมาณ 15 นาที
+  <br>ตอนเขียนโค้ดจริงให้เปิด
+  <a href="https://pkg.go.dev/encoding/json#Marshal">pkg.go.dev — json.Marshal</a>
+  ไว้ข้าง ๆ เพราะกฎการแปลงทุกข้อ (รวม <code>omitempty</code> และ
+  <code>-</code>) อยู่ในหน้านั้นครบ
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — ถ้าเจอ JSON ที่โครงสร้าง
+    ไม่แน่นอน (บางครั้งเป็น object บางครั้งเป็น array)
+    บอกมาได้ มีวิธีจัดการที่ยังไม่ได้สอนในบทนี้
+    (<code>json.RawMessage</code> และ custom <code>UnmarshalJSON</code>)
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0012-error-architecture.html">← บทเรียน 12</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 4</a>
+  <a href="../../day-5/lessons/0014-test-in-go.html">บทเรียน 14 → test in Go</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/blog/json">The Go Blog — JSON and Go</a> — บทความทางการ ครอบคลุมทั้ง encode/decode/stream</li>
+  <li><a href="https://pkg.go.dev/encoding/json#Marshal">pkg.go.dev — json.Marshal</a> — กฎการแปลงทุกข้อ รวม tag options</li>
+  <li><a href="https://pkg.go.dev/encoding/json#Decoder.DisallowUnknownFields">pkg.go.dev — DisallowUnknownFields</a></li>
+  <li><a href="https://google.github.io/styleguide/jsoncstyleguide.xml">Google JSON Style Guide</a> — ที่มาของกฎ camelCase</li>
+  <li><a href="https://go.dev/ref/spec#Struct_types">Go spec — Struct types</a> — นิยามของ struct tag</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheat Sheet — Go Day 4</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<style>
+  /* หน้านี้เป็นเอกสารอ้างอิง — แน่นกว่า lesson และออกแบบให้พิมพ์ลงกระดาษได้ */
+  body { font-size: 15.5px; }
+  main { max-width: 54rem; }
+  h2 { margin-top: 2.2rem; font-size: 1.2rem; }
+  h3 { margin-top: 1.4rem; font-size: 1rem; }
+  pre { font-size: 0.78rem; padding: 0.75rem 0.9rem; margin-bottom: 0.9rem; }
+  table { font-size: 0.86rem; }
+  p, ul, ol { margin-bottom: 0.8rem; }
+  .toc { columns: 2; font-size: 0.9rem; padding-left: 1.1rem; }
+  .toc li { break-inside: avoid; }
+  .rule { font-weight: 650; color: var(--accent-dk); }
+  @media print { body { font-size: 9.5pt; } main { max-width: none; } h2 { margin-top: 1.2rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Reference · เก็บไว้เปิดตอนเขียนโค้ด</p>
+  <h1>Go Day 4 — Cheat Sheet</h1>
+  <p class="meta">ครอบคลุมสไลด์ทั้ง 66 หน้า · ตัวอย่างทุกอันรันจริงบน Go 1.26 แล้ว · พิมพ์ลงกระดาษได้</p>
+</header>
+
+<main>
+
+<h2>สารบัญ</h2>
+<ol class="toc">
+  <li><a href="#underlying">Underlying Type &amp; Alias</a></li>
+  <li><a href="#interface">Interface &amp; Duck Typing</a></li>
+  <li><a href="#any">any, Assertion, Type Switch</a></li>
+  <li><a href="#std">Standard Interfaces</a></li>
+  <li><a href="#error">Error Architecture</a></li>
+  <li><a href="#json">JSON &amp; Struct Tags</a></li>
+  <li><a href="#decoder">Encoder / Decoder</a></li>
+  <li><a href="#traps">ตารางกับดักรวม</a></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="underlying">1 · Underlying Type &amp; Alias</h2>
+
+<pre><code><span class="k">type</span> Score <span class="n">float64</span>       <span class="c">// defined type — type ใหม่ ไม่เท่ากับ float64</span>
+<span class="k">type</span> Price = <span class="n">float64</span>     <span class="c">// alias      — คือ float64 ตัวเดียวกันเป๊ะ</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>type T U</code></th><th><code>type T = U</code></th></tr>
+  <tr><td>type ใหม่</td><td>✅</td><td>❌</td></tr>
+  <tr><td>assign ตรง ๆ กับ <code>U</code></td><td>❌ ต้อง <code>U(v)</code></td><td>✅</td></tr>
+  <tr><td>แปะ method</td><td>✅</td><td>❌ <code>cannot define new methods on non-local type</code></td></tr>
+  <tr><td><code>%T</code></td><td><code>main.T</code></td><td><code>U</code></td></tr>
+</table>
+</div>
+
+<ul>
+  <li><span class="rule">underlying type เดียวกัน ≠ type เดียวกัน</span> —
+      <code>Score</code> กับ <code>Price</code> ที่ต่างมาจาก <code>float64</code>
+      เอามา <code>==</code> กันไม่ได้</li>
+  <li>alias ที่มีอยู่แล้วในภาษา: <code>any</code>=<code>interface{}</code> ·
+      <code>byte</code>=<code>uint8</code> · <code>rune</code>=<code>int32</code></li>
+  <li>ใช้ defined type เมื่ออยากให้ compiler แยกความหมาย
+      (<code>UserID</code>/<code>ProductID</code>, <code>Baht</code>/<code>Satang</code>)</li>
+</ul>
+
+<pre><code><span class="k">type</span> Score <span class="n">float64</span>
+<span class="k">func</span> (s Score) <span class="f">Passed</span>() <span class="n">bool</span> { <span class="k">return</span> s >= <span class="n">50</span> }   <span class="c">// method บน type ที่ไม่ใช่ struct ก็ได้</span>
+
+a := <span class="f">Score</span>(<span class="n">80.5</span>) + <span class="f">Score</span>(<span class="n">10</span>)   <span class="c">// 90.5  · %T = main.Score (ไม่ใช่ float64)</span></code></pre>
+
+<!-- ============================================================ -->
+<h2 id="interface">2 · Interface &amp; Duck Typing</h2>
+
+<pre><code><span class="k">type</span> Notifier <span class="k">interface</span> {
+    <span class="f">Notify</span>(message <span class="n">string</span>) <span class="n">error</span>
+}
+
+<span class="k">type</span> EmailNotifier <span class="k">struct</span>{}
+<span class="k">func</span> (EmailNotifier) <span class="f">Notify</span>(message <span class="n">string</span>) <span class="n">error</span> { <span class="k">return</span> <span class="k">nil</span> }
+<span class="c">// ไม่ต้องเขียน implements — มี method ครบก็ใช้ได้เลย (structural typing)</span></code></pre>
+
+<h3>Method set — กฎที่ทำให้ compile ไม่ผ่านบ่อยที่สุด</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>receiver</th><th><code>T</code> เป็น interface ได้</th><th><code>*T</code> เป็น interface ได้</th></tr>
+  <tr><td><code>func (t T) M()</code></td><td>✅</td><td>✅</td></tr>
+  <tr><td><code>func (t *T) M()</code></td><td>❌</td><td>✅</td></tr>
+</table>
+</div>
+<pre><code><span class="c">// error ที่จะเจอ:</span>
+<span class="c">// T does not implement I (method M has pointer receiver)</span>
+<span class="c">// ทางแก้: ใส่ &amp; → var i I = &amp;T{}</span></code></pre>
+
+<h3>Dependency injection ด้วย interface</h3>
+<pre><code><span class="k">type</span> PaymentGateway <span class="k">interface</span> { <span class="f">Pay</span>(amount <span class="n">int64</span>) <span class="n">error</span> }
+
+<span class="k">type</span> CheckoutService <span class="k">struct</span> { gateway PaymentGateway }
+
+<span class="k">func</span> <span class="f">NewCheckoutService</span>(gateway PaymentGateway) *CheckoutService {
+    <span class="k">return</span> &amp;CheckoutService{gateway: gateway}
+}
+<span class="c">// สลับ PaypalGateway{} / GooglePayGateway{} / FakeGateway{} ได้ที่จุดเดียว</span></code></pre>
+
+<h3>Interface embedding</h3>
+<pre><code><span class="k">type</span> Storage <span class="k">interface</span> {
+    Saver      <span class="c">// รวม method ของ Saver มา ไม่ใช่ field</span>
+    Loader
+    Deleter
+}
+<span class="c">// ของจริง: io.ReadWriter = io.Reader + io.Writer</span></code></pre>
+
+<h3>กฎออกแบบ</h3>
+<ul>
+  <li><span class="rule">สร้าง interface ตามสิ่งที่<em>ผู้เรียก</em>ต้องใช้ ไม่ใช่ตามทุกอย่างที่ type ทำได้</span></li>
+  <li><span class="rule">Accept interfaces, return structs</span> — พารามิเตอร์เป็น interface ค่าคืนเป็น struct</li>
+  <li>ประกาศ interface ไว้ใน package ของ<strong>ฝั่งที่ใช้</strong> ไม่ใช่ฝั่งที่ implement</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="any">3 · any, Type Assertion, Type Switch</h2>
+
+<pre><code><span class="k">type</span> <span class="k">any</span> = <span class="k">interface</span>{}   <span class="c">// alias · interface ที่ไม่ขอ method อะไรเลย</span></code></pre>
+
+<div class="diagram">
+<pre>ตัวแปร interface เก็บ <strong>สองช่อง</strong>เสมอ:
+
+  ┌──────────┬──────────┐
+  │  type    │  value   │      %T อ่านช่องซ้าย · %v อ่านช่องขวา
+  └──────────┴──────────┘
+  interface == nil ก็ต่อเมื่อ <strong>ทั้งสองช่องว่าง</strong></pre>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เขียน</th><th>ถ้า type ไม่ตรง</th><th>ใช้เมื่อ</th></tr>
+  <tr><td><code>s := i.(string)</code></td><td>💥 <strong>panic</strong></td><td>มั่นใจ 100% เท่านั้น</td></tr>
+  <tr><td><code>s, ok := i.(string)</code></td><td><code>s</code> = zero value, <code>ok</code> = false</td><td><strong>ค่าเริ่มต้น ใช้อันนี้</strong></td></tr>
+  <tr><td><code>switch v := i.(type)</code></td><td>ตกลง <code>default</code></td><td>เช็คหลาย type</td></tr>
+</table>
+</div>
+
+<pre><code><span class="k">switch</span> value := v.(<span class="k">type</span>) {     <span class="c">// .(type) เขียนได้เฉพาะใน switch</span>
+<span class="k">case</span> <span class="n">string</span>:  <span class="c">// value เป็น string จริง ๆ ในบล็อกนี้ ไม่ต้อง assert ซ้ำ</span>
+<span class="k">case</span> <span class="n">int</span>:
+<span class="k">case</span> <span class="k">nil</span>:     <span class="c">// เช็ค nil interface ได้</span>
+<span class="k">case</span> fmt.Stringer, <span class="n">error</span>:   <span class="c">// หลาย type ใน case เดียว → value กลับเป็น any</span>
+<span class="k">default</span>:
+}</code></pre>
+
+<ul>
+  <li><span class="rule">Go เลือก case <em>แรก</em>ที่ตรง ไม่ใช่ที่ตรงที่สุด</span> —
+      type ที่ implement ทั้ง <code>error</code> และ <code>fmt.Stringer</code>
+      จะเข้า case ไหนขึ้นกับลำดับที่คุณเขียน</li>
+  <li><code>panic</code> ที่จะเห็น:
+      <code>interface conversion: interface {} is string, not int</code></li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="std">4 · Standard Interfaces ที่ควรรู้จัก</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Interface</th><th>Method</th><th>ได้อะไร</th></tr>
+  <tr><td><code>fmt.Stringer</code></td><td><code>String() string</code></td><td><code>fmt.Println</code> พิมพ์ตามที่คุณกำหนด</td></tr>
+  <tr><td><code>error</code></td><td><code>Error() string</code></td><td>เป็น error ได้</td></tr>
+  <tr><td><code>io.Reader</code></td><td><code>Read([]byte) (int, error)</code></td><td>เสียบเข้ากับ ecosystem ทั้งหมดของ Go</td></tr>
+  <tr><td><code>io.Writer</code></td><td><code>Write([]byte) (int, error)</code></td><td>เขียนลงไฟล์/network/buffer ได้เหมือนกันหมด</td></tr>
+  <tr><td><code>json.Marshaler</code></td><td><code>MarshalJSON() ([]byte, error)</code></td><td>คุมรูปแบบ JSON เอง</td></tr>
+</table>
+</div>
+
+<pre><code><span class="k">func</span> (p Person) <span class="f">String</span>() <span class="n">string</span> { <span class="k">return</span> p.Name + <span class="s">" "</span> + p.Surname }
+
+fmt.<span class="f">Println</span>(p)   <span class="c">// มี String()  → Alice Wonder</span>
+                   <span class="c">// ไม่มี        → {Alice Wonder}</span></code></pre>
+
+<ul>
+  <li><span class="rule">อย่าเขียน <code>fmt.Sprintf("%v", p)</code> ข้างใน <code>String()</code></span>
+      → วนไม่รู้จบ stack overflow · อ้าง field ตรง ๆ แทน</li>
+  <li>type ที่มีทั้ง <code>Error()</code> และ <code>String()</code> →
+      <code>fmt</code> เลือก <strong><code>Error()</code></strong> ก่อน</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="error">5 · Error Architecture</h2>
+
+<pre><code><span class="k">type</span> <span class="n">error</span> <span class="k">interface</span> { <span class="f">Error</span>() <span class="n">string</span> }   <span class="c">// built-in · แค่นี้จริง ๆ</span></code></pre>
+
+<h3>สร้าง error</h3>
+<div class="table-wrap">
+<table>
+  <tr><th></th><th>ใช้เมื่อ</th><th>ห่อได้</th><th><code>==</code> ได้</th></tr>
+  <tr><td><code>errors.New("...")</code></td><td>ข้อความคงที่ / sentinel</td><td>❌</td><td>✅</td></tr>
+  <tr><td><code>fmt.Errorf("...%w", err)</code></td><td>เติมบริบท / ห่อ error เดิม</td><td>✅</td><td>❌</td></tr>
+  <tr><td><code>&amp;MyError{...}</code></td><td>ต้องพก field ไปด้วย</td><td>✅ (ถ้ามี <code>Unwrap</code>)</td><td>❌</td></tr>
+</table>
+</div>
+
+<h3>Sentinel + Error chain</h3>
+<pre><code><span class="k">var</span> ErrUserNotFound = errors.<span class="f">New</span>(<span class="s">"user not found"</span>)   <span class="c">// ระดับ package · ขึ้นต้น Err</span>
+
+<span class="c">// repository:</span> fmt.<span class="f">Errorf</span>(<span class="s">"query user: %w"</span>, err)
+<span class="c">// service:   </span> fmt.<span class="f">Errorf</span>(<span class="s">"get profile %s: %w"</span>, id, err)
+<span class="c">// ได้: get profile U-101: query user: user not found</span></code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="rule">%v ทำให้โซ่ขาด แต่ข้อความเหมือนเดิมทุกตัวอักษร</span> —
+    <code>errors.Is</code> จะคืน <code>false</code> เงียบ ๆ
+    <strong>ใช้ <code>%w</code> เท่านั้นเวลาห่อ error</strong>
+  </p>
+</div>
+
+<h3>ตรวจ error</h3>
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>errors.Is(err, target)</code></th><th><code>errors.As(err, &amp;target)</code></th></tr>
+  <tr><td>ถาม</td><td>"มี error <strong>ตัวนี้</strong> ในโซ่ไหม"</td><td>"มี error <strong>ชนิดนี้</strong> ในโซ่ไหม"</td></tr>
+  <tr><td>คู่กับ</td><td>sentinel</td><td>custom struct</td></tr>
+  <tr><td>ได้กลับ</td><td><code>bool</code></td><td><code>bool</code> + ตัวจริงพร้อม field</td></tr>
+  <tr><td>ต้องมี <code>&amp;</code></td><td>❌</td><td>✅ <strong>บังคับ</strong></td></tr>
+</table>
+</div>
+
+<pre><code><span class="k">if</span> errors.<span class="f">Is</span>(err, ErrUserNotFound) { <span class="c">/* ตอบ 404 */</span> }
+
+<span class="k">var</span> appErr *AppError
+<span class="k">if</span> errors.<span class="f">As</span>(err, &amp;appErr) {
+    http.<span class="f">Error</span>(w, appErr.Message, appErr.HTTPStatus)
+}</code></pre>
+
+<h3>Custom error struct — โครงที่ใช้จริง</h3>
+<pre><code><span class="k">type</span> AppError <span class="k">struct</span> {
+    Op         <span class="n">string</span>   <span class="c">// เกิดที่ไหน — "UserService.GetUser"</span>
+    Code       <span class="n">string</span>   <span class="c">// รหัสให้เครื่องอ่าน — "USER_NOT_FOUND"</span>
+    HTTPStatus <span class="n">int</span>      <span class="c">// ตอบ client ยังไง</span>
+    Message    <span class="n">string</span>   <span class="c">// ข้อความให้ผู้ใช้อ่าน</span>
+    Err        <span class="n">error</span>    <span class="c">// error เดิม</span>
+}
+
+<span class="k">func</span> (e *AppError) <span class="f">Error</span>() <span class="n">string</span> { ... }
+<span class="k">func</span> (e *AppError) <span class="f">Unwrap</span>() <span class="n">error</span> { <span class="k">return</span> e.Err }   <span class="c">// ⚠️ ขาดไม่ได้</span></code></pre>
+
+<ul>
+  <li><span class="rule">ไม่มี <code>Unwrap()</code> → <code>errors.Is</code> พัง
+      แต่ <code>errors.As</code> ยังหา type ชั้นนอกสุดเจอ</span></li>
+  <li><span class="rule">ห้ามตรวจ error ด้วย <code>err.Error() == "..."</code></span></li>
+</ul>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="rule">typed nil</span> — คืน <code>var e *AppError = nil</code>
+    จากฟังก์ชันที่ประกาศคืน <code>error</code> จะทำให้
+    <code>err != nil</code> เป็น <strong>true</strong>
+    เพราะช่อง type ไม่ว่าง · <strong>ให้เขียน <code>return nil</code> ตรง ๆ</strong>
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="json">6 · JSON &amp; Struct Tags</h2>
+
+<pre><code>json.<span class="f">Marshal</span>(v)            <span class="c">// Go → []byte  (ส่งออก)</span>
+json.<span class="f">Unmarshal</span>(data, &amp;v)   <span class="c">// []byte → Go  (รับเข้า) · ลืม &amp; = error</span>
+json.<span class="f">MarshalIndent</span>(v, <span class="s">""</span>, <span class="s">"  "</span>)   <span class="c">// สวยงามสำหรับ log/debug</span></code></pre>
+
+<h3>Tag options</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>Tag</th><th>ผล</th></tr>
+  <tr><td><code>json:"userId"</code></td><td>เปลี่ยนชื่อ key</td></tr>
+  <tr><td><code>json:"nickname,omitempty"</code></td><td>ตัดทิ้งถ้าเป็น zero value</td></tr>
+  <tr><td><code>json:"-"</code></td><td>ไม่เข้าไม่ออก JSON เลย</td></tr>
+  <tr><td><code>json:"-,"</code></td><td>key ชื่อ <code>"-"</code> จริง ๆ (สังเกต comma)</td></tr>
+  <tr><td><code>json:",string"</code></td><td>ส่งตัวเลขเป็น string (<code>"2590"</code>)</td></tr>
+  <tr><td>ไม่ใส่ tag</td><td>ใช้ชื่อ field ตรง ๆ → <code>"UserID"</code></td></tr>
+</table>
+</div>
+
+<pre><code><span class="c">// หลาย package ในบรรทัดเดียว คั่นด้วยเว้นวรรค:</span>
+UserID <span class="n">int</span> <span class="s">`json:"userId" xml:"userId" validate:"required"`</span></code></pre>
+
+<h3>กฎที่ทำให้ข้อมูลหายแบบไม่มี error</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>ผล</th><th>มี error ไหม</th></tr>
+  <tr><td>field ขึ้นต้น<strong>ตัวเล็ก</strong></td><td>ข้ามทั้งขาเข้าและขาออก</td><td>❌ เงียบสนิท</td></tr>
+  <tr><td><code>omitempty</code> + ค่าเป็น <code>0</code>/<code>false</code></td><td>หายไปจาก JSON</td><td>❌</td></tr>
+  <tr><td>JSON ไม่ส่ง field มา</td><td>ได้ zero value</td><td>❌</td></tr>
+  <tr><td>JSON มี field ส่วนเกิน</td><td>ทิ้งไปเฉย ๆ</td><td>❌</td></tr>
+  <tr><td>key ตัวพิมพ์ไม่ตรง (<code>"ID"</code> vs <code>"id"</code>)</td><td><strong>เข้าได้</strong> (case-insensitive)</td><td>❌</td></tr>
+  <tr><td>type ไม่ตรง</td><td>ไม่เข้า</td><td>✅ มี error</td></tr>
+  <tr><td>ลืม <code>&amp;</code> ตอน Unmarshal</td><td>ไม่เข้า</td><td>✅ <code>Unmarshal(non-pointer …)</code></td></tr>
+</table>
+</div>
+
+<h3>Pointer แยก "ไม่ส่ง" ออกจาก "ส่งค่า zero"</h3>
+<pre><code><span class="k">type</span> Item <span class="k">struct</span> {
+    Price  *<span class="n">int</span>  <span class="s">`json:"price,omitempty"`</span>
+    Active *<span class="n">bool</span> <span class="s">`json:"active,omitempty"`</span>
+}
+
+Item{}                                <span class="c">// {}</span>
+Item{Price: &amp;price, Active: &amp;active}  <span class="c">// {"price":0,"active":false}</span></code></pre>
+
+<h3>ปกป้องข้อมูลลับ — แยก struct ปลอดภัยกว่า tag</h3>
+<pre><code><span class="k">type</span> UserModel <span class="k">struct</span> { ID <span class="n">int</span>; Email <span class="n">string</span>; PasswordHash <span class="n">string</span> }   <span class="c">// ในระบบ</span>
+<span class="k">type</span> UserResponse <span class="k">struct</span> {                                       <span class="c">// ส่งออก</span>
+    ID    <span class="n">int</span>    <span class="s">`json:"id"`</span>
+    Email <span class="n">string</span> <span class="s">`json:"email"`</span>
+}</code></pre>
+
+<h3>Google JSON Style Guide (ที่คอร์สอ้างถึง)</h3>
+<ul>
+  <li>property name เป็น <code>camelCase</code>, ASCII</li>
+  <li>ใช้ double quote เท่านั้น · ห้ามมี comment ใน JSON</li>
+  <li>วันที่ใช้รูปแบบ RFC 3339 — <code>2007-11-06T16:34:41.000Z</code></li>
+  <li>ค่าเป็นได้แค่ boolean, number, string, object, array, null</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="decoder">7 · Encoder / Decoder — เมื่อ Marshal ไม่พอ</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>Marshal</code>/<code>Unmarshal</code></th><th><code>Encoder</code>/<code>Decoder</code></th></tr>
+  <tr><td>ทำงานกับ</td><td><code>[]byte</code> ในมือ</td><td><code>io.Reader</code>/<code>io.Writer</code> (stream)</td></tr>
+  <tr><td>หน่วยความจำ</td><td>เท่าขนาดข้อมูลทั้งก้อน</td><td>คงที่</td></tr>
+  <tr><td>เหมาะกับ</td><td>ข้อมูลเล็ก ที่มีอยู่แล้ว</td><td>ไฟล์ใหญ่, HTTP body, network</td></tr>
+  <tr><td>โหมดเข้มงวด</td><td>❌</td><td>✅ <code>DisallowUnknownFields()</code></td></tr>
+</table>
+</div>
+
+<pre><code>file, err := os.<span class="f">Open</span>(<span class="s">"product.json"</span>)
+<span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+<span class="k">defer</span> file.<span class="f">Close</span>()
+
+decoder := json.<span class="f">NewDecoder</span>(file)
+decoder.<span class="f">DisallowUnknownFields</span>()          <span class="c">// → json: unknown field "isAdmin"</span>
+
+<span class="k">var</span> product Product
+<span class="k">if</span> err := decoder.<span class="f">Decode</span>(&amp;product); err != <span class="k">nil</span> { <span class="k">return</span> err }</code></pre>
+
+<pre><code><span class="c">// ฝั่งเขียนออก — ไม่ต้องสร้าง []byte กลาง:</span>
+json.<span class="f">NewEncoder</span>(w).<span class="f">Encode</span>(response)   <span class="c">// w คือ http.ResponseWriter ก็ได้</span></code></pre>
+
+<ul>
+  <li><span class="rule">เปิด <code>DisallowUnknownFields()</code> สำหรับ config
+      และ request body ของเราเอง</span> — จับ typo ได้</li>
+  <li><span class="rule">อย่าเปิด</span> ตอนอ่าน response จาก API ภายนอก —
+      เขาเพิ่ม field ใหม่เมื่อไหร่ระบบเราพังทันที</li>
+</ul>
+
+<h3>JSON ที่ไม่รู้โครงสร้าง</h3>
+<pre><code><span class="k">var</span> m <span class="k">map</span>[<span class="n">string</span>]<span class="k">any</span>
+json.<span class="f">Unmarshal</span>(data, &amp;m)
+
+m[<span class="s">"id"</span>]     <span class="c">// 101 แต่ %T = float64  ← ตัวเลขทุกตัวเป็น float64!</span>
+m[<span class="s">"tags"</span>]   <span class="c">// %T = []interface{}</span></code></pre>
+
+<!-- ============================================================ -->
+<h2 id="traps">8 · ตารางกับดักรวม — อ่านก่อนส่ง PR</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>โค้ดที่เห็น</th><th>สิ่งที่คุณคิด</th><th>สิ่งที่เกิดจริง</th></tr>
+  <tr>
+    <td><code>var v float64 = score</code> (<code>Score</code>)</td>
+    <td>ข้างใต้เป็น float64 ก็น่าจะได้</td>
+    <td>💥 compile error · ต้อง <code>float64(score)</code></td>
+  </tr>
+  <tr>
+    <td><code>type T = U</code> แล้วแปะ method</td>
+    <td>ได้ method บน type ใหม่</td>
+    <td>💥 <code>cannot define new methods on non-local type</code></td>
+  </tr>
+  <tr>
+    <td><code>var i I = T{}</code> เมื่อ method ใช้ <code>*T</code></td>
+    <td>Go แปลงให้เอง</td>
+    <td>💥 <code>method has pointer receiver</code> · ใส่ <code>&amp;</code></td>
+  </tr>
+  <tr>
+    <td><code>s := i.(string)</code></td>
+    <td>ไม่ตรงก็ได้ค่าว่าง</td>
+    <td>💥 <strong>panic</strong> · ใช้ <code>s, ok := …</code></td>
+  </tr>
+  <tr>
+    <td><code>fmt.Sprintf("%v", p)</code> ใน <code>String()</code></td>
+    <td>พิมพ์ค่า struct</td>
+    <td>💥 วนไม่จบ → stack overflow</td>
+  </tr>
+  <tr>
+    <td><code>fmt.Errorf("...: %v", err)</code></td>
+    <td>ห่อ error แล้ว</td>
+    <td>โซ่ขาด · <code>errors.Is</code> = false <strong>เงียบ ๆ</strong></td>
+  </tr>
+  <tr>
+    <td>custom error ไม่มี <code>Unwrap()</code></td>
+    <td>field <code>Err</code> พอแล้ว</td>
+    <td><code>errors.Is</code> มองไม่ทะลุ</td>
+  </tr>
+  <tr>
+    <td><code>return e</code> เมื่อ <code>e</code> คือ <code>*AppError</code> ที่เป็น nil</td>
+    <td>ผู้เรียกได้ nil</td>
+    <td>💥 <code>err != nil</code> เป็น true (typed nil)</td>
+  </tr>
+  <tr>
+    <td><code>err.Error() == "user not found"</code></td>
+    <td>เช็ค error ได้</td>
+    <td>พังทันทีที่มีคนแก้ข้อความ · ใช้ <code>errors.Is</code></td>
+  </tr>
+  <tr>
+    <td>field <code>password string</code> + tag</td>
+    <td>tag ทำให้ออก JSON ได้</td>
+    <td>หายเงียบทั้งสองทาง (unexported)</td>
+  </tr>
+  <tr>
+    <td><code>Price int `json:",omitempty"`</code> ค่า 0</td>
+    <td>ส่ง 0 ออกไป</td>
+    <td>หายไปจาก JSON · ใช้ <code>*int</code></td>
+  </tr>
+  <tr>
+    <td>JSON ส่ง <code>"isAdmin"</code> เกินมา</td>
+    <td>ได้ error เตือน</td>
+    <td>ทิ้งเงียบ · ต้อง <code>DisallowUnknownFields()</code></td>
+  </tr>
+  <tr>
+    <td><code>json.Unmarshal(data, product)</code></td>
+    <td>แก้ product ได้</td>
+    <td><code>Unmarshal(non-pointer …)</code> · ใส่ <code>&amp;</code></td>
+  </tr>
+  <tr>
+    <td><code>m["id"]</code> จาก <code>map[string]any</code></td>
+    <td>ได้ <code>int</code></td>
+    <td>ได้ <code>float64</code> ทุกตัวเลข</td>
+  </tr>
+  <tr>
+    <td><code>func f() error</code> ขึ้นบรรทัดใหม่ค่อย <code>{</code></td>
+    <td>จัดรูปแบบสวยงาม</td>
+    <td>💥 <code>unexpected semicolon or newline before {</code></td>
+  </tr>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="../lessons/0009-underlying-type.html">บทเรียน 09 — underlying type</a>
+  <a href="../lessons/0010-interface-and-duck-typing.html">บทเรียน 10 — interface</a>
+  <a href="../lessons/0011-type-assertion-and-switch.html">บทเรียน 11 — type assertion</a>
+  <a href="../lessons/0012-error-architecture.html">บทเรียน 12 — error</a>
+  <a href="../lessons/0013-json-and-struct-tags.html">บทเรียน 13 — JSON</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../../docs.html?f=RESOURCES.md">📚 Resources</a>
+</nav>
+
+</main>
+</body>
+</html>

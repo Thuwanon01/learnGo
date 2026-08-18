@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 06 — append ไปทับข้อมูลคนอื่นได้ยังไง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 06 · Go Data Structure</p>
+  <h1>append ไปทับข้อมูลคนอื่นได้ยังไง</h1>
+  <p class="meta">~15 นาที · ต้องมี: รู้จัก <code>[]int</code> และ <code>append</code> คร่าว ๆ</p>
+  <p class="standfirst">
+    บั๊ก Go ที่เจ็บที่สุดสำหรับมือใหม่คือบั๊กที่ <strong>compiler ไม่เตือน
+    เทสต์ผ่าน แต่ข้อมูลเพี้ยนบน production</strong> เกือบทั้งหมดมาจากเรื่องเดียว —
+    slice สองตัวแอบใช้ array ก้อนเดียวกันอยู่ จบบทนี้คุณจะมองออกทันทีว่าโค้ดบรรทัดไหน
+    กำลังจะระเบิด
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ฉากที่เกิดเรื่อง</h2>
+
+<p>
+  สมมติคุณเขียน service ที่เก็บรายการ order แล้วมีฟังก์ชันดึง "3 รายการแรก" ไปทำรายงาน
+  ดูโค้ดนี้ก่อน — มันดูปกติมาก
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">topThree</span>(orders []<span class="n">int</span>) []<span class="n">int</span> {
+    <span class="k">return</span> orders[<span class="n">0</span>:<span class="n">3</span>]
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    all := []<span class="n">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>, <span class="n">40</span>, <span class="n">50</span>}
+    top := <span class="f">topThree</span>(all)
+
+    top = <span class="f">append</span>(top, <span class="n">999</span>)   <span class="c">// เพิ่มแถวสรุปท้ายรายงาน</span>
+
+    fmt.<span class="f">Println</span>(all)          <span class="c">// ← ตัวนี้ควรจะเหมือนเดิมไหม?</span>
+}</code></pre>
+
+<div class="warn">
+  <span class="label">สปอยล์</span>
+  <p><code>all</code> ไม่เหมือนเดิม มันกลายเป็น <code>[10 20 30 999 50]</code> —
+  ค่า <code>40</code> หายไปเฉย ๆ ทั้งที่ไม่มีใครแตะ <code>all</code> เลยสักบรรทัด</p>
+</div>
+
+<p>จะเข้าใจว่าทำไม ต้องรู้ก่อนว่า slice <em>คืออะไรจริง ๆ</em></p>
+
+<h2>2 · slice ไม่ได้เก็บข้อมูล</h2>
+
+<p>
+  Go spec เรียก slice ว่า <em>descriptor</em> ของ array ก้อนหนึ่ง —
+  <a href="https://go.dev/blog/slices-intro">blog ทางการของ Go</a> อธิบายว่ามันคือ
+  โครงสร้าง 3 ช่องที่เรียกว่า <strong>slice header</strong>:
+</p>
+
+<div class="diagram">Slice Header (24 bytes)              Underlying Array (ของจริงอยู่ตรงนี้)
+┌─────────────────────┐              ┌────┬────┬────┬────┬────┐
+│ Data ───────────────┼─────────────▶│ 10 │ 20 │ 30 │ 40 │ 50 │
+│ Len  = 3            │              └────┴────┴────┴────┴────┘
+│ Cap  = 5            │                [0]  [1]  [2]  [3]  [4]
+└─────────────────────┘</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ช่อง</th><th>ความหมาย</th><th>อ่านค่าด้วย</th></tr>
+  <tr><td><code>Data</code></td><td>ที่อยู่ของ array จริง — <strong>slice ไม่ได้เก็บข้อมูลเอง</strong></td><td>—</td></tr>
+  <tr><td><code>Len</code></td><td>ตอนนี้ใช้อยู่กี่ช่อง</td><td><code>len(s)</code></td></tr>
+  <tr><td><code>Cap</code></td><td>จองไว้ทั้งหมดกี่ช่อง (นับจาก Data ไปจนสุด array)</td><td><code>cap(s)</code></td></tr>
+</table>
+</div>
+
+<p>
+  กฎเหล็กที่ต้องท่องได้: <strong><code>0 &lt;= len &lt;= cap</code> เสมอ</strong>
+</p>
+
+<div class="note">
+  <span class="label">ประโยคที่ต้องจำ</span>
+  <p>
+    จาก <a href="https://go.dev/blog/slices-intro">Go Slices: usage and internals</a>:
+    <em>"Slicing does not copy the slice's data. It creates a new slice value that
+    points to the original array."</em>
+  </p>
+  <p style="margin-bottom:0">
+    แปลว่า <code>orders[0:3]</code> <strong>ไม่ใช่การก็อป</strong> — มันคือการ
+    "ยืม array เดิมมาใช้ร่วมกัน" แค่ทำ header ใบใหม่ที่ชี้ไปที่เดิม
+  </p>
+</div>
+
+<h2>3 · ลองทำนายดู</h2>
+
+<div class="predict">
+  <pre><code>s := []<span class="n">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>, <span class="n">40</span>, <span class="n">50</span>}
+sub := s[<span class="n">1</span>:<span class="n">3</span>]
+
+sub[<span class="n">0</span>] = <span class="n">777</span>
+
+fmt.<span class="f">Println</span>(s)</code></pre>
+  <p class="ask">คิดในใจก่อน (อย่าเพิ่งกดเฉลย) — <code>s</code> พิมพ์ออกมาว่าอะไร?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>[10 777 30 40 50]</code></strong></p>
+    <p style="margin-bottom:0">
+      <code>sub</code> ชี้เข้าไปที่ array เดิมโดยเริ่มที่ index 1 → <code>sub[0]</code>
+      <em>คือ</em> <code>s[1]</code> คนละชื่อ แต่เป็นช่องเดียวกันในหน่วยความจำ
+      ตรงนี้ยังพอเดาได้ ข้อต่อไปคือข้อที่หลอกจริง
+    </p>
+  </div>
+</div>
+
+<h2>4 · กุญแจของเรื่องคือ <code>cap</code></h2>
+
+<p>
+  ตอนทำ subslice <code>s[low:high]</code> Go spec
+  (<a href="https://go.dev/ref/spec#Slice_expressions">Slice expressions</a>)
+  กำหนดไว้ชัดว่า:
+</p>
+
+<div class="diagram">len ของตัวใหม่ = high − low       ← อันนี้ทุกคนเดาถูก
+cap ของตัวใหม่ = cap(เดิม) − low   ← อันนี้แหละตัวปัญหา</div>
+
+<p>
+  สังเกตว่า <code>high</code> <strong>ไม่มีผลกับ cap เลย</strong> — subslice จึง
+  "มองเห็น" ช่องที่เหลือทางขวาของ array เดิมทั้งหมด
+</p>
+
+<div class="diagram">s   := []int{10, 20, 30, 40, 50}     len=5  cap=5
+sub := s[1:3]                        len=2  cap=4   ← 5−1 = 4 !
+
+        [0]  [1]  [2]  [3]  [4]
+        ┌────┬────┬────┬────┬────┐
+   s ──▶│ 10 │ 20 │ 30 │ 40 │ 50 │
+        └────┴────┴────┴────┴────┘
+             ▲
+   sub ──────┘  len ครอบแค่ 2 ช่อง │ แต่ cap ยาวไปถึงท้าย array
+                └─ 20 │ 30 ─┘└─ 40 │ 50 ─┘
+                   ใช้อยู่      "ที่ว่าง" ที่ sub คิดว่าเป็นของตัวเอง</div>
+
+<p>
+  ทีนี้ <code>append</code> ทำงานแบบนี้: <strong>ถ้า cap ยังเหลือ → เขียนลงช่องถัดไป
+  ของ array เดิมทันที (ไม่ย้ายบ้าน)</strong> ส่วน "ช่องถัดไป" ของ <code>sub</code>
+  ก็คือ <code>s[3]</code> ที่มีเลข 40 อยู่ นั่นแหละ
+</p>
+
+<div class="predict">
+  <pre><code>s := []<span class="n">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>, <span class="n">40</span>, <span class="n">50</span>}
+c := s[<span class="n">1</span>:<span class="n">3</span>]
+
+c = <span class="f">append</span>(c, <span class="n">999</span>)
+
+fmt.<span class="f">Println</span>(s)
+fmt.<span class="f">Println</span>(c)</code></pre>
+  <p class="ask">คราวนี้ <code>s</code> กับ <code>c</code> พิมพ์ออกมาว่าอะไร?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>
+      <code>s</code> → <strong><code>[10 20 30 999 50]</code></strong><br>
+      <code>c</code> → <strong><code>[20 30 999]</code></strong>
+    </p>
+    <p style="margin-bottom:0">
+      <code>cap(c)</code> = 4 แต่ <code>len(c)</code> = 2 → ยังเหลือที่ →
+      <code>append</code> เขียนทับ <code>s[3]</code> เลข <code>40</code> ตายตรงนี้
+      โดยไม่มี error ไม่มี warning ไม่มีอะไรทั้งนั้น
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">อ่านเป็นประโยคเดียว</span>
+  <p style="margin-bottom:0">
+    <strong>subslice ไม่ใช่การก็อป — และ <code>append</code> ที่ cap ยังเหลือ
+    จะเขียนทับข้อมูลของคนอื่น</strong>
+  </p>
+</div>
+
+<h2>5 · ทางแก้ 2 แบบ</h2>
+
+<h3>แบบที่ 1 — Three-index slice <code>s[low:high:max]</code></h3>
+
+<p>
+  รูปแบบเต็มของ slice expression มี 3 ตัวเลข ตัวที่สามคุม <code>cap</code> โดยตรง:
+</p>
+
+<div class="diagram">len = high − low
+cap = max  − low      ← เพิ่มตัวนี้เข้ามาคุมได้เอง</div>
+
+<pre><code>c := s[<span class="n">1</span>:<span class="n">3</span>:<span class="n">3</span>]        <span class="c">// len = 3−1 = 2, cap = 3−1 = 2  → เต็มพอดี</span>
+c = <span class="f">append</span>(c, <span class="n">999</span>)   <span class="c">// cap ไม่พอ → Go จองบ้านใหม่ให้</span>
+
+fmt.<span class="f">Println</span>(s)         <span class="c">// [10 20 30 40 50]  ✓ ปลอดภัย</span>
+fmt.<span class="f">Println</span>(c)         <span class="c">// [20 30 999]</span></code></pre>
+
+<p>
+  พอ <code>cap</code> เต็ม <code>append</code> ไม่มีทางเลือก ต้องจอง array ใหม่ +
+  ก็อปของเก่าไปใส่ → <strong>ขาดจากกันทันที</strong>
+</p>
+
+<h3>แบบที่ 2 — <code>copy()</code> ให้ขาดไปเลย</h3>
+
+<pre><code>c := <span class="f">make</span>([]<span class="n">int</span>, <span class="n">2</span>)
+<span class="f">copy</span>(c, s[<span class="n">1</span>:<span class="n">3</span>])   <span class="c">// copy(ปลายทาง, ต้นทาง)</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th>Three-index</th><th><code>copy()</code></th></tr>
+  <tr><td>ยังแชร์ array อยู่ไหม</td><td>ใช่ จนกว่าจะ append</td><td>ไม่ ขาดตั้งแต่แรก</td></tr>
+  <tr><td>เขียนทับได้ไหม</td><td>ไม่ได้ (append) แต่ <code>c[0]=x</code> ยังทับได้</td><td>ไม่ได้เลย</td></tr>
+  <tr><td>ใช้เมื่อ</td><td>ส่ง slice ออกจากฟังก์ชัน เผื่อคนรับ append</td><td>ต้องการอิสระเต็มที่</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <span class="label">โบนัส</span>
+  <p style="margin-bottom:0">
+    <code>copy()</code> ยังแก้อีกปัญหาด้วย — ถ้าคุณ subslice ข้อมูล 10 ตัวออกจาก
+    array ขนาด 100 MB แล้วเก็บไว้นาน <strong>GC จะเก็บ 100 MB นั้นไม่ได้เลย</strong>
+    เพราะยังมี pointer ชี้อยู่ blog ทางการเรียกอาการนี้ว่า
+    <em>"The full array will be kept in memory until it is no longer referenced."</em>
+  </p>
+</div>
+
+<h2>6 · ทดสอบความจำ</h2>
+
+<p>อย่าเลื่อนกลับไปดูนะครับ ตอบจากหัวล้วน ๆ — ตอบผิดตรงนี้ดีกว่าไปผิดตอน review</p>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. <code>s</code> มี len=6 cap=6 แล้ว <code>x := s[2:4]</code> — <code>cap(x)</code> เป็นเท่าไหร่?</p>
+  <div class="opts">
+    <button class="opt">cap(x) มีค่าเป็น 2</button>
+    <button class="opt">cap(x) มีค่าเป็น 4</button>
+    <button class="opt">cap(x) มีค่าเป็น 6</button>
+    <button class="opt">cap(x) มีค่าเป็น 0</button>
+  </div>
+  <div class="explain">
+    <p><code>cap = cap(เดิม) − low = 6 − 2 = 4</code> — ตัวเลข <code>high</code>
+    (เลข 4) ไม่เกี่ยวกับ cap เลย มันคุมแค่ <code>len</code> เท่านั้น
+    (<code>len(x) = 4−2 = 2</code>)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">2. <code>append</code> จะสร้าง array ก้อนใหม่ก็ต่อเมื่อ…</p>
+  <div class="opts">
+    <button class="opt">ทุกครั้งที่ถูกเรียกใช้งาน</button>
+    <button class="opt">เมื่อ slice มาจาก subslice</button>
+    <button class="opt">เมื่อ len ใหม่จะเกิน cap</button>
+    <button class="opt">เมื่อ slice นั้นเป็น nil</button>
+  </div>
+  <div class="explain">
+    <p>cap คือเพดาน ถ้าใส่แล้วยังไม่เกินเพดาน มันเขียนลงที่เดิม (เร็วกว่ามาก) —
+    <strong>และนั่นแหละคือตอนที่ข้อมูลคนอื่นโดนทับ</strong> ถ้าเกินเพดานเมื่อไหร่
+    ถึงจะจองใหม่ ซึ่งกลายเป็นปลอดภัยโดยบังเอิญ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. อยากให้ <code>x := s[2:4]</code> ปลอดภัยจากการ append ทับ ต้องเขียนยังไง?</p>
+  <div class="opts">
+    <button class="opt">x := s[2:4:4] แบบสามเลข</button>
+    <button class="opt">x := s[2:4:6] แบบสามเลข</button>
+    <button class="opt">x := &amp;s[2] แล้วค่อยตัด</button>
+    <button class="opt">x := s[2:4] ก็ปลอดภัยแล้ว</button>
+  </div>
+  <div class="explain">
+    <p><code>s[2:4:4]</code> → <code>len = 4−2 = 2</code>, <code>cap = 4−2 = 2</code>
+    เท่ากันพอดี = ไม่เหลือที่ให้ append เขียนทับ</p>
+    <p style="margin-bottom:0">ส่วน <code>s[2:4:6]</code> ให้ <code>cap = 6−2 = 4</code>
+    ซึ่งยังเหลือที่ → ยังอันตรายเหมือนเดิม</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. <code>var s []int</code> (nil slice) — ข้อไหน<strong>ผิด</strong>?</p>
+  <div class="opts">
+    <button class="opt">len(s) คืนค่า 0 ได้ปกติ</button>
+    <button class="opt">for range s ไม่ panic เลย</button>
+    <button class="opt">s = append(s, 1) ใช้ได้</button>
+    <button class="opt">s[0] = 1 เขียนลงไปได้</button>
+  </div>
+  <div class="explain">
+    <p>nil slice ใช้ได้เกือบทุกอย่าง <strong>ยกเว้นเข้าถึงด้วย index</strong> —
+    <code>s[0]</code> จะ panic เพราะ <code>len</code> เป็น 0 (index out of range)</p>
+    <p style="margin-bottom:0">จำแยกจาก <strong>nil map</strong> ให้ดี: nil map
+    <em>อ่าน</em>ได้ แต่ <em>เขียน</em>แล้ว panic ส่วน nil slice <code>append</code>
+    ได้สบาย</p>
+  </div>
+</div>
+
+<h2>7 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: ซ่อม <code>topThree</code></h3>
+  <ol>
+    <li>เปิด <a href="https://go.dev/play/">Go Playground</a></li>
+    <li>วางโค้ดจากหัวข้อ 1 ลงไป รันดูให้เห็นบั๊กด้วยตาตัวเอง</li>
+    <li>เพิ่มบรรทัด <code>fmt.Println(len(top), cap(top))</code> ก่อน
+        <code>append</code> — <strong>ยืนยันว่า cap คือ 5 ไม่ใช่ 3</strong></li>
+    <li>ซ่อมด้วย three-index ก่อน รันใหม่ ต้องได้ <code>[10 20 30 40 50]</code></li>
+    <li>ซ่อมอีกรอบด้วย <code>copy()</code> แทน เทียบดูว่าต่างกันตรงไหน</li>
+    <li><strong>โจทย์ท้าทาย:</strong> เขียน
+        <code>func safeSlice(s []int, lo, hi int) []int</code> ที่คืน slice
+        ซึ่งไม่มีทางไปแตะ <code>s</code> ได้เลยไม่ว่าคนรับจะทำอะไรกับมัน</li>
+  </ol>
+</div>
+
+<div class="win">
+  <span class="label">ชัยชนะของบทนี้</span>
+  <p style="margin-bottom:0">
+    ต่อไปเวลาเห็น <code>return xs[a:b]</code> ในโค้ดใคร คุณจะสะดุดทันทีและถามว่า
+    <em>"คนรับ append ต่อได้ไหม แล้วมันจะไปทับอะไรของเรารึเปล่า"</em> — นั่นคือสายตา
+    ของคน review Go เป็น
+  </p>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://go.dev/blog/slices-intro">Go Slices: usage and internals</a> —
+  เขียนโดย Andrew Gerrand จากทีม Go เอง ยาวประมาณ 10 นาที มีหัวข้อ
+  <em>"A possible 'gotcha'"</em> ท้ายบทความที่ตรงกับบทเรียนนี้เป๊ะ
+  <strong>อ่านให้จบก่อนบทเรียนหน้า</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — ผมเป็นครูประจำ workspace นี้
+    ถ้าอ่านแล้วยังไม่คลิก บอกมาว่าไม่คลิกตรงไหน เดี๋ยวผมทำ lesson เสริมให้เฉพาะจุด
+    หรือถ้าอยากได้โจทย์เพิ่มก็บอกได้
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 3 (ทั้งหมด)</a>
+  <a href="./0007-value-vs-pointer.html">บทเรียน 07 → copy หรือของจริง</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/blog/slices-intro">Go Slices: usage and internals</a> — slice header, การแชร์ array, memory retention</li>
+  <li><a href="https://go.dev/ref/spec#Slice_expressions">Go spec — Slice expressions</a> — สูตร len/cap ของ <code>a[low:high]</code> และ <code>a[low:high:max]</code></li>
+  <li><a href="https://go.dev/blog/slices">The mechanics of 'append'</a> — Rob Pike, ว่าด้วย cap เป็นเพดานของ len</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

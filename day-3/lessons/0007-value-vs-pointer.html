@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 07 — คุณกำลังแก้ของจริง หรือแก้ copy?</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 07 · Pointer &amp; Struct</p>
+  <h1>คุณกำลังแก้ของจริง หรือแก้ copy?</h1>
+  <p class="meta">~15 นาที · ต้องมี: <a href="./0006-slice-aliasing.html">บทเรียน 06</a></p>
+  <p class="standfirst">
+    บทที่แล้วคือ "แก้แล้วเปลี่ยนทั้งที่ไม่อยากให้เปลี่ยน" บทนี้คืออาการตรงข้าม —
+    <strong>เขียนโค้ดแก้ค่า รันแล้วค่าไม่เปลี่ยน</strong> เหมือนโค้ดโดนเมิน
+    รากของทั้งสองอาการคือกฎข้อเดียวกัน และมันเป็นกฎที่ Go ไม่มีข้อยกเว้นเลย
+  </p>
+</header>
+
+<main>
+
+<h2>1 · กฎข้อเดียวที่ต้องจำ</h2>
+
+<div class="win">
+  <span class="label">กฎ</span>
+  <p style="margin-bottom:0">
+    <strong>ใน Go ทุกอย่างเป็น pass by value 100% ไม่มีข้อยกเว้น</strong><br>
+    การใช้ pointer ไม่ได้ทำให้เป็น "pass by reference" — มันแค่เปลี่ยนจาก
+    <em>ก็อปของ</em> เป็น <em>ก็อปที่อยู่ของของ</em>
+  </p>
+</div>
+
+<pre><code><span class="k">func</span> <span class="f">tryValue</span>(n <span class="n">int</span>)  { n = <span class="n">999</span> }
+<span class="k">func</span> <span class="f">tryPtr</span>(n *<span class="n">int</span>)   { *n = <span class="n">999</span> }
+
+x := <span class="n">42</span>
+<span class="f">tryValue</span>(x)   <span class="c">// x ยังเป็น 42  — แก้ copy ของเลข</span>
+<span class="f">tryPtr</span>(&amp;x)    <span class="c">// x เป็น 999    — แก้ผ่านที่อยู่</span></code></pre>
+
+<div class="diagram">tryValue(x)                          tryPtr(&x)
+┌──────────┐   ก็อปเลข             ┌──────────┐   ก็อป "ที่อยู่"
+│ x = 42   │──────────▶┌────────┐   │ x = 42   │◀─────────┐
+└──────────┘           │ n = 42 │   └──────────┘          │
+   ไม่รู้จักกัน          └────────┘      ▲            ┌─────┴────┐
+                          แก้ตัวนี้      └────────────│ n=0x1040 │
+                          ไม่มีผล        *n เข้าถึงได้ └──────────┘</div>
+
+<p>
+  ตัว <code>tryPtr</code> ก็ได้ <em>copy ของ pointer</em> มาเหมือนกัน — แต่ copy ของ
+  ที่อยู่บ้าน ก็ยังชี้ไปบ้านหลังเดิม เลยเข้าไปแก้ของในบ้านได้
+</p>
+
+<h2>2 · จุดที่กฎนี้เล่นงานคุณ #1: <code>for range</code></h2>
+
+<div class="predict">
+  <pre><code><span class="k">type</span> User <span class="k">struct</span>{ Name <span class="n">string</span>; Age <span class="n">int</span> }
+
+users := []User{{<span class="s">"Alice"</span>, <span class="n">30</span>}, {<span class="s">"Bob"</span>, <span class="n">25</span>}}
+
+<span class="k">for</span> _, u := <span class="k">range</span> users {
+    u.Name = <span class="s">"CHANGED"</span>
+}
+
+fmt.<span class="f">Println</span>(users[<span class="n">0</span>].Name)</code></pre>
+  <p class="ask">พิมพ์ออกมาว่าอะไร?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>Alice</code></strong> — ไม่เปลี่ยนเลย</p>
+    <p>
+      ทุกรอบของ <code>for range</code> ตัวแปร <code>u</code> ได้ <strong>copy</strong>
+      ของ struct มา แก้ <code>u</code> ก็คือแก้ copy พอจบรอบ copy ก็ถูกทิ้ง
+    </p>
+    <p style="margin-bottom:0">แก้ให้ถูกต้องใช้ index แทน:</p>
+    <pre style="margin-top:0.6rem;margin-bottom:0"><code><span class="k">for</span> i := <span class="k">range</span> users {
+    users[i].Name = <span class="s">"CHANGED"</span>   <span class="c">// ✓ เข้าถึงช่องจริงใน slice</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">ทำไม slice ของ int ถึงแก้ได้ แต่ struct แก้ไม่ได้?</span>
+  <p style="margin-bottom:0">
+    มันเหมือนกันทุกประการครับ — <code>for _, v := range nums { v = 0 }</code>
+    ก็ไม่เปลี่ยนอะไรเหมือนกัน สิ่งที่ทำให้คนสับสนคือ
+    <code>users[i].Name = "x"</code> (ผ่าน index) กับ <code>u.Name = "x"</code>
+    (ผ่านตัวแปรวนลูป) หน้าตาคล้ายกันมาก แต่ตัวแรกแตะของจริง ตัวหลังแตะ copy
+  </p>
+</div>
+
+<h2>3 · จุดที่กฎนี้เล่นงานคุณ #2: struct ใน map</h2>
+
+<div class="predict">
+  <pre><code><span class="k">type</span> Product <span class="k">struct</span>{ Name <span class="n">string</span>; Qty <span class="n">int</span> }
+
+inv := <span class="k">map</span>[<span class="n">string</span>]Product{
+    <span class="s">"SKU-1"</span>: {Name: <span class="s">"Mouse"</span>, Qty: <span class="n">50</span>},
+}
+
+inv[<span class="s">"SKU-1"</span>].Qty = <span class="n">49</span></code></pre>
+  <p class="ask">โค้ดนี้ผลลัพธ์เป็นยังไง?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>compile ไม่ผ่าน</strong> — <code>cannot assign to struct field
+    inv["SKU-1"].Qty in map</code></p>
+    <p>
+      <code>inv["SKU-1"]</code> คืน <strong>copy</strong> ไม่ใช่ที่อยู่จริง Go เลย
+      <em>ห้ามตั้งแต่ตอน compile</em> ไม่ให้คุณเขียนโค้ดที่ดูเหมือนแก้ได้แต่ไม่มีผล
+    </p>
+    <p style="margin-bottom:0"><strong>เหตุผลลึก:</strong> map ย้ายข้อมูลไปมาได้ตอน
+    ขยายตัว (rehash) ที่อยู่ของ value จึงไม่คงที่ → เอา address มาไม่ได้ →
+    เรียกว่า <em>non-addressable</em></p>
+  </div>
+</div>
+
+<p>ทางออก 3 แบบ เรียงตามที่ใช้จริงบ่อยที่สุด:</p>
+
+<pre><code><span class="c">// 1) เก็บเป็น pointer ตั้งแต่แรก — ใช้บ่อยสุดในงานจริง</span>
+inv := <span class="k">map</span>[<span class="n">string</span>]*Product{<span class="s">"SKU-1"</span>: {Name: <span class="s">"Mouse"</span>, Qty: <span class="n">50</span>}}
+inv[<span class="s">"SKU-1"</span>].Qty = <span class="n">49</span>          <span class="c">// ✓ ได้</span>
+
+<span class="c">// 2) อ่านออกมา แก้ แล้วยัดกลับทั้งก้อน</span>
+p := inv[<span class="s">"SKU-1"</span>]
+p.Qty = <span class="n">49</span>
+inv[<span class="s">"SKU-1"</span>] = p               <span class="c">// ✓ ได้</span>
+
+<span class="c">// 3) ถ้า field เป็น slice จะแก้ได้เลย เพราะ index ของ slice addressable เสมอ</span>
+inv[<span class="s">"SKU-1"</span>].Tags[<span class="n">0</span>] = <span class="s">"new"</span>   <span class="c">// ✓ ได้ (แต่ .Qty ยังไม่ได้)</span></code></pre>
+
+<div class="note">
+  <span class="label">คู่กับ comma-ok เสมอ</span>
+  <p style="margin-bottom:0">
+    เวลาอ่าน map จำไว้ว่า key ที่ไม่มีจะคืน <strong>zero value</strong> ไม่ใช่ error
+    ดังนั้น <code>inv["ghost"].Qty</code> ได้ <code>0</code> ซึ่งแยกไม่ออกจาก
+    "มีของแต่หมดสต็อก" → ใช้ <code>p, ok := inv[k]</code> ทุกครั้งที่สองกรณีนี้
+    มีความหมายต่างกัน
+  </p>
+</div>
+
+<h2>4 · จุดที่กฎนี้เล่นงานคุณ #3: receiver ของ method</h2>
+
+<p>Method ก็คือฟังก์ชันที่มี parameter พิเศษข้างหน้าชื่อ <strong>receiver</strong></p>
+
+<div class="diagram">func (a *Account) Deposit(amount float64) { … }
+     └────┬────┘  └───┬───┘ └──────┬──────┘
+      receiver    method name   signature
+
+     receiver type = *Account  (pointer receiver)
+     base type     =  Account</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>func (u User)</code> — value</th><th><code>func (u *User)</code> — pointer</th></tr>
+  <tr><td>ได้อะไรมา</td><td>copy ของ struct</td><td>ที่อยู่ของ struct จริง</td></tr>
+  <tr><td>แก้ field แล้วมีผลข้างนอก</td><td>❌ ไม่มี</td><td>✅ มี</td></tr>
+  <tr><td>struct ใหญ่</td><td>ก็อปทั้งก้อนทุกครั้ง</td><td>ส่งแค่ 8 bytes</td></tr>
+  <tr><td>เหมาะกับ</td><td>getter / อ่านอย่างเดียว</td><td>ทุกอย่างที่ต้องแก้ค่า</td></tr>
+</table>
+</div>
+
+<pre><code><span class="k">type</span> Account <span class="k">struct</span>{ Balance <span class="n">float64</span> }
+
+<span class="k">func</span> (a Account)  <span class="f">Show</span>() <span class="n">float64</span>      { <span class="k">return</span> a.Balance }
+<span class="k">func</span> (a *Account) <span class="f">Deposit</span>(x <span class="n">float64</span>) { a.Balance += x }
+
+acc := Account{Balance: <span class="n">1000</span>}
+acc.<span class="f">Deposit</span>(<span class="n">500</span>)              <span class="c">// Go แปลงให้เป็น (&amp;acc).Deposit(500)</span>
+fmt.<span class="f">Println</span>(acc.<span class="f">Show</span>())      <span class="c">// 1500</span></code></pre>
+
+<div class="warn">
+  <span class="label">syntactic sugar ที่ทำให้งง</span>
+  <p style="margin-bottom:0">
+    <code>acc</code> ไม่ใช่ pointer แต่เรียก <code>acc.Deposit()</code> ได้ เพราะ Go
+    ใส่ <code>&amp;</code> ให้อัตโนมัติเมื่อตัวแปร <em>addressable</em> —
+    เวลาเขียนจึงแทบไม่รู้สึกต่าง <strong>แต่ผลลัพธ์ต่างกันสิ้นเชิง</strong>
+    ต้องดูที่ประกาศ method เสมอ ไม่ใช่ดูที่จุดเรียก
+  </p>
+</div>
+
+<h3>เกณฑ์ตัดสินจาก Go Code Review Comments</h3>
+
+<p>
+  นี่คือเกณฑ์ที่ reviewer จริงใช้ตัดสิน — ย่อจาก
+  <a href="https://go.dev/wiki/CodeReviewComments">Go Code Review Comments · Receiver Type</a>:
+</p>
+
+<ul>
+  <li><strong>ถ้า method ต้องแก้ค่า receiver → ต้องเป็น pointer</strong> (บังคับ)</li>
+  <li>ถ้า receiver เป็น struct ใหญ่ หรือ array ใหญ่ → pointer มีประสิทธิภาพกว่า
+      <em>("How large is large? Assume it's equivalent to passing all its elements
+      as arguments")</em></li>
+  <li>ถ้า receiver มี <code>sync.Mutex</code> อยู่ข้างใน → <strong>ต้องเป็น pointer</strong>
+      ไม่งั้น copy แล้ว lock ไม่ทำงาน</li>
+  <li>ถ้า receiver เป็น <strong>map, func, chan → อย่าใช้ pointer</strong>;
+      ถ้าเป็น slice และ method ไม่ได้ reslice/realloc → ก็อย่าใช้</li>
+  <li>ถ้าเป็น struct เล็ก ไม่มี field ที่ต้องแก้ และเป็น value โดยธรรมชาติ
+      (แบบ <code>time.Time</code>) → value receiver เหมาะกว่า</li>
+  <li><strong>"Don't mix receiver types"</strong> — type เดียวกันเลือกแบบเดียวทั้งหมด</li>
+  <li><strong>"When in doubt, use a pointer receiver."</strong></li>
+</ul>
+
+<h2>5 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ข้อความไหน<strong>ถูกต้อง</strong>เกี่ยวกับการส่งค่าใน Go?</p>
+  <div class="opts">
+    <button class="opt">slice ส่งแบบ pass by reference</button>
+    <button class="opt">pointer ทำให้เป็น pass by ref</button>
+    <button class="opt">ทุกอย่างเป็น pass by value หมด</button>
+    <button class="opt">struct ส่งแบบ pass by reference</button>
+  </div>
+  <div class="explain">
+    <p>Go ไม่มี pass by reference เลย <strong>ส่ง slice = ก็อป slice header
+    (24 bytes)</strong> ที่บังเอิญชี้ array เดิม จึงดูเหมือน by reference
+    แต่กลไกคือ by value ทั้งหมด</p>
+    <p style="margin-bottom:0">พิสูจน์ได้: ฟังก์ชันที่รับ <code>[]int</code>
+    <code>append</code> ข้างในแล้ว <strong>len ของตัวแปรข้างนอกไม่เปลี่ยน</strong>
+    เพราะแก้ได้แค่ header ที่ก็อปมา (<a href="https://go.dev/blog/slices">Rob Pike
+    อธิบายไว้</a>)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. <code>m := map[string]User{...}</code> แล้ว <code>m["a"].Age = 31</code> จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">แก้สำเร็จ ค่าเปลี่ยนตามปกติ</button>
+    <button class="opt">รันได้ แต่ค่าไม่เปลี่ยนเลย</button>
+    <button class="opt">รันได้ แต่จะ panic ตอนรัน</button>
+    <button class="opt">compile ไม่ผ่านตั้งแต่แรก</button>
+  </div>
+  <div class="explain">
+    <p>Go เลือกที่จะ <strong>ห้ามตั้งแต่ compile</strong> เพราะถ้าปล่อยให้รันได้แล้ว
+    ค่าไม่เปลี่ยน จะเป็นบั๊กที่หาไม่เจอ — map value เป็น
+    <em>non-addressable</em></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">3. struct มี <code>sync.Mutex</code> อยู่ข้างใน ควรใช้ receiver แบบไหน?</p>
+  <div class="opts">
+    <button class="opt">value receiver เพราะเร็วกว่ามาก</button>
+    <button class="opt">pointer receiver เพราะห้ามคัดลอก</button>
+    <button class="opt">แล้วแต่ว่าจะแก้ค่าหรือแค่อ่าน</button>
+    <button class="opt">ผสมกันได้ ตามงานของแต่ละตัว</button>
+  </div>
+  <div class="explain">
+    <p>copy struct ที่มี mutex = ได้ mutex คนละตัว → lock ไม่ป้องกันอะไรเลย
+    เป็นบั๊ก concurrency ที่เงียบมาก <code>go vet</code> จะเตือนเรื่องนี้ให้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. <code>for _, u := range users</code> แล้วแก้ <code>u.Name</code> ไม่มีผล เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">u เป็นสำเนาของสมาชิกแต่ละตัว</button>
+    <button class="opt">u ถูกล็อกไม่ให้แก้ในลูป</button>
+    <button class="opt">slice ของ struct แก้ไม่ได้เลย</button>
+    <button class="opt">ต้องใช้ append เท่านั้นถึงแก้ได้</button>
+  </div>
+  <div class="explain">
+    <p>range ก็อป element ใส่ตัวแปรวนลูปทุกรอบ ใช้ <code>users[i].Name = ...</code>
+    หรือประกาศ slice เป็น <code>[]*User</code> ถ้าตั้งใจให้แก้ได้</p>
+  </div>
+</div>
+
+<h2>6 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: แปลง <code>Inventory</code> ให้แก้ค่าได้จริง</h3>
+  <ol>
+    <li>ใน <a href="https://go.dev/play/">Playground</a> สร้าง
+        <code>type Product struct{ Name string; Qty int }</code> และ
+        <code>inv := map[string]Product{...}</code></li>
+    <li>ลองเขียน <code>inv["a"].Qty = 5</code> — <strong>อ่าน error ที่ compiler
+        พ่นออกมาให้ครบ</strong> คุ้นหน้ามันไว้</li>
+    <li>ซ่อมด้วยวิธี "อ่าน–แก้–ยัดกลับ"</li>
+    <li>ซ่อมอีกรอบด้วย <code>map[string]*Product</code> เทียบว่าโค้ดสั้นลงแค่ไหน</li>
+    <li>เขียน method <code>func (inv Inventory) Add(p Product)</code>
+        แบบ <strong>value receiver ก่อน</strong> แล้วลองเรียก —
+        สังเกตว่าทำไมมันถึงดูเหมือนได้ผล (คำใบ้: map ข้างในเป็น reference)</li>
+    <li><strong>ท้าทาย:</strong> เพิ่ม field <code>count int</code> ใน
+        <code>Inventory</code> แล้วให้ <code>Add</code> เพิ่ม <code>count</code>
+        ด้วย — ทีนี้ value receiver จะพังให้เห็น อธิบายให้ได้ว่าทำไม</li>
+  </ol>
+</div>
+
+<div class="win">
+  <span class="label">ชัยชนะของบทนี้</span>
+  <p style="margin-bottom:0">
+    เวลาเห็นโค้ดที่ "แก้แล้วไม่เปลี่ยน" คุณจะไล่ได้ใน 3 คำถาม —
+    <em>ตัวนี้เป็น copy รึเปล่า? มัน addressable ไหม? receiver เป็น value หรือ pointer?</em>
+  </p>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://go.dev/wiki/CodeReviewComments">Go Code Review Comments</a> —
+  หัวข้อ <em>Receiver Type</em> เป็นเกณฑ์ที่ทีม Go ใช้ review จริง ยาวไม่ถึงหน้าเดียว
+  ควรอ่านให้จบทั้งหน้าเลยเพราะหัวข้ออื่น (Indent Error Flow, Don't Panic)
+  จะเจอในคอร์สวันถัด ๆ ไปแน่นอน
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — โดยเฉพาะข้อ 6 ของภารกิจ
+    ถ้าอธิบายไม่ได้ว่าทำไม value receiver ถึงพัง ให้ถามมาเลย นั่นคือจุดที่ความเข้าใจ
+    กำลังจะแน่นพอดี
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0006-slice-aliasing.html">← บทเรียน 06</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 3</a>
+  <a href="./0008-defer.html">บทเรียน 08 → defer</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/wiki/CodeReviewComments">Go Code Review Comments — Receiver Type</a> — เกณฑ์เลือก value vs pointer receiver</li>
+  <li><a href="https://go.dev/blog/slices">The mechanics of 'append'</a> — <em>"even though a slice contains a pointer, it is itself a value"</em></li>
+  <li><a href="https://go.dev/ref/spec#Address_operators">Go spec — Address operators</a> — นิยามของ addressable</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

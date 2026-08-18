@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheat Sheet — Go Day 5</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<style>
+  /* หน้านี้เป็นเอกสารอ้างอิง — แน่นกว่า lesson และออกแบบให้พิมพ์ลงกระดาษได้ */
+  body { font-size: 15.5px; }
+  main { max-width: 54rem; }
+  h2 { margin-top: 2.2rem; font-size: 1.2rem; }
+  h3 { margin-top: 1.4rem; font-size: 1rem; }
+  pre { font-size: 0.78rem; padding: 0.75rem 0.9rem; margin-bottom: 0.9rem; }
+  table { font-size: 0.86rem; }
+  p, ul, ol { margin-bottom: 0.8rem; }
+  .toc { columns: 2; font-size: 0.9rem; padding-left: 1.1rem; }
+  .toc li { break-inside: avoid; }
+  .rule { font-weight: 650; color: var(--accent-dk); }
+  @media print { body { font-size: 9.5pt; } main { max-width: none; } h2 { margin-top: 1.2rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Reference · เก็บไว้เปิดตอนเขียนโค้ด</p>
+  <h1>Go Day 5 — Cheat Sheet</h1>
+  <p class="meta">ครอบคลุมสไลด์ทั้ง 50 หน้า · ตัวอย่างทุกอันรันจริงบน Go 1.26 + testify v1.11.1 แล้ว · พิมพ์ลงกระดาษได้</p>
+</header>
+
+<main>
+
+<h2>สารบัญ</h2>
+<ol class="toc">
+  <li><a href="#rules">กฎการตั้งชื่อ &amp; package</a></li>
+  <li><a href="#cmd">คำสั่ง <code>go test</code></a></li>
+  <li><a href="#t">method ของ <code>testing.T</code></a></li>
+  <li><a href="#table">Table-Driven Test</a></li>
+  <li><a href="#testify">Testify — assert / require</a></li>
+  <li><a href="#mock">Testify — mock &amp; suite</a></li>
+  <li><a href="#tdd">TDD &amp; AI workflow</a></li>
+  <li><a href="#traps">ตารางกับดักรวม</a></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="rules">1 · กฎการตั้งชื่อ &amp; package</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สิ่งที่ต้องทำ</th><th>ถ้าทำผิด</th></tr>
+  <tr><td>ไฟล์ลงท้าย <code>_test.go</code></td><td><code>[no test files]</code> — <strong>เงียบสนิท ไม่มี error</strong></td></tr>
+  <tr><td>ฟังก์ชันขึ้นต้น <code>Test</code> + ตัวถัดไปเป็นตัวใหญ่/<code>_</code></td><td>ไม่ถูกรัน</td></tr>
+  <tr><td>รับ <code>t *testing.T</code> ตัวเดียว ไม่คืนค่า</td><td>compile error</td></tr>
+</table>
+</div>
+
+<pre><code>admin_handler.go
+admin_handler_test.go     <span class="c">← วางคู่กันใน folder เดียวกัน</span></code></pre>
+
+<h3>Internal vs External test package</h3>
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>package calc</code> (internal)</th><th><code>package calc_test</code> (external)</th></tr>
+  <tr><td>import package ตัวเอง</td><td>❌ ไม่ต้อง</td><td>✅ ต้อง</td></tr>
+  <tr><td>เทส unexported</td><td>✅ ได้</td><td>❌ <code>name X not exported by package calc</code></td></tr>
+  <tr><td>มุมมอง</td><td>คนใน</td><td><strong>คนนอก — เหมือนผู้ใช้จริง</strong></td></tr>
+</table>
+</div>
+<ul>
+  <li><span class="rule">1 folder มี 2 package ได้ เฉพาะกรณีที่ตัวที่สองลงท้าย <code>_test</code></span>
+      — เป็นข้อยกเว้นเดียวในภาษา · ใช้ทั้งสองแบบพร้อมกันได้</li>
+</ul>
+
+<h3>Build tag — แยก integration test</h3>
+<pre><code><span class="c">//go:build integration</span>
+                          <span class="c">← gofmt ต้องการบรรทัดว่างตรงนี้</span>
+<span class="k">package</span> user</code></pre>
+<div class="table-wrap">
+<table>
+  <tr><th>เขียนแบบ</th><th>ผลรันจริง</th></tr>
+  <tr><td>อยู่บนสุด + มีบรรทัดว่าง</td><td>✅ ถูกต้อง</td></tr>
+  <tr><td>อยู่บนสุด + ไม่มีบรรทัดว่าง</td><td>⚠️ ยังทำงาน แต่ <code>gofmt -l</code> ฟ้อง</td></tr>
+  <tr><td>อยู่<strong>ใต้</strong> <code>package</code></td><td>💥 <code>misplaced compiler directive</code></td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="cmd">2 · คำสั่ง <code>go test</code></h2>
+
+<pre><code>go test [options] [packages]</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>packages</th><th>ความหมาย</th></tr>
+  <tr><td><code>.</code></td><td>folder ปัจจุบัน</td></tr>
+  <tr><td><code>./...</code></td><td><strong>ทุก folder ลงไปทุกชั้น</strong> — ใช้บ่อยสุด</td></tr>
+  <tr><td><code>./internal/user</code></td><td>ระบุ folder</td></tr>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Option</th><th>ทำอะไร</th></tr>
+  <tr><td><code>-v</code></td><td>โชว์ชื่อเทสทุกตัว + <code>t.Log</code></td></tr>
+  <tr><td><code>-run &lt;regex&gt;</code></td><td>รันเฉพาะที่ชื่อตรง (เจาะ subtest ด้วย <code>/</code> ได้)</td></tr>
+  <tr><td><code>-cover</code></td><td><code>coverage: 42.9% of statements</code></td></tr>
+  <tr><td><code>-coverprofile=c.out</code></td><td>บันทึกลงไฟล์</td></tr>
+  <tr><td><code>-count=1</code></td><td><strong>ล้าง cache</strong> · <code>-count=10</code> จับ flaky test</td></tr>
+  <tr><td><code>-short</code></td><td>เปิด short mode → <code>testing.Short()</code> เป็น true</td></tr>
+  <tr><td><code>-race</code></td><td>จับ data race</td></tr>
+  <tr><td><code>-tags &lt;tag&gt;</code></td><td><span class="rule">มี s! สไลด์เขียน <code>-tag</code> ซึ่งใช้ไม่ได้</span></td></tr>
+  <tr><td><code>-failfast</code></td><td>หยุดทันทีที่มีเทสแรกพัง</td></tr>
+</table>
+</div>
+
+<pre><code>go test -v -run <span class="s">'TestDiscount'</span> .                <span class="c"># ทั้งฟังก์ชัน</span>
+go test -v -run <span class="s">'TestDiscount/ลด_10'</span> .        <span class="c"># เจาะ subtest</span>
+go test -v -run <span class="s">'TestUser|TestOrder'</span> .        <span class="c"># regex OR</span>
+
+go test -coverprofile=c.out .
+go tool cover -func=c.out                     <span class="c"># ตาราง</span>
+go tool cover -html=c.out                     <span class="c"># หน้าเว็บระบายสี</span></code></pre>
+
+<ul>
+  <li><span class="rule">Go แปลงเว้นวรรคในชื่อ subtest เป็น <code>_</code></span> —
+      ตั้ง <code>"ลด 10%"</code> ต้อง <code>-run</code> ด้วย <code>ลด_10%</code></li>
+  <li><span class="rule"><code>ok (cached)</code> = ไม่ได้รันจริง</span> — ใช้ <code>-count=1</code></li>
+  <li><span class="rule">coverage 100% ≠ ไม่มีบั๊ก</span> — นับแค่ว่าบรรทัดถูกรันผ่าน
+      ใช้หาส่วนที่ 0% ไม่ใช่ไล่ล่าตัวเลข</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="t">3 · method ของ <code>testing.T</code></h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Method</th><th>ทำอะไร</th><th>หยุดเทสไหม</th></tr>
+  <tr><td><code>t.Error</code> / <code>t.Errorf</code></td><td>ทำให้ fail แล้วไปต่อ</td><td>❌</td></tr>
+  <tr><td><code>t.Fatal</code> / <code>t.Fatalf</code></td><td>ทำให้ fail แล้วหยุด</td><td>✅</td></tr>
+  <tr><td><code>t.Log</code> / <code>t.Logf</code></td><td>ข้อความดีบัก — <strong>เห็นเฉพาะ <code>-v</code> หรือตอน fail</strong></td><td>❌</td></tr>
+  <tr><td><code>t.Skip</code> / <code>t.Skipf</code></td><td>ข้ามเทสนี้ → <code>--- SKIP:</code></td><td>✅</td></tr>
+  <tr><td><code>t.Failed()</code></td><td>ถามว่าตอนนี้ fail ไปหรือยัง (<code>bool</code>)</td><td>❌</td></tr>
+  <tr><td><code>t.Run(name, fn)</code></td><td>สร้าง subtest — ได้ <code>t</code> ตัวใหม่</td><td>❌</td></tr>
+  <tr><td><code>t.Parallel()</code></td><td>จอดเทสไว้ แล้วปล่อยวิ่งพร้อมกันทีหลัง</td><td>—</td></tr>
+  <tr><td><code>t.Cleanup(fn)</code></td><td>ลงทะเบียนงานเก็บกวาด — LIFO รันแม้ fail</td><td>❌</td></tr>
+  <tr><td><code>t.Helper()</code></td><td>บอกว่าฟังก์ชันนี้เป็น helper → error ชี้ที่คนเรียก</td><td>❌</td></tr>
+  <tr><td><code>t.TempDir()</code></td><td>folder ชั่วคราวที่ลบให้เองตอนจบ</td><td>❌</td></tr>
+  <tr><td><code>t.Setenv(k, v)</code></td><td>ตั้ง env var แล้วคืนค่าเดิมตอนจบ</td><td>❌</td></tr>
+</table>
+</div>
+
+<h3>Error vs Fatal — กฎเลือก</h3>
+<pre><code>user, err := <span class="f">GetUser</span>(<span class="s">"U-101"</span>)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    t.<span class="f">Fatalf</span>(<span class="s">"GetUser พัง: %v"</span>, err)   <span class="c">// Fatal — บรรทัดล่างจะ panic ถ้าไปต่อ</span>
+}
+<span class="k">if</span> user.Name != <span class="s">"Alice"</span> {
+    t.<span class="f">Errorf</span>(<span class="s">"Name = %q; want Alice"</span>, user.Name)   <span class="c">// Error — อยากเห็นทุกจุดที่ผิด</span>
+}</code></pre>
+<ul>
+  <li><span class="rule">บรรทัดถัดไปจะพังตามแน่ ๆ → <code>Fatal</code> · นอกนั้น <code>Error</code></span></li>
+  <li><span class="rule"><code>t.Fatal</code> ใช้ใน goroutine อื่นไม่ได้</span> — ใช้ <code>t.Error</code> แทน</li>
+</ul>
+
+<h3><code>t.Cleanup</code> vs <code>defer</code></h3>
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>defer</code></th><th><code>t.Cleanup</code></th></tr>
+  <tr><td>รันเมื่อ</td><td>ฟังก์ชันที่เขียน defer จบ</td><td><strong>เทสจบ</strong></td></tr>
+  <tr><td>เขียนใน helper</td><td>❌ รันทันทีที่ helper จบ</td><td>✅ รอจนเทสจบ</td></tr>
+  <tr><td>ลำดับ · รันตอน fail</td><td>LIFO · ✅</td><td>LIFO · ✅</td></tr>
+</table>
+</div>
+<pre><code><span class="k">func</span> <span class="f">newTestDB</span>(t *testing.T) *DB {
+    t.<span class="f">Helper</span>()
+    db := <span class="f">openTempDB</span>()
+    t.<span class="f">Cleanup</span>(<span class="k">func</span>() { db.<span class="f">Close</span>() })   <span class="c">// defer จะปิดเร็วเกินไป</span>
+    <span class="k">return</span> db
+}</code></pre>
+
+<h3><code>t.Helper()</code> — ผลรันจริง</h3>
+<pre><code>ไม่ใส่ → parallel2_test.go:<strong>43</strong>: got 5, want 10   <span class="c">// ชี้ในตัว helper (ไร้ประโยชน์)</span>
+ใส่   → parallel2_test.go:<strong>59</strong>: got 5, want 10   <span class="c">// ชี้บรรทัดที่เรียก (ถูก)</span></code></pre>
+<ul><li><span class="rule">helper ที่รับ <code>*testing.T</code> ต้องใส่ <code>t.Helper()</code> บรรทัดแรกเสมอ</span></li></ul>
+
+<h3><code>t.Parallel()</code> — กลไกและกับดักการวัดเวลา</h3>
+<pre><code><span class="c">// ❌ วัดผิด — Parallel คืนการควบคุมทันที</span>
+t.<span class="f">Run</span>(<span class="s">"group"</span>, <span class="k">func</span>(t *testing.T) {
+    start := time.<span class="f">Now</span>()
+    <span class="k">for</span> ... { t.<span class="f">Run</span>(..., <span class="k">func</span>(t *testing.T){ t.<span class="f">Parallel</span>(); ... }) }
+    t.<span class="f">Logf</span>(<span class="s">"%v"</span>, time.<span class="f">Since</span>(start))   <span class="c">// ได้ 139µs — หลอกตา!</span>
+})
+
+<span class="c">// ✅ วัดถูก — วัดนอก group</span>
+start := time.<span class="f">Now</span>()
+t.<span class="f">Run</span>(<span class="s">"group"</span>, <span class="k">func</span>(t *testing.T) { <span class="c">/* สร้าง parallel subtest */</span> })
+t.<span class="f">Logf</span>(<span class="s">"%v"</span>, time.<span class="f">Since</span>(start))       <span class="c">// ได้ 201ms — จริง</span></code></pre>
+<div class="table-wrap">
+<table>
+  <tr><th>วิธี</th><th>ผลรันจริง (5 เคส × 200ms)</th></tr>
+  <tr><td>sequential</td><td>1.006 s</td></tr>
+  <tr><td>parallel วัดถูก</td><td><strong>201 ms</strong> (เร็วขึ้น 5 เท่า)</td></tr>
+  <tr><td>parallel วัดแบบในสไลด์</td><td>139 µs ← ไม่ใช่เวลาจริง</td></tr>
+</table>
+</div>
+<ul><li><span class="rule">ก่อนใส่ <code>t.Parallel()</code> ต้องแน่ใจว่าไม่แชร์ state</span> —
+  ตรวจด้วย <code>-race -count=10</code></li></ul>
+
+<!-- ============================================================ -->
+<h2 id="table">4 · Table-Driven Test</h2>
+
+<pre><code><span class="k">func</span> <span class="f">TestCalculateDiscount</span>(t *testing.T) {
+    tests := []<span class="k">struct</span> {
+        name    <span class="n">string</span>      <span class="c">// ← ขาดไม่ได้ ไม่งั้นไม่รู้ว่าเคสไหนพัง</span>
+        price   <span class="n">int</span>
+        percent <span class="n">int</span>
+        want    <span class="n">int</span>
+        wantErr <span class="n">bool</span>
+    }{
+        {<span class="s">"ลด 10%"</span>,          <span class="n">100</span>,  <span class="n">10</span>,  <span class="n">90</span>, <span class="k">false</span>},
+        {<span class="s">"ไม่ลด"</span>,            <span class="n">100</span>,   <span class="n">0</span>, <span class="n">100</span>, <span class="k">false</span>},
+        {<span class="s">"เปอร์เซ็นต์ติดลบ"</span>,  <span class="n">100</span>,  <span class="n">-5</span>,   <span class="n">0</span>,  <span class="k">true</span>},
+    }
+
+    <span class="k">for</span> _, tt := <span class="k">range</span> tests {
+        t.<span class="f">Run</span>(tt.name, <span class="k">func</span>(t *testing.T) {
+            got, err := <span class="f">CalculateDiscount</span>(tt.price, tt.percent)
+            <span class="k">if</span> (err != <span class="k">nil</span>) != tt.wantErr {
+                t.<span class="f">Fatalf</span>(<span class="s">"err = %v; wantErr %v"</span>, err, tt.wantErr)
+            }
+            <span class="k">if</span> got != tt.want {
+                t.<span class="f">Errorf</span>(<span class="s">"CalculateDiscount(%d, %d) = %d; want %d"</span>,
+                    tt.price, tt.percent, got, tt.want)
+            }
+        })
+    }
+}</code></pre>
+
+<ul>
+  <li><span class="rule">ข้อความ error ต้องบอก 3 อย่าง: input · got · want</span>
+      รูปแบบมาตรฐาน <code>f(input) = got; want X</code></li>
+  <li><code>(err != nil) != tt.wantErr</code> จับได้ทั้งสองทาง
+      <strong>รวมกรณีที่ควรพังแต่ไม่พัง</strong></li>
+  <li>อยากแน่นกว่านั้น → <code>wantErr error</code> + <code>errors.Is</code>
+      (<code>errors.Is(nil, nil)</code> = <code>true</code> ครอบคลุมทั้งสองเคส)</li>
+  <li><span class="rule">Go 1.22+ ไม่ต้องเขียน <code>tt := tt</code> แล้ว</span> —
+      ตัวแปรลูปเป็นตัวใหม่ทุกรอบ · <strong>แต่ดูบรรทัด <code>go</code> ใน go.mod ก่อน</strong></li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="testify">5 · Testify — assert / require</h2>
+
+<pre><code>go get github.com/stretchr/testify &amp;&amp; go mod tidy   <span class="c">// tidy ขาดไม่ได้</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>assert.X</code></th><th><code>require.X</code></th></tr>
+  <tr><td>เทียบเท่ากับ</td><td><code>t.Errorf</code> — ไปต่อ</td><td><code>t.Fatalf</code> — หยุด</td></tr>
+  <tr><td>ใช้กับ</td><td>ตรวจผลลัพธ์หลายจุด</td><td>เงื่อนไขก่อนหน้า</td></tr>
+</table>
+</div>
+
+<pre><code>result, err := <span class="f">CalculateDiscount</span>(<span class="n">100</span>, <span class="n">10</span>)
+require.<span class="f">NoError</span>(t, err)          <span class="c">// ถ้าพังก็ไม่ต้องไปต่อ</span>
+assert.<span class="f">Equal</span>(t, <span class="n">90</span>, result)      <span class="c">// ตรวจผล</span></code></pre>
+
+<h3>แคตตาล็อก (รันผ่านจริงบน v1.11.1)</h3>
+<pre><code><span class="c">// ค่าปกติ</span>
+assert.<span class="f">Equal</span>(t, expected, actual)               <span class="c">// เท่ากัน (type ต้องตรง!)</span>
+assert.<span class="f">NotEqual</span>(t, unexpected, actual)
+assert.<span class="f">ElementsMatch</span>(t, []<span class="n">int</span>{<span class="n">3</span>,<span class="n">1</span>,<span class="n">2</span>}, list)     <span class="c">// slice เท่ากัน ไม่สนลำดับ</span>
+
+<span class="c">// สถานะ</span>
+assert.<span class="f">Nil</span>(t, err) · assert.<span class="f">NotNil</span>(t, obj)
+assert.<span class="f">Empty</span>(t, slice) · assert.<span class="f">Len</span>(t, slice, <span class="n">3</span>)
+assert.<span class="f">True</span>(t, ok) · assert.<span class="f">False</span>(t, failed)
+
+<span class="c">// error — อย่าเทียบข้อความ!</span>
+require.<span class="f">Error</span>(t, err) · assert.<span class="f">NoError</span>(t, err)
+assert.<span class="f">ErrorIs</span>(t, err, ErrNotFound)              <span class="c">// ← แม่นกว่า (ตาม chain)</span>
+assert.<span class="f">ErrorAs</span>(t, err, &amp;appErr)
+assert.<span class="f">ErrorContains</span>(t, err, <span class="s">"not found"</span>)      <span class="c">// หลวม ใช้เมื่อจำเป็น</span>
+
+<span class="c">// float — ห้ามใช้ Equal!</span>
+assert.<span class="f">InDelta</span>(t, <span class="n">3.14</span>, result, <span class="n">0.001</span>)
+
+<span class="c">// slice/map/string</span>
+assert.<span class="f">Contains</span>(t, <span class="s">"hello world"</span>, <span class="s">"world"</span>)
+assert.<span class="f">Contains</span>(t, []<span class="n">int</span>{<span class="n">1</span>,<span class="n">2</span>,<span class="n">3</span>}, <span class="n">2</span>)
+assert.<span class="f">Contains</span>(t, <span class="k">map</span>[<span class="n">string</span>]<span class="n">int</span>{<span class="s">"a"</span>:<span class="n">1</span>}, <span class="s">"a"</span>)
+
+<span class="c">// เปรียบเทียบ · ข้อความเสริม</span>
+assert.<span class="f">Greater</span>(t, a, b) · assert.<span class="f">Less</span>(t, a, b)
+assert.<span class="f">Equal</span>(t, <span class="n">10</span>, x, <span class="s">"input ตอนนั้นคือ %d"</span>, input)</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="rule"><code>assert.Equal</code> เทียบทั้ง type และค่า</span>
+    (ฐานคือ <code>reflect.DeepEqual</code>) — ผลรันจริง:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>assert.Equal(t, 90.0, result)   <span class="c">// result เป็น int</span>
+→ expected: float64(90)  actual: int(90)   ✗ <span class="c">(สไลด์เขียนแบบนี้!)</span>
+
+<span class="k">var</span> g Grade = <span class="s">"A"</span>
+assert.Equal(t, <span class="s">"A"</span>, g)
+→ expected: string("A")  actual: Grade("A")   ✗</code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="mock">6 · Testify — mock &amp; suite</h2>
+
+<h3>DI ก่อน แล้วค่อย mock ได้</h3>
+<pre><code><span class="k">type</span> Store <span class="k">interface</span> { <span class="f">Save</span>(r Result) <span class="n">error</span> }
+
+<span class="k">type</span> Calculator <span class="k">struct</span> { store Store }
+<span class="k">func</span> <span class="f">NewCalculator</span>(s Store) *Calculator { <span class="k">return</span> &amp;Calculator{store: s} }</code></pre>
+
+<pre><code><span class="k">type</span> MockStore <span class="k">struct</span> { mock.Mock }
+
+<span class="k">func</span> (m *MockStore) <span class="f">Save</span>(r Result) <span class="n">error</span> {
+    args := m.<span class="f">Called</span>(r)
+    <span class="k">return</span> args.<span class="f">Error</span>(<span class="n">0</span>)
+}
+
+mockStore := <span class="f">new</span>(MockStore)
+mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, Result{A:<span class="n">2</span>, B:<span class="n">3</span>, Sum:<span class="n">5</span>}).<span class="f">Return</span>(<span class="k">nil</span>)
+calc := <span class="f">NewCalculator</span>(mockStore)
+result, err := calc.<span class="f">Add</span>(<span class="n">2</span>, <span class="n">3</span>)
+mockStore.<span class="f">AssertExpectations</span>(t)</code></pre>
+
+<pre><code><span class="c">// จับคู่ argument แบบหลวม</span>
+mock.Anything · mock.<span class="f">AnythingOfType</span>(<span class="s">"main.Result"</span>)
+
+<span class="c">// ตรวจการเรียก</span>
+m.<span class="f">AssertExpectations</span>(t)                 <span class="c">// ทุกอันที่ On ไว้ถูกเรียกครบ</span>
+m.<span class="f">AssertCalled</span>(t, <span class="s">"Save"</span>, mock.Anything)
+m.<span class="f">AssertNotCalled</span>(t, <span class="s">"Update"</span>)
+m.<span class="f">AssertNumberOfCalls</span>(t, <span class="s">"Save"</span>, <span class="n">2</span>)
+
+<span class="c">// จำกัดจำนวนครั้ง</span>
+.<span class="f">Once</span>() · .<span class="f">Twice</span>() · .<span class="f">Times</span>(<span class="n">3</span>)</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="rule">ลืม <code>.On()</code> แล้วเรียก method → panic</span>
+    แต่ข้อความบอกวิธีแก้พร้อมค่า argument ที่ได้รับจริง:
+    <br><code>mock: I don't know what to return because the method call was unexpected.</code>
+  </p>
+</div>
+
+<h3>Suite</h3>
+<pre><code><span class="k">type</span> UserServiceSuite <span class="k">struct</span> {
+    suite.Suite
+    store *MockUserStore
+    svc   *UserService
+}
+
+<span class="k">func</span> (s *UserServiceSuite) <span class="f">SetupTest</span>() {
+    s.store = <span class="f">new</span>(MockUserStore)      <span class="c">// สร้างใหม่ทุกเทส</span>
+    s.svc = <span class="f">NewUserService</span>(s.store)
+}
+
+<span class="k">func</span> (s *UserServiceSuite) <span class="f">TestFindUser</span>() {
+    s.store.<span class="f">On</span>(<span class="s">"GetByID"</span>, <span class="n">1</span>).<span class="f">Return</span>(&amp;User{Name: <span class="s">"Bob"</span>}, <span class="k">nil</span>)
+    user, err := s.svc.<span class="f">FindUser</span>(<span class="n">1</span>)
+    s.<span class="f">Require</span>().<span class="f">NoError</span>(err)             <span class="c">// ⚠️ ไม่ต้องส่ง t</span>
+    s.<span class="f">Assert</span>().<span class="f">Equal</span>(<span class="s">"Bob"</span>, user.Name)
+}
+
+<span class="k">func</span> <span class="f">TestUserServiceSuite</span>(t *testing.T) {   <span class="c">// ← ขาดไม่ได้</span>
+    suite.<span class="f">Run</span>(t, <span class="f">new</span>(UserServiceSuite))
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Hook</th><th>รันเมื่อ</th></tr>
+  <tr><td><code>SetupSuite()</code></td><td>ครั้งเดียวก่อนทุกเทส</td></tr>
+  <tr><td><code>SetupTest()</code></td><td>ก่อนทุกเทส</td></tr>
+  <tr><td><code>BeforeTest(suiteName, testName)</code></td><td>ก่อนแต่ละเทส (รู้ชื่อ)</td></tr>
+  <tr><td><code>AfterTest(suiteName, testName)</code></td><td>หลังแต่ละเทส</td></tr>
+  <tr><td><code>TearDownTest()</code></td><td>หลังทุกเทส</td></tr>
+  <tr><td><code>TearDownSuite()</code></td><td>ครั้งเดียวหลังทุกเทสจบ</td></tr>
+</table>
+</div>
+<ul>
+  <li><span class="rule">suite เรียงเทสตามตัวอักษร ไม่ใช่ตามลำดับในไฟล์</span>
+      → ห้ามเขียนเทสที่พึ่งพาลำดับ</li>
+  <li><span class="rule">ใน suite ใช้ <code>s.Assert()</code> / <code>s.Require()</code></span>
+      ไม่ใช่ <code>assert.X(t, …)</code></li>
+  <li><span class="rule">mock เฉพาะสิ่งที่อยู่นอกการควบคุม</span> —
+      database, HTTP, ไฟล์, นาฬิกา, ตัวสุ่ม · mock เยอะเกิน = refactor ทีแดงหมด</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="tdd">7 · TDD &amp; AI workflow</h2>
+
+<div class="diagram">
+<pre>   <strong>[Red]</strong> ──▶ <strong>[Green]</strong> ──▶ <strong>[Refactor]</strong> ──┐
+     ▲                                │
+     └────────────────────────────────┘
+เขียนเทสให้พัง   แก้ให้ผ่าน    ทำให้สวย (เทสยังเขียว)</pre>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ขั้น</th><th>กฎเหล็ก</th></tr>
+  <tr><td>🔴 Red</td><td>ห้ามเขียน production code ก่อนเห็นไฟแดง</td></tr>
+  <tr><td>🟢 Green</td><td>เขียนน้อยที่สุดที่ทำให้ผ่าน — สวยทีหลังได้</td></tr>
+  <tr><td>🔵 Refactor</td><td>เทสต้องเขียวตลอด · <strong>ห้ามแก้เทสไปพร้อมกัน</strong></td></tr>
+</table>
+</div>
+
+<h3>Red มีสองแบบ — มีแบบเดียวที่ใช่</h3>
+<pre><code><span class="c">// 🚫 ยังไม่ใช่ Red — เทสยังไม่เคยรันเลย</span>
+./division_test.go:6:14: undefined: Division
+FAIL	tdd [build failed]
+
+<span class="c">// ✅ Red ที่ต้องการ — เทสรันแล้วพังด้วยเหตุผลที่ถูก</span>
+--- FAIL: TestDivision (0.00s)
+    division_test.go:11: Division(10,2) = 0; want 5</code></pre>
+
+<h3>AI workflow</h3>
+<pre><code><span class="n">1.</span> คุณ: เขียน table-driven test ระบุพฤติกรรมทุกเคส (รวมเคสขอบ)
+<span class="n">2.</span> คุณ: รันให้เห็นแดง — พิสูจน์ว่าเทสจับได้จริง
+<span class="n">3.</span> AI:  เขียน implementation ให้ผ่านเทส (ห้ามแก้ไฟล์เทส)
+<span class="n">4.</span> AI:  รัน go test เอง แก้เอง จนเขียว
+<span class="n">5.</span> คุณ: <strong>อ่านโค้ด — มัน "โกง" เทสหรือเปล่า?</strong>
+<span class="n">6.</span> คุณ: เพิ่มเคส → กลับข้อ 2</code></pre>
+
+<ul>
+  <li><span class="rule">อย่าให้ AI เขียนเทสจากโค้ดที่มันเพิ่งเขียนเอง</span>
+      — ถ้าโค้ดผิด เทสจะยืนยันความผิดนั้น</li>
+  <li><span class="rule">ตารางเทสต้องมีเคสมากพอจนการโกงยากกว่าการทำจริง</span>
+      — ระวัง <code>if price == 100 &amp;&amp; percent == 10 { return 90, nil }</code></li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="traps">8 · ตารางกับดักรวม — อ่านก่อนส่ง PR</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สิ่งที่เห็น / เขียน</th><th>สิ่งที่คุณคิด</th><th>สิ่งที่เกิดจริง</th></tr>
+  <tr>
+    <td>ไฟล์ <code>mytests.go</code> มี <code>func TestX</code></td>
+    <td>รันเทสได้</td>
+    <td><code>[no test files]</code> <strong>เงียบสนิท</strong></td>
+  </tr>
+  <tr>
+    <td><code>package calc_test</code> เรียก <code>double()</code></td>
+    <td>อยู่ folder เดียวกันน่าจะได้</td>
+    <td>💥 <code>name double not exported</code></td>
+  </tr>
+  <tr>
+    <td><code>//go:build</code> อยู่ใต้ <code>package</code></td>
+    <td>อยู่ไฟล์เดียวกันก็พอ</td>
+    <td>💥 <code>misplaced compiler directive</code></td>
+  </tr>
+  <tr>
+    <td><code>go test -tag=integration</code></td>
+    <td>ตามที่สไลด์เขียน</td>
+    <td>💥 <code>flag provided but not defined: -tag</code> · ใช้ <code>-tags</code></td>
+  </tr>
+  <tr>
+    <td><code>ok (cached)</code></td>
+    <td>เทสผ่านแล้ว</td>
+    <td>ไม่ได้รันจริง · ใช้ <code>-count=1</code></td>
+  </tr>
+  <tr>
+    <td><code>coverage: 100%</code></td>
+    <td>ไม่มีบั๊กแล้ว</td>
+    <td>แค่ทุกบรรทัดถูกรันผ่าน — assert อาจไม่มีเลย</td>
+  </tr>
+  <tr>
+    <td><code>t.Error</code> แล้วใช้ค่าต่อ</td>
+    <td>หยุดแล้ว</td>
+    <td>💥 บรรทัดถัดไป panic (nil) · ใช้ <code>t.Fatal</code></td>
+  </tr>
+  <tr>
+    <td><code>t.Fatal</code> ใน goroutine</td>
+    <td>หยุดเทส</td>
+    <td>หยุดแค่ goroutine · ผลลัพธ์เพี้ยน</td>
+  </tr>
+  <tr>
+    <td><code>fmt.Println</code> ในเทส</td>
+    <td>ดีบักสะดวก</td>
+    <td>พิมพ์ตลอด ไม่มีเลขบรรทัด · ใช้ <code>t.Log</code></td>
+  </tr>
+  <tr>
+    <td>helper ไม่ใส่ <code>t.Helper()</code></td>
+    <td>ไม่เป็นไร</td>
+    <td>error ทุกอันชี้บรรทัดเดียวกันในตัว helper</td>
+  </tr>
+  <tr>
+    <td><code>defer db.Close()</code> ใน test helper</td>
+    <td>ปิดตอนเทสจบ</td>
+    <td>ปิดทันทีที่ออกจาก helper · ใช้ <code>t.Cleanup</code></td>
+  </tr>
+  <tr>
+    <td>วัดเวลาในบล็อกที่มี <code>t.Parallel()</code></td>
+    <td>ได้เวลารันจริง</td>
+    <td>ได้ ~139µs (แค่เวลาจอดคิว) · วัดนอกบล็อก</td>
+  </tr>
+  <tr>
+    <td><code>t.Parallel()</code> + ตัวแปร global</td>
+    <td>เร็วขึ้น</td>
+    <td>flaky test · ตรวจด้วย <code>-race -count=10</code></td>
+  </tr>
+  <tr>
+    <td>ตารางเทสไม่มี field <code>name</code></td>
+    <td>ใช้ index ก็ได้</td>
+    <td><code>case 1 failed</code> — ไม่รู้ว่าเคสอะไร</td>
+  </tr>
+  <tr>
+    <td><code>assert.Equal(t, 90.0, intResult)</code></td>
+    <td>ค่าเท่ากันก็ผ่าน</td>
+    <td>💥 <code>float64(90) ≠ int(90)</code> <strong>(สไลด์เขียนแบบนี้)</strong></td>
+  </tr>
+  <tr>
+    <td><code>assert.Equal(t, 0.3, a+b)</code> (float)</td>
+    <td>0.1+0.2 = 0.3</td>
+    <td>💥 ได้ <code>0.30000000000000004</code> · ใช้ <code>InDelta</code></td>
+  </tr>
+  <tr>
+    <td><code>assert.Equal(t, "A", grade)</code> (custom type)</td>
+    <td>ค่าเป็น "A" เหมือนกัน</td>
+    <td>💥 <code>string("A") ≠ Grade("A")</code></td>
+  </tr>
+  <tr>
+    <td>ลืม <code>go mod tidy</code> หลัง <code>go get testify</code></td>
+    <td>ลงเสร็จแล้ว</td>
+    <td>💥 <code>missing go.sum entry for … go-spew</code></td>
+  </tr>
+  <tr>
+    <td>ใน suite เรียก <code>assert.Equal(t, …)</code></td>
+    <td>เหมือนเทสปกติ</td>
+    <td>ไม่มี <code>t</code> ให้ใช้ · ใช้ <code>s.Assert()</code></td>
+  </tr>
+  <tr>
+    <td>เขียนเทส suite ให้ทำงานตามลำดับ</td>
+    <td>รันตามลำดับในไฟล์</td>
+    <td>เรียงตามตัวอักษร → เทสพังแบบเดาไม่ได้</td>
+  </tr>
+  <tr>
+    <td>ลืม <code>mockStore.On(...)</code></td>
+    <td>mock คืน zero value</td>
+    <td>💥 panic — แต่ข้อความบอกวิธีแก้ให้</td>
+  </tr>
+  <tr>
+    <td><code>build failed</code> ตอนทำ TDD</td>
+    <td>นี่คือ Red แล้ว</td>
+    <td>เทสยังไม่เคยรัน · เขียนโครงเปล่าให้คอมไพล์ผ่านก่อน</td>
+  </tr>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="../lessons/0014-test-in-go.html">บทเรียน 14 — test in Go</a>
+  <a href="../lessons/0015-testing-t.html">บทเรียน 15 — testing.T</a>
+  <a href="../lessons/0016-table-driven-test.html">บทเรียน 16 — table-driven</a>
+  <a href="../lessons/0017-testify.html">บทเรียน 17 — Testify</a>
+  <a href="../lessons/0018-tdd.html">บทเรียน 18 — TDD</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../../docs.html?f=RESOURCES.md">📚 Resources</a>
+</nav>
+
+</main>
+</body>
+</html>

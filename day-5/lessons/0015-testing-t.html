@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 15 — testing.T: เครื่องมือทั้งหมดที่อยู่ใน t</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 15 · Day 5 · Testing</p>
+  <h1>testing.T: เครื่องมือทั้งหมดที่อยู่ใน <code>t</code></h1>
+  <p class="meta">~16 นาที · ต้องมี: <a href="./0014-test-in-go.html">บทเรียน 14</a>, <a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a> (defer)</p>
+  <p class="standfirst">
+    <code>t</code> ไม่ใช่แค่ที่ไว้บอกว่า "พัง" — มันคือ<strong>รีโมตควบคุมการทดสอบ</strong>
+    หยุดกลางคัน ข้ามทั้งเทส แตกเป็นเทสย่อย รันขนานกัน เก็บกวาดตอนจบ
+    หรือแม้แต่บอกให้ error ชี้ไปที่บรรทัดที่<em>ถูกต้อง</em>
+    บทนี้ไล่ทีละอย่างพร้อมผลรันจริง
+  </p>
+</header>
+
+<main>
+
+<h2>1 · <code>t.Run</code> — แตกเทสใหญ่เป็นเทสย่อย</h2>
+
+<pre><code><span class="k">func</span> <span class="f">TestT_Examples</span>(t *testing.T) {
+    t.<span class="f">Run</span>(<span class="s">"กลุ่ม_A"</span>, <span class="k">func</span>(t *testing.T) {
+        t.<span class="f">Run</span>(<span class="s">"ย่อย_1"</span>, <span class="k">func</span>(t *testing.T) {
+            t.<span class="f">Log</span>(<span class="s">"path: TestT_Examples/กลุ่ม_A/ย่อย_1"</span>)
+        })
+        t.<span class="f">Run</span>(<span class="s">"ย่อย_2"</span>, <span class="k">func</span>(t *testing.T) {
+            t.<span class="f">Log</span>(<span class="s">"path: TestT_Examples/กลุ่ม_A/ย่อย_2"</span>)
+        })
+    })
+}</code></pre>
+
+<div class="diagram">
+<pre>ชื่อ subtest ต่อกันเป็น <strong>path</strong> คั่นด้วย /
+
+  TestT_Examples
+      └── กลุ่ม_A
+            ├── ย่อย_1     →  TestT_Examples/กลุ่ม_A/ย่อย_1
+            └── ย่อย_2     →  TestT_Examples/กลุ่ม_A/ย่อย_2
+
+<strong>path นี้เอาไปใส่ -run ได้ตรง ๆ</strong>
+  go test -run 'TestT_Examples/กลุ่ม_A/ย่อย_1'</pre>
+</div>
+
+<ul>
+  <li>subtest แต่ละตัวได้ <code>t</code> <strong>ตัวใหม่</strong> — พังตัวหนึ่งไม่ลามตัวอื่น</li>
+  <li><strong>Go แปลงเว้นวรรคในชื่อเป็น <code>_</code> อัตโนมัติ</strong> —
+      ตั้งว่า <code>"ลด 10%"</code> จะแสดงเป็น <code>ลด_10%</code></li>
+  <li>ซ้อนกี่ชั้นก็ได้ แต่เกิน 2 ชั้นมักอ่านยาก</li>
+</ul>
+
+<h2>2 · <code>Error</code> vs <code>Fatal</code> — ต่างกันแค่ "หยุดหรือไม่หยุด"</h2>
+
+<div class="compare">
+  <div class="side">
+    <h4><code>t.Errorf</code> — ฟ้องแล้วไปต่อ</h4>
+    <pre><code>result := <span class="n">5</span>
+<span class="k">if</span> result != <span class="n">10</span> {
+    t.<span class="f">Errorf</span>(<span class="s">"ได้ %d ไม่เท่ากับ 10"</span>, result)
+}
+t.<span class="f">Log</span>(<span class="s">"บรรทัดนี้ยังรันต่อ"</span>)</code></pre>
+  </div>
+  <div class="side">
+    <h4><code>t.Fatalf</code> — ฟ้องแล้วหยุดทันที</h4>
+    <pre><code>result := <span class="n">5</span>
+<span class="k">if</span> result != <span class="n">10</span> {
+    t.<span class="f">Fatalf</span>(<span class="s">"ได้ %d ไม่เท่ากับ 10"</span>, result)
+}
+t.<span class="f">Log</span>(<span class="s">"บรรทัดนี้จะไม่รัน"</span>)</code></pre>
+  </div>
+</div>
+
+<p>ผลรันจริงของทั้งสองแบบ:</p>
+
+<pre><code>=== RUN   TestErrorContinues/Error_ทำงานต่อ
+    behaviour_test.go:13: ได้ 5 ไม่เท่ากับ 10
+    behaviour_test.go:15: บรรทัดนี้ยังรันต่อ         <span class="c">← มา</span>
+--- FAIL: TestErrorContinues/Error_ทำงานต่อ
+
+=== RUN   TestFatalStops/Fatal_หยุดทันที
+    behaviour_test.go:23: ได้ 5 ไม่เท่ากับ 10 -> หยุด
+--- FAIL: TestFatalStops/Fatal_หยุดทันที                <span class="c">← ไม่มี Log ตามมา</span></code></pre>
+
+<h3>เลือกยังไง — มีกฎง่าย ๆ ข้อเดียว</h3>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ถ้าบรรทัดถัดไปจะพังตามแน่ ๆ ให้ใช้ <code>Fatal</code></strong> ·
+    นอกนั้นใช้ <code>Error</code>
+  </p>
+  <pre style="margin:0.7rem 0 0"><code>user, err := <span class="f">GetUser</span>(<span class="s">"U-101"</span>)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    t.<span class="f">Fatalf</span>(<span class="s">"GetUser พัง: %v"</span>, err)   <span class="c">// ← Fatal เพราะ user เป็น nil</span>
+}
+<span class="k">if</span> user.Name != <span class="s">"Alice"</span> {                <span class="c">// ถ้าใช้ Error ข้างบน บรรทัดนี้ panic!</span>
+    t.<span class="f">Errorf</span>(<span class="s">"Name = %q; want Alice"</span>, user.Name)
+}
+<span class="k">if</span> user.Age != <span class="n">30</span> {                       <span class="c">// ← Error เพราะอยากเห็นทุกจุดที่ผิด</span>
+    t.<span class="f">Errorf</span>(<span class="s">"Age = %d; want 30"</span>, user.Age)
+}</code></pre>
+</div>
+
+<div class="warn">
+  <span class="label">ข้อจำกัดที่ต้องรู้</span>
+  <p style="margin-bottom:0">
+    <code>t.Fatal</code> ต้องเรียกจาก <strong>goroutine ของเทสเอง</strong>
+    เท่านั้น — เรียกใน goroutine ที่แตกออกไปแล้ว มันจะหยุด goroutine นั้น
+    แต่<em>ไม่หยุดเทส</em> และผลลัพธ์จะเพี้ยน
+    <br>ใน goroutine ให้ใช้ <code>t.Error</code> แทน
+  </p>
+</div>
+
+<h2>3 · <code>Log</code> / <code>Logf</code> — เห็นเฉพาะตอน <code>-v</code></h2>
+
+<div class="predict">
+  <pre><code><span class="k">func</span> <span class="f">TestLogOnlyWithV</span>(t *testing.T) {
+    t.<span class="f">Log</span>(<span class="s">"เริ่มเทส..."</span>)
+    t.<span class="f">Logf</span>(<span class="s">"input = %d, expected = %d"</span>, <span class="n">5</span>, <span class="n">10</span>)
+}</code></pre>
+  <p class="ask">สั่ง <code>go test .</code> เฉย ๆ (ไม่ใส่ <code>-v</code>) จะเห็นข้อความไหม?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่เห็นเลย</strong> — ผมรันทดสอบแล้ว ได้แค่ <code>ok</code></p>
+    <p style="margin-bottom:0">
+      พอใส่ <code>-v</code> ถึงจะโผล่มา:
+    </p>
+    <pre style="margin:0.6rem 0 0"><code>=== RUN   TestLogOnlyWithV/Log_ใช้ดีบัก
+    behaviour_test.go:40: เริ่มเทส...
+    behaviour_test.go:41: input = 5, expected = 10
+--- PASS: TestLogOnlyWithV/Log_ใช้ดีบัก</code></pre>
+    <p style="margin:0.6rem 0 0">
+      <strong>ยกเว้นกรณีเดียว: ถ้าเทสนั้น fail จะโชว์ log ให้เสมอ</strong>
+      แม้ไม่ใส่ <code>-v</code> — ออกแบบมาให้ log ที่จำเป็นตอนดีบักโผล่มาเอง
+      <br><strong>อย่าใช้ <code>fmt.Println</code> ในเทส</strong>
+      เพราะมันพิมพ์ตลอดเวลา รกจอ และไม่มีเลขบรรทัดกำกับ
+    </p>
+  </div>
+</div>
+
+<h2>4 · <code>Skip</code> — ข้ามเทสตามเงื่อนไข</h2>
+
+<pre><code><span class="k">func</span> <span class="f">TestHeavyStuff</span>(t *testing.T) {
+    <span class="k">if</span> testing.<span class="f">Short</span>() {       <span class="c">// true เมื่อสั่ง go test -short</span>
+        t.<span class="f">Skip</span>(<span class="s">"ข้ามเพราะอยู่ใน short mode"</span>)
+    }
+    t.<span class="f">Log</span>(<span class="s">"ถ้าไม่ใช่ short mode จะรันบรรทัดนี้"</span>)
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>คำสั่ง</th><th>ผลรันจริง</th></tr>
+  <tr><td><code>go test -v .</code></td><td><code>--- PASS:</code> + log ปกติ</td></tr>
+  <tr><td><code>go test -v -short .</code></td><td><code>--- SKIP:</code> พร้อมเหตุผล</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong><code>SKIP</code> ไม่ใช่ <code>FAIL</code></strong> — เทสที่ถูกข้าม
+    ไม่ทำให้ build แดง แต่<strong>ยังปรากฏในรายงาน</strong> ต่างจากการ comment
+    โค้ดทิ้งซึ่งจะหายไปเลยและไม่มีใครนึกถึงอีก
+    <br>ใช้ <code>Skip</code> กับ: เทสที่ต้องต่อเน็ต, เทสที่ช้ามาก,
+    เทสที่รันได้เฉพาะบน OS บางตัว (<code>runtime.GOOS</code>)
+  </p>
+</div>
+
+<h2>5 · <code>t.Failed()</code> — ถามว่าตอนนี้พังไปหรือยัง</h2>
+
+<pre><code>result := <span class="n">5</span>
+<span class="k">if</span> result != <span class="n">10</span> {
+    t.<span class="f">Error</span>(<span class="s">"ไม่เท่ากับ 10"</span>)     <span class="c">// Error ไม่หยุด → มาถึงบรรทัดล่างได้</span>
+}
+
+<span class="k">if</span> t.<span class="f">Failed</span>() {
+    t.<span class="f">Log</span>(<span class="s">"เทสนี้ fail แล้ว จะ dump ข้อมูลเพิ่ม"</span>)
+}</code></pre>
+
+<p>
+  ประโยชน์จริง: <strong>เก็บหลักฐานเฉพาะตอนพัง</strong> —
+  เช่น dump ทั้ง struct ออกมา, เซฟ response ลงไฟล์, print SQL ที่รันไป
+  ถ้าทำทุกครั้งจะรกเกินไป แต่ตอนพังคือตอนที่ต้องการมากที่สุด
+</p>
+
+<h2>6 · <code>t.Cleanup</code> — <code>defer</code> ที่ฉลาดกว่า</h2>
+
+<pre><code>t.<span class="f">Cleanup</span>(<span class="k">func</span>() { t.<span class="f">Log</span>(<span class="s">"cleanup #1 (ลงทะเบียนก่อน)"</span>) })
+t.<span class="f">Cleanup</span>(<span class="k">func</span>() { t.<span class="f">Log</span>(<span class="s">"cleanup #2 (ลงทะเบียนหลัง)"</span>) })
+t.<span class="f">Log</span>(<span class="s">"กำลังเทส..."</span>)
+t.<span class="f">Error</span>(<span class="s">"จงใจ fail"</span>)</code></pre>
+
+<div class="predict">
+  <p class="ask">เทส fail แล้ว cleanup จะรันไหม แล้วรันเรียงยังไง?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>รันครบทั้งสองอัน และเรียงแบบ LIFO</strong> — ผมรันทดสอบแล้ว:</p>
+    <pre style="margin-bottom:0.8rem"><code>behaviour_test.go:61: กำลังเทส...
+behaviour_test.go:62: จงใจ fail
+behaviour_test.go:60: cleanup #2 (ลงทะเบียนหลัง)   <span class="c">← หลังสุดออกก่อน</span>
+behaviour_test.go:59: cleanup #1 (ลงทะเบียนก่อน)
+--- FAIL: TestCleanupOrder/Cleanup_ทำความสะอาด</code></pre>
+    <p style="margin-bottom:0">
+      <strong>เป็นกฎเดียวกับ <code>defer</code></strong> จาก
+      <a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a> —
+      last in, first out
+    </p>
+  </div>
+</div>
+
+<h3>แล้วต่างจาก <code>defer</code> ตรงไหน</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>defer</code></th><th><code>t.Cleanup</code></th></tr>
+  <tr><td>รันเมื่อ</td><td>ฟังก์ชัน<em>ที่เขียน defer</em> จบ</td><td><strong>เทส (และ subtest ทั้งหมด) จบ</strong></td></tr>
+  <tr><td>เขียนใน helper แล้วใช้ได้ไหม</td><td>❌ รันทันทีที่ helper จบ</td><td>✅ รอจนเทสจบจริง</td></tr>
+  <tr><td>ลำดับ</td><td>LIFO</td><td>LIFO</td></tr>
+  <tr><td>รันตอน fail/panic</td><td>✅</td><td>✅</td></tr>
+</table>
+</div>
+
+<pre><code><span class="c">// นี่คือเหตุผลที่ Cleanup มีอยู่ — helper ที่เก็บกวาดตัวเองได้</span>
+<span class="k">func</span> <span class="f">newTestDB</span>(t *testing.T) *DB {
+    t.<span class="f">Helper</span>()
+    db := <span class="f">openTempDB</span>()
+    t.<span class="f">Cleanup</span>(<span class="k">func</span>() { db.<span class="f">Close</span>() })   <span class="c">// ← ถ้าใช้ defer จะปิดทันทีที่ออกจาก newTestDB</span>
+    <span class="k">return</span> db
+}
+
+<span class="k">func</span> <span class="f">TestSomething</span>(t *testing.T) {
+    db := <span class="f">newTestDB</span>(t)    <span class="c">// เรียกบรรทัดเดียว ได้ทั้ง setup และ teardown</span>
+    <span class="c">// ... ใช้ db ได้ตามปกติ ...</span>
+}</code></pre>
+
+<h2>7 · <code>t.Helper()</code> — ทำให้ error ชี้ถูกบรรทัด</h2>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ไม่ใส่ <code>t.Helper()</code></h4>
+    <pre><code><span class="k">func</span> <span class="f">assertEqual</span>(
+    t *testing.T, got, want <span class="n">int</span>,
+) {
+    <span class="k">if</span> got != want {
+        t.<span class="f">Errorf</span>(<span class="s">"got %d, want %d"</span>,
+            got, want)
+    }
+}</code></pre>
+  </div>
+  <div class="side good">
+    <h4>✅ ใส่ <code>t.Helper()</code></h4>
+    <pre><code><span class="k">func</span> <span class="f">assertEqual</span>(
+    t *testing.T, got, want <span class="n">int</span>,
+) {
+    t.<span class="f">Helper</span>()   <span class="c">// ← บรรทัดเดียว</span>
+    <span class="k">if</span> got != want {
+        t.<span class="f">Errorf</span>(<span class="s">"got %d, want %d"</span>,
+            got, want)
+    }
+}</code></pre>
+  </div>
+</div>
+
+<p>ผลรันจริง — สังเกตเลขบรรทัด:</p>
+
+<pre><code>=== RUN   TestHelperDemonstration/ไม่ใส่_Helper
+    parallel2_test.go:<strong>43</strong>: got 5, want 10      <span class="c">← ชี้เข้าไปใน helper (ไร้ประโยชน์)</span>
+=== RUN   TestHelperDemonstration/ใส่_Helper
+    parallel2_test.go:<strong>59</strong>: got 5, want 10      <span class="c">← ชี้บรรทัดที่ "เรียก" helper (ถูก!)</span></code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    เทสหนึ่งไฟล์เรียก <code>assertEqual</code> 30 ครั้ง — ถ้าไม่ใส่
+    <code>t.Helper()</code> ทุก error จะชี้ไปที่บรรทัดเดียวกันหมด
+    <strong>คุณจะไม่รู้เลยว่าเคสไหนพัง</strong>
+    <br><strong>กฎ: helper ที่รับ <code>*testing.T</code> ต้องใส่
+    <code>t.Helper()</code> เป็นบรรทัดแรกเสมอ</strong>
+  </p>
+</div>
+
+<h2>8 · <code>t.Parallel()</code> — และกับดักการวัดเวลาในสไลด์</h2>
+
+<pre><code>t.<span class="f">Run</span>(fmt.<span class="f">Sprintf</span>(<span class="s">"เคส_%d"</span>, n), <span class="k">func</span>(t *testing.T) {
+    t.<span class="f">Parallel</span>()                          <span class="c">// ← ต่างที่นี่</span>
+    time.<span class="f">Sleep</span>(<span class="n">200</span> * time.Millisecond)
+})</code></pre>
+
+<p>
+  <strong><code>t.Parallel()</code> ทำงานแปลกกว่าที่คิด:</strong>
+  มันไม่ได้ "เริ่มรันขนาน" ทันที — มัน<em>หยุดเทสย่อยนั้นไว้ก่อน</em>
+  แล้วคืนการควบคุมให้ตัวแม่ พอตัวแม่รันจบทั้งลูปแล้ว Go ถึงปล่อยเทสที่จอดไว้
+  ทั้งหมดวิ่งพร้อมกัน
+</p>
+
+<div class="predict">
+  <pre><code>t.<span class="f">Run</span>(<span class="s">"PARALLEL"</span>, <span class="k">func</span>(t *testing.T) {
+    start := time.<span class="f">Now</span>()
+    <span class="k">for</span> _, n := <span class="k">range</span> cases {          <span class="c">// 5 เคส เคสละ 200ms</span>
+        t.<span class="f">Run</span>(..., <span class="k">func</span>(t *testing.T) {
+            t.<span class="f">Parallel</span>()
+            time.<span class="f">Sleep</span>(<span class="n">200</span> * time.Millisecond)
+        })
+    }
+    t.<span class="f">Logf</span>(<span class="s">"parallel ใช้เวลา: %v"</span>, time.<span class="f">Since</span>(start))
+})</code></pre>
+  <p class="ask">บรรทัด <code>Logf</code> จะพิมพ์เวลาประมาณเท่าไหร่?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ประมาณ 140 ไมโครวินาที</strong> — ผมรันทดสอบแล้ว ได้
+    <code>139.959µs</code></p>
+    <p>
+      แต่นั่น<strong>ไม่ใช่เวลาที่ใช้จริง</strong> — มันคือเวลาที่ใช้
+      "จอดเทสทั้ง 5 ตัวไว้ในคิว" เท่านั้น เพราะ <code>t.Parallel()</code>
+      คืนการควบคุมกลับมาทันที
+      <strong>ตอนที่ <code>Logf</code> ทำงาน ยังไม่มีเทสไหนได้รันเลยสักตัว</strong>
+    </p>
+    <p>วิธีวัดให้ถูก — ต้องวัด<em>นอก</em>บล็อกที่สร้าง parallel subtest:</p>
+    <pre style="margin-bottom:0.8rem"><code>start := time.<span class="f">Now</span>()
+t.<span class="f">Run</span>(<span class="s">"group"</span>, <span class="k">func</span>(t *testing.T) {
+    <span class="k">for</span> _, n := <span class="k">range</span> cases {
+        t.<span class="f">Run</span>(..., <span class="k">func</span>(t *testing.T) {
+            t.<span class="f">Parallel</span>()
+            time.<span class="f">Sleep</span>(<span class="n">200</span> * time.Millisecond)
+        })
+    }
+})
+<span class="c">// ถึงบรรทัดนี้ subtest แบบ parallel จบครบแล้ว</span>
+t.<span class="f">Logf</span>(<span class="s">"ใช้เวลาจริง: %v"</span>, time.<span class="f">Since</span>(start))</code></pre>
+    <p style="margin-bottom:0">
+      ผลรันจริงของทั้งสองแบบ:
+      <br>· sequential (5 × 200ms) → <strong>1.006 วินาที</strong>
+      <br>· parallel วัดถูกวิธี → <strong>201 มิลลิวินาที</strong> (เร็วขึ้น 5 เท่าจริง)
+      <br>· parallel วัดแบบในสไลด์ → <strong>139µs</strong> (ตัวเลขหลอกตา)
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">ก่อนใส่ <code>t.Parallel()</code> ต้องแน่ใจว่า…</span>
+  <p style="margin-bottom:0">
+    เทสไม่แชร์ state กัน — ไม่ใช้ตัวแปร global ร่วมกัน ไม่เขียนไฟล์ชื่อเดียวกัน
+    ไม่แย่ง port เดียวกัน <strong>ถ้าแชร์กันจะกลายเป็น flaky test
+    ที่บางทีผ่านบางทีไม่ผ่าน</strong> ซึ่งแย่กว่าเทสช้าเยอะ
+    <br>ใช้ <code>go test -race</code> ช่วยจับ และ <code>-count=10</code>
+    ช่วยยืนยันว่าเสถียรจริง
+  </p>
+</div>
+
+<h2>9 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. <code>t.Errorf</code> ต่างจาก <code>t.Fatalf</code> ตรงไหน?</p>
+  <div class="opts">
+    <button class="opt">Errorf ทำให้ fail ส่วน Fatalf แค่เตือน</button>
+    <button class="opt">Fatalf เขียน log ได้ Errorf เขียนไม่ได้</button>
+    <button class="opt">Errorf รันบรรทัดต่อไป Fatalf หยุดทันที</button>
+    <button class="opt">Fatalf หยุดทั้งไฟล์ Errorf หยุดแค่เทส</button>
+  </div>
+  <div class="explain">
+    <p>ทั้งคู่ทำให้เทส <strong>fail เหมือนกัน</strong> ต่างที่จะเดินต่อหรือไม่ ·
+    <strong>กฎเลือก: ถ้าบรรทัดถัดไปจะพังตามแน่ ๆ (เช่นเพิ่งได้ <code>nil</code> มา)
+    ใช้ <code>Fatal</code></strong> นอกนั้นใช้ <code>Error</code>
+    เพื่อจะได้เห็นทุกจุดที่ผิดในรอบเดียว</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. <code>t.Cleanup</code> ดีกว่า <code>defer</code> ตรงไหน?</p>
+  <div class="opts">
+    <button class="opt">รันเรียงจากตัวแรกไปตัวสุดท้ายเสมอ</button>
+    <button class="opt">เขียนไว้ใน helper แล้วรอจนเทสจบจริง</button>
+    <button class="opt">รันแม้เทสจะ fail ซึ่ง defer ไม่รัน</button>
+    <button class="opt">เขียนสั้นกว่าและอ่านง่ายกว่าเดิม</button>
+  </div>
+  <div class="explain">
+    <p>ทั้งคู่เป็น LIFO และรันตอน fail เหมือนกัน · ต่างที่ <strong>ขอบเขต</strong> —
+    <code>defer</code> ผูกกับ<em>ฟังก์ชันที่เขียนมัน</em> ส่วน <code>Cleanup</code>
+    ผูกกับ<em>เทส</em> → เขียนใน helper อย่าง <code>newTestDB(t)</code>
+    แล้วมันจะรอปิด db ตอนเทสจบจริง ไม่ใช่ตอนออกจาก helper</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. helper ที่รับ <code>*testing.T</code> ลืมใส่ <code>t.Helper()</code> — ผลคือ?</p>
+  <div class="opts">
+    <button class="opt">คอมไพล์ไม่ผ่านเพราะขาดบรรทัดนี้</button>
+    <button class="opt">go vet จะเตือนตอนตรวจโค้ด</button>
+    <button class="opt">helper จะไม่ทำงานตามที่เขียนไว้</button>
+    <button class="opt">error ชี้เข้าไปในตัว helper แทนคนเรียก</button>
+  </div>
+  <div class="explain">
+    <p>ทุกอย่างทำงานปกติ แต่<strong>เลขบรรทัดใน error ชี้ผิดที่</strong> —
+    ผมรันเทียบแล้ว ไม่ใส่ → ชี้ที่บรรทัด 43 (ในตัว helper) · ใส่ → ชี้ที่บรรทัด 59
+    (จุดที่เรียก) เรียก helper ตัวเดียว 30 ครั้งแล้วทุก error ชี้ที่เดิม
+    = ดีบักไม่ได้เลย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. วัด <code>time.Since(start)</code> ในบล็อกที่สร้าง parallel subtest ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้เวลาสั้นมาก เพราะ subtest ยังไม่ทันรัน</button>
+    <button class="opt">ได้เวลารวมของ subtest ที่ช้าที่สุด</button>
+    <button class="opt">ได้เวลารวมของ subtest ทุกตัวบวกกัน</button>
+    <button class="opt">ได้ค่าศูนย์ เพราะยังไม่ได้เริ่มจับเวลา</button>
+  </div>
+  <div class="explain">
+    <p><code>t.Parallel()</code> <strong>จอดเทสไว้แล้วคืนการควบคุมทันที</strong>
+    → ลูปจบเร็วมาก (ผมวัดได้ <code>139µs</code>) แล้ว Go ค่อยปล่อยเทสทั้งหมด
+    วิ่งพร้อมกัน<em>หลังจาก</em>บล็อกแม่จบ
+    <strong>วัดให้ถูกต้องวัดนอกบล็อกนั้น</strong> — ได้ 201ms เทียบกับ sequential 1.006s</p>
+  </div>
+</div>
+
+<h2>10 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: ใช้ <code>t</code> ให้ครบทุกเครื่องมือ</h3>
+  <p>ต่อจากโปรเจกต์ <code>calcdemo</code> ในบทที่แล้ว</p>
+  <ol>
+    <li>เขียน <code>TestDiscount</code> ที่มี subtest 3 ตัว:
+        <code>"ลด 10%"</code>, <code>"ไม่ลด"</code>, <code>"เปอร์เซ็นต์เกิน"</code></li>
+    <li>รัน <code>go test -v .</code> แล้วดูว่า <strong>ชื่อ subtest ที่แสดง
+        ต่างจากที่คุณตั้งยังไง</strong> — จากนั้น <code>-run</code> เจาะเฉพาะตัวกลาง</li>
+    <li>ในเคส <code>"เปอร์เซ็นต์เกิน"</code> ใช้ <code>t.Fatalf</code> เมื่อ
+        <code>err == nil</code> แล้วอธิบายให้ตัวเองฟังว่า<strong>ทำไมต้อง Fatal
+        ไม่ใช่ Error</strong></li>
+    <li>เขียน helper <code>assertNoError(t *testing.T, err error)</code>
+        <strong>โดยยังไม่ใส่</strong> <code>t.Helper()</code> →
+        ทำให้เทสพัง → จดเลขบรรทัดใน error ไว้</li>
+    <li>ใส่ <code>t.Helper()</code> แล้วรันใหม่ → <strong>เลขบรรทัดเปลี่ยนเป็นอะไร</strong></li>
+    <li>เขียน <code>newTempFile(t *testing.T) string</code> ที่สร้างไฟล์ชั่วคราว
+        แล้วลงทะเบียน <code>t.Cleanup</code> ให้ลบไฟล์ทิ้ง —
+        <strong>ลองเปลี่ยนเป็น <code>defer</code> ดูว่าพังยังไง</strong>
+        <br><em>คำใบ้: <code>os.CreateTemp("", "demo-*.txt")</code></em></li>
+    <li><strong>ท้าทาย 1:</strong> ทำการทดลองเรื่อง <code>t.Parallel()</code> ซ้ำ
+        ทั้งแบบวัดผิด (ในบล็อก) และวัดถูก (นอกบล็อก) —
+        <strong>ตัวเลขของคุณตรงกับที่ผมได้ไหม</strong>
+        (sequential ~1s · parallel ~200ms · วัดผิด ~100µs)</li>
+    <li><strong>ท้าทาย 2:</strong> เขียนเทสที่ใช้ตัวแปร global ร่วมกัน 2 ตัว
+        แล้วใส่ <code>t.Parallel()</code> ทั้งคู่ → รัน
+        <code>go test -race -count=10 .</code> →
+        <strong>เห็น <code>WARNING: DATA RACE</code> ไหม?</strong></li>
+  </ol>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://pkg.go.dev/testing#T">pkg.go.dev — testing.T</a>
+  เป็นรายการ method ครบทุกตัวพร้อมคำอธิบายสั้น ๆ
+  <strong>อ่านผ่านทั้งหน้าครั้งเดียวจะรู้ว่ามีอะไรให้ใช้บ้าง</strong> ประมาณ 10 นาที
+  ส่วนเรื่อง <code>t.Parallel()</code> ที่ลึกกว่านี้ (เช่นการใช้ร่วมกับ
+  <code>t.Cleanup</code>) อยู่ในเอกสารของ
+  <a href="https://pkg.go.dev/testing#T.Parallel">T.Parallel</a> โดยตรง
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — ท้าทายข้อ 2 (data race)
+    ถ้ารัน <code>-race</code> แล้วไม่เห็น warning ส่งโค้ดมาได้
+    บางทีต้องออกแบบให้มันชนกันจริง ๆ ถึงจะจับได้
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0014-test-in-go.html">← บทเรียน 14</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 5</a>
+  <a href="./0016-table-driven-test.html">บทเรียน 16 → table-driven test</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/testing#T">pkg.go.dev — testing.T</a> — method ทั้งหมดของ <code>t</code></li>
+  <li><a href="https://pkg.go.dev/testing#T.Parallel">pkg.go.dev — T.Parallel</a> — กลไกการจอดและปล่อยเทส</li>
+  <li><a href="https://pkg.go.dev/testing#T.Cleanup">pkg.go.dev — T.Cleanup</a></li>
+  <li><a href="https://pkg.go.dev/testing#T.Helper">pkg.go.dev — T.Helper</a></li>
+  <li><a href="https://go.dev/blog/subtests">The Go Blog — Using Subtests and Sub-benchmarks</a> — ที่มาของ <code>t.Run</code></li>
+  <li><a href="https://go.dev/doc/articles/race_detector">Data Race Detector</a> — คู่มือ <code>-race</code></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

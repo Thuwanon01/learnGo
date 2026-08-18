@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 26 — Worker Pool: จำกัดจำนวนคนทำงาน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 26 · Day 6 · Concurrency</p>
+  <h1>Worker Pool: จำกัดจำนวนคนทำงาน</h1>
+  <p class="meta">~15 นาที · ต้องมี: <a href="./0021-goroutine-waitgroup.html">บทเรียน 21</a>, <a href="./0022-channel.html">บทเรียน 22</a>, <a href="./0024-data-race-mutex.html">บทเรียน 24</a></p>
+  <p class="standfirst">
+    goroutine ถูกมาก — สร้างแสนตัวยังไหว
+    แต่ถ้าแต่ละตัวเปิด connection ไป database ที่รับได้ 100 connection
+    <strong>คุณไม่ได้ทำให้ระบบเร็วขึ้น คุณทำให้ database ล่ม</strong>
+    <br>Worker Pool คือรูปแบบที่บอกว่า "<em>มีงานล้านชิ้นก็ได้ แต่ทำพร้อมกันแค่ N</em>"
+    — และเป็นบทที่เอาทุกอย่างของ Day 6 มารวมกัน
+  </p>
+</header>
+
+<main>
+
+<h2>1 · โครงสร้าง: สองท่อกับกลุ่มคนทำงาน</h2>
+
+<div class="diagram">
+<pre>                   ┌─────────────────┐
+   main ──ส่งงาน──►│  jobs channel   │
+                   └────────┬────────┘
+                            │  worker แย่งกันดึงงาน
+              ┌─────────────┼─────────────┐
+              ▼             ▼             ▼
+          worker 1      worker 2      worker 3     ← มีเท่านี้ ไม่เพิ่ม
+              │             │             │
+              └─────────────┼─────────────┘
+                            ▼
+                   ┌─────────────────┐
+                   │ results channel │──► main รวมผล
+                   └─────────────────┘
+
+   งาน 9 ชิ้น · worker 3 ตัว  →  แต่ละตัวทำ 3 รอบ</pre>
+</div>
+
+<h2>2 · ตัว worker</h2>
+
+<pre><code><span class="k">func</span> <span class="f">worker</span>(
+    id <span class="k">int</span>,
+    jobs &lt;-<span class="k">chan</span> <span class="k">int</span>,        <span class="c">// รับอย่างเดียว</span>
+    results <span class="k">chan</span>&lt;- <span class="k">int</span>,     <span class="c">// ส่งอย่างเดียว</span>
+    wg *sync.WaitGroup,     <span class="c">// pointer!</span>
+) {
+    <span class="k">defer</span> wg.<span class="f">Done</span>()
+
+    <span class="k">for</span> job := <span class="k">range</span> jobs {     <span class="c">// วนจนกว่า jobs จะถูกปิด</span>
+        time.<span class="f">Sleep</span>(<span class="n">500</span> * time.Millisecond)
+        results &lt;- job * <span class="n">2</span>
+    }
+
+    fmt.<span class="f">Printf</span>(<span class="s">"Worker %d: ไม่มีงานแล้ว จบ\n"</span>, id)
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทั้งหมดนี้คือของที่คุณเรียนมาแล้ว ประกอบกัน:</strong>
+    <br>• <code>&lt;-chan</code> / <code>chan&lt;-</code> — directional channel (บทเรียน 22)
+    <br>• <code>for range jobs</code> — วนจนถูก <code>close</code> (บทเรียน 22)
+    <br>• <code>*sync.WaitGroup</code> — ต้องเป็น pointer (บทเรียน 21)
+    <br>• <code>defer wg.Done()</code> — บรรทัดแรกเสมอ (บทเรียน 08)
+    <br><strong>ไม่มีของใหม่เลยสักอย่าง — worker pool คือ "วิธีเรียงของเก่า"</strong>
+  </p>
+</div>
+
+<h2>3 · ตัวประกอบร่าง</h2>
+
+<pre><code><span class="k">func</span> <span class="f">main</span>() {
+    <span class="k">const</span> numJobs, numWorkers = <span class="n">9</span>, <span class="n">3</span>
+
+    jobs := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>, numJobs)
+    results := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>, numJobs)
+    <span class="k">var</span> wg sync.WaitGroup
+
+    <span class="c">// 1) เปิด worker pool — จำนวนคงที่</span>
+    <span class="k">for</span> w := <span class="n">1</span>; w &lt;= numWorkers; w++ {
+        wg.<span class="f">Add</span>(<span class="n">1</span>)
+        <span class="k">go</span> <span class="f">worker</span>(w, jobs, results, &amp;wg)
+    }
+
+    <span class="c">// 2) ส่งงานทั้งหมด แล้วปิดท่อ</span>
+    <span class="k">for</span> j := <span class="n">1</span>; j &lt;= numJobs; j++ {
+        jobs &lt;- j
+    }
+    <span class="f">close</span>(jobs)              <span class="c">// บอกว่าไม่มีงานเพิ่มแล้ว</span>
+
+    <span class="c">// 3) รอ worker ครบแล้วปิด results — ต้องอยู่ใน goroutine</span>
+    <span class="k">go</span> <span class="k">func</span>() {
+        wg.<span class="f">Wait</span>()
+        <span class="f">close</span>(results)
+    }()
+
+    <span class="c">// 4) รวมผล — จบเองเมื่อ results ถูกปิด</span>
+    sum := <span class="n">0</span>
+    <span class="k">for</span> r := <span class="k">range</span> results {
+        sum += r
+    }
+    fmt.<span class="f">Println</span>(<span class="s">"ผลรวมทั้งหมด:"</span>, sum)
+}</code></pre>
+
+<p>ผมรันแล้วได้:</p>
+
+<pre><code>Worker 2: ไม่มีงานแล้ว จบ
+Worker 1: ไม่มีงานแล้ว จบ
+Worker 3: ไม่มีงานแล้ว จบ
+ผลรวมทั้งหมด: 90
+ใช้เวลา: <strong>600ms</strong> (ถ้าทำทีละงานจะใช้ 1.8s)</code></pre>
+
+<p>
+  9 งาน × 200ms = 1.8 วินาทีถ้าทำทีละอัน · worker 3 ตัวทำได้ใน 600ms
+  <strong>เร็วขึ้น 3 เท่าพอดี = จำนวน worker</strong>
+</p>
+
+<h2>4 · ขั้นตอนที่ 3 คือขั้นที่คนพลาดมากที่สุด</h2>
+
+<div class="predict">
+  <pre><code>results := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>)      <span class="c">// ← unbuffered</span>
+
+<span class="c">// ... เปิด worker · ส่งงาน · close(jobs) เหมือนเดิม ...</span>
+
+<span class="c">// เอา goroutine ครอบออก เขียนตรง ๆ แบบนี้แทน</span>
+wg.<span class="f">Wait</span>()
+<span class="f">close</span>(results)
+
+sum := <span class="n">0</span>
+<span class="k">for</span> r := <span class="k">range</span> results {
+    sum += r
+}</code></pre>
+  <p class="ask">อ่านดูแล้วตรงไปตรงมากว่าเดิม — ทำไมถึงใช้ไม่ได้?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรันแล้วได้:</p>
+    <pre style="margin:0.6rem 0"><code>fatal error: all goroutines are asleep - deadlock!
+
+goroutine 1 [<strong>sync.WaitGroup.Wait</strong>]:</code></pre>
+    <p>
+      <strong>ทุกคนรอกันเองครบวง:</strong>
+      <br>• <code>main</code> ค้างที่ <code>wg.Wait()</code> รอ worker จบ
+      <br>• worker ค้างที่ <code>results &lt;- ...</code> รอคนมารับ
+      <br>• คนที่จะมารับคือ <code>for range results</code> ซึ่งอยู่<strong>ใต้</strong>
+      <code>wg.Wait()</code> — ไปไม่ถึงสักที
+    </p>
+    <p>
+      <strong>กฎที่ถอดออกมาได้:</strong> คนที่ <em>รอ</em> กับคนที่ <em>รับ</em>
+      ต้องไม่ใช่ goroutine เดียวกัน
+      <br>สำนวนมาตรฐานจึงเป็น <code>go func(){ wg.Wait(); close(results) }()</code>
+      — ให้การรอไปเกิดข้างหลัง ส่วน <code>main</code> ว่างมารับผลได้เรื่อย ๆ
+      <br>และนี่คือคำตอบของคำถามค้างในบทเรียน 22:
+      <strong>เมื่อมีคนส่งหลายคน ให้ตัวที่รอทุกคนเสร็จเป็นคนปิด</strong>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>⚠️ กับดักซ้อน — ตัวอย่างในสไลด์รอดมาได้เพราะบังเอิญ</strong>
+      <br>ผมลองเปลี่ยน <code>results</code> เป็น <code>make(chan int, numJobs)</code>
+      (buffer ใหญ่เท่าจำนวนงานพอดี ตามสไลด์) แล้วเขียน <code>wg.Wait()</code>
+      ตรง ๆ แบบนี้ — <strong>มัน<em>ทำงานได้</em> พิมพ์ <code>ผลรวม: 90</code> ปกติ</strong>
+      <br>เพราะ worker ยัดผลลงบัฟเฟอร์ได้ครบโดยไม่ต้องรอใคร
+      <br><strong>แต่พอมีงานเยอะกว่า buffer แม้แค่ชิ้นเดียว มันจะกลับมาค้างทันที</strong>
+      — นี่คือบั๊กที่ผ่านเทสตอน dev (ข้อมูลน้อย) แล้วไปล่มตอน production
+      <br><em>เขียนสำนวนที่ถูกไว้ตั้งแต่แรก ดีกว่าเขียนแบบที่บังเอิญไม่พัง</em>
+    </p>
+  </div>
+</div>
+
+<h2>5 · จะตั้งจำนวน worker เท่าไหร่ดี?</h2>
+
+<p>
+  คำตอบขึ้นกับว่างานของคุณ <strong>รออะไรอยู่</strong> หรือ <strong>คิดอะไรอยู่</strong>
+  <br>ผมวัดจริงด้วยงาน 60 ชิ้น บนเครื่องที่มี <code>GOMAXPROCS = 10</code>:
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>งานที่รอ I/O (<code>Sleep 100ms</code>)</h4>
+    <pre><code>worker   1 → 6.09s
+worker   2 → 3.05s
+worker   5 → 1.22s
+worker  10 → 610ms
+worker  20 → 310ms
+worker  60 → <strong>100ms</strong>
+worker 200 → 100ms   ← ตันเพราะงานหมด</code></pre>
+    <p style="margin-bottom:0">
+      <strong>ดีขึ้นเรื่อย ๆ จนกว่า worker จะเท่าจำนวนงาน</strong>
+      เพราะระหว่างรอ I/O ไม่ได้ใช้ CPU เลย
+    </p>
+  </div>
+  <div class="side">
+    <h4>งานที่กิน CPU (คำนวณล้วน)</h4>
+    <pre><code>worker   1 → 10.16s
+worker   2 →  5.38s
+worker   5 →  2.57s
+worker  10 →  <strong>1.74s</strong>  ← = GOMAXPROCS
+worker  20 →  1.71s
+worker  60 →  1.60s</code></pre>
+    <p style="margin-bottom:0">
+      <strong>ตันที่ 10 = จำนวน core</strong>
+      เพิ่ม worker ต่อไม่ช่วยอะไร เพราะไม่มี CPU ให้ใช้แล้ว
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <span class="label">📊 กฎการตั้งจำนวน worker</span>
+  <div class="table-wrap" style="margin-top:0.6rem">
+  <table>
+    <tr><th>งานแบบไหน</th><th>ตั้งเท่าไหร่</th><th>ตัวจำกัดจริง ๆ คือ</th></tr>
+    <tr><td><strong>CPU-bound</strong> — คำนวณ, เข้ารหัส, ประมวลผลภาพ</td><td><code>runtime.GOMAXPROCS(0)</code></td><td>จำนวน CPU core</td></tr>
+    <tr><td><strong>I/O-bound</strong> — เรียก API, อ่านไฟล์</td><td>สูงได้ (50–500)</td><td>bandwidth · rate limit ปลายทาง</td></tr>
+    <tr><td><strong>Database</strong></td><td><strong>≤ ขนาด connection pool</strong></td><td>จำนวน connection ที่ DB รับได้</td></tr>
+  </table>
+  </div>
+  <p style="margin:0.6rem 0 0">
+    <strong>ข้อสุดท้ายสำคัญที่สุดในงานจริง</strong> — worker 500 ตัวยิงเข้า
+    pool ที่มี 25 connection = 475 ตัวนั่งรอคิว เพิ่มแต่ความซับซ้อน ไม่ได้เร็วขึ้น
+    <br><strong>หาให้เจอก่อนว่าคอขวดอยู่ตรงไหน แล้วค่อยตั้งตัวเลข</strong> —
+    ไม่ใช่เดาแล้วหวังว่าเยอะไว้ก่อนดีกว่า
+  </p>
+</div>
+
+<h2>6 · <code>GOMAXPROCS</code> — เพดานที่แท้จริง</h2>
+
+<pre><code>runtime.<span class="f">GOMAXPROCS</span>(<span class="n">0</span>)   <span class="c">// ถามค่าปัจจุบัน (0 = ไม่เปลี่ยน)</span>
+runtime.<span class="f">NumCPU</span>()         <span class="c">// จำนวน core ที่มองเห็น</span></code></pre>
+
+<p>บนเครื่องที่ผมทดสอบ ทั้งสองค่าเป็น <strong>10</strong> เท่ากัน</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>GOMAXPROCS คือจำนวน goroutine ที่ <em>รันบน CPU จริง ๆ พร้อมกัน</em>
+    ได้สูงสุด ณ ขณะหนึ่ง</strong> — คือจำนวน <strong>P</strong> ใน GMP model
+    (บทเรียน 21)
+    <br>goroutine อีกหมื่นตัวไม่ได้หายไปไหน — แค่เข้าคิวรอ P ว่าง
+    <br><br>
+    <strong>สำคัญเวลารันใน container:</strong> Go เวอร์ชันใหม่อ่าน CPU limit
+    ของ cgroup มาตั้ง <code>GOMAXPROCS</code> ให้เอง
+    แต่ถ้าใช้ Go เก่า (ก่อน 1.25) มันจะเห็น core ของ <em>เครื่องแม่</em>
+    เช่นเห็น 64 core ทั้งที่ container จำกัดไว้ 2 → สร้าง P เกินความจำเป็น
+    → เสียเวลาสลับงานไปมาโดยเปล่าประโยชน์
+    <br><strong>ถ้า service ใน Kubernetes ช้าผิดปกติ นี่คือจุดแรกที่ควรเช็ค</strong>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ทำไม <code>close(results)</code> ต้องอยู่ใน <code>go func(){ wg.Wait(); ... }()</code>?</p>
+  <div class="opts">
+    <button class="opt">เพราะ <code>close</code> ต้องเรียกจาก goroutine เท่านั้น</button>
+    <button class="opt">เพราะคนที่รอ กับคนที่รับผล ต้องไม่ใช่ตัวเดียวกัน</button>
+    <button class="opt">เพราะ <code>wg.Wait()</code> ห้ามเรียกใน <code>main</code></button>
+    <button class="opt">เพราะต้องปิดหลัง <code>close(jobs)</code> อย่างน้อย 1 รอบ</button>
+  </div>
+  <div class="explain">
+    <p>ถ้า <code>main</code> ค้างที่ <code>wg.Wait()</code> ก็ไปไม่ถึง
+    <code>for range results</code> — แต่ worker ค้างอยู่ที่
+    <code>results &lt;- ...</code> รอคนรับ
+    <strong>ทุกคนรอกันเอง → deadlock</strong>
+    <br><code>goroutine 1 [chan receive]</code>
+    <br>ย้ายการรอไปไว้ข้างหลัง <code>main</code> จึงว่างมารับผลได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">2. งานเรียก API ภายนอก 1000 ครั้ง ควรตั้ง worker กี่ตัว?</p>
+  <div class="opts">
+    <button class="opt">1000 ตัว เพื่อยิงพร้อมกันให้เร็วที่สุด</button>
+    <button class="opt">เท่ากับจำนวน CPU core เพราะเป็นเพดานจริง</button>
+    <button class="opt">หลักสิบถึงร้อย ดูจาก rate limit ของ API ปลายทาง</button>
+    <button class="opt">1 ตัว เพื่อไม่ให้ API ปลายทางรับภาระหนักเกิน</button>
+  </div>
+  <div class="explain">
+    <p>งาน I/O ไม่ได้ใช้ CPU ระหว่างรอ → ตั้งเกินจำนวน core ได้สบาย
+    (ผมวัดได้ว่า worker 60 ตัวเร็วกว่า 10 ตัวถึง 6 เท่าในงานแบบนี้)
+    <br><strong>แต่ตัวจำกัดจริงคือปลายทาง</strong> — ยิง 1000 พร้อมกันมักโดน
+    <code>429 Too Many Requests</code> หรือทำ API เขาล่ม
+    <br>ถ้าเป็น database ให้ยึด<strong>ขนาด connection pool</strong> เป็นเพดาน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. งานคำนวณล้วน 60 ชิ้น บนเครื่อง 10 core — เพิ่ม worker จาก 10 เป็น 60 ได้ผลยังไง?</p>
+  <div class="opts">
+    <button class="opt">แทบไม่เร็วขึ้น เพราะ CPU เต็มไปแล้วตั้งแต่ 10</button>
+    <button class="opt">เร็วขึ้น 6 เท่า เพราะทำได้ครบทุกงานพร้อมกัน</button>
+    <button class="opt">ช้าลงมาก เพราะ goroutine แย่ง memory กันเอง</button>
+    <button class="opt">พังด้วย error ว่าสร้าง goroutine เกิน GOMAXPROCS</button>
+  </div>
+  <div class="explain">
+    <p>ผมวัดจริง: <strong>worker 10 → 1.74s · 20 → 1.71s · 60 → 1.60s</strong>
+    — เกือบเท่ากันหมด
+    <br>งาน CPU-bound ตันที่ <code>GOMAXPROCS</code> เพราะไม่มี core ว่างให้ใช้แล้ว
+    goroutine ที่เกินแค่เข้าคิวรอ
+    <br>เทียบกับงาน I/O ที่ 10 → 610ms แต่ 60 → 100ms (เร็วขึ้น 6 เท่า)
+    <strong>ประเภทของงานกำหนดคำตอบ</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. <code>GOMAXPROCS</code> ใน GMP model คืออะไร?</p>
+  <div class="opts">
+    <button class="opt">จำนวน goroutine สูงสุดที่สร้างได้ทั้งโปรแกรม</button>
+    <button class="opt">จำนวน OS thread สูงสุดที่ Go runtime สร้างได้</button>
+    <button class="opt">จำนวน channel สูงสุดที่เปิดพร้อมกันได้</button>
+    <button class="opt">จำนวน P — คือ goroutine ที่รันบน CPU จริงพร้อมกันได้สูงสุด</button>
+  </div>
+  <div class="explain">
+    <p>คือจำนวน <strong>P</strong> (Processor) — สิทธิ์ในการรันโค้ด Go
+    goroutine จะสร้างกี่หมื่นตัวก็ได้ แต่ที่ <em>executing</em> จริงพร้อมกัน
+    ไม่เกินค่านี้
+    <br><strong>ระวังตอนรันใน container:</strong> Go เก่า (ก่อน 1.25) เห็น core
+    ของเครื่องแม่ ไม่ใช่ CPU limit ที่ตั้งไว้ — ทำให้สร้าง P เกินจำเป็น</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — Pipeline ร้านอาหาร (Workshop จากสไลด์)</span>
+  <p>
+    นี่คือ workshop ท้ายสไลด์ Day 6 — <strong>ทำเองก่อน ค่อยเทียบเฉลย</strong>
+    <br>เป้าหมาย output:
+  </p>
+  <pre style="margin:0.6rem 0"><code>✅ Burger ready
+✅ Pizza ready
+✅ Bubble Tea ready
+
+All orders completed 🎉</code></pre>
+  <ol>
+    <li>สร้าง <code>type Order struct { ID int; Menu string }</code>
+        และ <code>type Result struct { Order Order; Ready bool }</code></li>
+    <li><strong>Producer:</strong> ส่ง 3 ออเดอร์ (Burger, Pizza, Bubble Tea)
+        เข้า <code>orders</code> channel แล้วปิด</li>
+    <li><strong>Worker:</strong> เปิด 2 ตัว ดึงจาก <code>orders</code>
+        หน่วงเวลา 300ms แล้วส่งเข้า <code>results</code></li>
+    <li><strong>Main:</strong> ปิด <code>results</code> ให้ถูกวิธี
+        แล้ววนพิมพ์ <code>✅ ... ready</code> · ปิดท้ายด้วย
+        <code>All orders completed 🎉</code></li>
+    <li>ใช้ <strong>directional channel</strong> ที่ทุก parameter</li>
+    <li>รัน <code>go vet ./...</code> และ <code>go run -race .</code> —
+        <strong>ต้องเงียบทั้งคู่</strong></li>
+    <li><strong>ท้าทาย 1:</strong> เอา <code>go func(){ wg.Wait(); close(results) }()</code>
+        ออกแล้วเรียกตรง ๆ → จดคำในวงเล็บเหลี่ยม</li>
+    <li><strong>ท้าทาย 2 — นับให้ปลอดภัย:</strong> เพิ่มตัวนับ
+        <code>completed</code> ที่ทุก worker เพิ่มค่าเอง
+        <br>ทำ<strong>สองเวอร์ชัน</strong>: แบบไม่ล็อก กับแบบใส่ <code>sync.Mutex</code>
+        <br>รัน <code>-race</code> ทั้งสองแบบ แล้วเทียบผล
+        <em>(ต่อจากบทเรียน 24)</em></li>
+    <li><strong>ท้าทาย 3 — ใส่ context:</strong> เพิ่ม
+        <code>ctx context.Context</code> เป็น parameter ตัวแรกของ worker
+        แล้วให้มันหยุดกลางคันได้ด้วย <code>select</code>
+        <br>ตั้ง <code>WithTimeout</code> 400ms — <strong>เสร็จกี่ออเดอร์?</strong>
+        <em>(ต่อจากบทเรียน 25)</em></li>
+    <li><strong>ท้าทาย 4 — วัดจุดอิ่มตัวเอง:</strong> เพิ่มเป็น 60 ออเดอร์
+        แล้วลอง worker = 1, 2, 5, 10, 20, 60 จับเวลาทุกครั้ง
+        <br>จากนั้นเปลี่ยน "หน่วงเวลา" เป็น "วน <code>for</code> คำนวณเลข 200 ล้านรอบ"
+        แล้ววัดใหม่ — <strong>กราฟต่างกันตรงไหน?</strong></li>
+  </ol>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ท้าทาย 4 คือข้อที่ทำให้คุณเลิกเดาตัวเลข worker ไปตลอดชีวิต</strong> —
+    ส่งตัวเลขที่วัดได้มาเทียบกับของผมได้เลย (เครื่องคนละรุ่นจะได้ไม่เท่ากัน
+    แต่<em>รูปร่างของกราฟ</em>ควรเหมือนกัน)
+    <br>จบ concurrency แล้ว — บทสุดท้ายของ Day 6 คือการจัดโครงโปรเจกต์จริง
+    และต่อ database
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0025-context.html">← บทเรียน 25</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0027-project-layout-gorm.html">บทเรียน 27 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://gobyexample.com/worker-pools">Go by Example — Worker Pools</a> — โครงเดียวกับบทนี้ รันได้เลย</li>
+  <li><a href="https://go.dev/blog/pipelines">Go Concurrency Patterns: Pipelines and cancellation</a> — Go Blog · <strong>อ่านต่อจากบทนี้ได้เลย</strong></li>
+  <li><a href="https://pkg.go.dev/runtime#GOMAXPROCS">pkg.go.dev — runtime.GOMAXPROCS</a> · <a href="https://pkg.go.dev/runtime#NumCPU">NumCPU</a></li>
+  <li><a href="https://go.dev/doc/effective_go#parallel">Effective Go — Parallelization</a></li>
+  <li><a href="https://pkg.go.dev/database/sql#DB.SetMaxOpenConns">pkg.go.dev — DB.SetMaxOpenConns</a> — เพดานที่ควรใช้ตั้งจำนวน worker เวลาต่อ database</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 17 — Testify: assert, require, mock, suite</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 17 · Day 5 · Testify</p>
+  <h1>Testify: assert, require, mock, suite</h1>
+  <p class="meta">~18 นาที · ต้องมี: <a href="./0016-table-driven-test.html">บทเรียน 16</a>, <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a> (interface &amp; DI)</p>
+  <p class="standfirst">
+    <code>testing</code> เปล่า ๆ ทำงานได้ แต่คุณต้องเขียน <code>if</code> เองทุกครั้ง
+    และเขียนข้อความ error เองทุกครั้ง Testify ยุบสามบรรทัดเหลือหนึ่ง
+    พร้อม diff ที่อ่านรู้เรื่อง — <strong>และมี mock กับ suite แถมมาด้วย
+    ซึ่งเป็นของที่ standard library ไม่มีให้</strong>
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ติดตั้ง</h2>
+
+<pre><code>go get github.com/stretchr/testify
+
+<span class="c"># แล้วก็</span>
+go mod tidy</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ต้อง <code>go mod tidy</code> ด้วย</strong> — testify พึ่งพา
+    <code>go-spew</code>, <code>go-difflib</code>, <code>yaml.v3</code>
+    ถ้าไม่ tidy จะเจอ <code>missing go.sum entry for module providing package …</code>
+    (ผมเจอมาแล้วตอนทดสอบ)
+    <br>เวอร์ชันที่ทดสอบในบทนี้: <strong>testify v1.11.1</strong>
+  </p>
+</div>
+
+<h2>2 · <code>assert</code> vs <code>require</code> — คู่แฝดของ Error/Fatal</h2>
+
+<div class="compare">
+  <div class="side">
+    <h4><code>testing</code> เปล่า ๆ</h4>
+    <pre><code>result, err := <span class="f">CalculateDiscount</span>(<span class="n">100</span>, <span class="n">10</span>)
+
+<span class="k">if</span> err != <span class="k">nil</span> {
+    t.<span class="f">Errorf</span>(<span class="s">"did not expect error, got %v"</span>, err)
+}
+<span class="k">if</span> result != <span class="n">90</span> {
+    t.<span class="f">Errorf</span>(<span class="s">"CalculateDiscount(100, 10) = %v; want 90"</span>,
+        result)
+}</code></pre>
+  </div>
+  <div class="side good">
+    <h4>Testify</h4>
+    <pre><code>result, err := <span class="f">CalculateDiscount</span>(<span class="n">100</span>, <span class="n">10</span>)
+
+require.<span class="f">NoError</span>(t, err)
+assert.<span class="f">Equal</span>(t, <span class="n">90</span>, result)</code></pre>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>assert.X</code></th><th><code>require.X</code></th></tr>
+  <tr><td>พฤติกรรมเมื่อไม่ผ่าน</td><td>ฟ้องแล้ว<strong>ไปต่อ</strong></td><td>ฟ้องแล้ว<strong>หยุด</strong></td></tr>
+  <tr><td>เทียบเท่ากับ</td><td><code>t.Errorf</code></td><td><code>t.Fatalf</code></td></tr>
+  <tr><td>ใช้เมื่อ</td><td>อยากเห็นทุกจุดที่ผิดในรอบเดียว</td><td>บรรทัดถัดไปจะพังตามแน่ ๆ</td></tr>
+</table>
+</div>
+
+<p>ผมรันทดสอบยืนยันแล้ว:</p>
+
+<pre><code>=== RUN   TestAssertVsRequire_assert
+        Error: Not equal: expected: 1  actual: 2
+    testify_test.go:33: assert -> บรรทัดนี้ยังรัน    <span class="c">← มา</span>
+--- FAIL: TestAssertVsRequire_assert
+
+=== RUN   TestAssertVsRequire_require
+        Error: Not equal: expected: 1  actual: 2
+--- FAIL: TestAssertVsRequire_require              <span class="c">← ไม่มี log ตามมา</span></code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>สำนวนที่ใช้จริง:</strong> <code>require</code> สำหรับ
+    <em>เงื่อนไขก่อนหน้า</em> (ได้ค่ามาแล้วใช่ไหม, ไม่มี error ใช่ไหม)
+    · <code>assert</code> สำหรับ <em>ตัวผลลัพธ์</em> ที่อยากเห็นครบทุกจุด
+    <br><code>require.NoError(t, err)</code> ตามด้วย <code>assert.Equal(...)</code>
+    หลายบรรทัด — คือรูปแบบที่เจอบ่อยที่สุด
+  </p>
+</div>
+
+<h2>3 · ⚠️ กับดักใหญ่: <code>assert.Equal</code> เข้มเรื่อง type</h2>
+
+<div class="predict">
+  <pre><code><span class="c">// CalculateDiscount คืน (int, error)</span>
+result, err := <span class="f">CalculateDiscount</span>(<span class="n">100</span>, <span class="n">10</span>)
+
+require.<span class="f">NoError</span>(t, err)
+assert.<span class="f">Equal</span>(t, <span class="n">90.0</span>, result)     <span class="c">// สังเกต .0</span></code></pre>
+  <p class="ask">เทสนี้ผ่านไหม? (<code>result</code> ได้ค่า 90 ตามที่คาด)</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่ผ่าน</strong> — ผมรันทดสอบแล้ว ได้ข้อความนี้:</p>
+    <pre style="margin-bottom:0.8rem"><code>Error: Not equal:
+       expected: float64(90)
+       actual  : int(90)</code></pre>
+    <p style="margin-bottom:0">
+      <code>assert.Equal</code> ใช้ <code>reflect.DeepEqual</code> เป็นฐาน
+      ซึ่ง<strong>เทียบทั้ง type และค่า</strong> —
+      <code>90.0</code> คือ <code>float64</code> ส่วน <code>result</code> คือ
+      <code>int</code> → คนละ type → ไม่เท่ากัน
+      <br>ตรงนี้ตรงกับกฎที่เจอมาตั้งแต่
+      <a href="../../day-4/lessons/0009-underlying-type.html">บทเรียน 09</a>:
+      <strong>type ต่างกันคือคนละอย่าง ต่อให้ค่าเท่ากัน</strong>
+      <br><strong>ทางแก้: เขียน <code>assert.Equal(t, 90, result)</code></strong>
+    </p>
+    <div class="warn" style="margin-top:0.9rem">
+      <p style="margin-bottom:0">
+        <strong>สไลด์ Day 5 หน้า "Testify" เขียน <code>assert.Equal(t, 90.0, result)</code>
+        ไว้เป็นตัวอย่างของโค้ดที่สะอาดกว่า — แต่โค้ดนั้นเทสไม่ผ่านจริง ๆ</strong>
+        ถ้าลอกไปใช้แล้วงงว่าทำไมแดงทั้งที่ logic ถูก นี่คือคำตอบ
+      </p>
+    </div>
+  </div>
+</div>
+
+<h3>ญาติของกับดักนี้: float</h3>
+
+<pre><code>a, b := <span class="n">0.1</span>, <span class="n">0.2</span>
+assert.<span class="f">Equal</span>(t, <span class="n">0.3</span>, a+b)      <span class="c">// ✗ ไม่ผ่าน!</span></code></pre>
+
+<p>ผลรันจริง:</p>
+
+<pre><code>a+b = 0.30000000000000004441
+0.3 = 0.29999999999999998890
+
+Error: Not equal:
+       expected: 0.3
+       actual  : 0.30000000000000004</code></pre>
+
+<pre><code>assert.<span class="f">InDelta</span>(t, <span class="n">0.3</span>, a+b, <span class="n">0.0001</span>)   <span class="c">// ✓ ผ่าน — เทียบแบบมีค่าคลาดเคลื่อน</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>เรื่องแปลกที่เจอตอนทดสอบ:</strong> ถ้าเขียน
+    <code>assert.Equal(t, 0.3, 0.1+0.2)</code> ตรง ๆ (ไม่ผ่านตัวแปร)
+    <strong>มัน<em>ผ่าน</em></strong> — เพราะ <code>0.1 + 0.2</code>
+    เป็น untyped constant ที่ compiler คำนวณให้ตั้งแต่ตอน build
+    ด้วยความละเอียดไม่จำกัด ได้ 0.3 เป๊ะ
+    <br>ต้องผ่านตัวแปรถึงจะเป็นการคำนวณ float64 ตอน runtime และเห็นปัญหา —
+    เป็นเรื่องเดียวกับ <code>int(3.9)</code> ใน
+    <a href="../../day-1/lessons/0002-var-and-types.html">บทเรียน 02</a>
+    <br><strong>กฎ: float ห้ามใช้ <code>Equal</code> ใช้ <code>InDelta</code></strong>
+  </p>
+</div>
+
+<h2>4 · Diff ที่อ่านรู้เรื่อง — เหตุผลหลักที่คนใช้ Testify</h2>
+
+<pre><code>got  := UserProfile{ID: <span class="n">1</span>, Name: <span class="s">"Alice"</span>, Email: <span class="s">"alice@test.com"</span>, Age: <span class="n">30</span>}
+want := UserProfile{ID: <span class="n">1</span>, Name: <span class="s">"Alice"</span>, Email: <span class="s">"alice@test.com"</span>, Age: <span class="n">25</span>}
+
+assert.<span class="f">Equal</span>(t, want, got)</code></pre>
+
+<p>ผลรันจริง — มันชี้ field ที่ต่างให้เลย:</p>
+
+<pre><code>Error: Not equal:
+       expected: UserProfile{ID:1, Name:"Alice", Email:"alice@test.com", Age:25, ...}
+       actual  : UserProfile{ID:1, Name:"Alice", Email:"alice@test.com", Age:30, ...}
+
+       Diff:
+       --- Expected
+       +++ Actual
+       @@ -4,3 +4,3 @@
+         Email: (string) (len=14) "alice@test.com",
+       <strong>- Age: (int) 25,
+       + Age: (int) 30,</strong>
+         Roles: ([]string) &lt;nil&gt;</code></pre>
+
+<p>
+  ถ้าเขียนเองด้วย <code>t.Errorf("got %v; want %v", got, want)</code>
+  คุณจะได้ struct สองก้อนยาว ๆ แล้วต้องนั่งไล่สายตาเองว่า field ไหนต่าง —
+  <strong>ยิ่ง struct ใหญ่ยิ่งทรมาน</strong>
+</p>
+
+<h2>5 · แคตตาล็อก assert ที่ใช้บ่อย</h2>
+
+<p>ทั้งหมดนี้ผมรันผ่านจริงบน testify v1.11.1:</p>
+
+<pre><code><span class="c">// --- ค่าปกติ ---</span>
+assert.<span class="f">Equal</span>(t, expected, actual)               <span class="c">// เท่ากัน (type ต้องตรงด้วย!)</span>
+assert.<span class="f">NotEqual</span>(t, unexpected, actual)          <span class="c">// ไม่เท่ากัน</span>
+assert.<span class="f">ElementsMatch</span>(t, []<span class="n">int</span>{<span class="n">3</span>,<span class="n">1</span>,<span class="n">2</span>}, list)     <span class="c">// slice เท่ากัน "ไม่สนลำดับ"</span>
+
+<span class="c">// --- สถานะ ---</span>
+assert.<span class="f">Nil</span>(t, err)
+assert.<span class="f">NotNil</span>(t, obj)
+assert.<span class="f">Empty</span>(t, slice)                          <span class="c">// ว่าง (nil ก็นับ)</span>
+assert.<span class="f">Len</span>(t, slice, <span class="n">3</span>)                        <span class="c">// ยาว 3</span>
+
+<span class="c">// --- บูลีน ---</span>
+assert.<span class="f">True</span>(t, ok)
+assert.<span class="f">False</span>(t, failed)
+
+<span class="c">// --- error (อย่าเทียบข้อความสตริง!) ---</span>
+require.<span class="f">Error</span>(t, err)                            <span class="c">// มี error</span>
+assert.<span class="f">NoError</span>(t, err)                           <span class="c">// ไม่มี error</span>
+assert.<span class="f">ErrorIs</span>(t, err, ErrNotFound)              <span class="c">// ใช่ sentinel ตัวนี้ (แม่นกว่า)</span>
+assert.<span class="f">ErrorAs</span>(t, err, &amp;appErr)                  <span class="c">// เป็นชนิดนี้ + ดึงตัวจริง</span>
+assert.<span class="f">ErrorContains</span>(t, err, <span class="s">"not found"</span>)      <span class="c">// ข้อความมีคำนี้ (หลวม)</span>
+
+<span class="c">// --- float (ห้ามใช้ Equal!) ---</span>
+assert.<span class="f">InDelta</span>(t, <span class="n">3.14</span>, result, <span class="n">0.001</span>)
+
+<span class="c">// --- slice/map/string ---</span>
+assert.<span class="f">Contains</span>(t, <span class="s">"hello world"</span>, <span class="s">"world"</span>)       <span class="c">// substring</span>
+assert.<span class="f">Contains</span>(t, []<span class="n">int</span>{<span class="n">1</span>,<span class="n">2</span>,<span class="n">3</span>}, <span class="n">2</span>)              <span class="c">// element</span>
+assert.<span class="f">Contains</span>(t, <span class="k">map</span>[<span class="n">string</span>]<span class="n">int</span>{<span class="s">"a"</span>:<span class="n">1</span>}, <span class="s">"a"</span>)     <span class="c">// key</span>
+
+<span class="c">// --- เปรียบเทียบ ---</span>
+assert.<span class="f">Greater</span>(t, a, b)                          <span class="c">// a &gt; b</span>
+assert.<span class="f">Less</span>(t, a, b)                             <span class="c">// a &lt; b</span>
+
+<span class="c">// --- แสดงข้อมูลเพิ่มเมื่อพัง (arg ท้ายสุด) ---</span>
+assert.<span class="f">Equal</span>(t, <span class="n">10</span>, x, <span class="s">"input ตอนนั้นคือ %d"</span>, input)</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong><code>ErrorIs</code> ดีกว่า <code>ErrorContains</code></strong> —
+    ตัวแรกเดินตาม error chain (บทเรียน 12) ส่วนตัวหลังเทียบข้อความ
+    ซึ่งพังทันทีที่มีคนแก้ข้อความ · ใช้ <code>ErrorContains</code>
+    เฉพาะกับ error จาก library ภายนอกที่ไม่มี sentinel ให้จับ
+  </p>
+</div>
+
+<h2>6 · Dependency Injection — เตรียมโค้ดให้ mock ได้</h2>
+
+<p>
+  ก่อนจะ mock ได้ โค้ดต้องออกแบบมาให้<strong>รับ dependency เข้ามา</strong>
+  ไม่ใช่สร้างเองข้างใน — ตรงกับ
+  <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a> เป๊ะ ๆ
+</p>
+
+<pre><code><span class="k">type</span> Result <span class="k">struct</span> { A, B, Sum <span class="n">int</span> }
+
+<span class="k">type</span> Store <span class="k">interface</span> {
+    <span class="f">Save</span>(r Result) <span class="n">error</span>
+}
+
+<span class="k">type</span> Calculator <span class="k">struct</span> {
+    store Store         <span class="c">// ← dependency: Calculator "พึ่ง" Store</span>
+}
+
+<span class="k">func</span> <span class="f">NewCalculator</span>(s Store) *Calculator {   <span class="c">// ← constructor รับเข้ามา</span>
+    <span class="k">return</span> &amp;Calculator{store: s}
+}
+
+<span class="k">func</span> (c *Calculator) <span class="f">Add</span>(a, b <span class="n">int</span>) (<span class="n">int</span>, <span class="n">error</span>) {
+    sum := a + b
+    <span class="k">if</span> err := c.store.<span class="f">Save</span>(Result{A: a, B: b, Sum: sum}); err != <span class="k">nil</span> {
+        <span class="k">return</span> <span class="n">0</span>, err
+    }
+    <span class="k">return</span> sum, <span class="k">nil</span>
+}</code></pre>
+
+<div class="win">
+  <span class="label">ทำไมออกแบบแบบนี้ถึงเทสได้</span>
+  <p style="margin-bottom:0">
+    ถ้า <code>Add</code> เขียนว่า <code>fileStore := NewFileStore("/data"); fileStore.Save(...)</code>
+    ข้างในเลย → <strong>เทสจะต้องเขียนไฟล์จริงทุกครั้ง</strong>
+    <br>พอรับ <code>Store</code> เป็น interface เข้ามา → ยัดอะไรก็ได้ที่มี
+    <code>Save()</code> เข้าไป รวมถึงของปลอม
+  </p>
+</div>
+
+<h2>7 · <code>mock</code> — ของปลอมที่ตอบอะไรก็ได้ และจำได้ว่าถูกเรียกกี่ครั้ง</h2>
+
+<pre><code><span class="k">type</span> MockStore <span class="k">struct</span> {
+    mock.Mock            <span class="c">// ← embed เข้ามา (บทเรียน 11)</span>
+}
+
+<span class="k">func</span> (m *MockStore) <span class="f">Save</span>(r Result) <span class="n">error</span> {
+    args := m.<span class="f">Called</span>(r)      <span class="c">// บันทึกว่าถูกเรียกด้วย r</span>
+    <span class="k">return</span> args.<span class="f">Error</span>(<span class="n">0</span>)     <span class="c">// คืนค่าตัวที่ 0 ที่ตั้งไว้</span>
+}</code></pre>
+
+<pre><code><span class="k">func</span> <span class="f">TestCalculator_Add_Success</span>(t *testing.T) {
+    mockStore := <span class="f">new</span>(MockStore)
+
+    <span class="c">// ตั้งโปรแกรมล่วงหน้า: ถ้าถูกเรียก Save ด้วยค่านี้ ให้คืน nil</span>
+    mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, Result{A: <span class="n">2</span>, B: <span class="n">3</span>, Sum: <span class="n">5</span>}).<span class="f">Return</span>(<span class="k">nil</span>)
+
+    calc := <span class="f">NewCalculator</span>(mockStore)
+    result, err := calc.<span class="f">Add</span>(<span class="n">2</span>, <span class="n">3</span>)
+
+    require.<span class="f">NoError</span>(t, err)
+    assert.<span class="f">Equal</span>(t, <span class="n">5</span>, result)
+
+    mockStore.<span class="f">AssertExpectations</span>(t)   <span class="c">// ← ตรวจว่าทุกอันที่ On ไว้ ถูกเรียกจริง</span>
+}</code></pre>
+
+<h3>ทดสอบเส้นทางที่พัง — จุดที่ mock มีค่าที่สุด</h3>
+
+<pre><code><span class="k">func</span> <span class="f">TestCalculator_Add_StoreFails</span>(t *testing.T) {
+    mockStore := <span class="f">new</span>(MockStore)
+
+    <span class="c">// สั่งให้ของปลอม "พัง" ตามที่เราต้องการ</span>
+    mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, mock.<span class="f">AnythingOfType</span>(<span class="s">"main.Result"</span>)).
+        <span class="f">Return</span>(errors.<span class="f">New</span>(<span class="s">"disk full"</span>))
+
+    calc := <span class="f">NewCalculator</span>(mockStore)
+    _, err := calc.<span class="f">Add</span>(<span class="n">2</span>, <span class="n">3</span>)
+
+    require.<span class="f">Error</span>(t, err)
+    assert.<span class="f">ErrorContains</span>(t, err, <span class="s">"disk full"</span>)
+    mockStore.<span class="f">AssertExpectations</span>(t)
+}</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ลองคิดดู: จะทำให้ disk เต็มจริง ๆ เพื่อเทสยังไง?</strong>
+    ทำไม่ได้ — นี่คือเหตุผลที่ mock มีอยู่
+    <strong>เส้นทางที่พังคือเส้นทางที่เทสยากที่สุดและมีบั๊กเยอะที่สุด</strong>
+  </p>
+</div>
+
+<h3>ตัวช่วยจับคู่ argument และตรวจการเรียก</h3>
+
+<pre><code><span class="c">// จับคู่แบบหลวม ๆ</span>
+mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, mock.<span class="f">AnythingOfType</span>(<span class="s">"main.Result"</span>)).<span class="f">Return</span>(<span class="k">nil</span>)
+mockStore.<span class="f">On</span>(<span class="s">"Transfer"</span>, <span class="n">1</span>, mock.Anything, mock.Anything).<span class="f">Return</span>(<span class="k">nil</span>)
+
+<span class="c">// ตรวจหลังเรียกเสร็จ</span>
+mockStore.<span class="f">AssertExpectations</span>(t)                    <span class="c">// ทุกอันที่ On ไว้ ถูกเรียกครบ</span>
+mockStore.<span class="f">AssertCalled</span>(t, <span class="s">"Save"</span>, mock.Anything)   <span class="c">// ถูกเรียกจริง</span>
+mockStore.<span class="f">AssertNotCalled</span>(t, <span class="s">"Update"</span>)             <span class="c">// ไม่ถูกเรียก</span>
+mockStore.<span class="f">AssertNumberOfCalls</span>(t, <span class="s">"Save"</span>, <span class="n">2</span>)        <span class="c">// ถูกเรียก 2 ครั้งพอดี</span>
+
+<span class="c">// จำกัดจำนวนครั้ง</span>
+mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, mock.Anything).<span class="f">Return</span>(<span class="k">nil</span>).<span class="f">Once</span>()
+mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, mock.Anything).<span class="f">Return</span>(<span class="k">nil</span>).<span class="f">Twice</span>()
+mockStore.<span class="f">On</span>(<span class="s">"Save"</span>, mock.Anything).<span class="f">Return</span>(<span class="k">nil</span>).<span class="f">Times</span>(<span class="n">3</span>)</code></pre>
+
+<div class="warn">
+  <span class="label">อย่า mock ทุกอย่าง</span>
+  <p style="margin-bottom:0">
+    mock เยอะเกินไป = เทสกลายเป็นการ<strong>ยืนยันว่าโค้ดเรียกฟังก์ชันตามลำดับที่คุณเขียนไว้</strong>
+    ไม่ใช่ยืนยันว่ามันทำงานถูก · พอ refactor ทีเทสแดงหมดทั้งที่พฤติกรรมไม่เปลี่ยน
+    <br><strong>mock เฉพาะสิ่งที่อยู่นอกการควบคุมของคุณ</strong> —
+    database, HTTP API, ระบบไฟล์, นาฬิกา, ตัวสุ่ม
+  </p>
+</div>
+
+<h2>8 · <code>suite</code> — จัดกลุ่มเทสที่ใช้ setup ร่วมกัน</h2>
+
+<pre><code><span class="k">type</span> UserServiceSuite <span class="k">struct</span> {
+    suite.Suite                    <span class="c">// ← embed</span>
+    store *MockUserStore           <span class="c">// สิ่งที่ใช้ร่วมในทุกเทส</span>
+    svc   *UserService
+}
+
+<span class="k">func</span> (s *UserServiceSuite) <span class="f">SetupTest</span>() {
+    s.store = <span class="f">new</span>(MockUserStore)     <span class="c">// สร้างใหม่ทุกเทส → ไม่ปนกัน</span>
+    s.svc = <span class="f">NewUserService</span>(s.store)
+}
+
+<span class="k">func</span> (s *UserServiceSuite) <span class="f">TestFindUser_ReturnsUser</span>() {
+    s.store.<span class="f">On</span>(<span class="s">"GetByID"</span>, <span class="n">1</span>).<span class="f">Return</span>(&amp;User{Name: <span class="s">"Bob"</span>}, <span class="k">nil</span>)
+
+    user, err := s.svc.<span class="f">FindUser</span>(<span class="n">1</span>)
+    s.<span class="f">Require</span>().<span class="f">NoError</span>(err)              <span class="c">// ⚠️ s.Require() ไม่ใช่ require.X(t, …)</span>
+    s.<span class="f">Assert</span>().<span class="f">Equal</span>(<span class="s">"Bob"</span>, user.Name)     <span class="c">// ⚠️ ไม่ต้องส่ง t</span>
+}
+
+<span class="k">func</span> (s *UserServiceSuite) <span class="f">TestFindUser_PropagatesError</span>() {
+    s.store.<span class="f">On</span>(<span class="s">"GetByID"</span>, <span class="n">2</span>).<span class="f">Return</span>(<span class="k">nil</span>, errors.<span class="f">New</span>(<span class="s">"db down"</span>))
+
+    _, err := s.svc.<span class="f">FindUser</span>(<span class="n">2</span>)
+    s.<span class="f">Assert</span>().<span class="f">Error</span>(err)
+}
+
+<span class="c">// ต้องมีตัวนี้ ไม่งั้น go test ไม่เห็น suite</span>
+<span class="k">func</span> <span class="f">TestUserServiceSuite</span>(t *testing.T) {
+    suite.<span class="f">Run</span>(t, <span class="f">new</span>(UserServiceSuite))
+}</code></pre>
+
+<h3>Hook ทั้งหมด</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Method</th><th>รันเมื่อ</th></tr>
+  <tr><td><code>SetupSuite()</code></td><td><strong>ครั้งเดียว</strong> ก่อนทุกเทสใน suite</td></tr>
+  <tr><td><code>SetupTest()</code></td><td>ก่อน<strong>ทุก</strong>เทส</td></tr>
+  <tr><td><code>BeforeTest(suiteName, testName string)</code></td><td>ก่อนแต่ละเทส — รู้ชื่อเทสด้วย</td></tr>
+  <tr><td><code>AfterTest(suiteName, testName string)</code></td><td>หลังแต่ละเทส</td></tr>
+  <tr><td><code>TearDownTest()</code></td><td>หลัง<strong>ทุก</strong>เทส</td></tr>
+  <tr><td><code>TearDownSuite()</code></td><td><strong>ครั้งเดียว</strong> หลังทุกเทสจบ</td></tr>
+</table>
+</div>
+
+<p>ผลรันจริงของลำดับ hook:</p>
+
+<pre><code>=== RUN   TestUserServiceSuite
+    SetupSuite: ครั้งเดียวก่อนทุกเทส
+=== RUN   TestUserServiceSuite/TestFindUser_<strong>P</strong>ropagatesError
+    SetupTest: ก่อนทุกเทส
+    TearDownTest: หลังทุกเทส
+=== RUN   TestUserServiceSuite/TestFindUser_<strong>R</strong>eturnsUser
+    SetupTest: ก่อนทุกเทส
+    TearDownTest: หลังทุกเทส
+    TearDownSuite: ครั้งเดียวหลังทุกเทสจบ
+--- PASS: TestUserServiceSuite</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>สังเกตอะไรแปลก ๆ ไหม</strong> — <code>PropagatesError</code>
+    รันก่อน <code>ReturnsUser</code> ทั้งที่ในโค้ดผมเขียน <code>ReturnsUser</code> ไว้ก่อน
+    <br><strong>suite เรียงเทสตามตัวอักษร ไม่ใช่ตามลำดับในไฟล์</strong>
+    → <strong>ห้ามเขียนเทสที่ต้องพึ่งพาลำดับเด็ดขาด</strong>
+    ทุกเทสต้องตั้งต้นเองได้ครบใน <code>SetupTest</code>
+  </p>
+</div>
+
+<h2>9 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="3">
+  <p class="q">1. <code>assert.Equal(t, 90.0, result)</code> เมื่อ <code>result</code> เป็น <code>int</code> ค่า 90?</p>
+  <div class="opts">
+    <button class="opt">ผ่าน เพราะค่าเท่ากันทั้งคู่คือ 90</button>
+    <button class="opt">ผ่าน แต่จะมีคำเตือนเรื่อง type</button>
+    <button class="opt">คอมไพล์ไม่ผ่าน เพราะ type ไม่ตรง</button>
+    <button class="opt">ไม่ผ่าน เพราะ float64(90) ≠ int(90)</button>
+  </div>
+  <div class="explain">
+    <p>คอมไพล์ผ่าน (พารามิเตอร์เป็น <code>any</code>) แต่ตอนรัน
+    <code>reflect.DeepEqual</code> <strong>เทียบทั้ง type และค่า</strong> →
+    <code>expected: float64(90) / actual: int(90)</code>
+    <br><strong>สไลด์เขียนตัวอย่างนี้ไว้ — แต่มันเทสไม่ผ่านจริง ๆ</strong>
+    แก้เป็น <code>assert.Equal(t, 90, result)</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. <code>require.NoError</code> ต่างจาก <code>assert.NoError</code> ยังไง?</p>
+  <div class="opts">
+    <button class="opt">require หยุดเทสทันที ส่วน assert ไปต่อ</button>
+    <button class="opt">require ตรวจ error chain ด้วย assert ไม่ตรวจ</button>
+    <button class="opt">assert ใช้ได้ใน suite แต่ require ใช้ไม่ได้</button>
+    <button class="opt">require แสดง diff ให้ ส่วน assert ไม่แสดง</button>
+  </div>
+  <div class="explain">
+    <p><code>require</code> = <code>t.Fatal</code> · <code>assert</code> = <code>t.Error</code>
+    <strong>สำนวนที่ใช้จริง: <code>require</code> สำหรับเงื่อนไขก่อนหน้า
+    (ถ้าไม่ผ่านบรรทัดถัดไปจะ panic) แล้วตามด้วย <code>assert</code> หลายบรรทัด
+    สำหรับตรวจผลลัพธ์</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. ต้องออกแบบโค้ดยังไงถึงจะเอา mock ยัดเข้าไปได้?</p>
+  <div class="opts">
+    <button class="opt">ทำ field ทุกตัวใน struct ให้เป็น public</button>
+    <button class="opt">เขียน method ให้เป็น pointer receiver ทั้งหมด</button>
+    <button class="opt">รับ dependency เป็น interface ผ่าน constructor</button>
+    <button class="opt">แยกไฟล์เทสเป็น external test package เสมอ</button>
+  </div>
+  <div class="explain">
+    <p>ถ้าฟังก์ชันสร้าง dependency เองข้างใน (<code>NewFileStore("/data")</code>)
+    ก็ไม่มีทางแทนที่ได้ · <strong>รับเป็น interface ผ่าน
+    <code>NewCalculator(s Store)</code> → ยัดของจริงตอน production
+    ยัด mock ตอนเทส</strong> นี่คือ DI จากบทเรียน 10 มาใช้งานจริง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. testify suite รันเทสในลำดับไหน?</p>
+  <div class="opts">
+    <button class="opt">ตามลำดับที่เขียนไว้ในไฟล์จากบนลงล่าง</button>
+    <button class="opt">เรียงตามตัวอักษรของชื่อ method</button>
+    <button class="opt">สุ่มลำดับใหม่ทุกครั้งที่รันเทส</button>
+    <button class="opt">ตามลำดับที่ SetupTest กำหนดไว้ให้</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันแล้วเห็นชัด: <code>TestFindUser_<strong>P</strong>ropagatesError</code>
+    รันก่อน <code>TestFindUser_<strong>R</strong>eturnsUser</code> ทั้งที่ในไฟล์เขียนสลับกัน
+    <strong>→ ห้ามเขียนเทสที่พึ่งพาลำดับ</strong>
+    ทุกเทสต้องตั้งต้นเองได้ครบใน <code>SetupTest</code></p>
+  </div>
+</div>
+
+<h2>10 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: เขียนเทสที่ไม่ต้องต่อ database</h3>
+  <ol>
+    <li><code>go get github.com/stretchr/testify &amp;&amp; go mod tidy</code></li>
+    <li>เอาเทสจาก <a href="./0016-table-driven-test.html">บทเรียน 16</a>
+        (<code>Grade</code>) มาแปลง <code>if</code> ทุกอันเป็น
+        <code>assert</code>/<code>require</code> —
+        <strong>บรรทัดลดลงกี่บรรทัด?</strong></li>
+    <li>ลอง <code>assert.Equal(t, "A", grade)</code> โดยที่ <code>grade</code>
+        เป็น <code>type Grade string</code> (custom type จาก
+        <a href="../../day-4/lessons/0009-underlying-type.html">บทเรียน 09</a>)
+        — <strong>ผ่านไหม? ทำไม?</strong>
+        <br><em>สปอยล์ผลรันจริง: <code>expected: string("A")</code> vs
+        <code>actual: Grade("A")</code> → <strong>ไม่ผ่าน</strong>
+        เพราะ custom type คือคนละ type · แก้ด้วย
+        <code>assert.Equal(t, Grade("A"), grade)</code></em></li>
+    <li>สร้างโครง DI: <code>type UserRepo interface { GetByID(id int) (*User, error) }</code>
+        และ <code>UserService</code> ที่รับมันเข้ามาทาง constructor</li>
+    <li>เขียน <code>MockUserRepo</code> ที่ embed <code>mock.Mock</code></li>
+    <li>เขียนสองเทส:
+      <ul>
+        <li><strong>happy path</strong> — mock คืน user → service คืน user</li>
+        <li><strong>sad path</strong> — mock คืน <code>errors.New("db down")</code>
+            → service ต้องส่ง error ต่อขึ้นไป</li>
+      </ul>
+      ปิดท้ายด้วย <code>AssertExpectations(t)</code> ทั้งสองเทส</li>
+    <li>แปลงทั้งสองเทสเป็น <code>suite</code> ที่มี <code>SetupTest</code>
+        สร้าง mock ใหม่ทุกครั้ง — <strong>อย่าลืม <code>s.Assert()</code>
+        ไม่ใช่ <code>assert.X(t, ...)</code></strong></li>
+    <li>เพิ่ม <code>SetupSuite</code>/<code>TearDownSuite</code> ที่ <code>t.Log</code>
+        แล้วรัน <code>-v</code> เพื่อ<strong>ดูลำดับ hook และลำดับเทสด้วยตาตัวเอง</strong></li>
+    <li><strong>ท้าทาย 1:</strong> ลบ <code>mockStore.On("Save", ...)</code> ออก
+        แต่ยังเรียก <code>calc.Add(2,3)</code> อยู่ → <strong>ได้อะไร?</strong>
+        <br><em>สปอยล์ผลรันจริง — mock <strong>panic</strong> พร้อมข้อความที่บอกวิธีแก้ให้เลย:</em>
+        <pre style="margin:0.4rem 0"><code>panic:
+  assert: mock: I don't know what to return because
+  the method call was unexpected.
+    Either do Mock.On("Save").Return(...) first,
+    or remove the Save() call.
+  This method was unexpected:
+    Save(day5check.Result)
+    0: day5check.Result{A:2, B:3, Sum:5}</code></pre>
+        <strong>สังเกตว่ามันบอกค่า argument ที่ได้รับจริงมาให้ด้วย</strong> —
+        เอาไปวางใน <code>.On()</code> ได้ตรง ๆ</li>
+    <li><strong>ท้าทาย 2:</strong> เขียนเทสที่มี <code>assert.InDelta</code>
+        เทียบ float แล้วลองเปลี่ยนเป็น <code>assert.Equal</code> —
+        พิสูจน์ปัญหา floating point ด้วยตัวเอง</li>
+  </ol>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://pkg.go.dev/github.com/stretchr/testify/assert">pkg.go.dev — testify/assert</a>
+  มีรายการฟังก์ชันครบทุกตัว <strong>กด Ctrl+F หาสิ่งที่ต้องการเร็วกว่าเดา</strong>
+  · ส่วน <a href="https://pkg.go.dev/github.com/stretchr/testify/mock">testify/mock</a>
+  มีตัวอย่างครบตั้งแต่ <code>On</code> ถึง <code>Run</code>
+  <br><strong>ข้อควรรู้:</strong> testify เป็น library ของบุคคลที่สาม ไม่ใช่ของทีม Go —
+  บางทีมเลือกไม่ใช้เลยเพราะอยากให้เทสพึ่งพา standard library อย่างเดียว
+  <strong>รู้ทั้งสองแบบไว้ดีที่สุด</strong> บทเรียน 15–16 คือแบบไม่ใช้ บทนี้คือแบบใช้
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — เรื่องที่คุ้มถามที่สุดคือ
+    <strong>"ควร mock อะไร ไม่ควร mock อะไร"</strong> ในโปรเจกต์ของคุณ
+    เพราะเป็นเรื่องที่ทำเกินแล้วเจ็บทีหลัง ถ้ามีโครงโปรเจกต์อยู่แล้วส่งมาได้
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0016-table-driven-test.html">← บทเรียน 16</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 5</a>
+  <a href="./0018-tdd.html">บทเรียน 18 → TDD</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/github.com/stretchr/testify/assert">testify/assert</a> — รายการฟังก์ชันครบทุกตัว</li>
+  <li><a href="https://pkg.go.dev/github.com/stretchr/testify/require">testify/require</a> — เวอร์ชันที่หยุดเทส</li>
+  <li><a href="https://pkg.go.dev/github.com/stretchr/testify/mock">testify/mock</a> — <code>On</code>, <code>Return</code>, <code>Assert*</code></li>
+  <li><a href="https://pkg.go.dev/github.com/stretchr/testify/suite">testify/suite</a> — hook ทั้งหมด</li>
+  <li><a href="https://github.com/stretchr/testify">github.com/stretchr/testify</a> — README มีตัวอย่างครบ</li>
+  <li><a href="https://pkg.go.dev/reflect#DeepEqual">pkg.go.dev — reflect.DeepEqual</a> — กฎการเทียบที่ <code>assert.Equal</code> ใช้</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

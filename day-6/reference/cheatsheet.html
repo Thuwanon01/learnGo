@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheat Sheet — Go Day 6</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<style>
+  /* หน้านี้เป็นเอกสารอ้างอิง — แน่นกว่า lesson และออกแบบให้พิมพ์ลงกระดาษได้ */
+  body { font-size: 15.5px; }
+  main { max-width: 54rem; }
+  h2 { margin-top: 2.2rem; font-size: 1.2rem; }
+  h3 { margin-top: 1.4rem; font-size: 1rem; }
+  pre { font-size: 0.78rem; padding: 0.75rem 0.9rem; margin-bottom: 0.9rem; }
+  table { font-size: 0.86rem; }
+  p, ul, ol { margin-bottom: 0.8rem; }
+  .toc { columns: 2; font-size: 0.9rem; padding-left: 1.1rem; }
+  .toc li { break-inside: avoid; }
+  .rule { font-weight: 650; color: var(--accent-dk); }
+  @media print { body { font-size: 9.5pt; } main { max-width: none; } h2 { margin-top: 1.2rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Reference · เก็บไว้เปิดตอนเขียนโค้ด</p>
+  <h1>Go Day 6 — Cheat Sheet</h1>
+  <p class="meta">Generics · Concurrency · Project Layout · GORM · ตัวอย่างทุกอันรันจริงบน Go 1.26.5 · GORM v1.31.2 กับ PostgreSQL 17 · พิมพ์ลงกระดาษได้</p>
+</header>
+
+<main>
+
+<h2>สารบัญ</h2>
+<ol class="toc">
+  <li><a href="#generics">Generics — type parameter &amp; constraint</a></li>
+  <li><a href="#gstruct">Generic struct &amp; เมื่อไหร่ไม่ควรใช้</a></li>
+  <li><a href="#goroutine">Goroutine &amp; WaitGroup</a></li>
+  <li><a href="#channel">Channel</a></li>
+  <li><a href="#select"><code>select</code></a></li>
+  <li><a href="#sync">Mutex &amp; Race Detector</a></li>
+  <li><a href="#context">Context &amp; Graceful Shutdown</a></li>
+  <li><a href="#pool">Worker Pool &amp; GOMAXPROCS</a></li>
+  <li><a href="#layout">Project Layout</a></li>
+  <li><a href="#gorm">GORM</a></li>
+  <li><a href="#diag">อ่าน error ของ concurrency</a></li>
+  <li><a href="#traps">ตารางกับดักรวม</a></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="generics">1 · Generics — type parameter &amp; constraint</h2>
+
+<pre><code><span class="k">func</span> <span class="f">Sum</span>[T Number](values []T) T { ... }
+<span class="c">//       └── type parameter ── ┘  └ ค่า ┘  └ return</span>
+
+<span class="c">// [] เหลี่ยม = ส่ง type   ·   () กลม = ส่งค่า</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Constraint</th><th>มาจากไหน</th><th>ให้ทำอะไรได้</th></tr>
+  <tr><td><code>any</code></td><td>built-in</td><td>ส่งต่อ/เก็บเท่านั้น — <strong>บวก/เทียบไม่ได้</strong></td></tr>
+  <tr><td><code>comparable</code></td><td>built-in</td><td><code>==</code> <code>!=</code> · map key — <strong>ไม่ให้ <code>&lt;</code></strong></td></tr>
+  <tr><td><code>cmp.Ordered</code></td><td><code>import "cmp"</code> (1.21+)</td><td><code>&lt;</code> <code>&gt;</code> <code>&lt;=</code> <code>&gt;=</code> · ตัวเลข + <code>string</code></td></tr>
+  <tr><td>เขียนเอง</td><td><code>interface { ~int | ~float64 }</code></td><td>เท่าที่ type ในนั้นทำร่วมกันได้</td></tr>
+</table>
+</div>
+
+<h3>เครื่องหมาย <code>~</code></h3>
+
+<pre><code><span class="k">type</span> Integer <span class="k">interface</span> {  <span class="k">int</span> | <span class="k">int64</span> }   <span class="c">// รับเฉพาะ int เป๊ะ ๆ</span>
+<span class="k">type</span> Integer <span class="k">interface</span> { ~<span class="k">int</span> | ~<span class="k">int64</span> }   <span class="c">// รับทุก type ที่ underlying เป็น int</span>
+
+<span class="k">type</span> Score <span class="k">int</span>
+<span class="f">Max</span>(Score(<span class="n">80</span>), Score(<span class="n">95</span>))
+<span class="c">// ไม่มี ~ → Score does not satisfy Integer (possibly missing ~ for int in Integer)</span></code></pre>
+
+<p class="rule">เขียน constraint เอง → ใส่ <code>~</code> ไว้ก่อนเกือบทุกครั้ง</p>
+
+<h3>สำนวนที่ต้องจำ</h3>
+
+<pre><code><span class="k">func</span> <span class="f">Pop</span>[T <span class="k">any</span>]() (T, <span class="k">bool</span>) {
+    <span class="k">var</span> zero T          <span class="c">// ← ทางเดียวที่ได้ zero value ของ T</span>
+    <span class="k">return</span> zero, <span class="k">false</span>   <span class="c">// return nil / return 0 / return T{} ใช้ไม่ได้</span>
+}</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="gstruct">2 · Generic struct &amp; เมื่อไหร่ไม่ควรใช้</h2>
+
+<pre><code><span class="k">type</span> Stack[T <span class="k">any</span>] <span class="k">struct</span> { items []T }
+
+<span class="k">func</span> (s *Stack[T]) <span class="f">Push</span>(v T) { ... }   <span class="c">// receiver ต้องมี [T]</span>
+
+numbers := Stack[<span class="k">int</span>]{}                <span class="c">// ต้องระบุ type เสมอ</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>เลือก</th></tr>
+  <tr><td>สนใจแค่ "มันทำอะไรได้" (<code>io.Writer</code>)</td><td><strong>interface</strong></td></tr>
+  <tr><td>ต้องคืน type เดียวกับที่รับเข้ามา</td><td><strong>generics</strong></td></tr>
+  <tr><td>เก็บของหลาย type ในโครงเดียว (<code>Stack</code>, <code>Cache</code>)</td><td><strong>generics</strong></td></tr>
+  <tr><td>เก็บของ<em>ต่าง</em> type ปนกันใน slice เดียว</td><td><strong>interface</strong> (<code>[]Shape</code>)</td></tr>
+  <tr><td>ต้องใช้ <code>+</code> <code>&lt;</code> <code>==</code></td><td><strong>generics</strong></td></tr>
+  <tr><td>ยังมี type เดียว ยังไม่ซ้ำ</td><td><strong>ไม่ต้องทั้งคู่</strong></td></tr>
+</table>
+</div>
+
+<p class="rule">อย่ารีบทำทุกอย่างเป็น generic — วันไหนมี type ที่สองค่อยแปลง</p>
+
+<!-- ============================================================ -->
+<h2 id="goroutine">3 · Goroutine &amp; WaitGroup</h2>
+
+<pre><code><span class="k">go</span> <span class="f">doSomething</span>()    <span class="c">// สั่งแล้วไปต่อทันที ไม่รอ</span></code></pre>
+
+<p class="rule">main จบ = โปรแกรมจบทันที · runtime ไม่รอ goroutine ที่ค้างอยู่เลย</p>
+
+<pre><code><span class="k">var</span> wg sync.WaitGroup
+
+wg.<span class="f">Add</span>(<span class="n">1</span>)              <span class="c">// ← ต้องอยู่ก่อน go เสมอ</span>
+<span class="k">go</span> <span class="k">func</span>() {
+    <span class="k">defer</span> wg.<span class="f">Done</span>()      <span class="c">// ← บรรทัดแรกเสมอ</span>
+    <span class="f">work</span>()
+}()
+wg.<span class="f">Wait</span>()
+
+<span class="c">// Go 1.25+ — จับคู่ Add/Done/go ให้ในคำสั่งเดียว</span>
+wg.<span class="f">Go</span>(<span class="k">func</span>() { <span class="f">work</span>() })
+wg.<span class="f">Wait</span>()</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เขียนผิดแบบ</th><th>ผลที่ได้</th><th>ระดับความอันตราย</th></tr>
+  <tr><td><code>Add</code> &gt; <code>Done</code></td><td><code>deadlock!</code> · <code>[sync.WaitGroup.Wait]</code></td><td>เห็นชัด</td></tr>
+  <tr><td><code>Done</code> &gt; <code>Add</code></td><td><code>panic: sync: negative WaitGroup counter</code></td><td>เห็นชัด</td></tr>
+  <tr><td><code>Add</code> อยู่ใน goroutine</td><td><strong>จบปกติ แต่งานหายบางส่วน</strong> (วัดได้ 90–96 จาก 100)</td><td><strong>อันตรายสุด</strong></td></tr>
+  <tr><td>ส่งแบบไม่ใช่ pointer</td><td>ค้างตลอดกาล — <code>go vet</code> จับให้</td><td>vet ช่วย</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="channel">4 · Channel</h2>
+
+<pre><code>ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>)        <span class="c">// unbuffered — ความจุ 0</span>
+ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>, <span class="n">3</span>)     <span class="c">// buffered</span>
+<span class="k">var</span> ch <span class="k">chan</span> <span class="k">int</span>              <span class="c">// nil — ใช้ไม่ได้ ต้อง make</span>
+
+ch &lt;- <span class="n">10</span>                    <span class="c">// ส่ง</span>
+v := &lt;-ch                    <span class="c">// รับ</span>
+v, ok := &lt;-ch                <span class="c">// รับ + เช็คว่าปิดหรือยัง</span>
+<span class="f">close</span>(ch)</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th>Unbuffered</th><th>Buffered (cap N)</th></tr>
+  <tr><td>ส่ง</td><td>รอจนมีคนรับถึงมือ</td><td>ผ่านเลยถ้ายังไม่เต็ม · เต็มแล้วรอ</td></tr>
+  <tr><td>รับ</td><td>รอจนมีคนส่ง</td><td>ได้เลยถ้ามีของ · ว่างแล้วรอ</td></tr>
+  <tr><td>ใช้เมื่อ</td><td>ต้องการ <strong>นัดเจอ</strong> / จับจังหวะ</td><td>ต้องการ<strong>ลดการรอ</strong></td></tr>
+</table>
+</div>
+
+<h3>เมื่อ channel ถูกปิดแล้ว</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ทำอะไร</th><th>ผล</th></tr>
+  <tr><td>รับ ตอนยังมีของ</td><td>ได้ของนั้น</td></tr>
+  <tr><td>รับ ตอนไม่มีของ</td><td><strong>zero value ทันที ไม่ block</strong> · <code>ok = false</code></td></tr>
+  <tr><td><code>for range</code></td><td>วนจนของหมดแล้ว<strong>ออกจาก loop</strong></td></tr>
+  <tr><td>ส่ง</td><td>💥 <code>panic: send on closed channel</code></td></tr>
+  <tr><td><code>close</code> ซ้ำ</td><td>💥 <code>panic: close of closed channel</code></td></tr>
+</table>
+</div>
+
+<p class="rule">
+  คนส่งเป็นคนปิด ไม่ใช่คนรับ · มีคนส่งหลายคน → ให้ตัวที่รอทุกคนเสร็จเป็นคนปิด ·
+  ไม่ปิดเลยก็ได้ถ้าไม่มีใคร <code>range</code> (ไม่ใช่ memory leak)
+</p>
+
+<h3>Directional channel</h3>
+
+<pre><code><span class="k">func</span> <span class="f">producer</span>(ch <span class="k">chan</span>&lt;- <span class="k">int</span>)   <span class="c">// ส่งอย่างเดียว — ลูกศรหลัง chan</span>
+<span class="k">func</span> <span class="f">consumer</span>(ch &lt;-<span class="k">chan</span> <span class="k">int</span>)   <span class="c">// รับอย่างเดียว — ลูกศรหน้า chan</span>
+
+<span class="c">// consumer สั่ง close ไม่ได้:
+// cannot close receive-only channel ch (variable of type &lt;-chan int)</span></code></pre>
+
+<!-- ============================================================ -->
+<h2 id="select">5 · <code>select</code></h2>
+
+<pre><code><span class="k">select</span> {
+<span class="k">case</span> msg := &lt;-messages:      <span class="c">// รับ</span>
+<span class="k">case</span> ch &lt;- value:            <span class="c">// ส่ง — ใส่ได้เหมือนกัน</span>
+<span class="k">case</span> &lt;-time.<span class="f">After</span>(<span class="n">2</span>*time.Second):   <span class="c">// timeout</span>
+<span class="k">case</span> &lt;-ctx.<span class="f">Done</span>():          <span class="c">// ยกเลิก</span>
+<span class="k">default</span>:                    <span class="c">// ไม่มีใครพร้อม → ทำทันที ไม่รอ</span>
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>ไม่มี <code>default</code></th><th>มี <code>default</code></th></tr>
+  <tr><td>มี case พร้อม 1 อัน</td><td colspan="2">ทำอันนั้น</td></tr>
+  <tr><td>พร้อมหลายอัน</td><td colspan="2"><strong>สุ่มเลือก</strong> (วัดได้ ~50/50 จาก 1000 รอบ)</td></tr>
+  <tr><td>ไม่มีใครพร้อม</td><td><strong>รอ</strong> (ไม่กิน CPU)</td><td>ทำ <code>default</code> ทันที</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  ⚠️ <code>default</code> ใน <code>for</code> เปล่า ๆ = busy loop
+  (วัดได้ 95.7 ล้านรอบใน 0.3 วิ · กิน CPU เต็ม core) —
+  เอา <code>default</code> ออกให้ <code>select</code> block แทน
+</p>
+
+<pre><code><span class="c">// ✅ default ที่ใช้ถูก — มีอย่างอื่นให้ทำจริง</span>
+<span class="k">select</span> {
+<span class="k">case</span> metrics &lt;- stat:
+<span class="k">default</span>:
+    droppedCount++      <span class="c">// buffer เต็ม ยอมทิ้ง</span>
+}</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="sync">6 · Mutex &amp; Race Detector</h2>
+
+<pre><code><span class="k">var</span> mu sync.Mutex
+
+mu.<span class="f">Lock</span>()
+<span class="k">defer</span> mu.<span class="f">Unlock</span>()      <span class="c">// ← บรรทัดถัดไปเสมอ</span>
+counter++</code></pre>
+
+<pre><code><span class="k">type</span> Cache <span class="k">struct</span> {
+    mu   sync.RWMutex
+    data <span class="k">map</span>[<span class="k">string</span>]<span class="k">string</span>
+}
+
+<span class="k">func</span> (c *Cache) <span class="f">Get</span>(k <span class="k">string</span>) (<span class="k">string</span>, <span class="k">bool</span>) {
+    c.mu.<span class="f">RLock</span>(); <span class="k">defer</span> c.mu.<span class="f">RUnlock</span>()   <span class="c">// อ่าน — หลายคนพร้อมกันได้</span>
+    v, ok := c.data[k]; <span class="k">return</span> v, ok
+}
+
+<span class="k">func</span> (c *Cache) <span class="f">Set</span>(k, v <span class="k">string</span>) {
+    c.mu.<span class="f">Lock</span>(); <span class="k">defer</span> c.mu.<span class="f">Unlock</span>()     <span class="c">// เขียน — คนเดียว</span>
+    c.data[k] = v
+}</code></pre>
+
+<p class="rule">
+  วัดจริง — 2000 goroutine อ่านพร้อมกัน:
+  <code>Mutex</code> 12.4ms · <code>RWMutex</code> 0.8ms → <strong>เร็วขึ้น ~16 เท่า</strong>
+</p>
+
+<h3>Race Detector</h3>
+
+<pre><code>go run   -race main.go
+go test  -race ./...
+go build -race
+
+<span class="c">// เจอ race →  WARNING: DATA RACE (บอกบรรทัดที่อ่าน/เขียน/สร้าง goroutine)
+//             Found N data race(s)
+//             exit status 66   ← CI แดงเองอัตโนมัติ</span></code></pre>
+
+<p class="rule">
+  ฟ้อง = มีจริง 100% · <strong>ไม่ฟ้อง ≠ ไม่มี</strong> (ตรวจเฉพาะเส้นทางที่รันจริง)
+</p>
+
+<h3>เก้ากฎความปลอดภัย</h3>
+
+<ol>
+  <li>ไม่ share ก็ไม่ต้อง lock</li>
+  <li>ของกลางต้องมีเจ้าของ — ใครเขียนได้ · ใครอ่านได้ · sync ด้วยอะไร</li>
+  <li>Lock ให้แคบ แต่ครบ — อย่าครอบ network/DB call</li>
+  <li>อย่า copy <code>Mutex</code>/<code>RWMutex</code>/<code>WaitGroup</code> หลังเริ่มใช้</li>
+  <li><code>defer Unlock()</code> เสมอ</li>
+  <li>ทุก goroutine ต้องตอบได้ว่าจะจบเมื่อไหร่</li>
+  <li>คิดเรื่องยกเลิกตั้งแต่ออกแบบ</li>
+  <li>รัน race detector เป็นนิสัย</li>
+  <li>"ทำ concurrent ได้" ≠ "ควรทำ"</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="context">7 · Context &amp; Graceful Shutdown</h2>
+
+<pre><code>ctx, cancel := context.<span class="f">WithCancel</span>(context.<span class="f">Background</span>())
+ctx, cancel := context.<span class="f">WithTimeout</span>(context.<span class="f">Background</span>(), <span class="n">2</span>*time.Second)
+<span class="k">defer</span> <span class="f">cancel</span>()      <span class="c">// ← ทุกครั้ง ไม่มีข้อยกเว้น</span></code></pre>
+
+<pre><code><span class="k">func</span> <span class="f">worker</span>(ctx context.Context) {
+    <span class="k">for</span> {
+        <span class="k">select</span> {
+        <span class="k">case</span> &lt;-ctx.<span class="f">Done</span>():
+            <span class="k">return</span> ctx.<span class="f">Err</span>()
+        <span class="k">default</span>:
+            <span class="f">doChunkOfWork</span>()
+        }
+    }
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th><code>ctx.Err()</code></th><th>แปลว่า</th><th>HTTP status</th></tr>
+  <tr><td><code>nil</code></td><td>ยังทำงานต่อได้</td><td>—</td></tr>
+  <tr><td><code>context.Canceled</code></td><td>มีคนเรียก <code>cancel()</code> · หรือได้ SIGTERM</td><td>499 (ผู้ใช้ไปแล้ว)</td></tr>
+  <tr><td><code>context.DeadlineExceeded</code></td><td>หมดเวลาตาม timeout</td><td>504</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  ใช้ <code>errors.Is</code> ไม่ใช่ <code>==</code> ·
+  <code>ctx</code> เป็น parameter <strong>ตัวแรก</strong> เสมอ ·
+  ห้ามเก็บใน struct · ห้ามส่ง <code>nil</code> (ใช้ <code>context.TODO()</code>)
+</p>
+
+<p class="rule">
+  ⚠️ <code>cancel()</code> <strong>ไม่หยุด goroutine</strong> — แค่ปิด channel
+  ตัวที่ไม่เช็ค <code>ctx.Done()</code> จะทำงานต่อไปเรื่อย ๆ
+  <br><strong>context = บอกให้หยุด · WaitGroup = รอจนหยุดจริง</strong> — ต้องมีคู่กัน
+</p>
+
+<p class="rule">
+  context ซ้อนกัน → <strong>ตัวที่หมดก่อนชนะ</strong> · child ขยายเวลาเกิน parent ไม่ได้
+</p>
+
+<h3>Graceful Shutdown</h3>
+
+<pre><code>ctx, stop := signal.<span class="f">NotifyContext</span>(
+    context.<span class="f">Background</span>(), os.Interrupt, syscall.SIGTERM,
+)
+<span class="k">defer</span> <span class="f">stop</span>()
+
+&lt;-ctx.<span class="f">Done</span>()                 <span class="c">// ค้างจนได้สัญญาณ → ctx.Err() = context canceled</span>
+srv.<span class="f">Shutdown</span>(shutdownCtx)   <span class="c">// เก็บงานค้างให้จบ</span></code></pre>
+
+<!-- ============================================================ -->
+<h2 id="pool">8 · Worker Pool &amp; GOMAXPROCS</h2>
+
+<pre><code><span class="k">func</span> <span class="f">worker</span>(id <span class="k">int</span>, jobs &lt;-<span class="k">chan</span> Job, results <span class="k">chan</span>&lt;- Result, wg *sync.WaitGroup) {
+    <span class="k">defer</span> wg.<span class="f">Done</span>()
+    <span class="k">for</span> job := <span class="k">range</span> jobs { results &lt;- <span class="f">process</span>(job) }
+}
+
+<span class="k">for</span> w := <span class="n">1</span>; w &lt;= numWorkers; w++ { wg.<span class="f">Add</span>(<span class="n">1</span>); <span class="k">go</span> <span class="f">worker</span>(w, jobs, results, &amp;wg) }
+<span class="k">for</span> _, j := <span class="k">range</span> allJobs { jobs &lt;- j }
+<span class="f">close</span>(jobs)
+
+<span class="k">go</span> <span class="k">func</span>() { wg.<span class="f">Wait</span>(); <span class="f">close</span>(results) }()   <span class="c">// ← ต้องอยู่ใน goroutine!</span>
+
+<span class="k">for</span> r := <span class="k">range</span> results { ... }</code></pre>
+
+<p class="rule">
+  คนที่ <em>รอ</em> กับคนที่ <em>รับ</em> ต้องไม่ใช่ goroutine เดียวกัน —
+  ไม่งั้น <code>deadlock!</code> <code>[sync.WaitGroup.Wait]</code>
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>งานแบบไหน</th><th>ตั้ง worker เท่าไหร่</th><th>ตัวจำกัดจริง</th></tr>
+  <tr><td>CPU-bound (คำนวณ)</td><td><code>runtime.GOMAXPROCS(0)</code></td><td>จำนวน core</td></tr>
+  <tr><td>I/O-bound (API, ไฟล์)</td><td>สูงได้ 50–500</td><td>bandwidth · rate limit ปลายทาง</td></tr>
+  <tr><td>Database</td><td><strong>≤ ขนาด connection pool</strong></td><td>connection ที่ DB รับได้</td></tr>
+</table>
+</div>
+
+<p>วัดจริง 60 งาน บนเครื่อง <code>GOMAXPROCS = 10</code>:</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>worker</th><th>1</th><th>2</th><th>5</th><th>10</th><th>20</th><th>60</th></tr>
+  <tr><td>I/O (<code>Sleep</code>)</td><td>6.09s</td><td>3.05s</td><td>1.22s</td><td>610ms</td><td>310ms</td><td><strong>100ms</strong></td></tr>
+  <tr><td>CPU (คำนวณ)</td><td>10.16s</td><td>5.38s</td><td>2.57s</td><td><strong>1.74s</strong></td><td>1.71s</td><td>1.60s</td></tr>
+</table>
+</div>
+
+<p class="rule">
+  งาน CPU ตันที่ <code>GOMAXPROCS</code> · งาน I/O ดีขึ้นเรื่อย ๆ จนกว่า worker จะเท่าจำนวนงาน
+  <br>⚠️ ใน container: Go ก่อน 1.25 เห็น core ของ<em>เครื่องแม่</em> ไม่ใช่ CPU limit
+</p>
+
+<!-- ============================================================ -->
+<h2 id="layout">9 · Project Layout</h2>
+
+<pre><code>myapp/
+├── cmd/api/main.go              <span class="c">← จุดเริ่ม ประกอบทุกอย่าง (มีได้หลายตัว)</span>
+├── internal/
+│   ├── user/                    <span class="c">← จัดตามโดเมน ไม่ใช่ตามชนิดไฟล์</span>
+│   │   ├── handler.go           <span class="c">HTTP ↔ JSON · ไม่รู้จัก database</span>
+│   │   ├── service.go           <span class="c">กฎธุรกิจ · ไม่รู้จัก HTTP</span>
+│   │   ├── repository.go        <span class="c">SQL อย่างเดียว</span>
+│   │   ├── model.go             <span class="c">struct ที่ตรงกับตาราง</span>
+│   │   └── dto.go               <span class="c">struct request/response (มี json tag)</span>
+│   └── platform/database/       <span class="c">← ของกลางที่ทุกโดเมนใช้</span>
+├── go.mod
+└── go.sum</code></pre>
+
+<p class="rule">
+  <code>internal/</code> — module อื่น import ไม่ได้จริง:
+  <code>use of internal package ... not allowed</code>
+  <br>แยก <code>dto.go</code> จาก <code>model.go</code> เพื่อไม่ให้
+  <code>PasswordHash</code> หลุดโดยลืมใส่ <code>json:"-"</code>
+  <br>ลูกศรชี้ทางเดียว: handler → service → repository ·
+  <code>ctx</code> เดินทางไปด้วยทุกชั้น
+</p>
+
+<!-- ============================================================ -->
+<h2 id="gorm">10 · GORM</h2>
+
+<pre><code>go get -u gorm.io/gorm
+go get -u gorm.io/driver/postgres
+go mod tidy        <span class="c">← ลืมแล้วจะเจอ missing go.sum entry</span></code></pre>
+
+<pre><code><span class="k">type</span> User <span class="k">struct</span> {
+    ID    <span class="k">uint</span>   <span class="s">`gorm:"primaryKey"`</span>
+    Name  <span class="k">string</span>
+    Email <span class="k">string</span> <span class="s">`gorm:"unique"`</span>
+}
+<span class="c">// User → ตาราง "users"  ·  OrderItem → ตาราง "order_items"</span></code></pre>
+
+<pre><code>db.<span class="f">Create</span>(&amp;user)                                   <span class="c">// เขียน ID กลับเข้า struct (ต้องมี &amp;)</span>
+db.<span class="f">First</span>(&amp;user, <span class="n">1</span>)                                <span class="c">// หา id = 1</span>
+db.<span class="f">Find</span>(&amp;users)                                    <span class="c">// ทั้งหมด</span>
+db.<span class="f">Where</span>(<span class="s">"name = ?"</span>, name).<span class="f">Find</span>(&amp;users)          <span class="c">// ใช้ ? เสมอ — กัน SQL injection</span>
+db.<span class="f">Model</span>(&amp;user).<span class="f">Update</span>(<span class="s">"Name"</span>, <span class="s">"Somsri"</span>)
+db.<span class="f">Delete</span>(&amp;user, <span class="n">1</span>)
+db.<span class="f">WithContext</span>(ctx).<span class="f">Find</span>(&amp;users)                  <span class="c">// ส่ง ctx ต่อถึง database</span></code></pre>
+
+<p class="rule">
+  ⚠️ GORM คืน <code>*gorm.DB</code> ไม่ใช่ <code>(value, error)</code> —
+  ต้องเช็ค <code>.Error</code> เอง <strong>compiler ไม่บังคับ</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>ผลจริงที่รันได้</th></tr>
+  <tr><td><code>First</code> ไม่เจอ</td><td><code>gorm.ErrRecordNotFound</code> — ใช้ <code>errors.Is</code></td></tr>
+  <tr><td><strong><code>Find</code> ไม่เจอ</strong></td><td><strong><code>.Error = nil</code> · <code>RowsAffected = 0</code></strong> ← ไม่ error</td></tr>
+  <tr><td><code>Update</code>/<code>Delete</code> ไม่มี <code>Where</code></td><td><code>WHERE conditions required</code> (<code>gorm.ErrMissingWhereClause</code>)</td></tr>
+  <tr><td>มี <code>DeletedAt gorm.DeletedAt</code></td><td><code>Delete</code> = <strong>soft delete</strong> · <code>Unscoped()</code> ถึงจะเห็น</td></tr>
+  <tr><td>soft delete แล้วสร้าง email เดิม</td><td>💥 ชน <code>unique constraint</code> — แถวเดิมยังอยู่จริง</td></tr>
+</table>
+</div>
+
+<h3>Transaction</h3>
+
+<pre><code>db.<span class="f">Transaction</span>(<span class="k">func</span>(tx *gorm.DB) <span class="k">error</span> {
+    tx.<span class="f">Model</span>(...).<span class="f">Update</span>(<span class="s">"balance"</span>, gorm.<span class="f">Expr</span>(<span class="s">"balance - ?"</span>, <span class="n">50</span>))
+    <span class="k">return</span> <span class="k">nil</span>      <span class="c">// nil = commit  ·  error = rollback</span>
+})</code></pre>
+
+<p class="rule">ใช้ <code>tx</code> ข้างใน ไม่ใช่ <code>db</code> — เผลอใช้ <code>db</code> = คำสั่งนั้นอยู่นอก transaction</p>
+
+<!-- ============================================================ -->
+<h2 id="diag">11 · อ่าน error ของ concurrency</h2>
+
+<p>เวลาเจอ <code>fatal error: all goroutines are asleep - deadlock!</code>
+<strong>ให้ดูคำในวงเล็บเหลี่ยมของบรรทัด <code>goroutine N [...]</code> เป็นอันดับแรก</strong></p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ในวงเล็บเขียนว่า</th><th>แปลว่าค้างที่</th><th>สาเหตุที่พบบ่อย</th></tr>
+  <tr><td><code>[sync.WaitGroup.Wait]</code></td><td><code>wg.Wait()</code></td><td><code>Add</code> เกิน <code>Done</code> · ส่ง wg แบบไม่ใช่ pointer</td></tr>
+  <tr><td><code>[chan send]</code></td><td><code>ch &lt;- x</code></td><td>ไม่มีใครรับ · buffer เต็ม</td></tr>
+  <tr><td><code>[chan receive]</code></td><td><code>&lt;-ch</code> หรือ <code>for range ch</code></td><td>ลืม <code>close</code> · ไม่มีใครส่ง</td></tr>
+  <tr><td><code>[chan receive (nil chan)]</code></td><td>channel ที่ยังไม่ <code>make</code></td><td><code>var ch chan int</code> เฉย ๆ</td></tr>
+  <tr><td><code>[sync.Mutex.Lock]</code> / <code>[sync.RWMutex.RLock]</code></td><td>ขอ lock</td><td>ลืม <code>Unlock</code> · <strong>ขอ lock ซ้อนตัวเอง</strong></td></tr>
+</table>
+</div>
+
+<p class="rule">
+  <code>sync.Mutex</code> ของ Go <strong>ไม่ reentrant</strong> —
+  method ที่ถือ lock อยู่แล้วเรียก method อื่นที่ขอ lock เดิม = ค้างตลอดกาล
+  <br>ทางแก้: แยก method ที่<em>ไม่ล็อก</em> ออกมาเป็นตัว unexported
+</p>
+
+<h3>คำสั่งที่ควรรันก่อน commit ทุกครั้ง</h3>
+
+<pre><code>go vet ./...        <span class="c">// จับ copy lock · lostcancel · misuse ต่าง ๆ</span>
+go test -race ./... <span class="c">// จับ data race</span></code></pre>
+
+<!-- ============================================================ -->
+<h2 id="traps">12 · ตารางกับดักรวม</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เขียนแบบนี้</th><th>เกิดอะไรขึ้น</th></tr>
+  <tr><td><code>var total any</code> แล้ว <code>total.(int)</code></td><td>💥 <code>interface conversion: interface {} is nil, not int</code></td></tr>
+  <tr><td>constraint <code>int | int64</code> กับ <code>type Score int</code></td><td>❌ <code>possibly missing ~ for int in Integer</code></td></tr>
+  <tr><td><code>comparable</code> แล้วใช้ <code>&gt;</code></td><td>❌ <code>type parameter T cannot use operator &gt;</code></td></tr>
+  <tr><td><code>[]int</code> เป็น <code>comparable</code></td><td>❌ <code>[]int does not satisfy comparable</code></td></tr>
+  <tr><td><code>Stack{}</code> ไม่ระบุ type</td><td>❌ <code>cannot use generic type ... without instantiation</code></td></tr>
+  <tr><td>method มี type parameter ของตัวเอง</td><td>❌ <code>method must have no type parameters</code></td></tr>
+  <tr><td>ลืม <code>make</code> map ใน generic struct</td><td>💥 <code>panic: assignment to entry in nil map</code></td></tr>
+  <tr><td><code>go f()</code> แล้ว main จบเลย</td><td>⚠️ goroutine ไม่ได้ทำงาน — <strong>เงียบสนิท</strong></td></tr>
+  <tr><td><code>wg.Add(1)</code> อยู่ใน goroutine</td><td>⚠️ งานหายบางส่วน (วัดได้ 90–96 จาก 100) — <strong>ไม่ error</strong></td></tr>
+  <tr><td>ส่ง <code>wg sync.WaitGroup</code> ไม่มีดาว</td><td>ค้าง — <code>go vet</code>: <code>passes lock by value</code></td></tr>
+  <tr><td>ส่งเข้า unbuffered channel ใน goroutine เดียว</td><td>💥 <code>deadlock! [chan send]</code></td></tr>
+  <tr><td><code>for range ch</code> โดยไม่ <code>close</code></td><td>💥 <code>deadlock! [chan receive]</code></td></tr>
+  <tr><td>ส่งเข้า channel ที่ปิดแล้ว</td><td>💥 <code>panic: send on closed channel</code></td></tr>
+  <tr><td><code>select</code> + <code>default</code> ใน <code>for</code> เปล่า</td><td>⚠️ busy loop — CPU 100% แบบไม่มี error</td></tr>
+  <tr><td>timeout แล้วปล่อย goroutine ค้างส่ง</td><td>⚠️ <strong>goroutine leak</strong> — แก้ด้วย buffer ขนาด 1</td></tr>
+  <tr><td><code>counter++</code> หลาย goroutine</td><td>⚠️ ค่าหาย (988/947/956/…) — <strong>ไม่ error</strong></td></tr>
+  <tr><td>เขียน map หลาย goroutine</td><td>💥 <code>fatal error: concurrent map writes</code></td></tr>
+  <tr><td>value receiver บน struct ที่มี Mutex</td><td>⚠️ ล็อกสำเนา = ไม่ได้ล็อก — <code>go vet</code> จับ</td></tr>
+  <tr><td>method ที่ถือ lock เรียก method ที่ขอ lock เดิม</td><td>💥 ค้างตลอดกาล — Mutex ไม่ reentrant</td></tr>
+  <tr><td><code>ctx, _ := context.WithTimeout(...)</code></td><td>⚠️ context leak — <code>go vet</code>: <code>cancel ... should be called</code></td></tr>
+  <tr><td>goroutine ที่ไม่เช็ค <code>ctx.Done()</code></td><td>⚠️ <code>cancel()</code> ไม่มีผลกับมันเลย</td></tr>
+  <tr><td><code>wg.Wait(); close(results)</code> ไม่อยู่ใน goroutine</td><td>💥 <code>deadlock! [sync.WaitGroup.Wait]</code></td></tr>
+  <tr><td>เช็คแต่ <code>.Error</code> หลัง GORM <code>Find</code></td><td>⚠️ ไม่เจอข้อมูลก็ไม่ error — ต้องดู <code>RowsAffected</code></td></tr>
+  <tr><td>soft delete แล้วสร้างซ้ำด้วย email เดิม</td><td>💥 <code>duplicate key value violates unique constraint</code></td></tr>
+  <tr><td>ใช้ <code>db</code> แทน <code>tx</code> ใน transaction</td><td>⚠️ คำสั่งนั้น rollback ไม่ได้</td></tr>
+  <tr><td><code>go get</code> แล้วไม่ <code>go mod tidy</code></td><td>❌ <code>missing go.sum entry</code></td></tr>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="../lessons/0027-project-layout-gorm.html">← บทเรียน 27</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../../day-5/reference/cheatsheet.html">📄 Cheat sheet Day 5</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/blog/when-generics">When To Use Generics</a> — Ian Lance Taylor</li>
+  <li><a href="https://go.dev/blog/pipelines">Go Concurrency Patterns: Pipelines and cancellation</a></li>
+  <li><a href="https://go.dev/blog/context">Go Concurrency Patterns: Context</a></li>
+  <li><a href="https://go.dev/doc/articles/race_detector">Data Race Detector</a></li>
+  <li><a href="https://go.dev/doc/modules/layout">Organizing a Go module</a></li>
+  <li><a href="https://gorm.io/docs/">GORM Guides</a></li>
+</ul>
+
+</main>
+
+</body>
+</html>

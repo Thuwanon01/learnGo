@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 25 — Context: บอกให้ทุกคนหยุดพร้อมกัน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 25 · Day 6 · Concurrency</p>
+  <h1>Context: บอกให้ทุกคนหยุดพร้อมกัน</h1>
+  <p class="meta">~15 นาที · ต้องมี: <a href="./0023-select.html">บทเรียน 23</a> (<code>select</code>), <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a> (<code>errors.Is</code>)</p>
+  <p class="standfirst">
+    ผู้ใช้กดปุ่ม Cancel บนหน้าเว็บ ตอนนั้น request ของเขาแตกเป็น goroutine
+    ไปแล้ว 10 ชั้น — ยิง DB, เรียก API ข้างนอก, เขียน log
+    <br><strong>คุณจะบอกทั้งสิบชั้นยังไงว่า "งานนี้ไม่ต้องทำต่อแล้ว"?</strong>
+    <br>Go ไม่มีวิธีฆ่า goroutine จากข้างนอก คำตอบเดียวคือ
+    <strong>ส่งสัญญาณให้มันหยุดเอง</strong> — นั่นคือ <code>context</code>
+  </p>
+</header>
+
+<main>
+
+<h2>1 · Context ส่งอะไรได้บ้าง</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ส่งอะไร</th><th>แปลว่า</th><th>สร้างด้วย</th></tr>
+  <tr><td><strong>Cancellation</strong></td><td>"งานนี้ไม่ต้องทำต่อแล้ว"</td><td><code>context.WithCancel</code></td></tr>
+  <tr><td><strong>Deadline / Timeout</strong></td><td>"งานนี้ทำได้ถึงเวลานี้"</td><td><code>context.WithTimeout</code> · <code>WithDeadline</code></td></tr>
+  <tr><td><strong>Values</strong></td><td>ข้อมูลที่เดินทางไปกับ request เช่น request ID</td><td><code>context.WithValue</code></td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ <code>WithValue</code> ไม่ใช่ทางเลี่ยง parameter</strong>
+    <br>ใส่ได้เฉพาะของที่ "เดินทางไปกับ request ทั้งเส้น" เช่น request ID,
+    trace ID, ข้อมูล user ที่ login อยู่
+    <br><strong>ห้ามใส่ argument ของฟังก์ชัน</strong> เพราะ compiler ตรวจให้ไม่ได้
+    — ใส่ผิด key หรือลืมใส่ จะไปพังตอนรัน แทนที่จะพังตอน build
+    <br>ถ้าฟังก์ชันต้องใช้ <code>userID</code> ให้รับเป็น parameter ตรง ๆ
+  </p>
+</div>
+
+<h2>2 · <code>context.WithCancel</code> — กดกริ่งเอง</h2>
+
+<pre><code><span class="k">func</span> <span class="f">main</span>() {
+    ctx, cancel := context.<span class="f">WithCancel</span>(context.<span class="f">Background</span>())
+
+    <span class="k">go</span> <span class="f">worker</span>(ctx)
+
+    time.<span class="f">Sleep</span>(<span class="n">2</span> * time.Second)
+    fmt.<span class="f">Println</span>(<span class="s">"สั่งยกเลิก..."</span>)
+    <span class="f">cancel</span>()                              <span class="c">// ← กดกริ่ง</span>
+
+    time.<span class="f">Sleep</span>(<span class="n">1</span> * time.Second)
+}</code></pre>
+
+<div class="diagram">
+<pre>   context.Background()          ← ต้นทาง ไม่มีวันถูกยกเลิก
+          │
+          ├── WithCancel  ──► ctx  ────────┬──────────┬──────────┐
+          │                   │            │          │          │
+       cancel()               ▼            ▼          ▼          ▼
+          │              Handler       Service   Repository   Logger
+          │                                │
+          └──► ปิด ctx.Done() ──► <strong>ทุกคนที่ถือ ctx รู้พร้อมกัน</strong>
+
+   <strong>cancel ที่ต้นทาง = ทุกกิ่งที่แตกออกไปได้สัญญาณหมด</strong></pre>
+</div>
+
+<h2>3 · <code>ctx.Done()</code> — ช่องรับสัญญาณ</h2>
+
+<p>
+  <code>ctx.Done()</code> คืน <strong>channel</strong> ที่จะ<strong>ถูกปิด</strong>
+  เมื่อถึงเวลายกเลิก — เอามาใช้กับ <code>select</code> ตามที่ฝึกในบทเรียน 23:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">worker</span>(ctx context.Context, name <span class="k">string</span>) {
+    <span class="k">for</span> {
+        <span class="k">select</span> {
+        <span class="k">case</span> &lt;-ctx.<span class="f">Done</span>():
+            fmt.<span class="f">Printf</span>(<span class="s">"[%s] ได้รับสัญญาณ หยุด: %v\n"</span>, name, ctx.<span class="f">Err</span>())
+            <span class="k">return</span>                      <span class="c">// ← ต้อง return จริง ๆ</span>
+
+        <span class="k">default</span>:
+            fmt.<span class="f">Printf</span>(<span class="s">"[%s] ทำงาน...\n"</span>, name)
+            time.<span class="f">Sleep</span>(<span class="n">400</span> * time.Millisecond)
+        }
+    }
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทำไม <code>ctx.Done()</code> ถึงใช้วิธี "ปิด channel" ไม่ใช่ "ส่งค่า":</strong>
+    เพราะ channel ที่ปิดแล้วทำให้<strong>ทุกคนที่รออยู่ได้รับพร้อมกันหมด</strong>
+    (บทเรียน 22 หัวข้อ 7) — ถ้าส่งค่า จะมีแค่คนเดียวที่ได้
+    <br><strong>นี่คือสำนวน broadcast ของ Go</strong> ใช้ได้กับงานอื่นด้วย:
+    อยากบอกอะไรกับ goroutine หลายตัวพร้อมกัน → ปิด channel
+  </p>
+</div>
+
+<h2>4 · <code>context.WithTimeout</code> — ตั้งเวลาไว้ล่วงหน้า</h2>
+
+<pre><code>ctx, cancel := context.<span class="f">WithTimeout</span>(
+    context.<span class="f">Background</span>(),
+    <span class="n">2</span> * time.Second,
+)
+<span class="k">defer</span> <span class="f">cancel</span>()      <span class="c">// ← ต้องมีเสมอ แม้จะปล่อยให้หมดเวลาเอง</span></code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ <code>defer cancel()</code> ต้องเขียนทุกครั้ง — ไม่มีข้อยกเว้น</strong>
+    <br>คนมักคิดว่า "ตั้ง timeout ไว้แล้ว เดี๋ยวมันก็ยกเลิกเอง ไม่ต้องเรียก <code>cancel</code>"
+    <strong>ผิด</strong> — context ที่ยังไม่ถูก cancel จะยึด resource
+    (timer + การเชื่อมกับ context แม่) ไว้จนกว่าจะครบเวลา
+    <br>ถ้างานเสร็จใน 10ms แต่ timeout ตั้งไว้ 30 วินาที = ค้างไว้เปล่า ๆ 30 วินาที
+    ทุกครั้งที่มี request → <strong>memory leak แบบค่อยเป็นค่อยไป</strong>
+    <br>ข่าวดี: <code>go vet</code> จับให้ — ผมลองละทิ้ง <code>cancel</code>
+    ด้วย <code>ctx, _ := context.WithTimeout(...)</code> แล้วได้:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>the cancel function returned by context.WithTimeout should be called,
+not discarded, to avoid a context leak</code></pre>
+</div>
+
+<h2>5 · <code>ctx.Err()</code> — ถามว่าหยุดเพราะอะไร</h2>
+
+<pre><code><span class="k">if</span> errors.<span class="f">Is</span>(ctx.<span class="f">Err</span>(), context.Canceled) {
+    fmt.<span class="f">Println</span>(<span class="s">"มีคนกด cancel!"</span>)
+}
+
+<span class="k">if</span> errors.<span class="f">Is</span>(ctx.<span class="f">Err</span>(), context.DeadlineExceeded) {
+    fmt.<span class="f">Println</span>(<span class="s">"หมดเวลาทำงานแล้ว!"</span>)
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th><code>ctx.Err()</code> คืนอะไร</th><th>แปลว่า</th><th>ควรตอบผู้ใช้ยังไง</th></tr>
+  <tr><td><code>nil</code></td><td>ยังไม่ถูกยกเลิก ทำงานต่อได้</td><td>—</td></tr>
+  <tr><td><code>context.Canceled</code></td><td>มีคนเรียก <code>cancel()</code></td><td>ไม่ต้องตอบ — ผู้ใช้ไปแล้ว (HTTP 499)</td></tr>
+  <tr><td><code>context.DeadlineExceeded</code></td><td>หมดเวลาตาม timeout</td><td>504 Gateway Timeout</td></tr>
+</table>
+</div>
+
+<p>
+  สังเกตว่าใช้ <code>errors.Is</code> ไม่ใช่ <code>==</code> —
+  หลักการเดิมจาก <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>
+  เพราะ error อาจถูกห่อด้วย <code>%w</code> ระหว่างทาง
+</p>
+
+<h2>6 · การยกเลิกเป็นเรื่อง "ขอความร่วมมือ" ไม่ใช่ "บังคับ"</h2>
+
+<div class="predict">
+  <pre><code>ctx, cancel := context.<span class="f">WithTimeout</span>(context.<span class="f">Background</span>(), <span class="n">1</span>*time.Second)
+<span class="k">defer</span> <span class="f">cancel</span>()
+
+<span class="k">go</span> <span class="f">worker</span>(ctx, <span class="s">"A"</span>)      <span class="c">// worker วน select + Sleep 400ms</span>
+<span class="k">go</span> <span class="f">worker</span>(ctx, <span class="s">"B"</span>)
+
+&lt;-ctx.<span class="f">Done</span>()               <span class="c">// รอจนหมดเวลา</span>
+time.<span class="f">Sleep</span>(<span class="n">100</span> * time.Millisecond)
+fmt.<span class="f">Println</span>(<span class="s">"DeadlineExceeded?"</span>, errors.<span class="f">Is</span>(ctx.<span class="f">Err</span>(), context.DeadlineExceeded))</code></pre>
+  <p class="ask">worker ทั้งสองตัวจะได้พิมพ์ <code>"ได้รับสัญญาณ หยุด"</code> ไหม?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรันแล้วได้:</p>
+    <pre style="margin:0.6rem 0"><code>[B] ทำงาน...
+[A] ทำงาน...
+[A] ทำงาน...
+[B] ทำงาน...
+[B] ทำงาน...
+[A] ทำงาน...
+DeadlineExceeded? true</code></pre>
+    <p>
+      <strong>ไม่มีใครพิมพ์ "ได้รับสัญญาณ" เลย</strong>
+    </p>
+    <p>
+      <strong>ทำไม:</strong> ตอน context หมดเวลา worker ทั้งสองตัว
+      กำลัง <code>Sleep</code> อยู่กลางทาง — ยังไม่ถึงรอบที่จะเช็ค
+      <code>ctx.Done()</code> พอ <code>main</code> รอแค่ 100ms แล้วจบ
+      โปรแกรมก็จบ (บทเรียน 21) worker ตายกลางคันโดยไม่ทันรู้ตัว
+    </p>
+    <p style="margin-bottom:0">
+      <strong>บทเรียนสำคัญที่สุดของบทนี้:</strong>
+      <code>cancel()</code> ไม่ได้หยุดใครทั้งนั้น มันแค่<strong>ปิด channel</strong>
+      — goroutine ที่ไม่เคยเช็ค <code>ctx.Done()</code> จะทำงานต่อไปเรื่อย ๆ
+      ไม่มีใครหยุดมันได้
+      <br><em>"Context ไม่ใช่ปุ่มหยุด มันคือป้ายบอกทาง — ต้องมีคนอ่านถึงจะได้ผล"</em>
+    </p>
+  </div>
+</div>
+
+<p>รอให้ worker หยุดจริง ๆ ต้องใช้ <code>WaitGroup</code> คู่กับ context:</p>
+
+<pre><code><span class="k">var</span> wg sync.WaitGroup
+wg.<span class="f">Add</span>(<span class="n">2</span>)
+<span class="k">go</span> <span class="f">worker</span>(ctx, <span class="s">"A"</span>, &amp;wg)
+<span class="k">go</span> <span class="f">worker</span>(ctx, <span class="s">"B"</span>, &amp;wg)
+
+wg.<span class="f">Wait</span>()      <span class="c">// ← รอให้เขาจบ "เอง" จริง ๆ</span>
+fmt.<span class="f">Println</span>(<span class="s">"ทุก worker หยุดเรียบร้อย"</span>)</code></pre>
+
+<p>คราวนี้ผลลัพธ์เปลี่ยนไป — ผมรันแล้วได้:</p>
+
+<pre><code>[A] ทำงาน...
+[B] ทำงาน...
+...
+[A] ได้รับสัญญาณ หยุด: context deadline exceeded
+[B] ได้รับสัญญาณ หยุด: context deadline exceeded
+ทุก worker หยุดเรียบร้อย</code></pre>
+
+<div class="win">
+  <span class="label">💡 สูตรที่ต้องจำ</span>
+  <p style="margin-bottom:0">
+    <strong>context = บอกให้หยุด · WaitGroup = รอจนหยุดจริง</strong>
+    <br>ต้องมีคู่กันเสมอ ถ้าอยากรู้ว่างานปิดเรียบร้อยแล้ว
+  </p>
+</div>
+
+<h2>7 · <code>ctx</code> ต้องเป็น parameter ตัวแรกเสมอ</h2>
+
+<pre><code><span class="k">func</span> <span class="f">Handler</span>(ctx context.Context, r *http.Request) { <span class="f">Service</span>(ctx) }
+
+<span class="k">func</span> <span class="f">Service</span>(ctx context.Context)                    { <span class="f">Repository</span>(ctx) }
+
+<span class="k">func</span> <span class="f">Repository</span>(ctx context.Context) {
+    db.<span class="f">QueryRowContext</span>(ctx, query, id)   <span class="c">// ส่งต่อจนถึง DB</span>
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ธรรมเนียมที่ทั้งชุมชน Go ใช้เหมือนกันหมด:</strong>
+    <br>1. <code>ctx context.Context</code> เป็น <strong>parameter ตัวแรก</strong> เสมอ
+    <br>2. ชื่อตัวแปรคือ <code>ctx</code> — ไม่ใช่ <code>c</code> หรือ <code>context</code>
+    <br>3. <strong>ห้ามเก็บ context ไว้ใน struct</strong> — ส่งผ่าน parameter อย่างเดียว
+    <br>4. ห้ามส่ง <code>nil</code> — ถ้ายังไม่มีให้ใช้ <code>context.TODO()</code>
+    <br><br>
+    ใน HTTP handler คุณได้ context มาฟรีจาก <code>r.Context()</code>
+    ซึ่งจะถูกยกเลิก<strong>อัตโนมัติ</strong>เมื่อผู้ใช้ปิดหน้าเว็บ —
+    ส่งต่อไปเรื่อย ๆ แล้วทั้ง request จะยกเลิกตัวเองได้ทั้งเส้น
+  </p>
+</div>
+
+<h2>8 · <code>Background()</code> กับ <code>TODO()</code> ต่างกันตรงไหน</h2>
+
+<div class="compare">
+  <div class="side">
+    <h4><code>context.Background()</code></h4>
+    <pre><code>ctx := context.<span class="f">Background</span>()</code></pre>
+    <p style="margin-bottom:0">
+      <strong>"นี่คือต้นทาง"</strong> — ใช้ใน <code>main</code>,
+      ตอนเริ่ม server, ใน test, ในงานที่รันเป็น background job
+      <br>ไม่มีวันถูกยกเลิก ไม่มี deadline ไม่มี value
+    </p>
+  </div>
+  <div class="side">
+    <h4><code>context.TODO()</code></h4>
+    <pre><code>ctx := context.<span class="f">TODO</span>()</code></pre>
+    <p style="margin-bottom:0">
+      <strong>"ยังไม่รู้ว่าจะเอา context จากไหน"</strong> —
+      ใช้ตอนกำลังแก้โค้ดเก่าให้รองรับ context
+      แต่ยังไม่ได้เดินสายจากข้างบนลงมา
+      <br>เป็นป้ายบอกตัวเองว่า <em>ยังไม่เสร็จ</em>
+    </p>
+  </div>
+</div>
+
+<p>
+  <strong>ทั้งสองตัวทำงานเหมือนกันเป๊ะ</strong> — ต่างกันแค่<em>เจตนา</em>
+  ที่สื่อให้คนอ่านโค้ด (และเครื่องมือวิเคราะห์บางตัวใช้แยกได้)
+</p>
+
+<h2>9 · Graceful Shutdown — ปิดโดยไม่ตัดงานกลางคัน</h2>
+
+<p>
+  ตอน deploy หรือ scale down ระบบจะส่งสัญญาณ <code>SIGTERM</code> มาบอกให้ปิด
+  <br>ถ้าปิดทันที = request ที่ค้างอยู่ถูกตัดกลางคัน =
+  ลูกค้าจ่ายเงินแล้วแต่ order ไม่ถูกบันทึก
+</p>
+
+<pre><code>ctx, stop := signal.<span class="f">NotifyContext</span>(
+    context.<span class="f">Background</span>(),
+    os.Interrupt,        <span class="c">// Ctrl+C</span>
+    syscall.SIGTERM,     <span class="c">// docker stop / kubernetes</span>
+)
+<span class="k">defer</span> <span class="f">stop</span>()
+
+<span class="c">// ... เปิด server แล้วส่ง ctx ต่อไปเรื่อย ๆ ...</span>
+
+&lt;-ctx.<span class="f">Done</span>()                        <span class="c">// ค้างตรงนี้จนกว่าจะมีสัญญาณ</span>
+fmt.<span class="f">Println</span>(<span class="s">"ได้รับสัญญาณปิด:"</span>, ctx.<span class="f">Err</span>())
+
+<span class="c">// เก็บงานให้เรียบร้อยก่อนจบ</span>
+srv.<span class="f">Shutdown</span>(shutdownCtx)</code></pre>
+
+<p>
+  <code>signal.NotifyContext</code> ทำให้สัญญาณจากระบบปฏิบัติการ
+  <strong>กลายเป็น context ธรรมดา</strong> — ทุกอย่างที่คุณเรียนมาในบทนี้ใช้ได้ทันที
+</p>
+
+<p>ผมทดลองส่ง <code>SIGTERM</code> ให้โปรแกรมจริง ๆ ได้แบบนี้:</p>
+
+<pre><code>server กำลังรับ request...
+server กำลังรับ request...
+
+ได้รับสัญญาณปิด: <strong>context canceled</strong>
+กำลังปิดงานค้าง (drain)...
+ปิดเรียบร้อย ไม่มี request ไหนถูกตัดกลางคัน</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>สังเกตว่าได้ <code>context canceled</code> ไม่ใช่ <code>DeadlineExceeded</code></strong>
+    — เพราะสัญญาณจาก OS นับเป็นการ "กด cancel" ไม่ใช่ "หมดเวลา"
+    <br><strong>สำนวนเต็มในระบบจริงมีสอง context</strong>: ตัวแรกรับสัญญาณปิด
+    ตัวที่สองเป็น <code>WithTimeout</code> กำหนดว่า
+    "ให้เวลาเก็บของ 30 วินาที ถ้าไม่เสร็จก็ตัดจบ"
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="3">
+  <p class="q">1. เรียก <code>cancel()</code> แล้ว goroutine ที่กำลังทำงานอยู่จะเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">ถูก runtime หยุดทันทีตรงบรรทัดที่ทำอยู่</button>
+    <button class="opt">ทำงานที่ค้างให้จบก่อนแล้ว runtime ค่อยหยุดให้</button>
+    <button class="opt">เกิด panic ข้างในตัวมันเองแล้วจบการทำงาน</button>
+    <button class="opt">ทำงานต่อไปเรื่อย ๆ ถ้าไม่ได้เช็ค <code>ctx.Done()</code></button>
+  </div>
+  <div class="explain">
+    <p><code>cancel()</code> แค่<strong>ปิด channel</strong> ที่ <code>ctx.Done()</code> คืนมา
+    <strong>Go ไม่มีวิธีฆ่า goroutine จากข้างนอกเลย</strong>
+    <br>ผมรัน worker ที่ <code>Sleep</code> อยู่ตอน timeout หมด —
+    ไม่มีตัวไหนพิมพ์ "ได้รับสัญญาณ" เลยสักตัว
+    <br><em>context คือป้ายบอกทาง ไม่ใช่ปุ่มหยุด — ต้องมีคนอ่านถึงได้ผล</em></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. <code>ctx, cancel := context.WithTimeout(...)</code> แล้วไม่เรียก <code>cancel()</code> เลย?</p>
+  <div class="opts">
+    <button class="opt">ไม่เป็นไร เพราะ timeout จะยกเลิกตัวเองอยู่แล้ว</button>
+    <button class="opt">resource ถูกยึดไว้จนครบเวลา — leak ทีละนิด</button>
+    <button class="opt">context จะไม่มีวันหมดเวลาเลยตลอดการทำงาน</button>
+    <button class="opt">panic ทันทีเมื่อฟังก์ชันนั้นทำงานจบลง</button>
+  </div>
+  <div class="explain">
+    <p>context เก็บ timer และผูกกับ context แม่ไว้ — <code>cancel()</code>
+    คือตัวปลดของพวกนี้
+    <br>งานเสร็จใน 10ms แต่ timeout 30 วินาที = ค้างเปล่า ๆ 30 วินาที
+    <strong>ต่อหนึ่ง request</strong> · ที่ 1000 req/s = สะสมเป็นกอง
+    <br><strong><code>defer cancel()</code> ทันทีบรรทัดถัดไปเสมอ</strong> ·
+    <code>go vet</code> มี check <code>lostcancel</code> ช่วยจับ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. ทำไม <code>ctx.Done()</code> ถึงใช้วิธี "ปิด channel" แทนการ "ส่งค่า"?</p>
+  <div class="opts">
+    <button class="opt">เพราะปิด channel เร็วกว่าการส่งค่าเข้าไปมาก</button>
+    <button class="opt">เพราะ channel ของ context ไม่มี buffer ให้ส่ง</button>
+    <button class="opt">เพราะปิดแล้วทุกคนที่รออยู่ได้รับพร้อมกันหมด</button>
+    <button class="opt">เพราะส่งค่าเข้า channel ที่ปิดแล้วจะ panic ทันที</button>
+  </div>
+  <div class="explain">
+    <p>ส่งค่า = คนแรกที่รับได้ไปคนเดียว คนอื่นยังรออยู่
+    <br>ปิด channel = <strong>ทุกคนที่รอได้รับพร้อมกัน</strong> และรับซ้ำได้ไม่จำกัด
+    (บทเรียน 22: รับจาก channel ที่ปิดแล้วได้ zero value ทันที ไม่ block)
+    <br>context หนึ่งตัวถูกส่งต่อไป 10 ชั้น — ต้องแจ้งทุกชั้นพร้อมกันได้
+    <br><strong>นี่คือสำนวน broadcast มาตรฐานของ Go</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. <code>signal.NotifyContext</code> มีไว้ทำอะไร?</p>
+  <div class="opts">
+    <button class="opt">แปลงสัญญาณ SIGTERM/Ctrl+C ให้เป็น context ที่ถูก cancel</button>
+    <button class="opt">ส่งสัญญาณจากโปรแกรมเราไปหา process อื่นในเครื่อง</button>
+    <button class="opt">ตั้ง timeout ให้ context โดยอิงเวลาของระบบปฏิบัติการ</button>
+    <button class="opt">แจ้งเตือนทาง log ทุกครั้งที่ context ถูกยกเลิก</button>
+  </div>
+  <div class="explain">
+    <p>มันเชื่อม<strong>โลกของ OS</strong> (สัญญาณ) เข้ากับ<strong>โลกของ Go</strong> (context)
+    <br>ผมส่ง <code>SIGTERM</code> ให้โปรแกรมจริง ๆ แล้วได้
+    <code>ได้รับสัญญาณปิด: context canceled</code> —
+    <strong>เป็น <code>Canceled</code> ไม่ใช่ <code>DeadlineExceeded</code></strong>
+    <br>พอเป็น context แล้ว ทุกอย่างที่เรียนมาในบทนี้ใช้ต่อได้ทันที</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ระบบที่ปิดตัวเองได้อย่างสุภาพ</span>
+  <ol>
+    <li>เขียน <code>worker(ctx context.Context, id int, wg *sync.WaitGroup)</code>
+        ที่วน <code>select</code> พิมพ์ <code>worker N ทำงาน</code> ทุก 300ms
+        และออกเมื่อ <code>ctx.Done()</code> พร้อมพิมพ์ <code>ctx.Err()</code></li>
+    <li><code>main</code> เปิด 3 worker ด้วย
+        <code>context.WithTimeout(..., 2*time.Second)</code>
+        แล้ว <code>wg.Wait()</code>
+        <br><strong>ต้องเห็นทั้ง 3 ตัวพิมพ์ข้อความปิดครบ</strong></li>
+    <li>เปลี่ยนเป็น <code>WithCancel</code> แล้วสั่ง <code>cancel()</code>
+        หลัง 1 วินาที — <strong><code>ctx.Err()</code> เปลี่ยนไปไหม?</strong></li>
+    <li>ลบ <code>wg.Wait()</code> ออก แล้วรันใหม่ —
+        <strong>ยังเห็นข้อความปิดครบ 3 ตัวไหม?</strong> ทำไม?</li>
+    <li>เปลี่ยนมาใช้ <code>signal.NotifyContext</code> รับ
+        <code>os.Interrupt</code> แล้วกด <strong>Ctrl+C</strong> เอง —
+        <code>ctx.Err()</code> เป็นอะไร?</li>
+    <li><strong>ท้าทาย 1 — worker ดื้อ:</strong> เขียน worker อีกตัว
+        ที่<strong>ไม่เช็ค <code>ctx.Done()</code> เลย</strong>
+        แค่ <code>for { Sleep(300ms) }</code>
+        แล้วใส่เข้า <code>wg</code> ด้วย → เกิดอะไรขึ้นกับโปรแกรม?</li>
+    <li><strong>ท้าทาย 2 — context ซ้อนกัน:</strong> สร้าง <code>parent</code>
+        timeout 5 วินาที แล้วสร้าง <code>child</code> จาก parent ด้วย timeout 1 วินาที
+        <br>ลองสลับ: parent 1 วิ / child 5 วิ
+        <strong>อันไหนหมดก่อนชนะ? child เกินเวลา parent ได้ไหม?</strong></li>
+    <li><strong>ท้าทาย 3:</strong> ลบ <code>defer cancel()</code> ออกทุกที่
+        แล้วสั่ง <code>go vet ./...</code> — vet ว่าอะไร?</li>
+  </ol>
+  <button class="reveal">เฉลยท้าทาย 1 และ 2</button>
+  <div class="answer">
+    <p><strong>ท้าทาย 1:</strong> <code>wg.Wait()</code> จะ<strong>ไม่มีวันคืนค่า</strong>
+    — worker ดื้อไม่มีวันเรียก <code>wg.Done()</code>
+    → <code>fatal error: all goroutines are asleep - deadlock!</code>
+    พร้อม <code>goroutine 1 [sync.WaitGroup.Wait]</code>
+    <br>นี่คือรูปธรรมของกฎข้อ 6 ในบทเรียน 24:
+    <strong>ทุก goroutine ต้องตอบได้ว่าจะจบเมื่อไหร่</strong></p>
+    <p><strong>ท้าทาย 2:</strong> <strong>ตัวที่หมดก่อนชนะเสมอ</strong>
+    ผมวัดจริงทั้งสองแบบ:</p>
+    <pre style="margin:0.6rem 0"><code>parent 5s, child 1s → child จบที่ <strong>1s</strong>
+parent 1s, child 5s → child จบที่ <strong>1s</strong>   ← ไม่ได้ 5s</code></pre>
+    <p style="margin-bottom:0">child ถูกยกเลิกทันทีที่ parent ถูกยกเลิก
+    ตั้ง 5 วินาทีบน parent 1 วินาที ก็ได้จริงแค่ 1 วินาที
+    <br><strong>context ขยายเวลาให้ตัวเองไม่ได้ ทำได้แค่หดสั้นลง</strong>
+    — เพราะแบบนี้ HTTP handler ที่รับ <code>r.Context()</code> มา
+    จึงยกเลิกทั้งเส้นได้ทันทีที่ผู้ใช้ปิดหน้าเว็บ</p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ท้าทาย 2 คือสิ่งที่ทำให้ context ทรงพลัง</strong> —
+    ต้นทางยกเลิกได้เสมอ ปลายทางขัดขืนไม่ได้
+    <br>บทถัดไปเอาทุกอย่างของ Day 6 มารวมกันเป็นรูปแบบเดียว: <strong>Worker Pool</strong>
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0024-data-race-mutex.html">← บทเรียน 24</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0026-worker-pool.html">บทเรียน 26 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/blog/context">Go Concurrency Patterns: Context</a> — Go Blog · <strong>ต้นทางของบทนี้</strong></li>
+  <li><a href="https://pkg.go.dev/context">pkg.go.dev — context</a> · <a href="https://pkg.go.dev/os/signal#NotifyContext">signal.NotifyContext</a></li>
+  <li><a href="https://go.dev/blog/pipelines">Go Concurrency Patterns: Pipelines and cancellation</a></li>
+  <li><a href="https://go.dev/wiki/CodeReviewComments#contexts">Go Code Review Comments — Contexts</a> — ธรรมเนียมการวาง <code>ctx</code></li>
+  <li><a href="https://pkg.go.dev/net/http#Server.Shutdown">pkg.go.dev — http.Server.Shutdown</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

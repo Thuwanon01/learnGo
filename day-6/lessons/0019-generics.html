@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 19 — Generics: เขียนครั้งเดียว ใช้ได้หลาย type</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 19 · Day 6 · Generics</p>
+  <h1>Generics: เขียนครั้งเดียว ใช้ได้หลาย type</h1>
+  <p class="meta">~15 นาที · ต้องมี: <a href="../../day-4/lessons/0009-underlying-type.html">บทเรียน 09</a> (underlying type), <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a> (interface), <a href="../../day-4/lessons/0011-type-assertion-and-switch.html">บทเรียน 11</a> (<code>any</code>)</p>
+  <p class="standfirst">
+    ก่อน Go 1.18 ถ้าอยากได้ <code>Sum</code> ที่ใช้กับทั้ง <code>int</code> และ
+    <code>float64</code> คุณมีสองทาง: <strong>copy ฟังก์ชันแล้วแก้ type</strong>
+    หรือ <strong>ใช้ <code>any</code> แล้วเดารายทาง</strong> —
+    ทางที่สองไม่ได้แค่ "อ่านยาก" แต่<strong>พังตอนรันจริง</strong>
+    บทนี้เริ่มจากพิสูจน์ว่ามันพังยังไง แล้วค่อยดูว่า generics แก้อะไร
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ปัญหา: สองทางที่แย่ทั้งคู่</h2>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ทางที่ 1 — copy แล้วแก้ type</h4>
+    <pre><code><span class="k">func</span> <span class="f">SumInts</span>(values []<span class="k">int</span>) <span class="k">int</span> {
+    <span class="k">var</span> total <span class="k">int</span>
+    <span class="k">for</span> _, v := <span class="k">range</span> values {
+        total += v
+    }
+    <span class="k">return</span> total
+}
+
+<span class="k">func</span> <span class="f">SumFloat64s</span>(values []<span class="k">float64</span>) <span class="k">float64</span> {
+    <span class="k">var</span> total <span class="k">float64</span>
+    <span class="k">for</span> _, v := <span class="k">range</span> values {
+        total += v
+    }
+    <span class="k">return</span> total
+}</code></pre>
+    <p style="margin-bottom:0">
+      โค้ดเหมือนกันเป๊ะ ต่างแค่คำว่า <code>int</code>/<code>float64</code>
+      <br>เจอบั๊ก = ต้องแก้ทุกก๊อป
+    </p>
+  </div>
+  <div class="side bad">
+    <h4>❌ ทางที่ 2 — ใช้ <code>any</code></h4>
+    <pre><code><span class="k">func</span> <span class="f">Sum</span>(values []<span class="k">any</span>) <span class="k">any</span> {
+    <span class="k">var</span> total <span class="k">any</span>
+    <span class="k">for</span> _, value := <span class="k">range</span> values {
+        <span class="k">switch</span> v := value.(<span class="k">type</span>) {
+        <span class="k">case</span> <span class="k">int</span>:
+            total = total.(<span class="k">int</span>) + v
+        <span class="k">case</span> <span class="k">float64</span>:
+            total = total.(<span class="k">float64</span>) + v
+        }
+    }
+    <span class="k">return</span> total
+}</code></pre>
+    <p style="margin-bottom:0">
+      เขียนครั้งเดียวจริง แต่<strong>โค้ดนี้ระเบิด</strong> —
+      ดู predict ข้างล่าง
+    </p>
+  </div>
+</div>
+
+<div class="predict">
+  <pre><code>fmt.<span class="f">Println</span>(<span class="f">Sum</span>([]<span class="k">any</span>{<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>}))</code></pre>
+  <p class="ask">ฟังก์ชัน <code>Sum</code> ฝั่งขวา (แบบ <code>any</code>) พิมพ์อะไรออกมา?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่พิมพ์อะไรเลย — มัน panic</strong> ผมรันแล้ว:</p>
+    <pre style="margin:0.6rem 0"><code>panic: interface conversion: interface {} is nil, not int</code></pre>
+    <p>
+      <strong>ทำไม:</strong> <code>var total any</code> ทำให้ <code>total</code> เริ่มต้นเป็น
+      <code>nil</code> — ไม่ใช่ <code>0</code> พอวนรอบแรกเจอ <code>case int</code>
+      มันสั่ง <code>total.(int)</code> คือ "จงตีความ <code>nil</code> ว่าเป็น <code>int</code>"
+      ซึ่งทำไม่ได้ (<a href="../../day-4/lessons/0011-type-assertion-and-switch.html">บทเรียน 11</a>
+      — type assertion แบบไม่มี comma-ok พังแล้วพังเลย)
+    </p>
+    <p style="margin-bottom:0">
+      <strong>ประเด็นที่สำคัญกว่านั้น:</strong> โค้ดนี้<strong>คอมไพล์ผ่าน</strong>
+      compiler ไม่มีทางรู้เลยว่ามีอะไรอยู่ใน <code>any</code>
+      — พังตอน production เท่านั้น
+      นี่คือเหตุผลที่ generics ไม่ใช่แค่ "ทางที่สวยกว่า" แต่เป็น<strong>ทางที่ปลอดภัยกว่า</strong>
+    </p>
+  </div>
+</div>
+
+<h2>2 · ทางที่สาม: type parameter</h2>
+
+<pre><code><span class="k">type</span> Number <span class="k">interface</span> {
+    ~<span class="k">int</span> | ~<span class="k">int64</span> | ~<span class="k">float64</span>
+}
+
+<span class="k">func</span> <span class="f">Sum</span>[T Number](values []T) T {
+    <span class="k">var</span> total T          <span class="c">// zero value ของ T = 0 ไม่ใช่ nil</span>
+    <span class="k">for</span> _, value := <span class="k">range</span> values {
+        total += value    <span class="c">// compiler รู้ว่า T บวกกันได้</span>
+    }
+    <span class="k">return</span> total
+}
+
+ints   := <span class="f">Sum</span>([]<span class="k">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>})       <span class="c">// 60</span>
+floats := <span class="f">Sum</span>([]<span class="k">float64</span>{<span class="n">1.5</span>, <span class="n">2.5</span>, <span class="n">3.5</span>})  <span class="c">// 7.5</span></code></pre>
+
+<div class="diagram">
+<pre>  <strong>ตำแหน่งของวงเล็บบอกว่าเป็นอะไร</strong>
+
+  func Sum <strong>[T Number]</strong> (values <strong>[]T</strong>) <strong>T</strong>
+           ─────┬─────   ────┬────    ┬
+                │            │        └─ คืนค่าเป็น type เดียวกัน
+                │            └────────── parameter ปกติ ใช้ T ได้
+                └─────────────────────── <strong>type parameter</strong>
+                                         "T คือ type อะไรก็ได้ที่เข้าเกณฑ์ Number"
+
+  <strong>[]</strong> เหลี่ยม = ส่ง <strong>type</strong> เข้าไป   ·   <strong>()</strong> กลม = ส่ง <strong>ค่า</strong> เข้าไป</pre>
+</div>
+
+<h2>3 · <code>[T any]</code> ไม่เหมือน parameter ที่เป็น <code>any</code></h2>
+
+<p>
+  จุดนี้คนสับสนมากที่สุด เพราะคำว่า <code>any</code> โผล่ทั้งสองแบบ
+  แต่ความหมายคนละเรื่อง:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ <code>value any</code> — ลืม type ไปแล้ว</h4>
+    <pre><code><span class="k">func</span> <span class="f">Identity</span>(value <span class="k">any</span>) <span class="k">any</span> {
+    <span class="k">return</span> value
+}
+
+name := <span class="f">Identity</span>(<span class="s">"Alice"</span>)
+
+<span class="c">// name เป็น any → ใช้กับ string ไม่ได้</span>
+fmt.<span class="f">Println</span>(strings.<span class="f">ToUpper</span>(
+    name.(<span class="k">string</span>),  <span class="c">// ต้อง assert เอง</span>
+))</code></pre>
+    <p style="margin-bottom:0">
+      คุณ<strong>รู้</strong>ว่ามันคือ string แต่ compiler ไม่รู้
+      — ต้อง assert ทุกครั้ง และ assert ผิดเมื่อไหร่ = panic
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ <code>[T any]</code> — จำ type ไว้</h4>
+    <pre><code><span class="k">func</span> <span class="f">Identity</span>[T <span class="k">any</span>](value T) T {
+    <span class="k">return</span> value
+}
+
+name := <span class="f">Identity</span>(<span class="s">"Alice"</span>)
+
+<span class="c">// name เป็น string เต็มตัว</span>
+fmt.<span class="f">Println</span>(strings.<span class="f">ToUpper</span>(name))</code></pre>
+    <p style="margin-bottom:0">
+      compiler เห็นว่าส่ง <code>string</code> เข้าไป
+      → <strong>T = string</strong> → คืนค่าเป็น <code>string</code>
+      <br>ไม่ต้อง assert ไม่มีทาง panic
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>สรุปสั้น:</strong> <code>any</code> ในฐานะ parameter แปลว่า
+    "<em>ฉันไม่สนว่าเป็นอะไร</em>" — ทิ้ง type ไว้ที่ประตู
+    <br><code>[T any]</code> แปลว่า "<em>ฉันยังไม่รู้ว่าเป็นอะไร แต่ตอนเรียกจะรู้
+    และจะจำไว้ทั้งฟังก์ชัน</em>" — <strong>type ยังอยู่ครบ</strong>
+  </p>
+</div>
+
+<h2>4 · <code>comparable</code> — เกณฑ์สำหรับของที่เทียบกันได้</h2>
+
+<p>
+  <code>any</code> กว้างเกินไปสำหรับงานที่ต้องใช้ <code>==</code>
+  Go มีเกณฑ์สำเร็จรูปให้ชื่อ <code>comparable</code>:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">Contains</span>[T <span class="k">comparable</span>](values []T, target T) <span class="k">bool</span> {
+    <span class="k">for</span> _, value := <span class="k">range</span> values {
+        <span class="k">if</span> value == target {   <span class="c">// ใช้ == ได้เพราะ comparable</span>
+            <span class="k">return</span> <span class="k">true</span>
+        }
+    }
+    <span class="k">return</span> <span class="k">false</span>
+}
+
+<span class="f">Contains</span>([]<span class="k">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>}, <span class="n">20</span>)                  <span class="c">// true</span>
+<span class="f">Contains</span>([]<span class="k">string</span>{<span class="s">"Go"</span>, <span class="s">"Java"</span>}, <span class="s">"Go"</span>)            <span class="c">// true</span>
+<span class="f">Contains</span>(points, Coordinate{X: <span class="n">10</span>, Y: <span class="n">20</span>})       <span class="c">// true — struct ที่ทุก field เทียบได้</span></code></pre>
+
+<p>
+  ที่ใช้บ่อยอีกที่คือ <strong>key ของ map</strong> — เพราะ Go บังคับอยู่แล้วว่า
+  key ต้องเทียบได้:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">Keys</span>[K <span class="k">comparable</span>, V <span class="k">any</span>](items <span class="k">map</span>[K]V) []K {
+    keys := <span class="f">make</span>([]K, <span class="n">0</span>, <span class="f">len</span>(items))
+    <span class="k">for</span> key := <span class="k">range</span> items {
+        keys = <span class="f">append</span>(keys, key)
+    }
+    <span class="k">return</span> keys
+}</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ สไลด์เขียน <code>// [Alice Bob]</code> — อย่าเชื่อลำดับนั้น</strong>
+    <br>ผมรัน <code>Keys</code> กับ map 4 ตัว 5 ครั้งติด ได้:
+    <code>[Alice Bob Carol Dave]</code> · <code>[Carol Dave Alice Bob]</code> ·
+    <code>[Bob Carol Dave Alice]</code> · … <strong>ไม่ซ้ำกันเลย</strong>
+    <br><strong>Go สุ่มลำดับ <code>for range</code> บน map โดยตั้งใจ</strong>
+    เพื่อไม่ให้ใครเผลอเขียนโค้ดที่พึ่งลำดับ
+    ถ้าต้องการลำดับแน่นอนต้อง <code>sort.Strings(keys)</code> เอง
+  </p>
+</div>
+
+<h2>5 · Type inference — ไม่ต้องบอก type ก็ได้</h2>
+
+<pre><code><span class="c">// แบบกำหนดเอง — ชัดเจนแต่ยาว</span>
+<span class="f">Contains</span>[<span class="k">int</span>]([]<span class="k">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>}, <span class="n">20</span>)
+
+<span class="c">// แบบให้ compiler เดาเอาจาก argument — นิยมกว่า</span>
+<span class="f">Contains</span>([]<span class="k">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>}, <span class="n">20</span>)</code></pre>
+
+<p>
+  ส่วนใหญ่เขียนแบบสั้นได้เลย จะต้องระบุเองก็ต่อเมื่อ compiler เดาไม่ออก —
+  เช่นฟังก์ชันที่ <code>T</code> โผล่แค่ใน return type
+</p>
+
+<h2>6 · Constraint — กำหนดว่า T ต้องทำอะไรได้บ้าง</h2>
+
+<p>
+  <code>[T any]</code> แปลว่า "อะไรก็ได้" ซึ่งแปลว่า compiler
+  <strong>ไม่ยอมให้คุณทำอะไรกับมันเลย</strong> นอกจากส่งต่อ:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">Sum</span>[T <span class="k">any</span>](values []T) T {
+    <span class="k">var</span> total T
+    <span class="k">for</span> _, value := <span class="k">range</span> values {
+        total += value   <span class="c">// ❌ compile error — T อาจเป็น struct ที่บวกไม่ได้</span>
+    }
+    <span class="k">return</span> total
+}</code></pre>
+
+<p>
+  วิธีแก้คือบอก compiler ว่า <code>T</code> แคบลงแค่ไหน — เขียนเป็น
+  <strong>interface ที่ระบุรายชื่อ type</strong> แทนรายชื่อ method:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Constraint</th><th>มาจากไหน</th><th>ให้ทำอะไรได้</th></tr>
+  <tr><td><code>any</code></td><td>built-in</td><td>ส่งต่อ / เก็บ / เทียบกับ <code>nil</code> เท่านั้น</td></tr>
+  <tr><td><code>comparable</code></td><td>built-in</td><td><code>==</code> · <code>!=</code> · ใช้เป็น map key</td></tr>
+  <tr><td><code>cmp.Ordered</code></td><td><code>import "cmp"</code> (Go 1.21+)</td><td><code>&lt;</code> <code>&gt;</code> <code>&lt;=</code> <code>&gt;=</code> — ตัวเลขทุกชนิด + <code>string</code></td></tr>
+  <tr><td><code>constraints.Ordered</code></td><td><code>golang.org/x/exp</code></td><td>เหมือนกัน แต่เป็น package ทดลอง — <strong>ใช้ <code>cmp</code> แทน</strong></td></tr>
+  <tr><td>เขียนเอง</td><td>คุณ</td><td>เท่าที่รายชื่อ type ในนั้นทำได้ร่วมกัน</td></tr>
+</table>
+</div>
+
+<pre><code><span class="k">import</span> <span class="s">"cmp"</span>
+
+<span class="k">func</span> <span class="f">Min</span>[T cmp.Ordered](a, b T) T {
+    <span class="k">if</span> a &lt; b {
+        <span class="k">return</span> a
+    }
+    <span class="k">return</span> b
+}
+
+<span class="f">Min</span>(<span class="n">10</span>, <span class="n">20</span>)            <span class="c">// 10</span>
+<span class="f">Min</span>(<span class="n">1.5</span>, <span class="n">2.5</span>)          <span class="c">// 1.5</span>
+<span class="f">Min</span>(<span class="s">"apple"</span>, <span class="s">"zoo"</span>)   <span class="c">// apple — string เรียงได้เหมือนกัน</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>สังเกตว่า constraint คือ <code>interface</code> เหมือนเดิม</strong> —
+    แค่ข้างในเปลี่ยนจาก "รายชื่อ method" เป็น "รายชื่อ type"
+    Go ไม่ได้เพิ่มคำใหม่ในภาษา แต่ขยายความหมายของ <code>interface</code> ที่คุณรู้จักจาก
+    <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a> แล้ว
+    <br>เครื่องหมาย <code>|</code> อ่านว่า "หรือ" — <code>~int | ~float64</code>
+    คือ "เป็น int ก็ได้ float64 ก็ได้"
+  </p>
+</div>
+
+<h2>7 · <code>~</code> — สัญลักษณ์ที่ทำให้ custom type ผ่านด่าน</h2>
+
+<div class="predict">
+  <pre><code><span class="k">type</span> Integer <span class="k">interface</span> { <span class="k">int</span> | <span class="k">int64</span> }   <span class="c">// ← ไม่มี ~</span>
+
+<span class="k">func</span> <span class="f">Max</span>[T Integer](a, b T) T {
+    <span class="k">if</span> a &gt; b { <span class="k">return</span> a }
+    <span class="k">return</span> b
+}
+
+<span class="k">type</span> Score <span class="k">int</span>          <span class="c">// จากบทเรียน 09</span>
+
+<span class="k">var</span> first  Score = <span class="n">80</span>
+<span class="k">var</span> second Score = <span class="n">95</span>
+fmt.<span class="f">Println</span>(<span class="f">Max</span>(first, second))</code></pre>
+  <p class="ask"><code>Score</code> มี underlying type เป็น <code>int</code> อยู่แล้ว — ผ่านไหม?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่ผ่าน</strong> ผมรันแล้วได้:</p>
+    <pre style="margin:0.6rem 0"><code>Score does not satisfy Integer (possibly missing ~ for int in Integer)</code></pre>
+    <p>
+      <strong>compiler บอกวิธีแก้ให้ในวงเล็บเลย</strong> —
+      <code>int</code> เฉย ๆ ใน constraint แปลว่า "<strong>ต้องเป็น <code>int</code> เป๊ะ ๆ</strong>"
+      <br><code>Score</code> ไม่ใช่ <code>int</code> มันคือ <code>Score</code> —
+      เรื่องเดิมจาก <a href="../../day-4/lessons/0009-underlying-type.html">บทเรียน 09</a>
+      ที่ว่า defined type เป็นคนละ type กับต้นแบบ
+    </p>
+    <p style="margin-bottom:0">
+      <strong>เติม <code>~</code> เข้าไปแล้วผ่านทันที:</strong>
+    </p>
+    <pre style="margin:0.6rem 0 0"><code><span class="k">type</span> Integer <span class="k">interface</span> { ~<span class="k">int</span> | ~<span class="k">int64</span> }
+<span class="c">// ~int อ่านว่า "type ใดก็ตามที่มี underlying type เป็น int"
+// → int ผ่าน · Score ผ่าน · Temperature ผ่าน · UserID ผ่าน</span></code></pre>
+  </div>
+</div>
+
+<div class="diagram">
+<pre>  <strong>int</strong>  กับ  <strong>~int</strong>  ต่างกันตรงนี้
+
+   type Score int          type Temperature int        int
+        │                        │                      │
+        └── underlying: int ─────┴──── underlying: int ─┘
+                                 │
+              ┌──────────────────┴──────────────────┐
+              │                                     │
+      constraint  <strong>int</strong>                      constraint  <strong>~int</strong>
+      รับเฉพาะตัวขวาสุด                      รับทั้งสามตัว
+      (Score, Temperature ตกด่าน)            (ผ่านหมด)</pre>
+</div>
+
+<p>ใช้ได้กับ slice type ที่ตั้งเองด้วย:</p>
+
+<pre><code><span class="k">type</span> Names []<span class="k">string</span>
+
+<span class="k">type</span> StringSlice <span class="k">interface</span> { ~[]<span class="k">string</span> }
+
+<span class="k">func</span> <span class="f">CountNames</span>[S StringSlice](names S) <span class="k">int</span> {
+    <span class="k">return</span> <span class="f">len</span>(names)
+}
+
+<span class="f">CountNames</span>([]<span class="k">string</span>{<span class="s">"Alice"</span>, <span class="s">"Bob"</span>})   <span class="c">// ผ่าน</span>
+<span class="f">CountNames</span>(Names{<span class="s">"Alice"</span>, <span class="s">"Bob"</span>})        <span class="c">// ผ่านเพราะมี ~</span></code></pre>
+
+<div class="win">
+  <span class="label">💡 กฎง่าย ๆ</span>
+  <p style="margin-bottom:0">
+    <strong>เขียน constraint เอง → ใส่ <code>~</code> ไว้ก่อนแทบทุกครั้ง</strong>
+    เพราะโค้ดจริงเต็มไปด้วย <code>type Baht int64</code>, <code>type UserID string</code>
+    ที่คุณสร้างเองตามบทเรียน 09 — ถ้าไม่ใส่ <code>~</code> ฟังก์ชัน generic ของคุณ
+    จะใช้กับ type ของโปรเจกต์ตัวเองไม่ได้เลย
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. <code>func Sum(values []any) any</code> ที่มี <code>var total any</code> มีปัญหาอะไร?</p>
+  <div class="opts">
+    <button class="opt">คอมไพล์ไม่ผ่านเพราะบวก any ไม่ได้</button>
+    <button class="opt">ทำงานได้ แต่ช้ากว่าแบบ generic มาก</button>
+    <button class="opt">คอมไพล์ผ่าน แต่ panic ตอนรันเพราะ nil</button>
+    <button class="opt">ทำงานได้ แต่คืนค่าผิดเมื่อมีทศนิยม</button>
+  </div>
+  <div class="explain">
+    <p><code>var total any</code> ได้ <code>nil</code> ไม่ใช่ <code>0</code> →
+    <code>total.(int)</code> รอบแรกคือ
+    <strong><code>panic: interface conversion: interface {} is nil, not int</code></strong>
+    <br>อันตรายตรงที่<strong>คอมไพล์ผ่าน</strong> — compiler มองไม่เห็นข้างใน <code>any</code>
+    จึงไปพังเอาตอนรันจริง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. <code>func F[T any](v T) T</code> ต่างจาก <code>func F(v any) any</code> ยังไง?</p>
+  <div class="opts">
+    <button class="opt">ไม่ต่างกัน เป็นแค่วิธีเขียนสองแบบ</button>
+    <button class="opt">แบบ generic คืนค่าเป็น type เดิม ไม่ต้อง assert</button>
+    <button class="opt">แบบ generic รับได้เฉพาะตัวเลขกับสตริง</button>
+    <button class="opt">แบบ any เร็วกว่าเพราะไม่ต้องสร้างโค้ดซ้ำ</button>
+  </div>
+  <div class="explain">
+    <p>ส่ง <code>string</code> เข้า <code>F[T any]</code> → ได้ <code>string</code> กลับมา
+    เรียก <code>strings.ToUpper</code> ต่อได้ทันที
+    <br>ส่งเข้า <code>F(v any)</code> → ได้ <code>any</code> กลับมา
+    ต้อง <code>.(string)</code> เอง และ<strong>ถ้า assert ผิด = panic</strong>
+    <br>สรุป: generic <em>รักษา</em> type ไว้ · <code>any</code> <em>ทิ้ง</em> type</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. <code>type Score int</code> ใช้กับ <code>interface{ int | int64 }</code> ไม่ได้ เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">เพราะ Score ไม่มี method ตามที่ interface ต้องการ</button>
+    <button class="opt">เพราะ constraint รับได้แค่ type เดียวเท่านั้น</button>
+    <button class="opt">เพราะ Score ต้องประกาศเป็น type alias ก่อน</button>
+    <button class="opt">เพราะ int ในนั้นแปลว่า int เป๊ะ ๆ ต้องใส่ ~ ก่อน</button>
+  </div>
+  <div class="explain">
+    <p>ในตัว constraint <code>int</code> = "ต้องเป็น <code>int</code> เท่านั้น" ·
+    <code>~int</code> = "อะไรก็ได้ที่ underlying เป็น <code>int</code>"
+    <br>compiler บอกทางแก้ให้ตรง ๆ:
+    <code>possibly missing ~ for int in Integer</code>
+    <br>เชื่อมกับบทเรียน 09: <code>Score</code> เป็นคนละ type กับ <code>int</code> เสมอ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. อยากเขียน <code>Min[T](a, b T) T</code> ควรใช้ constraint ตัวไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>cmp.Ordered</code> เพราะต้องใช้เครื่องหมาย &lt;</button>
+    <button class="opt"><code>comparable</code> เพราะต้องเปรียบเทียบค่ากัน</button>
+    <button class="opt"><code>any</code> เพราะรับได้ทุก type ที่ส่งเข้ามา</button>
+    <button class="opt"><code>error</code> เพราะต้องคืน error ได้ด้วยเสมอ</button>
+  </div>
+  <div class="explain">
+    <p><code>comparable</code> ให้แค่ <code>==</code> และ <code>!=</code>
+    <strong>ไม่ให้ <code>&lt;</code></strong> — ชื่อชวนเข้าใจผิดมากที่สุดใน Go
+    <br>ต้องใช้ <code>cmp.Ordered</code> (มีใน standard library ตั้งแต่ Go 1.21)
+    ซึ่งครอบคลุมตัวเลขทุกชนิดและ <code>string</code></p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — กล่องเครื่องมือ generic ของคุณเอง</span>
+  <p>
+    ทำใน <a href="https://go.dev/play/">Go Playground</a> หรือในเครื่อง
+    <strong>สร้างไฟล์เดียวจบ</strong>
+  </p>
+  <ol>
+    <li>เขียน <code>Sum[T Number](values []T) T</code> โดยที่
+        <code>Number</code> เป็น constraint ของคุณเอง
+        <strong>ใส่ <code>~</code> ให้ครบทุกตัว</strong></li>
+    <li>ทดสอบว่าใช้ได้จริงกับ 3 แบบ:
+        <code>[]int</code> · <code>[]float64</code> ·
+        และ <strong><code>[]Baht</code></strong> เมื่อ <code>type Baht int64</code>
+        (ของจากบทเรียน 09)</li>
+    <li>เขียน <code>Max[T cmp.Ordered](values []T) (T, bool)</code> —
+        คืน <code>false</code> เมื่อ slice ว่าง
+        <br><em>ใบ้: ค่าที่คืนตอนว่างคือ <code>var zero T</code></em></li>
+    <li>เขียน <code>Contains[T comparable](values []T, target T) bool</code>
+        แล้วลองใช้กับ <code>[]struct{X, Y int}</code></li>
+    <li><strong>ท้าทาย 1:</strong> ลองเอา <code>~</code> ออกจาก <code>Number</code>
+        แล้วรัน — <strong>จดข้อความ error ที่ได้ทั้งบรรทัด</strong>
+        แล้วดูว่า compiler บอกทางแก้ไว้ตรงไหน</li>
+    <li><strong>ท้าทาย 2:</strong> ลองเปลี่ยน <code>Max</code> ให้ใช้
+        <code>comparable</code> แทน <code>cmp.Ordered</code> —
+        <strong>พังตรงไหน และ error ว่าอะไร?</strong></li>
+    <li><strong>ท้าทาย 3:</strong> เขียน
+        <code>Contains[T comparable]</code> แล้วส่ง
+        <code>[][]int</code> (slice ของ slice) เข้าไป —
+        <strong>ผ่านไหม? ทำไม?</strong>
+        <br><em>ใบ้: slice ใน Go เอามา <code>==</code> กันได้หรือเปล่า</em></li>
+  </ol>
+  <button class="reveal">เฉลยท้าทาย 2 และ 3</button>
+  <div class="answer">
+    <p><strong>ท้าทาย 2:</strong> พังที่บรรทัดที่ใช้ <code>&gt;</code>:</p>
+    <pre style="margin:0.6rem 0"><code>invalid operation: value &gt; best (type parameter T cannot use operator &gt;)</code></pre>
+    <p>ชื่อ <code>comparable</code> ชวนเข้าใจผิดที่สุดใน Go —
+    ภาษาไทยแปลว่า "เปรียบเทียบได้" ทำให้นึกถึง <code>&lt;</code> <code>&gt;</code> ด้วย
+    แต่จริง ๆ มันหมายถึงแค่ <strong>"เอามาเทียบว่าเท่ากันไหมได้"</strong> —
+    คือ <code>==</code> กับ <code>!=</code> เท่านั้น
+    <br>ของที่<strong>เรียงลำดับ</strong>ได้ต้องใช้ <code>cmp.Ordered</code></p>
+    <p style="margin-bottom:0"><strong>ท้าทาย 3:</strong> ไม่ผ่าน —
+    <code>[]int does not satisfy comparable</code>
+    เพราะ Go ไม่ให้ <code>==</code> กับ slice (เทียบได้เฉพาะกับ <code>nil</code>)
+    เหตุผลเดียวกับที่ slice เป็น map key ไม่ได้
+    ถ้าอยากเทียบต้องใช้ <code>slices.Equal</code></p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ถามได้เลย</strong> — โดยเฉพาะถ้า error ตอนทำท้าทายอ่านไม่ออก
+    ข้อความ error ของ generics เป็นจุดที่ Go อ่านยากที่สุด
+    <strong>ส่งมาทั้งบรรทัดได้เลย</strong>
+    <br>บทถัดไปเอา generics ไปใส่ใน struct — และดูว่า
+    <strong>เมื่อไหร่ที่ยังไม่ควรใช้ generics</strong> ซึ่งสำคัญพอ ๆ กัน
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="../../day-5/lessons/0018-tdd.html">← บทเรียน 18</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0020-generic-struct.html">บทเรียน 20 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/doc/tutorial/generics">Tutorial: Getting started with generics</a> — ทางการ เริ่มจาก <code>Sum</code> แบบเดียวกับบทนี้</li>
+  <li><a href="https://go.dev/blog/intro-generics">An Introduction To Generics</a> — Go Blog ตอนปล่อย Go 1.18</li>
+  <li><a href="https://go.dev/ref/spec#Type_parameter_declarations">Go Spec — Type parameter declarations</a> — ตัวบทกฎหมายเรื่อง <code>~</code> และ type set</li>
+  <li><a href="https://pkg.go.dev/cmp#Ordered">pkg.go.dev — cmp.Ordered</a></li>
+  <li><a href="https://go.dev/blog/maps">Go maps in action</a> — ที่มาของการสุ่มลำดับ <code>for range</code> บน map</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

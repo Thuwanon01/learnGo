@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 14 — Test in Go: กฎเกมที่ต้องรู้ก่อนเขียนบรรทัดแรก</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 14 · Day 5 · Testing</p>
+  <h1>Test in Go: กฎเกมที่ต้องรู้ก่อนเขียนบรรทัดแรก</h1>
+  <p class="meta">~14 นาที · ต้องมี: <a href="../../day-1/lessons/0001-anatomy-of-a-go-program.html">บทเรียน 01</a> (package &amp; module), <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a></p>
+  <p class="standfirst">
+    Go มี test runner ในตัว ไม่ต้องลง framework อะไรเลย
+    แต่มันจะ<strong>มองเห็นเทสของคุณก็ต่อเมื่อตั้งชื่อไฟล์ถูก</strong> —
+    ตั้งผิดตัวเดียวคือ <code>[no test files]</code> เงียบ ๆ
+    บทนี้ว่าด้วยกฎการตั้งชื่อ, internal vs external package,
+    และ option ของ <code>go test</code> ที่ใช้จริงทุกวัน
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ระดับของการทดสอบ — ปิรามิดเทส</h2>
+
+<div class="diagram">
+<pre>              ╱╲
+             ╱  ╲        <strong>E2E</strong>      น้อย · ช้า · แพง · เปราะ
+            ╱────╲                 ทดสอบทั้งระบบเสมือนผู้ใช้จริง
+           ╱      ╲
+          ╱ Integr. ╲    <strong>Integration</strong>  ปานกลาง
+         ╱──────────╲               ทดสอบว่าโมดูลคุยกันรู้เรื่อง
+        ╱            ╲
+       ╱  Unit Tests  ╲  <strong>Unit</strong>     เยอะ · เร็ว · ถูก · เสถียร
+      ╱────────────────╲            ทดสอบฟังก์ชันเดียวแบบแยกเดี่ยว</pre>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ระดับ</th><th>ทดสอบอะไร</th><th>ต่อ database/network ไหม</th><th>ความเร็ว</th></tr>
+  <tr><td><strong>Unit</strong></td><td>ฟังก์ชัน/method เดียว แยกเดี่ยว (isolated)</td><td><strong>ไม่</strong></td><td>มิลลิวินาที</td></tr>
+  <tr><td><strong>Integration</strong></td><td>หลายโมดูลทำงานร่วมกัน รับส่งข้อมูลถูกไหม</td><td>ใช่</td><td>วินาที</td></tr>
+  <tr><td><strong>E2E</strong></td><td>ตั้งแต่ต้นจนจบ จำลองการใช้งานจริงของผู้ใช้</td><td>ใช่ ทุกอย่าง</td><td>นาที</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทำไมฐานต้องกว้าง:</strong> unit test พัง = รู้ทันทีว่าฟังก์ชันไหน ·
+    E2E พัง = รู้แค่ว่า "ระบบพัง" ต้องไปไล่หาเอง
+    <strong>เทสที่บอกไม่ได้ว่าอะไรพัง มีค่าน้อยกว่าเทสที่บอกได้</strong>
+    Day 5 ทั้งวันโฟกัสที่ชั้นล่างสุด — unit test
+  </p>
+</div>
+
+<h2>2 · กฎข้อที่ 1: ชื่อไฟล์ต้องลงท้าย <code>_test.go</code></h2>
+
+<div class="predict">
+  <pre><code><span class="c">// ไฟล์ชื่อ mytests.go (ไม่มี _test)</span>
+<span class="k">package</span> notest
+
+<span class="k">import</span> <span class="s">"testing"</span>
+
+<span class="k">func</span> <span class="f">TestSomething</span>(t *testing.T) { t.<span class="f">Log</span>(<span class="s">"hi"</span>) }</code></pre>
+  <p class="ask">สั่ง <code>go test ./...</code> แล้วเกิดอะไรขึ้น?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>? notest [no test files]</code></strong> — ผมรันทดสอบแล้ว</p>
+    <p style="margin-bottom:0">
+      Go <strong>ไม่รู้จักไฟล์นี้ว่าเป็นเทสเลย</strong> ไม่มี error ไม่มี warning
+      แค่บอกว่าไม่มีไฟล์เทส — คนที่เพิ่งเริ่มมักงงว่า "เขียนเทสแล้วทำไมไม่รัน"
+      คำตอบคือชื่อไฟล์
+      <br><strong>กฎ: ชื่ออะไรก็ได้ แต่ต้องลงท้ายด้วย <code>_test.go</code></strong>
+      นิยมตั้งชื่อคู่กับไฟล์จริง:
+    </p>
+    <pre style="margin:0.6rem 0 0"><code>admin_handler.go
+admin_handler_test.go   <span class="c">← วางไว้คู่กัน folder เดียวกัน</span></code></pre>
+  </div>
+</div>
+
+<h2>3 · กฎข้อที่ 2: ชื่อฟังก์ชันต้องขึ้นต้นด้วย <code>Test</code></h2>
+
+<pre><code><span class="k">func</span> <span class="f">TestDiscount</span>(t *testing.T) {
+    <span class="c">// โค้ดเทส</span>
+}</code></pre>
+
+<ul>
+  <li><strong>ต้อง</strong>ขึ้นต้นด้วย <code>Test</code> (T ตัวใหญ่)</li>
+  <li>ตัวถัดจาก <code>Test</code> ต้องเป็น<strong>ตัวใหญ่หรือ <code>_</code></strong> —
+      <code>Testdiscount</code> จะไม่ถูกมองว่าเป็นเทส</li>
+  <li>รับ <code>t *testing.T</code> ตัวเดียว ไม่คืนค่าอะไร</li>
+  <li><code>t</code> คือตัวที่ test runner ส่งเข้ามาให้ควบคุมการทดสอบและเก็บผลลัพธ์
+      — รายละเอียดอยู่ใน <a href="./0015-testing-t.html">บทเรียน 15</a></li>
+</ul>
+
+<h2>4 · กฎข้อที่ 3 (ข้อยกเว้นพิเศษ): 1 folder มีได้ 2 package</h2>
+
+<p>
+  ปกติ Go บังคับว่า <strong>1 folder = 1 package</strong> —
+  แต่มีข้อยกเว้นเดียวในภาษา คือ package ที่ลงท้ายด้วย <code>_test</code>
+  อยู่ร่วม folder เดียวกันได้ ทำให้เกิดสองสไตล์:
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Internal — <code>package calc</code></h4>
+    <pre><code><span class="c">// calc_test.go</span>
+<span class="k">package</span> calc      <span class="c">// ชื่อเดียวกับไฟล์จริง</span>
+
+<span class="k">import</span> <span class="s">"testing"</span>
+
+<span class="k">func</span> <span class="f">TestPrivate</span>(t *testing.T) {
+    <span class="c">// เรียก unexported ได้เลย</span>
+    <span class="k">if</span> <span class="f">double</span>(<span class="n">21</span>) != <span class="n">42</span> {
+        t.<span class="f">Error</span>(<span class="s">"พัง"</span>)
+    }
+}</code></pre>
+  </div>
+  <div class="side">
+    <h4>External — <code>package calc_test</code></h4>
+    <pre><code><span class="c">// calc_external_test.go</span>
+<span class="k">package</span> calc_test   <span class="c">// ลงท้าย _test</span>
+
+<span class="k">import</span> (
+    <span class="s">"testing"</span>
+    <span class="s">"myapp/calc"</span>   <span class="c">// ต้อง import!</span>
+)
+
+<span class="k">func</span> <span class="f">TestPublic</span>(t *testing.T) {
+    calc.<span class="f">Discount</span>(<span class="n">100</span>, <span class="n">10</span>)
+}</code></pre>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th>Internal (<code>package calc</code>)</th><th>External (<code>package calc_test</code>)</th></tr>
+  <tr><td>ต้อง import package ตัวเอง</td><td>❌ ไม่ต้อง</td><td>✅ ต้อง</td></tr>
+  <tr><td>เทส unexported (ตัวเล็ก) ได้</td><td>✅ ได้</td><td>❌ ไม่ได้</td></tr>
+  <tr><td>มุมมอง</td><td>คนใน — เห็นทุกอย่าง</td><td><strong>คนนอก — เห็นเท่าที่ผู้ใช้จริงเห็น</strong></td></tr>
+  <tr><td>เหมาะกับ</td><td>ตรรกะภายในที่ซับซ้อน</td><td>ตรวจว่า public API ใช้งานได้จริง</td></tr>
+</table>
+</div>
+
+<div class="predict">
+  <pre><code><span class="k">package</span> calc_test
+
+<span class="k">func</span> <span class="f">TestX</span>(t *testing.T) {
+    calc.<span class="f">double</span>(<span class="n">3</span>)   <span class="c">// double เป็น unexported</span>
+}</code></pre>
+  <p class="ask">โค้ดนี้จะได้ error ว่าอะไร?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>name double not exported by package calc</code></strong> — ผมรันทดสอบแล้ว</p>
+    <p style="margin-bottom:0">
+      นี่คือ<strong>ข้อดี</strong>ไม่ใช่ข้อจำกัด — external test บังคับให้คุณ
+      ทดสอบผ่านประตูหน้าเหมือนผู้ใช้จริง ถ้าเทสผ่านแปลว่า
+      <strong>คนอื่นเอา package คุณไปใช้ได้จริง</strong>
+      ส่วน internal test ถ้าเทสผ่านก็แค่แปลว่าโค้ดข้างในทำงานตามที่คิด
+      <br>ในทางปฏิบัติ<em>ใช้ทั้งสองแบบพร้อมกัน</em>ได้ในโฟลเดอร์เดียว
+    </p>
+  </div>
+</div>
+
+<h2>5 · คำสั่ง <code>go test</code></h2>
+
+<pre><code>go test [options] [packages]</code></pre>
+
+<h3>packages — จะรันตรงไหน</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>เขียน</th><th>ความหมาย</th></tr>
+  <tr><td><code>go test .</code></td><td>รันเฉพาะ folder ปัจจุบัน</td></tr>
+  <tr><td><code>go test ./...</code></td><td><strong>รันทุก folder ลงไปทุกชั้น</strong> — ใช้บ่อยที่สุด</td></tr>
+  <tr><td><code>go test ./internal/user</code></td><td>ระบุ folder ตรง ๆ</td></tr>
+  <tr><td><code>go test ./user/user_test.go</code></td><td>ระบุไฟล์เดียว</td></tr>
+</table>
+</div>
+
+<h3>options ที่ใช้จริงทุกวัน</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>Option</th><th>ทำอะไร</th><th>ผลรันจริง</th></tr>
+  <tr><td><code>-v</code></td><td>โชว์ชื่อเทสทุกตัว + <code>t.Log</code></td><td><code>=== RUN / --- PASS</code> ทีละบรรทัด</td></tr>
+  <tr><td><code>-cover</code></td><td>วัดว่าเทสครอบคลุมกี่ %</td><td><code>coverage: 42.9% of statements</code></td></tr>
+  <tr><td><code>-run &lt;regex&gt;</code></td><td>รันเฉพาะเทสที่ชื่อตรง</td><td>ดูตัวอย่างข้างล่าง</td></tr>
+  <tr><td><code>-count=1</code></td><td><strong>ล้าง cache</strong> บังคับรันใหม่</td><td>ไม่ขึ้น <code>(cached)</code></td></tr>
+  <tr><td><code>-short</code></td><td>เปิด short mode ให้เทสหนัก ๆ ข้ามตัวเอง</td><td><code>--- SKIP:</code></td></tr>
+  <tr><td><code>-race</code></td><td>จับ data race (จะได้ใช้ตอนเรียน concurrency)</td><td><code>WARNING: DATA RACE</code></td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">สไลด์เขียนผิด — flag เป็นพหูพจน์</span>
+  <p style="margin-bottom:0">
+    สไลด์เขียน <code>-tag=&lt;tagName&gt;</code> แต่ของจริงคือ <strong><code>-tags</code></strong>
+    (มี s) ผมรันทดสอบแล้ว ใช้ <code>-tag</code> ได้ผลนี้:
+    <br><code>flag provided but not defined: -tag</code>
+  </p>
+</div>
+
+<h3><code>-count=1</code> สำคัญกว่าที่คิด</h3>
+
+<pre><code>$ go test .
+ok  	day5check	0.212s
+
+$ go test .
+ok  	day5check	<span class="c">(cached)</span>      <span class="c">← ไม่ได้รันจริง! ใช้ผลเดิม</span>
+
+$ go test -count=1 .
+ok  	day5check	0.207s      <span class="c">← บังคับรันใหม่</span></code></pre>
+
+<p>
+  Go cache ผลเทสไว้ถ้าโค้ดไม่เปลี่ยน — ปกติดี แต่<strong>ถ้าเทสของคุณพึ่งพา
+  สิ่งภายนอก</strong> (ไฟล์, เวลา, database) ผล cache จะหลอกคุณ
+  <code>-count=1</code> คือวิธีมาตรฐานในการปิด cache
+  และ <code>-count=10</code> คือวิธีจับ <strong>flaky test</strong>
+  (เทสที่บางทีผ่านบางทีไม่ผ่าน)
+</p>
+
+<h3><code>-run</code> เจาะจงถึง subtest ได้</h3>
+
+<pre><code>go test -v -run <span class="s">'TestCalculateDiscount'</span> .            <span class="c"># ทั้งฟังก์ชัน</span>
+go test -v -run <span class="s">'TestCalculateDiscount/ลด_10'</span> .    <span class="c"># เฉพาะ subtest</span>
+go test -v -run <span class="s">'TestUser|TestOrder'</span> .            <span class="c"># regex OR</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>สังเกต <code>_</code> ในชื่อ subtest</strong> — ผมตั้งชื่อว่า
+    <code>"ลด 10%"</code> (มีเว้นวรรค) แต่ Go แสดงเป็น <code>ลด_10%</code>
+    <strong>Go แปลงเว้นวรรคเป็น <code>_</code> ให้อัตโนมัติ</strong>
+    เวลาจะ <code>-run</code> ต้องพิมพ์ตามที่แสดง ไม่ใช่ตามที่ตั้ง
+  </p>
+</div>
+
+<h2>6 · Coverage — ดูว่าโค้ดบรรทัดไหนยังไม่ถูกเทส</h2>
+
+<pre><code><span class="c"># รันเทส + บันทึกข้อมูล coverage ลงไฟล์</span>
+go test -coverprofile=c.out .
+
+<span class="c"># เปิดดูเป็นตาราง</span>
+go tool cover -func=c.out
+
+<span class="c"># เปิดดูเป็นหน้าเว็บ ระบายสีทีละบรรทัด</span>
+go tool cover -html=c.out</code></pre>
+
+<p>ผลรันจริงของ <code>-func</code>:</p>
+
+<pre><code>day5check/calc.go:7:   CalculateDiscount   100.0%
+day5check/calc.go:14:  Division              0.0%   <span class="c">← ยังไม่มีเทสเลย</span>
+day5check/calc.go:21:  double                0.0%
+total:                 (statements)          42.9%</code></pre>
+
+<div class="warn">
+  <span class="label">coverage 100% ≠ ไม่มีบั๊ก</span>
+  <p style="margin-bottom:0">
+    coverage บอกแค่ว่า<strong>บรรทัดนั้นถูกรันผ่าน</strong> ไม่ได้บอกว่า
+    คุณตรวจผลลัพธ์ถูกต้องหรือเปล่า — เขียนเทสที่เรียกฟังก์ชันแล้วไม่ assert อะไรเลย
+    ก็ได้ 100% เหมือนกัน
+    <br><strong>ใช้ coverage เพื่อหา "ที่ยังไม่ได้แตะ" ไม่ใช่เพื่อไล่ล่าตัวเลข</strong>
+    ส่วนที่ 0% คือสัญญาณจริง ส่วนที่ 85% กับ 92% แทบไม่ต่างกัน
+  </p>
+</div>
+
+<h2>7 · Build tag — แยก integration test ออกจาก unit test</h2>
+
+<pre><code><span class="c">//go:build integration</span>
+                              <span class="c">← ต้องเว้นบรรทัดว่างก่อน package เสมอ</span>
+<span class="k">package</span> user
+
+<span class="k">import</span> <span class="s">"testing"</span>
+
+<span class="k">func</span> <span class="f">TestRealDatabase</span>(t *testing.T) {
+    <span class="c">// เทสที่ต้องต่อ database จริง</span>
+}</code></pre>
+
+<pre><code>$ go test ./...                      <span class="c"># unit test เท่านั้น — เร็ว</span>
+ok  	day5check	[no tests to run]
+
+$ go test -tags integration ./...    <span class="c"># รวม integration ด้วย</span>
+--- PASS: TestRealDatabase</code></pre>
+
+<div class="win">
+  <span class="label">ทำไมต้องแยก</span>
+  <p style="margin-bottom:0">
+    unit test ต้องรันได้<strong>ทุกครั้งที่กด save</strong> — ถ้ามันช้าเพราะต้องรอ
+    database คนก็จะเลิกรัน · แยกด้วย build tag แล้วให้ CI รัน
+    <code>-tags integration</code> ตอน merge เท่านั้น
+  </p>
+</div>
+
+<div class="note">
+  <span class="label">ผมทดสอบเรื่องบรรทัดว่างให้แล้ว</span>
+  <p>
+    สไลด์เขียนว่า "ต้องเว้นหนึ่งบรรทัดก่อน <code>package</code> เสมอ" —
+    ผมรันทดสอบทั้งสองแบบบน Go 1.26 ได้ผลนี้:
+  </p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>เขียนแบบ</th><th>ผลจริง</th></tr>
+    <tr><td><code>//go:build</code> อยู่บนสุด + <strong>มี</strong>บรรทัดว่าง</td><td>✅ ถูกต้องทุกอย่าง</td></tr>
+    <tr><td><code>//go:build</code> อยู่บนสุด + <strong>ไม่มี</strong>บรรทัดว่าง</td><td>⚠️ <strong>ยังทำงานได้</strong> แต่ <code>gofmt -l</code> ฟ้อง และ <code>gofmt</code> จะแทรกบรรทัดว่างให้เอง</td></tr>
+    <tr><td><code>//go:build</code> อยู่<strong>ใต้</strong> <code>package</code></td><td>💥 <code>misplaced compiler directive</code> → build failed</td></tr>
+  </table>
+  </div>
+  <p style="margin-bottom:0">
+    <strong>สรุป: กฎที่ compiler บังคับจริงคือ "ต้องอยู่ก่อน <code>package</code>"</strong>
+    ส่วนบรรทัดว่างเป็นข้อกำหนดของ <code>gofmt</code> — ซึ่งก็ควรทำตามอยู่ดี
+    เพราะ CI ส่วนใหญ่ตรวจ <code>gofmt -l</code>
+  </p>
+</div>
+
+<h2>8 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ไฟล์ชื่อ <code>mytests.go</code> มี <code>func TestFoo(t *testing.T)</code> — <code>go test</code> ทำยังไง?</p>
+  <div class="opts">
+    <button class="opt">รันปกติ เพราะชื่อฟังก์ชันถูกแล้ว</button>
+    <button class="opt">ไม่เห็นเลย ขึ้น no test files</button>
+    <button class="opt">คอมไพล์ไม่ผ่าน เพราะชื่อไฟล์ผิด</button>
+    <button class="opt">รันได้ แต่จะเตือนเรื่องชื่อไฟล์</button>
+  </div>
+  <div class="explain">
+    <p>Go หาไฟล์เทสจาก<strong>ชื่อไฟล์</strong>ก่อน ไม่ใช่จากเนื้อใน —
+    ไม่ลงท้าย <code>_test.go</code> ก็ถือว่าเป็นไฟล์โปรแกรมธรรมดา
+    <strong>ไม่มี error ไม่มี warning เงียบสนิท</strong> เจอ
+    <code>[no test files]</code> เมื่อไหร่ ให้เช็คชื่อไฟล์เป็นอย่างแรก</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. <code>package calc_test</code> (external) เทสฟังก์ชัน <code>double()</code> ตัวเล็กได้ไหม?</p>
+  <div class="opts">
+    <button class="opt">ได้ เพราะอยู่ folder เดียวกัน</button>
+    <button class="opt">ได้ ถ้า import package ตัวเองเข้ามา</button>
+    <button class="opt">ได้ แต่ต้องเพิ่ม build tag กำกับ</button>
+    <button class="opt">ไม่ได้ เห็นแค่ที่ export ออกมา</button>
+  </div>
+  <div class="explain">
+    <p><code>calc_test</code> เป็นคนละ package กับ <code>calc</code> จริง ๆ —
+    error ที่ได้คือ <code>name double not exported by package calc</code>
+    <strong>นี่คือข้อดี</strong> มันบังคับให้เทสผ่านประตูหน้าเหมือนผู้ใช้จริง
+    ถ้าอยากเทสของข้างในให้ใช้ internal test (<code>package calc</code>) แทน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. <code>go test .</code> ขึ้น <code>ok (cached)</code> — แปลว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">ไม่ได้รันจริง ใช้ผลรอบก่อนมาแสดง</button>
+    <button class="opt">รันจริงแต่โหลดโค้ดจาก cache มา</button>
+    <button class="opt">เทสถูกข้ามเพราะอยู่ short mode</button>
+    <button class="opt">มีเทสค้างอยู่ในคิวยังไม่เสร็จ</button>
+  </div>
+  <div class="explain">
+    <p>Go จำผลไว้ถ้าโค้ดไม่เปลี่ยน — ประหยัดเวลามาก แต่<strong>หลอกได้ถ้าเทส
+    พึ่งพาสิ่งภายนอก</strong> (ไฟล์ เวลา database)
+    <code>-count=1</code> บังคับรันใหม่ · <code>-count=10</code> ใช้จับ flaky test</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">4. <code>coverage: 100%</code> รับประกันอะไรได้บ้าง?</p>
+  <div class="opts">
+    <button class="opt">รับประกันว่าโค้ดไม่มีบั๊กเหลืออยู่</button>
+    <button class="opt">รับประกันว่าทุกเงื่อนไขถูกตรวจครบ</button>
+    <button class="opt">รับประกันแค่ว่าทุกบรรทัดถูกรันผ่าน</button>
+    <button class="opt">รับประกันว่า assert ทุกอันเขียนถูก</button>
+  </div>
+  <div class="explain">
+    <p>coverage นับแค่ว่า<strong>บรรทัดนั้นถูกเดินผ่าน</strong> —
+    เทสที่เรียกฟังก์ชันแล้วไม่ตรวจผลอะไรเลยก็ได้ 100%
+    <strong>ใช้มันหาส่วนที่ยังไม่ได้แตะ (0%) ไม่ใช่ไล่ล่าตัวเลข</strong>
+    ทีมที่ตั้ง KPI ว่าต้องได้ 90% มักได้เทสปลอมมาเต็มไปหมด</p>
+  </div>
+</div>
+
+<h2>9 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: ตั้งโปรเจกต์เทสตัวแรก</h3>
+  <ol>
+    <li>สร้างโฟลเดอร์ใหม่ แล้ว <code>go mod init calcdemo</code></li>
+    <li>เขียน <code>calc.go</code> ที่มี
+        <code>func Discount(price, percent int) (int, error)</code>
+        (ลดราคา, คืน error ถ้า percent ไม่อยู่ระหว่าง 0–100)
+        และ <code>func double(n int) int</code> (ตัวเล็ก)</li>
+    <li>เขียน <code>calc_test.go</code> แบบ <strong>internal</strong>
+        (<code>package calcdemo</code>) ที่เทส <code>double</code></li>
+    <li>เขียน <code>calc_api_test.go</code> แบบ <strong>external</strong>
+        (<code>package calcdemo_test</code>) ที่เทส <code>Discount</code></li>
+    <li>ลองเรียก <code>calcdemo.double(3)</code> จากไฟล์ external —
+        <strong>อ่าน error ให้ครบ</strong> แล้วลบออก</li>
+    <li>รันตามลำดับนี้แล้วเทียบผล:
+      <pre style="margin:0.4rem 0"><code>go test ./...
+go test -v ./...
+go test ./...          # ← สังเกตคำว่า (cached)
+go test -count=1 ./...
+go test -cover ./...</code></pre>
+    </li>
+    <li>สั่ง <code>go test -coverprofile=c.out . &amp;&amp; go tool cover -html=c.out</code>
+        — <strong>ดูว่าบรรทัดไหนเป็นสีแดง</strong> แล้วเขียนเทสเพิ่มให้เขียว</li>
+    <li><strong>ท้าทาย 1:</strong> เปลี่ยนชื่อไฟล์เทสเป็น <code>calc_tests.go</code>
+        (มี s) แล้วรันใหม่ — <strong>ได้ผลว่าอะไร?</strong></li>
+    <li><strong>ท้าทาย 2:</strong> สร้าง <code>db_test.go</code> ที่มี
+        <code>//go:build integration</code> อยู่บรรทัดแรก แล้วพิสูจน์ว่า
+        <code>go test ./...</code> ไม่รันมัน แต่ <code>go test -tags integration ./...</code> รัน
+        <br>จากนั้นลองสองอย่างนี้แล้วเทียบกับตารางในหัวข้อ 7:
+        <ul>
+          <li>ลบบรรทัดว่างระหว่าง <code>//go:build</code> กับ <code>package</code>
+              → รัน <code>gofmt -l .</code> ดูว่าฟ้องไหม</li>
+          <li>ย้าย <code>//go:build integration</code> ไปไว้<strong>ใต้</strong>
+              บรรทัด <code>package</code> → <strong>อันนี้พังจริง</strong></li>
+        </ul></li>
+  </ol>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://go.dev/doc/tutorial/add-a-test">Add a test — Go tutorial</a>
+  สั้นมาก (10 นาที) พาเขียนเทสตัวแรกจนรันได้จริง
+  พออยากรู้ว่ามี option อะไรบ้างครบ ๆ ให้สั่ง <code>go help test</code>
+  และ <code>go help testflag</code> ในเทอร์มินัล — <strong>เอกสารอยู่ในเครื่องคุณอยู่แล้ว
+  ไม่ต้องเปิดเว็บ</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — ท้าทายข้อ 2 (build tag)
+    เป็นข้อที่คนพลาดเพราะเรื่องบรรทัดว่างมากที่สุด ถ้าลบแล้วงงว่าทำไมยังรันอยู่
+    ส่งไฟล์มาได้
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="../../day-4/lessons/0013-json-and-struct-tags.html">← บทเรียน 13</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 5</a>
+  <a href="./0015-testing-t.html">บทเรียน 15 → testing.T</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/doc/tutorial/add-a-test">Add a test</a> — tutorial ทางการ เขียนเทสตัวแรก</li>
+  <li><a href="https://pkg.go.dev/testing">pkg.go.dev — testing</a> — เอกสารของ package testing ทั้งหมด</li>
+  <li><a href="https://pkg.go.dev/cmd/go#hdr-Test_packages">cmd/go — Test packages</a> — กฎการหาไฟล์เทสและ package <code>_test</code></li>
+  <li><a href="https://pkg.go.dev/cmd/go#hdr-Testing_flags">cmd/go — Testing flags</a> — รายการ flag ครบทุกตัว</li>
+  <li><a href="https://pkg.go.dev/cmd/go#hdr-Build_constraints">cmd/go — Build constraints</a> — กฎของ <code>//go:build</code></li>
+  <li><a href="https://go.dev/blog/cover">The Go Blog — The cover story</a> — coverage ทำงานยังไงข้างใน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

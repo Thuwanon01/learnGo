@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 05 — error pattern และกับดัก := ที่ทำให้ค่าหาย</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 05 · Day 2 · Function Design</p>
+  <h1>error pattern และกับดัก <code>:=</code> ที่ทำให้ค่าหาย</h1>
+  <p class="meta">~14 นาที · ต้องมี: <a href="./0004-guard-clauses.html">บทเรียน 04</a></p>
+  <p class="standfirst">
+    Go ไม่มี <code>try/catch</code> — มันใช้ "คืน error ออกมาเป็นค่าธรรมดา" แทน
+    ซึ่งทำให้โค้ดตรงไปตรงมาแต่ก็เปิดช่องให้บั๊กชนิดหนึ่งที่<strong>compiler ไม่เตือน
+    เทสต์ผ่าน แต่ค่าที่คุณคิดว่าเซ็ตแล้วกลับหายไปเฉย ๆ</strong>
+  </p>
+</header>
+
+<main>
+
+<h2>1 · Go คืน error เป็นค่า ไม่ใช่ throw</h2>
+
+<pre><code><span class="k">func</span> <span class="f">divide</span>(a, b <span class="n">float64</span>) (<span class="n">float64</span>, <span class="k">error</span>) {
+    <span class="k">if</span> b == <span class="n">0</span> {
+        <span class="k">return</span> <span class="n">0</span>, errors.<span class="f">New</span>(<span class="s">"cannot divide by zero"</span>)
+    }
+    <span class="k">return</span> a / b, <span class="k">nil</span>
+}
+
+<span class="c">// เรียกใช้ — สำนวนมาตรฐานที่จะเจอทุกวัน</span>
+result, err := <span class="f">divide</span>(<span class="n">10</span>, <span class="n">2</span>)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    fmt.<span class="f">Println</span>(<span class="s">"Error:"</span>, err)
+    <span class="k">return</span>
+}
+fmt.<span class="f">Println</span>(<span class="s">"Result:"</span>, result)</code></pre>
+
+<div class="win">
+  <span class="label">กฎ 3 ข้อของ error ใน Go</span>
+  <ol style="margin-bottom:0">
+    <li><code>error</code> เป็น <strong>return value ตัวสุดท้ายเสมอ</strong></li>
+    <li>สำเร็จ = คืน <code>nil</code> เป็น error</li>
+    <li><strong>เช็ค <code>err != nil</code> ทันทีที่รับค่ามา</strong> — ไม่มีข้อยกเว้น</li>
+  </ol>
+</div>
+
+<p>
+  ถ้าฟังก์ชันไม่มีผลลัพธ์อื่นนอกจากสำเร็จ/ไม่สำเร็จ ก็คืนแค่ <code>error</code> ตัวเดียว
+  แล้วรวมกับ short statement ได้เลย:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">saveUser</span>(u User) <span class="k">error</span> { ... }
+
+<span class="k">if</span> err := <span class="f">saveUser</span>(user); err != <span class="k">nil</span> {
+    fmt.<span class="f">Println</span>(<span class="s">"save failed:"</span>, err)
+    <span class="k">return</span>
+}</code></pre>
+
+<p>
+  แบบนี้ <code>err</code> มีชีวิตแค่ในบล็อก <code>if</code> — <strong>ไม่ไปรกด้านนอก
+  และกันเผลอเอา err เก่ามาใช้ซ้ำ</strong>
+</p>
+
+<h2>2 · Named return &amp; naked return</h2>
+
+<pre><code><span class="c">// ตั้งชื่อ return value ได้</span>
+<span class="k">func</span> <span class="f">divide</span>(a, b <span class="n">float64</span>) (result <span class="n">float64</span>, err <span class="k">error</span>) {
+    <span class="k">if</span> b == <span class="n">0</span> {
+        err = errors.<span class="f">New</span>(<span class="s">"cannot divide by zero"</span>)
+        <span class="k">return</span>          <span class="c">// ← naked return: คืน result, err ที่มีอยู่ตอนนั้น</span>
+    }
+    result = a / b
+    <span class="k">return</span>
+}</code></pre>
+
+<div class="predict">
+  <p class="ask"><code>divide(1, 0)</code> คืนค่าอะไรออกมา?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>0, "cannot divide by zero"</code></strong></p>
+    <p style="margin-bottom:0">
+      <code>result</code> ไม่เคยถูกเซ็ต จึงเป็น <strong>zero value = 0</strong>
+      — นี่คือจุดแข็งของ named return: <em>ไม่ต้องเขียน <code>return 0, err</code>
+      ให้ครบทุกจุด</em>
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">ใช้ naked return เท่าที่ฟังก์ชันสั้น</span>
+  <p style="margin-bottom:0">
+    ถ้าฟังก์ชันยาว 40 บรรทัดแล้วเจอ <code>return</code> เปล่า ๆ
+    คนอ่านต้องเลื่อนขึ้นไปดู signature ว่าคืนอะไรบ้าง —
+    <strong>Effective Go บอกให้ใช้กับฟังก์ชันสั้นเท่านั้น</strong>
+    ฟังก์ชันยาวให้เขียนค่าออกมาให้ครบ
+  </p>
+</div>
+
+<p>
+  แต่ named return มีพลังพิเศษอีกอย่างที่คุ้มมาก —
+  <strong><code>defer</code> เข้าไปแก้มันได้</strong> (เรื่องนี้อยู่ใน
+  <a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a>) ใช้ห่อ error ทุกจุด
+  return ในครั้งเดียว:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">loadConfig</span>(path <span class="n">string</span>) (err <span class="k">error</span>) {
+    <span class="k">defer</span> <span class="k">func</span>() {
+        <span class="k">if</span> err != <span class="k">nil</span> {
+            err = fmt.<span class="f">Errorf</span>(<span class="s">"loadConfig %s: %w"</span>, path, err)
+        }
+    }()
+    <span class="c">// ...มี return err อยู่ 5 จุด ทุกจุดถูกห่อให้อัตโนมัติ</span>
+}
+<span class="c">// ได้: loadConfig app.yaml: file missing</span></code></pre>
+
+<p class="meta"><code>%w</code> ใน <code>fmt.Errorf</code> คือ "wrap" — เก็บ error เดิมไว้ข้างในให้ <code>errors.Is</code> / <code>errors.As</code> ตรวจได้ทีหลัง (ต่างจาก <code>%v</code> ที่แปลงเป็นข้อความอย่างเดียว)</p>
+
+<h2>3 · 💀 กับดักใหญ่: <code>:=</code> ไม่ได้แปลว่า "สร้างใหม่" เสมอไป</h2>
+
+<div class="predict">
+  <pre><code><span class="k">var</span> sum = <span class="n">0</span>
+
+<span class="k">if</span> <span class="k">true</span> {
+    sum := sum + <span class="n">20</span>
+    fmt.<span class="f">Println</span>(<span class="s">"ข้างใน  ="</span>, sum)
+}
+
+fmt.<span class="f">Println</span>(<span class="s">"ข้างนอก ="</span>, sum)</code></pre>
+  <p class="ask">พิมพ์อะไรออกมา?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin-bottom:0.8rem"><code>ข้างใน  = 20
+ข้างนอก = 0     ← ไม่ใช่ 20!</code></pre>
+    <p style="margin-bottom:0">
+      <code>sum := sum + 20</code> <strong>สร้างตัวแปร <code>sum</code> ตัวใหม่</strong>
+      ที่มีชีวิตแค่ใน block นั้น (ค่าเริ่มต้นคำนวณจาก <code>sum</code> ตัวนอก = 20)
+      พอออกจาก block ตัวใหม่ตาย <strong><code>sum</code> ตัวนอกไม่เคยถูกแตะเลย</strong>
+      <br>อาการนี้เรียกว่า <strong>variable shadowing</strong> — ตัวในบัง ตัวนอก
+    </p>
+  </div>
+</div>
+
+<p>แก้ง่ายมาก — เปลี่ยน <code>:=</code> เป็น <code>=</code></p>
+
+<pre><code><span class="k">if</span> <span class="k">true</span> {
+    sum = sum + <span class="n">20</span>    <span class="c">// = ไม่ใช่ := → แก้ตัวนอกจริง</span>
+}
+<span class="c">// ข้างนอก = 20 ✓</span></code></pre>
+
+<h3>ทำไมถึงอันตราย: เวอร์ชัน <code>err</code></h3>
+
+<p>อาการเดียวกันนี้เกิดกับ <code>err</code> ได้ และตรงนี้แหละที่ทำให้ production พัง</p>
+
+<pre><code><span class="k">func</span> <span class="f">process</span>() <span class="k">error</span> {
+    <span class="k">var</span> err <span class="k">error</span>
+
+    <span class="k">if</span> needFile {
+        file, err := os.<span class="f">Open</span>(<span class="s">"demo.txt"</span>)   <span class="c">// 💀 := สร้าง err ตัวใหม่!</span>
+        <span class="k">if</span> err != <span class="k">nil</span> {
+            fmt.<span class="f">Println</span>(<span class="s">"Cannot open:"</span>, err)
+        }
+        _ = file
+    }
+
+    <span class="k">return</span> err   <span class="c">// ← คืน nil เสมอ! error ที่เกิดจริงหายไปแล้ว</span>
+}</code></pre>
+
+<div class="warn">
+  <span class="label">ทำไมถึงหลบตาคุณได้</span>
+  <p style="margin-bottom:0">
+    ที่ต้องใช้ <code>:=</code> เพราะบรรทัดนั้นมี <code>file</code> เป็นตัวแปรใหม่ด้วย —
+    Go ยอมให้ใช้ <code>:=</code> ได้ถ้า<strong>มีตัวแปรใหม่อย่างน้อย 1 ตัว</strong>
+    ทางซ้าย แต่ถ้าตัวที่เหลืออยู่คนละ scope มันจะ<strong>สร้างใหม่ทั้งคู่ ไม่ใช่ reuse</strong>
+    → compiler ไม่เตือนเลย เพราะทุกตัวถูกใช้งานครบ
+  </p>
+</div>
+
+<p>ทางแก้ 2 แบบ:</p>
+
+<pre><code><span class="c">// 1) ประกาศ file แยกก่อน แล้วใช้ = ล้วน</span>
+<span class="k">var</span> file *os.File
+file, err = os.<span class="f">Open</span>(<span class="s">"demo.txt"</span>)
+
+<span class="c">// 2) จัดการ error ให้จบในที่เดียวกับที่มันเกิด (แนะนำ — ตรงกับ guard clause)</span>
+file, err := os.<span class="f">Open</span>(<span class="s">"demo.txt"</span>)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    <span class="k">return</span> err       <span class="c">// ส่งออกไปเลย ไม่ต้องเก็บไว้ใช้ทีหลัง</span>
+}</code></pre>
+
+<div class="note">
+  <span class="label">ตรวจจับอัตโนมัติ</span>
+  <p style="margin-bottom:0">
+    ไม่ต้องพึ่งสายตาอย่างเดียว — เครื่องมือ
+    <a href="https://github.com/kisielk/errcheck">errcheck</a> และ
+    <code>shadow</code> analyzer จับได้:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>go vet -vettool=$(which shadow) ./...</code></pre>
+</div>
+
+<h2>4 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ฟังก์ชัน Go ที่อาจล้มเหลว ควรออกแบบ signature ยังไง?</p>
+  <div class="opts">
+    <button class="opt">โยน panic ออกมาให้คนเรียกจับ</button>
+    <button class="opt">คืน error เป็นค่าตัวสุดท้ายเสมอ</button>
+    <button class="opt">คืน bool บอกว่าสำเร็จหรือไม่</button>
+    <button class="opt">เขียน log แล้วคืนค่า zero value</button>
+  </div>
+  <div class="explain">
+    <p>สำนวนมาตรฐานคือ <code>(result T, err error)</code> — <code>panic</code>
+    สงวนไว้สำหรับ "โปรแกรมพังจนไปต่อไม่ได้" เท่านั้น
+    (<em>Don't Panic</em> ใน Go Code Review Comments)</p>
+    <p style="margin-bottom:0">ส่วน bool ใช้กับ comma-ok ของ map/type assertion
+    ซึ่งไม่ได้บอก "ทำไมถึงล้มเหลว"</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. <code>var sum = 0</code> แล้วใน if เขียน <code>sum := sum + 20</code> — ข้างนอกได้เท่าไหร่?</p>
+  <div class="opts">
+    <button class="opt">ได้ค่า 0 เพราะโดน shadow</button>
+    <button class="opt">ได้ค่า 20 เพราะบวกเข้าไป</button>
+    <button class="opt">คอมไพล์ไม่ผ่านเพราะชื่อซ้ำ</button>
+    <button class="opt">ได้ค่า 40 เพราะบวกสองครั้ง</button>
+  </div>
+  <div class="explain">
+    <p><code>:=</code> ใน block ใหม่ = <strong>สร้างตัวแปรใหม่ที่บังตัวนอก</strong>
+    ตัวนอกไม่เคยถูกแตะ ถ้าอยากแก้ตัวนอกต้องใช้ <code>=</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. <code>file, err := os.Open(f)</code> ในที่ที่มี <code>err</code> อยู่แล้วข้างนอก — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">คอมไพล์ไม่ผ่านเพราะ err ซ้ำ</button>
+    <button class="opt">ใช้ err ตัวเดิมข้างนอกต่อเลย</button>
+    <button class="opt">สร้าง err ตัวใหม่บังตัวนอกไว้</button>
+    <button class="opt">รวมค่า error ทั้งสองตัวเข้าด้วยกัน</button>
+  </div>
+  <div class="explain">
+    <p>ถ้าอยู่ <strong>คนละ scope</strong> จะสร้างใหม่ทั้งคู่ →
+    <code>err</code> ข้างนอกยังเป็น <code>nil</code> อยู่ ทำให้
+    <code>return err</code> ตอนท้ายคืน nil ทั้งที่เกิด error จริง</p>
+    <p style="margin-bottom:0">(ถ้าอยู่ scope <em>เดียวกัน</em> Go จะ reuse
+    <code>err</code> ตัวเดิมให้ ขอแค่มีตัวแปรใหม่อย่างน้อย 1 ตัวทางซ้าย —
+    สองกรณีนี้ต่างกันตรงนี้)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. <code>func f() (result int, err error)</code> เขียน <code>return</code> เปล่า ๆ ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">คอมไพล์ไม่ผ่าน ต้องระบุค่า</button>
+    <button class="opt">คืน nil ทั้งสองค่าเสมอเลย</button>
+    <button class="opt">คืนค่าที่สุ่มมาจาก memory</button>
+    <button class="opt">คืนค่าที่ result กับ err มีอยู่ตอนนั้น</button>
+  </div>
+  <div class="explain">
+    <p><strong>naked return</strong> — คืนค่าปัจจุบันของ named return value
+    ถ้ายังไม่เคยเซ็ตก็ได้ zero value (<code>0</code> และ <code>nil</code>)</p>
+  </div>
+</div>
+
+<h2>5 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: <code>calculatePrice</code> (workshop จากสไลด์ Day 2)</h3>
+  <p>เขียน <code>func calculatePrice(price, discountPercent float64) (float64, error)</code></p>
+  <ul>
+    <li>ถ้า <code>price &lt; 0</code> → คืน error <code>"price cannot be negative"</code></li>
+    <li>ถ้า <code>discountPercent &lt; 0</code> หรือ <code>&gt; 100</code> → คืน error
+        <code>"discount must be between 0 and 100"</code></li>
+    <li>ถ้าถูกต้อง → <code>finalPrice = price − (price × discountPercent ÷ 100)</code></li>
+  </ul>
+  <ol style="margin-top:0.8rem">
+    <li>เขียนด้วย <strong>guard clause</strong> จากบทที่แล้ว (ไม่มี <code>else</code> เลย)</li>
+    <li>ทดสอบ 3 เคส:
+        <code>(1000, 10)</code> → 900.00 ·
+        <code>(-500, 10)</code> → error ·
+        <code>(1000, 120)</code> → error</li>
+    <li>ฝั่งผู้เรียก <strong>ต้องเช็ค <code>err != nil</code> ก่อนใช้ค่า</strong>
+        และพิมพ์ด้วย <code>fmt.Printf("Final price: %.2f\n", v)</code></li>
+    <li>เขียนใหม่อีกรอบด้วย <strong>named return + naked return</strong> เทียบดูว่าชอบแบบไหน</li>
+    <li><strong>ท้าทาย 1:</strong> ใช้ <code>defer</code> + named return ห่อ error
+        ทุกจุดให้ขึ้นต้นด้วย <code>"calculatePrice: "</code></li>
+    <li><strong>ท้าทาย 2 (สร้างบั๊กเอง):</strong> จงใจเขียนโค้ดที่มี shadowing ของ
+        <code>err</code> ให้ฟังก์ชันคืน <code>nil</code> ทั้งที่ควรเป็น error —
+        <strong>แล้วรัน <code>go vet ./...</code> ดูว่ามันจับได้ไหม</strong>
+        <br><em>สปอยล์: <code>go vet</code> เปล่า ๆ จับ<strong>ไม่ได้</strong>
+        — ผมรันทดสอบแล้ว เงียบสนิท ต้องลง shadow analyzer แยกต่างหาก
+        บทเรียนของข้อนี้คือ <strong>เครื่องมือ default ไม่ได้กันให้ทุกอย่าง
+        สายตาคุณยังต้องทำงาน</strong></em>
+        <pre style="margin:0.6rem 0 0"><code>go install golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow@latest
+go vet -vettool=$(which shadow) ./...</code></pre></li>
+  </ol>
+</div>
+
+<div class="win">
+  <span class="label">ชัยชนะของบทนี้</span>
+  <p style="margin-bottom:0">
+    ต่อไปเวลาเห็น <code>:=</code> ข้างใน <code>if</code>/<code>for</code> ที่มี
+    <code>err</code> อยู่ทางซ้าย คุณจะหยุดคิดหนึ่งวินาทีว่า
+    <em>"นี่กำลังสร้างตัวใหม่หรือใช้ตัวเดิม"</em> — วินาทีนั้นแหละที่กันบั๊กระดับ production
+  </p>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://go.dev/blog/error-handling-and-go">Error handling and Go</a> —
+  บทความทางการที่อธิบายว่าทำไม Go ถึงเลือกคืน error เป็นค่า
+  ต่อด้วย <a href="https://go.dev/blog/go1.13-errors">Working with Errors in Go 1.13</a>
+  ถ้าอยากเข้าใจ <code>%w</code>, <code>errors.Is</code>, <code>errors.As</code>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — โดยเฉพาะข้อ 3 ของ quiz
+    (<code>:=</code> scope เดียวกัน vs คนละ scope) เป็นจุดที่ละเอียดมาก
+    ถ้ายังไม่ชัดถามมาได้ เดี๋ยวทำตัวอย่างเทียบให้ดูทีละบรรทัด
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0004-guard-clauses.html">← บทเรียน 04</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 2</a>
+  <a href="../../day-3/lessons/0006-slice-aliasing.html">บทเรียน 06 → slice aliasing</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/blog/error-handling-and-go">Error handling and Go</a> — ทำไมถึงคืน error เป็นค่า</li>
+  <li><a href="https://go.dev/blog/go1.13-errors">Working with Errors in Go 1.13</a> — <code>%w</code>, <code>errors.Is</code>, <code>errors.As</code></li>
+  <li><a href="https://go.dev/ref/spec#Short_variable_declarations">Go spec — Short variable declarations</a> — กฎ "redeclaration" ที่ทำให้ <code>:=</code> reuse ตัวแปรได้เฉพาะใน scope เดียวกัน</li>
+  <li><a href="https://go.dev/doc/effective_go#named-results">Effective Go — Named result parameters</a></li>
+  <li><a href="https://go.dev/wiki/CodeReviewComments">Go Code Review Comments — Don't Panic</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

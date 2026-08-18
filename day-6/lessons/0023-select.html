@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 23 — select: รอหลายทางพร้อมกัน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 23 · Day 6 · Concurrency</p>
+  <h1><code>select</code>: รอหลายทางพร้อมกัน</h1>
+  <p class="meta">~13 นาที · ต้องมี: <a href="./0022-channel.html">บทเรียน 22</a> (channel)</p>
+  <p class="standfirst">
+    <code>msg := &lt;-ch</code> รอได้ทีละท่อ — ถ้ามีทั้ง "ท่อผลลัพธ์" และ "ท่อ error"
+    คุณจะรอทางไหนก่อน? รอผิดทางแล้วอีกทางมาถึงก่อน = ค้าง
+    <br><code>select</code> คือคำตอบ: <strong>รอทุกทางพร้อมกัน ใครมาถึงก่อนเอาคนนั้น</strong>
+    <br>บทนี้สั้นแต่มีกับดักหนึ่งอันที่กิน CPU 100% แบบไม่มีใครสังเกต
+  </p>
+</header>
+
+<main>
+
+<h2>1 · <code>select</code> คือ <code>switch</code> ของ channel</h2>
+
+<div class="compare">
+  <div class="side">
+    <h4>รอทีละท่อ — ต้องเดาถูก</h4>
+    <pre><code>msg := &lt;-messages
+<span class="c">// ถ้า error มาก่อน → ค้างตรงนี้</span></code></pre>
+  </div>
+  <div class="side good">
+    <h4><code>select</code> — รอพร้อมกัน</h4>
+    <pre><code><span class="k">select</span> {
+<span class="k">case</span> msg := &lt;-messages:
+    fmt.<span class="f">Println</span>(<span class="s">"message:"</span>, msg)
+
+<span class="k">case</span> err := &lt;-errs:
+    fmt.<span class="f">Println</span>(<span class="s">"error:"</span>, err)
+}</code></pre>
+  </div>
+</div>
+
+<p>
+  <code>select</code> <strong>block จนกว่าจะมี case ใดสักอันทำงานได้</strong>
+  แล้วรันแค่ case นั้นอันเดียว จบ — ไม่ต้องมี <code>break</code>
+  และ<strong>ไม่ตกลง case ถัดไป</strong> เหมือน <code>switch</code>
+</p>
+
+<p>ใส่ case ฝั่ง <em>ส่ง</em> ก็ได้ ไม่จำเป็นต้องเป็นฝั่งรับอย่างเดียว:</p>
+
+<pre><code><span class="k">select</span> {
+<span class="k">case</span> msg := &lt;-messages:
+    fmt.<span class="f">Println</span>(<span class="s">"message:"</span>, msg)
+
+<span class="k">case</span> ch &lt;- value:          <span class="c">// รอจนกว่าจะส่งเข้า ch ได้</span>
+    fmt.<span class="f">Println</span>(<span class="s">"send"</span>)
+}</code></pre>
+
+<h2>2 · ถ้าพร้อมพร้อมกันหลาย case จะเลือกอันไหน?</h2>
+
+<div class="predict">
+  <pre><code>a := <span class="f">make</span>(<span class="k">chan</span> <span class="k">string</span>, <span class="n">10</span>)
+b := <span class="f">make</span>(<span class="k">chan</span> <span class="k">string</span>, <span class="n">10</span>)
+
+<span class="c">// ใส่ของทั้งสองท่อให้พร้อมทั้งคู่ แล้ว select — ทำ 1000 รอบ</span>
+a &lt;- <span class="s">"A"</span>
+b &lt;- <span class="s">"B"</span>
+<span class="k">select</span> {
+<span class="k">case</span> &lt;-a:
+    countA++
+<span class="k">case</span> &lt;-b:
+    countB++
+}</code></pre>
+  <p class="ask"><code>a</code> เขียนไว้ก่อน — จะได้ <code>countA = 1000</code> ใช่ไหม?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรัน 3 ครั้ง ครั้งละ 1000 รอบ:</p>
+    <pre style="margin:0.6rem 0"><code>เลือก A 485 ครั้ง, B 515 ครั้ง
+เลือก A 478 ครั้ง, B 522 ครั้ง
+เลือก A 512 ครั้ง, B 488 ครั้ง</code></pre>
+    <p>
+      <strong>ประมาณครึ่งต่อครึ่ง — <code>select</code> สุ่มเลือก</strong>
+      ไม่ได้เรียงตามลำดับที่เขียนเหมือน <code>switch</code>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>ทำไมออกแบบมาแบบนี้:</strong> ถ้าเลือกตัวบนสุดเสมอ
+      channel ที่มีของตลอดเวลาจะกิน case แรกไปหมด
+      — case ล่าง ๆ จะไม่มีวันได้ทำงานเลย (เรียกว่า starvation)
+      <br><strong>ผลที่ตามมา: อย่าเขียนโค้ดที่พึ่งลำดับของ case</strong>
+      ถ้าต้องการให้บางอย่างมาก่อนจริง ๆ ต้องเช็คแยกก่อนเข้า <code>select</code>
+    </p>
+  </div>
+</div>
+
+<h2>3 · <code>for</code> + <code>select</code> — วนรับไปเรื่อย ๆ</h2>
+
+<pre><code><span class="k">for</span> {
+    <span class="k">select</span> {
+    <span class="k">case</span> msg := &lt;-messages:
+        fmt.<span class="f">Println</span>(<span class="s">"message:"</span>, msg)
+
+    <span class="k">case</span> err := &lt;-errs:
+        fmt.<span class="f">Println</span>(<span class="s">"error:"</span>, err)
+    }
+}</code></pre>
+
+<p>
+  นี่คือรูปแบบที่ใช้บ่อยที่สุดในโค้ดจริง — service ที่คอยฟังหลายทางไปตลอด
+  <br><strong>แต่ต้องมีทางออก</strong> ไม่งั้นวนตลอดกาล — บทเรียน 25 (context)
+  จะให้ทางออกที่ถูกต้อง
+</p>
+
+<h2>4 · <code>default</code> — ไม่รอเลยถ้าไม่มีใครพร้อม</h2>
+
+<pre><code><span class="k">select</span> {
+<span class="k">case</span> msg := &lt;-messages:
+    fmt.<span class="f">Println</span>(<span class="s">"message:"</span>, msg)
+
+<span class="k">case</span> err := &lt;-errs:
+    fmt.<span class="f">Println</span>(<span class="s">"error:"</span>, err)
+
+<span class="k">default</span>:
+    fmt.<span class="f">Println</span>(<span class="s">"default!"</span>)   <span class="c">// ไม่มีใครพร้อม → ทำอันนี้ทันที ไม่รอ</span>
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>ไม่มี <code>default</code></th><th>มี <code>default</code></th></tr>
+  <tr><td>มี case พร้อม</td><td>ทำ case นั้น</td><td>ทำ case นั้น (<code>default</code> ไม่ถูกเลือก)</td></tr>
+  <tr><td>ไม่มี case ไหนพร้อม</td><td><strong>รอ</strong> จนกว่าจะมี</td><td>ทำ <code>default</code> <strong>ทันที</strong></td></tr>
+  <tr><td>ไม่มี case เลย (<code>select{}</code>)</td><td>ค้างตลอดกาล</td><td>—</td></tr>
+</table>
+</div>
+
+<div class="predict">
+  <pre><code>done := <span class="f">make</span>(<span class="k">chan</span> <span class="k">struct</span>{})
+<span class="k">go</span> <span class="k">func</span>() {
+    time.<span class="f">Sleep</span>(<span class="n">300</span> * time.Millisecond)
+    <span class="f">close</span>(done)
+}()
+
+loops := <span class="n">0</span>
+<span class="k">for</span> {
+    <span class="k">select</span> {
+    <span class="k">case</span> &lt;-done:
+        fmt.<span class="f">Println</span>(<span class="s">"วนไป"</span>, loops, <span class="s">"รอบ"</span>)
+        <span class="k">return</span>
+    <span class="k">default</span>:
+        loops++
+    }
+}</code></pre>
+  <p class="ask">โปรแกรมรอ 300 มิลลิวินาที — ระหว่างนั้นวนไปกี่รอบ?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรันแล้วได้:</p>
+    <pre style="margin:0.6rem 0"><code>busy loop วนไป <strong>95,778,173</strong> รอบ ใน 301ms</code></pre>
+    <p>
+      <strong>เกือบร้อยล้านรอบใน 0.3 วินาที</strong> —
+      แต่ละรอบ CPU ทำงานเต็มที่เพื่อ<em>ไม่ทำอะไรเลย</em>
+      <br>นี่คือ <strong>busy loop</strong> (หรือ busy-wait) — กิน CPU เต็ม 1 core
+      โดยที่โปรแกรมยังทำงาน "ถูกต้อง" ทุกประการ
+    </p>
+    <p style="margin-bottom:0">
+      <strong>⚠️ กับดัก: <code>default</code> ข้างใน <code>for</code> ที่ไม่มีอะไรคั่น</strong>
+      <br>ถ้าเจอโค้ดแบบนี้ใน production คุณจะเห็นแค่ "CPU 100% ตลอดเวลา"
+      โดยหาสาเหตุไม่เจอ เพราะไม่มี error ไม่มี log อะไรผิด
+      <br><strong>วิธีแก้: เอา <code>default</code> ออก</strong> —
+      ให้ <code>select</code> block รอไปเลย ซึ่ง<em>ไม่กิน CPU สักนิด</em>
+      เพราะ Go runtime พัก goroutine ไว้จนกว่าจะมีของมาจริง ๆ
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <span class="label">💡 ใช้ <code>default</code> เมื่อไหร่ถึงถูก</span>
+  <p style="margin-bottom:0">
+    <strong>ใช้เมื่อคุณมีอย่างอื่นให้ทำจริง ๆ</strong> — ไม่ใช่เพื่อ "เช็คไปเรื่อย ๆ"
+  </p>
+  <pre style="margin:0.6rem 0 0"><code><span class="c">// ✅ ถูก — ส่งได้ก็ส่ง ส่งไม่ได้ก็ทิ้ง ไม่รอใคร</span>
+<span class="k">select</span> {
+<span class="k">case</span> metrics &lt;- stat:
+<span class="k">default</span>:
+    droppedCount++      <span class="c">// buffer เต็ม ยอมทิ้ง ดีกว่าให้ระบบหลักช้า</span>
+}
+
+<span class="c">// ✅ ถูก — เช็คว่าถูกสั่งยกเลิกหรือยัง แล้วทำงานหนักต่อ</span>
+<span class="k">select</span> {
+<span class="k">case</span> &lt;-ctx.<span class="f">Done</span>():
+    <span class="k">return</span> ctx.<span class="f">Err</span>()
+<span class="k">default</span>:
+}
+<span class="f">doHeavyWork</span>()          <span class="c">// ← มีงานจริงคั่น ไม่ใช่วนเปล่า</span></code></pre>
+</div>
+
+<h2>5 · Timeout — <code>select</code> + <code>time.After</code></h2>
+
+<pre><code><span class="k">select</span> {
+<span class="k">case</span> result := &lt;-resultCh:
+    fmt.<span class="f">Println</span>(<span class="s">"Result:"</span>, result)
+
+<span class="k">case</span> &lt;-time.<span class="f">After</span>(<span class="n">2</span> * time.Second):
+    fmt.<span class="f">Println</span>(<span class="s">"Timeout!"</span>)
+}</code></pre>
+
+<p>
+  <code>time.After(d)</code> คืน <strong>channel</strong> ที่จะมีค่าโผล่มาเมื่อครบเวลา
+  — พอเอามาใส่เป็น case หนึ่งใน <code>select</code> ก็กลายเป็นการแข่งกัน:
+  <strong>งานเสร็จก่อน หรือเวลาหมดก่อน</strong>
+</p>
+
+<p>ผมรันตัวอย่างที่งานใช้ 3 วินาที แต่ timeout ตั้งไว้ 2 วินาที:</p>
+
+<pre><code>Timeout!
+<span class="c">// เวลารวมที่ใช้จริง: 2.5 วินาที (รวมเวลาคอมไพล์) — ไม่ได้รอครบ 3</span></code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ timeout ไม่ได้ "หยุด" งานที่กำลังทำอยู่</strong>
+    <br>goroutine ที่ส่ง <code>resultCh</code> ยังทำงานต่อไปจนครบ 3 วินาที —
+    แค่ไม่มีใครรอฟังแล้ว
+    <strong>Go ไม่มีทางฆ่า goroutine จากข้างนอกได้เลย</strong>
+    <br>ถ้าต้องการให้มัน<em>หยุดจริง</em> ต้องบอกมันแล้วให้มันหยุดเอง —
+    นั่นคือหน้าที่ของ <code>context</code> ใน
+    <a href="./0025-context.html">บทเรียน 25</a>
+    <br><strong>ยิ่งไปกว่านั้น:</strong> ถ้า <code>resultCh</code> เป็น unbuffered
+    goroutine ตัวนั้นจะค้างตรง <code>resultCh &lt;- result</code>
+    <strong>ตลอดไป</strong> เพราะไม่มีใครมารับ = <strong>goroutine leak</strong>
+    <br>ทางกัน: ทำ <code>resultCh</code> เป็น buffered ขนาด 1 ให้ส่งทิ้งไว้ได้แล้วจบตัวเอง
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ถ้า <code>select</code> มี 2 case ที่พร้อมทำงานพร้อมกัน จะเลือกอันไหน?</p>
+  <div class="opts">
+    <button class="opt">อันที่เขียนไว้บนสุดเสมอ เหมือน <code>switch</code></button>
+    <button class="opt">อันที่ channel มีข้อมูลค้างอยู่มากกว่า</button>
+    <button class="opt">สุ่มเลือก เพื่อไม่ให้ case ล่างอดตาย</button>
+    <button class="opt">ทำทั้งสอง case เรียงจากบนลงล่าง</button>
+  </div>
+  <div class="explain">
+    <p>ผมทดสอบ 1000 รอบ 3 ครั้ง ได้ประมาณ <strong>485/515 · 478/522 · 512/488</strong>
+    — สุ่มชัดเจน
+    <br>ออกแบบมาเพื่อกัน <em>starvation</em>: ถ้าเลือกตัวบนเสมอ
+    channel ที่มีของตลอดจะกิน case แรกจน case อื่นไม่ได้ทำงานเลย
+    <br><strong>อย่าเขียนโค้ดที่พึ่งลำดับ case</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. <code>select</code> ที่มี <code>default</code> แต่ไม่มี case ไหนพร้อม จะเกิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">ทำ <code>default</code> ทันที ไม่รอสักนิด</button>
+    <button class="opt">รอ 1 วินาทีก่อนแล้วค่อยทำ <code>default</code></button>
+    <button class="opt">รอจนกว่าจะมี case พร้อมเหมือนไม่มี <code>default</code></button>
+    <button class="opt">panic เพราะไม่มีทางเลือกที่ทำได้เลย</button>
+  </div>
+  <div class="explain">
+    <p><code>default</code> เปลี่ยน <code>select</code> จาก <em>blocking</em>
+    เป็น <em>non-blocking</em> — ไม่มีใครพร้อมก็ไปต่อทันที
+    <br>ประโยชน์: "ส่งได้ก็ส่ง ส่งไม่ได้ก็ข้าม" โดยไม่ทำให้ระบบหลักหยุดรอ
+    <br>โทษ: ถ้าอยู่ใน <code>for</code> เปล่า ๆ จะกลายเป็น busy loop กิน CPU เต็ม core</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">3. <code>for { select { case &lt;-done: return; default: } }</code> มีปัญหาอะไร?</p>
+  <div class="opts">
+    <button class="opt">คอมไพล์ไม่ผ่านเพราะ <code>default</code> ว่างเปล่า</button>
+    <button class="opt">กิน CPU เต็ม core เพราะวนเช็คไม่หยุด</button>
+    <button class="opt">ไม่มีวันออกจาก loop แม้ <code>done</code> จะถูกปิด</button>
+    <button class="opt">เกิด deadlock เพราะไม่มีใครส่งเข้า <code>done</code></button>
+  </div>
+  <div class="explain">
+    <p>โปรแกรม<strong>ทำงานถูกต้อง</strong> — ออกจาก loop ได้ปกติเมื่อ <code>done</code> ปิด
+    แต่ระหว่างรอมันวนเปล่า ๆ <strong>เกือบ 96 ล้านรอบใน 0.3 วินาที</strong>
+    <br>อันตรายเพราะไม่มี error ไม่มี log — เห็นแค่ CPU 100% แล้วหาสาเหตุไม่เจอ
+    <br><strong>เอา <code>default</code> ออก</strong> → <code>select</code> จะ block
+    ซึ่ง<em>ไม่กิน CPU เลย</em></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. หลัง <code>case &lt;-time.After(2*time.Second)</code> ทำงานแล้ว goroutine ที่ทำงานอยู่เป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">ถูก Go runtime หยุดให้อัตโนมัติทันที</button>
+    <button class="opt">ถูกหยุดชั่วคราว รอจนมีคนมาสั่งให้ทำต่อ</button>
+    <button class="opt">เกิด panic ขึ้นข้างในตัวมันเองแล้วจบไป</button>
+    <button class="opt">ยังทำงานต่อจนจบ แค่ไม่มีใครรอฟังผลแล้ว</button>
+  </div>
+  <div class="explain">
+    <p><strong>Go ไม่มีวิธีฆ่า goroutine จากข้างนอกเลย</strong> —
+    timeout แค่ทำให้ <em>คนรอ</em> เลิกรอ ไม่ได้แตะตัวคนทำ
+    <br>แย่กว่านั้น: ถ้า channel เป็น unbuffered ตัวที่ทำงานเสร็จจะค้างที่
+    <code>ch &lt;- result</code> ตลอดไปเพราะไม่มีใครรับ = <strong>goroutine leak</strong>
+    <br>ทางแก้: buffered ขนาด 1 · และใช้ <code>context</code> (บทเรียน 25)
+    เพื่อบอกให้มันหยุดเอง</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — เรียก API สองเจ้า เอาคนที่เร็วกว่า</span>
+  <ol>
+    <li>เขียน <code>fetchFrom(name string, delay time.Duration, out chan&lt;- string)</code>
+        ที่ <code>Sleep</code> ตาม <code>delay</code> แล้วส่ง
+        <code>"ผลจาก " + name</code> เข้า channel</li>
+    <li>ใน <code>main</code> ยิงสองเจ้าพร้อมกัน (เจ้า A 500ms, เจ้า B 800ms)
+        ลง channel <strong>คนละตัว</strong>
+        แล้วใช้ <code>select</code> รับคนที่มาก่อน — <strong>จับเวลารวมด้วย</strong></li>
+    <li>เพิ่ม <code>case &lt;-time.After(300*time.Millisecond)</code> เข้าไป →
+        รันใหม่ ได้อะไร?</li>
+    <li>เปลี่ยน timeout เป็น 600ms → <strong>ได้ผลจากเจ้าไหน?</strong></li>
+    <li><strong>ท้าทาย 1 — จับ goroutine leak:</strong> ตั้ง timeout 300ms
+        แล้วเพิ่ม <code>time.Sleep(2*time.Second)</code> ท้าย <code>main</code>
+        พร้อมพิมพ์ <code>runtime.NumGoroutine()</code>
+        <strong>ก่อน select · หลัง select · และท้ายสุด</strong>
+        <br>ตัวเลขบอกอะไร?</li>
+    <li><strong>ท้าทาย 2 — แก้ leak:</strong> เปลี่ยน channel เป็น
+        <code>make(chan string, 1)</code> แล้วทำท้าทาย 1 ซ้ำ —
+        <strong>ตัวเลขเปลี่ยนไปยังไง ทำไม?</strong></li>
+    <li><strong>ท้าทาย 3 — busy loop ของจริง:</strong> เขียน <code>for</code>
+        ที่มี <code>select</code> + <code>default</code> ว่าง ๆ รอ 2 วินาที
+        แล้วเปิด Activity Monitor (หรือ <code>top</code>) ดู CPU
+        <br>จากนั้นเอา <code>default</code> ออก แล้วดูอีกครั้ง</li>
+  </ol>
+  <button class="reveal">ใบ้ท้าทาย 1 และ 2</button>
+  <div class="answer">
+    <p>ผมรันทั้งสองแบบต่อกันในโปรแกรมเดียว ได้แบบนี้เป๊ะ ๆ:</p>
+    <pre style="margin:0.6rem 0"><code>--- unbuffered ---
+ก่อน select : 1
+Timeout!
+หลัง select : 3
+หลังรอ 2 วิ  : <strong>3</strong>   ← ไม่ลดเลย
+
+--- buffered 1 ---
+ก่อน select : 3
+Timeout!
+หลัง select : 5
+หลังรอ 2 วิ  : <strong>3</strong>   ← ลดลง 2 ตัว</code></pre>
+    <p><strong>ท้าทาย 1:</strong> รอบ unbuffered ตัวเลขค้างที่ 3 ตลอด —
+    goroutine สองตัวติดอยู่ที่ <code>out &lt;- ...</code>
+    รอคนรับที่ไม่มีวันมา <strong>ตายไม่ได้ ทำงานต่อก็ไม่ได้</strong></p>
+    <p style="margin-bottom:0"><strong>ท้าทาย 2:</strong> buffer ขนาด 1
+    ทำให้ส่งทิ้งไว้แล้วจบตัวเองได้ → 5 ลดกลับมาเหลือ 3
+    <br><strong>สังเกตให้ดี: ลดมาถึงแค่ 3 ไม่ใช่ 1</strong> —
+    เพราะสองตัวที่ leak จากรอบแรก<strong>ยังค้างอยู่จนโปรแกรมจบ</strong>
+    นี่คือหน้าตาของ leak ที่สะสมไปเรื่อย ๆ ในระบบจริง
+    <br><strong>กฎ: channel ที่ "ยิงแล้วอาจไม่มีคนรับ" ควรมี buffer อย่างน้อย 1 เสมอ</strong></p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ท้าทาย 1–2 คือหัวใจของบทนี้</strong> — goroutine leak
+    ไม่ทำให้โปรแกรมพัง แต่ทำให้ memory ค่อย ๆ โตจนล่มตอนตีสาม
+    <strong>ส่งตัวเลข <code>NumGoroutine()</code> ที่ได้มาให้ดูได้เลย</strong>
+    <br>บทถัดไปเปลี่ยนโหมด: จากการ "ส่งของหากัน" เป็นการ
+    "แย่งกันแก้ของก้อนเดียว" — และทำไมมันถึงพังแบบที่คุณคาดไม่ถึง
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0022-channel.html">← บทเรียน 22</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0024-data-race-mutex.html">บทเรียน 24 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/tour/concurrency/5">A Tour of Go — Select</a> · <a href="https://go.dev/tour/concurrency/6">Default Selection</a></li>
+  <li><a href="https://gobyexample.com/select">Go by Example — Select</a> · <a href="https://gobyexample.com/timeouts">Timeouts</a> · <a href="https://gobyexample.com/non-blocking-channel-operations">Non-Blocking Channel Operations</a></li>
+  <li><a href="https://go.dev/ref/spec#Select_statements">Go Spec — Select statements</a> · <strong>ระบุเรื่องการสุ่มเลือกไว้ตรง ๆ</strong></li>
+  <li><a href="https://pkg.go.dev/time#After">pkg.go.dev — time.After</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

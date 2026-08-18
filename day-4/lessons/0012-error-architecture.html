@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 12 — Error Architecture: error คือข้อมูล ไม่ใช่ข้อความ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 12 · Day 4 · Error Handling</p>
+  <h1>Error Architecture: error คือข้อมูล ไม่ใช่ข้อความ</h1>
+  <p class="meta">~16 นาที · ต้องมี: <a href="../../day-2/lessons/0005-errors-and-shadowing.html">บทเรียน 05</a>, <a href="./0010-interface-and-duck-typing.html">บทเรียน 10</a></p>
+  <p class="standfirst">
+    <a href="../../day-2/lessons/0005-errors-and-shadowing.html">บทเรียน 05</a>
+    สอนว่า Go คืน error เป็นค่า บทนี้ไปต่ออีกขั้น:
+    <strong>error ไม่ได้มีไว้แค่ print</strong> — มันคือข้อมูลที่ควบคุมการทำงานของระบบ
+    ตอบ 404 หรือ 500 · retry หรือยอมแพ้ · แสดงข้อความอะไรให้ผู้ใช้
+    ทั้งหมดนี้ตัดสินจาก error ที่ลอยขึ้นมา
+  </p>
+</header>
+
+<main>
+
+<h2>1 · <code>error</code> เป็นแค่ interface ที่มี method เดียว</h2>
+
+<pre><code><span class="c">// นิยามจริงใน Go — built-in ไม่ต้อง import อะไร</span>
+<span class="k">type</span> <span class="n">error</span> <span class="k">interface</span> {
+    <span class="f">Error</span>() <span class="n">string</span>
+}</code></pre>
+
+<p>
+  แค่นั้นจริง ๆ <strong>อะไรก็ตามที่มี method <code>Error() string</code>
+  คือ error ได้ทันที</strong> — ตรงตาม duck typing จาก
+  <a href="./0010-interface-and-duck-typing.html">บทเรียน 10</a>
+  แปลว่าคุณสร้าง error ที่<em>พก field อะไรก็ได้</em> ติดไปด้วย
+</p>
+
+<pre><code><span class="k">type</span> ValidationError <span class="k">struct</span> {
+    Field   <span class="n">string</span>
+    Message <span class="n">string</span>
+}
+
+<span class="k">func</span> (e ValidationError) <span class="f">Error</span>() <span class="n">string</span> {
+    <span class="k">return</span> fmt.<span class="f">Sprintf</span>(<span class="s">"%s: %s"</span>, e.Field, e.Message)
+}
+
+<span class="k">func</span> <span class="f">ValidateAge</span>(age <span class="n">int</span>) <span class="n">error</span> {
+    <span class="k">if</span> age &lt; <span class="n">0</span> {
+        <span class="k">return</span> ValidationError{
+            Field:   <span class="s">"age"</span>,
+            Message: <span class="s">"must not be negative"</span>,
+        }
+    }
+    <span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+
+<p>
+  ตอนนี้ผู้เรียกได้มากกว่าข้อความ — <strong>ได้ <code>Field</code> ไปใช้
+  highlight ช่องกรอกที่ผิดในหน้าเว็บได้</strong>
+</p>
+
+<h2>2 · <code>errors.New()</code> ต่างจาก <code>fmt.Errorf()</code> ยังไง</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>errors.New()</code></th><th><code>fmt.Errorf()</code></th></tr>
+  <tr><td>ใช้เมื่อ</td><td>ข้อความคงที่ ไม่มีตัวแปร</td><td>ต้องแทรกข้อมูล หรือห่อ error เดิม</td></tr>
+  <tr><td>ตัวอย่าง</td><td><code>errors.New("insufficient balance")</code></td><td><code>fmt.Errorf("read %q: %w", name, err)</code></td></tr>
+  <tr><td>ห่อ error ได้ไหม</td><td>❌</td><td>✅ ด้วย <code>%w</code></td></tr>
+  <tr><td>เทียบด้วย <code>==</code></td><td>✅ (จึงทำ sentinel ได้)</td><td>❌ สร้างใหม่ทุกครั้ง</td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">ระวังตอนพิมพ์ตามสไลด์</span>
+  <p style="margin-bottom:0">
+    สไลด์หน้านี้แสดง <code>func Withdraw(balance, amount int) error</code>
+    แล้วขึ้นบรรทัดใหม่ค่อยเปิด <code>{</code> — <strong>ถ้าพิมพ์ตามนั้นตรง ๆ
+    จะ compile ไม่ผ่าน</strong> ผมรันแล้วได้
+    <code>syntax error: unexpected semicolon or newline before {</code>
+    เพราะ Go เติม semicolon ท้ายบรรทัดให้อัตโนมัติ
+    <strong>ปีกกาเปิดต้องอยู่บรรทัดเดียวกับ <code>func</code> เสมอ</strong>
+    (น่าจะเป็นแค่การตัดบรรทัดตอนทำสไลด์ แต่ถ้าลอกไปจะงงว่าพังเพราะอะไร)
+  </p>
+</div>
+
+<div class="compare">
+  <div class="side">
+    <h4><code>errors.New()</code> — ข้อความคงที่</h4>
+    <pre><code><span class="k">func</span> <span class="f">Withdraw</span>(balance, amount <span class="n">int</span>) <span class="n">error</span> {
+    <span class="k">if</span> amount > balance {
+        <span class="k">return</span> errors.<span class="f">New</span>(
+            <span class="s">"insufficient balance"</span>,
+        )
+    }
+    <span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+  </div>
+  <div class="side">
+    <h4><code>fmt.Errorf()</code> — เติมข้อมูล/ห่อ</h4>
+    <pre><code><span class="k">func</span> <span class="f">LoadConfig</span>(filename <span class="n">string</span>) <span class="n">error</span> {
+    data, err := os.<span class="f">ReadFile</span>(filename)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> fmt.<span class="f">Errorf</span>(
+            <span class="s">"read config %q: %w"</span>, filename, err,
+        )
+    }
+    _ = data
+    <span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+  </div>
+</div>
+
+<h2>3 · Sentinel Error — error ที่มีชื่อให้เทียบได้</h2>
+
+<pre><code><span class="k">package</span> user
+
+<span class="c">// นิยมประกาศระดับ package และตั้งชื่อขึ้นต้นด้วย Err</span>
+<span class="k">var</span> (
+    ErrUserNotFound     = errors.<span class="f">New</span>(<span class="s">"user not found"</span>)
+    ErrEmailAlreadyUsed = errors.<span class="f">New</span>(<span class="s">"email already used"</span>)
+    ErrPermissionDenied = errors.<span class="f">New</span>(<span class="s">"permission denied"</span>)
+)</code></pre>
+
+<p>
+  ประโยชน์คือผู้เรียก<strong>ตัดสินใจจาก error ได้</strong> โดยไม่ต้องเทียบข้อความ:
+</p>
+
+<pre><code><span class="k">if</span> errors.<span class="f">Is</span>(err, user.ErrUserNotFound) {
+    <span class="c">// ตอบ 404</span>
+} <span class="k">else</span> <span class="k">if</span> errors.<span class="f">Is</span>(err, user.ErrPermissionDenied) {
+    <span class="c">// ตอบ 403</span>
+}</code></pre>
+
+<div class="warn">
+  <span class="label">ห้ามเด็ดขาด</span>
+  <pre style="margin-bottom:0.5rem"><code><span class="k">if</span> err.<span class="f">Error</span>() == <span class="s">"user not found"</span> {   <span class="c">// ✗ อย่าทำ</span></code></pre>
+  <p style="margin-bottom:0">
+    ข้อความ error คือ<strong>สิ่งที่มนุษย์อ่าน</strong> ไม่ใช่ API
+    วันไหนมีคนแก้เป็น <code>"User not found"</code> (ตัว U ใหญ่)
+    หรือใส่ id ต่อท้าย โค้ดคุณจะพังเงียบ ๆ โดยไม่มี compile error เตือน
+  </p>
+</div>
+
+<h2>4 · Error Chain — ห่อ error โดยไม่ทำต้นตอหาย</h2>
+
+<p>
+  ระบบจริงมีหลายชั้น แต่ละชั้นควรเติมบริบทของตัวเองลงไป
+  <strong>โดยไม่กลบข้อมูลของชั้นล่าง</strong>
+</p>
+
+<pre><code><span class="c">// Repository:</span>
+<span class="k">func</span> (r UserRepository) <span class="f">Find</span>(id <span class="n">string</span>) (User, <span class="n">error</span>) {
+    user, err := <span class="f">queryDatabase</span>(id)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> User{}, fmt.<span class="f">Errorf</span>(<span class="s">"query user: %w"</span>, err)
+    }
+    <span class="k">return</span> user, <span class="k">nil</span>
+}
+
+<span class="c">// Service: เติมบริบทอีกชั้น</span>
+<span class="k">func</span> (s UserService) <span class="f">GetProfile</span>(id <span class="n">string</span>) (User, <span class="n">error</span>) {
+    user, err := s.repository.<span class="f">Find</span>(id)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> User{}, fmt.<span class="f">Errorf</span>(<span class="s">"get profile %s: %w"</span>, id, err)
+    }
+    <span class="k">return</span> user, <span class="k">nil</span>
+}</code></pre>
+
+<div class="diagram">
+<pre>ข้อความสุดท้ายที่ handler เห็น:
+
+  get profile U-101: query user: user not found
+  └──── Service ────┘└─ Repository ─┘└─ ต้นตอ ─┘
+
+แต่ละชั้นเติม<strong>คำนำหน้า</strong> ต้นตอยังอยู่ท้ายสุดเสมอ
+และ errors.Is() ยัง<strong>มองทะลุถึงต้นตอ</strong>ได้</pre>
+</div>
+
+<div class="predict">
+  <pre><code>err := fmt.<span class="f">Errorf</span>(<span class="s">"query user: %v"</span>, ErrUserNotFound)
+                              <span class="c">//     ↑ %v ไม่ใช่ %w</span>
+
+fmt.<span class="f">Println</span>(errors.<span class="f">Is</span>(err, ErrUserNotFound))</code></pre>
+  <p class="ask">พิมพ์ true หรือ false?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>false</code></strong> — ผมรันทดสอบแล้ว</p>
+    <p style="margin-bottom:0">
+      <code>%v</code> แค่<em>แปลง error เป็นข้อความ</em> แล้วโยนตัว error เดิมทิ้ง —
+      ข้อความสุดท้ายอ่านเหมือนกันเป๊ะ แต่<strong>โซ่ขาด</strong>
+      ส่วน <code>%w</code> เก็บ error เดิมไว้ข้างในให้ <code>errors.Is</code> ตามไปเจอ
+      <br><strong>นี่คือบั๊กที่หาไม่เจอที่สุดในเรื่อง error</strong> เพราะ log สวยงามทุกอย่าง
+      แต่ <code>errors.Is</code> คืน false เงียบ ๆ
+    </p>
+  </div>
+</div>
+
+<h2>5 · <code>errors.Is</code> กับ <code>errors.As</code> — คนละงานกัน</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>errors.Is(err, target)</code></th><th><code>errors.As(err, &amp;target)</code></th></tr>
+  <tr><td>ถามว่า</td><td>"ในโซ่นี้มี error <strong>ตัวนี้</strong> ไหม"</td><td>"ในโซ่นี้มี error <strong>ชนิดนี้</strong> ไหม"</td></tr>
+  <tr><td>คู่กับ</td><td>sentinel (<code>errors.New</code>)</td><td>custom error struct</td></tr>
+  <tr><td>ได้อะไรกลับ</td><td><code>bool</code> อย่างเดียว</td><td><code>bool</code> + <strong>ตัว error จริงพร้อม field</strong></td></tr>
+  <tr><td>อาร์กิวเมนต์ 2</td><td>ตัว error</td><td><strong>pointer ไปยังตัวแปร</strong> (ต้องมี <code>&amp;</code>)</td></tr>
+</table>
+</div>
+
+<pre><code><span class="c">// errors.Is — เช็คว่าใช่ตัวนั้นไหม</span>
+err := <span class="f">FindUser</span>(<span class="s">"U-101"</span>)
+<span class="k">if</span> errors.<span class="f">Is</span>(err, ErrUserNotFound) {
+    fmt.<span class="f">Println</span>(<span class="s">"show 404 page"</span>)
+}</code></pre>
+
+<pre><code><span class="c">// errors.As — ดึงตัวจริงออกมาใช้ field</span>
+<span class="k">var</span> validationErr *ValidationError
+
+err := <span class="f">ValidateInput</span>()
+<span class="k">if</span> errors.<span class="f">As</span>(err, &amp;validationErr) {
+    fmt.<span class="f">Println</span>(<span class="s">"invalid field:"</span>, validationErr.Field)
+    <span class="c">//                              ↑ ได้ field มาใช้ต่อ</span>
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>จำง่าย ๆ:</strong> <code>Is</code> = "ใช่<em>อันนี้</em>ไหม" ตอบได้แค่ใช่/ไม่ใช่ ·
+    <code>As</code> = "เป็น<em>ชนิดนี้</em>ไหม ถ้าใช่ขอตัวจริงด้วย"
+    <br>สังเกตว่า <code>errors.As</code> ก็คือ type assertion จาก
+    <a href="./0011-type-assertion-and-switch.html">บทเรียน 11</a>
+    ที่เดินตามโซ่ให้ด้วยนั่นเอง
+  </p>
+</div>
+
+<h2>6 · Custom Error Struct — แบบที่ใช้จริงในโปรดักชัน</h2>
+
+<pre><code><span class="k">type</span> AppError <span class="k">struct</span> {
+    Op         <span class="n">string</span>   <span class="c">// เกิดที่ไหน — "UserService.GetUser"</span>
+    Code       <span class="n">string</span>   <span class="c">// รหัสให้เครื่องอ่าน — "USER_NOT_FOUND"</span>
+    HTTPStatus <span class="n">int</span>      <span class="c">// ตอบ client ยังไง — 404</span>
+    Message    <span class="n">string</span>   <span class="c">// ข้อความให้ "ผู้ใช้" อ่าน</span>
+    Err        <span class="n">error</span>    <span class="c">// error เดิมที่ห่อไว้</span>
+}
+
+<span class="k">func</span> (e *AppError) <span class="f">Error</span>() <span class="n">string</span> {
+    <span class="k">if</span> e.Err != <span class="k">nil</span> {
+        <span class="k">return</span> fmt.<span class="f">Sprintf</span>(<span class="s">"%s: %s: %v"</span>, e.Op, e.Message, e.Err)
+    }
+    <span class="k">return</span> fmt.<span class="f">Sprintf</span>(<span class="s">"%s: %s"</span>, e.Op, e.Message)
+}
+
+<span class="c">// ⚠️ ขาดอันนี้ไม่ได้ — ไม่งั้น errors.Is/As มองทะลุไม่ได้</span>
+<span class="k">func</span> (e *AppError) <span class="f">Unwrap</span>() <span class="n">error</span> {
+    <span class="k">return</span> e.Err
+}</code></pre>
+
+<h3>ใช้ที่ชั้น service</h3>
+
+<pre><code><span class="k">func</span> <span class="f">GetUser</span>(id <span class="n">string</span>) (User, <span class="n">error</span>) {
+    user, err := repository.<span class="f">FindByID</span>(id)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">if</span> errors.<span class="f">Is</span>(err, ErrUserNotFound) {
+            <span class="k">return</span> User{}, &amp;AppError{
+                Op:         <span class="s">"UserService.GetUser"</span>,
+                Code:       <span class="s">"USER_NOT_FOUND"</span>,
+                HTTPStatus: http.StatusNotFound,
+                Message:    <span class="s">"ไม่พบผู้ใช้งาน"</span>,
+                Err:        err,
+            }
+        }
+        <span class="k">return</span> User{}, &amp;AppError{
+            Op:         <span class="s">"UserService.GetUser"</span>,
+            Code:       <span class="s">"INTERNAL_ERROR"</span>,
+            HTTPStatus: http.StatusInternalServerError,
+            Message:    <span class="s">"ไม่สามารถโหลดข้อมูลผู้ใช้ได้"</span>,
+            Err:        err,
+        }
+    }
+    <span class="k">return</span> user, <span class="k">nil</span>
+}</code></pre>
+
+<h3>ใช้ที่ชั้น handler</h3>
+
+<pre><code>user, err := service.<span class="f">GetUser</span>(id)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    <span class="k">var</span> appErr *AppError
+
+    <span class="k">if</span> errors.<span class="f">As</span>(err, &amp;appErr) {
+        http.<span class="f">Error</span>(w, appErr.Message, appErr.HTTPStatus)
+        <span class="k">return</span>
+    }
+
+    <span class="c">// error ที่ไม่รู้จัก — อย่าเผยรายละเอียดออกไป</span>
+    http.<span class="f">Error</span>(w, <span class="s">"internal server error"</span>, http.StatusInternalServerError)
+    <span class="k">return</span>
+}</code></pre>
+
+<p>ผลรันจริงของโครงนี้:</p>
+
+<pre><code><span class="c">err.Error()  = UserService.GetUser: ไม่พบผู้ใช้งาน: query user U-101: user not found
+errors.Is(err, ErrUserNotFound)  = true      ← ทะลุถึงต้นตอ
+errors.As(err, &amp;appErr)          = true
+appErr.Code = USER_NOT_FOUND | HTTPStatus = 404</span></code></pre>
+
+<div class="win">
+  <span class="label">สิ่งที่โครงนี้แก้ให้</span>
+  <p style="margin-bottom:0">
+    <strong>แยกข้อความสำหรับผู้ใช้ ออกจากข้อมูลสำหรับ developer</strong> —
+    ผู้ใช้เห็น <em>"ไม่พบผู้ใช้งาน"</em> ส่วน log เก็บโซ่เต็ม ๆ ว่าพังตรงไหน
+    และ handler ตัดสิน HTTP status ได้โดยไม่ต้องรู้จัก database เลยสักนิด
+  </p>
+</div>
+
+<h2>7 · กับดักร้ายแรง: nil ที่ไม่ nil</h2>
+
+<div class="predict">
+  <pre><code><span class="k">func</span> <span class="f">doWork</span>() <span class="n">error</span> {
+    <span class="k">var</span> e *AppError = <span class="k">nil</span>
+    <span class="k">return</span> e            <span class="c">// คืน pointer ที่เป็น nil</span>
+}
+
+<span class="k">if</span> <span class="f">doWork</span>() == <span class="k">nil</span> {
+    fmt.<span class="f">Println</span>(<span class="s">"ไม่มี error"</span>)
+} <span class="k">else</span> {
+    fmt.<span class="f">Println</span>(<span class="s">"มี error!"</span>)
+}</code></pre>
+  <p class="ask">พิมพ์อะไรออกมา?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>มี error!</code></strong> — ผมรันทดสอบแล้ว
+    <code>doWork() == nil</code> ได้ <code>false</code></p>
+    <p>ย้อนกลับไปดูรูปกล่องใน
+    <a href="./0011-type-assertion-and-switch.html">บทเรียน 11</a> — interface เก็บ
+    <strong>สองช่อง</strong>:</p>
+    <pre style="margin-bottom:0.8rem"><code><span class="c">┌──────────────┬────────────┐
+│   *AppError  │    nil     │   ← ช่อง type ไม่ว่าง!
+└──────────────┴────────────┘
+interface จะ == nil ก็ต่อเมื่อ ทั้งสองช่อง ว่าง</span></code></pre>
+    <p>
+      <strong>ทางแก้: อย่าประกาศตัวแปรเป็น <code>*AppError</code> แล้วคืนมันไปตรง ๆ</strong>
+      ให้ <code>return nil</code> ตรง ๆ ในเส้นทางที่สำเร็จ:
+    </p>
+    <pre style="margin-bottom:0"><code><span class="k">func</span> <span class="f">doWork</span>() <span class="n">error</span> {
+    <span class="k">if</span> somethingWrong {
+        <span class="k">return</span> &amp;AppError{...}
+    }
+    <span class="k">return</span> <span class="k">nil</span>          <span class="c">// ✓ nil ของแท้</span>
+}</code></pre>
+  </div>
+</div>
+
+<h2>8 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="0">
+  <p class="q">1. ใช้ <code>%v</code> แทน <code>%w</code> ใน <code>fmt.Errorf</code> มีผลยังไง?</p>
+  <div class="opts">
+    <button class="opt">ข้อความเหมือนเดิม แต่ errors.Is หาไม่เจอ</button>
+    <button class="opt">ข้อความหายไป แต่ errors.Is ยังใช้ได้</button>
+    <button class="opt">คอมไพล์ไม่ผ่านเพราะรูปแบบไม่ถูก</button>
+    <button class="opt">ไม่ต่างกันเลย ใช้แทนกันได้ทุกกรณี</button>
+  </div>
+  <div class="explain">
+    <p><strong>นี่คือกับดักที่อันตรายที่สุด</strong> เพราะ log ออกมาสวยงามเหมือนเดิมทุกอย่าง
+    แต่ <code>errors.Is</code> คืน <code>false</code> เงียบ ๆ →
+    handler ตอบ 500 แทนที่จะเป็น 404 <code>%w</code> เท่านั้นที่เก็บ error เดิมไว้ในโซ่</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">2. custom error struct ขาด method <code>Unwrap()</code> จะเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">คอมไพล์ไม่ผ่าน เพราะ error ต้องมีสองอัน</button>
+    <button class="opt">ทำงานปกติทุกอย่าง Unwrap มีไว้เฉย ๆ</button>
+    <button class="opt">errors.Is/As มองไม่ทะลุถึง error ข้างใน</button>
+    <button class="opt">Error() จะคืนค่าว่างเปล่าออกมาแทน</button>
+  </div>
+  <div class="explain">
+    <p><code>errors.Is</code>/<code>As</code> เดินตามโซ่โดยเรียก <code>Unwrap()</code>
+    ไปเรื่อย ๆ — <strong>ไม่มี <code>Unwrap()</code> = โซ่จบตรงนั้น</strong>
+    field <code>Err</code> ยังอยู่ครบ แต่ไม่มีใครตามไปดูได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. อยากได้ <code>Field</code> จาก <code>*ValidationError</code> ในโซ่ ใช้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ใช้ errors.Is แล้วอ่าน field ต่อ</button>
+    <button class="opt">ใช้ errors.Unwrap วนจนกว่าจะเจอ</button>
+    <button class="opt">เทียบ err.Error() กับข้อความที่รู้</button>
+    <button class="opt">ใช้ errors.As แล้วส่ง pointer ไปรับ</button>
+  </div>
+  <div class="explain">
+    <p><code>errors.Is</code> ตอบได้แค่ <code>bool</code> เอา field มาไม่ได้ ·
+    <code>errors.As(err, &amp;validationErr)</code> เดินตามโซ่ให้แล้ว
+    <strong>ยัดตัวจริงลงในตัวแปรที่คุณส่ง pointer ไป</strong> →
+    ใช้ <code>validationErr.Field</code> ได้เลย · <strong>อย่าลืม <code>&amp;</code></strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. คืน <code>var e *AppError = nil</code> จากฟังก์ชันที่ประกาศคืน <code>error</code>?</p>
+  <div class="opts">
+    <button class="opt">ผู้เรียกเช็ค err != nil ได้ false ตามคาด</button>
+    <button class="opt">ผู้เรียกเช็ค err != nil ได้ true ทั้งที่ไม่ error</button>
+    <button class="opt">โปรแกรม panic ทันทีที่ return ออกมา</button>
+    <button class="opt">คอมไพเลอร์เตือนว่าคืน nil ผิดชนิด</button>
+  </div>
+  <div class="explain">
+    <p>interface เก็บ <strong>type + value</strong> — ช่อง type มี <code>*AppError</code>
+    อยู่ ไม่ว่าง จึงไม่เท่ากับ <code>nil</code> ทั้งที่ค่าข้างในเป็น nil
+    <strong>วิธีกัน: เขียน <code>return nil</code> ตรง ๆ ในเส้นทางที่สำเร็จ
+    อย่าคืนตัวแปรที่เป็น pointer type</strong></p>
+  </div>
+</div>
+
+<h2>9 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: ระบบค้นหาสินค้าและจัดการ Error Chain (workshop จากสไลด์)</h3>
+  <ol>
+    <li>ประกาศ sentinel: <code>var ErrProductNotFound = errors.New("product not found")</code></li>
+    <li>ชั้น <strong>repository</strong>: <code>findProduct(code string) (Product, error)</code>
+        — ถ้าไม่พบให้คืน <code>ErrProductNotFound</code></li>
+    <li>ชั้น <strong>service</strong>: <code>getProduct(code string) (Product, error)</code>
+        — ห่อด้วย <code>fmt.Errorf("find product %q: %w", code, err)</code>
+        แล้วครอบด้วย <code>&amp;AppError{Code: "PRODUCT_NOT_FOUND", Message: "ไม่พบสินค้าที่ต้องการ", Err: ...}</code>
+        <br><em>ภารกิจนี้ใช้ <code>AppError</code> แบบย่อ (แค่ 3 field) และ
+        <code>Error()</code> คืน <code>fmt.Sprintf("%s: %v", e.Message, e.Err)</code>
+        — เพิ่ม <code>Op</code>/<code>HTTPStatus</code> ทีหลังได้</em></li>
+    <li>อย่าลืมเขียน <code>func (e *AppError) Unwrap() error</code></li>
+    <li>ชั้น <strong>main</strong>: ตรวจด้วย <code>errors.Is()</code> <em>และ</em>
+        <code>errors.As()</code> ให้ได้ผลลัพธ์:
+        <pre style="margin:0.4rem 0"><code>พบ ErrProductNotFound ใน Error Chain
+code: PRODUCT_NOT_FOUND
+message: ไม่พบสินค้าที่ต้องการ
+error: ไม่พบสินค้าที่ต้องการ: find product "P999": product not found</code></pre></li>
+    <li><strong>ห้ามตรวจ error ด้วยการเทียบข้อความ string</strong> — กฎจากสไลด์</li>
+    <li><strong>ท้าทาย 1:</strong> เปลี่ยน <code>%w</code> เป็น <code>%v</code> ในข้อ 3
+        แล้วรันใหม่ — <strong>ข้อความเปลี่ยนไหม? <code>errors.Is</code> เปลี่ยนไหม?</strong>
+        นี่คือการพิสูจน์กับดักในหัวข้อ 4 ด้วยมือตัวเอง</li>
+    <li><strong>ท้าทาย 2:</strong> ลบ <code>Unwrap()</code> ออก แล้วดูว่า
+        <code>errors.Is</code> กับ <code>errors.As</code> อันไหนพัง
+        <br><em>สปอยล์ผลรันจริง: <code>errors.Is</code> → <code>false</code> แต่
+        <code>errors.As</code> → <code>true</code> เหมือนเดิม
+        <strong>ทำไม <code>As</code> ถึงยังรอด?</strong>
+        คำใบ้: <code>err</code> ตัวนอกสุด<em>คือ</em> <code>*AppError</code> อยู่แล้ว
+        ไม่ต้องเดินโซ่ก็เจอ</em></li>
+  </ol>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://go.dev/blog/go1.13-errors">Working with Errors in Go 1.13</a>
+  — เขียนโดยทีม Go ตอนที่เพิ่ม <code>%w</code>/<code>Is</code>/<code>As</code> เข้ามา
+  จึงอธิบายว่า<em>แต่ละอันเกิดมาแก้ปัญหาอะไร</em> ไม่ใช่แค่ syntax
+  ประมาณ 15 นาที และเป็นแหล่งที่ควรอ่านก่อนออกแบบ error ของโปรเจกต์จริง
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — โครง <code>AppError</code>
+    มี 5 field ซึ่งอาจดูเยอะเกินไปสำหรับโปรเจกต์เล็ก
+    ถ้าอยากคุยว่า<strong>โปรเจกต์ของคุณควรมี field ไหนบ้าง</strong> บอกมาได้
+    เป็นการตัดสินใจที่ขึ้นกับว่าใครเป็นคนอ่าน error ของคุณ
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0011-type-assertion-and-switch.html">← บทเรียน 11</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 4</a>
+  <a href="./0013-json-and-struct-tags.html">บทเรียน 13 → JSON</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/blog/go1.13-errors">Working with Errors in Go 1.13</a> — ที่มาของ <code>%w</code>, <code>errors.Is</code>, <code>errors.As</code></li>
+  <li><a href="https://go.dev/blog/error-handling-and-go">Error handling and Go</a> — ปรัชญาว่าทำไม error เป็นค่า</li>
+  <li><a href="https://pkg.go.dev/errors">pkg.go.dev — errors</a> — เอกสาร <code>Is</code>/<code>As</code>/<code>Join</code></li>
+  <li><a href="https://go.dev/wiki/CodeReviewComments#error-strings">Go Code Review Comments — Error Strings</a> — ข้อความ error ควรหน้าตายังไง</li>
+  <li><a href="https://go.dev/doc/effective_go#errors">Effective Go — Errors</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

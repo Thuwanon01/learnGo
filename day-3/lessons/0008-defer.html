@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 08 — defer: เปิดแล้วปิดให้ครบทุกทางออก</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 08 · Resource Cleanup</p>
+  <h1>defer: เปิดแล้วปิดให้ครบทุกทางออก</h1>
+  <p class="meta">~12 นาที · ต้องมี: <a href="./0007-value-vs-pointer.html">บทเรียน 02</a></p>
+  <p class="standfirst">
+    ฟังก์ชันหนึ่งมี <code>return</code> ได้ 5 จุด ถ้าต้องปิด file ทุกจุด คุณต้อง
+    เขียน <code>Close()</code> 5 ครั้ง — และวันหนึ่งจะมีคนเพิ่ม <code>return</code>
+    ที่ 6 แล้วลืม <code>defer</code> ทำให้ปัญหานี้หายไปเลย
+    ด้วยกฎแค่ 3 ข้อ ซึ่งมีข้อหนึ่งที่หลอกคนเกือบทุกคน
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ปัญหาที่ defer แก้</h2>
+
+<p>ลองดูโค้ดแบบไม่มี <code>defer</code> ก่อน — นับดูว่า <code>Close()</code> ต้องเขียนกี่ที</p>
+
+<pre><code><span class="k">func</span> <span class="f">readFile</span>(name <span class="n">string</span>) <span class="k">error</span> {
+    f, err := os.<span class="f">Open</span>(name)
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+
+    data := <span class="f">make</span>([]<span class="n">byte</span>, <span class="n">100</span>)
+    n, err := f.<span class="f">Read</span>(data)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        f.<span class="f">Close</span>()          <span class="c">// ← 1</span>
+        <span class="k">return</span> err
+    }
+    <span class="k">if</span> n == <span class="n">0</span> {
+        f.<span class="f">Close</span>()          <span class="c">// ← 2  (ลืมข้อนี้ = file leak)</span>
+        <span class="k">return</span> errEmpty
+    }
+    f.<span class="f">Close</span>()              <span class="c">// ← 3</span>
+    <span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+
+<p>เขียนใหม่ด้วย <code>defer</code>:</p>
+
+<pre><code><span class="k">func</span> <span class="f">readFile</span>(name <span class="n">string</span>) <span class="k">error</span> {
+    f, err := os.<span class="f">Open</span>(name)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> err        <span class="c">// ยังไม่ได้เปิด → ไม่ต้องปิด</span>
+    }
+    <span class="k">defer</span> f.<span class="f">Close</span>()       <span class="c">// ✓ เขียนครั้งเดียว ติดกับ Open เลย</span>
+
+    data := <span class="f">make</span>([]<span class="n">byte</span>, <span class="n">100</span>)
+    n, err := f.<span class="f">Read</span>(data)
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }   <span class="c">// Close ทำงานที่นี่</span>
+    <span class="k">if</span> n == <span class="n">0</span>      { <span class="k">return</span> errEmpty } <span class="c">// และที่นี่</span>
+    <span class="k">return</span> <span class="k">nil</span>                        <span class="c">// และที่นี่</span>
+}</code></pre>
+
+<div class="win">
+  <span class="label">คุณค่าที่แท้จริง</span>
+  <p style="margin-bottom:0">
+    ไม่ใช่แค่ "โค้ดสั้นลง" แต่คือ <strong><code>Open</code> กับ <code>Close</code>
+    อยู่ติดกันในสายตา</strong> — reviewer เห็นสองบรรทัดนี้คู่กันแล้วรู้ทันทีว่า
+    ไม่รั่ว ไม่ต้องไล่อ่านทั้งฟังก์ชัน
+  </p>
+</div>
+
+<h2>2 · กฎ 3 ข้อ (จาก blog ทางการ)</h2>
+
+<p>
+  <a href="https://go.dev/blog/defer-panic-and-recover">Defer, Panic, and Recover</a>
+  ระบุกฎไว้ 3 ข้อพอดี ท่องให้ได้ทั้งสามข้อ
+</p>
+
+<h3>กฎ 1 — argument ถูกประเมิน <em>ตอนบรรทัด defer</em> ไม่ใช่ตอนทำงาน</h3>
+
+<blockquote style="margin:0 0 1.2rem;padding-left:1rem;border-left:3px solid var(--rule);color:var(--ink-soft)">
+  <em>"A deferred function's arguments are evaluated when the defer statement is
+  evaluated."</em>
+</blockquote>
+
+<div class="predict">
+  <pre><code><span class="k">func</span> <span class="f">a</span>() {
+    i := <span class="n">0</span>
+    <span class="k">defer</span> fmt.<span class="f">Println</span>(i)
+    i++
+    <span class="k">return</span>
+}</code></pre>
+  <p class="ask">พิมพ์เลขอะไรออกมา?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>0</code></strong> — ไม่ใช่ 1</p>
+    <p style="margin-bottom:0">
+      ค่า <code>i</code> ถูก "แช่แข็ง" เป็น 0 ตั้งแต่วินาทีที่เจอบรรทัด
+      <code>defer</code> การ <code>i++</code> ทีหลังไม่มีผลอะไรเลย
+      นี่คือกฎที่หลอกคนมากที่สุดในสามข้อ
+    </p>
+  </div>
+</div>
+
+<p>ถ้าอยากได้ค่า <strong>ล่าสุด</strong> ให้ห่อด้วย closure แทน:</p>
+
+<pre><code>i := <span class="n">0</span>
+<span class="k">defer</span> fmt.<span class="f">Println</span>(i)                          <span class="c">// พิมพ์ 0  — ส่งค่าเข้าไป</span>
+<span class="k">defer</span> <span class="k">func</span>() { fmt.<span class="f">Println</span>(i) }()          <span class="c">// พิมพ์ 1  — closure อ่านตอนทำงาน</span>
+i++</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>วิธีจำ:</strong> <code>defer f(x)</code> → <code>x</code> ถ่ายรูปเก็บไว้เลย ·
+    <code>defer func(){ …x… }()</code> → ไม่มี argument จึงไม่มีอะไรให้ถ่ายรูป
+    ต้องไปอ่านตัวแปรจริงตอนทำงาน
+  </p>
+</div>
+
+<h3>กฎ 2 — ทำงานแบบ LIFO หลังฟังก์ชัน return</h3>
+
+<blockquote style="margin:0 0 1.2rem;padding-left:1rem;border-left:3px solid var(--rule);color:var(--ink-soft)">
+  <em>"Deferred function calls are executed in Last In First Out order after the
+  surrounding function returns."</em>
+</blockquote>
+
+<div class="predict">
+  <pre><code><span class="k">func</span> <span class="f">b</span>() {
+    <span class="k">for</span> i := <span class="n">0</span>; i &lt; <span class="n">4</span>; i++ {
+        <span class="k">defer</span> fmt.<span class="f">Print</span>(i)
+    }
+}</code></pre>
+  <p class="ask">พิมพ์อะไรออกมา?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>3210</code></strong></p>
+    <p style="margin-bottom:0">
+      กองซ้อนกันเหมือน stack — ตัวที่ประกาศทีหลังทำงานก่อน
+      (และสังเกตว่ากฎ 1 ทำงานด้วย: แต่ละรอบถ่ายรูปค่า <code>i</code> ของรอบนั้นไว้)
+    </p>
+  </div>
+</div>
+
+<p>
+  LIFO ไม่ใช่เรื่องบังเอิญ — dependency ต้องคลายย้อนกลับเสมอ ดูตัวอย่างจริงจากงาน
+  backend:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">processOrder</span>(db *sql.DB) <span class="k">error</span> {
+    logFile, _ := os.<span class="f">OpenFile</span>(<span class="s">"log.txt"</span>, os.O_APPEND, <span class="n">0644</span>)
+    <span class="k">defer</span> logFile.<span class="f">Close</span>()   <span class="c">// ประกาศก่อน → ทำทีหลังสุด</span>
+
+    tx, _ := db.<span class="f">Begin</span>()
+    <span class="k">defer</span> tx.<span class="f">Rollback</span>()    <span class="c">// ประกาศทีหลัง → ทำก่อน ✓ ถูกลำดับ</span>
+
+    <span class="k">if</span> _, err := tx.<span class="f">Exec</span>(<span class="s">"INSERT INTO orders ..."</span>); err != <span class="k">nil</span> {
+        <span class="k">return</span> err          <span class="c">// rollback อัตโนมัติ</span>
+    }
+    <span class="k">return</span> tx.<span class="f">Commit</span>()     <span class="c">// commit แล้ว Rollback ทีหลังไม่มีผล</span>
+}</code></pre>
+
+<p>
+  <code>defer tx.Rollback()</code> ทันทีหลัง <code>Begin()</code> แปลว่า
+  <em>"ถ้าไม่ commit สำเร็จ ให้ย้อนกลับ"</em> — ไม่ต้องเขียน rollback ซ้ำในทุก
+  error branch
+</p>
+
+<h3>กฎ 3 — deferred function แก้ named return value ได้</h3>
+
+<blockquote style="margin:0 0 1.2rem;padding-left:1rem;border-left:3px solid var(--rule);color:var(--ink-soft)">
+  <em>"Deferred functions may read and assign to the returning function's named
+  return values."</em>
+</blockquote>
+
+<div class="predict">
+  <pre><code><span class="k">func</span> <span class="f">c</span>() (i <span class="n">int</span>) {        <span class="c">// ← ตั้งชื่อ return value ว่า i</span>
+    <span class="k">defer</span> <span class="k">func</span>() { i++ }()
+    <span class="k">return</span> <span class="n">1</span>
+}</code></pre>
+  <p class="ask">ฟังก์ชันนี้คืนค่าอะไร?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong><code>2</code></strong></p>
+    <p style="margin-bottom:0">
+      <code>return 1</code> ทำงาน 2 ขั้น: (1) เอา 1 ใส่ <code>i</code> →
+      (2) รัน deferred → <code>i++</code> เป็น 2 → (3) ค่อยคืนค่าออกไปจริง
+      <strong>ต้องตั้งชื่อ return value เท่านั้นถึงจะทำได้</strong>
+    </p>
+  </div>
+</div>
+
+<p>ใช้ทำอะไรจริง — <strong>ห่อ error ให้มีบริบทโดยไม่ต้องแก้ทุกจุด return</strong>:</p>
+
+<pre><code><span class="k">func</span> <span class="f">loadConfig</span>(path <span class="n">string</span>) (err <span class="k">error</span>) {
+    <span class="k">defer</span> <span class="k">func</span>() {
+        <span class="k">if</span> err != <span class="k">nil</span> {
+            err = fmt.<span class="f">Errorf</span>(<span class="s">"loadConfig %s: %w"</span>, path, err)
+        }
+    }()
+
+    <span class="c">// ...มี return err อยู่ 5 จุด ทุกจุดจะถูกห่อให้อัตโนมัติ</span>
+}</code></pre>
+
+<h2>3 · 2 กับดักที่ต้องรู้</h2>
+
+<div class="warn">
+  <span class="label">กับดัก 1 — scope คือ "ฟังก์ชัน" ไม่ใช่ block</span>
+  <p><code>defer</code> ในลูปจะ <strong>กองสะสมจนจบฟังก์ชัน</strong> ไม่ใช่จบทุกรอบ</p>
+  <pre style="margin-bottom:0.8rem"><code><span class="c">// ❌ เปิด file 1000 ตัวค้างพร้อมกัน</span>
+<span class="k">for</span> _, name := <span class="k">range</span> files {
+    f, _ := os.<span class="f">Open</span>(name)
+    <span class="k">defer</span> f.<span class="f">Close</span>()
+}
+
+<span class="c">// ✓ ครอบด้วยฟังก์ชันย่อย → จบทุกรอบ</span>
+<span class="k">for</span> _, name := <span class="k">range</span> files {
+    <span class="k">func</span>() {
+        f, _ := os.<span class="f">Open</span>(name)
+        <span class="k">defer</span> f.<span class="f">Close</span>()
+        <span class="c">// ...</span>
+    }()
+}</code></pre>
+  <p style="margin-bottom:0">Go 1.22+ มี <code>go vet</code> ที่ช่วยเตือนบางกรณี
+  แต่อย่าพึ่งมัน</p>
+</div>
+
+<div class="warn">
+  <span class="label">กับดัก 2 — os.Exit และ log.Fatal ไม่รัน defer</span>
+  <pre style="margin-bottom:0.5rem"><code><span class="k">defer</span> fmt.<span class="f">Println</span>(<span class="s">"จะไม่ถูกพิมพ์"</span>)
+log.<span class="f">Fatal</span>(<span class="s">"boom"</span>)   <span class="c">// = log.Print + os.Exit(1) → ตายทันที</span></code></pre>
+  <p style="margin-bottom:0">
+    ต่างจาก <code>panic</code> ซึ่ง <strong>รัน defer ครบทุกตัว</strong> ก่อนล้ม —
+    นั่นแหละที่ทำให้ <code>defer</code> เป็นเครื่องมือกู้คืน resource ที่ปลอดภัยที่สุด
+  </p>
+</div>
+
+<h2>4 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="0">
+  <p class="q">1. <code>x := 5; defer fmt.Println(x); x = 99</code> — พิมพ์อะไร?</p>
+  <div class="opts">
+    <button class="opt">พิมพ์เลข 5 ออกมา</button>
+    <button class="opt">พิมพ์เลข 99 ออกมา</button>
+    <button class="opt">พิมพ์เลข 0 ออกมา</button>
+    <button class="opt">คอมไพล์ไม่ผ่านเลย</button>
+  </div>
+  <div class="explain">
+    <p>กฎ 1 — argument ถ่ายรูปเก็บตอนบรรทัด <code>defer</code> ถ้าอยากได้ 99
+    ต้องเขียน <code>defer func(){ fmt.Println(x) }()</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. เขียน <code>defer A()</code> แล้ว <code>defer B()</code> ตามลำดับ อะไรทำงานก่อน?</p>
+  <div class="opts">
+    <button class="opt">A ทำงานก่อน B ตามลำดับ</button>
+    <button class="opt">B ทำงานก่อน A แบบ LIFO</button>
+    <button class="opt">ทำพร้อมกันทั้งสองตัวเลย</button>
+    <button class="opt">ขึ้นกับว่าฟังก์ชันคืนค่าไหม</button>
+  </div>
+  <div class="explain">
+    <p>กฎ 2 — LIFO เหมือน stack ออกแบบมาเพื่อให้คลาย dependency ย้อนกลับได้ถูกต้อง
+    (เปิด db → เปิด tx → ปิด tx → ปิด db)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. โปรแกรมเจอ <code>panic</code> กลางทาง — <code>defer</code> ที่ประกาศไว้แล้วจะ…</p>
+  <div class="opts">
+    <button class="opt">ถูกข้ามไปทั้งหมดทันที</button>
+    <button class="opt">ทำงานเฉพาะตัวแรกเท่านั้น</button>
+    <button class="opt">ทำงานครบทุกตัวตามลำดับ</button>
+    <button class="opt">ทำงานก็ต่อเมื่อมี recover</button>
+  </div>
+  <div class="explain">
+    <p>panic คลาย stack ทีละชั้น และรัน deferred ของแต่ละชั้นครบ นี่คือเหตุผลที่
+    <code>defer mu.Unlock()</code> ปลอดภัยกว่าการเรียก <code>mu.Unlock()</code> เอง —
+    ต่อให้โค้ดตรงกลาง panic ก็ยังปลดล็อกให้</p>
+    <p style="margin-bottom:0">ข้อยกเว้นเดียวคือ <code>os.Exit</code> /
+    <code>log.Fatal</code> ที่ตายทันทีไม่คลาย stack</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. <code>defer</code> จะแก้ค่าที่ฟังก์ชันคืนออกไปได้ ก็ต่อเมื่อ…</p>
+  <div class="opts">
+    <button class="opt">ใช้ pointer receiver ในฟังก์ชัน</button>
+    <button class="opt">เรียก defer ก่อนบรรทัด return</button>
+    <button class="opt">ฟังก์ชันคืนค่าชนิด error เท่านั้น</button>
+    <button class="opt">ตั้งชื่อ return value ในซิกเนเจอร์</button>
+  </div>
+  <div class="explain">
+    <p>กฎ 3 — ต้องเป็น <em>named return value</em> เช่น
+    <code>func f() (err error)</code> ถึงจะมีตัวแปรให้ deferred function ไปแก้ได้
+    ถ้าเขียน <code>func f() error</code> เฉย ๆ จะไม่มีชื่อให้อ้างถึง</p>
+  </div>
+</div>
+
+<h2>5 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: ทำ utility จับเวลา</h3>
+  <ol>
+    <li>รันโค้ดกฎ 1, 2, 3 ทั้งสามอันใน
+        <a href="https://go.dev/play/">Playground</a> ให้เห็นผลจริงด้วยตา</li>
+    <li>แก้ตัวอย่างกฎ 1 ให้พิมพ์ <code>1</code> แทน <code>0</code>
+        โดย<strong>ห้ามย้ายบรรทัด <code>defer</code></strong></li>
+    <li>สร้างฟังก์ชันนี้แล้วอธิบายให้ได้ว่าทำไมต้องมีวงเล็บ <strong>สองชุด</strong>:
+        <pre style="margin:0.6rem 0 0"><code><span class="k">func</span> <span class="f">trackTime</span>(name <span class="n">string</span>) <span class="k">func</span>() {
+    start := time.<span class="f">Now</span>()
+    <span class="k">return</span> <span class="k">func</span>() {
+        fmt.<span class="f">Printf</span>(<span class="s">"%s took %v\n"</span>, name, time.<span class="f">Since</span>(start))
+    }
+}
+
+<span class="k">func</span> <span class="f">work</span>() {
+    <span class="k">defer</span> <span class="f">trackTime</span>(<span class="s">"work"</span>)()   <span class="c">// ← สองชุด!</span>
+    time.<span class="f">Sleep</span>(<span class="n">500</span> * time.Millisecond)
+}</code></pre></li>
+    <li>ลองลบวงเล็บชุดหลังออก แล้วดูว่าเกิดอะไรขึ้น (คำใบ้: มันจะเงียบมาก)</li>
+    <li><strong>ท้าทาย:</strong> เขียนฟังก์ชันที่ใช้กฎ 3 ห่อ error —
+        <code>func doWork() (err error)</code> ที่ไม่ว่าจะ return จากจุดไหน
+        error จะถูกเติมคำว่า <code>"doWork: "</code> ข้างหน้าเสมอ</li>
+  </ol>
+</div>
+
+<div class="win">
+  <span class="label">ชัยชนะของบทนี้</span>
+  <p style="margin-bottom:0">
+    ต่อไปทุกครั้งที่พิมพ์ <code>Open</code>, <code>Begin</code>, <code>Lock</code>
+    หรือ <code>Dial</code> มือคุณจะพิมพ์บรรทัด <code>defer</code> ต่อทันทีโดยไม่ต้องคิด
+    — นั่นคือนิสัยที่แยกโค้ดที่รั่วออกจากโค้ดที่ไม่รั่ว
+  </p>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://go.dev/blog/defer-panic-and-recover">Defer, Panic, and Recover</a>
+  — สั้นมาก อ่าน 6 นาทีจบ ส่วนท้ายว่าด้วย <code>recover</code> ยังไม่ต้องอ่านลึก
+  แต่ให้รู้ว่ามีอยู่
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — ข้อ 3 ของภารกิจ (วงเล็บสองชุด)
+    เป็นจุดที่รวมความรู้ 3 เรื่องเข้าด้วยกัน: closure + first-class function + defer
+    ถ้าตรงนี้ผ่าน แปลว่า Part 1 ของ Day 3 แน่นแล้ว
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0007-value-vs-pointer.html">← บทเรียน 07</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 3</a>
+  <a href="../../day-4/lessons/0009-underlying-type.html">บทเรียน 09 → underlying type</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/blog/defer-panic-and-recover">Defer, Panic, and Recover</a> — กฎ 3 ข้อ พร้อมตัวอย่าง <code>a()</code>, <code>b()</code>, <code>c()</code> ที่ยกมาในบทนี้</li>
+  <li><a href="https://go.dev/ref/spec#Defer_statements">Go spec — Defer statements</a> — พฤติกรรมตอน panic และการคลาย stack</li>
+  <li><a href="https://go.dev/wiki/CodeReviewComments">Go Code Review Comments</a> — Don't Panic, Indent Error Flow</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

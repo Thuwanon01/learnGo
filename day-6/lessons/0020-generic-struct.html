@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 20 — Generic Struct และเมื่อไหร่ที่ยังไม่ควรใช้</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 20 · Day 6 · Generics</p>
+  <h1>Generic Struct และเมื่อไหร่ที่ยังไม่ควรใช้</h1>
+  <p class="meta">~14 นาที · ต้องมี: <a href="./0019-generics.html">บทเรียน 19</a>, <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a> (interface)</p>
+  <p class="standfirst">
+    ครึ่งแรกของบทนี้คือ "generic ใส่ใน struct ได้ด้วย" ซึ่งง่าย
+    ครึ่งหลังยากกว่ามาก: <strong>เมื่อไหร่ที่ไม่ควรใช้</strong>
+    สไลด์ปิดหัวข้อนี้ด้วยประโยคเดียว — <em>"อย่ารีบทำทุกอย่างเป็น Generic"</em> —
+    บทนี้จะบอกว่าเส้นแบ่งอยู่ตรงไหน และทำไม
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ปัญหา: struct เดียวกัน ต่างกันแค่ type ของ field</h2>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ก่อนมี generics</h4>
+    <pre><code><span class="k">type</span> IntBox <span class="k">struct</span> {
+    Value <span class="k">int</span>
+}
+
+<span class="k">type</span> StringBox <span class="k">struct</span> {
+    Value <span class="k">string</span>
+}
+
+<span class="k">type</span> UserBox <span class="k">struct</span> {
+    Value User
+}
+
+<span class="c">// เพิ่ม type ใหม่ = เพิ่ม struct ใหม่ ตลอดไป</span></code></pre>
+  </div>
+  <div class="side good">
+    <h4>✅ Generic struct</h4>
+    <pre><code><span class="k">type</span> Box[T <span class="k">any</span>] <span class="k">struct</span> {
+    Value T
+}
+
+numberBox := Box[<span class="k">int</span>]{Value: <span class="n">100</span>}
+nameBox   := Box[<span class="k">string</span>]{Value: <span class="s">"Alice"</span>}
+
+fmt.<span class="f">Printf</span>(<span class="s">"%T\n"</span>, numberBox.Value)
+<span class="c">// int</span>
+fmt.<span class="f">Printf</span>(<span class="s">"%T\n"</span>, nameBox.Value)
+<span class="c">// string</span></code></pre>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ตอนใช้งาน struct แบบ generic ต้องระบุ type เสมอ</strong>
+    เขียน <code>Stack{}</code> เฉย ๆ ไม่ได้:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>cannot use generic type Stack[T any] without instantiation</code></pre>
+</div>
+
+<h2>2 · ตัวอย่างที่ใกล้งานจริงที่สุด: API response</h2>
+
+<p>
+  ทุก endpoint คืนโครงเหมือนกัน ต่างแค่ก้อนข้อมูลข้างใน —
+  นี่คือที่ที่ generic struct คุ้มค่าที่สุด:
+</p>
+
+<pre><code><span class="k">type</span> Result[T <span class="k">any</span>] <span class="k">struct</span> {
+    Data    T    <span class="s">`json:"data"`</span>
+    Success <span class="k">bool</span> <span class="s">`json:"success"`</span>
+}
+
+userResult := Result[User]{
+    Data:    User{Name: <span class="s">"Alice"</span>},
+    Success: <span class="k">true</span>,
+}
+
+productResult := Result[Product]{
+    Data:    Product{Name: <span class="s">"Mechanical Keyboard"</span>},
+    Success: <span class="k">true</span>,
+}
+
+listResult := Result[[]User]{   <span class="c">// T เป็น slice ก็ได้</span>
+    Data:    users,
+    Success: <span class="k">true</span>,
+}</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ สไลด์หน้านี้คอมไพล์ไม่ผ่าน</strong> —
+    สไลด์ประกาศ <code>Result[T]</code> ที่มี field <code>Data</code> กับ
+    <code>Success bool</code> แต่ตอนใช้งานกลับใส่ <code>Count: 29301</code>
+    (ค้างมาจากสไลด์หน้าก่อนที่ struct ยังมี field <code>Count</code>)
+    <br>ผมลองรันแล้วได้:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>unknown field Count in struct literal of type Result[User]</code></pre>
+  <p style="margin:0.6rem 0 0">
+    ตัวอย่างข้างบนคือฉบับที่แก้แล้ว — ถ้าจะเก็บจำนวนด้วย ให้เพิ่ม
+    <code>Count int</code> เข้าไปใน struct ก่อน
+  </p>
+</div>
+
+<h2>3 · Method บน generic struct</h2>
+
+<pre><code><span class="k">type</span> Stack[T <span class="k">any</span>] <span class="k">struct</span> {
+    items []T
+}
+
+<span class="c">// receiver ต้องเขียน [T] ต่อท้ายชื่อ type ด้วย</span>
+<span class="k">func</span> (s *Stack[T]) <span class="f">Push</span>(value T) {
+    s.items = <span class="f">append</span>(s.items, value)
+}
+
+<span class="k">func</span> (s *Stack[T]) <span class="f">Pop</span>() (T, <span class="k">bool</span>) {
+    <span class="k">var</span> zero T                 <span class="c">// ← จุดสำคัญ</span>
+    <span class="k">if</span> <span class="f">len</span>(s.items) == <span class="n">0</span> {
+        <span class="k">return</span> zero, <span class="k">false</span>
+    }
+    lastIndex := <span class="f">len</span>(s.items) - <span class="n">1</span>
+    value := s.items[lastIndex]
+    s.items = s.items[:lastIndex]
+    <span class="k">return</span> value, <span class="k">true</span>
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทำไม receiver ต้องเป็น <code>*Stack[T]</code> ไม่ใช่ <code>Stack[T]</code>:</strong>
+    <code>Push</code> แก้ field <code>items</code> — ถ้าใช้ value receiver
+    มันแก้สำเนา ของหายหมด เรื่องเดิมเป๊ะ ๆ จาก
+    <a href="../../day-3/lessons/0007-value-vs-pointer.html">บทเรียน 07</a>
+    <br><strong>generics ไม่ได้ยกเลิกกฎเดิมของภาษาสักข้อ</strong>
+  </p>
+</div>
+
+<div class="predict">
+  <pre><code>numbers := Stack[<span class="k">int</span>]{}
+numbers.<span class="f">Push</span>(<span class="n">10</span>)
+numbers.<span class="f">Push</span>(<span class="n">20</span>)
+numbers.<span class="f">Push</span>(<span class="n">30</span>)
+fmt.<span class="f">Println</span>(numbers.<span class="f">Pop</span>())
+
+empty := Stack[<span class="k">int</span>]{}
+v1, ok1 := empty.<span class="f">Pop</span>()
+fmt.<span class="f">Println</span>(v1, ok1)
+
+emptyStr := Stack[<span class="k">string</span>]{}
+v2, ok2 := emptyStr.<span class="f">Pop</span>()
+fmt.<span class="f">Printf</span>(<span class="s">"%q %v\n"</span>, v2, ok2)</code></pre>
+  <p class="ask"><code>var zero T</code> ให้ค่าอะไรออกมา เมื่อ stack ว่าง?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0 0 0.6rem"><code>30 true
+0 false
+"" false</code></pre>
+    <p>
+      <strong><code>var zero T</code> ให้ zero value ของ type ที่ใส่เข้าไปตอนนั้น</strong> —
+      <code>Stack[int]</code> ได้ <code>0</code> · <code>Stack[string]</code> ได้
+      <code>""</code> · <code>Stack[*User]</code> จะได้ <code>nil</code>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>นี่คือสำนวนที่ต้องจำ</strong> — ในฟังก์ชัน generic คุณเขียน
+      <code>return 0</code> หรือ <code>return nil</code> ตรง ๆ ไม่ได้
+      เพราะไม่รู้ว่า <code>T</code> จะเป็นอะไร
+      <code>var zero T</code> คือทางเดียวที่ใช้ได้กับทุก type
+      <br>และเพราะ zero value อาจเป็นค่าที่ถูกต้องจริง ๆ (เช่น <code>0</code>)
+      <strong>จึงต้องคืน <code>bool</code> คู่มาด้วยเสมอ</strong> —
+      แบบเดียวกับ comma-ok ที่คุณเห็นมาตั้งแต่บทเรียน 11
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ method เพิ่ม type parameter ของตัวเองไม่ได้</strong>
+    <br><code>func (s *Stack[T]) MapTo[R any](f func(T) R) []R</code> →
+    <code>method must have no type parameters</code>
+    <br>ถ้าต้องแปลง type ต้องเขียนเป็น<strong>ฟังก์ชันธรรมดา</strong>:
+    <code>func MapStack[T, R any](s *Stack[T], f func(T) R) []R</code>
+  </p>
+</div>
+
+<h2>4 · เมื่อไหร่ที่ <em>ยังไม่</em> ควรใช้ generics</h2>
+
+<p>
+  หัวข้อนี้คือสิ่งที่แยกคนเขียน Go เป็นจากคนเพิ่งอ่านเจอ generics เมื่อวาน
+  <strong>สามกรณีที่สไลด์ยกมา ถูกทั้งหมด</strong>:
+</p>
+
+<h3 style="margin-top:1.4rem">4.1 มี type เดียว ยังไม่มีความซ้ำ</h3>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ เขียนแบบนี้ไปก่อน</h4>
+    <pre><code><span class="k">func</span> <span class="f">CalculateInvoiceTotal</span>(
+    items []InvoiceItem,
+) <span class="k">int64</span> {
+    <span class="c">// business logic</span>
+}</code></pre>
+  </div>
+  <div class="side bad">
+    <h4>❌ ยังไม่จำเป็นต้องรีบ</h4>
+    <pre><code><span class="k">func</span> <span class="f">CalculateTotal</span>[T Billable](
+    items []T,
+) <span class="k">int64</span> {
+    <span class="c">// business logic</span>
+}</code></pre>
+  </div>
+</div>
+
+<p>
+  ตอนนี้มี <code>InvoiceItem</code> อยู่ type เดียว การทำเป็น generic
+  <strong>ไม่ได้ลดโค้ดสักบรรทัด</strong> แต่เพิ่มของให้คนอ่านต้องแกะ
+  — <code>Billable</code> คืออะไร? <code>T</code> เป็นอะไรได้บ้าง?
+  <br>วันไหนมี type ที่สองจริง ค่อยแปลง ตอนนั้นคุณจะรู้ด้วยว่า
+  <em>อะไรคือส่วนที่เหมือนกันจริง ๆ</em>
+</p>
+
+<h3 style="margin-top:1.4rem">4.2 ฟังก์ชันทำแค่เรียก method — ใช้ interface</h3>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ interface พอแล้ว</h4>
+    <pre><code><span class="k">func</span> <span class="f">Save</span>(w io.Writer, data []<span class="k">byte</span>) <span class="k">error</span> {
+    _, err := w.<span class="f">Write</span>(data)
+    <span class="k">return</span> err
+}</code></pre>
+  </div>
+  <div class="side bad">
+    <h4>❌ generic ที่ไม่ได้อะไรเพิ่ม</h4>
+    <pre><code><span class="k">func</span> <span class="f">Save</span>[W io.Writer](w W, data []<span class="k">byte</span>) <span class="k">error</span> {
+    _, err := w.<span class="f">Write</span>(data)
+    <span class="k">return</span> err
+}</code></pre>
+  </div>
+</div>
+
+<div class="win">
+  <span class="label">💡 เส้นแบ่งที่ใช้ตัดสินใจได้จริง</span>
+  <p style="margin-bottom:0">
+    <strong>ฟังก์ชันสนใจแค่ "มันทำอะไรได้" → ใช้ interface</strong>
+    <br><strong>ฟังก์ชันต้องรู้ "มันเป็น type อะไร" เพื่อคืนค่า type เดียวกัน
+    หรือเก็บลง container → ใช้ generics</strong>
+    <br><br>
+    <code>Save</code> แค่เรียก <code>.Write()</code> — ไม่สนว่าเป็นไฟล์หรือ buffer
+    → interface
+    <br><code>First[T any](values []T) T</code> ต้องคืนของ type เดิม
+    → interface ทำไม่ได้ ต้อง generics
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">4.3 generic แล้ว caller อ่านยากกว่าเดิม</h3>
+
+<pre><code><span class="k">func</span> <span class="f">Execute</span>[
+    T <span class="k">any</span>,
+    R <span class="k">comparable</span>,
+    S ~[]T,
+    M ~<span class="k">map</span>[R]S,
+](
+    <span class="c">// ...</span>
+) {
+    <span class="c">// Business Logic</span>
+}</code></pre>
+
+<p>
+  ตอนเขียนรู้สึกฉลาดมาก ตอนคนอื่นมาอ่าน (หรือตัวคุณเองอีกสามเดือน)
+  ต้องนั่งไล่ว่า <code>M</code> คือ map ของอะไรไปหาอะไร
+  <strong>ถ้าคนเรียกต้องนั่งแกะ type parameter ก่อนจะเรียกได้ — แสดงว่าเกินพอดีแล้ว</strong>
+</p>
+
+<h3 style="margin-top:1.4rem">4.4 <code>Map</code>/<code>Filter</code> ไม่ได้ชนะ for loop เสมอ</h3>
+
+<div class="compare">
+  <div class="side">
+    <h4>Map + Filter แบบ generic</h4>
+    <pre><code>activeNames := <span class="f">Map</span>(
+    <span class="f">Filter</span>(users, <span class="k">func</span>(u User) <span class="k">bool</span> {
+        <span class="k">return</span> u.Active
+    }),
+    <span class="k">func</span>(u User) <span class="k">string</span> {
+        <span class="k">return</span> u.Name
+    },
+)</code></pre>
+  </div>
+  <div class="side">
+    <h4>for loop ธรรมดา</h4>
+    <pre><code>activeNames := <span class="f">make</span>([]<span class="k">string</span>, <span class="n">0</span>)
+
+<span class="k">for</span> _, user := <span class="k">range</span> users {
+    <span class="k">if</span> user.Active {
+        activeNames = <span class="f">append</span>(
+            activeNames, user.Name,
+        )
+    }
+}</code></pre>
+  </div>
+</div>
+
+<p>
+  ถ้ามาจาก JavaScript หรือ Python ฝั่งซ้ายจะดูคุ้นและ "สะอาด" กว่า
+  แต่ในวัฒนธรรม Go <strong>ฝั่งขวาถือว่าอ่านง่ายกว่า</strong> —
+  อ่านจากบนลงล่างได้ตรง ๆ ไม่ต้องกลับหัวอ่านจากในออกนอก
+  และ debug ง่ายกว่ามาก (ใส่ <code>fmt.Println</code> ตรงไหนก็ได้)
+  <br><strong>ไม่ใช่ว่าฝั่งซ้ายผิด</strong> — แต่อย่าเปลี่ยนเพราะคิดว่าอีกฝั่งดูโบราณ
+</p>
+
+<h2>5 · Interface หรือ Generics — ตารางตัดสิน</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>เลือก</th><th>เพราะ</th></tr>
+  <tr><td>รับอะไรก็ได้ที่ <code>Write()</code> ได้</td><td><strong>interface</strong></td><td>สนใจแค่พฤติกรรม</td></tr>
+  <tr><td>เก็บของหลาย type ในโครงเดียว (<code>Stack</code>, <code>Cache</code>)</td><td><strong>generics</strong></td><td>ต้องจำ type ไว้ตอนดึงออก</td></tr>
+  <tr><td>คืนค่า type เดียวกับที่รับเข้ามา</td><td><strong>generics</strong></td><td>interface คืนได้แค่ interface</td></tr>
+  <tr><td>เก็บของต่าง type ปนกันใน slice เดียว</td><td><strong>interface</strong></td><td><code>[]Shape</code> ใส่ทั้ง Circle และ Square ได้ · <code>[]T</code> ใส่ได้ type เดียว</td></tr>
+  <tr><td>ต้องใช้ <code>+</code> <code>&lt;</code> <code>==</code> กับค่าที่รับมา</td><td><strong>generics</strong></td><td>interface ระบุ method ได้ แต่ระบุ operator ไม่ได้</td></tr>
+  <tr><td>ยังมี type เดียว</td><td><strong>ไม่ต้องทั้งคู่</strong></td><td>เขียนตรง ๆ ไปก่อน</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ข้อที่คนมองข้ามคือแถวที่ 4</strong> — <code>Stack[Shape]</code>
+    ก็ยังใส่ของต่างชนิดได้อยู่ ถ้า <code>Shape</code> เป็น interface
+    <strong>สองอย่างนี้ใช้ร่วมกันได้ ไม่ได้แข่งกัน</strong>
+    <br>constraint ในบทเรียน 19 ก็คือ interface นั่นเอง —
+    <code>func FindByID[T Identifiable](values []T, id string) (T, bool)</code>
+    ใช้ทั้งสองอย่างพร้อมกัน: interface กำหนดว่า <code>T</code> ต้องมี
+    <code>ID()</code> · generics ทำให้คืนค่าเป็น type เดิมได้
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ในฟังก์ชัน generic จะคืน "ค่าว่าง" ของ <code>T</code> ต้องเขียนยังไง?</p>
+  <div class="opts">
+    <button class="opt"><code>return nil</code> ใช้ได้กับทุก type parameter</button>
+    <button class="opt"><code>var zero T</code> แล้ว <code>return zero</code></button>
+    <button class="opt"><code>return T{}</code> เพื่อสร้างค่าเปล่า</button>
+    <button class="opt"><code>return *new(any)</code> เพื่อได้ค่าว่าง</button>
+  </div>
+  <div class="explain">
+    <p><code>nil</code> ใช้ไม่ได้เพราะ <code>T</code> อาจเป็น <code>int</code> ·
+    <code>T{}</code> ใช้ไม่ได้เพราะ <code>T</code> อาจไม่ใช่ struct
+    <br><code>var zero T</code> ได้ zero value ที่ถูกต้องของ type นั้น ๆ เสมอ —
+    <code>0</code> · <code>""</code> · <code>nil</code> · <code>false</code> แล้วแต่ว่าใส่อะไรเข้าไป</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">2. <code>func Save(w io.Writer, data []byte) error</code> ควรเปลี่ยนเป็น <code>[W io.Writer]</code> ไหม?</p>
+  <div class="opts">
+    <button class="opt">ควร เพราะ generic เร็วกว่า interface เสมอ</button>
+    <button class="opt">ควร เพราะทำให้รองรับ type ได้มากขึ้นกว่าเดิม</button>
+    <button class="opt">ไม่ควร เพราะทำแค่เรียก method — interface พอ</button>
+    <button class="opt">ไม่ควร เพราะ io.Writer ใช้เป็น constraint ไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p>ฟังก์ชันสนใจแค่ว่า "เขียนได้ไหม" ไม่ได้ต้องคืน type เดิมหรือเก็บลง container
+    <strong>generic version ไม่ได้อะไรเพิ่มเลย แต่เพิ่มของให้อ่าน</strong>
+    <br>เส้นแบ่ง: สนใจ<em>พฤติกรรม</em> → interface · ต้องรู้<em>ตัว type</em> → generics
+    <br>(<code>io.Writer</code> ใช้เป็น constraint ได้จริง — ตัวเลือกสุดท้ายผิดข้อเท็จจริง)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. อยากได้ slice ที่เก็บทั้ง <code>Circle</code> และ <code>Square</code> ปนกัน ควรใช้อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>[]Shape</code> เมื่อ Shape เป็น interface</button>
+    <button class="opt"><code>[]T</code> เมื่อ T มี constraint เป็น Shape</button>
+    <button class="opt"><code>Stack[T any]</code> แล้ว Push ทั้งสองแบบ</button>
+    <button class="opt"><code>[]any</code> แล้วค่อย assert ตอนดึงออกมา</button>
+  </div>
+  <div class="explain">
+    <p><code>[]T</code> คือ slice ของ type <strong>เดียว</strong> —
+    <code>[]Circle</code> หรือ <code>[]Square</code> อย่างใดอย่างหนึ่ง ไม่ใช่ปนกัน
+    <br>ของปนกันต้องใช้ interface: <code>[]Shape</code> เก็บอะไรก็ได้ที่ implement <code>Shape</code>
+    <br>(<code>[]any</code> ทำได้ทางเทคนิค แต่ทิ้ง type ทิ้งความปลอดภัยไปหมด)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. ทำไม <code>func (s *Stack[T]) MapTo[R any](...)</code> ถึงคอมไพล์ไม่ผ่าน?</p>
+  <div class="opts">
+    <button class="opt">เพราะ receiver ต้องเป็น value ไม่ใช่ pointer</button>
+    <button class="opt">เพราะชื่อ type parameter ห้ามซ้ำกับตัวอื่น</button>
+    <button class="opt">เพราะ generic struct มี method ได้ไม่เกินสองตัว</button>
+    <button class="opt">เพราะ method เพิ่ม type parameter ของตัวเองไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p><code>method must have no type parameters</code> — method ใช้ได้เฉพาะ
+    <code>T</code> ที่ประกาศไว้ที่ตัว struct เท่านั้น
+    <br>ถ้าต้องแปลงไป type ใหม่ ให้เขียนเป็นฟังก์ชันธรรมดาแทน:
+    <code>func MapStack[T, R any](s *Stack[T], f func(T) R) []R</code></p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — Cache generic ที่ใช้ได้จริง</span>
+  <p>
+    ทำในเครื่อง (จะได้ต่อยอดในบทเรียน 24 ตอนเติม mutex)
+    <strong>เขียนเทสด้วย</strong> — คุณทำเป็นแล้วตั้งแต่ Day 5
+  </p>
+  <ol>
+    <li>สร้าง <code>type Cache[K comparable, V any] struct</code>
+        ที่ข้างในมี <code>data map[K]V</code>
+        <br><em>ทำไม <code>K</code> ต้องเป็น <code>comparable</code>? ตอบในใจก่อนเขียน</em></li>
+    <li>เขียน constructor <code>NewCache[K comparable, V any]() *Cache[K, V]</code>
+        ที่ <code>make</code> map ให้เรียบร้อย
+        <br><em>ลืม make แล้วจะเจออะไร — ลองดูก็ได้</em></li>
+    <li>เขียน method <code>Set(key K, value V)</code> และ
+        <code>Get(key K) (V, bool)</code>
+        <br><strong>ตอน Get ไม่เจอ ต้องคืน <code>var zero V</code></strong></li>
+    <li>เขียน <code>Len() int</code> และ <code>Delete(key K)</code></li>
+    <li>เขียนเทส table-driven (บทเรียน 16) ที่ทดสอบ
+        <code>Cache[string, int]</code> และ <code>Cache[int, User]</code>
+        <strong>ในไฟล์เทสเดียวกัน</strong></li>
+    <li><strong>ท้าทาย 1:</strong> ทำให้เกิด
+        <code>cannot use generic type Cache[K comparable, V any] without instantiation</code>
+        โดยตั้งใจ แล้วแก้ให้ถูก</li>
+    <li><strong>ท้าทาย 2 — ข้อคิด:</strong> ตอนนี้ <code>Cache</code> ของคุณ
+        <strong>ยังใช้กับหลาย goroutine พร้อมกันไม่ได้</strong>
+        เขียนคำตอบไว้ในคอมเมนต์ว่าทำไม — บทเรียน 24 จะมาแก้ให้</li>
+    <li><strong>ท้าทาย 3:</strong> ลองเพิ่ม
+        <code>func (c *Cache[K, V]) Keys() []K</code> —
+        แล้วเขียนเทสที่เทียบผลลัพธ์กับ <code>[]string{"a","b"}</code> ตรง ๆ
+        <br><strong>เทสจะแดงเป็นบางครั้ง — ทำไม?</strong>
+        (ใบ้: บทเรียน 19 หัวข้อ 4)</li>
+  </ol>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ท้าทาย 3 คือข้อที่ผมอยากเห็นผลที่สุด</strong> —
+    เทสที่แดงเป็นบางครั้ง (flaky test) คือฝันร้ายของทุกทีม
+    ถ้าจับสาเหตุได้เองแปลว่าบทเรียน 19 เข้าเป้าแล้ว
+    <br>บทถัดไปเปลี่ยนโลก: จากโปรแกรมที่ทำทีละอย่าง เป็นโปรแกรมที่ทำหลายอย่างพร้อมกัน
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0019-generics.html">← บทเรียน 19</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0021-goroutine-waitgroup.html">บทเรียน 21 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/blog/when-generics">When To Use Generics</a> — Ian Lance Taylor · <strong>แหล่งหลักของครึ่งหลังบทนี้</strong> เขียนโดยคนออกแบบ generics เอง</li>
+  <li><a href="https://go.dev/blog/intro-generics">An Introduction To Generics</a> — Go Blog</li>
+  <li><a href="https://go.dev/ref/spec#Instantiations">Go Spec — Instantiations</a></li>
+  <li><a href="https://go.dev/wiki/CodeReviewComments#interfaces">Go Code Review Comments — Interfaces</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

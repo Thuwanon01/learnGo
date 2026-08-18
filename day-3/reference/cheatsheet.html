@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheat Sheet — Go Day 3</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<style>
+  /* หน้านี้เป็นเอกสารอ้างอิง — แน่นกว่า lesson และออกแบบให้พิมพ์ลงกระดาษได้ */
+  body { font-size: 15.5px; }
+  main { max-width: 54rem; }
+  h2 { margin-top: 2.2rem; font-size: 1.2rem; }
+  h3 { margin-top: 1.4rem; font-size: 1rem; }
+  pre { font-size: 0.78rem; padding: 0.75rem 0.9rem; margin-bottom: 0.9rem; }
+  table { font-size: 0.86rem; }
+  p, ul, ol { margin-bottom: 0.8rem; }
+  .toc { columns: 2; font-size: 0.9rem; padding-left: 1.1rem; }
+  .toc li { break-inside: avoid; }
+  .rule { font-weight: 650; color: var(--accent-dk); }
+  @media print { body { font-size: 9.5pt; } main { max-width: none; } h2 { margin-top: 1.2rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Reference · เก็บไว้เปิดตอนเขียนโค้ด</p>
+  <h1>Go Day 3 — Cheat Sheet</h1>
+  <p class="meta">ครอบคลุมสไลด์ทั้ง 107 หน้า · ตัวอย่างทุกอันรันจริงบน Go 1.26 แล้ว · พิมพ์ลงกระดาษได้</p>
+</header>
+
+<main>
+
+<h2>สารบัญ</h2>
+<ol class="toc">
+  <li><a href="#func">Function ขั้นสูง</a></li>
+  <li><a href="#array">Array</a></li>
+  <li><a href="#slice">Slice</a></li>
+  <li><a href="#map">Map</a></li>
+  <li><a href="#struct">Struct</a></li>
+  <li><a href="#pointer">Pointer &amp; Memory</a></li>
+  <li><a href="#defer">defer</a></li>
+  <li><a href="#method">Method &amp; Receiver</a></li>
+  <li><a href="#traps">ตารางกับดักรวม</a></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="func">1 · Function ขั้นสูง</h2>
+
+<h3>Variadic</h3>
+<pre><code><span class="k">func</span> <span class="f">sum</span>(nums ...<span class="n">int</span>) <span class="n">int</span> { ... }   <span class="c">// ข้างในนี้ nums คือ []int ธรรมดา</span>
+
+<span class="f">sum</span>()            <span class="c">// 0</span>
+<span class="f">sum</span>(<span class="n">10</span>, <span class="n">20</span>)      <span class="c">// 30</span>
+<span class="f">sum</span>(xs...)       <span class="c">// กาง slice เข้าไป — ต้องมี ... ไม่งั้น error</span></code></pre>
+<ul>
+  <li>ต้องเป็น parameter <strong>ตัวสุดท้าย</strong> และมีได้ <strong>ตัวเดียว</strong></li>
+  <li><span class="rule">ห้ามใช้กับ return type</span></li>
+</ul>
+
+<h3>Function เป็น value ชนิดหนึ่ง</h3>
+<pre><code>op := add            <span class="c">// เก็บใส่ตัวแปร — type คือ func(int, int) int</span>
+op = multiply        <span class="c">// สลับได้ ถ้า signature เหมือนกัน (ชื่อไม่เกี่ยว)</span>
+
+<span class="k">func</span> <span class="f">compute</span>(op <span class="k">func</span>(<span class="n">float64</span>, <span class="n">float64</span>) <span class="n">float64</span>) <span class="n">float64</span>   <span class="c">// รับเข้า</span>
+<span class="k">func</span> <span class="f">compute</span>() <span class="k">func</span>(<span class="n">float64</span>, <span class="n">float64</span>) <span class="n">float64</span>              <span class="c">// คืนออก</span></code></pre>
+
+<h3>Anonymous / IIFE / Closure</h3>
+<pre><code>greet := <span class="k">func</span>(n <span class="n">string</span>) { ... }        <span class="c">// anonymous — เก็บใส่ตัวแปร</span>
+<span class="k">func</span>(n <span class="n">string</span>) { ... }(<span class="s">"Gopher"</span>)      <span class="c">// IIFE — ประกาศแล้วเรียกทันที</span>
+
+<span class="k">func</span> <span class="f">newCounter</span>() <span class="k">func</span>() <span class="n">int</span> {
+    count := <span class="n">0</span>                        <span class="c">// escape ไป heap</span>
+    <span class="k">return</span> <span class="k">func</span>() <span class="n">int</span> { count++; <span class="k">return</span> count }
+}
+c := <span class="f">newCounter</span>(); c(); c()          <span class="c">// 1 แล้ว 2</span>
+d := <span class="f">newCounter</span>(); d()               <span class="c">// 1 — คนละตัว! เรียกใหม่ = count ใหม่</span></code></pre>
+<p><span class="rule">closure จับ "ตัวแปร" ไม่ใช่ "ค่า"</span> — จำประโยคนี้ไว้ จะได้ใช้ตอน <code>defer</code></p>
+
+<!-- ============================================================ -->
+<h2 id="array">2 · Array — <code>[N]T</code></h2>
+
+<pre><code><span class="k">var</span> arr [<span class="n">5</span>]<span class="n">int</span> = [<span class="n">5</span>]<span class="n">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>, <span class="n">40</span>, <span class="n">50</span>}
+unsafe.<span class="f">Sizeof</span>(arr)   <span class="c">// 40 = 5 × 8 bytes (ข้อมูลจริงอยู่ในตัวมันเอง)</span></code></pre>
+
+<ul>
+  <li><span class="rule">ขนาดเป็นส่วนหนึ่งของ type</span> — <code>[3]int</code> กับ <code>[5]int</code> คนละ type assign กันไม่ได้</li>
+  <li><strong>value type</strong> → assign / ส่งเข้าฟังก์ชัน = copy ทั้งก้อน</li>
+  <li>เทียบ <code>==</code> ได้ (ต่างจาก slice)</li>
+  <li>งานจริงแทบไม่ใช้ตรง ๆ แต่ต้องเข้าใจเพราะ slice สร้างทับมัน</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="slice">3 · Slice — <code>[]T</code></h2>
+
+<div class="diagram">Slice Header (24 bytes)              Underlying Array
+┌──────────────┐                     ┌────┬────┬────┬───┬───┐
+│ Data ────────┼────────────────────▶│ 10 │ 20 │ 30 │ . │ . │
+│ Len = 3      │                     └────┴────┴────┴───┴───┘
+│ Cap = 5      │                       len=3 ──┘  cap−len=2 ┘
+└──────────────┘
+unsafe.Sizeof(s) == 24 เสมอ  (วัดแค่ header ไม่ใช่ข้อมูล)</div>
+
+<p><span class="rule">กฎเหล็ก: 0 &lt;= len &lt;= cap เสมอ</span></p>
+
+<h3>สร้าง</h3>
+<pre><code>s := []<span class="n">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>}    <span class="c">// len=3 cap=3</span>
+s := <span class="f">make</span>([]<span class="n">int</span>, <span class="n">5</span>, <span class="n">10</span>)   <span class="c">// make([]T, len, cap)</span>
+s := <span class="f">make</span>([]<span class="n">int</span>, <span class="n">5</span>)       <span class="c">// cap = len = 5</span>
+<span class="k">var</span> s []<span class="n">int</span>              <span class="c">// nil slice: len=0 cap=0 data=nil</span></code></pre>
+
+<h3>Subslice — จุดที่บั๊กเกิด</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>เขียน</th><th>len</th><th>cap</th><th>หมายเหตุ</th></tr>
+  <tr><td><code>s[low:high]</code></td><td><code>high − low</code></td><td><code>cap(s) − low</code></td><td>⚠️ <code>high</code> ไม่คุม cap</td></tr>
+  <tr><td><code>s[low:high:max]</code></td><td><code>high − low</code></td><td><code>max − low</code></td><td>✓ คุม cap ได้เอง</td></tr>
+</table>
+</div>
+
+<pre><code>s := []<span class="n">int</span>{<span class="n">10</span>, <span class="n">20</span>, <span class="n">30</span>, <span class="n">40</span>, <span class="n">50</span>}
+
+c := s[<span class="n">1</span>:<span class="n">3</span>]              <span class="c">// len=2 cap=4 → ยังเหลือที่</span>
+c = <span class="f">append</span>(c, <span class="n">999</span>)
+<span class="c">// s → [10 20 30 999 50]  💥 40 โดนทับ</span>
+
+c := s[<span class="n">1</span>:<span class="n">3</span>:<span class="n">3</span>]            <span class="c">// len=2 cap=2 → เต็มพอดี</span>
+c = <span class="f">append</span>(c, <span class="n">999</span>)
+<span class="c">// s → [10 20 30 40 50]   ✓ ปลอดภัย (append จองบ้านใหม่)</span></code></pre>
+
+<h3>CRUD</h3>
+<pre><code>s = <span class="f">append</span>(s, <span class="n">40</span>)                        <span class="c">// Create</span>
+v := s[<span class="n">1</span>]                                <span class="c">// Read</span>
+s[<span class="n">1</span>] = <span class="n">99</span>                                <span class="c">// Update</span>
+s = slices.<span class="f">Delete</span>(s, <span class="n">1</span>, <span class="n">2</span>)               <span class="c">// Delete (Go 1.21+) — แนะนำ</span>
+s = <span class="f">append</span>(s[:i], s[i+<span class="n">1</span>:]...)            <span class="c">// Delete เขียนเอง (แก้ array เดิมในที่!)</span>
+<span class="f">copy</span>(dst, src)                            <span class="c">// คัดลอก = min(len(dst), len(src)) ตัว</span></code></pre>
+
+<h3>Growth strategy (วัดจริงบน Go 1.26)</h3>
+<div class="diagram">len=1    cap=4       len=257   cap=512
+len=5    cap=8       len=513   cap=848    ← เลิกเป็น 2x ตรงนี้
+len=9    cap=16      len=849   cap=1280
+len=129  cap=256     len=1793  cap=2560
+
+≤ 256 → โต 2x เป๊ะ ๆ    > 256 → ค่อย ๆ ลดเข้าหา ~1.25x
+สูตรจริง: newcap + (newcap + 3×256)/4 แล้วปัดตาม memory size class</div>
+<p>รู้จำนวนล่วงหน้า → <code>make([]T, 0, n)</code> จองทีเดียว เร็วกว่ามาก</p>
+
+<h3>nil vs empty</h3>
+<pre><code><span class="k">var</span> nilS []<span class="n">int</span>;  emptyS := []<span class="n">int</span>{}
+
+nilS == <span class="k">nil</span>            <span class="c">// true</span>
+emptyS == <span class="k">nil</span>          <span class="c">// false</span>
+<span class="f">len</span>(nilS)               <span class="c">// 0 — ใช้ได้</span>
+<span class="k">for</span> <span class="k">range</span> nilS {}       <span class="c">// ปลอดภัย ไม่ panic</span>
+nilS = <span class="f">append</span>(nilS, <span class="n">1</span>) <span class="c">// ✓ ได้!</span>
+nilS[<span class="n">0</span>]                <span class="c">// 💥 panic: index out of range</span></code></pre>
+
+<div class="win">
+  <span class="label">Key takeaway — Slice</span>
+  <ul style="margin-bottom:0">
+    <li><code>0 &lt;= len &lt;= cap</code> เสมอ · เข้าถึง index ที่ไม่มี → panic</li>
+    <li><strong>เทียบ <code>==</code> ไม่ได้</strong> (ยกเว้นกับ <code>nil</code>) → ใช้ <code>slices.Equal()</code></li>
+    <li>เป็น reference type → <strong>ระวังการแชร์ memory ทุกครั้งที่ subslice</strong></li>
+    <li>subslice ข้อมูลนิดเดียวจาก array ยักษ์ = GC เก็บ array ทั้งก้อนไม่ได้ → ใช้ <code>copy()</code></li>
+    <li><span class="rule">ห้ามลบสมาชิกระหว่าง <code>for range</code></span> (range ใช้ snapshot ของ header ตอนเริ่ม)</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="map">4 · Map — <code>map[K]V</code></h2>
+
+<pre><code>m := <span class="f">make</span>(<span class="k">map</span>[<span class="n">string</span>]<span class="n">int</span>)          <span class="c">// ✓ ใช้ได้เลย</span>
+<span class="k">var</span> m <span class="k">map</span>[<span class="n">string</span>]<span class="n">int</span>                <span class="c">// nil map — เขียนแล้ว panic!</span>
+m := <span class="k">map</span>[<span class="n">string</span>]<span class="n">int</span>{<span class="s">"a"</span>: <span class="n">1</span>}        <span class="c">// literal</span>
+
+m[<span class="s">"k"</span>] = <span class="n">10</span>       <span class="c">// Create / Update — syntax เดียวกัน</span>
+v := m[<span class="s">"k"</span>]        <span class="c">// Read — key ไม่มีจะคืน zero value ไม่ใช่ error</span>
+<span class="f">delete</span>(m, <span class="s">"k"</span>)     <span class="c">// Delete — ลบ key ที่ไม่มีก็ไม่ error</span></code></pre>
+
+<h3>Comma-ok — ใช้ทุกครั้งที่ "ไม่มี" ≠ "เป็นศูนย์"</h3>
+<pre><code>v, ok := m[<span class="s">"k"</span>]
+<span class="k">if</span> v, ok := m[<span class="s">"k"</span>]; ok { ... }
+<span class="k">if</span> _, ok := m[<span class="s">"k"</span>]; !ok { ... }</code></pre>
+
+<h3>ภายใน — hash map</h3>
+<div class="diagram">m (pointer 8 bytes) → hmap { count, B, hash0, buckets → [bmap × 2^B] }
+
+O(1) ปกติ · O(n) worst case เมื่อ collision หนัก
+hash0 สุ่มทุกครั้งที่รัน → กัน hash-flooding + เป็นเหตุผลที่ลำดับไม่แน่นอน</div>
+<p class="meta">หมายเหตุ: <code>hmap</code>/<code>bmap</code> เป็น internal ของ runtime เปลี่ยนได้ทุกเวอร์ชัน (Go 1.24 เปลี่ยนไปใช้ Swiss Table แล้ว) — เข้าใจแนวคิดพอ</p>
+
+<h3>Nested map — ต้อง init ชั้นในก่อน</h3>
+<pre><code>users := <span class="f">make</span>(<span class="k">map</span>[<span class="n">string</span>]<span class="k">map</span>[<span class="n">string</span>]<span class="n">int</span>)
+users[<span class="s">"alice"</span>] = <span class="k">map</span>[<span class="n">string</span>]<span class="n">int</span>{}   <span class="c">// ← ขาดบรรทัดนี้ = panic</span>
+users[<span class="s">"alice"</span>][<span class="s">"score"</span>] = <span class="n">90</span></code></pre>
+
+<div class="win">
+  <span class="label">Key takeaway — Map</span>
+  <ul style="margin-bottom:0">
+    <li><strong>ไม่มีลำดับ</strong> — <code>for range</code> ออกมาไม่เรียง และสุ่มใหม่ทุกรอบ (Go จงใจ)<br>
+        ต้องการเรียง → เก็บ key ใส่ slice แล้ว <code>slices.Sort()</code></li>
+    <li><strong>nil map เขียน = panic</strong> (แต่อ่านคืน zero value ได้) — ต่างจาก nil slice</li>
+    <li><strong>non-addressable</strong> → <code>m["a"].Age = 31</code> compile ไม่ผ่าน<br>
+        <code>cannot assign to struct field m["a"].Age in map</code><br>
+        แก้: ใช้ <code>map[K]*V</code> · หรืออ่าน–แก้–ยัดกลับ</li>
+    <li><code>ok</code> แยก "ไม่มี key" ออกจาก "มีแต่เป็น zero value"</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="struct">5 · Struct</h2>
+
+<pre><code><span class="k">type</span> User <span class="k">struct</span> { Name <span class="n">string</span>; Age <span class="n">int</span> }
+
+<span class="k">var</span> u1 User                              <span class="c">// zero value ทุก field</span>
+u2 := User{Name: <span class="s">"Bob"</span>, Age: <span class="n">30</span>}        <span class="c">// ✓ named — ใช้แบบนี้</span>
+u3 := User{<span class="s">"Bob"</span>, <span class="n">30</span>}                   <span class="c">// ⚠️ positional — เพิ่ม field ทีหลังแล้วพัง</span>
+
+fmt.<span class="f">Printf</span>(<span class="s">"%+v\n"</span>, u2)                <span class="c">// {Name:Bob Age:30} — %+v โชว์ชื่อ field</span></code></pre>
+
+<h3>ทำไม Go ไม่มี class</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>ปัญหาของ inheritance</th><th>คำอธิบาย</th></tr>
+  <tr><td>Diamond Problem</td><td>สืบมาสองทางที่มีต้นตอเดียวกัน → เรียก method ของใคร</td></tr>
+  <tr><td>Tight Coupling</td><td>แก้พ่อทีลูกพังหมด</td></tr>
+  <tr><td>Deep Hierarchy</td><td>สืบ 7 ชั้น อ่านโค้ดต้องไล่ขึ้นไปหาต้นตอ</td></tr>
+  <tr><td>Is-A Problem</td><td>บังคับความสัมพันธ์ "เป็น" ทั้งที่จริงแค่ "มี"</td></tr>
+</table>
+</div>
+<p>Go แทนด้วย <strong>Composition + Promotion + Has-A</strong></p>
+
+<h3>Embedding &amp; Promotion</h3>
+<pre><code><span class="k">type</span> Animal <span class="k">struct</span>{ Name <span class="n">string</span> }
+<span class="k">func</span> (a Animal) <span class="f">Eat</span>() { ... }
+
+<span class="k">type</span> Dog <span class="k">struct</span> {
+    Animal              <span class="c">// embed — ไม่มีชื่อ field</span>
+    Breed <span class="n">string</span>
+}
+
+d := Dog{Animal: Animal{Name: <span class="s">"บัดดี้"</span>}, Breed: <span class="s">"Golden"</span>}
+d.Name          <span class="c">// promoted field  (= d.Animal.Name)</span>
+d.<span class="f">Eat</span>()         <span class="c">// promoted method (= d.Animal.Eat())</span></code></pre>
+
+<p><strong>ชื่อชนกัน → ชั้นตื้นกว่าชนะ</strong> (shadowing ไม่ใช่ override — ตัวเดิมยังอยู่):</p>
+<pre><code><span class="k">func</span> (c Cat) <span class="f">Eat</span>() { ... }   <span class="c">// Cat มี Eat เอง + embed Animal ที่มี Eat</span>
+c.<span class="f">Eat</span>()          <span class="c">// ของ Cat</span>
+c.Animal.<span class="f">Eat</span>()   <span class="c">// ของ Animal — ยังเรียกได้ผ่านทางเต็ม</span></code></pre>
+
+<h3>Anonymous struct</h3>
+<pre><code>p := <span class="k">struct</span>{ X, Y <span class="n">int</span> }{X: <span class="n">1</span>, Y: <span class="n">2</span>}   <span class="c">// ใช้ครั้งเดียวแล้วทิ้ง</span></code></pre>
+<p>เหมาะกับ table-driven test / decode JSON เฉพาะกิจ — ใช้ซ้ำเมื่อไหร่ให้ตั้ง <code>type</code> ทันที</p>
+
+<div class="win">
+  <span class="label">Do / Don't — Struct</span>
+  <div class="table-wrap" style="margin-bottom:0">
+  <table>
+    <tr><th>✓ Do</th><th>✗ Don't</th></tr>
+    <tr><td>เก็บข้อมูลที่เกี่ยวข้องกันเป็นหน่วยเดียว</td><td>positional init <code>{1,"a","b"}</code></td></tr>
+    <tr><td>ตั้งชื่อ field ให้สื่อชัดเจน</td><td>anonymous struct โดยไม่จำเป็น</td></tr>
+    <tr><td>embed + composition + promotion</td><td>embed ลึกเกิน 3 ชั้น</td></tr>
+  </table>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="pointer">6 · Pointer &amp; Memory</h2>
+
+<pre><code>x := <span class="n">10</span>
+p := &amp;x           <span class="c">// & = address of</span>
+fmt.<span class="f">Println</span>(*p)  <span class="c">// * = dereference → 10</span>
+*p = <span class="n">20</span>          <span class="c">// เขียนผ่านที่อยู่ → x เป็น 20</span></code></pre>
+
+<p><code>*</code> มี 2 ความหมาย: อยู่ใน <strong>type</strong> (<code>var p *int</code>) = "เป็น pointer" · อยู่ใน <strong>นิพจน์</strong> (<code>*p</code>) = "ตามไปเอาค่า"</p>
+
+<h3>อะไร <code>&amp;</code> ได้ / ไม่ได้ (addressable)</h3>
+<div class="diagram">✓ &x           ตัวแปรปกติ          ✗ &42         literal
+✓ &s.field     field ของ struct    ✗ &foo()      ผลลัพธ์ฟังก์ชัน
+✓ &arr[i]      element array/slice ✗ &m["k"]     map value (ย้ายตอน rehash)
+✓ &(*p)        pointer ที่ deref   ✗ &MyConst    constant</div>
+
+<ul>
+  <li>zero value = <code>nil</code> → deref nil = <strong>panic</strong></li>
+  <li>ขนาด <strong>8 bytes เสมอ</strong> (64-bit) ไม่ว่าจะชี้ไป struct ใหญ่แค่ไหน</li>
+  <li><span class="rule">ทุกอย่างใน Go เป็น pass by value 100%</span> — pointer แค่ copy "ที่อยู่" แทน "ของ"</li>
+  <li><code>c.count</code> เมื่อ <code>c</code> เป็น pointer → Go แปลง <code>(*c).count</code> ให้อัตโนมัติ</li>
+</ul>
+
+<h3>ควร / ไม่ควรใช้ pointer</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>✓ ควรใช้</th><th>✗ ไม่ควรใช้</th></tr>
+  <tr><td>ต้องแก้ตัวแปรต้นฉบับ</td><td>struct เล็ก (≤64 bytes) — copy เร็วกว่า</td></tr>
+  <tr><td>ข้อมูลขนาดใหญ่ (copy แพง)</td><td>ฟังก์ชันที่แค่อ่านค่า</td></tr>
+  <tr><td>ต้องการให้ค่าเป็น <code>nil</code> ได้</td><td>type ที่ value คือ identity (<code>time.Time</code>)</td></tr>
+  <tr><td></td><td><strong>slice / map / channel</strong> — เป็น reference อยู่แล้ว</td></tr>
+</table>
+</div>
+
+<h3>Stack vs Heap</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>Stack</th><th>Heap</th></tr>
+  <tr><td>เร็ว (แค่เลื่อน pointer) · พื้นที่น้อย · คืนอัตโนมัติเมื่อฟังก์ชันจบ</td>
+      <td>ยืดหยุ่น · ต้องมี GC · อยู่จนกว่าจะไม่มีใครชี้</td></tr>
+</table>
+</div>
+
+<p><strong>Escape analysis</strong> — compiler ตัดสินใจให้เอง ว่าตัวแปรหลุดออกนอก scope ไหม</p>
+<pre><code><span class="k">func</span> <span class="f">newUser</span>() *User {
+    u := User{Name: <span class="s">"Alice"</span>}   <span class="c">// local</span>
+    <span class="k">return</span> &amp;u                    <span class="c">// ที่อยู่หลุดออกไป → escape to heap</span>
+}</code></pre>
+<pre><code>go build -gcflags=<span class="s">"-m"</span> ./...    <span class="c"># ให้ compiler บอกว่าตัวไหน escape</span></code></pre>
+
+<p><strong>Garbage Collector</strong> — กฎเดียว: <span class="rule">"ไม่มีการถูกชี้จากที่ไหนอีก" → ถูกนำออก</span></p>
+
+<!-- ============================================================ -->
+<h2 id="defer">7 · defer</h2>
+
+<p>กฎ 3 ข้อจาก <a href="https://go.dev/blog/defer-panic-and-recover">blog ทางการ</a> (รันยืนยันแล้วทั้งสามข้อ):</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>#</th><th>กฎ</th><th>ตัวอย่าง</th><th>ผล</th></tr>
+  <tr>
+    <td>1</td><td>argument ประเมิน<strong>ตอนบรรทัด defer</strong></td>
+    <td><code>i:=0; defer Println(i); i++</code></td><td><code>0</code></td>
+  </tr>
+  <tr>
+    <td>2</td><td><strong>LIFO</strong> หลังฟังก์ชัน return</td>
+    <td><code>for i:=0;i&lt;4;i++ { defer Print(i) }</code></td><td><code>3210</code></td>
+  </tr>
+  <tr>
+    <td>3</td><td>แก้ <strong>named return value</strong> ได้</td>
+    <td><code>func c() (i int) { defer func(){i++}(); return 1 }</code></td><td><code>2</code></td>
+  </tr>
+</table>
+</div>
+
+<pre><code><span class="c">// อยากได้ค่า ณ ตอนประกาศ → ส่งเป็น argument</span>
+<span class="k">defer</span> fmt.<span class="f">Println</span>(i)
+
+<span class="c">// อยากได้ค่าล่าสุด → ห่อ closure</span>
+<span class="k">defer</span> <span class="k">func</span>() { fmt.<span class="f">Println</span>(i) }()</code></pre>
+
+<p><strong>Pattern ที่ใช้จริง:</strong></p>
+<pre><code><span class="k">defer</span> f.<span class="f">Close</span>()        <span class="c">// ทันทีหลัง Open</span>
+<span class="k">defer</span> mu.<span class="f">Unlock</span>()      <span class="c">// ทันทีหลัง Lock</span>
+<span class="k">defer</span> tx.<span class="f">Rollback</span>()    <span class="c">// ทันทีหลัง Begin — commit สำเร็จแล้วไม่มีผล</span>
+<span class="k">defer</span> <span class="f">trackTime</span>(<span class="s">"op"</span>)()  <span class="c">// จับเวลา — สังเกตวงเล็บ 2 ชุด</span>
+
+<span class="c">// ห่อ error ทุกจุด return ด้วยกฎ 3</span>
+<span class="k">func</span> <span class="f">doWork</span>() (err <span class="k">error</span>) {
+    <span class="k">defer</span> <span class="k">func</span>() { <span class="k">if</span> err != <span class="k">nil</span> { err = fmt.<span class="f">Errorf</span>(<span class="s">"doWork: %w"</span>, err) } }()
+    ...
+}</code></pre>
+
+<div class="warn">
+  <span class="label">กับดัก defer</span>
+  <ul style="margin-bottom:0">
+    <li><strong>scope คือฟังก์ชัน ไม่ใช่ block</strong> — <code>defer</code> ในลูปกองสะสมจนจบฟังก์ชัน → ครอบด้วย IIFE</li>
+    <li><strong><code>os.Exit()</code> / <code>log.Fatal()</code> ไม่รัน defer</strong> (แต่ <code>panic</code> รันครบ)</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="method">8 · Method &amp; Receiver</h2>
+
+<div class="diagram">func (c *Cart) TotalPrice() (*money.Money, error) { … }
+     └───┬───┘  └────┬────┘ └───────────┬─────────┘
+     receiver   method name        signature
+
+Base type: Cart  ·  Receiver type: *Cart</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th>Method</th><th>Function</th></tr>
+  <tr><td>ผูกกับ struct</td><td>เสมอ</td><td>อิสระ</td></tr>
+  <tr><td>เรียกด้วยชื่อตรง ๆ</td><td>ไม่ได้ (ต้อง <code>obj.M()</code>)</td><td>ได้</td></tr>
+  <tr><td>ใช้กับ</td><td>พฤติกรรมของ type นั้น</td><td>logic กลาง เช่น utility, use case</td></tr>
+</table>
+</div>
+<p><span class="rule">Go ไม่มี method overloading</span> — ตั้งชื่อซ้ำใน type เดียวกันไม่ได้</p>
+
+<h3>Value vs Pointer receiver</h3>
+<pre><code><span class="k">func</span> (u User)  <span class="f">Greet</span>() <span class="n">string</span> { ... }   <span class="c">// ได้ copy — read only / getter</span>
+<span class="k">func</span> (a *Account) <span class="f">Deposit</span>(x <span class="n">float64</span>) { a.Balance += x }  <span class="c">// แก้ของจริง</span>
+
+acc := Account{...}
+acc.<span class="f">Deposit</span>(<span class="n">500</span>)   <span class="c">// Go แปลงเป็น (&amp;acc).Deposit(500) ให้อัตโนมัติ</span></code></pre>
+
+<p>เกณฑ์จาก <a href="https://go.dev/wiki/CodeReviewComments">Go Code Review Comments</a>:</p>
+<ul>
+  <li>ต้องแก้ค่า receiver → <strong>ต้องเป็น pointer</strong></li>
+  <li>มี <code>sync.Mutex</code> ข้างใน → <strong>ต้องเป็น pointer</strong> (copy แล้ว lock ไม่ทำงาน)</li>
+  <li>struct/array ใหญ่ → pointer</li>
+  <li>receiver เป็น map / func / chan → <strong>อย่าใช้ pointer</strong></li>
+  <li>struct เล็กที่เป็น value โดยธรรมชาติ (แบบ <code>time.Time</code>) → value</li>
+  <li><span class="rule">"Don't mix receiver types" · "When in doubt, use a pointer receiver."</span></li>
+</ul>
+
+<h3>Encapsulation — ตัวใหญ่/ตัวเล็ก</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>ขึ้นต้น</th><th>ความหมาย</th></tr>
+  <tr><td><code>Name</code> ตัวใหญ่</td><td><strong>exported (public)</strong> — package อื่นเห็น</td></tr>
+  <tr><td><code>balance</code> ตัวเล็ก</td><td><strong>unexported (private)</strong> — เฉพาะใน package เดียวกัน</td></tr>
+</table>
+</div>
+<p><span class="rule">ขอบเขตคือ package ไม่ใช่ struct</span> — ไฟล์อื่นใน package เดียวกันเข้าถึง <code>balance</code> ได้</p>
+
+<h3>Method chaining</h3>
+<pre><code><span class="k">func</span> (sb *StringBuilder) <span class="f">Append</span>(s <span class="n">string</span>) *StringBuilder {
+    sb.buf = <span class="f">append</span>(sb.buf, s...)
+    <span class="k">return</span> sb        <span class="c">// ← คืนตัวเอง = ต่อกันได้</span>
+}
+
+result := (&amp;StringBuilder{}).<span class="f">Append</span>(<span class="s">"Hello"</span>).<span class="f">Append</span>(<span class="s">", World"</span>).<span class="f">String</span>()</code></pre>
+<p>ข้อเสีย: จัดการ error ยาก — งานที่มี error ให้ใช้แบบธรรมดา</p>
+
+<!-- ============================================================ -->
+<h2 id="traps">9 · ตารางกับดักรวม — อ่านก่อนส่ง PR</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>โค้ดที่เห็น</th><th>สิ่งที่คุณคิด</th><th>สิ่งที่เกิดจริง</th></tr>
+  <tr>
+    <td><code>c := s[1:3]; append(c, x)</code></td>
+    <td>c เป็นของตัวเอง</td>
+    <td>💥 เขียนทับ <code>s[3]</code></td>
+  </tr>
+  <tr>
+    <td><code>for _, u := range users { u.N = "x" }</code></td>
+    <td>แก้ users ได้</td>
+    <td>แก้ copy → ไม่เปลี่ยน · ใช้ <code>users[i]</code></td>
+  </tr>
+  <tr>
+    <td><code>m["a"].Age = 31</code></td>
+    <td>แก้ค่าใน map</td>
+    <td>💥 compile error (non-addressable)</td>
+  </tr>
+  <tr>
+    <td><code>var m map[string]int; m["a"]=1</code></td>
+    <td>สร้าง map ให้เอง</td>
+    <td>💥 panic: nil map</td>
+  </tr>
+  <tr>
+    <td><code>i:=0; defer Println(i); i++</code></td>
+    <td>พิมพ์ 1</td>
+    <td>พิมพ์ <code>0</code> (argument แช่แข็ง)</td>
+  </tr>
+  <tr>
+    <td><code>for … { defer f.Close() }</code></td>
+    <td>ปิดทุกรอบ</td>
+    <td>กองจนจบฟังก์ชัน → file leak</td>
+  </tr>
+  <tr>
+    <td><code>log.Fatal()</code> ที่มี defer ค้าง</td>
+    <td>cleanup ให้</td>
+    <td>ไม่รัน defer เลย</td>
+  </tr>
+  <tr>
+    <td><code>func (a Account) Deposit()</code></td>
+    <td>ยอดเงินเพิ่ม</td>
+    <td>แก้ copy → ต้องใช้ <code>*Account</code></td>
+  </tr>
+  <tr>
+    <td>ลบสมาชิกใน <code>for range</code></td>
+    <td>ลบครบ</td>
+    <td>ข้ามตัว/ผลเพี้ยน (snapshot ของ header)</td>
+  </tr>
+  <tr>
+    <td><code>small := huge[:10]</code> เก็บนาน</td>
+    <td>ใช้แค่ 10 ตัว</td>
+    <td>GC เก็บ <code>huge</code> ทั้งก้อนไม่ได้ → ใช้ <code>copy()</code></td>
+  </tr>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="../lessons/0006-slice-aliasing.html">บทเรียน 06 — slice aliasing</a>
+  <a href="../lessons/0007-value-vs-pointer.html">บทเรียน 07 — value vs pointer</a>
+  <a href="../lessons/0008-defer.html">บทเรียน 08 — defer</a>
+  <a href="../../docs.html?f=RESOURCES.md">📚 Resources</a>
+</nav>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 22 — Channel: ท่อที่ทำให้ goroutine คุยกันได้</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 22 · Day 6 · Concurrency</p>
+  <h1>Channel: ท่อที่ทำให้ goroutine คุยกันได้</h1>
+  <p class="meta">~17 นาที · ต้องมี: <a href="./0021-goroutine-waitgroup.html">บทเรียน 21</a>, <a href="../../day-4/lessons/0011-type-assertion-and-switch.html">บทเรียน 11</a> (comma-ok)</p>
+  <p class="standfirst">
+    ถ้า goroutine คือนักวิ่งหลายคนที่วิ่งพร้อมกัน
+    <strong>channel คือไม้ต่อในการวิ่งผลัด</strong> — ส่งของถูกจังหวะ ไม่มีใครวิ่งชนกัน
+    <br>บทนี้มีกับดัก 4 อันที่ทำให้โปรแกรมค้างหรือ panic
+    <strong>ทุกอันผมรันให้ดูแล้วว่าพังยังไง</strong> เพราะรู้จักหน้าตามันไว้
+    จะแก้ได้ในสามวินาทีแทนที่จะนั่งงงสามชั่วโมง
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ปรัชญาที่อยู่เบื้องหลัง</h2>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>"Do not communicate by sharing memory; instead, share memory by communicating."</strong>
+    <br><em>— คำขวัญของ Go เรื่อง concurrency</em>
+  </p>
+</div>
+
+<p>
+  แปลเป็นภาษาคน: แทนที่จะให้ทุก goroutine แย่งกันเขียนตัวแปรก้อนเดียว
+  (ซึ่งต้องใส่ lock และพังง่าย — บทเรียน 24 จะพิสูจน์ให้ดู)
+  <strong>ให้ส่งข้อมูลผ่านท่อแทน</strong> — ของอยู่กับใครก็คนนั้นจัดการ
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ แชร์ตัวแปรกัน</h4>
+    <pre><code><span class="k">var</span> total <span class="k">int</span>
+
+<span class="k">go</span> <span class="k">func</span>() { total++ }()
+<span class="k">go</span> <span class="k">func</span>() { total++ }()
+
+<span class="c">// สองตัวแย่งเขียนที่เดียวกัน
+// ผลลัพธ์เดาไม่ได้ (บทเรียน 24)</span></code></pre>
+  </div>
+  <div class="side good">
+    <h4>✅ ส่งผ่านท่อ</h4>
+    <pre><code>ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>)
+
+<span class="k">go</span> <span class="k">func</span>() { ch &lt;- <span class="n">1</span> }()
+<span class="k">go</span> <span class="k">func</span>() { ch &lt;- <span class="n">1</span> }()
+
+total := &lt;-ch + &lt;-ch
+<span class="c">// คนรับคนเดียว ไม่มีใครแย่งกัน</span></code></pre>
+  </div>
+</div>
+
+<h2>2 · สร้าง channel — ต้องใช้ <code>make</code></h2>
+
+<pre><code>chInt := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>)
+chStr := <span class="f">make</span>(<span class="k">chan</span> <span class="k">string</span>)
+
+<span class="k">type</span> Order <span class="k">struct</span> {
+    ID    <span class="k">int</span>
+    Total <span class="k">float64</span>
+}
+orders := <span class="f">make</span>(<span class="k">chan</span> Order)   <span class="c">// ส่ง struct ก็ได้</span></code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ประกาศเฉย ๆ ไม่พอ</strong> — <code>var ch chan int</code>
+    ได้ <code>nil</code> channel และ <code>ch == nil</code> เป็น <code>true</code>
+    <br><strong>อ่านหรือเขียน nil channel = ค้างตลอดกาล</strong> ไม่ panic
+    ไม่ error แค่หยุดนิ่ง
+    <br>ในโปรแกรมเล็กที่ไม่มี goroutine อื่นเลย Go จับได้และบอกตรง ๆ ว่า
+    <code>goroutine 1 [chan receive (<strong>nil chan</strong>)]</code>
+    แต่ในโปรแกรมจริงที่ยังมีตัวอื่นทำงานอยู่ runtime จะ<strong>ไม่ฟ้องอะไรเลย</strong>
+    — goroutine ตัวนั้นค้างหายไปเงียบ ๆ ตัวเดียว
+    <br>ต้อง <code>make</code> เสมอ
+  </p>
+</div>
+
+<h2>3 · เครื่องหมาย <code>&lt;-</code> — ลูกศรชี้ทางเดินของข้อมูล</h2>
+
+<pre><code>ch &lt;- <span class="n">10</span>          <span class="c">// ส่ง 10 เข้า channel   (ลูกศรชี้เข้า ch)</span>
+
+value := &lt;-ch     <span class="c">// รับค่าออกมา          (ลูกศรชี้ออกจาก ch)</span>
+
+&lt;-ch              <span class="c">// รับแล้วทิ้ง — ใช้เมื่อสนใจแค่ "จังหวะ" ไม่สนค่า</span></code></pre>
+
+<div class="diagram">
+<pre>   ch &lt;- 10          value := &lt;-ch
+
+   ┌────┐              ┌────┐
+   │ 10 │──►[ ch ]     │ ch │──► value
+   └────┘              └────┘
+   ลูกศรอยู่ขวา ch      ลูกศรอยู่ซ้าย ch
+   = ส่งเข้า            = ดึงออก
+
+   <strong>จำง่าย ๆ: ลูกศรชี้ไปทางไหน ข้อมูลไหลไปทางนั้น</strong></pre>
+</div>
+
+<h2>4 · Unbuffered channel — ต้องมีทั้งคนส่งและคนรับ</h2>
+
+<p>
+  <code>make(chan string)</code> ไม่ระบุขนาด = <strong>ความจุ 0</strong>
+  <br>แปลว่าไม่มีที่พักของ — <strong>คนส่งต้องยืนรอจนกว่าจะมีคนมารับถึงมือ</strong>
+  และคนรับก็ต้องรอจนกว่าจะมีคนส่ง
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ส่งคนเดียว ไม่มีใครรับ</h4>
+    <pre><code>ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">string</span>)
+
+ch &lt;- <span class="s">"Hello"</span>       <span class="c">// ค้างตรงนี้ตลอดกาล</span>
+
+fmt.<span class="f">Println</span>(&lt;-ch)   <span class="c">// ไปไม่ถึงบรรทัดนี้</span></code></pre>
+    <p style="margin-bottom:0">
+      <code>fatal error: all goroutines are asleep - deadlock!</code>
+      <br><code>goroutine 1 [<strong>chan send</strong>]</code>
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ แยกคนส่งไปอยู่คนละ goroutine</h4>
+    <pre><code>ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">string</span>)
+
+<span class="k">go</span> <span class="k">func</span>() {
+    ch &lt;- <span class="s">"Hello"</span>
+}()
+
+fmt.<span class="f">Println</span>(&lt;-ch)   <span class="c">// Hello</span></code></pre>
+    <p style="margin-bottom:0">
+      main รอรับ · goroutine ส่ง — <strong>เจอกันพอดี</strong>
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <span class="label">💡 มุมที่ทำให้เข้าใจ unbuffered channel จริง ๆ</span>
+  <p style="margin-bottom:0">
+    unbuffered channel ไม่ได้ทำหน้าที่ "เก็บของ" แต่ทำหน้าที่
+    <strong>"นัดเจอ"</strong> — ทั้งสองฝ่ายต้องมาถึงจุดนัดพร้อมกันถึงจะเดินต่อได้
+    <br>เพราะแบบนี้มันจึงใช้เป็น<strong>สัญญาณจับเวลา</strong>ได้ด้วย:
+    เมื่อ <code>ch &lt;- x</code> ผ่านไปได้ คุณ<em>รู้แน่นอน</em> ว่ามีคนรับไปแล้ว
+  </p>
+</div>
+
+<h2>5 · Buffered channel — มีที่พักของ</h2>
+
+<pre><code>ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">string</span>, <span class="n">3</span>)   <span class="c">// ความจุ 3</span></code></pre>
+
+<div class="diagram">
+<pre>   ┌─────┬─────┬─────┐
+   │  A  │  B  │  C  │   ← เต็มแล้ว คนส่งคนที่ 4 ต้องรอ
+   └─────┴─────┴─────┘
+
+   <strong>ส่ง</strong>: buffer ยังว่าง → ผ่านเลย ไม่ต้องรอคนรับ
+        buffer เต็ม  → block จนกว่าจะมีคนดึงออก
+   <strong>รับ</strong>: มีของ       → ได้เลย
+        ว่างเปล่า    → block จนกว่าจะมีคนส่ง (ยกเว้น channel ถูกปิด)</pre>
+</div>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ ส่งไม่เกินความจุ</h4>
+    <pre><code>ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">string</span>, <span class="n">2</span>)
+
+ch &lt;- <span class="s">"A"</span>
+ch &lt;- <span class="s">"B"</span>
+
+fmt.<span class="f">Println</span>(&lt;-ch)  <span class="c">// A</span>
+fmt.<span class="f">Println</span>(&lt;-ch)  <span class="c">// B</span></code></pre>
+    <p style="margin-bottom:0">ไม่ต้องมี goroutine อื่นก็ได้</p>
+  </div>
+  <div class="side bad">
+    <h4>❌ ส่งเกินความจุ</h4>
+    <pre><code>ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">string</span>, <span class="n">2</span>)
+
+ch &lt;- <span class="s">"A"</span>
+ch &lt;- <span class="s">"B"</span>
+ch &lt;- <span class="s">"C"</span>      <span class="c">// ค้างตรงนี้</span></code></pre>
+    <p style="margin-bottom:0">
+      <code>deadlock! goroutine 1 [chan send]</code>
+    </p>
+  </div>
+</div>
+
+<h2>6 · <code>close</code> และ <code>for range</code></h2>
+
+<div class="predict">
+  <pre><code>ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">string</span>, <span class="n">3</span>)
+ch &lt;- <span class="s">"A"</span>
+ch &lt;- <span class="s">"B"</span>
+ch &lt;- <span class="s">"C"</span>
+
+<span class="k">for</span> val := <span class="k">range</span> ch {
+    fmt.<span class="f">Println</span>(val)
+}</code></pre>
+  <p class="ask">ของอยู่ครบ 3 ตัว วนอ่านออกมาหมดแล้วจะจบสวย ๆ ใช่ไหม?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรันแล้วได้:</p>
+    <pre style="margin:0.6rem 0"><code>A
+B
+C
+fatal error: all goroutines are asleep - deadlock!
+
+goroutine 1 [chan receive]:</code></pre>
+    <p>
+      <strong>อ่านครบแล้วยังค้าง</strong> — เพราะ <code>for range ch</code>
+      ไม่ได้แปลว่า "วนตามจำนวนของที่มี" แต่แปลว่า
+      <strong>"วนไปเรื่อย ๆ จนกว่า channel จะถูกปิด"</strong>
+    </p>
+    <p style="margin-bottom:0">
+      พออ่านครบ 3 ตัว มันไปรออันที่ 4 ต่อ ซึ่งไม่มีวันมา
+      <br><strong>วิธีแก้: ใส่ <code>close(ch)</code> ก่อนเข้า loop</strong>
+    </p>
+    <pre style="margin:0.6rem 0 0"><code>ch &lt;- <span class="s">"C"</span>
+<span class="f">close</span>(ch)          <span class="c">// ← บรรทัดนี้</span>
+
+<span class="k">for</span> val := <span class="k">range</span> ch {   <span class="c">// A B C แล้วจบเรียบร้อย</span>
+    fmt.<span class="f">Println</span>(val)
+}</code></pre>
+  </div>
+</div>
+
+<p>ในโค้ดจริง คนส่งเป็นคนปิด และมักปิดด้วย <code>defer</code>:</p>
+
+<pre><code><span class="k">func</span> <span class="f">producer</span>(ch <span class="k">chan</span> <span class="k">int</span>) {
+    <span class="k">defer</span> <span class="f">close</span>(ch)      <span class="c">// ส่งครบแล้วปิดเสมอ</span>
+    <span class="k">for</span> i := <span class="n">1</span>; i &lt;= <span class="n">5</span>; i++ {
+        ch &lt;- i
+    }
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>)
+    <span class="k">go</span> <span class="f">producer</span>(ch)
+
+    <span class="k">for</span> val := <span class="k">range</span> ch {   <span class="c">// 1 2 3 4 5 แล้วจบ</span>
+        fmt.<span class="f">Println</span>(val)
+    }
+    fmt.<span class="f">Println</span>(<span class="s">"Done!"</span>)
+}</code></pre>
+
+<div class="win">
+  <span class="label">💡 กฎการปิด channel ที่ตอบได้ทุกกรณี</span>
+  <p style="margin-bottom:0">
+    <strong>คนส่งเป็นคนปิด ไม่ใช่คนรับ</strong> —
+    เพราะคนส่งเท่านั้นที่รู้ว่า "ส่งครบแล้ว"
+    <br><strong>มีคนส่งหลายคน? ห้ามให้ใครปิดเอง</strong> —
+    ให้ตัวที่รอทุกคนเสร็จเป็นคนปิด (จะเห็นสำนวนนี้ในบทเรียน 25)
+    <br><strong>ไม่ปิดเลยก็ได้</strong> ถ้าไม่มีใคร <code>for range</code> —
+    channel ที่ไม่มีใครใช้แล้วจะถูก garbage collect ไปเอง
+    <strong>การไม่ปิดไม่ใช่ memory leak</strong>
+  </p>
+</div>
+
+<h2>7 · ปิดแล้วเกิดอะไรขึ้น</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ทำอะไรกับ channel ที่ปิดแล้ว</th><th>ผล</th></tr>
+  <tr><td>รับ (<code>&lt;-ch</code>) ตอนยังมีของค้าง</td><td>ได้ของนั้นตามปกติ</td></tr>
+  <tr><td>รับ ตอนไม่มีของแล้ว</td><td>ได้ <strong>zero value ทันที ไม่ block</strong></td></tr>
+  <tr><td><code>for range</code></td><td>วนจนของหมดแล้ว<strong>ออกจาก loop</strong></td></tr>
+  <tr><td><strong>ส่ง</strong> (<code>ch &lt;- x</code>)</td><td>💥 <code>panic: send on closed channel</code></td></tr>
+  <tr><td><code>close</code> ซ้ำอีกรอบ</td><td>💥 <code>panic: close of closed channel</code></td></tr>
+</table>
+</div>
+
+<div class="predict">
+  <pre><code>ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>, <span class="n">1</span>)
+ch &lt;- <span class="n">0</span>              <span class="c">// ส่งเลขศูนย์เข้าไปจริง ๆ</span>
+<span class="f">close</span>(ch)
+
+v, ok := &lt;-ch
+fmt.<span class="f">Println</span>(v, ok)
+
+v, ok = &lt;-ch
+fmt.<span class="f">Println</span>(v, ok)</code></pre>
+  <p class="ask">สองบรรทัดนี้พิมพ์อะไร — และต่างกันตรงไหน?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0 0 0.6rem"><code>0 true
+0 false</code></pre>
+    <p>
+      <strong><code>v</code> เป็น <code>0</code> เหมือนกันทั้งสองครั้ง</strong> —
+      ครั้งแรกคือ "ศูนย์ที่ถูกส่งมาจริง" ครั้งที่สองคือ "ศูนย์เพราะไม่มีอะไรแล้ว"
+      <br><strong>ดูจากค่าอย่างเดียวแยกไม่ออก</strong>
+    </p>
+    <p style="margin-bottom:0">
+      ตัวที่แยกให้คือ <code>ok</code> — นี่คือเหตุผลที่ต้องมี comma-ok
+      รูปแบบเดียวกับ type assertion (<a href="../../day-4/lessons/0011-type-assertion-and-switch.html">บทเรียน 11</a>)
+      และ map lookup
+      <br><strong>ถ้า channel ส่งของที่ zero value เป็นค่าที่ถูกต้องได้
+      (<code>0</code>, <code>""</code>, <code>false</code>) — ต้องใช้ comma-ok เสมอ</strong>
+    </p>
+  </div>
+</div>
+
+<h2>8 · Directional channel — จำกัดทิศทางที่ parameter</h2>
+
+<pre><code><span class="c">// ส่งได้อย่างเดียว — ลูกศรชี้เข้า chan</span>
+<span class="k">func</span> <span class="f">producer</span>(ch <span class="k">chan</span>&lt;- <span class="k">int</span>) {
+    <span class="k">defer</span> <span class="f">close</span>(ch)
+    <span class="k">for</span> i := <span class="n">1</span>; i &lt;= <span class="n">5</span>; i++ {
+        ch &lt;- i
+    }
+}
+
+<span class="c">// รับได้อย่างเดียว — ลูกศรชี้ออกจาก chan</span>
+<span class="k">func</span> <span class="f">consumer</span>(ch &lt;-<span class="k">chan</span> <span class="k">int</span>) {
+    <span class="k">for</span> val := <span class="k">range</span> ch {
+        fmt.<span class="f">Println</span>(val)
+    }
+}
+
+<span class="c">// ตอนเรียก ส่ง channel ปกติเข้าไปได้เลย Go แปลงให้เอง</span>
+ch := <span class="f">make</span>(<span class="k">chan</span> <span class="k">int</span>)
+<span class="k">go</span> <span class="f">producer</span>(ch)
+<span class="f">consumer</span>(ch)</code></pre>
+
+<div class="diagram">
+<pre>   chan&lt;- int     ลูกศรอยู่<strong>หลัง</strong> chan  →  ส่งเข้าอย่างเดียว
+   &lt;-chan int     ลูกศรอยู่<strong>หน้า</strong> chan  →  รับออกอย่างเดียว
+
+   <strong>วิธีจำ: อ่านจากซ้ายไปขวาตามลำดับที่เขียน</strong>
+   chan &lt;- int  =  "channel รับ int เข้าไป"
+   &lt;- chan int  =  "ดึงออกจาก channel ได้ int"</pre>
+</div>
+
+<p>
+  ประโยชน์คือ <strong>compiler บังคับสัญญาให้</strong> —
+  <code>consumer</code> จะเผลอส่งของเข้าหรือปิด channel ไม่ได้เลย:
+</p>
+
+<pre><code>cannot close receive-only channel ch (variable of type &lt;-chan int)</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>เขียน production code ให้ใช้ directional channel ที่ parameter เสมอ</strong>
+    — เป็นการเขียน "ใครทำอะไรได้" ลงไปในลายเซ็นฟังก์ชัน
+    คนอ่านไม่ต้องไล่โค้ดข้างใน และ compiler ช่วยกันพลาดให้
+    <br>ตรงกันกับหลัก "accept interfaces, return structs" ที่คุณเจอใน
+    <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a>:
+    <strong>รับให้แคบที่สุดเท่าที่ต้องใช้</strong>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. <code>ch := make(chan string)</code> แล้ว <code>ch &lt;- "Hello"</code> ใน <code>main</code> เกิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">เก็บไว้ใน channel รอจนกว่าจะมีคนมาอ่าน</button>
+    <button class="opt">panic ทันทีเพราะ channel ยังไม่มี buffer</button>
+    <button class="opt">ค้างที่บรรทัดนั้นจนได้ <code>deadlock</code></button>
+    <button class="opt">ส่งผ่านไปได้ แต่ข้อมูลจะหายไปเลยทันที</button>
+  </div>
+  <div class="explain">
+    <p>ไม่ระบุขนาด = ความจุ 0 = <strong>ไม่มีที่พักของ</strong>
+    คนส่งต้องรอจนมีคนมารับถึงมือ แต่ <code>main</code> ค้างอยู่ตรงนั้นแล้ว
+    ไม่มีใครไปอ่านได้
+    <br><code>fatal error: all goroutines are asleep - deadlock!</code> ·
+    <code>goroutine 1 [chan send]</code>
+    <br>แก้โดยย้ายฝั่งส่ง (หรือฝั่งรับ) ไปอยู่คนละ goroutine</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. <code>for val := range ch</code> จะออกจาก loop เมื่อไหร่?</p>
+  <div class="opts">
+    <button class="opt">เมื่อ channel ถูก <code>close</code> และของหมดแล้ว</button>
+    <button class="opt">เมื่ออ่านครบตามจำนวนของที่ใส่เข้าไป</button>
+    <button class="opt">เมื่อ channel ว่างลงชั่วขณะระหว่างวนอ่าน</button>
+    <button class="opt">เมื่อ goroutine ที่ส่งของทำงานเสร็จสิ้นแล้ว</button>
+  </div>
+  <div class="explain">
+    <p><code>range</code> บน channel ไม่รู้จัก "จำนวน" — มันวนไปเรื่อย ๆ
+    <strong>รอ <code>close</code> อย่างเดียว</strong>
+    <br>ใส่ของ 3 ตัวแล้วไม่ปิด → อ่านครบ 3 แล้วไปรอตัวที่ 4 → <code>deadlock</code>
+    <br>ในโค้ดจริงนิยมเขียน <code>defer close(ch)</code> ไว้ในฟังก์ชันฝั่งส่ง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. รับจาก channel ที่ปิดแล้วและไม่มีของเหลือ ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">panic ว่า <code>receive on closed channel</code></button>
+    <button class="opt">ค้างรอตลอดกาลเหมือน channel ที่ยังไม่ปิด</button>
+    <button class="opt">ได้ <code>nil</code> ไม่ว่า channel จะเป็น type อะไร</button>
+    <button class="opt">ได้ zero value ทันที และ <code>ok</code> เป็น <code>false</code></button>
+  </div>
+  <div class="explain">
+    <p>รับจาก channel ที่ปิดแล้ว<strong>ไม่ block</strong> — ได้ zero value กลับมาทันที
+    (<code>0</code> · <code>""</code> · <code>nil</code> แล้วแต่ type)
+    <br>ที่ panic คือการ<strong>ส่ง</strong>เข้า channel ที่ปิด:
+    <code>panic: send on closed channel</code>
+    <br>เพราะค่าที่ได้แยกไม่ออกจาก "ศูนย์จริง ๆ" จึงต้องใช้
+    <code>v, ok := &lt;-ch</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. <code>func consumer(ch &lt;-chan int)</code> ทำอะไรกับ <code>ch</code> ไม่ได้?</p>
+  <div class="opts">
+    <button class="opt">อ่านค่าออกมาด้วย <code>&lt;-ch</code> ตรง ๆ</button>
+    <button class="opt">ส่งค่าเข้าไป หรือสั่ง <code>close(ch)</code></button>
+    <button class="opt">วนอ่านด้วย <code>for val := range ch</code></button>
+    <button class="opt">ส่งต่อ <code>ch</code> ให้ฟังก์ชันอื่นที่รับ <code>&lt;-chan</code></button>
+  </div>
+  <div class="explain">
+    <p><code>&lt;-chan int</code> = รับได้อย่างเดียว →
+    <code>cannot close receive-only channel</code> และส่งเข้าก็ไม่ได้
+    <br>อ่าน · <code>range</code> · ส่งต่อให้ฟังก์ชันที่รับ <code>&lt;-chan</code> —
+    ทำได้หมด
+    <br><strong>เป็นการเขียนสัญญาไว้ในลายเซ็น</strong> ให้ compiler บังคับแทนคน</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — สายพานร้านอาหาร</span>
+  <p>
+    ทำในเครื่อง <strong>ทุกข้อที่ให้ "ทำให้พัง" ต้องจดคำในวงเล็บเหลี่ยม</strong>
+    ของบรรทัด <code>goroutine 1 [...]</code> ไว้ด้วย
+  </p>
+  <ol>
+    <li>สร้าง <code>type Order struct { ID int; Menu string }</code>
+        และ channel <code>orders := make(chan Order)</code></li>
+    <li>เขียน <code>kitchen(orders chan&lt;- Order)</code> ที่ส่งออเดอร์ 3 รายการ
+        (Burger, Pizza, Bubble Tea) แล้ว <code>defer close</code>
+        <br><strong>ใช้ directional channel ให้ถูกทิศ</strong></li>
+    <li>ใน <code>main</code> วน <code>for order := range orders</code>
+        พิมพ์ <code>✅ Burger ready</code> ทีละอัน
+        แล้วปิดท้ายด้วย <code>All orders completed 🎉</code></li>
+    <li><strong>ทำให้พัง 1:</strong> ลบ <code>defer close(orders)</code> ออก
+        → เกิดอะไร? อยู่ที่บรรทัดไหน?</li>
+    <li><strong>ทำให้พัง 2:</strong> ใส่ <code>close</code> กลับ
+        แล้วเพิ่ม <code>orders &lt;- Order{...}</code> อีกอันหลัง <code>close</code>
+        → ได้ error ว่าอะไร?</li>
+    <li><strong>ทำให้พัง 3:</strong> ย้าย <code>kitchen(orders)</code>
+        ออกจาก <code>go</code> (เรียกตรง ๆ) → เกิดอะไร? <strong>ทำไม?</strong></li>
+    <li><strong>ทำให้พัง 4:</strong> ลองสั่ง <code>close(orders)</code>
+        ข้างใน <code>main</code> ทั้งที่ <code>kitchen</code> ปิดไปแล้ว</li>
+    <li><strong>เปลี่ยนเป็น buffered:</strong> ทำ <code>make(chan Order, 3)</code>
+        แล้วลองเรียก <code>kitchen(orders)</code> แบบไม่มี <code>go</code> อีกครั้ง
+        — <strong>คราวนี้ผ่านไหม? ทำไมถึงต่างจากข้อ 6?</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 6 กับข้อ 8</button>
+  <div class="answer">
+    <p><strong>ข้อ 6 (unbuffered, ไม่มี <code>go</code>):</strong> ค้างที่
+    <code>orders &lt;- ...</code> ตัวแรกเลย —
+    <code>deadlock! goroutine 1 [chan send]</code>
+    <br><code>main</code> ยังไม่ได้ไปถึงบรรทัด <code>for range</code>
+    เพราะติดอยู่ในตัว <code>kitchen</code> → ไม่มีใครรับ → ค้าง</p>
+    <p style="margin-bottom:0"><strong>ข้อ 8 (buffered 3, ไม่มี <code>go</code>):</strong>
+    <strong>ผ่าน!</strong> เพราะ buffer รับ 3 ตัวไว้ได้โดยไม่ต้องมีคนรับ
+    <code>kitchen</code> จึงส่งครบแล้ว <code>close</code> แล้ว return ออกมาได้
+    จากนั้น <code>main</code> ค่อยวนอ่าน
+    <br><strong>แต่ถ้าเพิ่มเป็น 4 ออเดอร์บน buffer 3 → กลับมาค้างที่ตัวที่ 4</strong>
+    ลองดูด้วย จะเห็นว่า buffer แค่<em>เลื่อน</em>ปัญหา ไม่ได้<em>แก้</em></p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 8 คือหัวใจของบทนี้</strong> — คนมักคิดว่า
+    "ใส่ buffer เยอะ ๆ ไว้ก่อน เดี๋ยวก็ไม่ค้าง" ซึ่งทำให้บั๊กไปโผล่ตอน load สูงแทน
+    <strong>buffer มีไว้ลดการรอ ไม่ได้มีไว้แก้ deadlock</strong>
+    <br>บทถัดไป: <code>select</code> — รอหลาย channel พร้อมกัน
+    และวิธีไม่ให้ต้องรอตลอดกาล
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0021-goroutine-waitgroup.html">← บทเรียน 21</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0023-select.html">บทเรียน 23 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/tour/concurrency/2">A Tour of Go — Channels</a> ถึงหน้า 6 · รันได้ในหน้าเว็บ</li>
+  <li><a href="https://go.dev/blog/codelab-share">Share Memory By Communicating</a> — ที่มาของคำขวัญในหัวข้อ 1</li>
+  <li><a href="https://go.dev/ref/spec#Channel_types">Go Spec — Channel types</a> · <a href="https://go.dev/ref/spec#Close">Close</a></li>
+  <li><a href="https://go.dev/doc/effective_go#channels">Effective Go — Channels</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

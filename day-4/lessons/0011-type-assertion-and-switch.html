@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 11 — any, Type Assertion และการดึงของจริงออกมาจากกล่อง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 11 · Day 4 · Interface (ต่อ)</p>
+  <h1>any, Type Assertion และการดึงของจริงออกมาจากกล่อง</h1>
+  <p class="meta">~14 นาที · ต้องมี: <a href="./0010-interface-and-duck-typing.html">บทเรียน 10</a></p>
+  <p class="standfirst">
+    <code>any</code> รับได้ทุกอย่าง — ฟังดูสะดวก แต่พอรับเข้ามาแล้วคุณ
+    <strong>ทำอะไรกับมันไม่ได้เลย</strong> จนกว่าจะดึง type จริงออกมา
+    บทนี้ว่าด้วยสามวิธีดึง (assertion, comma-ok, type switch) ว่าอันไหน panic
+    อันไหนปลอดภัย และทำไม <code>fmt.Println</code> ถึงรู้จักวิธีพิมพ์ struct ของคุณ
+  </p>
+</header>
+
+<main>
+
+<h2>1 · <code>interface{}</code> / <code>any</code> — กล่องที่ใส่อะไรก็ได้</h2>
+
+<p>
+  <code>interface{}</code> คือ interface ที่<strong>ไม่ขอ method อะไรเลย</strong>
+  → ทุก type ในโลกจึงผ่านเงื่อนไขนี้อัตโนมัติ ตั้งแต่ Go 1.18 มี alias ให้ใช้
+  ชื่อสั้นกว่าคือ <code>any</code> (จำจาก <a href="./0009-underlying-type.html">บทเรียน 09</a>:
+  <code>type any = interface{}</code> — เป็น alias ไม่ใช่ type ใหม่)
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">describe</span>(v <span class="k">any</span>) {
+    fmt.<span class="f">Printf</span>(<span class="s">"Value: %v, Type: %T\n"</span>, v, v)
+}
+
+<span class="f">describe</span>(<span class="s">"hello"</span>)        <span class="c">// Value: hello, Type: string</span>
+<span class="f">describe</span>(<span class="n">42</span>)             <span class="c">// Value: 42, Type: int</span>
+<span class="f">describe</span>(<span class="k">true</span>)           <span class="c">// Value: true, Type: bool</span>
+<span class="f">describe</span>(<span class="f">Score</span>(<span class="n">95.5</span>))    <span class="c">// Value: 95.5, Type: main.Score</span></code></pre>
+
+<div class="diagram">
+<pre>ตัวแปร any เก็บ <strong>สองอย่าง</strong> เสมอ:
+
+   ┌───────────────┬───────────────┐
+   │  type จริง    │   ค่าจริง     │
+   ├───────────────┼───────────────┤
+   │   string      │   "hello"     │
+   └───────────────┴───────────────┘
+        ↑ %T อ่านช่องนี้    ↑ %v อ่านช่องนี้
+
+type assertion = <strong>ถามช่องซ้าย แล้วขอช่องขวาถ้าตรง</strong></pre>
+</div>
+
+<div class="warn">
+  <span class="label">อย่าใช้พร่ำเพรื่อ</span>
+  <p style="margin-bottom:0">
+    <code>any</code> คือการ<strong>ปิดตา compiler</strong> — บั๊กที่เคยถูกจับตอน
+    compile จะไปโผล่ตอน runtime แทน ใช้เมื่อ<em>จำเป็นจริง ๆ</em> เท่านั้น
+    เช่นตอนแกะ JSON ที่ไม่รู้โครงสร้างล่วงหน้า หรือเขียน logger
+    ถ้ารู้ type อยู่แล้วก็เขียน type นั้นตรง ๆ
+  </p>
+</div>
+
+<h2>2 · Type Assertion — แบบดิบ (เสี่ยง panic)</h2>
+
+<pre><code><span class="k">var</span> i <span class="k">any</span> = <span class="s">"hello"</span>
+s := i.(<span class="n">string</span>)     <span class="c">// syntax: x.(T)</span>
+fmt.<span class="f">Println</span>(s)      <span class="c">// hello</span></code></pre>
+
+<div class="predict">
+  <pre><code><span class="k">var</span> i <span class="k">any</span> = <span class="s">"hello"</span>
+n := i.(<span class="n">int</span>)
+fmt.<span class="f">Println</span>(n)</code></pre>
+  <p class="ask">เกิดอะไรขึ้น — compile error, พิมพ์ 0 หรือ panic?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>Panic ตอน runtime</strong> — compile ผ่านสบาย แล้วพังตอนรัน
+    ข้อความจริงที่ผมรันได้:</p>
+    <pre style="margin-bottom:0.8rem"><code><span class="c">panic: interface conversion: interface {} is string, not int</span></code></pre>
+    <p style="margin-bottom:0">
+      อ่านข้อความนี้ให้ออก: <em>"กล่องนี้เก็บ string อยู่ ไม่ใช่ int"</em>
+      <strong>compiler ช่วยอะไรไม่ได้เลย</strong> เพราะตอน compile มันเห็นแค่ว่า
+      <code>i</code> เป็น <code>any</code> — จะเป็นอะไรก็ได้
+    </p>
+  </div>
+</div>
+
+<h2>3 · Comma-ok — แบบปลอดภัย ใช้อันนี้</h2>
+
+<pre><code><span class="k">var</span> i <span class="k">any</span> = <span class="s">"hello"</span>
+
+s, ok := i.(<span class="n">string</span>)
+<span class="k">if</span> ok {
+    fmt.<span class="f">Println</span>(<span class="s">"String value:"</span>, s)
+} <span class="k">else</span> {
+    fmt.<span class="f">Println</span>(<span class="s">"Not a string"</span>)
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เขียนแบบ</th><th><code>ok</code></th><th>ค่าที่ได้</th><th>ถ้าไม่ตรง</th></tr>
+  <tr><td><code>s := i.(string)</code></td><td>—</td><td>ค่าจริง</td><td><strong>panic</strong> 💥</td></tr>
+  <tr><td><code>s, ok := i.(string)</code></td><td><code>true</code>/<code>false</code></td><td>ค่าจริง หรือ <strong>zero value</strong></td><td>ไปต่อได้ ไม่พัง</td></tr>
+</table>
+</div>
+
+<pre><code><span class="c">// ผลรันจริงเมื่อ i เก็บ string อยู่:</span>
+s, ok := i.(<span class="n">string</span>)   <span class="c">// s = "hello",  ok = true</span>
+n, ok := i.(<span class="n">int</span>)      <span class="c">// n = 0,        ok = false  ← zero value ไม่ใช่ขยะ</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>รูปแบบ comma-ok คุณเคยเจอแล้ว</strong> — ตอนอ่าน map ใน
+    <a href="../../day-3/lessons/0007-value-vs-pointer.html">บทเรียน 07</a>
+    (<code>v, ok := m["key"]</code>) และตอนอ่าน channel
+    Go ใช้สำนวนนี้ทุกที่ที่ "อาจจะไม่มี" — <strong>เจอ <code>, ok</code> เมื่อไหร่
+    แปลว่า Go กำลังบอกว่าอย่าเชื่อว่าจะได้ของ</strong>
+  </p>
+</div>
+
+<h2>4 · Type Switch — เช็คหลาย type ทีเดียว</h2>
+
+<p>
+  ถ้าต้องเช็ค 5 type ด้วย comma-ok ก็จะได้ <code>if</code> ซ้อนกัน 5 ชั้น —
+  ซึ่งเป็นสิ่งที่ <a href="../../day-2/lessons/0004-guard-clauses.html">บทเรียน 04</a>
+  บอกให้เลิกทำ Go มีไวยากรณ์เฉพาะให้:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">printType</span>(v <span class="k">any</span>) {
+    <span class="k">switch</span> value := v.(<span class="k">type</span>) {    <span class="c">// ← .(type) เขียนได้เฉพาะใน switch</span>
+    <span class="k">case</span> <span class="n">string</span>:
+        fmt.<span class="f">Println</span>(<span class="s">"string:"</span>, value)   <span class="c">// value เป็น string ตรงนี้</span>
+    <span class="k">case</span> <span class="n">int</span>:
+        fmt.<span class="f">Println</span>(<span class="s">"int:"</span>, value)      <span class="c">// value เป็น int ตรงนี้</span>
+    <span class="k">case</span> <span class="n">bool</span>:
+        fmt.<span class="f">Println</span>(<span class="s">"bool:"</span>, value)
+    <span class="k">default</span>:
+        fmt.<span class="f">Println</span>(<span class="s">"unknown type"</span>)
+    }
+}
+
+<span class="c">// ผลรันจริง:</span>
+<span class="f">printType</span>(<span class="s">"hello"</span>)   <span class="c">// string: hello</span>
+<span class="f">printType</span>(<span class="n">42</span>)        <span class="c">// int: 42</span>
+<span class="f">printType</span>(<span class="k">true</span>)      <span class="c">// bool: true</span>
+<span class="f">printType</span>(<span class="n">3.14</span>)      <span class="c">// unknown type   ← float64 ไม่มี case</span></code></pre>
+
+<div class="win">
+  <span class="label">จุดที่เจ๋งของ type switch</span>
+  <p style="margin-bottom:0">
+    ใน <code>case string:</code> ตัวแปร <code>value</code> <strong>เป็น
+    <code>string</code> จริง ๆ ไม่ใช่ <code>any</code></strong> — เรียก
+    <code>len(value)</code> หรือ <code>strings.ToUpper(value)</code> ได้ทันที
+    ไม่ต้อง assert ซ้ำ compiler เปลี่ยน type ให้ในแต่ละ branch
+  </p>
+</div>
+
+<h2>5 · Stringer — ทำไม <code>fmt.Println</code> ถึงรู้จัก struct ของคุณ</h2>
+
+<p>
+  <code>fmt</code> ทำ type switch อยู่ข้างในนั่นเอง — มันเช็คว่าค่าที่รับมา
+  implement interface นี้ไหม:
+</p>
+
+<pre><code><span class="c">// นิยามจริงใน package fmt:</span>
+<span class="k">type</span> Stringer <span class="k">interface</span> {
+    <span class="f">String</span>() <span class="n">string</span>
+}</code></pre>
+
+<div class="compare">
+  <div class="side good">
+    <h4>มี <code>String()</code></h4>
+    <pre><code><span class="k">type</span> Person <span class="k">struct</span> {
+    Name    <span class="n">string</span>
+    Surname <span class="n">string</span>
+}
+
+<span class="k">func</span> (p Person) <span class="f">String</span>() <span class="n">string</span> {
+    <span class="k">return</span> fmt.<span class="f">Sprintf</span>(<span class="s">"%s %s"</span>,
+        p.Name, p.Surname)
+}
+
+fmt.<span class="f">Println</span>(p)
+<span class="c">// Alice Wonder</span></code></pre>
+  </div>
+  <div class="side">
+    <h4>ไม่มี <code>String()</code></h4>
+    <pre><code><span class="k">type</span> Person <span class="k">struct</span> {
+    Name    <span class="n">string</span>
+    Surname <span class="n">string</span>
+}
+
+
+
+
+
+fmt.<span class="f">Println</span>(p)
+<span class="c">// {Alice Wonder}</span></code></pre>
+  </div>
+</div>
+
+<p>
+  <strong>ไม่ต้องบอก <code>fmt</code> เลยว่าคุณมี <code>String()</code></strong> —
+  duck typing จาก <a href="./0010-interface-and-duck-typing.html">บทเรียน 10</a>
+  ทำงานให้อัตโนมัติ นี่คือตัวอย่างที่ชัดที่สุดว่า implicit interface มีประโยชน์ยังไง:
+  <code>fmt</code> เขียนขึ้นก่อนโค้ดคุณเกิดเป็นสิบปี แต่ยังทำงานกับ type ใหม่ได้
+</p>
+
+<div class="warn">
+  <span class="label">กับดัก: String() ที่เรียกตัวเอง</span>
+  <pre style="margin-bottom:0.5rem"><code><span class="k">func</span> (p Person) <span class="f">String</span>() <span class="n">string</span> {
+    <span class="k">return</span> fmt.<span class="f">Sprintf</span>(<span class="s">"%v"</span>, p)   <span class="c">// ✗ วนไม่รู้จบ → stack overflow</span>
+}</code></pre>
+  <p style="margin-bottom:0">
+    <code>%v</code> บน <code>p</code> จะไปเรียก <code>String()</code> อีกรอบ →
+    วนไม่จบจน stack เต็ม <strong>ทางแก้: อ้าง field ตรง ๆ</strong>
+    (<code>p.Name</code>) หรือ convert เป็น type อื่นก่อน
+  </p>
+</div>
+
+<h2>6 · Interface Embedding — ประกอบ interface จากชิ้นเล็ก</h2>
+
+<p>
+  <a href="./0010-interface-and-duck-typing.html">บทเรียน 10</a> บอกให้ทำ interface
+  ให้เล็ก แล้วถ้าบางที่อยากได้ครบทุกอันล่ะ — ไม่ต้องพิมพ์ซ้ำ ใช้ embedding:
+</p>
+
+<pre><code><span class="k">type</span> Saver   <span class="k">interface</span> { <span class="f">Save</span>(data []<span class="n">byte</span>) <span class="n">error</span> }
+<span class="k">type</span> Loader  <span class="k">interface</span> { <span class="f">Load</span>(id <span class="n">string</span>) ([]<span class="n">byte</span>, <span class="n">error</span>) }
+<span class="k">type</span> Deleter <span class="k">interface</span> { <span class="f">Delete</span>(id <span class="n">string</span>) <span class="n">error</span> }
+
+<span class="k">type</span> Storage <span class="k">interface</span> {
+    Saver          <span class="c">// ← ไม่ใช่ field แต่คือ "รวม method ของ Saver มาด้วย"</span>
+    Loader
+    Deleter
+}</code></pre>
+
+<p>
+  <code>Storage</code> จึงมี 3 method โดยไม่ต้องเขียนซ้ำ และ type ที่ implement
+  ครบทั้งสามก็เป็น <code>Storage</code> อัตโนมัติ:
+</p>
+
+<pre><code><span class="k">type</span> FileStorage <span class="k">struct</span>{}
+
+<span class="k">func</span> (FileStorage) <span class="f">Save</span>(data []<span class="n">byte</span>) <span class="n">error</span>         { <span class="k">return</span> <span class="k">nil</span> }
+<span class="k">func</span> (FileStorage) <span class="f">Load</span>(id <span class="n">string</span>) ([]<span class="n">byte</span>, <span class="n">error</span>) { <span class="k">return</span> []<span class="n">byte</span>(<span class="s">"example"</span>), <span class="k">nil</span> }
+<span class="k">func</span> (FileStorage) <span class="f">Delete</span>(id <span class="n">string</span>) <span class="n">error</span>       { <span class="k">return</span> <span class="k">nil</span> }
+
+<span class="k">var</span> s Storage = FileStorage{}   <span class="c">// ✓ ผ่าน</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ของจริงใน standard library:</strong> <code>io.ReadWriter</code> คือ
+    <code>io.Reader</code> + <code>io.Writer</code> ประกอบกันแบบนี้เป๊ะ ๆ —
+    เปิดอ่านได้ที่ <a href="https://pkg.go.dev/io#ReadWriter">pkg.go.dev/io</a>
+    ซอร์สจริงสั้นแค่ 4 บรรทัด
+  </p>
+</div>
+
+<h2>7 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. <code>var i any = "hello"</code> แล้ว <code>n := i.(int)</code> เกิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">compile ไม่ผ่านตั้งแต่บรรทัดนั้น</button>
+    <button class="opt">ได้ค่า 0 แล้วรันต่อได้ปกติ</button>
+    <button class="opt">panic ตอน runtime ทันทีที่ถึง</button>
+    <button class="opt">แปลง string เป็น int ให้เอง</button>
+  </div>
+  <div class="explain">
+    <p>compiler เห็นแค่ <code>any</code> จึงปล่อยผ่าน แล้วพังตอนรันด้วย
+    <code>panic: interface conversion: interface {} is string, not int</code>
+    <strong>ใช้ <code>n, ok := i.(int)</code> แทนเสมอถ้าไม่แน่ใจ 100%</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. <code>n, ok := i.(int)</code> เมื่อ <code>i</code> เก็บ string — <code>n</code> ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้ 0 ซึ่งเป็น zero value ของ int</button>
+    <button class="opt">ได้ค่าขยะที่อ่านมาจากหน่วยความจำ</button>
+    <button class="opt">ไม่ได้ค่า เพราะโปรแกรมหยุดก่อน</button>
+    <button class="opt">ได้ nil เพราะการแปลงล้มเหลว</button>
+  </div>
+  <div class="explain">
+    <p>รูปแบบ comma-ok <strong>ไม่เคยคืนค่าขยะ</strong> — ถ้าไม่ตรงจะได้
+    zero value ของ type ที่ขอ (<code>0</code>, <code>""</code>, <code>false</code>,
+    <code>nil</code>) พร้อม <code>ok = false</code> เสมอ ปลอดภัยกว่าแบบดิบมาก</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. ใน <code>case string:</code> ของ type switch ตัวแปรมี type อะไร?</p>
+  <div class="opts">
+    <button class="opt">ยังเป็น any ต้อง assert ซ้ำอีกรอบ</button>
+    <button class="opt">เป็น interface ที่มีแค่ method string</button>
+    <button class="opt">ไม่มีตัวแปรให้ใช้ใน case นั้นเลย</button>
+    <button class="opt">เป็น string จริง ใช้งานได้ทันที</button>
+  </div>
+  <div class="explain">
+    <p>compiler เปลี่ยน type ของตัวแปรให้<strong>ในแต่ละ branch แยกกัน</strong>
+    → <code>len(value)</code>, <code>strings.ToUpper(value)</code> เรียกได้เลย
+    นี่คือเหตุผลหลักที่ type switch อ่านง่ายกว่า <code>if</code> ซ้อน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. <code>fmt.Println(p)</code> รู้ได้ยังไงว่าต้องเรียก <code>String()</code>?</p>
+  <div class="opts">
+    <button class="opt">ต้องลงทะเบียน type ไว้กับ fmt ก่อน</button>
+    <button class="opt">fmt เช็คว่าค่านั้น implement Stringer ไหม</button>
+    <button class="opt">Go เรียก String ให้ทุก struct เสมอ</button>
+    <button class="opt">คอมไพเลอร์แทรกโค้ดพิเศษให้ตอน build</button>
+  </div>
+  <div class="explain">
+    <p><code>fmt</code> ทำ type assertion ข้างในว่า <code>v.(Stringer)</code> ได้ไหม
+    — <strong>ไม่ต้องลงทะเบียนอะไรเลย</strong> นี่คือ duck typing ในทางปฏิบัติ
+    และเป็นเหตุผลที่ <code>error</code> interface ทำงานแบบเดียวกันได้ใน
+    <a href="./0012-error-architecture.html">บทเรียน 12</a></p>
+  </div>
+</div>
+
+<h2>8 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: เขียน formatter ที่รับอะไรก็ได้</h3>
+  <ol>
+    <li>เขียน <code>func Format(v any) string</code> ที่ใช้ type switch คืนค่าดังนี้:
+      <ul>
+        <li><code>string</code> → ครอบด้วย <code>"</code> เช่น <code>"hello"</code></li>
+        <li><code>int</code>, <code>int64</code> → เติม comma คั่นหลักพัน (<code>1,234,567</code>)</li>
+        <li><code>bool</code> → <code>"ใช่"</code> / <code>"ไม่ใช่"</code></li>
+        <li><code>nil</code> → <code>"(ว่าง)"</code> — <em>คำใบ้: <code>case nil:</code> ใช้ได้</em></li>
+        <li>อย่างอื่น → <code>fmt.Sprintf("%v", v)</code></li>
+      </ul>
+    </li>
+    <li>เพิ่ม <code>case fmt.Stringer:</code> ไว้<strong>ก่อน</strong> <code>default</code>
+        แล้วคืน <code>v.String()</code></li>
+    <li>สร้าง <code>type Temp float64</code> ที่มี <code>String()</code> คืน
+        <code>"36.5°C"</code> แล้วส่งเข้า <code>Format</code> — <strong>เข้า case ไหน?</strong></li>
+    <li><strong>ลำดับของ case มีผลจริง</strong> — สร้าง type ที่ตรงสอง case พร้อมกัน:
+        <pre style="margin:0.4rem 0"><code><span class="k">type</span> FieldError <span class="k">struct</span>{ Field <span class="n">string</span> }
+
+<span class="k">func</span> (e FieldError) <span class="f">Error</span>() <span class="n">string</span>  { <span class="k">return</span> <span class="s">"invalid field: "</span> + e.Field }
+<span class="k">func</span> (e FieldError) <span class="f">String</span>() <span class="n">string</span> { <span class="k">return</span> <span class="s">"FieldError("</span> + e.Field + <span class="s">")"</span> }</code></pre>
+        เพิ่ม <code>case error:</code> เข้าไป แล้วลองสลับว่าใครอยู่ก่อน
+        ระหว่าง <code>case error:</code> กับ <code>case fmt.Stringer:</code>
+        <br><em>สปอยล์ผลรันจริง: <code>error</code> อยู่ก่อน →
+        <code>invalid field: age</code> · <code>Stringer</code> อยู่ก่อน →
+        <code>FieldError(age)</code></em>
+        <br><strong>Go เลือก case แรกที่ตรง ไม่ใช่ที่ตรงที่สุด</strong></li>
+    <li>ลองสั่ง <code>fmt.Println(FieldError{Field: "age"})</code> ตรง ๆ ดูว่า
+        <code>fmt</code> เลือกอันไหน — <em>เฉลย: ได้ <code>invalid field: age</code>
+        แปลว่า <code>fmt</code> เช็ค <code>error</code> ก่อน <code>Stringer</code></em></li>
+    <li><strong>ท้าทาย:</strong> เพิ่ม <code>case []any:</code> ที่วนเรียก
+        <code>Format</code> กับสมาชิกทุกตัวแล้วต่อด้วย <code>", "</code> —
+        recursion กับ type switch ทำงานด้วยกันได้สบาย</li>
+  </ol>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://go.dev/tour/methods/15">A Tour of Go — Type assertions</a>
+  ถึงหน้า 18 (จบที่ Stringer พร้อมแบบฝึกหัดให้เขียนเอง) ประมาณ 10 นาที
+  ส่วนถ้าอยากรู้ว่า interface เก็บ type+value ยังไงในหน่วยความจำจริง ๆ
+  <a href="https://research.swtch.com/interfaces">Go Data Structures: Interfaces</a>
+  ของ Russ Cox (หนึ่งในทีมหลักของ Go) อธิบายระดับ bit เลย —
+  ยากกว่าที่ต้องรู้ตอนนี้ แต่เก็บไว้อ่านตอนสงสัยว่าทำไม interface ถึงเร็ว
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — ข้อ 4 ของภารกิจ (สลับลำดับ case)
+    เป็นข้อที่ตั้งใจให้ผลลัพธ์ "แปลก" ถ้าได้ผลแล้วอธิบายไม่ได้ว่าทำไม
+    ส่งโค้ดกับผลลัพธ์มา จะอธิบายให้
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0010-interface-and-duck-typing.html">← บทเรียน 10</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 4</a>
+  <a href="./0012-error-architecture.html">บทเรียน 12 → error architecture</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/tour/methods/15">A Tour of Go — Type assertions &amp; switches</a></li>
+  <li><a href="https://go.dev/ref/spec#Type_assertions">Go spec — Type assertions</a> — กฎว่าเมื่อไหร่ panic</li>
+  <li><a href="https://go.dev/ref/spec#Type_switches">Go spec — Type switches</a></li>
+  <li><a href="https://pkg.go.dev/fmt#Stringer">pkg.go.dev — fmt.Stringer</a> — นิยามจริง 3 บรรทัด</li>
+  <li><a href="https://pkg.go.dev/io#ReadWriter">pkg.go.dev — io.ReadWriter</a> — ตัวอย่าง interface embedding ในของจริง</li>
+  <li><a href="https://research.swtch.com/interfaces">Russ Cox — Go Data Structures: Interfaces</a> — interface หน้าตายังไงในหน่วยความจำ</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

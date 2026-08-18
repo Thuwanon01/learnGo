@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 24 — Data Race, Mutex และ Race Detector</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 24 · Day 6 · Concurrency</p>
+  <h1>Data Race, Mutex และ Race Detector</h1>
+  <p class="meta">~16 นาที · ต้องมี: <a href="./0021-goroutine-waitgroup.html">บทเรียน 21</a>, <a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a> (<code>defer</code>)</p>
+  <p class="standfirst">
+    บั๊กที่คุณเจอมาทั้งหมดจนถึงบทที่แล้ว มีลักษณะร่วมกันอย่างหนึ่ง:
+    <strong>มันพังเหมือนเดิมทุกครั้ง</strong> รันสิบครั้งก็ผิดสิบครั้งแบบเดียวกัน
+    <br>บทนี้คือบั๊กคนละสายพันธุ์ — <strong>รันสิบครั้งผิดสิบแบบ
+    และบางครั้งก็ถูก</strong> ซึ่งแย่กว่ามาก เพราะมันผ่านการเทสของคุณไปได้
+  </p>
+</header>
+
+<main>
+
+<h2>1 · การทดลองที่ต้องเห็นด้วยตาตัวเอง</h2>
+
+<div class="predict">
+  <pre><code><span class="k">var</span> counter <span class="k">int</span>
+<span class="k">var</span> wg sync.WaitGroup
+
+<span class="k">for</span> i := <span class="n">0</span>; i &lt; <span class="n">1000</span>; i++ {
+    wg.<span class="f">Add</span>(<span class="n">1</span>)
+    <span class="k">go</span> <span class="k">func</span>() {
+        <span class="k">defer</span> wg.<span class="f">Done</span>()
+        counter++
+    }()
+}
+
+wg.<span class="f">Wait</span>()
+fmt.<span class="f">Println</span>(<span class="s">"counter ="</span>, counter)</code></pre>
+  <p class="ask">
+    <code>WaitGroup</code> ถูกต้องทุกอย่าง รอครบ 1000 ตัวจริง ๆ
+    — พิมพ์อะไรออกมา?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรัน 5 ครั้งติดกัน:</p>
+    <pre style="margin:0.6rem 0"><code>counter = 988
+counter = 947
+counter = 956
+counter = 963
+counter = 918</code></pre>
+    <p>
+      <strong>ไม่เคยได้ 1000 และไม่เคยได้ตัวเลขเดิมซ้ำ</strong>
+      <br>ไม่มี panic ไม่มี error ไม่มี warning — โปรแกรม "ทำงานสำเร็จ" ทุกครั้ง
+      แค่<strong>คำตอบผิด</strong>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>ลองคิดดูว่าถ้าตัวแปรนี้คือยอดเงินคงเหลือของลูกค้า</strong>
+      บั๊กแบบนี้ผ่าน code review ผ่านเทส ขึ้น production
+      แล้วไปโผล่เป็น "ยอดไม่ตรง" ตอนปิดบัญชีสิ้นเดือน
+    </p>
+  </div>
+</div>
+
+<h2>2 · ทำไม <code>counter++</code> ถึงไม่ปลอดภัย</h2>
+
+<p>
+  <code>counter++</code> ดูเหมือนคำสั่งเดียว แต่จริง ๆ CPU ทำ <strong>3 ขั้น</strong>:
+</p>
+
+<div class="diagram">
+<pre>   counter++  =  1) อ่านค่าจาก memory   2) บวก 1   3) เขียนกลับ
+
+   <strong>เวลา →</strong>
+
+   goroutine A:  อ่าน(5) ──── +1 ──── เขียน(6)
+   goroutine B:       อ่าน(5) ──── +1 ──── เขียน(6)
+                        ▲                      ▲
+                        │                      │
+              อ่านทัน<strong>ก่อน</strong> A เขียน       ทับค่าที่ A เพิ่งเขียน
+
+   ผลลัพธ์: บวกไปสองครั้ง แต่ค่าขึ้นแค่ 1  ←  <strong>หายไป 1</strong></pre>
+</div>
+
+<p>
+  ยิ่งมี goroutine เยอะ ยิ่งซ้อนกันบ่อย ยิ่งหายเยอะ —
+  และเพราะจังหวะการสลับขึ้นกับ OS scheduler
+  <strong>จำนวนที่หายจึงต่างกันทุกครั้ง</strong>
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ map พังหนักกว่านั้นอีก</strong> — ผมลองให้ 100 goroutine
+    เขียน map เดียวกัน รัน 3 ครั้ง ได้เหมือนกันทั้งสามครั้ง:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>fatal error: concurrent map writes</code></pre>
+  <p style="margin:0.6rem 0 0">
+    Go runtime ดักไว้ให้เองสำหรับ map และ<strong>ฆ่าโปรแกรมทิ้งทันที</strong>
+    (ไม่ใช่ panic ที่ <code>recover</code> ได้ด้วย)
+    <br>ข่าวดีคือพังเสียงดัง — ต่างจาก <code>int</code> ที่หายเงียบ ๆ
+  </p>
+</div>
+
+<h2>3 · <code>sync.Mutex</code> — เข้าได้ทีละคน</h2>
+
+<pre><code><span class="k">var</span> (
+    counter <span class="k">int</span>
+    mu      sync.Mutex
+)
+
+<span class="k">func</span> <span class="f">increment</span>() {
+    mu.<span class="f">Lock</span>()
+    <span class="k">defer</span> mu.<span class="f">Unlock</span>()
+
+    counter++       <span class="c">// ตรงนี้มีได้แค่ goroutine เดียวเท่านั้น</span>
+}</code></pre>
+
+<p>
+  <strong>Mutex ย่อมาจาก MUTual EXclusion</strong> — กันไม่ให้เข้าพร้อมกัน
+  เหมือนกุญแจห้องน้ำ: ใครถือกุญแจอยู่ คนอื่นรอ
+</p>
+
+<p>ผมเอาโค้ดจากหัวข้อ 1 มาใส่ <code>mu.Lock()</code> แล้วรันใหม่:</p>
+
+<pre><code>counter = 1000   <span class="c">// ทุกครั้ง ไม่มีพลาด</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong><code>defer mu.Unlock()</code> — ต้องเป็นบรรทัดถัดจาก <code>Lock()</code> เสมอ</strong>
+    <br>ถ้าโค้ดตรงกลาง <code>return</code> ก่อน หรือ panic แล้วไม่ได้ <code>Unlock</code>
+    → <strong>ทุก goroutine ที่รอกุญแจจะค้างตลอดกาล</strong>
+    ซึ่งแย่กว่าบั๊กเดิมอีก
+    <br>เหตุผลเดียวกับ <code>defer wg.Done()</code> ในบทเรียน 21
+  </p>
+</div>
+
+<h2>4 · <code>sync.RWMutex</code> — คนอ่านเข้าพร้อมกันได้</h2>
+
+<p>
+  <code>Mutex</code> กันทุกคน แม้แต่คนที่แค่ <em>อ่าน</em> —
+  ซึ่งเกินจำเป็น เพราะคนอ่านหลายคนพร้อมกันไม่ได้ทำให้ข้อมูลเสีย
+  <br><strong>สิ่งที่ต้องกันคือ "อ่านขณะมีคนเขียน" และ "เขียนพร้อมกัน"</strong>
+</p>
+
+<pre><code><span class="k">type</span> Cache <span class="k">struct</span> {
+    mu   sync.RWMutex
+    data <span class="k">map</span>[<span class="k">string</span>]<span class="k">string</span>
+}
+
+<span class="k">func</span> (c *Cache) <span class="f">Get</span>(key <span class="k">string</span>) (<span class="k">string</span>, <span class="k">bool</span>) {
+    c.mu.<span class="f">RLock</span>()             <span class="c">// R = Read — หลายคนพร้อมกันได้</span>
+    <span class="k">defer</span> c.mu.<span class="f">RUnlock</span>()
+
+    value, ok := c.data[key]
+    <span class="k">return</span> value, ok
+}
+
+<span class="k">func</span> (c *Cache) <span class="f">Set</span>(key, value <span class="k">string</span>) {
+    c.mu.<span class="f">Lock</span>()              <span class="c">// ไม่มี R = Write — คนเดียวเท่านั้น</span>
+    <span class="k">defer</span> c.mu.<span class="f">Unlock</span>()
+
+    c.data[key] = value
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>RLock()</code> (อ่าน)</th><th><code>Lock()</code> (เขียน)</th></tr>
+  <tr><td>คนอ่านคนอื่นเข้าได้ไหม</td><td>✅ ได้ กี่คนก็ได้</td><td>❌ ไม่ได้</td></tr>
+  <tr><td>คนเขียนเข้าได้ไหม</td><td>❌ ไม่ได้</td><td>❌ ไม่ได้</td></tr>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">📊 วัดจริงว่าคุ้มแค่ไหน</span>
+  <p style="margin-bottom:0">
+    ผมทำ cache สองตัว เหมือนกันทุกอย่างต่างแค่ <code>Mutex</code> กับ
+    <code>RWMutex</code> แล้วให้ 2000 goroutine อ่านพร้อมกัน รัน 3 ครั้ง:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>sync.Mutex   : 12.4ms  ·  13.8ms  ·  7.1ms
+sync.RWMutex :  0.8ms  ·   0.7ms  ·  0.4ms
+             เร็วขึ้น 16–20 เท่า</code></pre>
+  <p style="margin:0.6rem 0 0">
+    <strong>ใช้ <code>RWMutex</code> เมื่ออ่านบ่อยกว่าเขียนมาก ๆ</strong>
+    (cache, config, ตารางค้นหา) — ซึ่งเป็นกรณีส่วนใหญ่ใน backend
+    <br><em>แต่ถ้าอ่านกับเขียนพอ ๆ กัน <code>Mutex</code> ธรรมดาเรียบง่ายกว่าและไม่ช้ากว่าเท่าไหร่</em>
+  </p>
+</div>
+
+<h2>5 · Race Detector — เครื่องมือที่ต้องติดตัว</h2>
+
+<p>
+  ปัญหาใหญ่ของ data race คือมัน<strong>ไม่พังทุกครั้ง</strong>
+  — เทสผ่าน 100 ครั้งไม่ได้แปลว่าไม่มี
+  <br>Go จึงมีเครื่องมือที่<strong>ตรวจจับการเข้าถึงที่ไม่ปลอดภัย ไม่ใช่ผลลัพธ์ที่ผิด</strong>:
+</p>
+
+<pre><code>go run  -race main.go
+go test -race ./...
+go build -race</code></pre>
+
+<p>ผมรันโค้ดจากหัวข้อ 1 ด้วย <code>-race</code> ได้แบบนี้:</p>
+
+<pre><code>==================
+WARNING: DATA RACE
+Read at 0x00c00009c038 by goroutine 12:
+  main.main.func1()
+      /path/to/main.go:<strong>15</strong> +0x68
+
+Previous write at 0x00c00009c038 by goroutine 14:
+  main.main.func1()
+      /path/to/main.go:<strong>15</strong> +0x78
+
+Goroutine 12 (running) created at:
+  main.main()
+      /path/to/main.go:<strong>13</strong> +0x6c
+==================
+counter = 934
+<strong>Found 2 data race(s)</strong>
+<strong>exit status 66</strong></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>บรรทัด</th><th>อ่านว่าอะไร</th></tr>
+  <tr><td><code>Read at 0x... by goroutine 12</code></td><td>ใครอ่าน · อ่านที่ไหนในโค้ด</td></tr>
+  <tr><td><code>Previous write ... by goroutine 14</code></td><td>ใครเขียนทับก่อนหน้านั้น</td></tr>
+  <tr><td><code>created at</code></td><td>goroutine นั้นเกิดจากบรรทัดไหน — <strong>ชี้ไปที่ <code>go</code> ของคุณ</strong></td></tr>
+  <tr><td><code>exit status 66</code></td><td><strong>ออกด้วยรหัสไม่เป็นศูนย์ → CI ฟ้องได้</strong></td></tr>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">✅ ใส่ไว้ใน CI ตั้งแต่วันแรก</span>
+  <p style="margin-bottom:0">
+    เพราะ <code>-race</code> ทำให้ exit code เป็น 66 เมื่อเจอ race
+    <strong>pipeline จะแดงเองโดยไม่ต้องมีใครมานั่งอ่าน log</strong>
+    <br>ค่าใช้จ่าย: ช้าลง ~2–20 เท่า และกิน memory มากขึ้น →
+    <strong>ใช้ตอนเทส ไม่ใช่ตอน build ขึ้น production</strong>
+    <br>ต่อยอดจาก Day 5: <code>go test -race ./...</code> คือคำสั่งเดียวที่ควรจำ
+  </p>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ race detector ไม่ได้เห็นทุกอย่าง</strong> —
+    มันตรวจเฉพาะ<em>สิ่งที่เกิดขึ้นจริงในรอบที่รัน</em>
+    ถ้าเส้นทางนั้นไม่ถูกเรียกก็ไม่เจอ
+    <br><strong>"รัน <code>-race</code> แล้วเงียบ" ≠ "ไม่มี race"</strong>
+    — เหมือน coverage 100% ที่ไม่ได้แปลว่าไม่มีบั๊ก
+    (<a href="../../day-5/lessons/0014-test-in-go.html">บทเรียน 14</a>)
+    <br>แต่ถ้ามันฟ้อง <strong>แปลว่ามีจริง 100%</strong> ไม่เคยฟ้องผิด
+  </p>
+</div>
+
+<h2>6 · เก้าข้อที่ทำให้ concurrency ปลอดภัย</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>#</th><th>กฎ</th><th>ทำไม</th></tr>
+  <tr><td>1</td><td><strong>ไม่ share ก็ไม่ต้อง lock</strong></td><td>ทางที่ปลอดภัยที่สุดคือไม่มีของกลาง — ส่งผ่าน channel แทน</td></tr>
+  <tr><td>2</td><td><strong>ของกลางต้องมีเจ้าของ</strong></td><td>ตอบให้ได้ว่า <em>ใครเขียนได้ · ใครอ่านได้ · sync ด้วยอะไร</em></td></tr>
+  <tr><td>3</td><td><strong>Lock ให้แคบ แต่ครบ</strong></td><td>อย่าครอบ network/DB call ไว้ใน lock — คนอื่นรอฟรี</td></tr>
+  <tr><td>4</td><td><strong>อย่า copy sync primitive หลังเริ่มใช้</strong></td><td><code>Mutex</code> · <code>RWMutex</code> · <code>WaitGroup</code> — <code>go vet</code> จับให้</td></tr>
+  <tr><td>5</td><td><strong><code>defer Unlock()</code> เสมอ</strong></td><td>return กลางทางหรือ panic แล้วยังปลดล็อก</td></tr>
+  <tr><td>6</td><td><strong>ทุก goroutine ต้องตอบได้ว่าจบเมื่อไหร่</strong></td><td>ตอบไม่ได้ = leak (บทเรียน 23)</td></tr>
+  <tr><td>7</td><td><strong>คิดเรื่องยกเลิกตั้งแต่ออกแบบ</strong></td><td>ใส่ <code>context</code> ทีหลังยากกว่ามาก (บทเรียน 25)</td></tr>
+  <tr><td>8</td><td><strong>รัน race detector เป็นนิสัย</strong></td><td><code>go test -race ./...</code></td></tr>
+  <tr><td>9</td><td><strong>"ทำ concurrent ได้" ≠ "ควรทำ"</strong></td><td>เร็วขึ้น 5% แต่ debug ยากขึ้น 10 เท่า = ไม่คุ้ม</td></tr>
+</table>
+</div>
+
+<h3 style="margin-top:1.4rem">ขยายกฎข้อ 3 — Lock ให้แคบ</h3>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ล็อกคลุมงานช้า</h4>
+    <pre><code>mu.<span class="f">Lock</span>()
+
+<span class="f">doNetworkRequest</span>()   <span class="c">// 200ms</span>
+<span class="f">doDatabaseQuery</span>()    <span class="c">// 50ms</span>
+<span class="f">calculate</span>()
+<span class="f">updateCounter</span>()
+
+mu.<span class="f">Unlock</span>()</code></pre>
+    <p style="margin-bottom:0">
+      ทุกคนรอ 250ms ทั้งที่ของกลางถูกแตะแค่บรรทัดสุดท้าย
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ ล็อกเท่าที่จำเป็น</h4>
+    <pre><code>result := <span class="f">doSlowWork</span>()   <span class="c">// นอก lock</span>
+
+mu.<span class="f">Lock</span>()
+cache[key] = result       <span class="c">// แตะของกลางแค่นี้</span>
+mu.<span class="f">Unlock</span>()</code></pre>
+    <p style="margin-bottom:0">
+      งานหนักทำพร้อมกันได้ · lock ถือแค่เสี้ยววินาที
+    </p>
+  </div>
+</div>
+
+<h3 style="margin-top:1.4rem">ขยายกฎข้อ 4 — อย่า copy</h3>
+
+<pre><code><span class="c">// ❌ value receiver = ได้ Mutex สำเนา = ไม่ได้ล็อกอะไรเลย</span>
+<span class="k">func</span> (c Cache) <span class="f">Set</span>(k, v <span class="k">string</span>) { ... }
+
+<span class="c">// ✅ pointer receiver</span>
+<span class="k">func</span> (c *Cache) <span class="f">Set</span>(k, v <span class="k">string</span>) { ... }</code></pre>
+
+<p>
+  <code>go vet</code> ฟ้องว่า
+  <code>passes lock by value: sync.Mutex contains sync.noCopy</code>
+  — <strong>เป็นเหตุผลที่ struct ที่มี mutex ต้องใช้ pointer receiver เสมอ</strong>
+  (ต่อจาก <a href="../../day-3/lessons/0007-value-vs-pointer.html">บทเรียน 07</a>)
+</p>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. 1000 goroutine ทำ <code>counter++</code> โดยมี <code>WaitGroup</code> ถูกต้อง ได้ผลอะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้ 1000 เสมอ เพราะ WaitGroup รอครบทุกตัว</button>
+    <button class="opt">ได้เลขน้อยกว่า 1000 และต่างกันทุกครั้งที่รัน</button>
+    <button class="opt">เกิด panic ว่ามีการเข้าถึงตัวแปรพร้อมกัน</button>
+    <button class="opt">คอมไพล์ไม่ผ่านเพราะแก้ตัวแปรนอก goroutine</button>
+  </div>
+  <div class="explain">
+    <p>ผมรัน 5 ครั้งได้ <strong>988 · 947 · 956 · 963 · 918</strong>
+    <br><code>WaitGroup</code> รับประกันแค่ว่า "ทุกตัวทำงานจบแล้ว"
+    <strong>ไม่ได้รับประกันว่าทำงานถูกต้อง</strong>
+    <br><code>counter++</code> คือ 3 ขั้น (อ่าน–บวก–เขียน) ที่แทรกกันได้
+    → มีคนเขียนทับ → ค่าหาย · ไม่ panic เพราะไม่มีอะไรผิดกฎภาษา</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">2. <code>go run -race</code> เจอ race แล้วจะเกิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">หยุดโปรแกรมทันทีที่เจอ ไม่ให้ทำงานต่อ</button>
+    <button class="opt">แก้ให้อัตโนมัติโดยใส่ lock ให้ตอน build</button>
+    <button class="opt">พิมพ์ WARNING พร้อมบรรทัดที่ชนกัน แล้วออกด้วย exit 66</button>
+    <button class="opt">เขียนลง log ไฟล์แล้วรันต่อโดยไม่แจ้งอะไร</button>
+  </div>
+  <div class="explain">
+    <p>โปรแกรม<strong>ทำงานต่อจนจบ</strong> แต่พิมพ์ <code>WARNING: DATA RACE</code>
+    บอกบรรทัดที่อ่าน บรรทัดที่เขียน และบรรทัดที่ <code>go</code> เกิด
+    <br>ปิดท้ายด้วย <code>Found N data race(s)</code> และ
+    <strong><code>exit status 66</code></strong> — ซึ่งทำให้ CI แดงเองอัตโนมัติ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. cache ที่อ่าน 1000 ครั้งต่อเขียน 1 ครั้ง ควรใช้อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>RWMutex</code> — <code>RLock</code> ตอนอ่าน <code>Lock</code> ตอนเขียน</button>
+    <button class="opt"><code>Mutex</code> ธรรมดา เพราะปลอดภัยกว่าเสมอ</button>
+    <button class="opt">ไม่ต้องใช้อะไร เพราะการอ่านไม่ทำให้ข้อมูลเสีย</button>
+    <button class="opt"><code>WaitGroup</code> เพราะนับจำนวนคนเข้าถึงได้</button>
+  </div>
+  <div class="explain">
+    <p><code>RWMutex</code> ให้คนอ่านเข้าพร้อมกันกี่คนก็ได้ กันเฉพาะตอนเขียน
+    <br>ผมวัดจริงกับ 2000 goroutine ที่อ่านพร้อมกัน:
+    <strong><code>Mutex</code> 12.4ms · <code>RWMutex</code> 0.8ms — เร็วขึ้น 16 เท่า</strong>
+    <br>ตัวเลือกที่ 3 ผิด: อ่านขณะมีคนเขียนอยู่ก็ยังเป็น race
+    (และ map จะได้ <code>fatal error: concurrent map writes</code>)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. ทำไม struct ที่มี <code>sync.Mutex</code> ต้องใช้ pointer receiver?</p>
+  <div class="opts">
+    <button class="opt">เพราะ Mutex กินหน่วยความจำมาก คัดลอกแล้วช้า</button>
+    <button class="opt">เพราะ Go บังคับให้ทุก method ของ struct ใช้ pointer</button>
+    <button class="opt">เพราะ Lock ต้องเรียกจาก method ที่ไม่คืนค่าเท่านั้น</button>
+    <button class="opt">เพราะ value receiver ได้ Mutex สำเนา จึงไม่ได้ล็อกตัวจริง</button>
+  </div>
+  <div class="explain">
+    <p>Go ส่งค่าแบบ pass-by-value (บทเรียน 07) → value receiver ได้<strong>สำเนาของ Mutex</strong>
+    → <code>Lock()</code> ล็อกสำเนา → goroutine อื่นเข้าได้อยู่ดี
+    <strong>เท่ากับไม่ได้ล็อกอะไรเลย</strong>
+    <br><code>go vet</code> ฟ้อง:
+    <code>passes lock by value: sync.Mutex contains sync.noCopy</code>
+    <br>กฎเดียวกันกับ <code>WaitGroup</code> ในบทเรียน 21</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำ Cache ให้ปลอดภัยจริง</span>
+  <p>
+    <strong>ต่อยอดจากภารกิจบทเรียน 20</strong> (<code>Cache[K, V]</code> ที่คุณเขียนไว้)
+    — ท้าทาย 2 ของบทนั้นถามว่าทำไมมันยังใช้หลาย goroutine ไม่ได้ วันนี้มาแก้กัน
+  </p>
+  <ol>
+    <li><strong>พิสูจน์ก่อนว่าพัง:</strong> เขียนเทสที่ยิง 100 goroutine
+        <code>Set</code> คนละ key พร้อมกัน แล้วเช็ค <code>Len() == 100</code>
+        <br>รัน <code>go test</code> ธรรมดา — <strong>ผ่านหรือพัง?</strong>
+        <br>รัน <code>go test -race</code> — <strong>ผลต่างกันไหม?</strong></li>
+    <li>เพิ่ม <code>mu sync.RWMutex</code> เข้าไปใน struct</li>
+    <li><code>Set</code> และ <code>Delete</code> ใช้ <code>Lock</code>/<code>Unlock</code>
+        · <code>Get</code> และ <code>Len</code> ใช้ <code>RLock</code>/<code>RUnlock</code>
+        <br><strong>ใช้ <code>defer</code> ทุกอัน</strong></li>
+    <li>รัน <code>go test -race ./...</code> อีกครั้ง — ต้องเงียบสนิท</li>
+    <li><strong>ท้าทาย 1:</strong> เปลี่ยน receiver ของ <code>Set</code>
+        จาก <code>*Cache</code> เป็น <code>Cache</code> (ไม่มีดาว)
+        แล้วรัน <code>go vet ./...</code> <strong>ก่อน</strong> รันเทส —
+        vet ว่าอะไร?</li>
+    <li><strong>ท้าทาย 2 — deadlock ตัวเอง:</strong> เขียน method
+        <code>GetOrSet(k, v)</code> ที่ข้างในเรียก <code>c.Get(k)</code>
+        แล้วถ้าไม่เจอก็เรียก <code>c.Set(k, v)</code>
+        <strong>โดยที่ตัว <code>GetOrSet</code> เองก็ <code>Lock()</code> ไว้ด้วย</strong>
+        → รันแล้วเกิดอะไร?
+        <br><em>นี่คือบั๊กที่เจอบ่อยมากในโค้ดจริง</em></li>
+    <li><strong>ท้าทาย 3:</strong> วัดความต่าง — ทำ cache สองเวอร์ชัน
+        (<code>Mutex</code> vs <code>RWMutex</code>) แล้วยิง 2000 goroutine อ่าน
+        <strong>จับเวลาทั้งสองแบบ</strong> ได้ต่างกันกี่เท่า?</li>
+  </ol>
+  <button class="reveal">เฉลยท้าทาย 2</button>
+  <div class="answer">
+    <p><strong>โปรแกรมค้างตลอดกาล</strong> ผมรันแล้วได้:</p>
+    <pre style="margin:0.6rem 0"><code>fatal error: all goroutines are asleep - deadlock!
+
+goroutine 1 [<strong>sync.RWMutex.RLock</strong>]:</code></pre>
+    <p>คำในวงเล็บชี้ตรงจุดเลย (แบบเดียวกับที่ฝึกในบทเรียน 21) —
+    <code>GetOrSet</code> ถือ lock อยู่
+    แล้วเรียก <code>Get</code> ที่พยายามขอ lock ตัวเดิมอีกครั้ง
+    <br><strong><code>sync.Mutex</code> ของ Go ไม่ใช่ reentrant</strong> —
+    เจ้าของ lock ขอซ้ำเองก็ยังต้องรอ และมันจะรอตัวเองไปตลอดกาล</p>
+    <p style="margin-bottom:0"><strong>ทางแก้ที่เป็นสำนวนมาตรฐาน:</strong>
+    แยก method ที่<em>ไม่ล็อก</em> ออกมาเป็นตัว unexported
+    แล้วให้ทั้ง <code>Get</code> และ <code>GetOrSet</code> เรียกตัวนั้น</p>
+    <pre style="margin:0.6rem 0 0"><code><span class="k">func</span> (c *Cache[K, V]) <span class="f">get</span>(k K) (V, <span class="k">bool</span>) {   <span class="c">// ไม่ล็อก — ผู้เรียกต้องล็อกมาแล้ว</span>
+    v, ok := c.data[k]
+    <span class="k">return</span> v, ok
+}
+
+<span class="k">func</span> (c *Cache[K, V]) <span class="f">Get</span>(k K) (V, <span class="k">bool</span>) {
+    c.mu.<span class="f">RLock</span>()
+    <span class="k">defer</span> c.mu.<span class="f">RUnlock</span>()
+    <span class="k">return</span> c.<span class="f">get</span>(k)
+}</code></pre>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 1 คือข้อที่ผมอยากเห็นผลที่สุด</strong> —
+    เทสแบบไม่มี <code>-race</code> มักจะ<em>ผ่าน</em> ทั้งที่โค้ดผิด
+    ถ้าคุณเห็นความต่างนั้นด้วยตาตัวเอง คุณจะไม่มีวันลืมใส่ <code>-race</code> อีกเลย
+    <br>บทถัดไป: วิธีบอก goroutine ที่กระจายไป 10 ชั้นว่า "งานนี้ไม่ต้องทำต่อแล้ว"
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0023-select.html">← บทเรียน 23</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0025-context.html">บทเรียน 25 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/doc/articles/race_detector">Data Race Detector</a> — คู่มือทางการของ <code>-race</code></li>
+  <li><a href="https://go.dev/ref/mem">The Go Memory Model</a> — นิยามอย่างเป็นทางการว่า data race คืออะไร · <strong>ยากกว่าที่ต้องรู้ตอนนี้</strong></li>
+  <li><a href="https://pkg.go.dev/sync#Mutex">pkg.go.dev — sync.Mutex</a> · <a href="https://pkg.go.dev/sync#RWMutex">sync.RWMutex</a></li>
+  <li><a href="https://go.dev/blog/race-detector">Introducing the Go Race Detector</a> — Go Blog</li>
+  <li><a href="https://go.dev/wiki/CodeReviewComments#synchronous-functions">Go Code Review Comments — Synchronous Functions</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

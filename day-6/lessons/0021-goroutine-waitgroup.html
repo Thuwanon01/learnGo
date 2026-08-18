@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 21 — Goroutine &amp; WaitGroup: ทำหลายอย่างพร้อมกัน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 21 · Day 6 · Concurrency</p>
+  <h1>Goroutine &amp; WaitGroup: ทำหลายอย่างพร้อมกัน</h1>
+  <p class="meta">~16 นาที · ต้องมี: <a href="../../day-3/lessons/0007-value-vs-pointer.html">บทเรียน 07</a> (pointer), <a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a> (<code>defer</code>)</p>
+  <p class="standfirst">
+    <code>go</code> คำเดียวเปลี่ยนโปรแกรมของคุณจาก "ทำทีละอย่างตามลำดับ"
+    เป็น "ทำหลายอย่างพร้อมกัน" — และเปลี่ยนกฎการอ่านโค้ดไปทั้งหมด
+    <strong>บรรทัดถัดไปไม่ได้รอบรรทัดก่อนอีกต่อไป</strong>
+    บทนี้เริ่มจากบั๊กที่ทุกคนเจอเป็นอย่างแรก แล้วค่อยไปเครื่องมือที่แก้มัน
+  </p>
+</header>
+
+<main>
+
+<h2>1 · Concurrency ไม่ใช่ Parallelism</h2>
+
+<div class="diagram">
+<pre>  <strong>Concurrency</strong> — จัดการหลายงานพร้อมกัน (โครงสร้างของโปรแกรม)
+
+    บาริสต้า 1 คน:  ต้มกาแฟ A ─┐         ┌─ เสิร์ฟ A
+                                ├ ระหว่างรอ ┤
+                     รับออเดอร์ B ┘         └─ ต้มกาแฟ B
+
+    คนเดียว แต่ไม่นั่งรออะไรเปล่า ๆ
+
+  <strong>Parallelism</strong> — ทำหลายงานพร้อมกันจริง ๆ (การทำงานของเครื่อง)
+
+    บาริสต้า 2 คน:  คนที่ 1 ─── ต้มกาแฟ A ───►
+                     คนที่ 2 ─── ต้มกาแฟ B ───►
+
+    สองมือทำงานพร้อมกันจริงในวินาทีเดียวกัน</pre>
+</div>
+
+<p>
+  Go ให้คุณเขียนแบบ <strong>concurrent</strong> —
+  ส่วนจะได้ <strong>parallel</strong> จริงไหมขึ้นกับว่าเครื่องมีกี่ core
+  โค้ดชุดเดียวกันรันบนเครื่อง 1 core ก็ยังถูกต้อง แค่ไม่เร็วขึ้น
+</p>
+
+<h2>2 · GMP Model — ใครเป็นคนจัดคิว</h2>
+
+<p>
+  ถ้าสร้าง goroutine ได้เป็นแสนแต่ CPU มีไม่กี่ core
+  มีใครสักคนต้องจัดคิว — คนนั้นคือ <strong>Go runtime</strong>
+  ที่ใช้โมเดลชื่อ GMP:
+</p>
+
+<div class="diagram">
+<pre>   G G G G  ──►  P1  ──►  M1  ──►  CPU Core 1
+   G G G    ──►  P2  ──►  M2  ──►  CPU Core 2
+   G G G G G ──► (รอคิว)
+
+   <strong>G</strong> = Goroutine   ออเดอร์ที่ลูกค้าสั่ง — มีเป็นหมื่นได้
+   <strong>M</strong> = Machine     พนักงานครัวตัวจริง (OS thread) — มีไม่กี่คน
+   <strong>P</strong> = Processor   หัวหน้าครัวที่ถือคิวงาน — เท่ากับ GOMAXPROCS</pre>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ตัว</th><th>คืออะไร</th><th>ราคาต่อตัว</th><th>มีได้กี่ตัว</th></tr>
+  <tr><td><strong>G</strong></td><td>งานหนึ่งชิ้นที่คุณสั่งด้วย <code>go</code></td><td>เริ่มที่ ~2 KB โตได้</td><td>หลักแสน–ล้าน</td></tr>
+  <tr><td><strong>M</strong></td><td>OS thread จริง ๆ</td><td>~1 MB (แพงกว่ามาก)</td><td>เท่าที่จำเป็น</td></tr>
+  <tr><td><strong>P</strong></td><td>สิทธิ์ในการรันโค้ด Go</td><td>—</td><td><code>GOMAXPROCS</code> (ปกติ = จำนวน core)</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทำไม goroutine ถึงเบา:</strong> มัน<em>ไม่ใช่</em> thread
+    goroutine หลายพันตัวถูก <strong>multiplex</strong> ลงบน OS thread ไม่กี่ตัว
+    — ไม่ใช่หนึ่ง goroutine ต่อหนึ่ง thread
+    <br>ในภาษาที่ 1 thread = 1 งาน การสร้างหมื่น thread คือฆ่าเครื่อง
+    ใน Go การสร้างหมื่น goroutine คือเรื่องปกติ
+    <br><strong>นี่คือเหตุผลหลักที่คนเลือก Go ทำงาน backend</strong>
+  </p>
+</div>
+
+<h2>3 · <code>go</code> — คำเดียวที่เปลี่ยนทุกอย่าง</h2>
+
+<pre><code>doSomething()      <span class="c">// รอจนเสร็จ แล้วค่อยไปบรรทัดถัดไป</span>
+
+<span class="k">go</span> doSomething()   <span class="c">// สั่งแล้วไปต่อทันที ไม่รอ</span></code></pre>
+
+<div class="predict">
+  <pre><code><span class="k">package</span> main
+
+<span class="k">import</span> <span class="s">"fmt"</span>
+
+<span class="k">func</span> <span class="f">sayHello</span>() {
+    fmt.<span class="f">Println</span>(<span class="s">"Hello from Goroutine"</span>)
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    <span class="k">go</span> <span class="f">sayHello</span>()
+    fmt.<span class="f">Println</span>(<span class="s">"main จบแล้ว"</span>)
+}</code></pre>
+  <p class="ask">พิมพ์อะไรออกมาบ้าง และเรียงยังไง?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรันแล้วได้บรรทัดเดียว:</p>
+    <pre style="margin:0.6rem 0"><code>main จบแล้ว</code></pre>
+    <p>
+      <strong><code>Hello from Goroutine</code> ไม่โผล่เลย</strong>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>กฎที่ต้องจำให้ขึ้นใจ: เมื่อ <code>main</code> จบ โปรแกรมจบทันที</strong>
+      Go runtime ไม่รอ goroutine ที่ค้างอยู่แม้แต่ตัวเดียว
+      — ไม่มี error ไม่มี warning ไม่มีอะไรบอกว่างานหายไป
+      <br>goroutine ถูกสร้างจริง แต่ยังไม่ทันได้คิว <code>main</code> ก็ถึงบรรทัดสุดท้ายแล้ว
+    </p>
+  </div>
+</div>
+
+<h2>4 · ทางแก้ที่ผิด: <code>time.Sleep</code></h2>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ เดาเวลาเอา</h4>
+    <pre><code><span class="k">func</span> <span class="f">main</span>() {
+    <span class="k">go</span> <span class="f">sayHello</span>()
+
+    time.<span class="f">Sleep</span>(time.Second)
+}</code></pre>
+    <p style="margin-bottom:0">
+      ได้ผลจริง แต่: ช้าไป 1 วิเสมอ ·
+      งานที่ใช้ 1.1 วิยังหายอยู่ดี · บนเครื่อง CI ที่ช้ากว่าจะพังเป็นบางครั้ง
+      <br><strong>คือการเดา ไม่ใช่การรอ</strong>
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ รอจนกว่าจะเสร็จจริง</h4>
+    <pre><code><span class="k">func</span> <span class="f">main</span>() {
+    <span class="k">var</span> wg sync.WaitGroup
+
+    wg.<span class="f">Add</span>(<span class="n">1</span>)
+    <span class="k">go</span> <span class="k">func</span>() {
+        <span class="k">defer</span> wg.<span class="f">Done</span>()
+        <span class="f">sayHello</span>()
+    }()
+
+    wg.<span class="f">Wait</span>()
+}</code></pre>
+    <p style="margin-bottom:0">
+      เสร็จเมื่อไหร่ไปต่อเมื่อนั้น — ไม่เร็วไป ไม่ช้าไป
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ สไลด์หน้า <code>time.Sleep()</code> คอมไพล์ไม่ผ่าน</strong> —
+    มี <code>import "fmt"</code> อย่างเดียว แต่เรียก <code>time.Sleep</code>
+    ต้องเพิ่ม <code>"time"</code> เข้าไปด้วย
+    (ถ้าลอกจากสไลด์ตรง ๆ จะเจอ <code>undefined: time</code>)
+  </p>
+</div>
+
+<h2>5 · <code>sync.WaitGroup</code> — ตัวนับที่รอจนถึงศูนย์</h2>
+
+<div class="diagram">
+<pre>  counter = 0
+
+  wg.Add(2)   ──►  counter = 2
+                        │
+  goroutine A จบ        │
+  wg.Done()   ──►  counter = 1     wg.Wait() ยัง<strong>ค้าง</strong>อยู่ตรงนี้
+                        │
+  goroutine B จบ        │
+  wg.Done()   ──►  counter = 0  ──►  wg.Wait() <strong>ปล่อยผ่าน</strong> ไปบรรทัดถัดไป</pre>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>method</th><th>ทำอะไร</th><th>เรียกที่ไหน</th></tr>
+  <tr><td><code>wg.Add(n)</code></td><td>เพิ่มตัวนับ n</td><td><strong>ก่อน</strong> <code>go</code> เสมอ</td></tr>
+  <tr><td><code>wg.Done()</code></td><td>ลดตัวนับ 1</td><td>ใน goroutine · ใส่ <code>defer</code> ไว้บรรทัดแรก</td></tr>
+  <tr><td><code>wg.Wait()</code></td><td>ค้างจนตัวนับเป็น 0</td><td>ใน goroutine ที่ต้องการรอ (ปกติคือ <code>main</code>)</td></tr>
+</table>
+</div>
+
+<pre><code><span class="k">var</span> wg sync.WaitGroup
+
+wg.<span class="f">Add</span>(<span class="n">2</span>)
+
+<span class="k">go</span> <span class="k">func</span>() {
+    <span class="k">defer</span> wg.<span class="f">Done</span>()   <span class="c">// บรรทัดแรกเสมอ — panic ก็ยังลดตัวนับ</span>
+    <span class="f">doA</span>()
+}()
+
+<span class="k">go</span> <span class="k">func</span>() {
+    <span class="k">defer</span> wg.<span class="f">Done</span>()
+    <span class="f">doB</span>()
+}()
+
+wg.<span class="f">Wait</span>()
+fmt.<span class="f">Println</span>(<span class="s">"All done"</span>)</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทำไมต้อง <code>defer wg.Done()</code> ไม่ใช่ <code>wg.Done()</code> ท้ายฟังก์ชัน:</strong>
+    ถ้าโค้ดตรงกลาง <code>return</code> ก่อน หรือ panic
+    <code>wg.Done()</code> ที่บรรทัดสุดท้ายจะไม่ถูกเรียก → ตัวนับไม่ถึงศูนย์ →
+    <strong>โปรแกรมค้างตลอดกาล</strong>
+    <br><code>defer</code> ทำงานทุกทางออก (<a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a>)
+  </p>
+</div>
+
+<h2>6 · ส่ง WaitGroup ข้ามฟังก์ชัน — ต้องเป็น pointer</h2>
+
+<pre><code><span class="k">func</span> <span class="f">worker</span>(id <span class="k">int</span>, wg *sync.WaitGroup) {   <span class="c">// ← ดาว</span>
+    <span class="k">defer</span> wg.<span class="f">Done</span>()
+    fmt.<span class="f">Println</span>(<span class="s">"Worker"</span>, id)
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    <span class="k">var</span> wg sync.WaitGroup
+    wg.<span class="f">Add</span>(<span class="n">1</span>)
+    <span class="k">go</span> <span class="f">worker</span>(<span class="n">1</span>, &amp;wg)          <span class="c">// ← แอมเปอร์แซนด์</span>
+    wg.<span class="f">Wait</span>()
+}</code></pre>
+
+<p>
+  ลืมดาวเมื่อไหร่ Go จะ<strong>คัดลอก</strong> WaitGroup ตามกฎ pass-by-value
+  (<a href="../../day-3/lessons/0007-value-vs-pointer.html">บทเรียน 07</a>) —
+  <code>Done()</code> ไปลดตัวนับของ<em>สำเนา</em> ส่วน <code>Wait()</code>
+  เฝ้าตัวจริงที่ไม่มีวันถึงศูนย์
+</p>
+
+<div class="win">
+  <span class="label">✅ ข่าวดี — <code>go vet</code> จับให้ก่อนรัน</span>
+  <p style="margin-bottom:0">ผมลองลืมดาวดู แล้วสั่ง <code>go vet</code>:</p>
+  <pre style="margin:0.6rem 0 0"><code>worker passes lock by value: sync.WaitGroup contains sync.noCopy
+call of worker copies lock value: sync.WaitGroup contains sync.noCopy</code></pre>
+  <p style="margin:0.6rem 0 0">
+    <strong>ตั้งแต่วันนี้ไป <code>go vet ./...</code> ควรอยู่ในนิสัยเหมือน <code>go test</code></strong> —
+    บั๊ก concurrency ส่วนใหญ่ไม่พังทันที แต่ vet เห็น
+  </p>
+</div>
+
+<h2>7 · สามวิธีที่ทำ WaitGroup พังได้</h2>
+
+<h3 style="margin-top:1.3rem">7.1 <code>Add</code> มากกว่า <code>Done</code> → ค้างตลอดกาล</h3>
+
+<pre><code>wg.<span class="f">Add</span>(<span class="n">3</span>)                  <span class="c">// บอกว่ามี 3 งาน</span>
+
+<span class="k">for</span> i := <span class="n">0</span>; i &lt; <span class="n">2</span>; i++ {     <span class="c">// แต่สร้างแค่ 2</span>
+    <span class="k">go</span> <span class="k">func</span>() {
+        <span class="k">defer</span> wg.<span class="f">Done</span>()
+        fmt.<span class="f">Println</span>(<span class="s">"working"</span>)
+    }()
+}
+
+wg.<span class="f">Wait</span>()</code></pre>
+
+<p>ผมรันแล้วได้:</p>
+
+<pre><code>working
+working
+fatal error: all goroutines are asleep - deadlock!
+
+goroutine 1 [<strong>sync.WaitGroup.Wait</strong>]:</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>อ่านบรรทัดในวงเล็บเหลี่ยมให้เป็น</strong> —
+    <code>[sync.WaitGroup.Wait]</code> บอกเลยว่า goroutine ที่ 1 ค้างอยู่ที่
+    <code>Wait()</code> แปลว่าตัวนับไม่ถึงศูนย์
+    <br>ถ้าเห็น <code>[chan receive]</code> หรือ <code>[chan send]</code> แทน
+    แปลว่าค้างที่ channel (บทเรียน 22)
+    <strong>คำในวงเล็บนี้คือเบาะแสแรกเสมอเวลา deadlock</strong>
+  </p>
+</div>
+
+<h3 style="margin-top:1.3rem">7.2 <code>Done</code> มากกว่า <code>Add</code> → panic</h3>
+
+<pre><code>wg.<span class="f">Add</span>(<span class="n">1</span>)
+wg.<span class="f">Done</span>()      <span class="c">// counter: 1 → 0</span>
+wg.<span class="f">Done</span>()      <span class="c">// counter: 0 → -1</span></code></pre>
+
+<pre><code>panic: sync: negative WaitGroup counter</code></pre>
+
+<p>
+  ข้อดีคือ<strong>พังเสียงดัง</strong> — ต่างจาก 7.1 ที่ค้างเงียบ ๆ
+  เจอแบบนี้แก้ง่ายกว่ามาก
+</p>
+
+<h3 style="margin-top:1.3rem">7.3 <code>Add</code> ช้าไป → ข้อมูลหายเงียบ ๆ</h3>
+
+<div class="predict">
+  <pre><code>done := <span class="n">0</span>
+<span class="k">for</span> i := <span class="n">0</span>; i &lt; <span class="n">100</span>; i++ {
+    <span class="k">go</span> <span class="k">func</span>() {
+        wg.<span class="f">Add</span>(<span class="n">1</span>)      <span class="c">// ❌ Add อยู่ข้างใน goroutine</span>
+        <span class="k">defer</span> wg.<span class="f">Done</span>()
+        done++
+    }()
+}
+wg.<span class="f">Wait</span>()
+fmt.<span class="f">Println</span>(<span class="s">"ทำเสร็จจริง ="</span>, done, <span class="s">"จาก 100"</span>)</code></pre>
+  <p class="ask">โปรแกรมนี้พังแบบไหน — ค้าง, panic, หรืออย่างอื่น?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่ค้าง ไม่ panic — มันจบปกติ แต่ตัวเลขไม่ครบ</strong> ผมรัน 3 ครั้ง:</p>
+    <pre style="margin:0.6rem 0"><code>ทำเสร็จจริง = 94 จาก 100
+ทำเสร็จจริง = 96 จาก 100
+ทำเสร็จจริง = 90 จาก 100</code></pre>
+    <p>
+      <strong>ทำไม:</strong> <code>wg.Wait()</code> ถูกเรียกตอนที่ goroutine
+      หลายตัว<em>ยังไม่ทันได้เริ่มทำงาน</em> เลยยังไม่ได้ <code>Add</code>
+      ตัวนับตอนนั้นอาจเป็น 0 พอดี → <code>Wait()</code> ปล่อยผ่านทันที →
+      <code>main</code> จบ → goroutine ที่เหลือตายกลางคัน
+    </p>
+    <p style="margin-bottom:0">
+      <strong>อันตรายที่สุดในสามข้อ</strong> — 7.1 ค้างให้เห็น 7.2 panic ให้เห็น
+      แต่ 7.3 ทำงาน "สำเร็จ" ทุกครั้ง แค่ข้อมูลหายไปบางส่วนแบบไม่มีใครรู้
+      <br><strong>กฎ: <code>wg.Add()</code> ต้องอยู่ใน goroutine ที่เรียก
+      <code>wg.Wait()</code> เสมอ — ไม่ใช่ในตัวที่ถูกสร้าง</strong>
+    </p>
+  </div>
+</div>
+
+<h2>8 · <code>wg.Go()</code> — ทางลัดใหม่ที่กันพลาดทั้งสามข้อ</h2>
+
+<div class="compare">
+  <div class="side">
+    <h4>แบบเดิม — 3 จุดที่พลาดได้</h4>
+    <pre><code><span class="k">var</span> wg sync.WaitGroup
+
+wg.<span class="f">Add</span>(<span class="n">1</span>)          <span class="c">// ลืม / ผิดจำนวน</span>
+
+<span class="k">go</span> <span class="k">func</span>() {
+    <span class="k">defer</span> wg.<span class="f">Done</span>()  <span class="c">// ลืม / ลืม defer</span>
+    <span class="f">sayHello</span>()
+}()
+
+wg.<span class="f">Wait</span>()</code></pre>
+  </div>
+  <div class="side good">
+    <h4>Go 1.25+ — จับคู่ให้อัตโนมัติ</h4>
+    <pre><code><span class="k">var</span> wg sync.WaitGroup
+
+wg.<span class="f">Go</span>(<span class="k">func</span>() {
+    <span class="f">sayHello</span>()
+})
+
+wg.<span class="f">Wait</span>()
+
+<span class="c">// Add/Done/go อยู่ในคำสั่งเดียว
+// ไม่มีทางลืม ไม่มีทาง Add ช้า</span></code></pre>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ <code>wg.Go</code> ใหม่มาก — เพิ่งมีใน Go 1.25</strong>
+    ผมทดสอบบน Go 1.26.5 ใช้ได้ปกติ แต่ลองย้อน <code>go.mod</code> ให้เป็น
+    <code>go 1.24</code> ดู: <code>go build</code> ยัง<em>ผ่าน</em> แต่
+    <code>go vet</code> ฟ้อง
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>sync.Go requires go1.25 or later (module is go1.24)</code></pre>
+  <p style="margin:0.6rem 0 0">
+    <strong>ถ้าโปรเจกต์ที่ทำงานยังไม่ถึง 1.25 ต้องใช้แบบเดิม</strong> —
+    และสไลด์ก็สอนแบบเดิมไว้ด้วย ซึ่งถูกแล้ว เพราะโค้ดที่คุณจะไปเจอในโลกจริง
+    ยังเป็นแบบ <code>Add</code>/<code>Done</code> เกือบทั้งหมด
+    <br><strong>ต้องอ่านออกทั้งสองแบบ · เขียนใหม่ให้ใช้ <code>wg.Go</code></strong>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="3">
+  <p class="q">1. <code>func main() { go sayHello() }</code> พิมพ์อะไร?</p>
+  <div class="opts">
+    <button class="opt">พิมพ์ <code>Hello</code> เพราะ Go รอ goroutine เสมอ</button>
+    <button class="opt">เกิด deadlock เพราะไม่มีใครรอ goroutine</button>
+    <button class="opt">เกิด panic เพราะ goroutine ไม่ได้จบเอง</button>
+    <button class="opt">ไม่พิมพ์อะไร เพราะ main จบก่อน</button>
+  </div>
+  <div class="explain">
+    <p><strong>main จบ = โปรแกรมจบทันที</strong> runtime ไม่รอ goroutine ที่ค้างอยู่
+    <br>ไม่ใช่ deadlock (ไม่มีใครรออะไร) ไม่ใช่ panic (ไม่มีอะไรผิดกฎ)
+    — แค่<strong>เงียบหายไป</strong> ซึ่งอันตรายกว่าทั้งสองอย่าง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. <code>wg.Add(3)</code> แต่สร้าง goroutine แค่ 2 ตัว เกิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">ค้างที่ <code>Wait()</code> จนได้ <code>fatal error: deadlock</code></button>
+    <button class="opt">panic ทันทีว่า <code>negative WaitGroup counter</code></button>
+    <button class="opt">ทำงานปกติ เพราะ WaitGroup ปรับตัวนับให้เอง</button>
+    <button class="opt">คอมไพล์ไม่ผ่านเพราะจำนวนไม่ตรงกับ goroutine</button>
+  </div>
+  <div class="explain">
+    <p>ตัวนับลงถึง 1 แล้วหยุด — <code>Wait()</code> รอตลอดกาล
+    Go ตรวจเจอว่าไม่มี goroutine ไหนทำอะไรได้อีก จึงหยุดโปรแกรม:
+    <code>fatal error: all goroutines are asleep - deadlock!</code>
+    <br>ดูในวงเล็บจะเห็น <code>[sync.WaitGroup.Wait]</code> ซึ่งชี้จุดให้เลย
+    <br>(<em>negative counter</em> คือกรณีตรงข้าม: <code>Done</code> เกิน)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. ทำไม <code>wg.Add(1)</code> ต้องอยู่ <em>ก่อน</em> <code>go</code> ไม่ใช่ข้างในนั้น?</p>
+  <div class="opts">
+    <button class="opt">เพราะ Add ข้างใน goroutine จะทำให้ panic ทันที</button>
+    <button class="opt">เพราะ Add ต้องเรียกจากฟังก์ชันที่ไม่ใช่ closure</button>
+    <button class="opt">เพราะ Wait อาจเห็นตัวนับเป็น 0 แล้วปล่อยผ่านไปก่อน</button>
+    <button class="opt">เพราะ Add ข้างใน goroutine จะนับซ้ำสองเท่าเสมอ</button>
+  </div>
+  <div class="explain">
+    <p><code>go</code> แค่สั่ง ไม่ได้แปลว่าเริ่มทำแล้ว —
+    goroutine อาจยังไม่ได้คิวตอนที่ <code>Wait()</code> ถูกเรียก
+    ตัวนับยังเป็น 0 → ผ่านฉลุย → main จบ → งานที่เหลือหายไปเงียบ ๆ
+    <br>ผมรัน 100 goroutine แบบนี้ 3 ครั้ง ได้ <strong>94 / 96 / 90</strong> —
+    ไม่เคยครบ และไม่เคย error</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. ส่ง WaitGroup เข้าฟังก์ชันแบบ <code>func worker(wg sync.WaitGroup)</code> ผลคือ?</p>
+  <div class="opts">
+    <button class="opt">ทำงานได้ปกติ เพราะ WaitGroup เป็น pointer อยู่แล้ว</button>
+    <button class="opt">ค้างตลอดกาล เพราะ Done ไปลดตัวนับของสำเนา</button>
+    <button class="opt">panic ทันทีเพราะ WaitGroup ห้ามคัดลอกเด็ดขาด</button>
+    <button class="opt">ทำงานได้ แต่ช้ากว่าเพราะต้องคัดลอกทั้งก้อน</button>
+  </div>
+  <div class="explain">
+    <p>Go ส่ง argument แบบ pass-by-value เสมอ (บทเรียน 07) →
+    <code>worker</code> ได้ <strong>สำเนา</strong> →
+    <code>Done()</code> ลดตัวนับของสำเนา ตัวจริงไม่ขยับ → <code>Wait()</code> ค้าง
+    <br>ต้องเขียน <code>wg *sync.WaitGroup</code> และส่ง <code>&amp;wg</code>
+    <br><strong><code>go vet</code> จับให้ก่อนรัน:</strong>
+    <code>passes lock by value: sync.WaitGroup contains sync.noCopy</code></p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ดาวน์โหลดพร้อมกัน 5 ไฟล์</span>
+  <p>ทำในเครื่อง (Playground จำกัดเวลารัน) <strong>รัน <code>go vet</code> ทุกครั้งก่อนรันจริง</strong></p>
+  <ol>
+    <li>เขียน <code>download(id int)</code> ที่แค่ <code>time.Sleep</code>
+        <strong>สุ่ม 100–500ms</strong> แล้วพิมพ์ <code>ไฟล์ N เสร็จ</code></li>
+    <li>เรียกแบบธรรมดา 5 ครั้งใน <code>for</code> — <strong>จับเวลารวม</strong>
+        ด้วย <code>time.Since(start)</code></li>
+    <li>เปลี่ยนเป็น <code>go download(i)</code> — <strong>รันแล้วจะเห็นอะไร?</strong>
+        (คำตอบอยู่ในหัวข้อ 3 ของบทนี้)</li>
+    <li>ใส่ <code>sync.WaitGroup</code> ให้ถูก แล้วจับเวลาอีกที —
+        <strong>เทียบกับข้อ 2</strong></li>
+    <li>เขียนใหม่ด้วย <code>wg.Go()</code> ให้ได้ผลเดียวกัน</li>
+    <li><strong>ท้าทาย 1:</strong> จงใจ <code>wg.Add(6)</code> ทั้งที่มี 5 งาน →
+        <strong>จดคำในวงเล็บเหลี่ยม</strong> ของบรรทัด <code>goroutine 1 [...]</code></li>
+    <li><strong>ท้าทาย 2:</strong> ย้าย <code>wg.Add(1)</code> เข้าไปข้างใน
+        <code>go func(){...}</code> แล้วรัน <strong>10 ครั้งติด</strong> —
+        ผลตรงกันทุกครั้งไหม?</li>
+    <li><strong>ท้าทาย 3:</strong> เปลี่ยน <code>download</code> ให้รับ
+        <code>wg sync.WaitGroup</code> (ไม่มีดาว) แล้วสั่ง <code>go vet ./...</code>
+        <strong>ก่อน</strong> รัน — vet บอกว่าอะไร?</li>
+  </ol>
+  <button class="reveal">ใบ้ข้อ 4 — จับเวลาให้ถูก</button>
+  <div class="answer">
+    <p style="margin-bottom:0">
+      ถ้าแต่ละไฟล์ใช้ ~300ms: แบบธรรมดา ≈ <strong>1.5 วินาที</strong> (บวกกัน) ·
+      แบบ goroutine ≈ <strong>0.5 วินาที</strong> (เท่ากับตัวที่ช้าที่สุด)
+      <br>ถ้าได้ตัวเลขใกล้เคียงนี้แปลว่าถูกแล้ว
+      — ถ้าแบบ goroutine ได้ <strong>เกือบ 0</strong> แปลว่าลืม <code>Wait()</code>
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ตอนนี้คุณสร้าง goroutine ได้แล้ว แต่มันยังคุยกันไม่ได้</strong>
+    ทุกตัวต่างคนต่างทำ แล้วเงียบไป
+    บทถัดไปคือ <strong>channel</strong> — ท่อที่ทำให้ goroutine ส่งของหากันได้
+    <br>ติดตรงไหนถามได้เลย โดยเฉพาะท้าทาย 2 ถ้าผลออกมาไม่เหมือนกันสักครั้ง
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0020-generic-struct.html">← บทเรียน 20</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0022-channel.html">บทเรียน 22 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/tour/concurrency/1">A Tour of Go — Concurrency</a> — แก้โค้ดแล้วกดรันได้ในหน้าเว็บ</li>
+  <li><a href="https://go.dev/blog/waza-talk">Concurrency is not Parallelism</a> — Rob Pike · <strong>ต้นทางของหัวข้อ 1</strong></li>
+  <li><a href="https://pkg.go.dev/sync#WaitGroup">pkg.go.dev — sync.WaitGroup</a> · <a href="https://pkg.go.dev/sync#WaitGroup.Go">WaitGroup.Go (Go 1.25+)</a></li>
+  <li><a href="https://go.dev/doc/effective_go#goroutines">Effective Go — Goroutines</a></li>
+  <li><a href="https://go.dev/ref/spec#Go_statements">Go Spec — Go statements</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 27 — Project Layout และ GORM</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 27 · Day 6 · Architecture &amp; Database</p>
+  <h1>Project Layout และ GORM</h1>
+  <p class="meta">~18 นาที · ต้องมี: <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> (struct tag), <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a> (<code>errors.Is</code>), <a href="./0025-context.html">บทเรียน 25</a> (<code>ctx</code>)</p>
+  <p class="standfirst">
+    จนถึงตอนนี้โค้ดของคุณอยู่ในไฟล์เดียว รันแล้วจบ
+    บทนี้คือการก้าวไปสู่<strong>โปรเจกต์จริง</strong> — หลายไฟล์ หลาย package
+    มี database จริง
+    <br>ผมทดสอบ GORM ทั้งบทกับ <strong>PostgreSQL 17 ตัวจริงใน Docker</strong>
+    ทุกผลลัพธ์ในหน้านี้คือของที่รันออกมาจริง ไม่ได้คัดจากเอกสาร
+  </p>
+</header>
+
+<main>
+
+<h2>1 · <code>internal/</code> — โฟลเดอร์ที่ compiler ปกป้องให้</h2>
+
+<pre><code>myapp/
+├── internal/
+│   └── user/
+│
+└── cmd/
+    └── api/</code></pre>
+
+<p>
+  <code>internal/</code> ไม่ใช่แค่ธรรมเนียมการตั้งชื่อ —
+  <strong>Go บังคับใช้จริงที่ระดับ compiler</strong>
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ ภายใน module เดียวกัน</h4>
+    <pre><code><span class="c">// libapp/public/public.go</span>
+<span class="k">import</span> <span class="s">"libapp/internal/secret"</span>
+
+<span class="c">// build ผ่าน</span></code></pre>
+  </div>
+  <div class="side bad">
+    <h4>❌ จาก module อื่น</h4>
+    <pre><code><span class="c">// other/main.go</span>
+<span class="k">import</span> <span class="s">"libapp/internal/secret"</span>
+
+<span class="c">// use of internal package
+// libapp/internal/secret
+// not allowed</span></code></pre>
+  </div>
+</div>
+
+<div class="win">
+  <span class="label">💡 ทำไมเรื่องนี้สำคัญกว่าที่คิด</span>
+  <p style="margin-bottom:0">
+    ใน <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a>
+    คุณเห็นแล้วว่าตัวพิมพ์ใหญ่/เล็กควบคุมการเข้าถึงระดับ<strong>ตัวแปร</strong>
+    <br><code>internal/</code> คือกลไกเดียวกันแต่ระดับ<strong>ทั้ง package</strong> —
+    ให้ export ชื่อเป็นตัวใหญ่ได้อิสระข้างใน โดยที่โลกภายนอกยังแตะไม่ได้
+    <br><strong>ผลในทางปฏิบัติ:</strong> ของที่อยู่ใน <code>internal/</code>
+    คุณ<em>รีแฟกเตอร์ได้ตลอดเวลาโดยไม่ทำใครพัง</em> —
+    ซึ่งเป็นอิสรภาพที่มีค่ามากในโปรเจกต์ที่อยู่ยาว
+  </p>
+</div>
+
+<h2>2 · จัดตามโดเมน ไม่ใช่ตามชนิดไฟล์</h2>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ จัดตามชนิด (แบบ MVC)</h4>
+    <pre><code>internal/
+├── handlers/
+│   ├── user.go
+│   ├── order.go
+│   └── product.go
+├── services/
+│   ├── user.go
+│   ├── order.go
+│   └── product.go
+└── repositories/
+    ├── user.go
+    ├── order.go
+    └── product.go</code></pre>
+    <p style="margin-bottom:0">
+      แก้ฟีเจอร์เดียวต้องเปิด 3 โฟลเดอร์ · ไฟล์ชื่อ <code>user.go</code> มี 3 ที่
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ จัดตามโดเมน (แบบ Go)</h4>
+    <pre><code>internal/
+├── user/
+│   ├── handler.go
+│   ├── service.go
+│   ├── repository.go
+│   ├── model.go
+│   └── dto.go
+├── order/
+│   └── ...
+└── product/
+    └── ...</code></pre>
+    <p style="margin-bottom:0">
+      ทุกอย่างของ <code>user</code> อยู่ที่เดียว ·
+      ลบฟีเจอร์ = ลบทั้งโฟลเดอร์
+    </p>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ไฟล์</th><th>หน้าที่</th><th>รู้จักอะไรบ้าง</th></tr>
+  <tr><td><code>handler.go</code></td><td>รับ HTTP · แปลง JSON · คืน status code</td><td>รู้จัก <code>service</code> · <strong>ไม่รู้จัก database</strong></td></tr>
+  <tr><td><code>service.go</code></td><td>กฎทางธุรกิจ · ตรวจความถูกต้อง</td><td>รู้จัก <code>repository</code> · <strong>ไม่รู้จัก HTTP</strong></td></tr>
+  <tr><td><code>repository.go</code></td><td>คุยกับ database อย่างเดียว</td><td>รู้จัก SQL · <strong>ไม่รู้จักกฎธุรกิจ</strong></td></tr>
+  <tr><td><code>model.go</code></td><td>struct ที่ตรงกับตารางใน database</td><td>—</td></tr>
+  <tr><td><code>dto.go</code></td><td>struct สำหรับ request/response</td><td>— (มี json tag)</td></tr>
+</table>
+</div>
+
+<div class="diagram">
+<pre>   HTTP Request
+        │
+        ▼
+   ┌──────────┐   ctx     ┌──────────┐   ctx    ┌──────────────┐   ctx   ┌────┐
+   │ handler  │─────────► │ service  │────────► │ repository   │───────► │ DB │
+   └──────────┘           └──────────┘          └──────────────┘         └────┘
+    JSON ↔ struct        กฎธุรกิจ                SQL/GORM
+
+   <strong>ลูกศรชี้ทางเดียว</strong> — repository ห้ามเรียก service กลับขึ้นไป
+   <strong>ctx เดินทางไปด้วยทุกชั้น</strong> (บทเรียน 25) → ยกเลิกได้ทั้งเส้น</pre>
+</div>
+
+<h3 style="margin-top:1.4rem">ทำไมต้องมี <code>dto.go</code> แยกจาก <code>model.go</code></h3>
+
+<pre><code><span class="c">// model.go — หน้าตาในฐานข้อมูล</span>
+<span class="k">type</span> User <span class="k">struct</span> {
+    ID           <span class="k">int64</span>
+    Name         <span class="k">string</span>
+    Email        <span class="k">string</span>
+    PasswordHash <span class="k">string</span>     <span class="c">// ← ห้ามหลุดออกไปเด็ดขาด</span>
+}
+
+<span class="c">// dto.go — หน้าตาที่ส่งออกไปข้างนอก</span>
+<span class="k">type</span> UserResponse <span class="k">struct</span> {
+    ID    <span class="k">int64</span>  <span class="s">`json:"id"`</span>
+    Name  <span class="k">string</span> <span class="s">`json:"name"`</span>
+    Email <span class="k">string</span> <span class="s">`json:"email"`</span>
+}</code></pre>
+
+<p>
+  นี่คือคำตอบของปัญหาที่เจอใน
+  <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> —
+  <strong>แยก struct ปลอดภัยกว่าการพึ่ง <code>json:"-"</code></strong>
+  เพราะเพิ่ม field ใหม่เข้า model แล้วลืมใส่ tag = ข้อมูลหลุดทันที
+  <br>ส่วน DTO ต้อง<em>ตั้งใจเพิ่ม</em> ถึงจะหลุดออกไปได้
+</p>
+
+<h2>3 · โครงเต็มที่ใช้งานจริง</h2>
+
+<pre><code>myapp/
+├── cmd/
+│   └── api/
+│       └── main.go          <span class="c">← จุดเริ่ม ประกอบทุกอย่างเข้าด้วยกัน</span>
+│
+├── internal/
+│   ├── user/
+│   │   ├── handler.go
+│   │   ├── service.go
+│   │   ├── repository.go
+│   │   ├── model.go
+│   │   └── dto.go
+│   │
+│   ├── product/
+│   │   └── ...
+│   │
+│   └── platform/            <span class="c">← ของกลางที่ทุกโดเมนใช้</span>
+│       └── database/
+│           └── postgres.go
+│
+├── go.mod
+└── go.sum</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong><code>cmd/</code> มีได้หลายตัว</strong> —
+    <code>cmd/api/</code> เป็น HTTP server · <code>cmd/worker/</code>
+    เป็นตัวประมวลผลเบื้องหลัง · <code>cmd/migrate/</code> เป็นเครื่องมือ migrate
+    <br>ทุกตัวใช้ <code>internal/</code> ร่วมกัน แต่ <code>main.go</code> คนละไฟล์
+    <br><strong>ถ้ายังมีตัวเดียว ก็ยังควรใส่ใน <code>cmd/api/</code></strong>
+    — เผื่อวันหน้าจะได้ไม่ต้องรื้อ
+  </p>
+</div>
+
+<h2>4 · Database พื้นฐานที่ต้องรู้</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>คำ</th><th>คืออะไร</th><th>ตัวอย่าง</th></tr>
+  <tr><td><strong>Table</strong></td><td>ตาราง — แถวคือข้อมูล 1 ชิ้น คอลัมน์คือ field</td><td><code>users</code></td></tr>
+  <tr><td><strong>Primary Key</strong></td><td>คอลัมน์ที่ระบุตัวตนแถวได้ไม่ซ้ำ</td><td><code>id</code></td></tr>
+  <tr><td><strong>Foreign Key</strong></td><td>คอลัมน์ที่ชี้ไปหา PK ของอีกตาราง</td><td><code>orders.user_id</code></td></tr>
+  <tr><td><strong>SQL</strong></td><td>ภาษาที่ใช้สั่ง database</td><td><code>SELECT ... WHERE ...</code></td></tr>
+  <tr><td><strong>Transaction</strong></td><td>กลุ่มคำสั่งที่ <strong>สำเร็จทั้งหมด หรือไม่สำเร็จเลย</strong></td><td>โอนเงิน: หักบัญชี A + เพิ่มบัญชี B</td></tr>
+</table>
+</div>
+
+<p>เปิด PostgreSQL ด้วย Docker — ไฟล์ <code>compose.yml</code>:</p>
+
+<pre><code>services:
+  postgres:
+    image: postgres:17
+    container_name: devpool-postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: Pe@devp00l
+    ports:
+      - <span class="s">"5432:5432"</span>
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data</code></pre>
+
+<p>
+  <code>volumes</code> คือส่วนที่ทำให้ข้อมูล<strong>ไม่หายเมื่อลบ container</strong>
+  — ไม่ใส่บรรทัดนี้ ข้อมูลหายทุกครั้งที่ <code>docker compose down</code>
+  <br>ดูข้อมูลด้วยเครื่องมือ GUI ได้ที่ <a href="https://tableplus.com/">TablePlus</a>
+</p>
+
+<h2>5 · <code>database/sql</code> หรือ GORM</h2>
+
+<div class="compare">
+  <div class="side">
+    <h4><code>database/sql</code> — มากับ Go</h4>
+    <pre><code>rows, err := db.<span class="f">Query</span>(
+    <span class="s">`SELECT id, name FROM orders
+     WHERE user_id = ?`</span>, userID,
+)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    <span class="k">return</span> err
+}
+<span class="k">defer</span> rows.<span class="f">Close</span>()
+
+<span class="k">for</span> rows.<span class="f">Next</span>() {
+    <span class="k">var</span> id <span class="k">int</span>
+    <span class="k">var</span> name <span class="k">string</span>
+    rows.<span class="f">Scan</span>(&amp;id, &amp;name)
+}</code></pre>
+    <p style="margin-bottom:0">
+      ยาวกว่า แต่<strong>เห็นทุก SQL ที่ยิงจริง</strong> ·
+      ไม่มี dependency · คุมประสิทธิภาพได้เต็มที่
+    </p>
+  </div>
+  <div class="side">
+    <h4>GORM — ORM ยอดนิยมของ Go</h4>
+    <pre><code><span class="k">var</span> orders []Order
+
+db.<span class="f">Where</span>(
+    <span class="s">"user_id = ?"</span>, userID,
+).<span class="f">Find</span>(&amp;orders)</code></pre>
+    <p style="margin-bottom:0">
+      สั้นกว่ามาก · แปลง struct ให้อัตโนมัติ ·
+      แต่<strong>มองไม่เห็นว่ายิง SQL อะไรออกไป</strong>
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ชุมชน Go แบ่งเป็นสองฝ่ายจริง ๆ ในเรื่องนี้</strong> —
+    ต่างจาก Java/PHP ที่ ORM เป็นค่ามาตรฐาน
+    <br>หลายทีมเลือก <code>database/sql</code> + <code>sqlc</code> หรือ
+    <code>sqlx</code> เพราะอยากเห็น SQL ตรง ๆ
+    <br><strong>คอร์สสอน GORM ก็เรียน GORM ให้เป็น</strong> —
+    แต่รู้ไว้ว่ามีอีกทางที่นิยมพอ ๆ กัน และ<strong>ต้องอ่าน SQL ออกอยู่ดี</strong>
+    เพราะเวลา query ช้า คุณจะต้องไปดูว่า ORM แปลออกมาเป็นอะไร
+  </p>
+</div>
+
+<h2>6 · ติดตั้ง GORM</h2>
+
+<pre><code>mkdir api &amp;&amp; cd api
+go mod init wongnok
+
+go get -u gorm.io/gorm
+go get -u gorm.io/driver/postgres
+
+go mod tidy      <span class="c">← อย่าลืมบรรทัดนี้</span></code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ กับดักเดิมจากบทเรียน 17</strong> — หลัง <code>go get</code>
+    ทั้งสองตัวจะขึ้นว่า <code>// indirect</code> ใน <code>go.mod</code>
+    เพราะยังไม่มีโค้ดไหน import จริง
+    <br>เขียนโค้ดแล้วสั่ง <code>go mod tidy</code> คำว่า <code>indirect</code>
+    ถึงจะหายไป — <strong>ถ้าเจอ <code>missing go.sum entry</code> คำตอบคือ
+    <code>go mod tidy</code> เกือบทุกครั้ง</strong>
+    <br><em>เวอร์ชันที่ผมทดสอบ: <code>gorm.io/gorm v1.31.2</code> ·
+    <code>gorm.io/driver/postgres v1.6.2</code> · PostgreSQL 17</em>
+  </p>
+</div>
+
+<h2>7 · GORM Model และ CRUD</h2>
+
+<pre><code><span class="k">type</span> User <span class="k">struct</span> {
+    ID    <span class="k">uint</span>   <span class="s">`gorm:"primaryKey"`</span>
+    Name  <span class="k">string</span>
+    Email <span class="k">string</span> <span class="s">`gorm:"unique"`</span>
+}</code></pre>
+
+<p>
+  <strong>struct tag อีกชุดหนึ่ง</strong> — คนละตัวกับ <code>json:</code>
+  ที่เรียนในบทเรียน 13 แต่ทำงานแบบเดียวกัน:
+  เป็น metadata ที่ library อ่านตอนรัน
+  <br>struct หนึ่งตัวมีได้ทั้งสอง tag พร้อมกัน
+</p>
+
+<div class="predict">
+  <pre><code>user := User{Name: <span class="s">"Somchai"</span>, Email: <span class="s">"somchai@example.com"</span>}
+db.<span class="f">Create</span>(&amp;user)
+
+fmt.<span class="f">Println</span>(user.ID)</code></pre>
+  <p class="ask">ยังไม่ได้ query อะไรกลับมา — <code>user.ID</code> เป็นอะไร?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรันกับ Postgres จริง ได้:</p>
+    <pre style="margin:0.6rem 0"><code>Create: RowsAffected=1 Error=&lt;nil&gt;  → ID ที่ได้กลับมา = <strong>1</strong></code></pre>
+    <p>
+      <strong>GORM เขียนค่ากลับเข้า struct ของคุณ</strong> —
+      เพราะคุณส่ง <code>&amp;user</code> ไป มันจึงแก้ตัวจริงได้
+      (<a href="../../day-3/lessons/0007-value-vs-pointer.html">บทเรียน 07</a>)
+      <br>ถ้าส่ง <code>user</code> เฉย ๆ ไม่มีดาว → GORM แก้สำเนา
+      → <code>ID</code> ของคุณยังเป็น <code>0</code>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>สังเกตอีกอย่าง: GORM ไม่คืน error เป็นค่าที่สอง</strong>
+      <br>มันคืน <code>*gorm.DB</code> ที่มี <code>.Error</code> และ
+      <code>.RowsAffected</code> อยู่ข้างใน — <strong>ต่างจากทุกอย่างที่คุณเรียนมา</strong>
+      ตั้งแต่บทเรียน 05
+      <br>แปลว่า <strong>ลืมเช็ค <code>.Error</code> ได้ง่ายมาก</strong>
+      เพราะ compiler ไม่บังคับเหมือน multiple return value
+    </p>
+  </div>
+</div>
+
+<pre><code><span class="c">// CREATE</span>
+db.<span class="f">Create</span>(&amp;user)
+
+<span class="c">// READ</span>
+<span class="k">var</span> user User
+db.<span class="f">First</span>(&amp;user, <span class="n">1</span>)                                  <span class="c">// หา id = 1</span>
+
+<span class="k">var</span> users []User
+db.<span class="f">Find</span>(&amp;users)                                    <span class="c">// เอาทั้งหมด</span>
+
+<span class="k">var</span> vipUsers []User
+db.<span class="f">Where</span>(<span class="s">"name = ?"</span>, <span class="s">"Somchai"</span>).<span class="f">Find</span>(&amp;vipUsers)  <span class="c">// มีเงื่อนไข</span>
+
+<span class="c">// UPDATE</span>
+db.<span class="f">Model</span>(&amp;user).<span class="f">Update</span>(<span class="s">"Name"</span>, <span class="s">"Somsri"</span>)
+
+<span class="c">// DELETE</span>
+db.<span class="f">Delete</span>(&amp;user, <span class="n">1</span>)</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ชื่อตารางถูกเดาให้อัตโนมัติ</strong> — ผมตรวจแล้ว
+    struct <code>User</code> → ตาราง <code>users</code>
+    (ตัวเล็ก + เติม s) · <code>OrderItem</code> → <code>order_items</code>
+    <br>ใช้เครื่องหมาย <code>?</code> ใน <code>Where</code> เสมอ
+    <strong>อย่าต่อสตริงเอง</strong> — นั่นคือช่องโหว่ SQL injection
+  </p>
+</div>
+
+<h2>8 · สี่กับดักของ GORM ที่ผมเจอตอนทดสอบ</h2>
+
+<h3 style="margin-top:1.3rem">8.1 <code>First</code> ฟ้องว่าไม่เจอ แต่ <code>Find</code> ไม่ฟ้อง</h3>
+
+<pre><code><span class="k">var</span> missing User
+err := db.<span class="f">First</span>(&amp;missing, <span class="n">9999</span>).Error
+<span class="c">// err = record not found · errors.Is(err, gorm.ErrRecordNotFound) = true</span>
+
+<span class="k">var</span> none []User
+res := db.<span class="f">Where</span>(<span class="s">"id = ?"</span>, <span class="n">9999</span>).<span class="f">Find</span>(&amp;none)
+<span class="c">// res.Error = &lt;nil&gt;  ·  res.RowsAffected = 0   ← ไม่ error!</span></code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ นี่คือกับดักที่คนเจอบ่อยที่สุดใน GORM</strong>
+    <br><code>First</code> คาดหวังว่าต้องเจอ → ไม่เจอ = error
+    <br><code>Find</code> คาดหวัง "เอาเท่าที่มี" → ไม่มี = slice ว่าง ไม่ใช่ error
+    <br><strong>ถ้าเช็คแต่ <code>.Error</code> หลัง <code>Find</code>
+    คุณจะไม่มีวันรู้ว่าไม่เจอ</strong> — ต้องเช็ค
+    <code>len(users) == 0</code> หรือ <code>RowsAffected</code> เอง
+    <br>ใช้ <code>errors.Is(err, gorm.ErrRecordNotFound)</code> เสมอ ไม่ใช่ <code>==</code>
+    (<a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>)
+  </p>
+</div>
+
+<h3 style="margin-top:1.3rem">8.2 <code>Update</code>/<code>Delete</code> ที่ไม่มีเงื่อนไข ถูกบล็อก</h3>
+
+<pre><code>db.<span class="f">Model</span>(&amp;User{}).<span class="f">Update</span>(<span class="s">"Balance"</span>, <span class="n">0</span>).Error
+<span class="c">// WHERE conditions required
+// errors.Is(err, gorm.ErrMissingWhereClause) = true</span>
+
+db.<span class="f">Delete</span>(&amp;User{}).Error
+<span class="c">// WHERE conditions required</span></code></pre>
+
+<p>
+  <strong>GORM กันไม่ให้คุณลบทั้งตารางโดยบังเอิญ</strong> —
+  เป็นฟีเจอร์ ไม่ใช่บั๊ก · ถ้าตั้งใจจริงต้องใส่
+  <code>.Where("1 = 1")</code> ให้ชัดเจน
+</p>
+
+<h3 style="margin-top:1.3rem">8.3 Transaction — rollback ทำงานจริง</h3>
+
+<pre><code>err := db.<span class="f">Transaction</span>(<span class="k">func</span>(tx *gorm.DB) <span class="k">error</span> {
+    tx.<span class="f">Model</span>(&amp;Account{}).<span class="f">Where</span>(<span class="s">"owner = ?"</span>, <span class="s">"A"</span>).
+        <span class="f">Update</span>(<span class="s">"balance"</span>, gorm.<span class="f">Expr</span>(<span class="s">"balance - ?"</span>, <span class="n">50</span>))
+
+    <span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"ระบบพังกลางคัน"</span>)   <span class="c">// ← คืน error = rollback</span>
+})</code></pre>
+
+<p>ผมทดสอบกับยอดเงิน A = 100:</p>
+
+<pre><code>Transaction คืน error → ระบบพังกลางคัน
+ยอดของ A หลัง rollback = <strong>100</strong>   ← ไม่ถูกหัก</code></pre>
+
+<p>เมื่อ callback คืน <code>nil</code> GORM จะ commit ให้ — ผมลองโอน 50 จาก A ไป B:</p>
+
+<pre><code>หลัง transaction สำเร็จ: [{ID:1 Owner:A Balance:<strong>50</strong>} {ID:2 Owner:B Balance:<strong>150</strong>}]</code></pre>
+
+<div class="win">
+  <span class="label">💡 กฎเดียวที่ต้องจำเรื่อง transaction ใน GORM</span>
+  <p style="margin-bottom:0">
+    <strong>callback คืน <code>error</code> = rollback · คืน <code>nil</code> = commit</strong>
+    <br>และ<strong>ต้องใช้ <code>tx</code> ข้างใน ไม่ใช่ <code>db</code></strong> —
+    เผลอใช้ <code>db</code> เมื่อไหร่ คำสั่งนั้นจะอยู่นอก transaction
+    แล้ว rollback ไม่ถึง (บั๊กที่หายากมาก เพราะทดสอบตอน happy path จะดูปกติทุกอย่าง)
+  </p>
+</div>
+
+<h3 style="margin-top:1.3rem">8.4 Soft delete — ลบแล้วยังอยู่</h3>
+
+<pre><code><span class="k">type</span> Post <span class="k">struct</span> {
+    ID        <span class="k">uint</span> <span class="s">`gorm:"primaryKey"`</span>
+    Title     <span class="k">string</span>
+    DeletedAt gorm.DeletedAt <span class="s">`gorm:"index"`</span>   <span class="c">// ← field นี้เปลี่ยนทุกอย่าง</span>
+}</code></pre>
+
+<p>ผมสร้าง 1 แถว แล้วสั่ง <code>Delete</code> แล้วนับ:</p>
+
+<pre><code>หลัง Delete: Find เห็น <strong>0</strong> แถว
+แต่ Unscoped เห็น <strong>1</strong> แถว   ← ข้อมูลยังอยู่ในตาราง!</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ มี field ชื่อ <code>DeletedAt</code> แบบ <code>gorm.DeletedAt</code>
+    เมื่อไหร่ <code>Delete</code> จะเปลี่ยนพฤติกรรมทันที</strong> —
+    จาก <code>DELETE FROM</code> กลายเป็น <code>UPDATE SET deleted_at = now()</code>
+    <br>ทุก query หลังจากนั้นจะเติม <code>WHERE deleted_at IS NULL</code> ให้เอง
+    <br><strong>ข้อดี:</strong> กู้ข้อมูลคืนได้ · เก็บประวัติได้
+    <br><strong>ข้อควรระวัง:</strong> คนที่ไม่รู้จะงงว่าทำไม
+    <code>UNIQUE(email)</code> ยังชนอยู่ทั้งที่ "ลบไปแล้ว" —
+    เพราะแถวนั้นยังอยู่จริง ๆ
+    <br>อยากลบจริงต้องใช้ <code>db.Unscoped().Delete(&amp;post)</code>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. <code>internal/</code> ต่างจากโฟลเดอร์ธรรมดายังไง?</p>
+  <div class="opts">
+    <button class="opt">เป็นแค่ธรรมเนียมการตั้งชื่อ ไม่มีผลอะไรจริง</button>
+    <button class="opt">ทำให้ทุกชื่อข้างในกลายเป็น unexported อัตโนมัติ</button>
+    <button class="opt">module อื่น import ไม่ได้ — compiler บล็อกให้จริง</button>
+    <button class="opt">ทำให้โค้ดข้างในไม่ถูกรวมตอน build เป็น binary</button>
+  </div>
+  <div class="explain">
+    <p>ผมทดสอบด้วย 2 module: ภายใน module เดียวกัน import ได้ปกติ ·
+    จาก module อื่นได้
+    <strong><code>use of internal package ... not allowed</code></strong>
+    <br>ชื่อตัวใหญ่ข้างในยังเป็น exported อยู่ (ตัวเลือกที่ 2 ผิด) —
+    แค่ขอบเขตการมองเห็นถูกจำกัดที่ระดับ module
+    <br><strong>ผลจริง: ของใน <code>internal/</code> รีแฟกเตอร์ได้โดยไม่ทำใครพัง</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. ทำไมต้องมี <code>dto.go</code> แยกจาก <code>model.go</code>?</p>
+  <div class="opts">
+    <button class="opt">เพราะเพิ่ม field ลับใน model แล้วลืมใส่ tag = ข้อมูลหลุด</button>
+    <button class="opt">เพราะ GORM ไม่ยอมให้ struct มี json tag ปนอยู่ด้วย</button>
+    <button class="opt">เพราะ Go บังคับให้แต่ละไฟล์มี struct ได้แค่ตัวเดียว</button>
+    <button class="opt">เพราะ DTO ต้องอยู่คนละ package กับ model เสมอ</button>
+  </div>
+  <div class="explain">
+    <p>ต่อจากบทเรียน 13: พึ่ง <code>json:"-"</code> แปลว่า
+    "<em>ปลอดภัยตราบใดที่ไม่มีใครลืม</em>"
+    <br>แยก struct แปลว่า "<em>ต้องตั้งใจเพิ่มถึงจะหลุด</em>" —
+    เพิ่ม <code>PasswordHash</code> เข้า model วันไหน DTO ก็ไม่กระทบ
+    <br><strong>ปลอดภัยโดยค่าเริ่มต้น ดีกว่าปลอดภัยเพราะจำได้</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. <code>db.Where("id = ?", 9999).Find(&amp;users)</code> เมื่อไม่มีข้อมูลตรงเลย?</p>
+  <div class="opts">
+    <button class="opt">คืน <code>gorm.ErrRecordNotFound</code> ใน <code>.Error</code></button>
+    <button class="opt">panic เพราะ slice ปลายทางยังไม่ได้ถูก make</button>
+    <button class="opt">คืน error ทั่วไปว่า <code>sql: no rows in result set</code></button>
+    <button class="opt"><code>.Error</code> เป็น <code>nil</code> · <code>RowsAffected</code> เป็น 0</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันจริงกับ Postgres: <code>Find(id=9999) Error = &lt;nil&gt; · RowsAffected = 0</code>
+    <br><strong><code>Find</code> ไม่ถือว่า "ไม่เจอ" เป็นความผิดพลาด</strong> —
+    ต่างจาก <code>First</code> ที่คืน <code>ErrRecordNotFound</code>
+    <br>ถ้าเช็คแต่ <code>.Error</code> คุณจะเข้าใจผิดว่าสำเร็จ —
+    ต้องดู <code>len()</code> หรือ <code>RowsAffected</code> เอง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. struct มี <code>DeletedAt gorm.DeletedAt</code> แล้วสั่ง <code>db.Delete(&amp;post)</code>?</p>
+  <div class="opts">
+    <button class="opt">ลบแถวออกจากตารางจริง แล้วเก็บ log ไว้ต่างหาก</button>
+    <button class="opt">ไม่ได้ลบจริง แค่ตั้งเวลาไว้ — <code>Unscoped</code> ยังเห็น</button>
+    <button class="opt">คืน error เพราะ <code>DeletedAt</code> ต้องเป็น <code>*time.Time</code></button>
+    <button class="opt">ลบแถวจริง เพราะ soft delete ต้องเปิดที่ config ก่อน</button>
+  </div>
+  <div class="explain">
+    <p>ผมทดสอบ: หลัง <code>Delete</code> → <code>Find</code> เห็น <strong>0</strong> แถว
+    แต่ <code>Unscoped().Find</code> เห็น <strong>1</strong> แถว
+    <br>GORM เปลี่ยนเป็น <code>UPDATE SET deleted_at = now()</code>
+    และเติม <code>WHERE deleted_at IS NULL</code> ให้ทุก query
+    <br><strong>ระวัง <code>unique</code> constraint</strong> — แถวที่ "ลบแล้ว" ยังชนอยู่
+    <br>ลบจริงต้อง <code>db.Unscoped().Delete(...)</code></p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — โปรเจกต์จริงตัวแรกของคุณ</span>
+  <p>
+    <strong>ภารกิจนี้ยาวที่สุดในคอร์ส</strong> เพราะเป็นครั้งแรกที่มีหลายไฟล์ + database จริง
+    ทำทีละข้อ อย่าข้าม
+  </p>
+  <ol>
+    <li>สร้างโครง: <code>cmd/api/main.go</code> ·
+        <code>internal/user/{model,repository,service,dto}.go</code>
+        <br><code>go mod init myapp</code> แล้วรัน <code>go build ./...</code>
+        ให้ผ่านก่อนเขียนอะไร</li>
+    <li>เปิด Postgres ด้วย <code>compose.yml</code> ข้างบน แล้วต่อด้วย GORM
+        ใน <code>internal/platform/database/postgres.go</code></li>
+    <li><code>model.go</code>: <code>User{ID, Name, Email, PasswordHash}</code>
+        พร้อม <code>gorm</code> tag · <code>AutoMigrate</code> ให้เรียบร้อย</li>
+    <li><code>dto.go</code>: <code>CreateUserRequest</code> และ
+        <code>UserResponse</code> — <strong><code>UserResponse</code>
+        ต้องไม่มี <code>PasswordHash</code></strong></li>
+    <li><code>repository.go</code>: <code>Create</code> · <code>FindByID</code> ·
+        <code>FindAll</code> — <strong>ทุกตัวรับ <code>ctx context.Context</code>
+        เป็น parameter ตัวแรก</strong> แล้วใช้ <code>db.WithContext(ctx)</code></li>
+    <li><code>service.go</code>: <code>Register</code> ที่ตรวจว่า
+        <code>name</code> ไม่ว่าง และ <code>email</code> มี <code>@</code>
+        ก่อนเรียก repository</li>
+    <li><strong>ทดลอง 1:</strong> เรียก <code>FindByID(ctx, 9999)</code> —
+        <strong><code>errors.Is(err, gorm.ErrRecordNotFound)</code> เป็น true ไหม?</strong>
+        <br>แล้วลอง <code>FindAll</code> บนตารางว่าง — ได้ error หรือ slice ว่าง?</li>
+    <li><strong>ทดลอง 2:</strong> สร้าง user ที่ email ซ้ำ →
+        <strong>error หน้าตาเป็นยังไง?</strong>
+        แล้วห่อด้วย <code>AppError</code> จากบทเรียน 12 ให้ผู้ใช้อ่านรู้เรื่อง</li>
+    <li><strong>ทดลอง 3:</strong> เขียน <code>Transfer</code> ที่ใช้
+        <code>db.Transaction</code> โอนเงินระหว่างสองแถว
+        แล้วจงใจ <code>return errors.New(...)</code> กลางทาง —
+        <strong>ยอดกลับมาเท่าเดิมไหม?</strong></li>
+    <li><strong>ทดลอง 4:</strong> เพิ่ม <code>DeletedAt gorm.DeletedAt</code>
+        แล้วลบ user คนหนึ่ง จากนั้น<strong>สร้างคนใหม่ด้วย email เดิม</strong>
+        → เกิดอะไรขึ้น? ทำไม?</li>
+    <li><strong>ท้าทาย — เชื่อมกับ Day 6 ทั้งวัน:</strong> เขียน
+        <code>ImportUsers(ctx, []CreateUserRequest)</code> ที่ใช้
+        <strong>worker pool</strong> (บทเรียน 26) สร้าง user พร้อมกัน
+        <br>ตั้งจำนวน worker เท่าไหร่? <em>(ใบ้: หัวข้อ 5 ของบทเรียน 26 แถวสุดท้าย)</em>
+        <br>รัน <code>go test -race ./...</code> ด้วย</li>
+  </ol>
+  <button class="reveal">ใบ้ทดลอง 4</button>
+  <div class="answer">
+    <p style="margin-bottom:0">
+      <strong>สร้างไม่ได้ — ชน <code>unique constraint</code></strong>
+      <br>เพราะ soft delete ไม่ได้ลบแถวจริง มันแค่ตั้ง <code>deleted_at</code>
+      แถวเดิมที่มี email นั้นยังอยู่ในตาราง และ constraint ระดับ database
+      ไม่รู้จักแนวคิด "ลบแบบนุ่มนวล" ของ GORM เลย
+      <br><strong>นี่คือเหตุผลที่ระบบจริงมักทำ unique index แบบมีเงื่อนไข</strong>
+      (<code>WHERE deleted_at IS NULL</code>) หรือเปลี่ยนไปใช้ hard delete
+      สำหรับ field ที่ต้อง unique
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <span class="label">🎉 จบ Day 6 แล้ว — และเป็นวันที่หนักที่สุด</span>
+  <p style="margin-bottom:0">
+    เก้าบทของ Day 6 ต่อกันเป็นสามช่วง:
+    <br><strong>Generics (19–20)</strong> — เขียนครั้งเดียวใช้ได้หลาย type
+    <br><strong>Concurrency (21–26)</strong> — สร้าง · สื่อสาร · เลือก · ป้องกัน · ยกเลิก · จำกัด
+    <br><strong>โปรเจกต์จริง (27)</strong> — จัดโครง · ต่อ database
+    <br><br>
+    ตอนนี้คุณ<strong>มีครบทุกชิ้นที่ต้องใช้สร้าง REST API แล้ว</strong> —
+    เหลือแค่ชั้น HTTP ซึ่งเป็นเนื้อหาสัปดาห์ที่ 3
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ภารกิจนี้ใหญ่ — ติดตรงไหนถามได้ทุกข้อ</strong>
+    โดยเฉพาะข้อ 5 (<code>WithContext</code>) และท้าทายข้อสุดท้าย
+    <br>ถ้าอยากได้บทเรียนเรื่อง <code>httptest</code> หรือ
+    การเขียนเทสให้ repository ที่ต่อ database จริง (ยังไม่มีในสไลด์) — บอกได้
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0026-worker-pool.html">← บทเรียน 26</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 6</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/doc/modules/layout">Organizing a Go module</a> — <strong>ทางการ</strong> · อธิบาย <code>cmd/</code> และ <code>internal/</code></li>
+  <li><a href="https://go.dev/doc/go1.4#internalpackages">Go 1.4 Release Notes — Internal packages</a> — ที่มาของกฎ <code>internal/</code></li>
+  <li><a href="https://gorm.io/docs/">GORM Guides</a> · <a href="https://gorm.io/docs/error_handling.html">Error Handling</a> · <a href="https://gorm.io/docs/delete.html#Soft-Delete">Soft Delete</a> · <a href="https://gorm.io/docs/transactions.html">Transactions</a></li>
+  <li><a href="https://pkg.go.dev/database/sql">pkg.go.dev — database/sql</a> — ทางเลือกที่ไม่ใช้ ORM</li>
+  <li><a href="https://hub.docker.com/_/postgres">Docker Hub — postgres</a> — ตัวเลือก environment ทั้งหมดของ image</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

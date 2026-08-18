@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 18 — TDD: Red, Green, Refactor (และทำไมมันสำคัญขึ้นในยุค AI)</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 18 · Day 5 · Test Practice</p>
+  <h1>TDD: Red, Green, Refactor</h1>
+  <p class="meta">~15 นาที · ต้องมี: <a href="./0017-testify.html">บทเรียน 17</a> · บทสุดท้ายของ Day 5</p>
+  <p class="standfirst">
+    TDD คือการ<strong>เขียนเทสก่อนเขียนโค้ด</strong> ฟังดูกลับหัวกลับหาง
+    แต่ผลที่ได้ไม่ใช่แค่ "มีเทส" — มันคือ<strong>การบังคับให้คุณตัดสินใจว่า
+    ฟังก์ชันนี้ควรหน้าตายังไงก่อนจะลงมือเขียน</strong>
+    และในยุคที่ AI generate โค้ดให้ได้ทั้งไฟล์ในสิบวินาที
+    เทสกลายเป็นสิ่งเดียวที่ยืนยันได้ว่าโค้ดนั้นตรงกับที่ธุรกิจต้องการจริง
+  </p>
+</header>
+
+<main>
+
+<h2>1 · วงจร Red → Green → Refactor</h2>
+
+<div class="diagram">
+<pre>       ┌──────────────────────────────────────────┐
+       │                                          ▼
+   <strong>[Red]</strong>  ─────────▶  <strong>[Green]</strong>  ─────────▶  <strong>[Refactor]</strong>
+  เขียนเทสให้พัง      แก้ให้ผ่าน           ทำให้สวย
+   (ไฟแดง)          (ไฟเขียว)        (โดยเทสยังเขียว)</pre>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ขั้น</th><th>ทำอะไร</th><th>กฎเหล็ก</th></tr>
+  <tr><td><strong>🔴 Red</strong></td><td>เขียนเทสที่อธิบายพฤติกรรมที่ต้องการ แล้วรันให้เห็นว่าพัง</td><td><strong>ห้ามเขียน production code ก่อนเห็นไฟแดง</strong></td></tr>
+  <tr><td><strong>🟢 Green</strong></td><td>เขียนโค้ดน้อยที่สุดที่ทำให้ผ่าน</td><td><strong>ห้ามเขียนเกินความจำเป็น</strong> — สวยทีหลังได้</td></tr>
+  <tr><td><strong>🔵 Refactor</strong></td><td>จัดโค้ดให้อ่านง่าย ลดซ้ำซ้อน</td><td><strong>เทสต้องเขียวตลอดเวลา</strong> ไม่แก้เทส</td></tr>
+</table>
+</div>
+
+<h2>2 · Red มีสองแบบ — และมีแบบเดียวที่ใช่</h2>
+
+<p>
+  ผมทดลองให้ดูแล้วด้วย <code>Division(a, b float64)</code> —
+  เริ่มจากเขียนเทสก่อน โดยที่ยังไม่มีฟังก์ชันเลย
+</p>
+
+<pre><code><span class="c">// division_test.go — เขียนอันนี้ก่อน</span>
+<span class="k">func</span> <span class="f">TestDivision</span>(t *testing.T) {
+    got, err := <span class="f">Division</span>(<span class="n">10</span>, <span class="n">2</span>)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        t.<span class="f">Fatalf</span>(<span class="s">"ไม่ควรมี error: %v"</span>, err)
+    }
+    <span class="k">if</span> got != <span class="n">5</span> {
+        t.<span class="f">Errorf</span>(<span class="s">"Division(10,2) = %v; want 5"</span>, got)
+    }
+}</code></pre>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>🚫 Red แบบที่ยังไม่ใช่</h4>
+    <pre><code>$ go test ./...
+<span class="c"># tdd [tdd.test]
+./division_test.go:6:14: undefined: Division
+FAIL	tdd [build failed]</span></code></pre>
+    <p style="margin-bottom:0">
+      <strong>นี่คือ build error ไม่ใช่ test failure</strong> —
+      แปลว่ายังไม่ได้ทดสอบอะไรเลย เทสของคุณยังไม่เคยได้รันด้วยซ้ำ
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ Red ที่ต้องการ</h4>
+    <pre><code><span class="c">// เขียนโครงเปล่า ๆ ก่อน</span>
+<span class="k">func</span> <span class="f">Division</span>(a, b <span class="n">float64</span>) (<span class="n">float64</span>, <span class="n">error</span>) {
+    <span class="k">return</span> <span class="n">0</span>, <span class="k">nil</span>
+}</code>
+<code>$ go test ./...
+<span class="c">--- FAIL: TestDivision (0.00s)
+    division_test.go:11: Division(10,2) = 0; want 5
+FAIL</span></code></pre>
+    <p style="margin-bottom:0">
+      <strong>เทสรันแล้วและพังด้วยเหตุผลที่ถูกต้อง</strong> —
+      นี่คือหลักฐานว่าเทสของคุณ<em>ทำงานจริง</em>
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <span class="label">ทำไมต้องเห็นไฟแดงก่อน</span>
+  <p style="margin-bottom:0">
+    <strong>เพื่อพิสูจน์ว่าเทสจับได้จริง</strong> — เทสที่ไม่เคยแดงเลย
+    อาจเป็นเทสที่<em>ผ่านตลอดไม่ว่าโค้ดจะเป็นยังไง</em>
+    (ลืม assert, assert ผิดตัวแปร, เงื่อนไขกลับด้าน)
+    <br>เขียนโค้ดก่อนแล้วค่อยเขียนเทส คุณจะไม่มีวันรู้ว่าเทสนั้นมีค่าจริงไหม
+  </p>
+</div>
+
+<h2>3 · Green — เขียนน้อยที่สุด</h2>
+
+<pre><code><span class="k">func</span> <span class="f">Division</span>(a, b <span class="n">float64</span>) (<span class="n">float64</span>, <span class="n">error</span>) {
+    <span class="k">return</span> a / b, <span class="k">nil</span>          <span class="c">// พอแล้วสำหรับเทสที่มีตอนนี้</span>
+}</code></pre>
+
+<pre><code>$ go test ./...
+ok  	tdd	0.464s      <span class="c">← 🟢</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>"แต่มันยังไม่กันหารด้วยศูนย์นี่"</strong> — ถูกต้อง
+    และนั่นคือ<strong>เคสถัดไปที่ต้องเขียนเทสก่อน</strong>
+    ไม่ใช่สิ่งที่จะแอบใส่ตอนนี้
+    <br>TDD บังคับให้ทุกบรรทัดของ production code
+    <em>มีเทสที่เรียกร้องมันอยู่</em> — ถ้าเขียนดักศูนย์ตอนนี้เลย
+    บรรทัดนั้นจะไม่มีเทสไหนพิสูจน์ว่ามันทำงานถูก
+  </p>
+</div>
+
+<h3>รอบที่ 2 — Red อีกครั้ง</h3>
+
+<pre><code><span class="c">// เพิ่มเคสในตาราง (บทเรียน 16)</span>
+{<span class="s">"หารด้วยศูนย์"</span>, <span class="n">10</span>, <span class="n">0</span>, <span class="n">0</span>, ErrDivideByZero},</code></pre>
+
+<pre><code>$ go test ./...
+--- FAIL: TestDivision/หารด้วยศูนย์
+    division_test.go:18: err = &lt;nil&gt;; want divide by zero   <span class="c">← 🔴</span></code></pre>
+
+<h3>Green อีกครั้ง</h3>
+
+<pre><code><span class="k">var</span> ErrDivideByZero = errors.<span class="f">New</span>(<span class="s">"divide by zero"</span>)
+
+<span class="k">func</span> <span class="f">Division</span>(a, b <span class="n">float64</span>) (<span class="n">float64</span>, <span class="n">error</span>) {
+    <span class="k">if</span> b == <span class="n">0</span> {
+        <span class="k">return</span> <span class="n">0</span>, ErrDivideByZero
+    }
+    <span class="k">return</span> a / b, <span class="k">nil</span>
+}</code></pre>
+
+<pre><code>$ go test ./...
+ok  	tdd	0.464s      <span class="c">← 🟢 ทั้งสองเคสผ่าน</span></code></pre>
+
+<h2>4 · Refactor — ขั้นที่คนข้ามบ่อยที่สุด</h2>
+
+<p>
+  ตอนนี้เทสเขียวแล้ว = <strong>คุณมีตาข่ายนิรภัย</strong>
+  แก้โครงสร้างโค้ดได้อย่างมั่นใจ เพราะถ้าทำพัง เทสจะบอกทันที
+</p>
+
+<ul>
+  <li>ตั้งชื่อตัวแปรใหม่ให้สื่อความหมาย</li>
+  <li>แยกฟังก์ชันที่ยาวเกินไป</li>
+  <li>ยุบ <code>if</code> ซ้อนเป็น guard clause (<a href="../../day-2/lessons/0004-guard-clauses.html">บทเรียน 04</a>)</li>
+  <li>เปลี่ยน <code>float64</code> เป็น custom type ให้สื่อความหมาย (<a href="../../day-4/lessons/0009-underlying-type.html">บทเรียน 09</a>)</li>
+</ul>
+
+<div class="warn">
+  <span class="label">กฎเดียวของขั้น Refactor</span>
+  <p style="margin-bottom:0">
+    <strong>ห้ามเปลี่ยนพฤติกรรม และห้ามแก้เทสไปพร้อมกัน</strong> —
+    ถ้าคุณแก้ทั้งโค้ดและเทสในรอบเดียว คุณจะไม่รู้ว่าเทสยังจับบั๊กได้อยู่ไหม
+    <br>อยากเปลี่ยนพฤติกรรม = กลับไปขั้น Red เขียนเทสใหม่ก่อน
+  </p>
+</div>
+
+<h2>5 · TDD ได้อะไรมากกว่า "มีเทส"</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สิ่งที่ได้</th><th>ทำไม</th></tr>
+  <tr>
+    <td><strong>ออกแบบ API ก่อนเขียน</strong></td>
+    <td>เทสคือ<em>ผู้ใช้คนแรก</em>ของฟังก์ชันคุณ — ถ้าเขียนเทสแล้วรู้สึกอึดอัด แปลว่า signature ออกแบบไม่ดี รู้ตั้งแต่ยังไม่ลงทุนเขียน implementation</td>
+  </tr>
+  <tr>
+    <td><strong>โค้ดเทสได้โดยธรรมชาติ</strong></td>
+    <td>คุณจะ<em>ต้อง</em>ใช้ DI (บทเรียน 17) เพราะไม่งั้นเขียนเทสไม่ได้ตั้งแต่แรก</td>
+  </tr>
+  <tr>
+    <td><strong>ไม่เขียนเกินที่ต้องการ</strong></td>
+    <td>ทุกบรรทัดมีเทสที่เรียกร้องมัน — ไม่มีโค้ดที่ "เผื่อไว้" แล้วไม่มีใครใช้</td>
+  </tr>
+  <tr>
+    <td><strong>เทสที่พิสูจน์แล้วว่าจับได้</strong></td>
+    <td>ทุกเทสเคยแดงมาก่อน → รู้แน่ว่ามันไม่ใช่เทสหลอก</td>
+  </tr>
+  <tr>
+    <td><strong>รู้ว่า "เสร็จ" เมื่อไหร่</strong></td>
+    <td>เทสเขียวครบ = เสร็จ · ไม่ต้องเดา ไม่ต้องเถียงกัน</td>
+  </tr>
+</table>
+</div>
+
+<h2>6 · Test with AI workflow</h2>
+
+<p>
+  ทุกวันนี้ AI generate โค้ดได้ทั้งไฟล์ในไม่กี่วินาที
+  แต่<strong>โค้ดที่ได้อาจไม่ตรงกับสิ่งที่ธุรกิจต้องการ</strong> —
+  AI เดาจากบริบทที่คุณให้ ถ้าบริบทกำกวม มันก็เดาไปทางที่ดูสมเหตุสมผลที่สุด
+  ซึ่งอาจไม่ใช่สิ่งที่คุณหมายถึง
+</p>
+
+<div class="diagram">
+<pre>ปัญหา: <strong>AI เก่งเรื่อง "เขียนโค้ด" แต่ไม่รู้ "ธุรกิจต้องการอะไร"</strong>
+
+  คุณ ──"เขียนฟังก์ชันคำนวณส่วนลด"──▶ AI ──▶ โค้ดที่ดูดี
+                                              │
+                                              ▼
+                                   แล้วยังไงถึงจะรู้ว่าถูก?
+
+ทางแก้: <strong>ให้เทสเป็นตัวกำหนดข้อตกลง แล้วปล่อย AI เขียน implementation</strong>
+
+  คุณ ──▶ <strong>เขียนเทส (สเปกที่รันได้)</strong> ──▶ AI เขียนโค้ด ──▶ go test
+                     ▲                                          │
+                     └──────────── แดง = ยังไม่ตรง ◀────────────┘</pre>
+</div>
+
+<h3>ทำไมเทสเหมาะกับงานนี้เป็นพิเศษ</h3>
+
+<ul>
+  <li><strong>เทสคือสเปกที่รันได้</strong> — ต่างจากคำอธิบายภาษาคน
+      ตรงที่ไม่มีทางตีความผิด และตรวจสอบอัตโนมัติได้</li>
+  <li><strong>AI ตรวจงานตัวเองได้</strong> — บอกให้รัน <code>go test</code>
+      แล้วแก้จนเขียว โดยไม่ต้องรอคุณ review ทุกรอบ</li>
+  <li><strong>คุณยังคุมความหมาย</strong> — คุณเป็นคนตัดสินใจว่า
+      "ส่วนลด 100% แล้วราคาควรเป็น 0 หรือควร error"
+      ซึ่ง AI เดาเองไม่ได้</li>
+</ul>
+
+<div class="warn">
+  <span class="label">อย่าให้ AI เขียนเทสจากโค้ดที่มันเพิ่งเขียนเอง</span>
+  <p style="margin-bottom:0">
+    ถ้าโค้ดผิด เทสที่เขียนตามโค้ดก็จะ<strong>ยืนยันความผิดนั้น</strong>
+    ได้เทสเขียวสวยงามที่พิสูจน์ว่าบั๊กทำงานถูกต้องตามที่บั๊กเป็น
+    <br><strong>ลำดับที่ถูก: คุณกำหนดพฤติกรรม → เทสก่อน → โค้ดทีหลัง</strong>
+    <br>ถ้าจะให้ AI ช่วยคิดเคส ให้มันเสนอ<em>รายการเคส</em>มาก่อน
+    (รวมถึงเคสขอบและเคสที่ควรพัง) แล้วคุณเลือกเอง —
+    ต่างจากให้มันเขียนเทสจากโค้ดสำเร็จรูป
+  </p>
+</div>
+
+<h3>รูปแบบที่ใช้ได้จริง</h3>
+
+<pre><code><span class="c">1. คุณ:   เขียน table-driven test ที่ระบุพฤติกรรมทุกเคส (รวมเคสขอบ)
+2. คุณ:   รันให้เห็นแดง — พิสูจน์ว่าเทสจับได้จริง
+3. AI:    เขียน implementation ให้ผ่านเทสทั้งหมด
+4. AI:    รัน go test เอง แก้เอง จนเขียว
+5. คุณ:   อ่านโค้ดที่ได้ — ตรวจว่ามันไม่ได้ "โกง" เทส
+6. คุณ:   เพิ่มเคสที่นึกออกเพิ่ม → กลับไปข้อ 2</span></code></pre>
+
+<div class="predict">
+  <pre><code><span class="c">// เทสที่คุณเขียน — มีเคสเดียว</span>
+<span class="k">func</span> <span class="f">TestCalculateDiscount</span>(t *testing.T) {
+    got, err := <span class="f">CalculateDiscount</span>(<span class="n">100</span>, <span class="n">10</span>)
+    require.<span class="f">NoError</span>(t, err)
+    assert.<span class="f">Equal</span>(t, <span class="n">90</span>, got)
+}
+
+<span class="c">// implementation ที่ได้กลับมา</span>
+<span class="k">func</span> <span class="f">CalculateDiscount</span>(price, percent <span class="n">int</span>) (<span class="n">int</span>, <span class="n">error</span>) {
+    <span class="k">if</span> price == <span class="n">100</span> &amp;&amp; percent == <span class="n">10</span> {
+        <span class="k">return</span> <span class="n">90</span>, <span class="k">nil</span>
+    }
+    <span class="k">return</span> <span class="n">0</span>, <span class="k">nil</span>
+}</code></pre>
+  <p class="ask">
+    <code>go test</code> จะขึ้นเขียวหรือแดง — และคุณควรรู้สึกยังไงกับผลนั้น?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>เขียว</strong> — เทสผ่านหมดทุกข้อ</p>
+    <p>
+      โค้ดนี้<em>ไม่ได้คำนวณส่วนลดเลย</em> มันแค่จำคำตอบของเคสที่คุณเทสไว้
+      แต่เทสของคุณ<strong>ยืนยันไม่ได้ว่ามันผิด</strong> เพราะคุณถามคำถามเดียว
+    </p>
+    <p style="margin-bottom:0">
+      <strong>นี่คือสิ่งที่ AI ทำได้จริง</strong> ถ้าคุณสั่งแค่ "ทำให้เทสผ่าน" —
+      และมันไม่ได้เจตนาโกง มันแค่ทำตามที่คุณขอเป๊ะ ๆ
+      <br><strong>ทางแก้ไม่ใช่การเลิกใช้ AI แต่คือการเขียนตารางเทสให้ครบ</strong>
+      จนการโกงยากกว่าการเขียนสูตรจริง — เพิ่มเคส
+      <code>(100, 0)</code>, <code>(250, 20)</code>, <code>(100, 100)</code>
+      แล้วโค้ดข้างบนจะแดงทันที
+      <br>นี่คือเหตุผลที่<a href="./0016-table-driven-test.html">บทเรียน 16</a>
+      ย้ำเรื่องเคสขอบตั้งแต่ก่อนจะมีเรื่อง AI
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ข้อ 5 ในลิสต์ข้างบนคือข้อที่ห้ามข้าม</strong> —
+    เทสเขียวบอกแค่ว่า "ผ่านคำถามที่คุณถาม"
+    ไม่ได้บอกว่า "โค้ดถูก" · <strong>คุณภาพของเทสคือเพดานของความมั่นใจ</strong>
+  </p>
+</div>
+
+<h2>7 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ลำดับของวงจร TDD คืออะไร?</p>
+  <div class="opts">
+    <button class="opt">เขียนโค้ด แล้วเขียนเทส แล้วจัดให้สวย</button>
+    <button class="opt">เขียนเทสให้พัง แก้ให้ผ่าน แล้วจัดให้สวย</button>
+    <button class="opt">ออกแบบก่อน เขียนโค้ด แล้วค่อยเขียนเทส</button>
+    <button class="opt">จัดโค้ดให้สวย เขียนเทส แล้วแก้ให้ผ่าน</button>
+  </div>
+  <div class="explain">
+    <p><strong>Red → Green → Refactor</strong> · หัวใจอยู่ที่ Red มาก่อน —
+    ทำให้คุณ<em>ออกแบบ API จากมุมของผู้ใช้</em> ก่อนจะติดกับ implementation
+    ที่เขียนไปแล้ว และพิสูจน์ว่าเทสจับได้จริง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">2. <code>undefined: Division / FAIL [build failed]</code> ถือเป็น Red ที่ใช้ได้ไหม?</p>
+  <div class="opts">
+    <button class="opt">ใช้ได้ เพราะผลลัพธ์ขึ้นว่า FAIL แล้ว</button>
+    <button class="opt">ใช้ได้ ถ้าจะเขียนฟังก์ชันในขั้นถัดไป</button>
+    <button class="opt">ยังไม่ใช่ เพราะเทสยังไม่เคยได้รันเลย</button>
+    <button class="opt">ยังไม่ใช่ เพราะต้องใช้ testify ก่อนเสมอ</button>
+  </div>
+  <div class="explain">
+    <p><code>build failed</code> แปลว่า<strong>คอมไพล์ไม่ผ่าน</strong> —
+    ยังไม่มีเทสตัวไหนได้รันสักตัว จึงพิสูจน์อะไรไม่ได้
+    <strong>Red ที่ต้องการคือเขียนโครงเปล่า ๆ ให้คอมไพล์ผ่าน
+    แล้วเห็น <code>--- FAIL: TestDivision ... = 0; want 5</code></strong>
+    ซึ่งพิสูจน์ว่าเทสทำงานและจับความผิดได้จริง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. ขั้น Green บอกให้ "เขียนน้อยที่สุด" — ทำไม?</p>
+  <div class="opts">
+    <button class="opt">เพื่อให้ทุกบรรทัดมีเทสที่เรียกร้องมัน</button>
+    <button class="opt">เพื่อให้โปรแกรมทำงานได้เร็วขึ้นกว่าเดิม</button>
+    <button class="opt">เพื่อประหยัดเวลาในการพิมพ์โค้ดลงไป</button>
+    <button class="opt">เพราะ Go จำกัดความยาวของฟังก์ชันไว้</button>
+  </div>
+  <div class="explain">
+    <p>ถ้าเขียนดักเคสที่ยังไม่มีเทส <strong>บรรทัดนั้นจะไม่มีอะไรพิสูจน์ว่าถูก</strong>
+    — และคุณจะไม่รู้ว่ามันทำงานจริงจนกว่าจะไป production
+    <br>เคสถัดไป = <strong>เขียนเทสก่อน</strong> แล้วค่อยเพิ่มโค้ด
+    ไม่ใช่แอบใส่ล่วงหน้า</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. ให้ AI เขียนเทสจากโค้ดที่มันเพิ่งเขียนเอง — ปัญหาคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">เทสจะยาวเกินไปและอ่านยากกว่าปกติ</button>
+    <button class="opt">เทสจะรันช้ากว่าที่คนเขียนเองมาก</button>
+    <button class="opt">เทสจะครอบคลุมไม่ถึง 100% coverage</button>
+    <button class="opt">ถ้าโค้ดผิด เทสจะยืนยันความผิดนั้น</button>
+  </div>
+  <div class="explain">
+    <p>เทสที่เขียนตามโค้ดจะ<strong>บรรยายสิ่งที่โค้ดทำ</strong>
+    ไม่ใช่<strong>สิ่งที่โค้ดควรทำ</strong> → ได้เทสเขียวสวยงามที่พิสูจน์ว่า
+    บั๊กทำงานถูกต้องตามที่บั๊กเป็น
+    <br><strong>ลำดับที่ถูก: คนกำหนดพฤติกรรม → เทสก่อน → AI เขียนโค้ดให้ผ่าน</strong></p>
+  </div>
+</div>
+
+<h2>8 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: เขียน <code>Division</code> ด้วย TDD แบบเคร่งครัด (workshop จากสไลด์)</h3>
+  <p>
+    <strong>กติกา: ห้ามพิมพ์ production code ก่อนเห็นไฟแดงเด็ดขาด</strong>
+    ทำทีละรอบ อย่าข้าม
+  </p>
+  <ol>
+    <li><strong>รอบ 1 — Red:</strong> เขียนเฉพาะ <code>division_test.go</code>
+        ที่เทส <code>Division(10, 2) == 5</code> → รัน →
+        <strong>ได้ <code>build failed</code> ใช่ไหม?</strong> นั่นยังไม่ใช่ Red</li>
+    <li><strong>รอบ 1 — Red จริง:</strong> เพิ่ม
+        <code>func Division(a, b float64) (float64, error) { return 0, nil }</code>
+        → รัน → <strong>ต้องได้ <code>= 0; want 5</code></strong></li>
+    <li><strong>รอบ 1 — Green:</strong> เขียน <code>return a / b, nil</code> → เขียว</li>
+    <li><strong>รอบ 2 — Red:</strong> เพิ่มเคส <code>Division(10, 0)</code>
+        ที่คาดว่าได้ <code>ErrDivideByZero</code> → ต้องแดง</li>
+    <li><strong>รอบ 2 — Green:</strong> เพิ่มการดักศูนย์ → เขียว</li>
+    <li><strong>รอบ 3 — Red:</strong> คิดเคสเพิ่มเอง <strong>อย่างน้อย 3 เคส</strong> —
+        แนะนำ: หารลงตัวไม่ลงตัว, ตัวเลขติดลบ, <code>0 / 5</code>
+        <br><em>ระวัง: ผลลัพธ์เป็น <code>float64</code> →
+        ใช้ <code>assert.InDelta</code> ไม่ใช่ <code>Equal</code>
+        (บทเรียน 17)</em></li>
+    <li><strong>Refactor:</strong> แปลงเทสทั้งหมดเป็น table-driven
+        (บทเรียน 16) โดยที่<strong>เทสต้องเขียวตลอด</strong> —
+        รัน <code>go test</code> หลังแก้ทุกครั้ง</li>
+    <li><strong>ท้าทาย 1 — พิสูจน์ว่าเทสไม่ใช่เทสหลอก:</strong>
+        จงใจทำให้ <code>Division</code> ผิด (เช่นเปลี่ยนเป็น <code>a * b</code>)
+        → <strong>เทสแดงกี่เคส?</strong> ถ้าแดงไม่หมดแปลว่ายังขาดเคส</li>
+    <li><strong>ท้าทาย 2 — ลอง AI workflow จริง:</strong>
+      <ol style="margin-top:0.3rem">
+        <li>เขียน<strong>เทสอย่างเดียว</strong>สำหรับฟังก์ชันใหม่
+            เช่น <code>ParseDuration(s string) (time.Duration, error)</code>
+            ที่รับ <code>"1h30m"</code>, <code>"45s"</code>, <code>"abc"</code></li>
+        <li>รันให้เห็นแดง</li>
+        <li>ส่งเทสให้ AI แล้วบอกว่า <em>"เขียน implementation ให้ผ่านเทสนี้
+            รัน go test เองจนเขียว ห้ามแก้ไฟล์เทส"</em></li>
+        <li><strong>อ่านโค้ดที่ได้ — มันโกงเทสหรือเปล่า?</strong>
+            มี <code>if s == "1h30m"</code> ไหม?</li>
+        <li>ถ้าโกง → เพิ่มเคสจนโกงไม่ได้ แล้วทำซ้ำ</li>
+      </ol>
+    </li>
+  </ol>
+</div>
+
+<div class="win">
+  <span class="label">🎉 จบ Day 5 แล้ว</span>
+  <p style="margin-bottom:0">
+    ตอนนี้คุณ<strong>เขียนเทสได้ · อ่านผลเทสออก · ออกแบบโค้ดให้เทสได้ ·
+    และใช้เทสเป็นสเปกคุม AI ได้</strong>
+    <br>ห้าบทของ Day 5 ต่อกันเป็นเส้นเดียว: กฎเกม (14) → เครื่องมือ (15) →
+    สำนวน (16) → library (17) → วิธีทำงาน (18)
+  </p>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://quii.gitbook.io/learn-go-with-tests">Learn Go with Tests</a>
+  ของ Chris James — <strong>สอน Go ทั้งภาษาผ่าน TDD</strong>
+  ตั้งแต่ hello world ถึง concurrency ทุกบทเป็นวงจร red-green-refactor จริง ๆ
+  ฟรี อ่านออนไลน์ได้ และเป็นแหล่งที่ชุมชน Go แนะนำกันมากที่สุดสำหรับเรื่องนี้
+  <br><strong>ถ้าจะอ่านต่อจากบทนี้แค่ที่เดียว ให้อ่านที่นั่น</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — ท้าทายข้อ 2 (AI workflow)
+    คือข้อที่ผมอยากเห็นผลมากที่สุด <strong>ถ้า AI โกงเทสได้ ส่งโค้ดที่มันเขียนมา</strong>
+    จะได้ดูด้วยกันว่าตารางเทสขาดเคสไหน — เป็นทักษะที่ใช้ได้ตลอดชีวิตการทำงาน
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0017-testify.html">← บทเรียน 17</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 5</a>
+  <a href="../../day-6/lessons/0019-generics.html">บทเรียน 19 → Generics</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://quii.gitbook.io/learn-go-with-tests">Learn Go with Tests</a> — เรียน Go ทั้งภาษาผ่าน TDD (ฟรี)</li>
+  <li><a href="https://go.dev/doc/tutorial/add-a-test">Add a test — Go tutorial</a> — ทางการ เริ่มต้นสั้น ๆ</li>
+  <li><a href="https://go.dev/wiki/TableDrivenTests">Go Wiki — Table Driven Tests</a></li>
+  <li><a href="https://pkg.go.dev/testing">pkg.go.dev — testing</a></li>
+  <li><a href="https://go.dev/wiki/CodeReviewComments#useful-test-failures">Go Code Review Comments — Useful Test Failures</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

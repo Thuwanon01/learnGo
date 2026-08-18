@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 16 — Table-Driven Test: เพิ่มเคสใหม่ด้วยการพิมพ์บรรทัดเดียว</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 16 · Day 5 · Test Convention</p>
+  <h1>Table-Driven Test: เพิ่มเคสใหม่ด้วยการพิมพ์บรรทัดเดียว</h1>
+  <p class="meta">~13 นาที · ต้องมี: <a href="./0015-testing-t.html">บทเรียน 15</a>, <a href="../../day-3/lessons/0006-slice-aliasing.html">บทเรียน 06</a> (slice of struct)</p>
+  <p class="standfirst">
+    นี่คือ<strong>สำนวนการเขียนเทสที่เป็นมาตรฐานของ Go</strong> —
+    เปิดซอร์สของ standard library ที่ไหนก็เจอ
+    แนวคิดเดียว: <em>แยก "ข้อมูลที่จะทดสอบ" ออกจาก "ตรรกะการทดสอบ"</em>
+    ผลคือเพิ่มเคสใหม่ = พิมพ์อีกบรรทัดในตาราง ไม่ใช่ copy โค้ดทั้งก้อน
+  </p>
+</header>
+
+<main>
+
+<h2>1 · ปัญหาที่มันแก้</h2>
+
+<p>
+  สมมติ <code>CalculateDiscount(price, percent)</code> ต้องเทส 5 เคส
+  ถ้าเขียนแบบตรงไปตรงมาจะได้แบบนี้:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">TestCalculateDiscount_HappyPath</span>(t *testing.T) {
+    result, err := <span class="f">CalculateDiscount</span>(<span class="n">100</span>, <span class="n">10</span>)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        t.<span class="f">Errorf</span>(<span class="s">"did not expect error, got %v"</span>, err)
+    }
+    <span class="k">if</span> result != <span class="n">90</span> {
+        t.<span class="f">Errorf</span>(<span class="s">"CalculateDiscount(100, 10) = %v; want 90"</span>, result)
+    }
+}
+
+<span class="k">func</span> <span class="f">TestCalculateDiscount_NoDiscount</span>(t *testing.T) {
+    result, err := <span class="f">CalculateDiscount</span>(<span class="n">100</span>, <span class="n">0</span>)
+    <span class="k">if</span> err != <span class="k">nil</span> {              <span class="c">// ← copy มาทั้งดุ้น</span>
+        t.<span class="f">Errorf</span>(<span class="s">"did not expect error, got %v"</span>, err)
+    }
+    <span class="k">if</span> result != <span class="n">100</span> {           <span class="c">// ← แก้แค่ตัวเลข</span>
+        t.<span class="f">Errorf</span>(<span class="s">"CalculateDiscount(100, 0) = %v; want 100"</span>, result)
+    }
+}
+
+<span class="c">// ... อีก 3 ฟังก์ชัน หน้าตาเหมือนกันหมด</span></code></pre>
+
+<ul>
+  <li><strong>ซ้ำซาก</strong> — ตรรกะเดิม 5 รอบ ต่างกันแค่ตัวเลข</li>
+  <li><strong>แก้ยาก</strong> — เปลี่ยน signature ของฟังก์ชันทีต้องแก้ 5 ที่</li>
+  <li><strong>ตกหล่นง่าย</strong> — copy แล้วลืมแก้ค่าใดค่าหนึ่ง เทสจะผ่านทั้งที่ไม่ควรผ่าน</li>
+  <li><strong>มองไม่เห็นภาพรวม</strong> — ตอบไม่ได้ทันทีว่าเทสครอบคลุมเคสไหนแล้วบ้าง</li>
+</ul>
+
+<h2>2 · รูปแบบ Table-Driven</h2>
+
+<pre><code><span class="k">func</span> <span class="f">TestCalculateDiscount</span>(t *testing.T) {
+    <span class="c">// ── ส่วนที่ 1: ตาราง (ข้อมูล) ──</span>
+    tests := []<span class="k">struct</span> {
+        name    <span class="n">string</span>
+        price   <span class="n">int</span>
+        percent <span class="n">int</span>
+        want    <span class="n">int</span>
+        wantErr <span class="n">bool</span>
+    }{
+        {<span class="s">"ลด 10%"</span>,              <span class="n">100</span>,  <span class="n">10</span>,  <span class="n">90</span>,  <span class="k">false</span>},
+        {<span class="s">"ไม่ลด"</span>,                <span class="n">100</span>,   <span class="n">0</span>, <span class="n">100</span>,  <span class="k">false</span>},
+        {<span class="s">"ลดเต็ม"</span>,               <span class="n">100</span>, <span class="n">100</span>,   <span class="n">0</span>,  <span class="k">false</span>},
+        {<span class="s">"เปอร์เซ็นต์ติดลบ"</span>,      <span class="n">100</span>,  <span class="n">-5</span>,   <span class="n">0</span>,   <span class="k">true</span>},
+        {<span class="s">"เปอร์เซ็นต์เกิน 100"</span>,   <span class="n">100</span>, <span class="n">101</span>,   <span class="n">0</span>,   <span class="k">true</span>},
+    }
+
+    <span class="c">// ── ส่วนที่ 2: ตรรกะ (เขียนครั้งเดียว) ──</span>
+    <span class="k">for</span> _, tt := <span class="k">range</span> tests {
+        t.<span class="f">Run</span>(tt.name, <span class="k">func</span>(t *testing.T) {
+            got, err := <span class="f">CalculateDiscount</span>(tt.price, tt.percent)
+
+            <span class="k">if</span> (err != <span class="k">nil</span>) != tt.wantErr {
+                t.<span class="f">Fatalf</span>(<span class="s">"CalculateDiscount(%d, %d) err = %v; wantErr %v"</span>,
+                    tt.price, tt.percent, err, tt.wantErr)
+            }
+            <span class="k">if</span> got != tt.want {
+                t.<span class="f">Errorf</span>(<span class="s">"CalculateDiscount(%d, %d) = %d; want %d"</span>,
+                    tt.price, tt.percent, got, tt.want)
+            }
+        })
+    }
+}</code></pre>
+
+<div class="win">
+  <span class="label">สิ่งที่เพิ่งได้มา</span>
+  <p style="margin-bottom:0">
+    <strong>เพิ่มเคสที่ 6 = พิมพ์อีกหนึ่งบรรทัด</strong> ·
+    ตารางกลายเป็น<em>เอกสาร</em>ที่อ่านแล้วรู้ทันทีว่าครอบคลุมอะไร ·
+    แก้ตรรกะที่เดียวมีผลทุกเคส ·
+    และเพราะห่อด้วย <code>t.Run(tt.name, ...)</code> — <strong>ทุกเคสได้เป็น subtest
+    ที่ <code>-run</code> เจาะได้</strong>
+  </p>
+</div>
+
+<h2>3 · ผลรันจริง</h2>
+
+<div class="predict">
+  <pre><code><span class="c">// ในตารางตั้งชื่อเคสไว้ว่า</span>
+{<span class="s">"ลด 10%"</span>, <span class="n">100</span>, <span class="n">10</span>, <span class="n">90</span>, <span class="k">false</span>},</code></pre>
+  <p class="ask">
+    รัน <code>go test -v</code> แล้ว Go จะแสดงชื่อ subtest ว่าอะไร —
+    และถ้าอยาก <code>-run</code> เจาะเคสนี้ต้องพิมพ์ยังไง?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>แสดงเป็น <strong><code>TestCalculateDiscount/ลด_10%</code></strong> —
+    ผมรันทดสอบแล้ว</p>
+    <p>
+      <strong>Go แปลงเว้นวรรคในชื่อเป็น <code>_</code> อัตโนมัติ</strong>
+      เพราะชื่อเทสต้องเอาไปใช้ในคำสั่ง shell ได้
+    </p>
+    <p>
+      ส่วน <code>-run</code> — ผมทดสอบทั้งสองแบบแล้ว
+      <strong>ใช้ได้ทั้งคู่</strong> เพราะ Go แปลงเว้นวรรคใน<em>ตัว pattern</em> ให้ด้วย:
+    </p>
+    <pre style="margin:0.6rem 0"><code>go test -v -run <span class="s">'TestCalculateDiscount/ลด_10'</span> .    <span class="c">✓ เจอ</span>
+go test -v -run <span class="s">'TestCalculateDiscount/ลด 10'</span> .    <span class="c">✓ เจอเหมือนกัน</span></code></pre>
+    <p style="margin-bottom:0">
+      แต่<strong>ให้ชินกับการอ่านจากผลลัพธ์</strong> — เพราะ
+      <code>-v</code> จะพิมพ์ชื่อแบบ <code>_</code> เสมอ
+      ก็อปวางจากตรงนั้นปลอดภัยที่สุด
+    </p>
+  </div>
+</div>
+
+<pre><code>$ go test -v -run TestCalculateDiscount .
+=== RUN   TestCalculateDiscount
+=== RUN   TestCalculateDiscount/ลด_10%
+=== RUN   TestCalculateDiscount/ไม่ลด
+=== RUN   TestCalculateDiscount/ลดเต็ม
+=== RUN   TestCalculateDiscount/เปอร์เซ็นต์ติดลบ
+=== RUN   TestCalculateDiscount/เปอร์เซ็นต์เกิน_100
+--- PASS: TestCalculateDiscount (0.00s)
+    --- PASS: TestCalculateDiscount/ลด_10% (0.00s)
+    ...
+
+$ go test -v -run <span class="s">'TestCalculateDiscount/ลด_10'</span> .   <span class="c"># เจาะเคสเดียว</span></code></pre>
+
+<h2>4 · องค์ประกอบที่ทำให้มันดี</h2>
+
+<h3>4.1 field <code>name</code> — สำคัญกว่าที่คิด</h3>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ไม่มี name</h4>
+    <pre><code>tests := []<span class="k">struct</span>{
+    price, percent, want <span class="n">int</span>
+}{
+    {<span class="n">100</span>, <span class="n">10</span>, <span class="n">90</span>},
+    {<span class="n">100</span>,  <span class="n">0</span>, <span class="n">100</span>},
+}
+
+<span class="k">for</span> i, tt := <span class="k">range</span> tests {
+    t.<span class="f">Run</span>(fmt.<span class="f">Sprint</span>(i), ...)
+}
+
+<span class="c">// เวลาพัง: "case 1 failed"</span>
+<span class="c">// แล้ว case 1 คือเคสอะไร?</span></code></pre>
+  </div>
+  <div class="side good">
+    <h4>✅ มี name</h4>
+    <pre><code>tests := []<span class="k">struct</span>{
+    name                 <span class="n">string</span>
+    price, percent, want <span class="n">int</span>
+}{
+    {<span class="s">"ลด 10%"</span>, <span class="n">100</span>, <span class="n">10</span>, <span class="n">90</span>},
+    {<span class="s">"ไม่ลด"</span>,  <span class="n">100</span>,  <span class="n">0</span>, <span class="n">100</span>},
+}
+
+<span class="k">for</span> _, tt := <span class="k">range</span> tests {
+    t.<span class="f">Run</span>(tt.name, ...)
+}
+
+<span class="c">// เวลาพัง: "ลด_10% failed"</span>
+<span class="c">// อ่านออกทันที</span></code></pre>
+  </div>
+</div>
+
+<h3>4.2 ข้อความ error ต้องบอกครบ 3 อย่าง</h3>
+
+<pre><code>t.<span class="f">Errorf</span>(<span class="s">"CalculateDiscount(%d, %d) = %d; want %d"</span>,
+    tt.price, tt.percent,  <span class="c">// 1. input อะไร</span>
+    got,                   <span class="c">// 2. ได้อะไรมา</span>
+    tt.want)               <span class="c">// 3. อยากได้อะไร</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    รูปแบบ <code>f(input) = got; want X</code> เป็น<strong>สำนวนมาตรฐานของ Go</strong>
+    ที่ใช้ทั่ว standard library — พอทุกคนเขียนแบบเดียวกัน
+    คนอ่าน log ก็ไม่ต้องตีความใหม่ทุกครั้ง
+    <br>เทียบกับ <code>t.Error("ผิด")</code> ซึ่งบอกอะไรไม่ได้เลยนอกจากว่าพัง
+  </p>
+</div>
+
+<h3>4.3 <code>wantErr bool</code> — เทสเส้นทางที่พังด้วย</h3>
+
+<pre><code><span class="k">if</span> (err != <span class="k">nil</span>) != tt.wantErr {
+    t.<span class="f">Fatalf</span>(<span class="s">"err = %v; wantErr %v"</span>, err, tt.wantErr)
+}</code></pre>
+
+<p>
+  อ่านว่า: <em>"ความจริงที่ว่ามี error"</em> ต้องตรงกับ <em>"ที่คาดไว้ว่าจะมี error"</em>
+  — ครอบคลุมทั้งสองทิศทางในบรรทัดเดียว
+</p>
+
+<ul>
+  <li>คาดว่าไม่มี error แต่มี → fail ✅</li>
+  <li>คาดว่ามี error แต่ไม่มี → fail ✅ <strong>(คนมักลืมเทสด้านนี้)</strong></li>
+</ul>
+
+<p>
+  ถ้าอยากเช็คให้แน่นกว่านั้น เปลี่ยนเป็น <code>wantErr error</code>
+  แล้วใช้ <code>errors.Is</code> จาก
+  <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>:
+</p>
+
+<pre><code>tests := []<span class="k">struct</span>{
+    name    <span class="n">string</span>
+    percent <span class="n">int</span>
+    wantErr <span class="n">error</span>       <span class="c">// ← เก็บ sentinel ไปเลย</span>
+}{
+    {<span class="s">"ปกติ"</span>,      <span class="n">10</span>, <span class="k">nil</span>},
+    {<span class="s">"ติดลบ"</span>,     <span class="n">-5</span>, ErrPercentOutOfRange},
+}
+
+<span class="k">if</span> !errors.<span class="f">Is</span>(err, tt.wantErr) {
+    t.<span class="f">Fatalf</span>(<span class="s">"err = %v; want %v"</span>, err, tt.wantErr)
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <code>errors.Is(nil, nil)</code> คืน <code>true</code>
+    → เขียนแบบนี้ครอบคลุมทั้งเคสที่มี error และไม่มี error
+    ด้วยโค้ดชุดเดียว <strong>แน่นกว่า <code>wantErr bool</code>
+    เพราะบอกได้ว่าต้องเป็น error <em>ตัวไหน</em></strong>
+  </p>
+</div>
+
+<h2>5 · จับคู่กับ <code>t.Parallel()</code></h2>
+
+<pre><code><span class="k">for</span> _, tt := <span class="k">range</span> tests {
+    t.<span class="f">Run</span>(tt.name, <span class="k">func</span>(t *testing.T) {
+        t.<span class="f">Parallel</span>()          <span class="c">// ทุกเคสวิ่งพร้อมกัน</span>
+        got, err := <span class="f">CalculateDiscount</span>(tt.price, tt.percent)
+        <span class="c">// ...</span>
+    })
+}</code></pre>
+
+<div class="warn">
+  <span class="label">โค้ดเก่าจะเห็น <code>tt := tt</code> — ตอนนี้ไม่ต้องแล้ว</span>
+  <p style="margin-bottom:0">
+    ก่อน Go 1.22 ตัวแปรของ <code>for range</code> ถูกใช้ซ้ำทุกรอบ
+    → closure ทุกตัวชี้ตัวแปรเดียวกัน → parallel test ทุกเคสได้ค่าเคสสุดท้าย
+    ต้องเขียน <code>tt := tt</code> ดักไว้
+    <br><strong>ตั้งแต่ Go 1.22 เป็นต้นไป ตัวแปรลูปเป็นตัวใหม่ทุกรอบแล้ว</strong>
+    — บรรทัด <code>tt := tt</code> จึงไม่จำเป็น (เขียนไว้ก็ไม่ผิด แค่ซ้ำซ้อน)
+    <strong>แต่ถ้า <code>go.mod</code> ระบุ <code>go</code> ต่ำกว่า 1.22
+    พฤติกรรมเก่ายังมีผลอยู่</strong> — เช็ค <code>go.mod</code> ก่อนเสมอ
+  </p>
+</div>
+
+<h2>6 · ทดสอบความจำ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. table-driven test แยกอะไรออกจากอะไร?</p>
+  <div class="opts">
+    <button class="opt">แยก unit test ออกจาก integration test</button>
+    <button class="opt">แยกข้อมูลที่ทดสอบออกจากตรรกะที่ทดสอบ</button>
+    <button class="opt">แยกเทสที่ผ่านออกจากเทสที่ยังไม่ผ่าน</button>
+    <button class="opt">แยกโค้ดจริงออกจากโค้ดที่ใช้เทสเท่านั้น</button>
+  </div>
+  <div class="explain">
+    <p>ตาราง = <strong>ข้อมูล</strong> (input, expected, ชื่อเคส) ·
+    ลูป = <strong>ตรรกะ</strong> (เรียกฟังก์ชัน, เทียบผล)
+    เขียนตรรกะครั้งเดียวใช้กับทุกเคส → <strong>เพิ่มเคสใหม่คือพิมพ์อีกบรรทัด</strong>
+    และตารางกลายเป็นเอกสารว่าเทสครอบคลุมอะไรบ้าง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. ทำไมต้องมี field <code>name</code> ในแต่ละแถวของตาราง?</p>
+  <div class="opts">
+    <button class="opt">เพราะ Go บังคับให้ struct มีชื่อกำกับ</button>
+    <button class="opt">เพราะใช้เรียงลำดับการรันของแต่ละเคส</button>
+    <button class="opt">เพราะทำให้เทสรันเร็วขึ้นกว่าไม่มีชื่อ</button>
+    <button class="opt">เพราะเวลาพังจะรู้ทันทีว่าเคสไหนพัง</button>
+  </div>
+  <div class="explain">
+    <p>ไม่มี <code>name</code> → ต้องใช้ index → <code>"case 1 failed"</code>
+    ซึ่งต้องกลับไปนับแถวเอง · มี <code>name</code> →
+    <code>"เปอร์เซ็นต์ติดลบ failed"</code> อ่านออกทันที
+    <strong>และยัง <code>-run 'TestX/เปอร์เซ็นต์ติดลบ'</code> เจาะเคสเดียวได้ด้วย</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. <code>if (err != nil) != tt.wantErr</code> ครอบคลุมกรณีอะไรบ้าง?</p>
+  <div class="opts">
+    <button class="opt">เฉพาะกรณีที่คาดว่าจะมี error เกิดขึ้น</button>
+    <button class="opt">เฉพาะกรณีที่คาดว่าจะไม่มี error เลย</button>
+    <button class="opt">ทั้งสองทิศทาง รวมถึงที่ควรพังแต่ไม่พัง</button>
+    <button class="opt">ครอบคลุมทุกอย่างรวมชนิดของ error ด้วย</button>
+  </div>
+  <div class="explain">
+    <p>เทียบ "มี error จริงไหม" กับ "คาดว่ามีไหม" → จับได้ทั้งสองทาง
+    <strong>รวมถึงกรณีที่คนลืมเทสบ่อยที่สุด: input ที่ควรพังแต่ฟังก์ชันดันปล่อยผ่าน</strong>
+    · แต่มันบอกไม่ได้ว่าเป็น error <em>ตัวไหน</em> —
+    ถ้าต้องการแบบนั้นเปลี่ยนเป็น <code>wantErr error</code> + <code>errors.Is</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. ตั้งแต่ Go 1.22 บรรทัด <code>tt := tt</code> ก่อน <code>t.Parallel()</code> เป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">ไม่จำเป็นแล้ว ตัวแปรลูปเป็นตัวใหม่ทุกรอบ</button>
+    <button class="opt">ยังจำเป็น ไม่งั้นทุกเคสได้ค่าเดียวกัน</button>
+    <button class="opt">กลายเป็น compile error ต้องลบออกเสมอ</button>
+    <button class="opt">จำเป็นเฉพาะตอนที่ใช้ t.Parallel เท่านั้น</button>
+  </div>
+  <div class="explain">
+    <p>Go 1.22 เปลี่ยนให้ตัวแปรของ <code>for range</code>
+    <strong>เป็นตัวใหม่ทุก iteration</strong> → closure แต่ละตัวจับค่าของตัวเอง
+    · เขียน <code>tt := tt</code> ไว้ก็ไม่ผิด แค่ซ้ำซ้อน
+    <strong>แต่ถ้า <code>go.mod</code> ระบุเวอร์ชันต่ำกว่า 1.22 พฤติกรรมเก่ายังมีผล</strong>
+    — Go ใช้บรรทัด <code>go</code> ใน go.mod ตัดสิน ไม่ใช่เวอร์ชัน toolchain</p>
+  </div>
+</div>
+
+<h2>7 · ลงมือทำ</h2>
+
+<div class="task">
+  <h3>ภารกิจ: แปลงเทสซ้ำซากเป็นตาราง</h3>
+  <ol>
+    <li>เขียนฟังก์ชัน <code>Grade(score int) (string, error)</code>
+        — คืน A/B/C/D/F ตามเกณฑ์ 80/70/60/50 และคืน error ถ้า
+        <code>score</code> ไม่อยู่ระหว่าง 0–100</li>
+    <li>เขียนเทสแบบ<strong>ซ้ำซาก</strong>ก่อน — ฟังก์ชันแยก 4 ตัว
+        <em>(ทำจริง ๆ นะ จะได้รู้สึกถึงความน่ารำคาญ)</em></li>
+    <li>แปลงเป็น table-driven ให้ครอบคลุม <strong>อย่างน้อย 9 เคส</strong>:
+        <ul>
+          <li>ตัวแทนของแต่ละเกรด (5 เคส)</li>
+          <li><strong>ค่าขอบ</strong>: 80, 79, 50, 49 — จุดที่บั๊ก off-by-one ชอบซ่อน</li>
+          <li>ค่าผิดพลาด: −1, 101</li>
+        </ul>
+    </li>
+    <li>ข้อความ error ต้องอยู่ในรูป <code>Grade(%d) = %q; want %q</code></li>
+    <li>รัน <code>go test -v .</code> แล้วดูรายชื่อ subtest ทั้งหมด</li>
+    <li><code>-run</code> เจาะเฉพาะเคสขอบเคสเดียว</li>
+    <li><strong>ท้าทาย 1:</strong> เปลี่ยน <code>wantErr bool</code> เป็น
+        <code>wantErr error</code> แล้วใช้ <code>errors.Is</code> —
+        ต้องประกาศ sentinel <code>ErrScoreOutOfRange</code> ก่อน</li>
+    <li><strong>ท้าทาย 2:</strong> ใส่ <code>t.Parallel()</code> ใน
+        <code>t.Run</code> แล้วรัน <code>go test -race -count=5 .</code>
+        — <strong>ผ่านทุกรอบไหม?</strong></li>
+    <li><strong>ท้าทาย 3:</strong> จงใจทำให้ <code>Grade</code> ผิดที่ค่าขอบ
+        (เปลี่ยน <code>&gt;= 80</code> เป็น <code>&gt; 80</code>) →
+        <strong>เคสไหนจับได้บ้าง?</strong> ถ้าไม่มีเคสไหนจับได้
+        แปลว่าตารางของคุณยังขาดเคสขอบ</li>
+  </ol>
+</div>
+
+<h2>อ่านต่อจากต้นทาง</h2>
+
+<p>
+  <strong>แหล่งหลักที่แนะนำ:</strong>
+  <a href="https://go.dev/wiki/TableDrivenTests">Go Wiki — Table Driven Tests</a>
+  สั้นมาก และมีลิงก์ไปดูตัวอย่างจริงใน standard library
+  <br>ที่ผมแนะนำให้ทำจริง ๆ คือ <strong>เปิดซอร์สของ Go เองมาดู</strong> —
+  <a href="https://cs.opensource.google/go/go/+/master:src/strings/strings_test.go">strings_test.go</a>
+  เขียนแบบตารางเกือบทั้งไฟล์ เห็นแล้วจะรู้ว่าสำนวนนี้ไม่ใช่ทฤษฎี
+  แต่เป็นวิธีที่ทีม Go ใช้จริง
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ติดตรงไหนถามได้เลย</strong> — ท้าทายข้อ 3 (ค่าขอบ)
+    คือหัวใจของบทนี้จริง ๆ ถ้าจงใจทำโค้ดพังแล้วเทสยังผ่านหมด
+    แปลว่าตารางยังไม่ครบ ส่งตารางมาได้ จะช่วยดูว่าขาดเคสไหน
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0015-testing-t.html">← บทเรียน 15</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Day 5</a>
+  <a href="./0017-testify.html">บทเรียน 17 → Testify</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/wiki/TableDrivenTests">Go Wiki — Table Driven Tests</a> — สำนวนมาตรฐาน</li>
+  <li><a href="https://cs.opensource.google/go/go/+/master:src/strings/strings_test.go">strings_test.go</a> — ตัวอย่างจริงใน standard library</li>
+  <li><a href="https://go.dev/blog/subtests">The Go Blog — Using Subtests and Sub-benchmarks</a></li>
+  <li><a href="https://go.dev/blog/loopvar-preview">The Go Blog — Fixing For Loops in Go 1.22</a> — ที่มาของการเลิกเขียน <code>tt := tt</code></li>
+  <li><a href="https://go.dev/wiki/CodeReviewComments#useful-test-failures">Go Code Review Comments — Useful Test Failures</a> — รูปแบบข้อความ error ที่ควรใช้</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

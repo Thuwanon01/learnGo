@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheat Sheet — Go Day 2</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<style>
+  body { font-size: 15.5px; }
+  main { max-width: 54rem; }
+  h2 { margin-top: 2.2rem; font-size: 1.2rem; }
+  h3 { margin-top: 1.4rem; font-size: 1rem; }
+  pre { font-size: 0.78rem; padding: 0.75rem 0.9rem; margin-bottom: 0.9rem; }
+  table { font-size: 0.86rem; }
+  p, ul, ol { margin-bottom: 0.8rem; }
+  .toc { columns: 2; font-size: 0.9rem; padding-left: 1.1rem; }
+  .toc li { break-inside: avoid; }
+  .rule { font-weight: 650; color: var(--accent-dk); }
+  @media print { body { font-size: 9.5pt; } main { max-width: none; } h2 { margin-top: 1.2rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Reference · Day 2</p>
+  <h1>Go Day 2 — Cheat Sheet</h1>
+  <p class="meta">zero values · const &amp; iota · control flow · clean code · function design · ตัวอย่างรันจริงบน Go 1.26 แล้ว</p>
+</header>
+
+<main>
+
+<h2>สารบัญ</h2>
+<ol class="toc">
+  <li><a href="#zero">Zero values</a></li>
+  <li><a href="#const">Constant &amp; iota</a></li>
+  <li><a href="#if">If / Else</a></li>
+  <li><a href="#shadow">Variable shadowing</a></li>
+  <li><a href="#guard">Guard clause</a></li>
+  <li><a href="#switch">Switch</a></li>
+  <li><a href="#for">For</a></li>
+  <li><a href="#func">Function</a></li>
+  <li><a href="#err">Error pattern</a></li>
+  <li><a href="#traps">กับดัก Day 2</a></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="zero">1 · Zero values</h2>
+
+<pre><code><span class="k">var</span> i <span class="n">int</span>; <span class="k">var</span> f <span class="n">float64</span>; <span class="k">var</span> b <span class="n">bool</span>; <span class="k">var</span> s <span class="n">string</span>
+fmt.<span class="f">Printf</span>(<span class="s">"%v %v %v %q\n"</span>, i, f, b, s)
+<span class="c">// 0 0 false ""</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Type</th><th>Zero value</th></tr>
+  <tr><td>ตัวเลขทุกชนิด</td><td><code>0</code></td></tr>
+  <tr><td><code>bool</code></td><td><code>false</code></td></tr>
+  <tr><td><code>string</code></td><td><code>""</code></td></tr>
+  <tr><td>pointer / slice / map / func / chan / interface</td><td><code>nil</code></td></tr>
+</table>
+</div>
+
+<p><span class="rule">Go ไม่มี undefined</span> — ประกาศแล้วใช้ได้เลย</p>
+
+<!-- ============================================================ -->
+<h2 id="const">2 · Constant &amp; iota</h2>
+
+<pre><code><span class="k">const</span> Pi = <span class="n">3.14</span>
+<span class="k">const</span> World = <span class="s">"World"</span>
+<span class="k">const</span> Truth = <span class="k">true</span>
+
+<span class="c">// ✗ const ใช้ := ไม่ได้</span>
+<span class="c">// ✗ const Now = time.Now()  ← ต้องรู้ค่าตั้งแต่ compile time</span></code></pre>
+
+<h3>iota = ลำดับของ ConstSpec ใน block นั้น</h3>
+
+<pre><code><span class="k">const</span> (
+    zero = iota   <span class="c">// 0</span>
+    one           <span class="c">// 1  ← ทำซ้ำนิพจน์จากบรรทัดบนอัตโนมัติ</span>
+    two           <span class="c">// 2</span>
+)
+
+<span class="k">const</span> (
+    zero = iota   <span class="c">// 0</span>
+    _             <span class="c">// 1  (กินลำดับ แต่ไม่มีชื่อ)</span>
+    two           <span class="c">// 2</span>
+)
+
+<span class="k">const</span> (
+    Sunday = iota <span class="c">// 0 …ถึง… Saturday = 6</span>
+    Monday
+    Tuesday
+    Wednesday
+    Thursday
+    Friday
+    Saturday
+)
+
+<span class="c">// ทำเลขคณิตได้</span>
+<span class="k">const</span> (
+    _  = <span class="n">1</span> &lt;&lt; (iota * <span class="n">10</span>)  <span class="c">// 1 &lt;&lt; 0  (ทิ้ง)</span>
+    KB                       <span class="c">// 1024</span>
+    MB                       <span class="c">// 1048576</span>
+    GB                       <span class="c">// 1073741824</span>
+)</code></pre>
+
+<ul>
+  <li><strong>เริ่มที่ 0</strong> · เพิ่มทีละ 1 ต่อบรรทัด</li>
+  <li><span class="rule">reset เป็น 0 ทุกครั้งที่เจอ <code>const</code> block ใหม่</span></li>
+  <li>บรรทัดที่ไม่เขียนอะไร = ทำซ้ำนิพจน์บรรทัดบน</li>
+</ul>
+
+<h3>ทำให้ enum มี type ของตัวเอง</h3>
+<pre><code><span class="k">type</span> Weekday <span class="n">int</span>
+<span class="k">const</span> (
+    Sunday Weekday = iota
+    Monday
+)
+<span class="k">func</span> <span class="f">schedule</span>(d Weekday) { ... }   <span class="c">// ส่ง int ตัวแปรผิดเข้าไปไม่ได้</span></code></pre>
+
+<!-- ============================================================ -->
+<h2 id="if">3 · If / Else</h2>
+
+<pre><code><span class="k">if</span> result &gt; <span class="n">5</span> {
+    ...
+} <span class="k">else</span> <span class="k">if</span> result &gt; <span class="n">0</span> {
+    ...
+} <span class="k">else</span> {
+    ...
+}
+
+<span class="c">// if with short statement — ตัวแปรมีชีวิตแค่ใน if/else</span>
+<span class="k">if</span> result := rand.<span class="f">Intn</span>(<span class="n">10</span>); result &gt; <span class="n">5</span> {
+    fmt.<span class="f">Println</span>(result)
+}
+fmt.<span class="f">Println</span>(result)   <span class="c">// ✗ undefined: result</span></code></pre>
+
+<p>เงื่อนไข <strong>ไม่ต้องใส่วงเล็บ</strong> · ปีกกา <strong>บังคับใส่เสมอ</strong> แม้บรรทัดเดียว</p>
+
+<!-- ============================================================ -->
+<h2 id="shadow">4 · 💀 Variable shadowing</h2>
+
+<pre><code><span class="k">var</span> sum = <span class="n">0</span>
+<span class="k">if</span> <span class="k">true</span> {
+    sum := sum + <span class="n">20</span>       <span class="c">// := สร้างตัวใหม่!</span>
+    fmt.<span class="f">Println</span>(sum)     <span class="c">// 20</span>
+}
+fmt.<span class="f">Println</span>(sum)         <span class="c">// 0  ← ตัวนอกไม่เคยถูกแตะ</span>
+
+<span class="c">// แก้: ใช้ = แทน :=</span>
+<span class="k">if</span> <span class="k">true</span> { sum = sum + <span class="n">20</span> }   <span class="c">// ข้างนอก = 20 ✓</span></code></pre>
+
+<h3>เวอร์ชัน err — ตัวที่ทำ production พังจริง</h3>
+
+<pre><code><span class="k">func</span> <span class="f">process</span>() <span class="k">error</span> {
+    <span class="k">var</span> err <span class="k">error</span>
+    <span class="k">if</span> needFile {
+        file, err := os.<span class="f">Open</span>(<span class="s">"demo.txt"</span>)  <span class="c">// 💀 err ตัวใหม่</span>
+        ...
+    }
+    <span class="k">return</span> err   <span class="c">// คืน nil เสมอ! error หายไปแล้ว</span>
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th><code>:=</code> ทำอะไร</th></tr>
+  <tr><td><strong>scope เดียวกัน</strong> + มีตัวแปรใหม่ ≥1 ตัวทางซ้าย</td><td>✅ reuse ตัวเดิม</td></tr>
+  <tr><td><strong>คนละ scope</strong> (ใน if / for / block ย่อย)</td><td>💀 สร้างใหม่ทั้งหมด — bug</td></tr>
+</table>
+</div>
+
+<pre><code><span class="c"># go vet เปล่า ๆ จับไม่ได้ ต้องลง analyzer แยก</span>
+go install golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow@latest
+go vet -vettool=$(which shadow) ./...</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="guard">5 · Guard clause</h2>
+
+<div class="diagram">1. หา if ที่ครอบทุกอย่าง       →  if age >= 20 {
+2. พลิกเงื่อนไขให้ตรงข้าม       →  if age < 20 {
+3. เอาโค้ดใน else มาไว้ข้างใน + return
+   ทำซ้ำจนหมด</div>
+
+<pre><code><span class="c">// ✗ ก่อน</span>
+<span class="k">if</span> age &gt;= <span class="n">20</span> {
+    <span class="k">if</span> hasJob {
+        <span class="k">if</span> income &gt;= <span class="n">15000</span> { fmt.<span class="f">Println</span>(<span class="s">"อนุมัติ"</span>) }
+        <span class="k">else</span> { ... }
+    } <span class="k">else</span> { ... }
+} <span class="k">else</span> { ... }
+
+<span class="c">// ✓ หลัง — ชั้นเดียว ไม่มี else เลย</span>
+<span class="k">if</span> age &lt; <span class="n">20</span>        { fmt.<span class="f">Println</span>(<span class="s">"ปฏิเสธ: อายุไม่ถึง"</span>); <span class="k">return</span> }
+<span class="k">if</span> !hasJob         { fmt.<span class="f">Println</span>(<span class="s">"ปฏิเสธ: ไม่มีงาน"</span>);  <span class="k">return</span> }
+<span class="k">if</span> income &lt; <span class="n">15000</span> { fmt.<span class="f">Println</span>(<span class="s">"ปฏิเสธ: รายได้ไม่ถึง"</span>); <span class="k">return</span> }
+fmt.<span class="f">Println</span>(<span class="s">"อนุมัติ"</span>)</code></pre>
+
+<h3>ตารางพลิกเงื่อนไข</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>เดิม</th><th>พลิกเป็น</th></tr>
+  <tr><td><code>x &gt;= 20</code></td><td><code>x &lt; 20</code></td></tr>
+  <tr><td><code>hasJob</code></td><td><code>!hasJob</code></td></tr>
+  <tr><td><code>err == nil</code></td><td><code>err != nil</code></td></tr>
+  <tr><td><code>a &amp;&amp; b</code></td><td><code>!a || !b</code> ← เดอมอร์แกน</td></tr>
+  <tr><td><code>a || b</code></td><td><code>!a &amp;&amp; !b</code></td></tr>
+</table>
+</div>
+
+<p>
+  มาตรฐานทางการ — <a href="https://go.dev/wiki/CodeReviewComments">Go Code Review
+  Comments · Indent Error Flow</a>: <em>"keep the normal code path at a minimal
+  indentation, and indent the error handling, dealing with it first."</em>
+</p>
+
+<!-- ============================================================ -->
+<h2 id="switch">6 · Switch</h2>
+
+<pre><code><span class="k">switch</span> day {
+<span class="k">case</span> <span class="s">"Monday"</span>:
+    fmt.<span class="f">Println</span>(<span class="s">"Start of work week"</span>)
+<span class="k">case</span> <span class="s">"Tuesday"</span>, <span class="s">"Wednesday"</span>, <span class="s">"Thursday"</span>:   <span class="c">// หลายค่าใน case เดียว</span>
+    fmt.<span class="f">Println</span>(<span class="s">"Mid Week"</span>)
+<span class="k">default</span>:
+    fmt.<span class="f">Println</span>(<span class="s">"Not found day"</span>)
+}
+
+<span class="c">// switch + short statement</span>
+<span class="k">switch</span> status := strings.<span class="f">ToUpper</span>(<span class="s">"approved"</span>); status {
+<span class="k">case</span> <span class="s">"APPROVED"</span>:
+    fmt.<span class="f">Println</span>(<span class="s">"Request approved"</span>)
+    <span class="k">fallthrough</span>              <span class="c">// ไหลลง case ถัดไป โดยไม่เช็คเงื่อนไข</span>
+<span class="k">case</span> <span class="s">"REJECTED"</span>:
+    fmt.<span class="f">Println</span>(<span class="s">"Request rejected"</span>)
+}
+<span class="c">// ได้: Request approved / Request rejected (แล้วหยุด ไม่ถึง default)</span></code></pre>
+
+<div class="win">
+  <span class="label">switch ของ Go ต่างจาก C/Java</span>
+  <ol style="margin-bottom:0">
+    <li><strong>ไม่ต้องเขียน <code>break</code></strong> — จบ case แล้วออกเอง</li>
+    <li>ใส่หลายค่าใน case เดียวได้</li>
+    <li>อยากไหลต่อต้องสั่ง <code>fallthrough</code> เอง (ไหลแค่ 1 case)</li>
+  </ol>
+</div>
+
+<h3>Control Flow Decision Guide</h3>
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>ใช้</th></tr>
+  <tr><td>ไม่ต้องตัดสินใจ</td><td>ทำคำสั่งตามลำดับ</td></tr>
+  <tr><td>คำถาม true/false เดียว</td><td><code>if</code></td></tr>
+  <tr><td>เลือกสองทาง</td><td><code>if-else</code></td></tr>
+  <tr><td>ตรวจหลายช่วง</td><td><code>if-else-if</code> หรือ <strong>guard clause</strong></td></tr>
+  <tr><td>เทียบตัวแปรเดียวกับหลายค่า</td><td><strong><code>switch</code></strong></td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="for">7 · For — Go มี loop แบบเดียว</h2>
+
+<pre><code><span class="c">// 1) ครบสามส่วน</span>
+<span class="k">for</span> i := <span class="n">1</span>; i &lt;= <span class="n">3</span>; i++ { ... }
+
+<span class="c">// 2) เหมือน while — ละ init/post ทิ้ง semicolon ได้</span>
+sum := <span class="n">1</span>
+<span class="k">for</span> sum &lt; <span class="n">1000</span> { sum += sum }
+
+<span class="c">// 3) forever</span>
+<span class="k">for</span> { ... }
+
+<span class="c">// 4) range (slice / array / map / string / channel)</span>
+<span class="k">for</span> i, v := <span class="k">range</span> nums { ... }</code></pre>
+
+<h3>break / continue / labeled break</h3>
+<pre><code><span class="k">for</span> i := <span class="n">1</span>; i &lt;= <span class="n">10</span>; i++ {
+    <span class="k">if</span> i == <span class="n">5</span> { <span class="k">break</span> }      <span class="c">// ออกจาก loop ทันที</span>
+    <span class="k">if</span> i == <span class="n">5</span> { <span class="k">continue</span> }   <span class="c">// ข้ามรอบนี้ ไปรอบถัดไป</span>
+}
+
+<span class="c">// break ธรรมดาออกได้แค่ loop ชั้นในสุด</span>
+OuterLoop:
+    <span class="k">for</span> row := <span class="n">1</span>; row &lt;= <span class="n">3</span>; row++ {
+        <span class="k">for</span> col := <span class="n">1</span>; col &lt;= <span class="n">3</span>; col++ {
+            <span class="k">if</span> row == <span class="n">2</span> &amp;&amp; col == <span class="n">2</span> {
+                <span class="k">break</span> OuterLoop      <span class="c">// ออกจาก loop นอกเลย</span>
+            }
+            fmt.<span class="f">Println</span>(row, col)
+        }
+    }
+<span class="c">// พิมพ์: (1,1) (1,2) (1,3) (2,1) แล้วหยุด</span></code></pre>
+
+<!-- ============================================================ -->
+<h2 id="func">8 · Function</h2>
+
+<pre><code><span class="k">func</span> <span class="f">add</span>(a <span class="n">int</span>, b <span class="n">int</span>) <span class="n">int</span> { <span class="k">return</span> a + b }
+<span class="k">func</span> <span class="f">add</span>(a, b <span class="n">int</span>) <span class="n">int</span>      { <span class="k">return</span> a + b }   <span class="c">// type เดียวกันยุบได้</span>
+
+<span class="c">// คืนหลายค่า</span>
+<span class="k">func</span> <span class="f">swap</span>(a, b <span class="n">int</span>) (<span class="n">int</span>, <span class="n">int</span>) { <span class="k">return</span> b, a }
+
+<span class="c">// named return</span>
+<span class="k">func</span> <span class="f">minMax</span>(a, b <span class="n">int</span>) (min, max <span class="n">int</span>) {
+    <span class="k">if</span> a &lt; b { <span class="k">return</span> a, b }
+    <span class="k">return</span> b, a
+}
+
+<span class="c">// naked return — คืนค่าปัจจุบันของ named return</span>
+<span class="k">func</span> <span class="f">calculate</span>(a, b <span class="n">int</span>) (sum, product <span class="n">int</span>) {
+    sum = a + b
+    product = a * b
+    <span class="k">return</span>
+}</code></pre>
+
+<p class="meta">
+  ⚠️ naked return ใช้กับ<strong>ฟังก์ชันสั้นเท่านั้น</strong> —
+  ฟังก์ชันยาวคนอ่านต้องเลื่อนขึ้นไปดู signature (Effective Go)
+</p>
+
+<!-- ============================================================ -->
+<h2 id="err">9 · Error pattern</h2>
+
+<pre><code><span class="k">func</span> <span class="f">divide</span>(a, b <span class="n">float64</span>) (<span class="n">float64</span>, <span class="k">error</span>) {
+    <span class="k">if</span> b == <span class="n">0</span> {
+        <span class="k">return</span> <span class="n">0</span>, errors.<span class="f">New</span>(<span class="s">"cannot divide by zero"</span>)
+    }
+    <span class="k">return</span> a / b, <span class="k">nil</span>
+}
+
+<span class="c">// สำนวนมาตรฐาน</span>
+result, err := <span class="f">divide</span>(<span class="n">10</span>, <span class="n">2</span>)
+<span class="k">if</span> err != <span class="k">nil</span> { fmt.<span class="f">Println</span>(<span class="s">"Error:"</span>, err); <span class="k">return</span> }
+
+<span class="c">// คืนแค่ error + short statement</span>
+<span class="k">if</span> err := <span class="f">saveUser</span>(user); err != <span class="k">nil</span> {
+    fmt.<span class="f">Println</span>(<span class="s">"save failed:"</span>, err)
+}
+
+<span class="c">// ห่อ error ด้วย %w + named return + defer</span>
+<span class="k">func</span> <span class="f">loadConfig</span>(path <span class="n">string</span>) (err <span class="k">error</span>) {
+    <span class="k">defer</span> <span class="k">func</span>() {
+        <span class="k">if</span> err != <span class="k">nil</span> { err = fmt.<span class="f">Errorf</span>(<span class="s">"loadConfig %s: %w"</span>, path, err) }
+    }()
+    ...
+}</code></pre>
+
+<div class="win">
+  <span class="label">กฎ 3 ข้อ</span>
+  <ol style="margin-bottom:0">
+    <li><code>error</code> เป็น return value <strong>ตัวสุดท้ายเสมอ</strong></li>
+    <li>สำเร็จ = คืน <code>nil</code></li>
+    <li><strong>เช็ค <code>err != nil</code> ทันทีที่รับค่ามา</strong></li>
+  </ol>
+</div>
+
+<p><code>%w</code> = wrap (เก็บ error เดิมไว้ให้ <code>errors.Is</code>/<code>errors.As</code> ตรวจได้) · <code>%v</code> = แปลงเป็นข้อความเฉย ๆ</p>
+
+<!-- ============================================================ -->
+<h2 id="traps">10 · กับดัก Day 2</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เขียน</th><th>คิดว่า</th><th>เกิดจริง</th></tr>
+  <tr>
+    <td><code>const Now = time.Now()</code></td><td>ได้เวลาตอนเริ่มรัน</td>
+    <td>💥 compile error — const ต้องรู้ค่าตอน compile</td>
+  </tr>
+  <tr>
+    <td><code>const x := 5</code></td><td>เหมือน var</td>
+    <td>💥 const ใช้ <code>:=</code> ไม่ได้</td>
+  </tr>
+  <tr>
+    <td><code>sum := sum + 20</code> ใน if</td><td>แก้ตัวนอก</td>
+    <td>สร้างตัวใหม่ → ตัวนอกไม่เปลี่ยน · ใช้ <code>=</code></td>
+  </tr>
+  <tr>
+    <td><code>file, err := ...</code> ใน if</td><td>ใช้ err ตัวนอก</td>
+    <td>💀 <strong>สร้าง err ใหม่ → error หาย</strong> (<code>go vet</code> เปล่า ๆ จับไม่ได้)</td>
+  </tr>
+  <tr>
+    <td>ใช้ตัวแปรจาก <code>if x := …;</code> หลังปิดปีกกา</td><td>ยังใช้ได้</td>
+    <td>💥 <code>undefined: x</code></td>
+  </tr>
+  <tr>
+    <td><code>switch</code> ไม่เขียน <code>break</code></td><td>ไหลลง case ถัดไป</td>
+    <td>จบ case แล้วออกเอง — กลับด้านกับ C</td>
+  </tr>
+  <tr>
+    <td>พลิก <code>a &amp;&amp; b</code> เป็น <code>!a &amp;&amp; !b</code></td><td>ถูกแล้ว</td>
+    <td>ผิด — ต้องเป็น <code>!a || !b</code> (เดอมอร์แกน)</td>
+  </tr>
+  <tr>
+    <td><code>break</code> ใน loop ซ้อน</td><td>ออกจากทั้งหมด</td>
+    <td>ออกแค่ชั้นในสุด → ใช้ labeled break</td>
+  </tr>
+  <tr>
+    <td>if ซ้อน 4–5 ชั้น</td><td>อ่านออกอยู่</td>
+    <td>reviewer ทักแน่ → guard clause</td>
+  </tr>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../lessons/0003-const-and-iota.html">บทเรียน 03 — const &amp; iota</a>
+  <a href="../lessons/0004-guard-clauses.html">บทเรียน 04 — guard clause</a>
+  <a href="../lessons/0005-errors-and-shadowing.html">บทเรียน 05 — error &amp; shadowing</a>
+  <a href="../../docs.html?f=RESOURCES.md">📚 Resources</a>
+</nav>
+
+</main>
+</body>
+</html>
