@@ -1,0 +1,1213 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 42 — Wongnok: ออกแบบ API spec จากโจทย์จริง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 42 · Day 8 · Workshop</p>
+  <h1>Wongnok — ออกแบบ API spec จากโจทย์จริง</h1>
+  <p class="meta">~20 นาที · ต้องมี: <a href="./0033-rest-resource-method.html">บทเรียน 33</a>–<a href="./0036-rest-naming-idempotency.html">36</a> (REST), <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> (project layout)</p>
+  <p class="standfirst">
+    เก้าบทที่ผ่านมาสอน<strong>เครื่องมือ</strong> — status code, query, Gin, binding, httptest, Swagger
+    <br>บทนี้ไม่มีของใหม่สักชิ้น มีแค่<strong>โจทย์ธุรกิจสี่บรรทัด</strong>
+    <br>คุณจะแปลงมันเป็น API spec ด้วยมือตัวเองก่อน แล้วค่อยเปิดดูของผู้สอน
+    <br>จากนั้น<strong>วิจารณ์ spec นั้นด้วยกฎ 7 ข้อ</strong> — รวมถึงสี่บรรทัดที่ขัดกฎชัด ๆ แต่ขัดอย่างมีเหตุผล
+    <br>ปิดท้ายด้วยการเขียน 2 endpoint ให้เดินได้จริงพร้อมเทส
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>🧰 ของที่ใช้ในบทนี้</strong> — โค้ดทุกชิ้นข้างล่างรันจริงบน
+    <strong>Go 1.26.5 darwin/arm64</strong> · <code>github.com/gin-gonic/gin</code> <strong>v1.12.0</strong> ·
+    <code>github.com/stretchr/testify</code> <strong>v1.12.1</strong> · <code>swag</code> CLI <strong>v1.16.4</strong>
+    <br>ไม่ต้องมี Docker ไม่ต้องมี database — บทนี้เก็บข้อมูลไว้ใน slice ในหน่วยความจำ
+    เพราะสิ่งที่เรากำลังพิสูจน์คือ<strong>รูปร่างของ API</strong> ไม่ใช่ชั้นเก็บข้อมูล
+  </p>
+</div>
+
+<h2>1 · โจทย์สี่บรรทัด — อ่านให้เจอ "คำนาม"</h2>
+
+<p>
+  นี่คือโจทย์ที่ผู้สอนให้มาทั้งหมด ไม่มีมากกว่านี้ — และของจริงในที่ทำงานก็ประมาณนี้แหละ
+  คือคนสั่งงานพูดเป็นภาษามนุษย์ ไม่ได้พูดเป็น endpoint
+</p>
+
+<div class="diagram">
+<pre><strong>โจทย์ Wongnok Recipes</strong>
+
+  เว็บรวมสูตรอาหาร
+  ผู้เยี่ยมชมทั่วไปค้นสูตรจาก<strong>ชื่อเมนู</strong>หรือ<strong>วัตถุดิบ</strong>ได้
+  ถ้าไม่รู้ชื่อ ค้นจาก "<strong>ระยะเวลาที่ใช้ปรุง</strong>" และ "<strong>ความยากง่าย</strong>" ได้
+  มีระบบ<strong>สมาชิก</strong> ที่สมัครแล้ว<strong>สร้าง/แก้/ลบสูตรของตัวเอง</strong>
+  และ<strong>ให้คะแนนสูตรของคนอื่น</strong>ได้</pre>
+</div>
+
+<p>
+  วิธีเริ่มที่ใช้ได้จริงมีอยู่วิธีเดียว และมันเชยมาก:
+  <strong>ขีดเส้นใต้คำนามทุกคำในโจทย์ แล้วถามทีละคำว่า "ของสิ่งนี้มีตัวตนไหม"</strong>
+  <br>เพราะ REST คือสถาปัตยกรรมที่<em>ทุกอย่างเป็นคำนาม</em> (<a href="./0033-rest-resource-method.html">บทเรียน 33</a>) —
+  ถ้าคุณหาคำนามไม่เจอ คุณจะเผลอไปตั้งชื่อ endpoint ด้วย<em>กริยา</em>ทันที
+  แล้วได้ <code>/searchRecipe</code> <code>/createRecipe</code> เหมือนที่ทุกคนเคยทำในโปรเจกต์แรก
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>คำในโจทย์</th><th>เป็นอะไรกันแน่</th><th>เพราะอะไร</th></tr>
+  <tr><td><strong>สูตรอาหาร</strong></td><td>✅ resource → <code>recipes</code></td><td>มีตัวตน · มี id ของตัวเอง · สร้าง/อ่าน/แก้/ลบได้ครบ 4 ท่า</td></tr>
+  <tr><td><strong>สมาชิก</strong></td><td>✅ resource → <code>users</code></td><td>มีตัวตน · มีหน้าโปรไฟล์ของตัวเอง · แก้ได้</td></tr>
+  <tr><td><strong>คะแนน</strong></td><td>✅ resource ลูก → <code>recipes/:id/rating</code></td><td>มีตัวตน แต่<strong>อยู่ลอย ๆ ไม่ได้</strong> — คะแนนต้องเป็นคะแนน<em>ของสูตรไหนสักสูตร</em></td></tr>
+  <tr><td><strong>รายการโปรด</strong><br><small>(ไม่ได้อยู่ในสี่บรรทัด — ผู้สอนเพิ่มเข้ามาใน spec ทีหลัง)</small></td><td>✅ resource ลูก → <code>recipes/:id/favorite</code></td><td>เหมือนกัน — เป็นความสัมพันธ์ระหว่าง "ฉัน" กับ "สูตรนี้"</td></tr>
+  <tr><td><strong>ชื่อเมนู / วัตถุดิบ</strong></td><td>❌ ไม่ใช่ resource — เป็น<strong>เงื่อนไขค้นหา</strong></td><td>มันคือ<em>คุณสมบัติ</em>ของสูตร ไม่ใช่ของที่มี id แยกต่างหาก</td></tr>
+  <tr><td><strong>ระยะเวลาที่ใช้ปรุง</strong></td><td>❌ ไม่ใช่ resource — เป็น<strong>เงื่อนไขค้นหา</strong></td><td>"30 นาที" ไม่ใช่สิ่งของ คุณ <code>DELETE</code> เลข 30 ทิ้งไม่ได้</td></tr>
+  <tr><td><strong>ความยากง่าย</strong></td><td>❌ ไม่ใช่ resource — เป็น<strong>เงื่อนไขค้นหา</strong></td><td>เหมือนกัน · เป็นค่าจากรายการจำกัด (easy / medium / hard)</td></tr>
+</table>
+</div>
+
+<p>
+  สามแถวล่างคือแถวที่คนพลาดกันมากที่สุด และมันพลาดแบบมีแบบแผน:
+  พอโจทย์เขียนว่า "ค้นจากความยากง่ายได้" สมองจะกระโดดไปที่
+  <code>GET /difficulty/easy/recipes</code> ทันที เพราะมันอ่านแล้วเหมือนภาษาไทยเป๊ะ
+  <br>แต่ <strong>path มีไว้บอกว่า "ของสิ่งนี้อยู่ที่ไหน" ไม่ใช่ "ฉันอยากได้ของแบบไหน"</strong> —
+  นั่นคือกฎข้อ 6 (<a href="./0036-rest-naming-idempotency.html">บทเรียน 36</a>): <em>filter ใช้ query</em>
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ เอาเงื่อนไขไปยัดใน path</h4>
+    <pre><code>GET /recipes/difficulty/easy
+GET /recipes/cooking-time/30
+GET /recipes/difficulty/easy/time/30</code></pre>
+    <p style="margin-bottom:0">
+      ทุกครั้งที่เพิ่มเงื่อนไขใหม่ <strong>ต้องเพิ่ม route ใหม่</strong>
+      · เงื่อนไข 3 อย่างที่เลือกใส่ไม่ใส่ได้ = ต้องลง route <strong>8 เส้น</strong>
+      <br>แล้วถ้าอยากเรียงลำดับด้วยล่ะ · แบ่งหน้าด้วยล่ะ — ตายตั้งแต่ยังไม่เขียนโค้ด
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ เงื่อนไขอยู่ใน query</h4>
+    <pre><code>GET /recipes?difficulty=easy
+GET /recipes?max_cooking_minutes=30
+GET /recipes?q=กะเพรา&amp;difficulty=easy&amp;max_cooking_minutes=30</code></pre>
+    <p style="margin-bottom:0">
+      <strong>route เดียวจบ</strong> ไม่ว่าจะมีเงื่อนไขกี่อัน · ใส่ไม่ครบก็ได้ · สลับลำดับก็ได้
+      <br>และวันหลังเพิ่ม <code>&amp;sort=rating</code> ได้โดย<strong>ไม่กระทบใครที่เรียกอยู่เดิม</strong>
+    </p>
+  </div>
+</div>
+
+<h2>2 · resource ที่ "อยู่ลอย ๆ ไม่ได้"</h2>
+
+<p>
+  คะแนนกับรายการโปรดต่างจาก <code>recipes</code> ตรงที่<strong>มันไม่มีความหมายถ้าไม่มีพ่อแม่</strong>
+  <br>ลองถามตัวเองว่า <code>GET /ratings/88</code> ควรตอบอะไร — "คะแนน 4 ดาว" เฉย ๆ เนี่ยนะ
+  ของใคร ให้สูตรไหน? มันไม่มีประโยชน์เลยถ้าไม่รู้ว่าเกาะอยู่กับสูตรไหน
+  <br>นี่คือกฎข้อ 5: <strong>ความสัมพันธ์ให้แสดงด้วย path ที่ซ้อนกัน</strong>
+</p>
+
+<div class="diagram">
+<pre>  /recipes                         ← กองสูตรทั้งหมด (ค้นหาที่นี่)
+     │
+     └── /recipes/:id              ← สูตรหนึ่งใบ (อ่าน/แก้/ลบที่นี่)
+            │
+            ├── /recipes/:id/rating     ← คะแนน "ของสูตรใบนี้"
+            │
+            └── /recipes/:id/favorite   ← ความเป็นรายการโปรด "ของฉัน ต่อสูตรใบนี้"
+
+  /users
+     │
+     └── /users/:id                ← โปรไฟล์สมาชิกหนึ่งคน</pre>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong>สังเกตว่า <code>favorite</code> กับ <code>rating</code> ไม่มี id ต่อท้าย</strong>
+    — ไม่ใช่ <code>/recipes/7/favorites/123</code>
+    <br>เพราะคำถามที่ endpoint นี้ตอบไม่ใช่ "รายการโปรดใบที่ 123" แต่คือ
+    <strong>"สูตรนี้ ฉัน กดโปรดไว้หรือยัง"</strong> — และ "ฉัน" ไม่ได้มาจาก URL
+    มันมาจาก <strong>token ใน header <code>Authorization</code></strong>
+    (<a href="./0035-query-body-header.html">บทเรียน 35</a>)
+    <br>ของที่ระบุตัวตนได้จาก header อยู่แล้ว <strong>ไม่ต้องเอามาใส่ซ้ำใน path</strong>
+    — ใส่ซ้ำเมื่อไหร่คุณจะได้บั๊ก "ผู้ใช้ A ลบรายการโปรดของผู้ใช้ B" ฟรี ๆ
+  </p>
+</div>
+
+<h2>3 · ตาคุณบ้าง — เขียน spec เองก่อนเปิดเฉลย</h2>
+
+<p>
+  ส่วนนี้ห้ามข้าม ถ้าเลื่อนไปดูเฉลยเลยคุณจะได้แค่ "เออ ก็สมเหตุสมผลดี"
+  ซึ่งเป็นความรู้สึกที่ไร้ค่าที่สุดในการเรียนออกแบบ
+  <br><strong>เปิดสมุดหรือไฟล์เปล่า เขียน method + path ให้ครบ 10 บรรทัดข้างล่างก่อน</strong>
+  เวลา 5 นาทีพอ
+</p>
+
+<div class="predict">
+  <p><strong>ออกแบบก่อนเปิดเฉลย</strong> — เขียน <code>METHOD /path</code> ให้แต่ละความต้องการ
+  <br><small>ข้อ 6–7 (รายการโปรด) ไม่ได้อยู่ในโจทย์สี่บรรทัด แต่อยู่ใน spec ของผู้สอน เลยเอามาให้ออกแบบด้วย</small></p>
+  <pre><code> 1. สมาชิกสร้างสูตรอาหารใหม่
+ 2. ผู้เยี่ยมชมค้นสูตร (ชื่อเมนู / เวลาปรุง / ความยากง่าย)
+ 3. เปิดดูสูตรหนึ่งใบแบบเต็ม ๆ
+ 4. เจ้าของสูตรแก้ไขสูตรของตัวเอง
+ 5. เจ้าของสูตรลบสูตรของตัวเอง
+ 6. กดสูตรของคนอื่นเข้ารายการโปรด
+ 7. เอาสูตรออกจากรายการโปรด
+ 8. ให้คะแนนสูตรของคนอื่น
+ 9. ดูโปรไฟล์สมาชิก
+10. แก้โปรไฟล์ตัวเอง</code></pre>
+  <p class="ask">
+    เขียนครบ 10 บรรทัดหรือยัง? <strong>อย่าเพิ่งกด</strong>
+    <br>เช็คตัวเองสามข้อก่อน: มี<em>กริยา</em>โผล่ใน path ไหม ·
+    ใช้พหูพจน์ตลอดหรือสลับไปมา · เงื่อนไขค้นหาอยู่ใน path หรือ query
+  </p>
+  <button class="reveal">เทียบกับ spec ของผู้สอน</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code><span class="c">// Recipes</span>
+POST   /recipes                 <span class="c">// 1. สร้าง</span>
+GET    /recipes                 <span class="c">// 2. ค้นหา / ดูทั้งหมด</span>
+GET    /recipes/:id             <span class="c">// 3. ดูใบเดียว</span>
+PUT    /recipes/:id             <span class="c">// 4. แก้</span>
+DELETE /recipes/:id             <span class="c">// 5. ลบ</span>
+
+<span class="c">// Favorite</span>
+POST   /recipes/:id/favorite    <span class="c">// 6. กดโปรด</span>
+DELETE /recipes/:id/favorite    <span class="c">// 7. เอาออก</span>
+
+<span class="c">// Rating</span>
+POST   /recipes/:id/rating      <span class="c">// 8. ให้คะแนน</span>
+
+<span class="c">// User</span>
+GET    /users/:id               <span class="c">// 9. ดูโปรไฟล์</span>
+PUT    /users/:id               <span class="c">// 10. แก้โปรไฟล์</span>
+
+<span class="c">// Auth (ผู้สอนแถมมาให้ ไม่ได้อยู่ใน 10 ข้อ)</span>
+GET    /login
+GET    /callback
+POST   /exchange
+GET    /logout</code></pre>
+    <p>
+      <strong>สิ่งที่ควรตรงกับของคุณ</strong>: ห้าบรรทัดแรกเป็น CRUD
+      (<em>Create / Read / Update / Delete</em> — สี่ท่าพื้นฐานที่ resource ทุกตัวมี) มาตรฐานที่
+      <a href="./0033-rest-resource-method.html">บทเรียน 33</a> สอนไว้เป๊ะ ๆ —
+      <code>POST</code>/<code>GET</code>/<code>PUT</code>/<code>DELETE</code> บน path เดิม
+      <strong>ต่างกันแค่ method</strong> ไม่ต้องคิดชื่อใหม่สักอัน
+    </p>
+    <p>
+      <strong>จุดที่มักไม่ตรง 1 — ข้อ 2</strong>: หลายคนเขียน <code>GET /recipes/search</code>
+      หรือ <code>GET /search?type=recipe</code> · ของผู้สอนคือ <code>GET /recipes</code> เฉย ๆ
+      แล้วให้ query เป็นตัวแยกว่า "ทั้งหมด" หรือ "เฉพาะที่ตรงเงื่อนไข"
+      <br><em>"ค้นหา" ไม่ใช่การกระทำที่ต้องมี endpoint ของตัวเอง — มันคือ
+      <strong>การขอ <code>/recipes</code> แบบมีเงื่อนไข</strong></em>
+    </p>
+    <p>
+      <strong>จุดที่มักไม่ตรง 2 — ข้อ 7</strong>: หลายคนเขียน
+      <code>POST /recipes/:id/unfavorite</code> เพราะมันอ่านแล้วชัดดี
+      <br>แต่ <code>DELETE</code> สื่อความหมายนี้อยู่แล้ว — พอ method สื่อได้
+      การเติมคำว่า <code>unfavorite</code> เข้าไปคือ<strong>พูดซ้ำ</strong> (กฎข้อ 7)
+    </p>
+    <p style="margin-bottom:0">
+      <strong>จุดที่ไม่มีทางตรง</strong>: สี่บรรทัด Auth ท้ายสุด —
+      ไม่มีใครเดาถูกเพราะมันไม่ได้มาจากโจทย์ธุรกิจ มันมาจาก<strong>ข้อจำกัดของเทคโนโลยี</strong>
+      ที่จะแกะกันในหัวข้อ 5
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    ✅ <strong>ผมเอา spec ทั้ง 14 เส้นไปลงทะเบียนกับ Gin จริง ๆ</strong>
+    (ใต้ group <code>/api/v1</code>) เพื่อดูว่ามันมี path ที่ชนกันจนโปรแกรม panic ไหม —
+    เพราะ Gin จะ panic <strong>ตอนลงทะเบียน route</strong> ไม่ใช่ตอนรับ request
+    (<a href="./0038-gin-routing.html">บทเรียน 38</a>)
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>GET    /api/v1/callback
+POST   /api/v1/exchange
+GET    /api/v1/login
+GET    /api/v1/logout
+GET    /api/v1/recipes
+POST   /api/v1/recipes
+DELETE /api/v1/recipes/:id
+GET    /api/v1/recipes/:id
+PUT    /api/v1/recipes/:id
+DELETE /api/v1/recipes/:id/favorite
+POST   /api/v1/recipes/:id/favorite
+POST   /api/v1/recipes/:id/rating
+GET    /api/v1/users/:id
+PUT    /api/v1/users/:id
+<strong>total routes = 14</strong></code></pre>
+  <p style="margin:0.6rem 0 0">
+    ผ่านฉลุย ไม่ panic — <code>/recipes/:id</code> อยู่ร่วมกับ <code>/recipes/:id/favorite</code> ได้
+    เพราะมันแตกต่างกันที่ <strong>segment</strong> (= ก้อนข้อความระหว่างเครื่องหมาย <code>/</code> —
+    <code>/recipes/7/favorite</code> มี 3 segment คือ <code>recipes</code> · <code>7</code> · <code>favorite</code>)
+    เส้นหนึ่งจบที่ segment ที่ 2 อีกเส้นมีต่อถึงที่ 3 · Gin จึงแยกออก
+    <br>เอา spec ไปลงทะเบียนดูก่อนเขียน handler เป็นวิธี<strong>ตรวจ spec ที่ถูกที่สุด</strong>:
+    ใช้เวลา 2 นาที และจับ path ที่ชนกันได้ตั้งแต่ยังไม่มีโค้ดสักบรรทัด
+  </p>
+</div>
+
+<h2>4 · spec นี้ผ่านกฎ 7 ข้อกี่ข้อ</h2>
+
+<p>
+  ตอนนี้เรามี spec แล้ว หน้าที่ต่อไปไม่ใช่รีบเขียนโค้ด แต่คือ<strong>ตรวจมันด้วยกฎที่เราเพิ่งเรียน</strong>
+  <br>และตรวจแบบตรงไปตรงมา — ไม่ใช่หาเรื่องชม และไม่ใช่หาเรื่องด่า
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>กฎ (<a href="./0036-rest-naming-idempotency.html">บทเรียน 36</a>)</th><th>ผล</th><th>หลักฐานจาก spec</th></tr>
+  <tr>
+    <td><strong>1.</strong> ใช้ noun ไม่ใช่ verb</td>
+    <td>⚠️ ผ่าน 10 / ตก 4</td>
+    <td>10 เส้นแรกเป็นคำนามล้วน · แต่ <code>/login</code> <code>/logout</code> <code>/exchange</code> เป็นกริยาเต็ม ๆ (<code>/callback</code> ก้ำกึ่ง)</td>
+  </tr>
+  <tr>
+    <td><strong>2.</strong> ชื่อ resource consistent</td>
+    <td>✅ ผ่าน</td>
+    <td><code>recipes</code> กับ <code>users</code> เป็นพหูพจน์ทั้งคู่ ไม่มี <code>/recipe</code> เอกพจน์โผล่มาปนสักที่</td>
+  </tr>
+  <tr>
+    <td><strong>3.</strong> lowercase</td>
+    <td>✅ ผ่าน</td>
+    <td>ทั้ง 14 เส้นเป็นตัวเล็กหมด ไม่มี <code>/Recipes</code></td>
+  </tr>
+  <tr>
+    <td><strong>4.</strong> หลายคำใช้ <code>-</code></td>
+    <td>➖ ไม่มีให้ตัดสิน</td>
+    <td>spec นี้ไม่มี resource ที่ชื่อยาวเกินหนึ่งคำเลย → กฎนี้ยังไม่ถูกทดสอบ</td>
+  </tr>
+  <tr>
+    <td><strong>5.</strong> relationship ใช้ path</td>
+    <td>✅ ผ่านสวย</td>
+    <td><code>/recipes/:id/favorite</code> · <code>/recipes/:id/rating</code> — อ่านแล้วรู้ทันทีว่าของลูกเกาะอยู่กับใคร</td>
+  </tr>
+  <tr>
+    <td><strong>6.</strong> filter ใช้ query</td>
+    <td>⚠️ <strong>spec เว้นว่างไว้</strong></td>
+    <td><code>GET /recipes</code> ไม่ได้ระบุ query สักตัว ทั้งที่โจทย์บอกชัดว่าต้องค้น 3 แบบ → <strong>ช่องว่างที่เราต้องเติมเอง</strong></td>
+  </tr>
+  <tr>
+    <td><strong>7.</strong> ไม่ใส่ action ถ้า method สื่อได้</td>
+    <td>⚠️ ผ่าน 10 / ตก 4</td>
+    <td><code>favorite</code>/<code>rating</code> <strong>เป็นข้อยกเว้นที่ถูกต้อง</strong> (method สื่อไม่ได้ว่า "โปรด" ต่างจาก "ให้คะแนน" ยังไง) · แต่ 4 เส้น Auth ตกจริง</td>
+  </tr>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">🎯 สองข้อที่ควรเก็บจากตารางนี้</span>
+  <p style="margin-bottom:0">
+    <strong>1. กฎข้อ 6 ที่ "ว่างไว้" อันตรายกว่ากฎที่ผิด</strong> —
+    ข้อที่ผิดชัด ๆ ทุกคนเห็นและเถียงกันได้
+    แต่ข้อที่<em>ไม่ได้เขียน</em>จะกลายเป็นการเดาของนักพัฒนาแต่ละคน
+    แล้วคุณจะได้ <code>?search=</code> จากคนนึง <code>?keyword=</code> จากอีกคน ใน API เดียวกัน
+    <br><strong>2. <code>/recipes/:id/favorite</code> ไม่ใช่การละเมิดกฎข้อ 7</strong> —
+    สไลด์เองก็ยกตัวอย่าง <code>PATCH /users/123/suspend</code> และ
+    <code>PATCH /users/123/reset-password</code> ว่า<strong>แนะนำ</strong> เพราะมันเป็น
+    action ที่ HTTP method สื่อไม่ได้ · กฎข้อ 7 ห้ามแค่การ<em>พูดซ้ำสิ่งที่ method พูดไปแล้ว</em>
+    เช่น <code>POST /users/create</code> หรือ <code>POST /users/123/delete</code>
+  </p>
+</div>
+
+<h2>5 · สี่บรรทัดที่ขัดกฎ — และเหตุผลที่มันขัดได้</h2>
+
+<pre><code>GET    /login       <span class="c">// กริยา + GET ที่ทำให้เกิดการเปลี่ยนแปลง</span>
+GET    /callback    <span class="c">// กริยา</span>
+POST   /exchange    <span class="c">// กริยาล้วน ๆ ไม่มีคำนามเลยสักคำ</span>
+GET    /logout      <span class="c">// กริยา + GET ที่ทำลาย session</span></code></pre>
+
+<p>
+  ถ้าเอากฎ 7 ข้อมาจับตรง ๆ สี่บรรทัดนี้<strong>ตกทั้งข้อ 1 และข้อ 7</strong>
+  และ <code>/login</code> กับ <code>/logout</code> ยังตกอีกข้อที่หนักกว่านั้น:
+  <strong><code>GET</code> ควรเป็น safe method</strong> — คือเรียกกี่ครั้งก็ไม่เปลี่ยนสถานะอะไรในระบบ
+  (<a href="./0036-rest-naming-idempotency.html">บทเรียน 36</a> เรื่อง idempotency)
+  แต่ <code>GET /logout</code> ทำลาย session ทิ้ง ซึ่งเป็นการเปลี่ยนสถานะเต็มตัว
+</p>
+
+<p>
+  <strong>แล้วทำไมทั้งโลกยังเขียนกันแบบนี้?</strong> เพราะสี่เส้นนี้
+  <strong>ไม่ได้ถูกเรียกโดยโค้ดของเรา</strong> — มันถูกเรียกโดย<strong>เบราว์เซอร์</strong>
+  และเบราว์เซอร์เดินไปหน้าใหม่ด้วย <code>GET</code> เสมอ
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📖 <strong>สามคำที่จะโผล่ในไดอะแกรมข้างล่าง</strong> — อ่านผ่านตาไว้ก่อน
+    <br><strong>Identity Provider (IdP)</strong> = เว็บภายนอกที่รับหน้าที่ยืนยันตัวตนแทนเรา
+    เช่น "เข้าสู่ระบบด้วย Google" · Google คือ IdP · เว็บเราไม่ต้องเก็บรหัสผ่านของใครเลย
+    <br><strong>302 redirect</strong> = status code ที่แปลว่า "ของไม่ได้อยู่ที่นี่ ไปต่อที่ URL นี้"
+    เบราว์เซอร์เห็นแล้วจะเดินไปเองอัตโนมัติ (<a href="./0034-http-status-code.html">บทเรียน 34</a>)
+    <br><strong>code</strong> กับ <strong>access token</strong> = ของสองชิ้นคนละใบ ·
+    <em>code</em> คือตั๋วชั่วคราวใช้ครั้งเดียวที่ IdP โยนกลับมาทาง URL ·
+    <em>access token</em> คือของจริงที่เอาไปแนบใน header <code>Authorization</code> ตอนเรียก API
+    <br>เราต้องเอา code ไป<strong>แลก</strong>เป็น token อีกทีหนึ่ง — นั่นคือหน้าที่ของ <code>POST /exchange</code>
+  </p>
+</div>
+
+<div class="diagram">
+<pre>  ผู้ใช้กดปุ่ม "เข้าสู่ระบบ"
+      │
+      │  1. เบราว์เซอร์ <strong>navigate</strong> ไป  GET /login       ← เราสั่งให้เป็น POST ไม่ได้
+      ▼                                                    (การกดลิงก์ = GET เท่านั้น)
+  แอปของเรา ตอบ 302 redirect ไปหน้า login ของ Identity Provider
+      │
+      │  2. ผู้ใช้พิมพ์รหัสผ่านที่ <strong>เว็บของ IdP</strong> (ไม่ใช่เว็บเรา)
+      ▼
+  IdP redirect กลับมา  <strong>GET /callback?code=xxxx</strong>    ← IdP เป็นคนกำหนดว่าเป็น GET
+      │                                                    เราแค่ต้องรับให้ได้
+      │  3. ตอนนี้เรามีแค่ "code" ยังไม่มี token
+      ▼
+  โค้ดฝั่งเรา ยิง  <strong>POST /exchange</strong>  เอา code ไปแลก access token
+      │                                        ← ขั้นนี้ <strong>โค้ดเราเป็นคนเรียกเอง</strong>
+      ▼                                          จึงเลือก method ได้อิสระ
+  ได้ token → เก็บไว้ → ยิง /api/v1/recipes ต่อได้</pre>
+</div>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>⛓️ เส้นที่เลือกไม่ได้จริง ๆ</h4>
+    <p>
+      <code>GET /login</code> · <code>GET /callback</code>
+    </p>
+    <p style="margin-bottom:0">
+      ตัวที่เรียกคือ<strong>เบราว์เซอร์</strong> ผ่านการกดลิงก์และการ redirect —
+      ทั้งสองอย่างเป็น <code>GET</code> ตามมาตรฐาน HTTP ไม่มีทางเลือกอื่น
+      <br>ต่อให้คุณตั้งชื่อสวยแค่ไหน มันก็ยังเป็น <code>GET</code> ที่จุดชนวนกระบวนการ
+      <strong>ข้อจำกัดนี้ไม่ได้มาจากความมักง่าย แต่มาจากตัวโปรโตคอล</strong>
+    </p>
+  </div>
+  <div class="side good">
+    <h4>🔧 เส้นที่ทำให้ RESTful กว่านี้ได้</h4>
+    <pre><code><span class="c">// แทน POST /exchange</span>
+POST   /auth/tokens
+
+<span class="c">// แทน GET /logout</span>
+DELETE /auth/tokens/current</code></pre>
+    <p style="margin-bottom:0">
+      "แลก code เป็น token" = <strong>สร้าง token ขึ้นมาหนึ่งใบ</strong> →
+      <code>POST</code> ลงกอง <code>/auth/tokens</code> ตรงตามกฎข้อ 1
+      <br>"ออกจากระบบ" = <strong>ทำลาย token ที่ถืออยู่</strong> →
+      <code>DELETE</code> · ได้ทั้งคำนาม ได้ทั้ง method ที่ตรงเจตนา
+      และเลิกใช้ <code>GET</code> เปลี่ยนสถานะด้วย
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ อย่าอ่านหัวข้อนี้เป็น "ผู้สอนเขียนผิด"</strong> — อ่านว่า
+    <strong>"กฎมีขอบเขต และนี่คือขอบของมัน"</strong>
+    <br>กฎ REST 7 ข้อคุมได้ดีมากกับ endpoint ที่<strong>โค้ดของเราเป็นคนเรียก</strong>
+    (มือถือเรียก API เรา · frontend เรียก backend เรา)
+    <br>แต่ endpoint ที่<strong>เบราว์เซอร์เดินไปเอง</strong> หรือ<strong>ระบบภายนอกเป็นคนยิงกลับมา</strong>
+    (OAuth callback, webhook ของ payment gateway, redirect กลับจาก 3D Secure)
+    ถูกบังคับรูปร่างด้วย<strong>มาตรฐานอื่น</strong>ที่เราไม่ได้เป็นคนเขียน
+    <br>ทางที่ทีมส่วนใหญ่เลือกจึงเป็นทางกลาง: <strong>แยกออกจากกันให้ชัด</strong> —
+    <code>/api/v1/...</code> สำหรับส่วนที่เราคุมและทำให้ RESTful ได้เต็มที่ ·
+    <code>/auth/...</code> สำหรับส่วนที่โปรโตคอลเป็นคนกำหนด
+    <br><strong>สิ่งที่รับไม่ได้จริง ๆ มีอย่างเดียว: ใช้ <code>GET</code> เปลี่ยนสถานะ
+    ในเส้นที่โค้ดเราเรียกเอง</strong> เพราะ <code>GET</code> คือสิ่งที่ browser, proxy และ CDN
+    ถือสิทธิ์ยิงซ้ำหรือ cache ได้ตามใจ
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">อีกสองจุดที่ควรถกก่อนลงมือเขียน</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>บรรทัดใน spec</th><th>ประเด็น</th><th>ทางเลือกที่ควรถกกับทีม</th></tr>
+  <tr>
+    <td><code>POST /recipes/:id/rating</code></td>
+    <td>สมาชิกคนเดิมกดให้คะแนนสองครั้ง จะได้สองคะแนน หรือทับของเดิม? <code>POST</code> สื่อว่า "<strong>สร้างใบใหม่</strong>" ทุกครั้ง</td>
+    <td>ถ้ากติกาคือ <em>หนึ่งคนต่อหนึ่งสูตรให้ได้คะแนนเดียว</em> → <code>PUT /recipes/:id/rating</code> ตรงกว่า เพราะ <code>PUT</code> เป็น idempotent: ยิงซ้ำ 10 ครั้งผลเท่ากับยิงครั้งเดียว</td>
+  </tr>
+  <tr>
+    <td><code>PUT /users/:id</code></td>
+    <td>ถ้า <code>:id</code> ไม่ใช่ตัวเราเองล่ะ? spec ไม่ได้บอกว่าใครแก้ใครได้</td>
+    <td>ตัว path ไม่ผิด แต่ต้องมี middleware เทียบ id ใน token กับ <code>:id</code> แล้วตอบ <strong>403</strong> ถ้าไม่ตรง (<a href="./0034-http-status-code.html">บทเรียน 34</a>: 401 = ไม่รู้ว่าคุณเป็นใคร · 403 = รู้ว่าคุณเป็นใคร แต่คุณทำไม่ได้)</td>
+  </tr>
+</table>
+</div>
+
+<h2>6 · จาก spec เป็นโค้ดจริง — 2 endpoint</h2>
+
+<p>
+  ถึงตรงนี้ spec นิ่งพอจะเขียนโค้ดได้แล้ว ผมเลือกทำสองเส้นที่<strong>สอนได้เยอะที่สุด</strong>:
+  <code>POST /recipes</code> (มี body ต้อง validate) กับ
+  <code>GET /recipes</code> (มี query — ช่องว่างที่ spec เว้นไว้ในกฎข้อ 6)
+  <br>โครงไฟล์ยึดตาม <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a>:
+</p>
+
+<div class="diagram">
+<pre>wongnok42/
+├── cmd/api/main.go              ← จุดเริ่มโปรแกรม + annotation ระดับ API
+├── internal/
+│   ├── httputil/response.go     ← รูปแบบ error กลางของทั้ง API
+│   └── recipe/
+│       ├── dto.go               ← <strong>สัญญากับ client</strong> (request/response)
+│       ├── handler.go           ← Gin handler + annotation ระดับ endpoint
+│       └── handler_test.go      ← httptest
+└── docs/                        ← swag สร้างให้ ห้ามแก้มือ</pre>
+</div>
+
+<p>
+  เริ่มที่ <code>dto.go</code> — และนี่คือไฟล์ที่สำคัญที่สุดในโปรเจกต์
+  เพราะมันคือ<strong>สัญญาเป็นลายลักษณ์อักษร</strong>ระหว่างเรากับคนที่เรียก API
+  <br><strong>DTO</strong> ย่อจาก <em>Data Transfer Object</em> — แปลตรงตัวคือ "struct ที่มีไว้รับ-ส่งข้อมูล
+  ข้ามเส้นแบ่งเท่านั้น" ไม่ใช่ struct ที่เก็บลง database · เราแยกมันออกมาเพราะ
+  <strong>หน้าตาที่ client เห็น ไม่จำเป็นต้องเหมือนหน้าตาที่เราเก็บจริง</strong>
+  (เช่น password ที่อยู่ในตารางแต่ห้ามหลุดออกไปใน response)
+</p>
+
+<pre><code><span class="c">// internal/recipe/dto.go</span>
+<span class="k">package</span> recipe
+
+<span class="c">// CreateRecipeRequest คือ body ที่ POST /recipes รับ</span>
+<span class="k">type</span> CreateRecipeRequest <span class="k">struct</span> {
+    Name           <span class="k">string</span> `json:<span class="s">"name"</span>            binding:<span class="s">"required"</span>                        example:<span class="s">"ผัดกะเพราหมูสับ"</span>`
+    CookingMinutes *<span class="k">int</span>   `json:<span class="s">"cooking_minutes"</span> binding:<span class="s">"required,min=1,max=1440"</span>         example:<span class="s">"15"</span>`
+    Difficulty     <span class="k">string</span> `json:<span class="s">"difficulty"</span>      binding:<span class="s">"required,oneof=easy medium hard"</span> example:<span class="s">"easy"</span>`
+}
+
+<span class="c">// ListRecipeQuery คือ query string ที่ GET /recipes รับ  ← เติมช่องว่างของกฎข้อ 6</span>
+<span class="k">type</span> ListRecipeQuery <span class="k">struct</span> {
+    Q                 <span class="k">string</span> `form:<span class="s">"q"</span>`
+    Difficulty        <span class="k">string</span> `form:<span class="s">"difficulty"</span>          binding:<span class="s">"omitempty,oneof=easy medium hard"</span>`
+    MaxCookingMinutes <span class="k">int</span>    `form:<span class="s">"max_cooking_minutes"</span> binding:<span class="s">"omitempty,min=1,max=1440"</span>`
+}
+
+<span class="c">// RecipeResponse คือหน้าตาสูตรอาหารที่ API คืนกลับไป</span>
+<span class="k">type</span> RecipeResponse <span class="k">struct</span> {
+    ID             <span class="k">string</span> `json:<span class="s">"id"</span>              example:<span class="s">"3f0c1a7e-2b19-4c5e-9f3a"</span>`
+    Name           <span class="k">string</span> `json:<span class="s">"name"</span>            example:<span class="s">"ผัดกะเพราหมูสับ"</span>`
+    CookingMinutes <span class="k">int</span>    `json:<span class="s">"cooking_minutes"</span> example:<span class="s">"15"</span>`
+    Difficulty     <span class="k">string</span> `json:<span class="s">"difficulty"</span>      example:<span class="s">"easy"</span>`
+}</code></pre>
+
+<p>
+  <strong>สามอย่างที่ตั้งใจใส่ และเหตุผลของแต่ละอัน</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ที่เขียนไว้</th><th>ทำไม</th></tr>
+  <tr>
+    <td><code>CookingMinutes *int</code> (pointer)</td>
+    <td>เพราะ <code>binding:"required"</code> มอง <code>0</code> ว่า "ไม่ได้ส่งมา" (<a href="./0039-gin-binding-middleware.html">บทเรียน 39</a>) · ใช้ pointer เพื่อแยก "ส่ง 0 มาจริง" ออกจาก "ไม่ส่งเลย" — ถึงเคสนี้ 0 นาทีจะไม่สมเหตุสมผลอยู่แล้ว แต่<strong>นิสัยนี้ต้องติดตัว</strong>เพราะ field ประเภทราคาหรือจำนวนคงเหลือ 0 คือค่าที่ถูกต้อง</td>
+  </tr>
+  <tr>
+    <td><code>omitempty</code> ใน query</td>
+    <td>query ทุกตัวเป็น <strong>ตัวเลือก</strong> ไม่ใช่ของบังคับ · แต่<strong>ถ้าส่งมาแล้วต้องถูก</strong> — ส่ง <code>?difficulty=insane</code> ต้องได้ 400 ไม่ใช่ผลลัพธ์ว่างเปล่าเงียบ ๆ</td>
+  </tr>
+  <tr>
+    <td><code>form:</code> ไม่ใช่ <code>json:</code></td>
+    <td><code>ShouldBindQuery</code> อ่าน tag ชื่อ <code>form</code> เท่านั้น · ใส่แต่ <code>json</code> แล้วค่าจะ<strong>ไม่เข้า field เลย</strong> แล้วไปติด <code>required</code> ทั้งที่ client ส่งมาถูกทุกอย่าง (<a href="./0039-gin-binding-middleware.html">บทเรียน 39</a>)</td>
+  </tr>
+  <tr>
+    <td><code>example:"15"</code> ทั้งที่ field เป็น <code>int</code></td>
+    <td>struct tag ในภาษา Go <strong>เป็น string ได้อย่างเดียว</strong> เลยต้องใส่เครื่องหมายคำพูดเสมอ · swag เป็นคนแปลงกลับให้ตรงกับ type จริงตอนสร้างเอกสาร — เดี๋ยวจะเห็นว่ามันออกมาเป็น <code>"example": 15</code> (ตัวเลข ไม่มีเครื่องหมายคำพูด) ใน <code>swagger.json</code></td>
+  </tr>
+</table>
+</div>
+
+<p>
+  ก่อนไป handler ต้องมีอีกไฟล์เล็ก ๆ ก่อน — <code>internal/httputil/response.go</code>
+  เพราะ handler ทุกตัวจะอ้างถึงมันตอนตอบ error
+  <br>มีแค่ struct เดียว แต่ทำให้ <strong>error ทุกอันของทั้ง API หน้าตาเหมือนกันหมด</strong>
+  client เขียนโค้ดอ่าน error ครั้งเดียวใช้ได้กับทุก endpoint:
+</p>
+
+<pre><code><span class="c">// internal/httputil/response.go</span>
+<span class="k">package</span> httputil
+
+<span class="c">// ErrorResponse คือรูปแบบ error เดียวของทั้ง API</span>
+<span class="k">type</span> ErrorResponse <span class="k">struct</span> {
+    Error <span class="k">string</span> `json:<span class="s">"error"</span> example:<span class="s">"invalid request body"</span>`
+}</code></pre>
+
+<p>ต่อด้วย handler — โครงเดียวกับ <a href="./0038-gin-routing.html">บทเรียน 38</a> คือ handler เป็น method บน struct เพื่อให้ฉีด dependency เข้ามาได้:</p>
+
+<pre><code><span class="c">// internal/recipe/handler.go</span>
+<span class="k">package</span> recipe
+
+<span class="k">import</span> (
+    <span class="s">"net/http"</span>
+    <span class="s">"strconv"</span>
+    <span class="s">"strings"</span>
+
+    <span class="s">"github.com/gin-gonic/gin"</span>
+
+    <span class="s">"wongnok42/internal/httputil"</span>   <span class="c">// &lt;module&gt;/internal/httputil — module ชื่อ wongnok42</span>
+)
+
+<span class="c">// Handler ถือ "ที่เก็บข้อมูล" ไว้ในตัวเอง — บทนี้คือ slice ธรรมดา</span>
+<span class="c">// วันที่ต่อ database จริง ก็เปลี่ยนแค่สอง field นี้เป็น *gorm.DB</span>
+<span class="k">type</span> Handler <span class="k">struct</span> {
+    store  []RecipeResponse
+    nextID <span class="k">int</span>
+}
+
+<span class="k">func</span> <span class="f">NewHandler</span>(seed []RecipeResponse) *Handler {
+    <span class="k">return</span> &amp;Handler{store: seed, nextID: <span class="f">len</span>(seed) + <span class="n">1</span>}
+}
+
+<span class="c">// Create godoc</span>
+<span class="c">//</span>
+<span class="c">//	@Summary		สร้างสูตรอาหารใหม่</span>
+<span class="c">//	@Description	สมาชิกสร้างสูตรอาหารของตัวเอง</span>
+<span class="c">//	@Tags			recipes</span>
+<span class="c">//	@Accept			json</span>
+<span class="c">//	@Produce		json</span>
+<span class="c">//	@Param			request	body		recipe.CreateRecipeRequest	true	"ข้อมูลสูตรอาหาร"</span>
+<span class="c">//	@Success		201		{object}	recipe.RecipeResponse</span>
+<span class="c">//	@Failure		400		{object}	httputil.ErrorResponse</span>
+<span class="c">//	@Security		BearerAuth</span>
+<span class="c">//	@Router			/recipes [post]</span>
+<span class="k">func</span> (h *Handler) <span class="f">Create</span>(c *gin.Context) {
+    <span class="k">var</span> req CreateRecipeRequest
+    <span class="k">if</span> err := c.<span class="f">ShouldBindJSON</span>(&amp;req); err != <span class="k">nil</span> {
+        c.<span class="f">JSON</span>(http.StatusBadRequest, httputil.ErrorResponse{Error: err.<span class="f">Error</span>()})
+        <span class="k">return</span>
+    }
+    created := RecipeResponse{
+        ID:             strconv.<span class="f">Itoa</span>(h.nextID),
+        Name:           req.Name,
+        CookingMinutes: *req.CookingMinutes,   <span class="c">// ปลอดภัยแล้ว: required การันตีว่าไม่ nil</span>
+        Difficulty:     req.Difficulty,
+    }
+    h.nextID++
+    h.store = <span class="f">append</span>(h.store, created)
+
+    c.<span class="f">JSON</span>(http.StatusCreated, created)   <span class="c">// 201 ไม่ใช่ 200 — บทเรียน 34</span>
+}
+
+<span class="c">// List godoc</span>
+<span class="c">//</span>
+<span class="c">//	@Summary		ค้นหาสูตรอาหาร</span>
+<span class="c">//	@Description	ผู้เยี่ยมชมทั่วไปค้นจากชื่อเมนู เวลาปรุง หรือความยากง่ายได้</span>
+<span class="c">//	@Tags			recipes</span>
+<span class="c">//	@Produce		json</span>
+<span class="c">//	@Param			q					query		string	false	"คำค้นจากชื่อเมนู"</span>
+<span class="c">//	@Param			difficulty			query		string	false	"ความยากง่าย"	Enums(easy, medium, hard)</span>
+<span class="c">//	@Param			max_cooking_minutes	query		int		false	"ใช้เวลาปรุงไม่เกินกี่นาที"</span>
+<span class="c">//	@Success		200					{array}		recipe.RecipeResponse</span>
+<span class="c">//	@Failure		400					{object}	httputil.ErrorResponse</span>
+<span class="c">//	@Router			/recipes [get]</span>
+<span class="k">func</span> (h *Handler) <span class="f">List</span>(c *gin.Context) {
+    <span class="k">var</span> q ListRecipeQuery
+    <span class="k">if</span> err := c.<span class="f">ShouldBindQuery</span>(&amp;q); err != <span class="k">nil</span> {
+        c.<span class="f">JSON</span>(http.StatusBadRequest, httputil.ErrorResponse{Error: err.<span class="f">Error</span>()})
+        <span class="k">return</span>
+    }
+
+    out := <span class="f">make</span>([]RecipeResponse, <span class="n">0</span>, <span class="f">len</span>(h.store))   <span class="c">// ← บรรทัดนี้มีเหตุผล ดูหัวข้อ 7</span>
+    <span class="k">for</span> _, r := <span class="k">range</span> h.store {
+        <span class="k">if</span> q.Q != <span class="s">""</span> &amp;&amp; !strings.<span class="f">Contains</span>(r.Name, q.Q) {
+            <span class="k">continue</span>
+        }
+        <span class="k">if</span> q.Difficulty != <span class="s">""</span> &amp;&amp; r.Difficulty != q.Difficulty {
+            <span class="k">continue</span>
+        }
+        <span class="k">if</span> q.MaxCookingMinutes &gt; <span class="n">0</span> &amp;&amp; r.CookingMinutes &gt; q.MaxCookingMinutes {
+            <span class="k">continue</span>
+        }
+        out = <span class="f">append</span>(out, r)
+    }
+
+    c.<span class="f">JSON</span>(http.StatusOK, out)
+}
+
+<span class="k">func</span> (h *Handler) <span class="f">Register</span>(rg *gin.RouterGroup) {
+    rg.<span class="f">POST</span>(<span class="s">"/recipes"</span>, h.Create)
+    rg.<span class="f">GET</span>(<span class="s">"/recipes"</span>, h.List)
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong>สังเกตว่า filter ทั้งสามข้อเขียนด้วยรูปทรงเดียวกันเป๊ะ</strong>:
+    <em>"ถ้าไม่ได้ส่งมา ก็ข้ามไป ไม่ต้องกรอง"</em>
+    <br>นี่คือผลพลอยได้ของการเลือก query ตั้งแต่ต้น — เพิ่มเงื่อนไขที่ 4
+    คือเพิ่ม <code>if</code> อีกก้อนเดียว ไม่ต้องแตะ route ไม่ต้องแตะ handler อื่น
+    <br>ถ้าเมื่อกี้เราเลือกยัดเงื่อนไขลง path ตอนนี้เราจะกำลังนั่งเขียน handler ที่ 8 อยู่
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem"><code>swag init</code> — spec ที่สร้างจากโค้ด ไม่ใช่จากความทรงจำ</h3>
+
+<p>
+  ต่อจาก <a href="./0041-swagger-swaggo.html">บทเรียน 41</a> · ชิ้นสุดท้ายที่ยังขาดคือ <code>main.go</code>
+  ซึ่งเก็บ annotation <strong>ระดับทั้ง API</strong> (ชื่อ เวอร์ชัน host และนิยามของ
+  <code>BearerAuth</code> ที่ handler อ้างถึงด้วย <code>@Security</code>)
+  <br>ถ้าไม่มีบล็อก <code>@securityDefinitions</code> ตรงนี้ คำว่า <code>BearerAuth</code>
+  ใน handler จะไม่มีความหมาย:
+</p>
+
+<pre><code><span class="c">// cmd/api/main.go</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"github.com/gin-gonic/gin"</span>
+
+    <span class="s">"wongnok42/internal/recipe"</span>
+)
+
+<span class="c">//	@title			Wongnok Recipes API</span>
+<span class="c">//	@version		1.0</span>
+<span class="c">//	@description	API รวมสูตรอาหารของ Wongnok</span>
+<span class="c">//	@host			localhost:8080</span>
+<span class="c">//	@BasePath		/api/v1</span>
+
+<span class="c">//	@securityDefinitions.apikey	BearerAuth</span>
+<span class="c">//	@in							header</span>
+<span class="c">//	@name						Authorization</span>
+<span class="k">func</span> <span class="f">main</span>() {
+    r := gin.<span class="f">Default</span>()
+    v1 := r.<span class="f">Group</span>(<span class="s">"/api/v1"</span>)
+    recipe.<span class="f">NewHandler</span>(<span class="k">nil</span>).<span class="f">Register</span>(v1)
+    r.<span class="f">Run</span>(<span class="s">":8080"</span>)
+}</code></pre>
+
+<p>
+  ทีนี้สั่ง <code>swag init</code> ได้แล้ว — <strong>ยืนอยู่ที่ root ของโปรเจกต์</strong>
+  (โฟลเดอร์ที่มี <code>go.mod</code>) แล้วรัน · เพราะ <code>main.go</code> ไม่ได้อยู่ที่ root
+  จึงต้องบอกทางให้ swag ด้วย <code>-g</code>:
+</p>
+
+<pre><code>$ swag init -g cmd/api/main.go
+2026/08/20 22:17:38 Generate swagger docs....
+2026/08/20 22:17:38 Generate general API Info, search dir:./
+2026/08/20 22:17:38 warning: failed to get package name in dir: ./, error: execute go list command, exit status 1, stdout:, stderr:no Go files in &lt;path ของโปรเจกต์คุณ&gt;
+2026/08/20 22:17:38 Generating recipe.CreateRecipeRequest
+2026/08/20 22:17:38 Generating recipe.RecipeResponse
+2026/08/20 22:17:38 Generating httputil.ErrorResponse
+2026/08/20 22:17:38 create docs.go at docs/docs.go
+2026/08/20 22:17:38 create swagger.json at docs/swagger.json
+2026/08/20 22:17:38 create swagger.yaml at docs/swagger.yaml</code></pre>
+
+<p>
+  บรรทัด <code>warning: failed to get package name in dir: ./</code> ยังขึ้นอยู่ดีแม้คำสั่งจะสำเร็จ —
+  <strong>ไม่ต้องตกใจ</strong> ดูบรรทัด <code>create ...</code> สามบรรทัดท้ายเป็นหลัก
+  <br>ทีนี้ส่วนที่น่าสนใจกว่า: <strong>เปิด <code>docs/swagger.json</code> ดูว่า
+  <code>binding</code> tag กลายเป็นอะไร</strong>
+</p>
+
+<pre><code><span class="s">"recipe.CreateRecipeRequest"</span>: {
+  <span class="s">"type"</span>: <span class="s">"object"</span>,
+  <span class="s">"required"</span>: [<span class="s">"cooking_minutes"</span>, <span class="s">"difficulty"</span>, <span class="s">"name"</span>],
+  <span class="s">"properties"</span>: {
+    <span class="s">"cooking_minutes"</span>: {
+      <span class="s">"type"</span>: <span class="s">"integer"</span>,
+      <span class="s">"maximum"</span>: <span class="n">1440</span>,
+      <span class="s">"minimum"</span>: <span class="n">1</span>,
+      <span class="s">"example"</span>: <span class="n">15</span>
+    },
+    <span class="s">"difficulty"</span>: {
+      <span class="s">"type"</span>: <span class="s">"string"</span>,
+      <span class="s">"enum"</span>: [<span class="s">"easy"</span>, <span class="s">"medium"</span>, <span class="s">"hard"</span>],
+      <span class="s">"example"</span>: <span class="s">"easy"</span>
+    },
+    <span class="s">"name"</span>: { <span class="s">"type"</span>: <span class="s">"string"</span>, <span class="s">"example"</span>: <span class="s">"ผัดกะเพราหมูสับ"</span> }
+  }
+}</code></pre>
+
+<div class="win">
+  <span class="label">🎁 สามอย่างที่เกิดขึ้นเองโดยเราไม่ได้เขียนใน annotation เลย</span>
+  <p style="margin-bottom:0">
+    <strong>1. <code>binding:"required"</code> → <code>"required": [...]</code></strong>
+    ครบทั้งสาม field
+    <br><strong>2. <code>min=1,max=1440</code> → <code>"minimum": 1, "maximum": 1440</code></strong>
+    <br><strong>3. <code>oneof=easy medium hard</code> → <code>"enum": ["easy","medium","hard"]</code></strong>
+    <br>แถม <code>CookingMinutes *int</code> ขึ้นเอกสารเป็น <code>"type": "integer"</code> ธรรมดา —
+    swag <strong>ถอด pointer ทิ้งให้</strong> เพราะ pointer เป็นรายละเอียดของภาษา Go
+    ไม่ใช่ส่วนหนึ่งของสัญญา HTTP
+    <br><br>
+    ความหมายที่แท้จริงของเรื่องนี้: <strong>กฎ validation กับเอกสารเป็นของชิ้นเดียวกัน</strong>
+    <br>วันไหนคุณแก้ <code>max=1440</code> เป็น <code>max=600</code> เอกสารจะเปลี่ยนตามทันทีที่รัน
+    <code>swag init</code> — คุณ<strong>ลืมอัปเดตเอกสารไม่ได้</strong> เพราะไม่เคยมีเอกสารแยกให้ลืม
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    ⚙️ <strong>ฝั่ง <code>GET /recipes</code> ก็ได้ของฟรีเหมือนกัน</strong> —
+    <code>Enums(easy, medium, hard)</code> ที่เขียนต่อท้าย <code>@Param difficulty</code>
+    กลายเป็น <code>"enum": ["easy","medium","hard"]</code> ในตัว query parameter จริง ๆ
+    <br>ความหมายคือ <strong>ค่าที่ยอมรับได้ถูกเขียนไว้ในเอกสารตรง ๆ</strong> —
+    คนที่มาเรียก API ของคุณไม่ต้องเดาว่าพิมพ์ <code>easy</code> หรือ <code>Easy</code> หรือ <code>1</code>
+    <br>เทียบกับตอนไม่ใส่: เขาจะรู้ค่าที่ถูกต้องก็ต่อเมื่อ<strong>ลองพิมพ์ผิดแล้วโดน 400 ตอบกลับมา</strong>
+    ซึ่งเป็นวิธีเรียนรู้ API ที่แย่ที่สุด
+  </p>
+</div>
+
+<h2>7 · เทสที่พิสูจน์ว่า spec เป็นจริง</h2>
+
+<p>
+  spec ที่ไม่มีเทสคือ<strong>ความตั้งใจ</strong> ไม่ใช่<strong>สัญญา</strong>
+  <br>เทสข้างล่างใช้ table-driven (<a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16</a>)
+  + <code>httptest.NewRecorder</code> (<a href="./0040-httptest-handler.html">บทเรียน 40</a>)
+  โดย<strong>ไม่ต้องเปิด server จริง ไม่ต้องมี database</strong>
+</p>
+
+<pre><code><span class="c">// internal/recipe/handler_test.go</span>
+<span class="k">package</span> recipe_test          <span class="c">// _test ต่อท้าย = เทสจากข้างนอก เห็นเฉพาะของที่ export</span>
+
+<span class="k">import</span> (
+    <span class="s">"net/http"</span>
+    <span class="s">"net/http/httptest"</span>
+    <span class="s">"strings"</span>
+    <span class="s">"testing"</span>
+
+    <span class="s">"github.com/gin-gonic/gin"</span>
+    <span class="s">"github.com/stretchr/testify/assert"</span>
+
+    <span class="s">"wongnok42/internal/recipe"</span>
+)
+
+<span class="k">func</span> <span class="f">newRouter</span>() *gin.Engine {
+    gin.<span class="f">SetMode</span>(gin.TestMode)          <span class="c">// ปิด log ของ gin ให้ output เทสอ่านออก</span>
+    r := gin.<span class="f">New</span>()
+    seed := []recipe.RecipeResponse{
+        {ID: <span class="s">"1"</span>, Name: <span class="s">"ผัดกะเพราหมูสับ"</span>, CookingMinutes: <span class="n">15</span>, Difficulty: <span class="s">"easy"</span>},
+        {ID: <span class="s">"2"</span>, Name: <span class="s">"แกงมัสมั่นไก่"</span>,   CookingMinutes: <span class="n">90</span>, Difficulty: <span class="s">"hard"</span>},
+    }
+    recipe.<span class="f">NewHandler</span>(seed).<span class="f">Register</span>(r.<span class="f">Group</span>(<span class="s">"/api/v1"</span>))
+    <span class="k">return</span> r
+}
+
+<span class="k">func</span> <span class="f">do</span>(t *testing.T, method, target, body <span class="k">string</span>) *httptest.ResponseRecorder {
+    t.<span class="f">Helper</span>()
+    req := httptest.<span class="f">NewRequest</span>(method, target, strings.<span class="f">NewReader</span>(body))
+    req.Header.<span class="f">Set</span>(<span class="s">"Content-Type"</span>, <span class="s">"application/json"</span>)
+    w := httptest.<span class="f">NewRecorder</span>()      <span class="c">// recorder ใหม่ทุกครั้ง — บทเรียน 40</span>
+    <span class="f">newRouter</span>().<span class="f">ServeHTTP</span>(w, req)
+    <span class="k">return</span> w
+}
+
+<span class="k">func</span> <span class="f">TestCreateRecipe</span>(t *testing.T) {
+    tests := []<span class="k">struct</span> {
+        name     <span class="k">string</span>
+        body     <span class="k">string</span>
+        wantCode <span class="k">int</span>
+    }{
+        {<span class="s">"ครบทุกช่อง"</span>,          `{"name":"ต้มยำกุ้ง","cooking_minutes":25,"difficulty":"medium"}`, http.StatusCreated},
+        {<span class="s">"ไม่ส่งชื่อเมนู"</span>,       `{"cooking_minutes":25,"difficulty":"medium"}`,                    http.StatusBadRequest},
+        {<span class="s">"difficulty นอกรายการ"</span>, `{"name":"ต้มยำกุ้ง","cooking_minutes":25,"difficulty":"insane"}`, http.StatusBadRequest},
+        {<span class="s">"cooking_minutes = 0"</span>,  `{"name":"ต้มยำกุ้ง","cooking_minutes":0,"difficulty":"easy"}`,    http.StatusBadRequest},
+        {<span class="s">"JSON พัง"</span>,             `{"name":`,                                                        http.StatusBadRequest},
+    }
+    <span class="k">for</span> _, tc := <span class="k">range</span> tests {
+        t.<span class="f">Run</span>(tc.name, <span class="k">func</span>(t *testing.T) {
+            w := <span class="f">do</span>(t, http.MethodPost, <span class="s">"/api/v1/recipes"</span>, tc.body)
+            assert.<span class="f">Equal</span>(t, tc.wantCode, w.Code)
+            t.<span class="f">Logf</span>(<span class="s">"code=%d body=%s"</span>, w.Code, w.Body.<span class="f">String</span>())
+        })
+    }
+}</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ อ่านบรรทัดนี้ให้ดี — มันจะกลับมาหลอกคุณตอนทำภารกิจ</strong>
+    <br><code>do()</code> เรียก <code>newRouter()</code> <strong>ใหม่ทุกครั้งที่ถูกเรียก</strong>
+    <br>แปลว่าทุก request เริ่มจาก handler ใบใหม่ ที่มีสูตรอยู่ 2 ใบเท่าเดิมเสมอ
+    — <strong>ของที่ request ก่อนหน้าสร้างหรือลบไป จะหายไปหมด</strong>
+    <br>นี่คือสิ่งที่เราต้องการสำหรับเทสข้างบน เพราะทำให้แต่ละเคส<em>ไม่ไปยุ่งกับเคสอื่น</em>
+    รันสลับลำดับกันก็ได้ผลเท่าเดิม
+    <br>แต่พอไหร่ที่คุณอยากเทสว่า "<strong>ลบแล้ว ค่อย GET ใบเดิม ต้องได้ 404</strong>"
+    คุณจะใช้ <code>do()</code> ไม่ได้ ต้องสร้าง router <strong>ตัวเดียว</strong>
+    แล้วยิงสองครั้งใส่ตัวเดิม (ผมยกโค้ดให้ในภารกิจข้อ 6)
+  </p>
+</div>
+
+<p>ผลรันจริง (ตัดมาเฉพาะบรรทัด log):</p>
+
+<pre><code>=== RUN   TestCreateRecipe/ครบทุกช่อง
+    handler_test.go:53: code=<strong>201</strong> body={"id":"3","name":"ต้มยำกุ้ง","cooking_minutes":25,"difficulty":"medium"}
+=== RUN   TestCreateRecipe/ไม่ส่งชื่อเมนู
+    handler_test.go:53: code=<strong>400</strong> body={"error":"Key: 'CreateRecipeRequest.Name' Error:Field validation for 'Name' failed on the 'required' tag"}
+=== RUN   TestCreateRecipe/difficulty_นอกรายการ
+    handler_test.go:53: code=<strong>400</strong> body={"error":"Key: 'CreateRecipeRequest.Difficulty' Error:Field validation for 'Difficulty' failed on the 'oneof' tag"}
+=== RUN   TestCreateRecipe/cooking_minutes_=_0
+    handler_test.go:53: code=<strong>400</strong> body={"error":"Key: 'CreateRecipeRequest.CookingMinutes' Error:Field validation for 'CookingMinutes' failed on the 'min' tag"}
+=== RUN   TestCreateRecipe/JSON_พัง
+    handler_test.go:53: code=<strong>400</strong> body={"error":"unexpected EOF"}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔎 <strong>อ่านสองบรรทัดนี้เทียบกัน</strong>
+    <br><code>cooking_minutes = 0</code> ตกที่ tag <strong><code>min</code></strong> ไม่ใช่ <code>required</code> —
+    เพราะเราใช้ <code>*int</code> ตัว <code>required</code> จึงผ่าน (ส่ง 0 มาจริง pointer ไม่ nil)
+    แล้วไปตกที่ <code>min=1</code> แทน · <strong>นี่คือหลักฐานว่า pointer ทำงานอย่างที่ตั้งใจ</strong>
+    <br>ส่วน <code>JSON พัง</code> ได้ <code>unexpected EOF</code> ซึ่ง<strong>ไม่ใช่ validation error</strong>
+    แต่เป็น parse error — คนละชนิดกัน (<a href="./0039-gin-binding-middleware.html">บทเรียน 39</a>)
+    ต่างกันที่<em>สาเหตุ</em> แต่<strong>เหมือนกันที่สัญญากับ client คือ 400</strong>
+    → เทสจึงผูกกับ <strong>status</strong> เป็นหลัก ไม่ใช่ผูกกับข้อความ error
+  </p>
+</div>
+
+<p>ฝั่ง <code>GET</code> — เทสว่า filter ทั้งสามแบบตามโจทย์ทำงานจริง:</p>
+
+<pre><code>=== RUN   TestListRecipes/ไม่ใส่_filter
+    code=200 body=[{"id":"1",...,"difficulty":"easy"},{"id":"2",...,"difficulty":"hard"}]
+=== RUN   TestListRecipes/ค้นจากชื่อ            <span class="c">// ?q=กะเพรา</span>
+    code=200 body=[{"id":"1","name":"ผัดกะเพราหมูสับ","cooking_minutes":15,"difficulty":"easy"}]
+=== RUN   TestListRecipes/ค้นจากความยาก         <span class="c">// ?difficulty=hard</span>
+    code=200 body=[{"id":"2","name":"แกงมัสมั่นไก่","cooking_minutes":90,"difficulty":"hard"}]
+=== RUN   TestListRecipes/ค้นจากเวลาปรุง         <span class="c">// ?max_cooking_minutes=30</span>
+    code=200 body=[{"id":"1","name":"ผัดกะเพราหมูสับ","cooking_minutes":15,"difficulty":"easy"}]
+=== RUN   TestListRecipes/ไม่มีอะไรตรง           <span class="c">// ?q=พิซซ่า</span>
+    code=<strong>200</strong> body=<strong>[]</strong>
+=== RUN   TestListRecipes/difficulty_นอกรายการ    <span class="c">// ?difficulty=insane</span>
+    code=<strong>400</strong> body={"error":"Key: 'ListRecipeQuery.Difficulty' Error:Field validation for 'Difficulty' failed on the 'oneof' tag"}
+PASS
+ok  	wongnok42/internal/recipe	0.329s</code></pre>
+
+<p>
+  บรรทัด <strong>"ไม่มีอะไรตรง → 200 <code>[]</code>"</strong> คือบรรทัดที่ต้องหยุดอ่าน
+  <br>ค้นแล้วไม่เจอ <strong>ไม่ใช่ 404</strong> — เพราะ resource <code>/recipes</code>
+  <em>มีอยู่จริง</em> เราเข้าถึงมันได้สำเร็จ แค่ผลลัพธ์ว่างเปล่า
+  (<a href="./0034-http-status-code.html">บทเรียน 34</a>)
+  <br>404 เก็บไว้ใช้กับ <code>GET /recipes/9999</code> ซึ่งคือการขอ<em>ของที่ไม่มีตัวตน</em>
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — ในโค้ด <code>List</code> ผมเขียนว่า
+  <code>out := make([]RecipeResponse, 0, len(h.store))</code>
+  <br>ถ้าเปลี่ยนเป็น <code>var out []RecipeResponse</code> (ซึ่งเป็นวิธีที่ Go เขียนกันปกติ)
+  แล้วไม่มีสูตรไหนตรงเงื่อนไขเลย</p>
+  <pre><code><span class="k">var</span> a []RecipeResponse                  <span class="c">// nil slice</span>
+b := <span class="f">make</span>([]RecipeResponse, <span class="n">0</span>)          <span class="c">// empty slice</span>
+
+json.<span class="f">Marshal</span>(a)   <span class="c">// -&gt; ?</span>
+json.<span class="f">Marshal</span>(b)   <span class="c">// -&gt; ?</span></code></pre>
+  <p class="ask">
+    ทั้งคู่มี <code>len() == 0</code> เหมือนกัน — แล้ว client ที่เรียก API
+    จะได้ body ต่างกันไหม? และถ้าต่าง <strong>มันพังตรงไหนในโลกจริง</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== RUN   TestNilSliceVsEmptySlice
+    nilslice_test.go:15: var a []RecipeResponse      -&gt; <strong>null</strong>
+    nilslice_test.go:16: make([]RecipeResponse, 0)   -&gt; <strong>[]</strong>
+--- PASS: TestNilSliceVsEmptySlice (0.00s)</code></pre>
+    <p>
+      <strong>ต่างกัน และเป็นความต่างที่ทำให้แอปฝั่ง client พังจริง</strong>
+      <br>โค้ดฝั่งหน้าเว็บมักเขียนประมาณ <code>data.map(...)</code> หรือ <code>data.length</code> —
+      ถ้าได้ <code>[]</code> มา จะได้หน้าจอว่างเปล่าอย่างสุภาพ
+      แต่ถ้าได้ <code>null</code> มาจะได้ error ทันที
+    </p>
+    <p>
+      และมันเป็นบั๊กที่<strong>ซ่อนตัวเก่งมาก</strong> เพราะตอน dev มีข้อมูลทดสอบอยู่ในระบบ
+      ทุกคำค้นจึงเจอผลลัพธ์เสมอ — จะไปเจอตอนผู้ใช้จริงพิมพ์คำที่ไม่มีในระบบ
+    </p>
+    <p style="margin-bottom:0">
+      กฎที่ควรติดตัวไปตลอด: <strong>endpoint ที่สัญญาว่าจะคืน array
+      ต้องคืน array เสมอ แม้จะว่าง</strong>
+      <br>ในทางปฏิบัติคือ <code>make([]T, 0)</code> ก่อนวนลูป — ยาวขึ้นสองคำ
+      แต่ประกาศเจตนาชัดว่า "ที่นี่คือกอง ไม่ใช่ค่าที่อาจไม่มี"
+      <br>สังเกตว่า Swagger บอกไว้แล้วว่า <code>@Success 200 {array} recipe.RecipeResponse</code> —
+      <strong><code>null</code> คือการผิดสัญญาที่เราเขียนไว้เอง</strong>
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ อีกหนึ่งบรรทัดที่ต้องรู้ไว้ก่อนเอาขึ้นจริง</strong> — ผมลองยิง method ที่ไม่มีในระบบ:
+  </p>
+  <pre style="margin:0.6rem 0"><code>DELETE /api/v1/recipes -&gt; code=<strong>404</strong> body="404 page not found"</code></pre>
+  <p style="margin:0.6rem 0 0">
+    เราลงไว้แค่ <code>POST</code> กับ <code>GET</code> บน path นี้ ดังนั้น <code>DELETE</code>
+    ควรได้ <strong>405 Method Not Allowed</strong> ตามหลัก HTTP
+    (<a href="./0034-http-status-code.html">บทเรียน 34</a>) แต่ Gin ตอบ <strong>404</strong>
+    <br>เพราะค่าเริ่มต้นของ <code>HandleMethodNotAllowed</code> คือ <code>false</code>
+    (<a href="./0038-gin-routing.html">บทเรียน 38</a>) — ต้องตั้ง
+    <code>r.HandleMethodNotAllowed = true</code> เอง
+    <br><strong>ผลกระทบจริง:</strong> คนที่เรียก API ของคุณแล้วได้ 404 จะไปนั่งไล่ว่า
+    "path ผิดตรงไหน" ทั้งที่ path ถูกแล้ว ผิดแค่ method — เสียเวลาไปครึ่งวันได้สบาย ๆ
+  </p>
+</div>
+
+<h2>8 · ปิด Day 8 — และของที่ยังไม่ได้สอน</h2>
+
+<p>
+  ทั้งวันนี้เดินเป็นเส้นเดียวจากคำถามว่า "API คืออะไร" มาถึงโค้ดที่รันได้:
+  <a href="./0033-rest-resource-method.html">บท 33</a> ให้ทุกอย่างเป็น <strong>resource + method</strong> ·
+  <a href="./0034-http-status-code.html">บท 34</a> ให้ <strong>status code</strong> เป็นคำตอบแรกที่ client อ่าน ·
+  <a href="./0035-query-body-header.html">บท 35</a> แยกว่าข้อมูลชิ้นไหนควรไปทาง <strong>query / body / header</strong> ·
+  <a href="./0036-rest-naming-idempotency.html">บท 36</a> ให้กฎการตั้งชื่อกับ <strong>idempotency</strong> ·
+  <a href="./0037-net-http-server.html">บท 37</a> เปิดฝา <strong><code>net/http</code></strong> ให้เห็นว่า server จริง ๆ มีแค่ interface เดียว ·
+  <a href="./0038-gin-routing.html">บท 38</a> กับ <a href="./0039-gin-binding-middleware.html">บท 39</a> เอา <strong>Gin</strong> มาลดโค้ดซ้ำด้วย routing / binding / middleware ·
+  <a href="./0040-httptest-handler.html">บท 40</a> ทำให้ทั้งหมด <strong>เทสได้โดยไม่ต้องเปิด server</strong> ·
+  <a href="./0041-swagger-swaggo.html">บท 41</a> ทำให้เอกสาร<strong>เกิดจากโค้ด</strong>แทนที่จะเกิดจากความทรงจำ ·
+  และบทนี้ให้คุณ<strong>ทำทั้งหมดนั้นย้อนกลับ</strong> — จากโจทย์ภาษามนุษย์สี่บรรทัด
+  กลายเป็น spec ที่วิจารณ์ได้ แล้วกลายเป็น endpoint ที่มีเทสยืนยัน
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ สิ่งที่ Day 8 ยังไม่ได้สอน และคุณจะต้องใช้แน่ ๆ</strong>
+    <br><strong>1. auth ของจริง</strong> — เรามี <code>@Security BearerAuth</code> ในเอกสาร
+    และมี <code>/login</code> <code>/callback</code> <code>/exchange</code> ใน spec
+    แต่<strong>ยังไม่มีโค้ดสักบรรทัดที่ตรวจ token จริง</strong> ·
+    <a href="./0039-gin-binding-middleware.html">บท 39</a> สอนกลไก middleware ไว้แล้ว
+    แต่การ verify JWT, การอ่าน user id ออกจาก token, การตอบ 401 กับ 403 ให้ถูกจังหวะ
+    ยังเป็นช่องว่างอยู่ — และนี่คือช่องว่างที่<strong>ห้ามเดาเอง</strong>
+    <br><strong>2. pagination</strong> — <code>GET /recipes</code> ของเราคืน<strong>ทุกใบ</strong>
+    ตอนนี้มี 2 ใบเลยดูดี วันที่มี 50,000 ใบ endpoint นี้จะยิง DB ยาว ๆ
+    แล้วส่ง JSON ก้อนมหึมากลับไป · ของที่ต้องเพิ่มคือ <code>?page=</code> กับ <code>?limit=</code>
+    พร้อมข้อมูลจำนวนทั้งหมดใน response — และมันเป็นเรื่องที่<strong>ต้องออกแบบตั้งแต่ต้น</strong>
+    เพราะเปลี่ยนทีหลังคือการเปลี่ยนสัญญากับทุกคนที่เรียกอยู่
+    <br><strong>3. ต่อ database จริง</strong> — บทนี้เก็บใน slice ทั้งหมด
+    การเอา GORM จาก <a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a>
+    มาแทน <code>h.store</code> คือขั้นถัดไปที่ตรงที่สุด
+    <br><strong>4. CORS</strong> — <em>origin</em> คือคู่ของ (โปรโตคอล + โดเมน + พอร์ต)
+    เช่น <code>http://localhost:5173</code> · frontend ที่รันอยู่คนละ origin กับ API
+    (<code>http://localhost:8080</code>) จะโดน<strong>เบราว์เซอร์บล็อกให้เอง</strong>
+    ทั้งที่ server เราตอบ 200 ปกติ — ต้องใส่ middleware ที่ตอบ header
+    <code>Access-Control-Allow-Origin</code> กลับไปเพิ่ม
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. โจทย์บอกว่าค้นสูตรจาก "ระยะเวลาที่ใช้ปรุง" และ "ความยากง่าย" ได้ — ข้อไหนออกแบบตรงตามกฎ REST ที่สุด?</p>
+  <div class="opts">
+    <button class="opt"><code>GET /recipes/difficulty/easy/cooking-time/30</code> เพราะเงื่อนไขทั้งสองเป็นส่วนหนึ่งของที่อยู่ของสูตร</button>
+    <button class="opt"><code>POST /recipes/search</code> พร้อมส่งเงื่อนไขทั้งหมดใน body เพราะเงื่อนไขอาจยาวเกิน URL</button>
+    <button class="opt"><code>GET /recipes?difficulty=easy&amp;max_cooking_minutes=30</code> เพราะเงื่อนไขค้นหาเป็น filter ของกองเดิม</button>
+    <button class="opt"><code>GET /searchRecipes?difficulty=easy&amp;time=30</code> เพราะชื่อ endpoint บอกเจตนาว่ากำลังค้นหา</button>
+  </div>
+  <div class="explain">
+    <p>"ความยากง่าย" กับ "เวลาปรุง" <strong>ไม่ใช่ resource</strong> — คุณ <code>DELETE</code> เลข 30 ทิ้งไม่ได้
+    มันเป็นแค่<em>คุณสมบัติ</em>ของสูตร ดังนั้นมันคือ <strong>filter</strong> ซึ่งกฎข้อ 6 บอกให้ใช้ query
+    <br>ตัวเลือกที่ 1 ผิดเพราะยัด filter ลง path — เงื่อนไข 3 อย่างที่เลือกใส่ไม่ใส่ได้จะกลายเป็น route
+    ที่ต้องลงทะเบียนถึง 8 เส้น และเพิ่มเงื่อนไขใหม่ทีต้องเพิ่ม route อีกชุด ·
+    ตัวเลือกที่ 2 ผิดสองชั้น: <code>search</code> เป็นกริยา (กฎข้อ 1) และ <code>POST</code> สื่อว่า
+    <em>สร้างของใหม่</em> ทั้งที่การค้นหาไม่ได้เปลี่ยนอะไรในระบบเลย ·
+    ตัวเลือกที่ 4 ผิดเพราะ <code>searchRecipes</code> เป็นกริยาและเป็น camelCase ผิดทั้งกฎข้อ 1 และข้อ 3
+    <br>ที่ถูกคือ <strong>การค้นหาไม่ใช่การกระทำที่ต้องมี endpoint ของตัวเอง มันคือการขอ
+    <code>/recipes</code> แบบมีเงื่อนไข</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. <code>GET /logout</code> ใน spec ของผู้สอน — ข้อสรุปไหนตรงที่สุด?</p>
+  <div class="opts">
+    <button class="opt">ถูกต้องตามกฎอยู่แล้ว เพราะการออกจากระบบเป็นเพียงการอ่านสถานะปัจจุบันของผู้ใช้</button>
+    <button class="opt">ผิดเพราะ <code>logout</code> เป็นกริยาเท่านั้น ถ้าเปลี่ยนเป็น <code>GET /session</code> ก็ถือว่าครบถ้วนแล้ว</button>
+    <button class="opt">ผิดร้ายแรงจนใช้ไม่ได้ ต้องเปลี่ยนเป็น <code>POST /logout</code> ก่อนเอาขึ้น production เสมอ</button>
+    <button class="opt">ขัดทั้งกฎข้อ 1 และข้อ 7 และยังใช้ <code>GET</code> เปลี่ยนสถานะ — แต่มีเหตุผลรองรับเพราะเบราว์เซอร์เป็นคนพาไป</button>
+  </div>
+  <div class="explain">
+    <p><code>logout</code> เป็นกริยา (ขัดข้อ 1) และเป็น action ใน URI (ขัดข้อ 7) ·
+    หนักกว่านั้นคือมันใช้ <code>GET</code> ซึ่งควรเป็น safe method ไปทำลาย session
+    <br>แต่เหตุผลที่ทั้งโลกยังเขียนแบบนี้คือ <strong>เส้นตระกูล auth ถูกเรียกโดยเบราว์เซอร์
+    ผ่านการกดลิงก์และการ redirect ซึ่งเป็น <code>GET</code> เสมอ</strong> — เราสั่งให้เป็น
+    <code>POST</code> ไม่ได้ ทางที่ RESTful กว่าคือ <code>DELETE /auth/tokens/current</code>
+    ซึ่งใช้ได้ดีเมื่อ<em>โค้ดของเรา</em>เป็นคนเรียกเอง
+    <br>ตัวเลือกที่ 1 ผิดชัดเจน — logout เปลี่ยนสถานะเต็มตัว ไม่ใช่การอ่าน ·
+    ตัวเลือกที่ 2 มองแคบไป: แก้ชื่อให้เป็นคำนามแล้วยังเหลือปัญหา <code>GET</code> เปลี่ยนสถานะอยู่ดี ·
+    ตัวเลือกที่ 3 แรงเกินจริง — spec แบบนี้ทำงานได้และใช้กันทั่วโลก และ <code>POST /logout</code>
+    ก็ยังไม่แก้ปัญหาว่ามันเป็นกริยาอยู่ดี
+    <br>บทเรียนที่แท้จริง: <strong>กฎ REST คุมได้เฉพาะเส้นที่โค้ดเราเป็นคนเรียก
+    ส่วนเส้นที่โปรโตคอลอื่นกำหนดรูปร่างไว้แล้ว ให้แยกออกไปเป็น <code>/auth/...</code>
+    แทนที่จะฝืนหรือแกล้งไม่เห็น</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">3. field <code>CookingMinutes *int</code> ที่มี <code>binding:"required,min=1,max=1440"</code> — หลังรัน <code>swag init</code> เอกสารที่ได้เป็นอย่างไร?</p>
+  <div class="opts">
+    <button class="opt">ขึ้นเป็น pointer type และต้องเขียน <code>@Param</code> เพิ่มเองถ้าอยากให้มีขอบเขตตัวเลข</button>
+    <button class="opt">ขึ้นเป็น <code>"type":"integer"</code> พร้อม <code>minimum</code> 1, <code>maximum</code> 1440 และชื่ออยู่ในรายการ <code>required</code></button>
+    <button class="opt">ขึ้นเป็น <code>"type":"integer"</code> เฉย ๆ เพราะ swag อ่านได้แค่ <code>json</code> tag กับ <code>example</code> tag</button>
+    <button class="opt">ขึ้นเป็น <code>"type":"integer"</code> ที่ไม่บังคับ เพราะ pointer แปลว่า field นี้ส่งมาหรือไม่ก็ได้</button>
+  </div>
+  <div class="explain">
+    <p>ผมรัน <code>swag init -g cmd/api/main.go</code> แล้วเปิด <code>docs/swagger.json</code> ดูของจริง ได้
+    <code>"required": ["cooking_minutes","difficulty","name"]</code> และภายใน <code>cooking_minutes</code> มี
+    <code>"maximum": 1440</code> กับ <code>"minimum": 1</code> ครบ — <strong>ทั้งหมดมาจาก <code>binding</code> tag
+    โดยเราไม่ได้เขียนอะไรเพิ่มใน annotation เลย</strong>
+    <br>ตัวเลือกที่ 1 กับ 3 ผิดตรงที่คิดว่า swag ไม่อ่าน <code>binding</code> — มันอ่าน และนั่นคือจุดที่ทำให้
+    เอกสารกับ validation<strong>เป็นของชิ้นเดียวกัน แก้ที่เดียวเปลี่ยนทั้งคู่</strong> ·
+    ตัวเลือกที่ 4 สลับความหมายของ pointer: pointer มีไว้แยก "ส่ง 0 มาจริง" ออกจาก "ไม่ส่งเลย"
+    ต่างหาก ตัวที่บอกว่าบังคับหรือไม่คือ <code>required</code> ซึ่งใส่ไว้แล้ว
+    <br>หลักฐานเพิ่มเติมจากผลรันเดียวกัน: swag <strong>ถอด pointer ทิ้ง</strong> เหลือ
+    <code>"type":"integer"</code> ธรรมดา เพราะ pointer เป็นรายละเอียดของภาษา Go ไม่ใช่ส่วนหนึ่งของสัญญา HTTP</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. <code>GET /recipes?q=พิซซ่า</code> แล้วไม่มีสูตรไหนตรงเลย — handler ควรตอบอะไร และเขียนโค้ดยังไง?</p>
+  <div class="opts">
+    <button class="opt">ตอบ 200 พร้อม body <code>[]</code> โดยต้อง <code>make([]T, 0)</code> ก่อนวนลูป ไม่งั้นจะได้ <code>null</code></button>
+    <button class="opt">ตอบ 404 พร้อม body <code>{"error":"not found"}</code> เพราะไม่พบข้อมูลที่ผู้ใช้ต้องการ</button>
+    <button class="opt">ตอบ 200 พร้อม body <code>null</code> ซึ่งถูกต้องแล้ว เพราะสื่อว่าไม่มีข้อมูลชัดเจนกว่า <code>[]</code></button>
+    <button class="opt">ตอบ 204 No Content เพราะไม่มีเนื้อหาจะส่งกลับ จึงไม่ควรมี body ติดไปด้วย</button>
+  </div>
+  <div class="explain">
+    <p>สองเรื่องรวมกันในข้อเดียว
+    <br><strong>เรื่อง status:</strong> resource <code>/recipes</code> มีอยู่จริงและเราเข้าถึงสำเร็จ
+    แค่ผลลัพธ์ว่าง → <strong>200</strong> · 404 เก็บไว้ใช้กับ <code>GET /recipes/9999</code>
+    ซึ่งคือการขอของที่ไม่มีตัวตน (<a href="./0034-http-status-code.html">บทเรียน 34</a>)
+    <br><strong>เรื่อง body:</strong> ผมรันเทียบให้ดูแล้ว <code>var a []RecipeResponse</code> ได้
+    <code>null</code> ส่วน <code>make([]RecipeResponse, 0)</code> ได้ <code>[]</code> — ทั้งที่
+    <code>len()</code> เป็น 0 เท่ากัน
+    <br>ตัวเลือกที่ 2 ผิดเพราะทำให้ client แยกไม่ออกระหว่าง "ค้นแล้วไม่เจอ" กับ "path พิมพ์ผิด" ·
+    ตัวเลือกที่ 3 ผิดเพราะ <code>null</code> ทำให้โค้ดฝั่งหน้าเว็บที่เขียน <code>data.map(...)</code>
+    พังทันที และมันจะไปพังตอนผู้ใช้จริงค้นคำที่ไม่มีในระบบ ไม่ใช่ตอน dev ·
+    ตัวเลือกที่ 4 ผิดเพราะ 204 แปลว่า "สำเร็จและไม่มี body เลย" ซึ่งขัดกับสัญญา
+    <code>@Success 200 {array}</code> ที่เราประกาศไว้เอง — ผลลัพธ์ว่างยังเป็นผลลัพธ์อยู่ดี</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำอีก 2 endpoint ให้เดินได้จริง</span>
+  <p>
+    หัวข้อ 6 ทำ <code>POST /recipes</code> กับ <code>GET /recipes</code> ไปแล้ว
+    ตาคุณทำสองเส้นที่เหลือของ CRUD: <strong><code>GET /recipes/:id</code></strong> กับ
+    <strong><code>DELETE /recipes/:id</code></strong>
+    <br>เป้าหมายไม่ใช่ "ให้มันตอบ 200 ได้" — เป้าหมายคือ
+    <strong>ให้ทุกกรณีที่ผิดพลาดได้ ตอบ status ที่ถูกต้อง และมีเทสยืนยันทุกกรณี</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งโปรเจกต์:</strong> สร้างโฟลเดอร์ว่างใหม่ <code>wongnok42/</code> แล้ว
+        <code>cd</code> เข้าไป · <strong>ทุกคำสั่งต่อจากนี้รันจากโฟลเดอร์นี้ทั้งหมด</strong>
+        <pre style="margin:0.5rem 0"><code>$ mkdir wongnok42 &amp;&amp; cd wongnok42
+$ go mod init wongnok42
+$ go get github.com/gin-gonic/gin@v1.12.0
+$ go get github.com/stretchr/testify@v1.12.1</code></pre>
+        ชื่อ module ต้องเป็น <code>wongnok42</code> ให้ตรงกับ import ในหัวข้อ 6
+        (<code>wongnok42/internal/httputil</code>) ไม่งั้นต้องไล่แก้ import ทุกไฟล์เอง
+        <br>แล้ววางโครงโฟลเดอร์ตามหัวข้อ 6: <code>cmd/api</code> · <code>internal/recipe</code> ·
+        <code>internal/httputil</code></li>
+    <li><strong>คัดลอกโค้ดจากหัวข้อ 6–7 มาให้รันได้ก่อน</strong> — ครบ 5 ไฟล์:
+        <code>internal/httputil/response.go</code> · <code>internal/recipe/dto.go</code> ·
+        <code>internal/recipe/handler.go</code> · <code>cmd/api/main.go</code> ·
+        <code>internal/recipe/handler_test.go</code>
+        <br>ยืนยันด้วย <code>go test ./... -v</code> ว่าเห็น <code>code=201</code> จริง
+        <br>ยังไม่ต้องเขียนอะไรใหม่ในข้อนี้ — <strong>ต้องมีฐานที่เขียวก่อนถึงจะต่อยอดได้</strong></li>
+    <li><strong>เขียน <code>GET /recipes/:id</code></strong> ด้วย <code>c.Param("id")</code>
+        (<a href="./0038-gin-routing.html">บทเรียน 38</a>)
+        <br>ต้องแยกให้ครบ <strong>สามทาง</strong>: เจอ → <strong>200</strong> ·
+        ไม่เจอ → <strong>404</strong> · id ไม่ใช่ตัวเลข → <strong>400</strong>
+        <br><small>หมายเหตุ: <code>c.Param("id")</code> คืน <code>string</code> เสมอ และ
+        <code>RecipeResponse.ID</code> ของเราก็เป็น <code>string</code> — ถ้าอยากได้ 400 ตอน
+        <code>/recipes/abc</code> ต้องเรียก <code>strconv.Atoi</code> เช็ครูปแบบเองก่อน
+        แล้วค่อยไปหาใน <code>h.store</code></small>
+        <br><em>คำถามที่ต้องตอบให้ได้ก่อนเขียน:</em> ทำไม "ไม่เจอ" กับ "id ผิดรูปแบบ"
+        ถึงไม่ควรใช้ status เดียวกัน</li>
+    <li><strong>เขียน <code>DELETE /recipes/:id</code></strong> — ลบสำเร็จควรตอบ
+        <strong>204 No Content</strong> (ไม่มี body) หรือ 200 พร้อม body?
+        เลือกอย่างใดอย่างหนึ่งแล้ว<strong>เขียนเหตุผลลงไปใน comment</strong>
+        <br>แล้วตอบคำถามสำคัญกว่านั้น: <strong>ลบ id เดิมซ้ำครั้งที่สองควรได้อะไร</strong>
+        — 204 เหมือนเดิม หรือ 404? ทั้งสองคำตอบมีคนใช้จริง ขอแค่คุณอธิบายได้ว่าทำไม
+        (ใบ้: <a href="./0036-rest-naming-idempotency.html">บทเรียน 36</a> เรื่อง idempotency)</li>
+    <li><strong>ใส่ annotation Swagger ให้ครบทั้งสองเส้น</strong> แล้วรัน
+        <code>swag init -g cmd/api/main.go</code> <strong>จาก root ของโปรเจกต์</strong>
+        <br>ถ้ายังไม่ได้ลง swag CLI ให้ลงก่อน (<a href="./0041-swagger-swaggo.html">บทเรียน 41</a>):
+        <code>go install github.com/swaggo/swag/cmd/swag@latest</code>
+        <br>เปิด <code>docs/swagger.json</code> แล้วยืนยันว่ามี path <code>/recipes/{id}</code>
+        โผล่มาจริง พร้อม parameter ชื่อ <code>id</code> ที่ <code>"in": "path"</code></li>
+    <li><strong>เขียนเทสพิสูจน์</strong> แบบ table-driven ครอบทุกกรณีข้างบน
+        (<a href="./0040-httptest-handler.html">บทเรียน 40</a>) โดยใช้ helper
+        <code>do(t, method, target, body)</code> จากหัวข้อ 7
+        <br>อย่าลืมเคสที่คนลืมกันบ่อยสุด: <strong>ลบแล้วค่อย <code>GET</code> ใบเดิม</strong>
+        — ต้องได้ 404 · ถ้ายังได้ 200 แปลว่าโค้ดลบไม่จริง
+        <br><strong>แต่เคสนี้ใช้ <code>do()</code> ไม่ได้</strong> เพราะมันสร้าง router ใหม่ทุกครั้ง
+        (ดูกล่องเตือนในหัวข้อ 7) — ต้องมี helper อีกตัวที่รับ router เข้ามา แล้วยิงสองครั้งใส่ตัวเดิม:
+        <pre style="margin:0.5rem 0"><code><span class="k">func</span> <span class="f">doOn</span>(t *testing.T, r *gin.Engine, method, target, body <span class="k">string</span>) *httptest.ResponseRecorder {
+    t.<span class="f">Helper</span>()
+    req := httptest.<span class="f">NewRequest</span>(method, target, strings.<span class="f">NewReader</span>(body))
+    req.Header.<span class="f">Set</span>(<span class="s">"Content-Type"</span>, <span class="s">"application/json"</span>)
+    w := httptest.<span class="f">NewRecorder</span>()
+    r.<span class="f">ServeHTTP</span>(w, req)              <span class="c">// ← ใช้ router ที่ส่งเข้ามา ไม่สร้างใหม่</span>
+    <span class="k">return</span> w
+}
+
+<span class="c">// แล้วในเทสเขียนแบบนี้</span>
+r := <span class="f">newRouter</span>()
+<span class="f">doOn</span>(t, r, http.MethodDelete, <span class="s">"/api/v1/recipes/1"</span>, <span class="s">""</span>)
+w := <span class="f">doOn</span>(t, r, http.MethodGet, <span class="s">"/api/v1/recipes/1"</span>, <span class="s">""</span>)
+assert.<span class="f">Equal</span>(t, http.StatusNotFound, w.Code)</code></pre></li>
+    <li><strong>เทสที่พิสูจน์ว่าเทสของคุณเทสจริง:</strong> ลองแก้ handler ให้ตอบ
+        <code>200</code> แทน <code>404</code> ตอนไม่เจอ แล้วรันเทสใหม่
+        <br><strong>ถ้าเทสยังเขียวอยู่ แปลว่าเทสของคุณยังไม่ได้เทสอะไร</strong> — กลับไปแก้เทส
+        แล้วค่อยแก้ handler กลับ</li>
+    <li><strong>ท้าทาย 1:</strong> ตั้ง <code>r.HandleMethodNotAllowed = true</code>
+        แล้วยิง <code>PATCH /api/v1/recipes/1</code> — <strong>ทายก่อนรัน</strong> ว่าได้ status อะไร
+        มี header <code>Allow</code> ไหม และในนั้นมีค่าอะไรบ้าง</li>
+    <li><strong>ท้าทาย 2:</strong> เพิ่ม <code>?page=</code> กับ <code>?limit=</code>
+        ให้ <code>GET /recipes</code> โดยให้ <code>limit</code> มีค่าเริ่มต้นและมีเพดาน
+        (เช่น <code>binding:"omitempty,min=1,max=100"</code>)
+        <br>แล้วตอบว่า <strong>client จะรู้ได้ยังไงว่ามีทั้งหมดกี่หน้า</strong> —
+        ต้องเปลี่ยน response จาก array เปล่า ๆ เป็นอะไร และ<strong>การเปลี่ยนนี้กระทบใครบ้าง</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 3 — ทำไม 404 กับ 400 ต้องแยกกัน</button>
+  <div class="answer">
+    <p>
+      สองสถานะนี้ตอบคำถามคนละคำถาม และ<strong>คนที่ต้องแก้ปัญหาก็คนละคน</strong>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>400 = "คำขอของคุณผิดรูปแบบ"</strong> — <code>/recipes/abc</code> ทั้งที่ id เป็นตัวเลข
+      แปลว่า<strong>โค้ดฝั่งที่เรียกมาเขียนผิด</strong> ยิงกี่ครั้งก็ผิดเหมือนเดิม
+      ต้องแก้ที่โค้ดฝั่งนั้น
+      <br><strong>404 = "คำขอถูกต้องแล้ว แต่ของไม่มี"</strong> — <code>/recipes/9999</code>
+      รูปแบบถูกทุกอย่าง แค่<strong>สูตรใบนั้นไม่มีในระบบ (หรือถูกลบไปแล้ว)</strong>
+      ไม่มีใครเขียนโค้ดผิด และพรุ่งนี้ถ้ามีคนสร้างสูตรที่ได้ id นี้ คำขอเดิมก็จะสำเร็จ
+      <br><br>
+      ถ้ายุบสองอย่างนี้เป็น status เดียว คนที่ debug จะเสียเวลาไล่ผิดทาง —
+      เห็น 404 แล้วไปนั่งไล่ว่า route ลงถูกไหม ทั้งที่ความจริงคือส่ง id มาผิดรูปแบบ
+      <br>นี่คือหลักเดียวกับที่ใช้มาทั้ง Day 8:
+      <strong>status code คือประโยคแรกที่ client อ่าน — พูดให้ตรงตั้งแต่ประโยคแรก
+      ประหยัดเวลาคนอื่นได้เป็นวัน</strong>
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p class="ask" style="margin-bottom:0">
+    💬 <strong>ข้อที่ผมอยากเห็นคำตอบที่สุดคือข้อ 4 กับท้าทาย 2</strong> —
+    เพราะทั้งคู่ไม่มีคำตอบเดียวที่ถูก มีแต่คำตอบที่คุณ<strong>อธิบายเหตุผลได้</strong>
+    และนั่นคือสิ่งที่แยกคนที่ "เขียน API ได้" ออกจากคนที่ "ออกแบบ API เป็น"
+    <br>ถ้าออกแบบ spec ส่วนไหนแล้วไม่แน่ใจ <strong>ส่ง spec มาให้ดูได้เลย</strong> —
+    เอามาถกกันว่าทำไมเลือกแบบนั้น สนุกกว่าเฉลยอยู่แล้ว
+    <br>และถ้ารันแล้วได้ output ไม่ตรงกับในบทนี้ บอกเวอร์ชันมาด้วย
+    (ทุกบรรทัดในบทนี้รันบน Go 1.26.5 darwin/arm64 · gin v1.12.0 · testify v1.12.1 · swag CLI v1.16.4)
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0041-swagger-swaggo.html">← บทเรียน 41</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <!-- บทสุดท้ายของวัน ไม่มีถัดไป -->
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Methods">MDN — HTTP request methods</a> — นิยามของ <strong>safe</strong> กับ <strong>idempotent</strong> ที่ใช้ตัดสิน <code>GET /logout</code> ในหัวข้อ 5</li>
+  <li><a href="https://datatracker.ietf.org/doc/html/rfc6749#section-4.1">RFC 6749 §4.1 — Authorization Code Grant</a> — ต้นเหตุที่ <code>/login</code> กับ <code>/callback</code> ถูกบังคับให้เป็น <code>GET</code></li>
+  <li><a href="https://swagger.io/specification/v2/">OpenAPI (Swagger) 2.0 Specification</a> — ที่มาของ <code>required</code>, <code>minimum</code>/<code>maximum</code>, <code>enum</code> ที่ swag สร้างให้จาก <code>binding</code> tag</li>
+  <li><a href="https://github.com/swaggo/swag#declarative-comments-format">swaggo/swag — Declarative Comments Format</a> — รายการ annotation ทั้งหมด รวมถึง <code>Enums(...)</code> ต่อท้าย <code>@Param</code></li>
+  <li><a href="https://pkg.go.dev/github.com/gin-gonic/gin#RouterGroup">pkg.go.dev — <code>gin.RouterGroup</code></a> · <a href="https://pkg.go.dev/github.com/gin-gonic/gin#Engine">gin.Engine</a> — <code>HandleMethodNotAllowed</code> อยู่ในหน้านี้</li>
+  <li><a href="https://pkg.go.dev/encoding/json#Marshal">pkg.go.dev — <code>json.Marshal</code></a> — เอกสารระบุเองว่า nil slice encode เป็น <code>null</code></li>
+  <li><a href="./0036-rest-naming-idempotency.html">บทเรียน 36 — กฎการตั้งชื่อ + idempotency</a> · <a href="./0040-httptest-handler.html">บทเรียน 40 — httptest</a> · <a href="./0041-swagger-swaggo.html">บทเรียน 41 — swaggo</a> — สามบทที่บทนี้เอามาต่อกัน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,1311 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 39 — binding · validation · middleware · CORS</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 39 · Day 8 · Gin</p>
+  <h1>binding · validation · middleware · CORS</h1>
+  <p class="meta">~18 นาที · ต้องมี: <a href="./0038-gin-routing.html">บทเรียน 38</a> (Gin, <code>*gin.Context</code>), <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> (struct tag)</p>
+  <p class="standfirst">
+    บทที่แล้วเรารับ request ได้แล้ว บทนี้คือ<strong>สามอย่างที่อยู่ระหว่าง request กับ handler</strong>:
+    แปลง body เป็น struct · เช็คว่าข้อมูลใช้ได้ไหม · แทรกโค้ดที่ต้องทำกับทุก request
+    <br>และผมจะพิสูจน์ให้ดูสามเรื่องที่<strong>ทำงาน "ถูกตามที่เขียน" แต่ผิดตามที่คุณตั้งใจ</strong>:
+    <code>binding:"required"</code> ที่ปฏิเสธข้อมูลที่ผู้ใช้ตั้งใจส่งมาจริง ·
+    <code>c.Abort()</code> ที่ตอบ <code>200 OK</code> ·
+    และ CORS ที่ <em>preflight</em> (request ที่เบราว์เซอร์ยิงไปถามก่อนเองโดยเราไม่ได้สั่ง)
+    ผ่านสวยงามแต่ request จริงโดนบล็อก
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 เตรียมเครื่องก่อนอ่าน</strong> — ทุก output ในบทนี้มาจากการรันจริงบน</p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+github.com/gin-gonic/gin v1.12.0
+github.com/go-playground/validator/v10 v10.30.1
+github.com/gin-contrib/cors v1.7.7</code></pre>
+  <p style="margin-bottom:0">
+    ถ้าจะพิมพ์ตาม: สร้างโฟลเดอร์เปล่าใหม่ · <code>cd</code> เข้าไป · แล้วสั่งสามบรรทัดนี้ในโฟลเดอร์นั้น
+    <br><code>go mod init check</code> ·
+    <code>go get github.com/gin-gonic/gin@v1.12.0</code> ·
+    <code>go get github.com/gin-contrib/cors</code>
+    <br>ตัว <code>validator/v10</code> ติดมากับ gin เอง ไม่ต้อง <code>go get</code> แยก —
+    มันคือเครื่องมือที่อ่าน tag <code>binding</code> ให้เรา
+  </p>
+</div>
+
+<h2>1 · จาก <code>c.Param</code> มาถึง body — <code>ShouldBindJSON</code> ทำอะไรให้บ้าง</h2>
+
+<p>
+  บทที่แล้วเราอ่านค่าจาก URL ด้วย <code>c.Param</code> ซึ่งได้ <code>string</code> เสมอ
+  แต่ <code>POST /recipes</code> ส่งข้อมูลมาเป็น <strong>JSON ใน body</strong> —
+  ก้อนไบต์ที่ยังไม่มีรูปร่าง ถ้าทำมือเองต้องเขียนสามขั้น: อ่านสตรีมออกมา →
+  <code>json.Unmarshal</code> → ไล่เช็คทีละ field ว่าครบไหม
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ทำมือ — ยาวและลืมง่าย</h4>
+    <pre><code><span class="k">var</span> in Recipe
+body, err := io.<span class="f">ReadAll</span>(c.Request.Body)
+<span class="k">if</span> err != <span class="k">nil</span> { <span class="c">/* 400 */</span> }
+<span class="k">if</span> err := json.<span class="f">Unmarshal</span>(body, &amp;in); err != <span class="k">nil</span> {
+    <span class="c">/* 400 */</span>
+}
+<span class="k">if</span> in.Title == <span class="s">""</span> { <span class="c">/* 400 */</span> }
+<span class="k">if</span> in.Servings &lt; <span class="n">1</span> { <span class="c">/* 400 */</span> }
+<span class="c">// ...อีก 6 field</span></code></pre>
+    <p style="margin-bottom:0">เช็คไม่ครบเมื่อไหร่ ข้อมูลพังก็ไหลลง database</p>
+  </div>
+  <div class="side good">
+    <h4>✅ ให้ gin ทำให้</h4>
+    <pre><code><span class="k">type</span> Recipe <span class="k">struct</span> {
+    Title    <span class="k">string</span> <span class="s">`json:"title" binding:"required"`</span>
+    Servings <span class="k">int</span>    <span class="s">`json:"servings" binding:"min=1,max=20"`</span>
+}
+
+<span class="k">var</span> in Recipe
+<span class="k">if</span> err := c.<span class="f">ShouldBindJSON</span>(&amp;in); err != <span class="k">nil</span> {
+    c.<span class="f">JSON</span>(http.StatusBadRequest, gin.H{<span class="s">"error"</span>: err.<span class="f">Error</span>()})
+    <span class="k">return</span>
+}</code></pre>
+    <p style="margin-bottom:0">กติกาย้ายไปอยู่บน struct — อ่านครั้งเดียวเห็นครบ</p>
+  </div>
+</div>
+
+<p>
+  <code>ShouldBindJSON</code> ทำสองงานรวดเดียว และ<strong>สองงานนี้ล้มเหลวได้คนละแบบ</strong>
+  ซึ่งเป็นเรื่องที่ต้องแยกให้ออกตั้งแต่ต้น:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ขั้น</th><th>ใครทำ</th><th>tag ที่ใช้</th><th>ชนิดของ error เมื่อพัง</th></tr></thead>
+  <tbody>
+    <tr><td>1. แปลง JSON เป็น struct</td><td><code>encoding/json</code></td><td><code>json:"..."</code></td><td><code>*json.UnmarshalTypeError</code> / <code>*errors.errorString</code></td></tr>
+    <tr><td>2. ตรวจกติกาของค่า</td><td><code>validator/v10</code></td><td><code>binding:"..."</code></td><td><code>validator.ValidationErrors</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ประเด็นที่ต้องจำจากตารางนี้: <strong><code>json</code> กับ <code>binding</code> เป็นคนละ tag
+  ทำคนละหน้าที่</strong> · <code>json:"title"</code> บอกว่า "key ใน JSON ชื่อ title"
+  (<a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a>) ส่วน
+  <code>binding:"required"</code> บอกว่า "ค่านี้ต้องผ่านกติกา" — ลบตัวหนึ่งทิ้ง อีกตัวยังทำงานอยู่
+</p>
+
+<p>ผมรันให้ดูว่าสองแบบนี้ออกมาไม่เหมือนกันจริง (struct คือ <code>ReqAge{ Age int `json:"age" binding:"required"` }</code>):</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📖 <strong>วิธีอ่านกล่องผลรันในบทนี้</strong> — บรรทัด <code>===== 6b ... =====</code>
+    คือชื่อเคสที่ <em>ผมตั้งเองในโปรแกรมทดสอบ</em> ไม่ใช่ข้อความจาก gin
+    <br><code>ERR_TYPE</code> = ชนิดของ error ที่ได้ · <code>ERR_STR</code> = ข้อความของ error ตัวนั้น ·
+    <code>STATUS</code> / <code>BODY</code> = สิ่งที่ client ได้รับจริง
+  </p>
+</div>
+
+<pre><code><span class="c">// JSON พัง — ไม่ถึงขั้นตรวจกติกาเลย</span>
+===== 6 broken JSON syntax  POST /should  body={"name": =====
+ERR_TYPE=*errors.errorString
+<strong>ERR_STR=unexpected EOF</strong>
+
+===== 6b wrong type  POST /should  body={"age":"abc"} =====
+ERR_TYPE=*json.UnmarshalTypeError
+<strong>ERR_STR=json: cannot unmarshal string into Go struct field ReqAge.age of type int</strong>
+
+===== 6c empty body  POST /should =====
+ERR_TYPE=*errors.errorString
+<strong>ERR_STR=EOF</strong></code></pre>
+
+<p>
+  สังเกต <code>EOF</code> เฉย ๆ ในเคสสุดท้าย — นั่นคือ <strong>ผู้ใช้ยิงมาโดยไม่มี body เลย</strong>
+  ถ้าคุณส่งข้อความนี้กลับไปตรง ๆ ฝั่ง frontend จะเห็นคำว่า <code>EOF</code> แล้วงงทั้งวัน
+  (เดี๋ยวหัวข้อ 3 จะจัดการเรื่องนี้)
+</p>
+
+<h2>2 · หัวใจของบท — <code>required</code> ไม่ได้แปลว่า "ต้องส่งมา"</h2>
+
+<p>
+  คำว่า <code>required</code> อ่านแล้วทุกคนแปลตรงกันว่า "ต้องมี field นี้ใน JSON"
+  <br><strong>ผิด</strong> — validator ไม่รู้เลยว่า JSON เดิมมี key อะไรบ้าง มันเห็นแค่ struct
+  <em>หลัง</em> unmarshal เสร็จแล้ว และมันตัดสินด้วยกฎเดียว:
+  <strong>ค่านี้เป็น zero value ของชนิดตัวเองหรือเปล่า</strong>
+</p>
+
+<p>
+  ถ้าเป็น zero value → ไม่ผ่าน · จบ · ไม่สนว่ามันเป็นศูนย์เพราะ "ไม่ได้ส่งมา"
+  หรือเพราะ "ส่งเลขศูนย์มาจริง ๆ" — สองอย่างนี้หน้าตาเหมือนกันเป๊ะในหน่วยความจำ
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — struct ของสูตรอาหารเป็นแบบนี้</p>
+  <pre><code><span class="k">type</span> ReqRecipe <span class="k">struct</span> {
+    Title     <span class="k">string</span> <span class="s">`json:"title" binding:"required"`</span>
+    Servings  <span class="k">int</span>    <span class="s">`json:"servings" binding:"required"`</span>
+    Published <span class="k">bool</span>   <span class="s">`json:"published" binding:"required"`</span>
+}</code></pre>
+  <p class="ask">
+    ผู้ใช้กรอกครบทุกช่องจริง ๆ แล้วกดบันทึกเป็น<strong>ฉบับร่าง</strong> —
+    body ที่ส่งมาคือ <code>{"title":"ผัดกะเพรา","servings":2,"published":false}</code>
+    <br>ได้ <strong>200</strong> หรือ <strong>400</strong>? แล้วถ้าเปลี่ยนเป็น
+    <code>"servings":0</code> ล่ะ? และ <code>"title":""</code> ล่ะ?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมยิงจริงทั้งสี่เคสผ่าน <code>httptest</code> — เครื่องมือของ Go ที่ยิง request
+    เข้า router ตรง ๆ ในโปรแกรมเดียวกัน ไม่ต้องเปิดพอร์ตจริง
+    (<a href="./0040-httptest-handler.html">บทเรียน 40</a> ลงลึก) — ได้แบบนี้:</p>
+    <pre style="margin:0.6rem 0"><code>POST /plain body={"title":"ผัดกะเพรา","servings":2,"published":true}
+  -&gt; <strong>STATUS=200</strong> BODY={"title":"ผัดกะเพรา","servings":2,"published":true}
+POST /plain body={"title":"","servings":2,"published":true}
+  -&gt; <strong>STATUS=400</strong> BODY={"error":"Key: 'ReqRecipe.Title' Error:Field validation for 'Title' failed on the 'required' tag"}
+POST /plain body={"title":"ผัดกะเพรา","servings":0,"published":true}
+  -&gt; <strong>STATUS=400</strong> BODY={"error":"Key: 'ReqRecipe.Servings' Error:Field validation for 'Servings' failed on the 'required' tag"}
+POST /plain body={"title":"ผัดกะเพรา","servings":2,"published":false}
+  -&gt; <strong>STATUS=400</strong> BODY={"error":"Key: 'ReqRecipe.Published' Error:Field validation for 'Published' failed on the 'required' tag"}</code></pre>
+    <p style="margin-bottom:0">
+      ผ่านเคสเดียว — เคสที่<em>บังเอิญ</em>ไม่มี zero value เลย
+      <br><strong>ฉบับร่าง (<code>published:false</code>) บันทึกไม่ได้ตลอดกาล</strong>
+      และไม่มีทางบันทึกได้ด้วย เพราะ <code>false</code> คือ zero value ของ <code>bool</code>
+      <br>เช่นเดียวกับ <code>"servings":0</code> ที่ผู้ใช้อาจตั้งใจส่ง และ <code>""</code> ที่แปลว่า "ล้างค่าเดิมทิ้ง"
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ อาการที่จะเจอใน production</span>
+  <p style="margin-bottom:0">
+    bug แบบนี้<strong>ไม่โผล่ตอนเทสด้วยมือ</strong> เพราะเวลาเราลองเอง เราพิมพ์ข้อมูลสวย ๆ
+    ที่ไม่มีศูนย์ ไม่มีค่าว่าง ไม่มี <code>false</code>
+    <br>มันจะโผล่วันที่ลูกค้าคนแรกกด "ปิดการแจ้งเตือน" (<code>false</code>)
+    หรือสั่ง "ส่วนลด 0 บาท" แล้วได้ 400 กลับมาโดยที่ log ฝั่งเราบอกว่า
+    <em>"required tag"</em> — ซึ่งอ่านแล้วเหมือนผู้ใช้ผิด ทั้งที่ผู้ใช้กรอกครบ
+  </p>
+</div>
+
+<p>
+  แล้วมันแยกไม่ออกจริงหรือ? จริง — ผมยิง <code>{"age":0}</code> กับ <code>{}</code>
+  เข้า struct เดียวกัน ได้ error ตัวเดียวกัน<strong>เป๊ะทุกตัวอักษร</strong>:
+</p>
+
+<pre><code>===== 2 required + zero value  POST /should  body={"age":0} =====
+ERR_STR=Key: 'ReqAge.Age' Error:Field validation for 'Age' failed on the 'required' tag
+
+===== 2b required + missing field  POST /should  body={} =====
+<strong>ERR_STR=Key: 'ReqAge.Age' Error:Field validation for 'Age' failed on the 'required' tag</strong></code></pre>
+
+<h3>ทางแก้: pointer</h3>
+
+<p>
+  <code>*int</code> มี zero value เป็น <code>nil</code> ไม่ใช่ <code>0</code> —
+  และ <code>nil</code> เกิดขึ้นได้ทางเดียวคือ <strong>JSON ไม่มี key นั้นเลย</strong>
+  (<a href="../../day-3/lessons/0007-value-vs-pointer.html">บทเรียน 7</a>)
+  <br>พอ key มีอยู่จริง <code>encoding/json</code> จะจองที่ให้ค่าแล้วชี้ไปหา แม้ค่านั้นจะเป็น <code>0</code>
+  ก็ตาม → pointer ไม่ nil → <code>required</code> ผ่าน
+</p>
+
+<div class="diagram">
+<pre>body ที่ส่งมา            Servings int          Servings *int
+─────────────────────    ─────────────────     ────────────────────
+{"servings": 2}          2    ✅ ผ่าน           &amp;2   ✅ ผ่าน
+{"servings": 0}          0    ❌ ไม่ผ่าน  ←     &amp;0   ✅ <strong>ผ่าน</strong>  ← จุดที่ต่างกัน
+{}  (ไม่ส่งมาเลย)         0    ❌ ไม่ผ่าน         nil  ❌ ไม่ผ่าน
+                         └─ สองแถวล่างแยกไม่ออก   └─ แยกออก</pre>
+</div>
+
+<p>รันจริงด้วย struct ชุดเดิมแต่เปลี่ยนเป็น pointer ทั้งสามช่อง:</p>
+
+<pre><code><span class="k">type</span> ReqRecipePtr <span class="k">struct</span> {
+    Title     *<span class="k">string</span> <span class="s">`json:"title" binding:"required"`</span>
+    Servings  *<span class="k">int</span>    <span class="s">`json:"servings" binding:"required"`</span>
+    Published *<span class="k">bool</span>   <span class="s">`json:"published" binding:"required"`</span>
+}</code></pre>
+
+<pre><code>POST /ptr body={"title":"ผัดกะเพรา","servings":0,"published":false}
+  -&gt; <strong>STATUS=200</strong> BODY={"published":false,"servings":0,"title":"ผัดกะเพรา"}
+
+POST /ptr body={"servings":0,"published":false}          <span class="c"># ไม่มี title เลย</span>
+  -&gt; <strong>STATUS=400</strong> BODY={"error":"Key: 'ReqRecipePtr.Title' Error:Field validation for 'Title' failed on the 'required' tag"}</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ได้สิ่งที่ต้องการพอดี</strong> — "ส่ง 0 มาจริง" ผ่าน · "ไม่ส่งมาเลย" ไม่ผ่าน
+    <br>ราคาที่จ่ายคือโค้ดหลังจากนั้นต้องเขียน <code>*in.Servings</code> (อ่านค่าที่ pointer ชี้อยู่) ทุกครั้ง
+    <br>และถ้าเผลอใส่ <code>*</code> กับ field ที่<strong>ไม่ได้</strong>ใส่ <code>required</code> ไว้
+    ตอนที่ผู้ใช้ไม่ส่ง key นั้นมา ค่ามันจะเป็น <code>nil</code> แล้วโปรแกรม panic ทันที
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>ใช้ pointer ตอนไหน</strong> — อย่าเปลี่ยนทุก field เป็น pointer เพราะเท่
+    ใช้เมื่อ <strong>zero value เป็นค่าที่มีความหมายจริง</strong> เท่านั้น:
+    <code>bool</code> ทุกตัว · จำนวนที่เป็น 0 ได้ (ส่วนลด, ยอดคงเหลือ) · string ที่ล้างค่าได้
+    <br>ส่วน <code>Title</code> ที่ยังไงก็ห้ามว่าง ใช้ <code>string</code> ธรรมดา + <code>required</code> ก็จบ —
+    ตรงนั้น "zero value = ผิด" เป็นความจริงพอดีอยู่แล้ว
+    <br>ทางเลือกอื่นสำหรับตัวเลขคือใช้ <code>binding:"min=0"</code> แทน <code>required</code>
+    (ไม่ต้อง pointer) — มันกันค่าติดลบให้ แต่<strong>ไม่บังคับว่า key ต้องมี</strong>
+    ดังนั้น "ไม่ส่งมาเลย" จะกลายเป็น 0 เงียบ ๆ ซึ่งอาจไม่ใช่สิ่งที่คุณต้องการ
+  </p>
+</div>
+
+<h2>3 · tag ที่ใช้จริง และ error ที่<em>ห้าม</em>ส่งให้ผู้ใช้ตรง ๆ</h2>
+
+<p>
+  <code>required</code> เป็นแค่ตัวเดียวใน tag หลายสิบตัวของ <code>validator/v10</code>
+  สามตัวที่เจอบ่อยที่สุดในงาน API จริงคือ <code>email</code> · <code>min</code>/<code>max</code> · <code>oneof</code>
+</p>
+
+<pre><code><span class="k">type</span> ReqEmail <span class="k">struct</span> {
+    Email <span class="k">string</span> <span class="s">`json:"email" binding:"required,email"`</span>
+}
+
+<span class="k">type</span> ReqRange <span class="k">struct</span> {
+    Level      <span class="k">int</span>    <span class="s">`json:"level" binding:"min=1,max=5"`</span>
+    Difficulty <span class="k">string</span> <span class="s">`json:"difficulty" binding:"oneof=easy medium hard"`</span>
+}</code></pre>
+
+<p>
+  หลาย tag ต่อกันด้วย <strong>comma</strong> และตรวจ<strong>ตามลำดับซ้ายไปขวา</strong> —
+  ตัวแรกที่ตกคือตัวที่รายงาน ผมรันเทียบสองเคสให้ดู:
+</p>
+
+<pre><code>===== 4 email invalid  POST /email  body={"email":"not-an-email"} =====
+ERR_STR=Key: 'ReqEmail.Email' Error:Field validation for 'Email' failed on the <strong>'email'</strong> tag
+
+===== 4b email empty  POST /email  body={} =====
+ERR_STR=Key: 'ReqEmail.Email' Error:Field validation for 'Email' failed on the <strong>'required'</strong> tag</code></pre>
+
+<p>
+  ค่าว่างติด <code>required</code> ก่อน ไม่เดินไปถึง <code>email</code> —
+  นี่คือเหตุผลที่ควรเขียน <code>required</code> ไว้หน้าสุดเสมอ ไม่งั้นข้อความ error
+  จะบอกว่า "รูปแบบอีเมลผิด" ทั้งที่ผู้ใช้แค่ยังไม่ได้กรอก
+</p>
+
+<p>และเมื่อผิดหลาย field พร้อมกัน validator รายงาน<strong>ทุกตัว</strong> ต่อกันด้วย <code>\n</code> ในสตริงเดียว:</p>
+
+<pre><code>===== 5 min/max + oneof  POST /range  body={"level":9,"difficulty":"insane"} =====
+ERR_STR=Key: 'ReqRange.Level' Error:Field validation for 'Level' failed on the 'max' tag
+Key: 'ReqRange.Difficulty' Error:Field validation for 'Difficulty' failed on the 'oneof' tag
+STATUS=400
+BODY={"error":"Key: 'ReqRange.Level' Error:Field validation for 'Level' failed on the 'max' tag<strong>\n</strong>Key: 'ReqRange.Difficulty' Error:Field validation for 'Difficulty' failed on the 'oneof' tag"}</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ อ่าน body ตัวสุดท้ายอีกรอบ — นี่คือสิ่งที่ผู้ใช้ได้รับ</span>
+  <p style="margin-bottom:0">
+    มันมีชื่อ struct ภายในของเรา (<code>ReqRange</code>) · มีคำว่า <code>tag</code> ·
+    มี <code>\n</code> โผล่กลางสตริง JSON
+    <br>และที่แย่ที่สุด: <strong>มันไม่บอกว่าอะไรถึงจะถูก</strong> —
+    ไม่มีคำว่า <code>easy medium hard</code> อยู่ในข้อความเลยสักตัว
+    ทั้งที่เราเขียนไว้ใน tag ชัด ๆ
+    <br>ผู้ใช้จึงรู้แค่ว่า "ผิด" แต่ไม่รู้ว่าต้องแก้เป็นอะไร ส่วนคนโจมตีได้ผังภายในของเราไปฟรี ๆ
+  </p>
+</div>
+
+<p>
+  ทางออกคือ <strong>อย่าโยน <code>err.Error()</code> ออกไปตรง ๆ</strong> ใน production
+  ให้แปลงเป็นข้อความของเราเองก่อน · <code>validator.ValidationErrors</code> เป็น slice
+  ที่วนอ่านทีละตัวได้ และแยกจาก parse error ได้ด้วย <code>errors.As</code>
+  (<a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>)
+  <br>โค้ดข้างล่างต้อง import สองตัวเพิ่ม: <code>errors</code> ของ Go เอง และ
+  <code>github.com/go-playground/validator/v10</code> (ตัวที่ติดมากับ gin อยู่แล้ว ไม่ต้อง <code>go get</code>):
+</p>
+
+<pre><code><span class="k">var</span> ve validator.ValidationErrors
+<span class="k">if</span> errors.<span class="f">As</span>(err, &amp;ve) {
+    out := <span class="f">make</span>(<span class="k">map</span>[<span class="k">string</span>]<span class="k">string</span>, <span class="f">len</span>(ve))
+    <span class="k">for</span> _, fe := <span class="k">range</span> ve {
+        out[fe.<span class="f">Field</span>()] = fe.<span class="f">Tag</span>()   <span class="c">// "Difficulty" -&gt; "oneof"</span>
+    }
+    c.<span class="f">JSON</span>(http.StatusBadRequest, gin.H{<span class="s">"fields"</span>: out})
+    <span class="k">return</span>
+}
+<span class="c">// มาถึงตรงนี้ = JSON เองพัง ไม่ใช่ค่าไม่ผ่านกติกา</span>
+c.<span class="f">JSON</span>(http.StatusBadRequest, gin.H{<span class="s">"error"</span>: <span class="s">"invalid JSON body"</span>})</code></pre>
+
+<p>ผมรันโค้ดชุดนี้กับ <code>ReqRange</code> จริง ๆ สี่เคส ได้ response ที่<strong>ผู้ใช้อ่านรู้เรื่อง</strong>แล้ว:</p>
+
+<pre><code>body={"level":9,"difficulty":"insane"} -&gt; 400 <strong>{"fields":{"Difficulty":"oneof","Level":"max"}}</strong>
+body={"level":0,"difficulty":"easy"}   -&gt; 400 <strong>{"fields":{"Level":"min"}}</strong>
+body={"level":3,"difficulty":"hard"}   -&gt; 200 {"ok":true}
+body={"title":                         -&gt; 400 <strong>{"error":"invalid JSON body"}</strong>   <span class="c">← ไปทางอื่น</span></code></pre>
+
+<p>
+  สังเกตบรรทัดสุดท้าย: JSON ที่พังตกไปคนละทางกับค่าที่ไม่ผ่านกติกาแล้ว
+  <br>สังเกตบรรทัดที่สอง: <code>level=0</code> ติด <code>'min'</code> ไม่ใช่ <code>'required'</code> —
+  เพราะชุดนี้ผมไม่ได้ใส่ <code>required</code> ไว้ · <code>min=1</code> ทำหน้าที่กันศูนย์ให้อยู่แล้ว
+  ซึ่งเป็นทางเลือกที่ตรงกว่า <code>required</code> เมื่อสิ่งที่คุณหมายถึงจริง ๆ คือ "ต้องมากกว่าศูนย์"
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>ทำไมต้องแยกสองทาง</strong> — เพราะสองอย่างนี้คนละความหมายสำหรับคนเรียกใช้ API
+    <br><em>"JSON พัง"</em> = โปรแกรมฝั่งคุณเขียนผิด แก้ที่โค้ด ·
+    <em>"ค่าไม่ผ่านกติกา"</em> = โปรแกรมถูกแล้ว แต่<strong>ข้อมูลที่ผู้ใช้กรอกยังไม่ได้</strong>
+    ต้องเอาไปแสดงใต้ช่องกรอก
+    <br>ยัดสองอย่างนี้ใน error ก้อนเดียวเมื่อไหร่ ฝั่ง frontend แยกไม่ออกทันที
+  </p>
+</div>
+
+<h2>4 · <code>ShouldBind*</code> vs <code>Bind*</code> — และ query/uri ใช้ tag คนละตัว</h2>
+
+<p>
+  Gin มีเมธอด bind สองตระกูลที่ทำงานเหมือนกันเป๊ะ ต่างกันแค่<strong>ตอนที่มัน error</strong>:
+  <br><code>ShouldBindJSON</code> คืน error แล้ว<strong>ไม่แตะ response เลย</strong> — เราตัดสินใจเองทั้งหมด
+  <br><code>BindJSON</code> คืน error <strong>แล้วเขียน <code>400</code> ให้เสร็จสรรพ</strong> พร้อม
+  <code>c.Abort()</code> ให้ด้วย
+</p>
+
+<p>
+  ฟังดูเหมือน <code>BindJSON</code> สะดวกกว่า จนกระทั่งเราเขียน response ต่อจากมัน
+  <br>handler ที่ผมใช้ทดสอบหน้าตาแบบนี้ — นี่คือเคส <strong>1c</strong> ·
+  เคส <strong>1b</strong> ต่างแค่เปลี่ยน <code>422</code> เป็น <code>400</code> ·
+  เคส <strong>1d</strong> คือลบทั้งก้อน <code>if</code> ทิ้ง เรียก <code>BindJSON</code> แล้วจบเลยไม่เขียนอะไรต่อ:
+</p>
+
+<pre><code>r.<span class="f">POST</span>(<span class="s">"/bind422"</span>, <span class="k">func</span>(c *gin.Context) {
+    <span class="k">if</span> err := c.<span class="f">BindJSON</span>(&amp;ReqAge{}); err != <span class="k">nil</span> {
+        c.<span class="f">JSON</span>(http.StatusUnprocessableEntity, gin.H{<span class="s">"error"</span>: err.<span class="f">Error</span>()})
+        <span class="k">return</span>
+    }
+    c.<span class="f">JSON</span>(http.StatusOK, gin.H{<span class="s">"ok"</span>: <span class="k">true</span>})
+})</code></pre>
+
+<p>
+  ยิง <code>{"age":0}</code> เข้าไปทั้งสามเคส — <code>ReqAge</code> ใส่ <code>required</code> ไว้
+  ค่า <code>0</code> จึงไม่ผ่านตามหัวข้อ 2 · ในผลรัน <code>WrittenBefore</code> คือค่าจาก
+  <code>c.Writer.Written()</code> ที่แปลว่า "มีคนเขียน response ลงสายไปแล้วหรือยัง":
+</p>
+
+<pre><code>===== 1b BindJSON + c.JSON(<strong>400</strong>)  body={"age":0} =====
+IsAborted=true <strong>WrittenBefore=true</strong> Status=400
+STATUS=400
+BODY="{\"error\":\"Key: 'ReqAge.Age' Error:Field validation for 'Age' failed on the 'required' tag\"}"
+
+===== 1c BindJSON + c.JSON(<strong>422</strong>)  body={"age":0} =====
+<strong>[GIN-debug] [WARNING] Headers were already written. Wanted to override status code 400 with 422</strong>
+<strong>STATUS=400</strong>
+BODY="{\"error\":\"Key: 'ReqAge.Age' Error:Field validation for 'Age' failed on the 'required' tag\"}"
+
+===== 1d BindJSON only, handler returns  body={"age":0} =====
+STATUS=400
+CTYPE=""
+<strong>BODY=""</strong></code></pre>
+
+<p>
+  เคส <strong>1b</strong> ดูปกติดี — แต่ปกติเพราะ<em>บังเอิญ</em>เราขอ 400 ซึ่งตรงกับที่ gin เขียนไปแล้วพอดี
+  <br>เคส <strong>1c</strong> คือของจริง: ขอ 422 แต่<strong>ได้ 400</strong> เพราะ HTTP status
+  เขียนลงสายได้ครั้งเดียว พอ <code>BindJSON</code> เขียนไปแล้ว ใครมาทีหลังก็เปลี่ยนไม่ได้
+  ได้แค่ warning ปลอบใจ
+  <br>เคส <strong>1d</strong> คือสิ่งที่เกิดถ้าเราคิดว่า "gin จัดการให้แล้ว ไม่ต้องเขียนอะไรต่อ" —
+  ผู้ใช้ได้ <strong>400 กับ body ว่างเปล่า</strong> ไม่มีคำอธิบายสักตัว
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ warning นี้เห็นเฉพาะ debug mode</span>
+  <p style="margin-bottom:0">
+    gin มีสองโหมด: <strong>debug</strong> (โหมด default ตอนคุณ <code>go run</code> เฉย ๆ — พิมพ์บรรทัด
+    <code>[GIN-debug]</code> ให้เพียบ) กับ <strong>release</strong> (สั่งเปิดด้วย
+    <code>gin.SetMode(gin.ReleaseMode)</code> ซึ่งคือสิ่งที่ทำบน production)
+    <br>บรรทัด <code>[GIN-debug] [WARNING]</code> ข้างบนออกมาจาก <code>debugPrint</code>
+    ซึ่ง<strong>เงียบสนิทใน release mode</strong> — แต่ผลลัพธ์เหมือนเดิมทุกประการ:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>== release mode: BindJSON + c.JSON(422) ==
+<strong>STATUS=400</strong> BODY="{\"error\":\"Key: 'ReqAge.Age' Error:Field validation for 'Age' failed on the 'required' tag\"}"</code></pre>
+  <p style="margin-bottom:0">
+    แปลว่าบน production คุณจะได้ status ผิดโดย<strong>ไม่มีอะไรเตือนเลย</strong>
+  </p>
+</div>
+
+<p>
+  ทำไมถึงเป็นแบบนั้น? <code>BindJSON</code> เป็นแค่เปลือกบาง ๆ ที่ส่งต่อให้
+  <code>MustBindWith</code> ทำงานจริง ซึ่งข้างในเป็นแบบนี้
+  (จาก <code>context.go</code> ของ gin v1.12.0):
+</p>
+
+<pre><code><span class="k">func</span> (c *Context) <span class="f">MustBindWith</span>(obj <span class="k">any</span>, b binding.Binding) <span class="k">error</span> {
+    err := c.<span class="f">ShouldBindWith</span>(obj, b)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="c">// ...</span>
+        c.<span class="f">AbortWithError</span>(http.StatusBadRequest, err).<span class="f">SetType</span>(ErrorTypeBind)
+        <span class="k">return</span> err
+    }
+    <span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+
+<p>
+  บรรทัดที่ทำให้เกิดเรื่องทั้งหมดคือ <code>c.AbortWithError(http.StatusBadRequest, err)</code> —
+  มันเขียน status <code>400</code> ลงสายไปเรียบร้อยตั้งแต่ตอนนั้น
+  (คำว่า <code>Abort</code> แปลว่าอะไรกันแน่ ค่อยเจาะในหัวข้อ 6)
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>กติกาที่จำง่ายที่สุดของบทนี้: ใช้ <code>ShouldBind*</code> เสมอ</strong>
+    <br>ตระกูล <code>Bind*</code> ตัดสินใจแทนคุณไปแล้วว่าจะตอบ 400 เปล่า ๆ ซึ่งไม่ใช่ response
+    ที่ API ที่ดีควรให้ · การที่มันสั้นกว่าไม่คุ้มกับการเสียสิทธิ์เลือก status และ body
+  </p>
+</div>
+
+<h3>bind จาก query กับ URI — tag เปลี่ยนไปอีก</h3>
+
+<p>
+  ข้อมูลไม่ได้มาแค่ทาง body · <code>GET /recipes?q=go&amp;page=2</code> ส่งมาทาง query string
+  และ <code>GET /recipes/42</code> ส่งมาทาง path · gin แยกเมธอดให้คนละตัว
+  และ<strong>ดู tag คนละชื่อ</strong> ซึ่งเป็นจุดที่คนใหม่เสียเวลามากที่สุด
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อมูลมาจาก</th><th>เมธอด</th><th>tag ที่ต้องใส่</th><th>ถ้าใส่ tag ผิด</th></tr></thead>
+  <tbody>
+    <tr><td>JSON body</td><td><code>c.ShouldBindJSON</code></td><td><code>json:"..."</code></td><td>field ไม่ถูกเติม</td></tr>
+    <tr><td>query string</td><td><code>c.ShouldBindQuery</code></td><td><code>form:"..."</code></td><td>field ไม่ถูกเติม</td></tr>
+    <tr><td>path param</td><td><code>c.ShouldBindUri</code></td><td><code>uri:"..."</code></td><td>field ไม่ถูกเติม</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ที่หลอกคือ "field ไม่ถูกเติม" ไม่ใช่ compile error และไม่ใช่ error ตอนรันด้วย —
+  มันแค่<strong>เงียบ ๆ ปล่อยให้ค่าเป็น zero value</strong> แล้วไปตกที่ <code>required</code> ทีหลัง
+  ทำให้ข้อความ error ชี้ไปผิดที่:
+</p>
+
+<pre><code>===== 7 ShouldBindQuery form tag  GET /query?q=go&amp;page=2 =====
+STATUS=200
+BODY="{\"page\":2,\"q\":\"go\"}"
+
+===== 7c ShouldBindQuery <strong>with json tag only</strong>  GET /queryjsontag?q=go =====
+ERR_STR=Key: 'ReqQueryJSONTag.Q' Error:Field validation for 'Q' failed on the 'required' tag
+<strong>STATUS=400</strong>
+
+===== 7d ShouldBindUri uri tag  GET /uri/42/hello =====
+STATUS=200
+BODY="{\"id\":\"42\",\"slug\":\"hello\"}"
+
+===== 7e ShouldBindUri <strong>with form tag only</strong>  GET /urifromtag/42 =====
+ERR_STR=Key: 'ReqUriFormTag.ID' Error:Field validation for 'ID' failed on the 'required' tag
+<strong>STATUS=400</strong></code></pre>
+
+<p>
+  เคส 7c คือ <code>?q=go</code> ที่ส่งมาถูกต้องทุกอย่าง แต่ server บอกว่า "ไม่ได้ส่ง q มา"
+  เพราะ struct เขียน <code>json:"q"</code> แทน <code>form:"q"</code> —
+  <strong>debug ตรงนี้ยากมากถ้าไม่รู้ว่ามันมี tag คนละตัว</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔍 <strong>เกร็ดสองข้อที่ตรวจแล้วเซอร์ไพรส์</strong>
+    <br><strong>1.</strong> <code>c.ShouldBind()</code> (ไม่มี <code>JSON</code> ต่อท้าย)
+    <strong>ดู <code>Content-Type</code> ก่อนเลือกวิธี bind</strong> — ยิง JSON มาแต่ header เป็น
+    <code>text/plain</code> มันจะไป fallback เป็น form แล้วได้ zero value ทั้งก้อน จบที่ 400 ทั้งที่ JSON ถูกทุกตัวอักษร
+    <br>ส่วน <code>ShouldBindJSON</code> ไม่สน Content-Type เลย เคสเดียวกันได้
+    <code>STATUS=200 BODY="{\"age\":30}"</code>
+    <br><strong>2.</strong> เรียก <code>ShouldBindJSON</code> <strong>สองครั้ง</strong>ใน handler เดียว
+    ครั้งที่สองได้ <code>EOF</code> (<code>first=&lt;nil&gt; second err=EOF</code>) เพราะ body เป็นสตรีมที่อ่านได้หนเดียว
+    <br>ถ้าจำเป็นต้องอ่านซ้ำ (เช่นเดา type จาก field เดียวก่อน) ใช้
+    <code>c.ShouldBindBodyWith(&amp;obj, binding.JSON)</code> ซึ่ง cache body ไว้ให้
+    (<code>binding</code> ตรงนี้คือ package <code>github.com/gin-gonic/gin/binding</code> ต้อง import เพิ่มอีกบรรทัด) —
+    ผมรันแล้วได้
+    <code>first=&lt;nil&gt;  second=&lt;nil&gt;  a.Age=30 b.Age=30</code>
+  </p>
+</div>
+
+<h2>5 · middleware — handler ที่ต่อคิว และ <code>c.Next()</code> คือการปล่อยคิวเดินต่อ</h2>
+
+<p>
+  ทุก API มีงานที่ต้องทำกับ<strong>ทุก</strong> request: บันทึก log · เช็ค token · จับเวลา · ใส่ request ID
+  ถ้าก๊อปโค้ดพวกนี้ไปวางในทุก handler ก็จะลืมสักตัวแน่นอน — middleware คือที่ที่งานพวกนี้ควรอยู่
+</p>
+
+<p>
+  หน้าตาของ middleware <strong>ไม่ต่างจาก handler เลยแม้แต่นิดเดียว</strong>: มันคือ
+  <code>func(c *gin.Context)</code> ตัวหนึ่ง · สิ่งเดียวที่ทำให้มันเป็น "middleware" คือมันถูก
+  ลงทะเบียนด้วย <code>r.Use()</code> ให้อยู่ในคิว<em>ก่อน</em> handler จริง
+</p>
+
+<p>
+  gin เก็บทุกอย่างที่ต้องรันสำหรับ route หนึ่งไว้เป็น<strong>คิวเดียว</strong> (slice ของฟังก์ชัน)
+  แล้วเดินทีละตัว · <code>c.Next()</code> แปลว่า <em>"หยุดฉันไว้ตรงนี้ ไปรันตัวถัดไปในคิวจนจบก่อน
+  แล้วค่อยกลับมาทำบรรทัดถัดไปของฉัน"</em>
+  <br>ผลคือโค้ด<strong>เหนือ</strong> <code>c.Next()</code> รันขาไป และโค้ด<strong>ใต้</strong>
+  <code>c.Next()</code> รันขากลับ — ซึ่งเป็นเหตุผลว่าทำไม middleware ถึงจับเวลาทั้ง request ได้
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — <code>r.Use(A)</code> แล้ว <code>r.Use(B)</code> ตามลำดับนี้</p>
+  <pre><code><span class="k">func</span> <span class="f">A</span>(c *gin.Context) {
+    fmt.<span class="f">Println</span>(<span class="s">"A: before Next"</span>)
+    c.<span class="f">Next</span>()
+    fmt.<span class="f">Println</span>(<span class="s">"A: after Next"</span>)
+}
+<span class="k">func</span> <span class="f">B</span>(c *gin.Context) {
+    fmt.<span class="f">Println</span>(<span class="s">"B: before Next"</span>)
+    c.<span class="f">Next</span>()
+    fmt.<span class="f">Println</span>(<span class="s">"B: after Next"</span>)
+}
+
+r.<span class="f">Use</span>(A)
+r.<span class="f">Use</span>(B)
+r.<span class="f">GET</span>(<span class="s">"/ping"</span>, <span class="k">func</span>(c *gin.Context) {
+    fmt.<span class="f">Println</span>(<span class="s">"HANDLER: /ping"</span>)
+    c.<span class="f">String</span>(<span class="n">200</span>, <span class="s">"pong"</span>)
+})</code></pre>
+  <p class="ask">
+    ยิง <code>GET /ping</code> หนึ่งครั้ง — <strong>ห้าบรรทัดนี้พิมพ์ออกมาเรียงยังไง?</strong>
+    <br>(คำใบ้: มันไม่ใช่ A ทั้งตัวจบแล้วค่อย B)
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ go run ./order
+<strong>A: before Next
+B: before Next
+HANDLER: /ping
+B: after Next
+A: after Next</strong>
+--- status: 200 body: pong</code></pre>
+    <p style="margin-bottom:0">
+      เป็น<strong>หัวหอม</strong> ไม่ใช่รายการงานเรียงต่อกัน —
+      ตัวที่ <code>Use()</code> ก่อนอยู่<strong>ชั้นนอกสุด</strong>
+      เข้าจากนอกเข้าใน แล้วออกจากในออกนอก
+    </p>
+  </div>
+</div>
+
+<div class="diagram">
+<pre>            ขาไป (บรรทัดเหนือ c.Next)          ขากลับ (บรรทัดใต้ c.Next)
+request ──▶ ┌──────────── A ────────────────────────────────────┐ ──▶ response
+            │ "A: before"                          "A: after"   │
+            │  ┌───────── B ─────────────────────────────────┐  │
+            │  │ "B: before"                     "B: after"  │  │
+            │  │   ┌────── handler ──────────────────────┐   │  │
+            │  │   │        "HANDLER: /ping"             │   │  │
+            │  │   └─────────────────────────────────────┘   │  │
+            │  └─────────────────────────────────────────────┘  │
+            └───────────────────────────────────────────────────┘
+              ลำดับจริง:  A before → B before → HANDLER → B after → A after</pre>
+</div>
+
+<p>
+  รูปหัวหอมนี้อธิบายทุกอย่างที่ middleware ทำได้ในประโยคเดียว:
+  <strong>ขาไปคือ "ก่อนรู้คำตอบ" ขากลับคือ "หลังรู้คำตอบแล้ว"</strong>
+  <br>เช็ค token ต้องอยู่ขาไป (ต้องกันไว้ก่อน) · จับเวลาและ log status ต้องคร่อมทั้งสองขา:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">Timing</span>() gin.HandlerFunc {
+    <span class="k">return</span> <span class="k">func</span>(c *gin.Context) {
+        start := time.<span class="f">Now</span>()          <span class="c">// ขาไป: ยังไม่รู้ว่า handler จะตอบอะไร</span>
+        c.<span class="f">Next</span>()
+        <span class="c">// ขากลับ: ตรงนี้ handler ทำงานจบแล้ว จึงอ่าน status ได้</span>
+        log.<span class="f">Printf</span>(<span class="s">"%s %s -&gt; %d in %v"</span>,
+            c.Request.Method, c.Request.URL.Path,
+            c.Writer.<span class="f">Status</span>(), time.<span class="f">Since</span>(start))
+    }
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>ทำไมต้อง <code>func() gin.HandlerFunc</code> ครอบอีกชั้น</strong> —
+    เพื่อรับ config เข้ามาตอนสร้าง เช่น <code>Auth(secret string)</code> หรือ
+    <code>Timing(logger *slog.Logger)</code> · ตัวที่ไม่ต้องการ config จะเขียนเป็น
+    <code>func(c *gin.Context)</code> ตรง ๆ แล้วส่งเข้า <code>r.Use()</code> ก็ได้ ทั้งสองแบบใช้ได้เหมือนกัน
+    <br>อีกเรื่อง: ถ้า middleware ของคุณ<strong>ไม่</strong>เรียก <code>c.Next()</code> เลย
+    แต่ก็ไม่ได้ <code>Abort()</code> — gin จะเดินคิวต่อให้เองหลังฟังก์ชันคุณจบ
+    <code>c.Next()</code> จึงจำเป็นเฉพาะตอนที่คุณ<em>มีโค้ดที่ต้องรันขากลับ</em>
+  </p>
+</div>
+
+<h2>6 · <code>c.Abort()</code> — จุดที่คนใหม่พลาดเยอะที่สุด</h2>
+
+<p>
+  middleware ที่กันคนแปลกหน้าต้องทำสองอย่าง: <strong>ตอบว่าทำไมไม่ให้ผ่าน</strong> และ
+  <strong>สั่งหยุดคิว</strong> · ถ้าทำอย่างเดียวจะพังคนละแบบ และทั้งสองแบบเงียบมาก
+</p>
+
+<p>
+  ผมรันครบสี่เคสด้วยคิว <strong>A (ชั้นนอก) → B (ชั้นใน) → handler</strong> ·
+  A คือตัวที่พิมพ์ <code>before Next</code> / <code>after Next</code> คร่อมไว้เฉย ๆ
+  ส่วน B คือตัวที่ทำหน้าที่ปฏิเสธ ซึ่งเปลี่ยนไปทีละเคส
+  <br>(ในเคส 3 ไม่มีบรรทัด <code>B:</code> ขึ้นมาเพราะโค้ดของ B เคสนั้นมีแค่
+  <code>c.AbortWithStatus(401)</code> บรรทัดเดียว ไม่ได้สั่งพิมพ์อะไร — ไม่ใช่ว่า B ไม่ทำงาน):
+</p>
+
+<pre><code>========= CASE 1: c.Abort() alone, no response written =========
+A : before Next
+B: aborting with plain c.Abort()
+A : after Next  (IsAborted = true )
+--- <strong>status=200</strong> contentType="" bodyLen=0 <strong>body=""</strong>
+
+========= CASE 2: c.AbortWithStatusJSON(401, ...) =========
+A : before Next
+B: AbortWithStatusJSON(401)
+A : after Next  (IsAborted = true )
+--- <strong>status=401</strong> contentType="application/json; charset=utf-8" bodyLen=24 body="{\"error\":\"unauthorized\"}"
+
+========= CASE 3: c.AbortWithStatus(401) (no body) =========
+A : before Next
+A : after Next  (IsAborted = true )
+--- status=401 contentType="" bodyLen=0 body=""
+
+========= CASE 4: c.JSON(401) WITHOUT Abort (classic bug) =========
+A : before Next
+B: c.JSON(401) but forgot Abort
+<strong>HANDLER RAN  &lt;-- yes, it does</strong>
+A : after Next  (IsAborted = false )
+--- status=401 contentType="application/json; charset=utf-8" bodyLen=26 <strong>body="{\"error\":\"unauthorized\"}ok"</strong></code></pre>
+
+<p>
+  ยืนยันอีกชั้นด้วยการเปิด server จริงบนพอร์ตหนึ่ง แล้วยิงด้วย <code>curl</code> ผ่านเน็ตเวิร์กจริง —
+  ไม่ใช่แค่ <code>httptest</code> ที่เรียกกันอยู่ในโปรแกรมเดียวกัน
+  (<code>curl -i</code> คือสั่งให้พิมพ์ header ของ response ออกมาด้วย):
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ <code>c.Abort()</code> เฉย ๆ</h4>
+    <pre><code>$ curl -s -i http://127.0.0.1:39181/abort-only
+<strong>HTTP/1.1 200 OK</strong>
+Date: Thu, 20 Aug 2026 14:49:43 GMT
+Content-Length: 0</code></pre>
+    <p style="margin-bottom:0">
+      ปฏิเสธสำเร็จ แต่ client เห็น <strong>200 OK</strong> —
+      frontend จะแปลว่า "สำเร็จแต่ไม่มีข้อมูล"
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ <code>c.AbortWithStatusJSON(401, ...)</code></h4>
+    <pre><code>$ curl -s -i http://127.0.0.1:39181/abort-json
+<strong>HTTP/1.1 401 Unauthorized</strong>
+Content-Type: application/json; charset=utf-8
+Date: Thu, 20 Aug 2026 14:49:43 GMT
+Content-Length: 24
+
+{"error":"unauthorized"}</code></pre>
+    <p style="margin-bottom:0">บอกทั้งรหัสและเหตุผล · หยุดคิวให้ด้วยในคำสั่งเดียว</p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ สองบรรทัดที่ต้องจำให้ขึ้นใจ</span>
+  <p style="margin-bottom:0">
+    <strong><code>Abort()</code> = หยุดคิว · ไม่ใช่ = ตอบ error</strong> —
+    มันไม่เขียน status ให้เลย ค่า default ของ <code>net/http</code> คือ 200 จึงได้ 200
+    <br><strong><code>c.JSON(401)</code> = ตอบ error · ไม่ใช่ = หยุดคิว</strong> —
+    CASE 4 คือหลักฐาน: <code>HANDLER RAN</code> ขึ้นจริง แล้ว body สองก้อนต่อกันเป็น
+    <code>{"error":"unauthorized"}ok</code> ซึ่งไม่ใช่ JSON ที่ parse ได้อีกต่อไป
+    <br>ใน middleware ให้ใช้ <code>c.AbortWithStatusJSON(...)</code> เป็น default เสมอ
+  </p>
+</div>
+
+<p>
+  อีกจุดที่ต้องรู้: <strong><code>Abort()</code> หยุดเฉพาะสิ่งที่ยังไม่ได้รัน</strong>
+  ส่วนโค้ดใต้ <code>c.Next()</code> ของ middleware ชั้นนอกยัง<strong>ทำงานเสมอ</strong>
+  (ในผลรันข้างบน <code>A : after Next</code> ขึ้นทุกเคส) — เพราะ A ค้างรออยู่ตรงนั้นอยู่แล้ว
+  <br>นี่คือเหตุผลที่ logger middleware ยังบันทึก request ที่โดน auth ปฏิเสธได้ครบ
+  และเป็นเหตุผลที่โค้ดขากลับควรเช็ค <code>c.IsAborted()</code> ก่อนทำงานหนัก
+</p>
+
+<h3>ส่งของจาก middleware ไปให้ handler: <code>c.Set</code> / <code>c.Get</code></h3>
+
+<p>
+  middleware ที่ตรวจ token แล้วรู้ว่าเป็นใคร ต้องส่งข้อมูลนั้นต่อให้ handler ·
+  ช่องทางคือ <code>c.Set(key, value)</code> แล้วอีกฝั่ง <code>c.Get(key)</code>
+  ซึ่งเก็บเป็น <code>any</code> จึงต้อง type-assert เอง
+  (<a href="../../day-4/lessons/0011-type-assertion-and-switch.html">บทเรียน 11</a>)
+</p>
+
+<pre><code>$ go run ./ctxdata
+=== GET /ok ===
+Get("user")     -&gt; value=main.User{Name:"bingza"} <strong>exists=true</strong>
+Get("nope")     -&gt; value=&lt;nil&gt; <strong>exists=false</strong>
+MustGet("user") -&gt; main.User{Name:"bingza"}
+MustGet("user").(string) comma-ok -&gt; "" ok=false
+
+=== GET /panic ===
+RECOVERED panic type=string value=<strong>key missing-key does not exist</strong></code></pre>
+
+<p>
+  <code>c.Get</code> คืน <code>(any, bool)</code> — ไม่เจอก็แค่ <code>nil, false</code>
+  <br><code>c.MustGet</code> ถ้าไม่มี key จะ <strong>panic</strong> ด้วยข้อความ
+  <code>key missing-key does not exist</code>
+  (<code>missing-key</code> คือชื่อ key ที่เราเรียกหาในการรันนั้น ไม่ใช่คำคงที่ของ gin) ·
+  ถ้ามี <code>gin.Recovery()</code> อยู่
+  (ซึ่ง <code>gin.Default()</code> ใส่ให้) panic นี้จะกลายเป็น <code>500</code> body ว่าง
+  <br>ใช้ <code>MustGet</code> ได้เมื่อคุณ<strong>แน่ใจ</strong>ว่า middleware ที่ <code>Set</code>
+  ค่านั้นถูกผูกไว้กับ route นี้แน่นอน — ซึ่งพาไปสู่เรื่องถัดไปพอดี
+</p>
+
+<h3>middleware ผูกกับ <em>group</em> ไม่ใช่ผูกกับเวลา</h3>
+
+<p>
+  <code>r.Group</code> จาก <a href="./0038-gin-routing.html">บทเรียน 38</a> ไม่ได้ใช้แค่ตัด prefix ซ้ำ ๆ —
+  มันมี <code>Use()</code> เป็นของตัวเอง ทำให้ผูก middleware เข้ากับ<strong>เฉพาะ route ในกลุ่มนั้น</strong>ได้
+  <br>โค้ดที่ผมรันเป็นแบบนี้:
+</p>
+
+<pre><code>r := gin.<span class="f">New</span>()
+r.<span class="f">GET</span>(<span class="s">"/public"</span>, <span class="c">/* ... */</span>)
+
+admin := r.<span class="f">Group</span>(<span class="s">"/admin"</span>)
+admin.<span class="f">Use</span>(<span class="k">func</span>(c *gin.Context) {          <span class="c">// ผูกกับ group นี้ตัวเดียว</span>
+    fmt.<span class="f">Println</span>(<span class="s">"  [authMW] ran for"</span>, c.Request.URL.Path)
+    <span class="k">if</span> c.<span class="f">GetHeader</span>(<span class="s">"X-Token"</span>) != <span class="s">"secret"</span> {
+        c.<span class="f">AbortWithStatusJSON</span>(<span class="n">401</span>, gin.H{<span class="s">"error"</span>: <span class="s">"no token"</span>})
+        <span class="k">return</span>
+    }
+    c.<span class="f">Next</span>()
+})
+admin.<span class="f">GET</span>(<span class="s">"/stats"</span>, <span class="c">/* ... */</span>)
+
+r.<span class="f">GET</span>(<span class="s">"/other"</span>, <span class="c">/* ... */</span>)     <span class="c">// เขียนทีหลัง admin.Use แต่คนละ group</span></code></pre>
+
+<pre><code>$ go run ./group
+=== GET /public (X-Token="") ===
+  -&gt; status=200 body="public ok"
+
+=== GET /other (X-Token="") ===
+  -&gt; status=200 body="other ok"
+
+=== GET /admin/stats (X-Token="") ===
+  <strong>[authMW] ran for /admin/stats</strong>
+  -&gt; status=401 body="{\"error\":\"no token\"}"
+
+=== GET /admin/stats (X-Token="secret") ===
+  [authMW] ran for /admin/stats
+  -&gt; status=200 body="admin stats"</code></pre>
+
+<p>
+  <code>[authMW] ran</code> ขึ้นเฉพาะใน <code>/admin/*</code> เท่านั้น — <code>/other</code>
+  ที่ลงทะเบียน<em>หลัง</em> <code>admin.Use(...)</code> ก็ไม่โดน เพราะมันอยู่คนละ group
+  <br><strong>แต่ในกลุ่มเดียวกัน ลำดับบรรทัดมีผลเต็ม ๆ</strong>:
+</p>
+
+<pre><code>=== group.Use AFTER route registered in same group ===
+  GET /g/early -&gt; status=200 body="early"          <span class="c"># ไม่มี [g mw] ขึ้นเลย</span>
+  <strong>[g mw] ran for /g/late</strong>
+  GET /g/late  -&gt; status=200 body="late"</code></pre>
+
+<p>
+  <code>/g/early</code> ลงทะเบียนก่อน <code>g.Use(...)</code> จึง<strong>ไม่ได้ middleware ติดไปด้วย</strong>
+  <br>เหตุผลคือ gin <strong>ก๊อปคิว ณ วินาทีที่ลงทะเบียน route</strong> ไม่ใช่ตอนมี request เข้ามา —
+  <code>Use()</code> ที่มาทีหลังจึงย้อนไปแก้ route เก่าไม่ได้ · จำสั้น ๆ ว่า
+  <strong><code>Use()</code> ต้องมาก่อน <code>GET/POST</code> เสมอ</strong>
+  ซึ่งจะกลับมาหลอกเราอีกครั้งในหัวข้อถัดไป
+</p>
+
+<h2>7 · CORS — กฎของเบราว์เซอร์ ไม่ใช่ยามหน้าประตูของ server</h2>
+
+<p>
+  อาการคลาสสิกที่ทุกคนต้องเจอ: <strong>Postman ยิงผ่าน · <code>curl</code> ผ่าน ·
+  แต่เว็บของตัวเองเรียกไม่ได้</strong> ขึ้น error สีแดงว่าโดน CORS บล็อก
+  <br>สาเหตุคือ CORS ไม่ได้ทำงานที่ server เลย · มันเป็นกฎที่ <strong>เบราว์เซอร์</strong>
+  บังคับใช้กับโค้ด JavaScript ที่มันรันอยู่
+</p>
+
+<p>
+  คำที่ต้องรู้ก่อนหนึ่งคำ: <strong>origin</strong> = โปรโตคอล + โดเมน + พอร์ต รวมกันสามอย่าง
+  · <code>https://app.example.com</code> กับ <code>http://app.example.com</code> คนละ origin
+  (โปรโตคอลต่าง) และ <code>https://api.example.com</code> ก็คนละ origin (โดเมนต่าง)
+</p>
+
+<p>
+  กฎเดิมของเว็บชื่อ <em>same-origin policy</em>: JS ที่โหลดมาจาก
+  <code>https://app.example.com</code> อ่านคำตอบจาก origin อื่นไม่ได้ ไม่งั้นเว็บร้ายเปิดค้างไว้
+  จะแอบยิงไปที่ธนาคารของคุณ (ซึ่งมี cookie ติดไปด้วย) แล้วอ่านยอดเงินได้เลย
+  <br>CORS คือ<strong>ช่องทางที่ server ใช้บอกเบราว์เซอร์ว่า "ฉันอนุญาตเว็บนี้"</strong>
+  ผ่าน response header · เบราว์เซอร์เป็นคนอ่าน header นั้นแล้วตัดสินใจ — ไม่ใช่ server
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧠 <strong>สรุปที่ต้องติดตัวไป</strong> — CORS <strong>ไม่ใช่</strong>ระบบความปลอดภัยของ server
+    <br>คนที่ไม่ใช้เบราว์เซอร์ (curl, Postman, สคริปต์, มือถือ native) <strong>ไม่โดน CORS เลยสักนิด</strong>
+    ยิงเข้ามาได้ปกติทุกอย่าง
+    <br>ดังนั้น <strong>authentication ยังต้องมีเสมอ</strong> — CORS กันได้แค่ JS ในแท็บของคนอื่น
+    ไม่ได้กันคนที่ตั้งใจจะยิง API ของคุณ
+  </p>
+</div>
+
+<h3>preflight — request ที่เบราว์เซอร์ยิงเองโดยที่เราไม่ได้สั่ง</h3>
+
+<p>
+  สำหรับ request ที่ "ไม่ธรรมดา" (มี <code>Content-Type: application/json</code>,
+  มี header <code>Authorization</code>, หรือใช้ method อย่าง <code>PUT</code>/<code>DELETE</code>)
+  เบราว์เซอร์จะ<strong>ยิง <code>OPTIONS</code> ไปถามก่อน</strong>ว่าอนุญาตไหม แล้วค่อยยิงของจริง
+  <br>แปลว่า API ของคุณต้องตอบ <code>OPTIONS</code> ให้เป็น — ซึ่งเป็นงานของ cors middleware:
+</p>
+
+<pre><code>$ curl -s -i -X OPTIONS -H <span class="s">"Origin: https://evil.example.com"</span> \
+    -H <span class="s">"Access-Control-Request-Method: POST"</span> http://127.0.0.1:39182/data
+<strong>HTTP/1.1 204 No Content</strong>
+Access-Control-Allow-Headers: Origin,Content-Length,Content-Type
+Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 43200
+Date: Thu, 20 Aug 2026 14:50:43 GMT</code></pre>
+
+<p>
+  เซิร์ฟเวอร์ตัวนี้ใช้แค่ <code>a.Use(cors.Default())</code> บรรทัดเดียว สังเกตสามอย่าง:
+  <br><strong>1.</strong> status เป็น <strong>204 No Content</strong> ไม่ใช่ 200
+  <br><strong>2.</strong> เราไม่ต้องลงทะเบียน route <code>OPTIONS</code> เอง —
+  cors middleware ตอบแล้ว <code>Abort</code> จบให้เลย
+  <br><strong>3.</strong> <code>Max-Age: 43200</code> คือ 12 ชั่วโมง (หน่วยวินาที)
+  แปลว่าเบราว์เซอร์จำคำตอบนี้ไว้ ไม่ต้องยิง <code>OPTIONS</code> ถามซ้ำทุก request
+</p>
+
+<p>ส่วน request จริง (ไม่ใช่ preflight) ได้ header น้อยกว่ามาก — แค่ตัวเดียว:</p>
+
+<pre><code>$ curl -s -i -H <span class="s">"Origin: https://evil.example.com"</span> http://127.0.0.1:39182/data
+HTTP/1.1 200 OK
+<strong>Access-Control-Allow-Origin: *</strong>
+Content-Type: application/json; charset=utf-8
+Content-Length: 11
+
+{"ok":true}
+
+<span class="c"># ยิงโดยไม่ส่ง Origin มาเลย</span>
+$ curl -s -i http://127.0.0.1:39182/data
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 11
+
+{"ok":true}          <span class="c">← ไม่มี CORS header สักตัว</span></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ เทส CORS ด้วย curl ต้องใส่ <code>-H "Origin: ..."</code> เสมอ</span>
+  <p style="margin-bottom:0">
+    ผลรันข้างบนพิสูจน์แล้ว: ไม่ส่ง <code>Origin</code> ไป cors middleware ก็ไม่ใส่ header ให้
+    <br>หลายคนจึงสรุปผิดว่า "ตั้ง CORS แล้วแต่ไม่ทำงาน" ทั้งที่มันทำงานปกติ —
+    แค่ไม่มีใครถามมันว่ามาจากไหน
+  </p>
+</div>
+
+<h3>สองกับดักของ <code>cors.Default()</code> และ <code>cors.New()</code></h3>
+
+<p>
+  <code>cors.Default()</code> อนุญาตทุก origin (<code>*</code>) ซึ่งพอสำหรับตอนพัฒนา
+  แต่มีรูที่ทำให้ระบบที่มี login ใช้ไม่ได้ ผมลองขอ <code>Authorization</code> ตอน preflight:
+</p>
+
+<pre><code>$ curl -s -i -X OPTIONS -H <span class="s">"Origin: https://evil.example.com"</span> \
+    -H <span class="s">"Access-Control-Request-Method: POST"</span> \
+    -H <span class="s">"Access-Control-Request-Headers: Content-Type, Authorization"</span> http://127.0.0.1:39182/data
+HTTP/1.1 204 No Content
+<strong>Access-Control-Allow-Headers: Origin,Content-Length,Content-Type</strong>
+Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 43200</code></pre>
+
+<p>
+  ตอบ 204 เหมือนเดิม แต่ในลิสต์ <strong>ไม่มีคำว่า <code>Authorization</code></strong> —
+  เว็บที่ส่ง JWT ผ่าน <code>Authorization: Bearer ...</code> จะโดนเบราว์เซอร์บล็อก
+  ทั้งที่ server ตอบ 204 สวยงาม
+</p>
+
+<p>
+  ทีนี้พอเปลี่ยนไปใช้ <code>cors.New()</code> เพื่อระบุ origin เจาะจง ก็เจอกับดักที่สอง —
+  <strong><code>cors.New()</code> ไม่ merge ค่า default ให้</strong> ใส่อะไรได้อย่างนั้น:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ใส่แต่ <code>AllowOrigins</code></h4>
+    <pre><code>cors.<span class="f">New</span>(cors.Config{
+    AllowOrigins: []<span class="k">string</span>{<span class="s">"https://app.example.com"</span>},
+})</code></pre>
+    <pre><code>$ curl -X OPTIONS -H "Origin: https://app.example.com" \
+    -H "Access-Control-Request-Method: POST" ...
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: https://app.example.com
+Vary: Origin
+<span class="c">← ไม่มี Allow-Methods / Allow-Headers เลย</span></code></pre>
+    <p style="margin-bottom:0">
+      status 204 ดูเหมือนผ่าน แต่<strong>เบราว์เซอร์จะบล็อก POST</strong>
+      เพราะไม่มีใครบอกว่า POST ทำได้
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ ใส่ให้ครบ</h4>
+    <pre><code>r.<span class="f">Use</span>(cors.<span class="f">New</span>(cors.Config{
+    AllowOrigins:     []<span class="k">string</span>{<span class="s">"https://app.example.com"</span>},
+    AllowMethods:     []<span class="k">string</span>{<span class="s">"GET"</span>, <span class="s">"POST"</span>, <span class="s">"PUT"</span>, <span class="s">"DELETE"</span>, <span class="s">"OPTIONS"</span>},
+    AllowHeaders:     []<span class="k">string</span>{<span class="s">"Origin"</span>, <span class="s">"Content-Type"</span>, <span class="s">"Authorization"</span>},
+    ExposeHeaders:    []<span class="k">string</span>{<span class="s">"Content-Length"</span>},
+    AllowCredentials: <span class="k">true</span>,
+    MaxAge:           <span class="n">12</span> * time.Hour,
+}))</code></pre>
+    <pre><code>HTTP/1.1 204 No Content
+Access-Control-Allow-Credentials: true
+<strong>Access-Control-Allow-Headers: Origin,Content-Type,Authorization
+Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS</strong>
+Access-Control-Allow-Origin: https://app.example.com
+Access-Control-Max-Age: 43200</code></pre>
+    <p style="margin-bottom:0">
+      <code>12 * time.Hour</code> ออกมาเป็น <code>43200</code> (หน่วยวินาที)
+      เท่ากับ default พอดี
+    </p>
+  </div>
+</div>
+
+<p>
+  ข้อดีของ <code>gin-contrib/cors</code> คือมัน<strong>ตัดจบที่ 403 เลย</strong>เมื่อ origin ไม่อยู่ในลิสต์
+  ไม่ใช่ตอบ 200 แล้วไม่ใส่ header แบบ lib บางตัว — ทำให้ debug ง่ายกว่ามาก:
+</p>
+
+<pre><code>$ curl -s -i -H <span class="s">"Origin: https://evil.example.com"</span> http://127.0.0.1:39183/data
+<strong>HTTP/1.1 403 Forbidden</strong>
+Date: Thu, 20 Aug 2026 14:50:48 GMT
+Content-Length: 0</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💥 <strong><code>cors.New()</code> panic ได้ตอน start server</strong> ซึ่งเป็นเรื่องดี — เจอเร็ว
+    <br><code>cors.New(cors.Config{})</code> เปล่า ๆ →
+    <code>PANIC value=conflict settings: all origins disabled</code>
+    <br>ลืมใส่ <code>https://</code> นำหน้า origin →
+    <code>PANIC value=bad origin: origins must contain '*' or include http://,https://</code>
+    <br>ทั้งคู่เกิดตอน <code>cors.New()</code> คือตอนบูต ไม่ใช่ตอนมี request เข้ามา
+  </p>
+</div>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — โค้ดนี้ลงทะเบียน route ก่อน แล้วค่อย <code>Use</code></p>
+  <pre><code>c := gin.<span class="f">New</span>()
+c.<span class="f">GET</span>(<span class="s">"/before"</span>, <span class="k">func</span>(ctx *gin.Context) {
+    ctx.<span class="f">JSON</span>(<span class="n">200</span>, gin.H{<span class="s">"which"</span>: <span class="s">"before"</span>})
+})
+c.<span class="f">Use</span>(cors.<span class="f">Default</span>())          <span class="c">// &lt;-- มาทีหลัง</span>
+c.<span class="f">GET</span>(<span class="s">"/after"</span>, <span class="k">func</span>(ctx *gin.Context) {
+    ctx.<span class="f">JSON</span>(<span class="n">200</span>, gin.H{<span class="s">"which"</span>: <span class="s">"after"</span>})
+})</code></pre>
+  <p class="ask">
+    เว็บที่ <code>https://x.example.com</code> ยิง <code>POST /before</code> —
+    <strong>preflight <code>OPTIONS /before</code> ได้อะไร</strong> และ
+    <strong>request จริงได้อะไร</strong>? เบราว์เซอร์จะปล่อยผ่านไหม?
+    <br>(คำใบ้: ลองไล่ดูว่าในโค้ดนี้มีใครลงทะเบียน route <code>OPTIONS /before</code> ไว้บ้าง)
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>preflight <strong>ผ่านสบาย ๆ</strong> ได้ header ครบทุกตัว:</p>
+    <pre style="margin:0.6rem 0"><code>$ curl -s -i -X OPTIONS -H "Origin: https://x.example.com" \
+    -H "Access-Control-Request-Method: POST" http://127.0.0.1:39184/before
+<strong>HTTP/1.1 204 No Content</strong>
+Access-Control-Allow-Headers: Origin,Content-Length,Content-Type
+Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 43200</code></pre>
+    <p>แต่ request จริง <strong>ไม่มี <code>Access-Control-Allow-Origin</code> เลย</strong>:</p>
+    <pre style="margin:0.6rem 0"><code>$ curl -s -i -H "Origin: https://x.example.com" http://127.0.0.1:39184/before
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 18
+
+{"which":"before"}          <span class="c">← ไม่มี CORS header</span>
+
+$ curl -s -i -H "Origin: https://x.example.com" http://127.0.0.1:39184/after
+HTTP/1.1 200 OK
+<strong>Access-Control-Allow-Origin: *</strong>
+Content-Type: application/json; charset=utf-8
+
+{"which":"after"}</code></pre>
+    <p>
+      ทำไม preflight ถึงผ่าน? เพราะเรา<strong>ไม่เคยลงทะเบียน <code>OPTIONS /before</code></strong>
+      มันจึงตกไปสาย <strong>NoRoute</strong> — คิวสำรองที่ gin ใช้ตอบเวลาไม่มี route ไหนตรงเลย
+      (ปกติคือตัวที่ตอบ 404) ซึ่ง gin สร้างคิวนี้ใหม่ตอน <code>Use()</code> — สายนั้นจึง<em>มี</em> cors อยู่
+      <br>ยืนยันได้ด้วย path ที่ไม่มีอยู่จริง ซึ่งก็มี header เหมือนกัน:
+    </p>
+    <pre style="margin:0.6rem 0"><code>$ curl -s -i -H "Origin: https://x.example.com" http://127.0.0.1:39184/totally-unknown
+HTTP/1.1 404 Not Found
+<strong>Access-Control-Allow-Origin: *</strong>
+Content-Type: text/plain
+
+404 page not found</code></pre>
+    <p style="margin-bottom:0">
+      <strong>อาการที่คุณจะเจอจริง</strong>: แท็บ Network ในเบราว์เซอร์แสดง OPTIONS เป็นสีเขียว 204
+      แต่ request จริงแดง — แล้วคุณจะนั่งแก้ config CORS ทั้งวันโดยที่ config ถูกอยู่แล้ว
+      <br>ปัญหาอยู่ที่<strong>ลำดับบรรทัด</strong>: <code>r.Use()</code> ต้องมาก่อน <code>r.GET()</code> เสมอ
+      (เรื่องเดียวกับ <code>/g/early</code> ในหัวข้อ 6)
+    </p>
+  </div>
+</div>
+
+<h2>8 · กับดักทั้งบทในตารางเดียว</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สิ่งที่เขียน</th><th>สิ่งที่คิดว่าจะได้</th><th>สิ่งที่ได้จริง (รันแล้ว)</th><th>ทางแก้</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>Published bool</code> + <code>required</code></td>
+      <td>ส่ง <code>false</code> มาก็ผ่าน</td>
+      <td><code>STATUS=400</code> ตลอดกาล</td>
+      <td>ใช้ <code>*bool</code></td>
+    </tr>
+    <tr>
+      <td><code>BindJSON</code> แล้ว <code>c.JSON(422)</code></td>
+      <td>ผู้ใช้ได้ 422</td>
+      <td><code>STATUS=400</code> + warning เฉพาะ debug mode</td>
+      <td>ใช้ <code>ShouldBindJSON</code></td>
+    </tr>
+    <tr>
+      <td>ส่ง <code>err.Error()</code> กลับไปเลย</td>
+      <td>ผู้ใช้รู้ว่าต้องแก้อะไร</td>
+      <td>ได้ชื่อ struct ภายใน แต่ไม่ได้ค่าที่ยอมรับ</td>
+      <td><code>errors.As</code> + แปลงเอง</td>
+    </tr>
+    <tr>
+      <td><code>json:"q"</code> กับ <code>ShouldBindQuery</code></td>
+      <td>อ่าน <code>?q=go</code> ได้</td>
+      <td>field ว่าง → ตกที่ <code>required</code></td>
+      <td>ใช้ tag <code>form:"q"</code></td>
+    </tr>
+    <tr>
+      <td><code>c.Abort()</code> เฉย ๆ</td>
+      <td>client ได้ 401 หรือ 403</td>
+      <td><code>HTTP/1.1 200 OK</code> body ว่าง</td>
+      <td><code>c.AbortWithStatusJSON(...)</code></td>
+    </tr>
+    <tr>
+      <td><code>c.JSON(401)</code> แต่ลืม <code>Abort</code></td>
+      <td>หยุดแค่นั้น</td>
+      <td>handler รันต่อ · body <code>{"error":"unauthorized"}ok</code></td>
+      <td><code>c.AbortWithStatusJSON(...)</code></td>
+    </tr>
+    <tr>
+      <td><code>cors.New</code> ใส่แต่ <code>AllowOrigins</code></td>
+      <td>ได้ default ที่เหลือแถมมา</td>
+      <td>ไม่มี <code>Allow-Methods</code> → เบราว์เซอร์บล็อก</td>
+      <td>ใส่ทุกช่องเอง</td>
+    </tr>
+    <tr>
+      <td><code>r.Use(cors...)</code> หลัง <code>r.GET</code></td>
+      <td>ผูกให้ทุก route</td>
+      <td>preflight ผ่าน 204 · request จริงไม่มี header</td>
+      <td><code>Use()</code> ก่อน route เสมอ</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>เส้นเรื่องเดียวที่ร้อยทั้งแปดแถว</strong> — ทุกกับดักในบทนี้
+    <em>ไม่มีตัวไหน compile ไม่ผ่าน และไม่มีตัวไหน crash</em>
+    <br>ทุกตัวรันได้ ตอบ status สวย ๆ กลับมา แล้วผิดเงียบ ๆ
+    <br>เครื่องมือที่จับพวกนี้ได้จึงไม่ใช่ compiler แต่เป็น
+    <strong>เทสที่ยิง request จริงแล้วอ่าน status กับ header</strong> — ซึ่งคือบทเรียน 40 พอดี
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. struct มี <code>Servings int `json:"servings" binding:"required"`</code> แล้วผู้ใช้ส่ง <code>{"servings":0}</code> มา จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">bind ผ่านตามปกติ แล้ว <code>in.Servings</code> มีค่าเป็น <code>0</code> ตามที่ส่งมา</button>
+    <button class="opt">bind ไม่ผ่าน ได้ error <code>'required' tag</code> เพราะ <code>0</code> คือ zero value</button>
+    <button class="opt">bind ไม่ผ่าน ได้ error <code>'min' tag</code> เพราะ <code>required</code> บังคับให้มากกว่าศูนย์</button>
+    <button class="opt">bind ผ่าน แต่ gin เซ็ตค่าให้เป็น <code>1</code> ซึ่งเป็นค่าต่ำสุดที่ยอมรับได้</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันจริงได้ <code>STATUS=400</code> พร้อม
+    <code>Key: 'ReqRecipe.Servings' Error:Field validation for 'Servings' failed on the 'required' tag</code>
+    <br><code>required</code> ไม่ได้ถาม "JSON มี key นี้ไหม" — validator เห็นแค่ struct หลัง unmarshal
+    จึงตัดสินจาก<strong>ค่าเป็น zero value หรือเปล่า</strong> เท่านั้น
+    <br>ตัวเลือกที่ 1 คือพฤติกรรมของ <code>*int</code> (ผมรันแล้วได้ <code>STATUS=200</code>) ไม่ใช่ <code>int</code> ·
+    ตัวเลือกที่ 3 ผิดเพราะ <code>min</code> เป็นคนละ tag — ผมรันแยกให้ดูแล้วว่า
+    <code>binding:"min=1,max=5"</code> กับ <code>level=0</code> ต่างหากที่ได้ <code>'min' tag</code> ·
+    ตัวเลือกที่ 4 ผิดเพราะ validator <strong>ไม่เคยแก้ค่าให้</strong> มันตรวจอย่างเดียว
+    <br>ทางแก้จริงคือเปลี่ยนเป็น <code>*int</code> ซึ่งแยก "ส่ง 0 มา" (<code>&amp;0</code>) ออกจาก "ไม่ส่งมา" (<code>nil</code>) ได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">2. handler เรียก <code>c.BindJSON(&amp;in)</code> แล้ว error จึงเขียน <code>c.JSON(422, ...)</code> ต่อ — client ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้ <code>422</code> พร้อม body ของเรา เพราะ <code>c.JSON</code> ตัวหลังสุดชนะเสมอ</button>
+    <button class="opt">ได้ <code>400</code> เปล่า ๆ ไม่มี body เพราะ gin ตัดจบตั้งแต่ bind ล้มเหลว</button>
+    <button class="opt">ได้ <code>400</code> พร้อม body ของเรา — status ถูกล็อกไปแล้วแต่ body ยังเขียนต่อได้</button>
+    <button class="opt">ได้ <code>500</code> เพราะการเขียน header ซ้ำสองรอบทำให้ ResponseWriter panic</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>[GIN-debug] [WARNING] Headers were already written. Wanted to override status code 400 with 422</code>
+    แล้วได้ <code>STATUS=400</code> กับ body ที่เราเขียนไปครบถ้วน
+    <br>เพราะ <code>BindJSON</code> เรียก <code>AbortWithError(400, ...)</code> ให้ตั้งแต่ตอน error →
+    <strong>header ถูกส่งลงสายไปแล้ว</strong> · HTTP เขียน status ได้ครั้งเดียวเท่านั้น
+    <br>ตัวเลือกที่ 1 ผิด เพราะที่เขียนทับได้คือ body ไม่ใช่ status ·
+    ตัวเลือกที่ 2 คือเคส <strong>1d</strong> ที่ bind แล้ว <code>return</code> เลยโดยไม่เขียนอะไรต่อ ·
+    ตัวเลือกที่ 4 ผิดเพราะไม่มี panic เลย มีแค่บรรทัด warning
+    <br>และ warning นั้น<strong>เงียบใน release mode</strong> — ผมรันยืนยันแล้วว่าได้ <code>STATUS=400</code>
+    เหมือนเดิมโดยไม่มีอะไรเตือน · ทางแก้คือใช้ <code>ShouldBindJSON</code> เสมอ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. auth middleware ตรวจ token ไม่ผ่าน แล้วเรียก <code>c.Abort()</code> เฉย ๆ โดยไม่เขียน response — client ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>200 OK</code> กับ body ว่างเปล่า ทั้งที่ request ถูกปฏิเสธไปแล้ว</button>
+    <button class="opt"><code>401 Unauthorized</code> กับ body ว่าง เพราะ Abort แปลว่าไม่อนุญาต</button>
+    <button class="opt"><code>500 Internal Server Error</code> เพราะไม่มี handler ไหนเขียน response</button>
+    <button class="opt"><code>204 No Content</code> ซึ่งเป็นรหัสมาตรฐานของ response ที่ไม่มีเนื้อหา</button>
+  </div>
+  <div class="explain">
+    <p>ยิงผ่าน socket จริงด้วย curl ได้ <code>HTTP/1.1 200 OK</code> กับ <code>Content-Length: 0</code>
+    <br><code>Abort()</code> ทำหน้าที่เดียวคือ<strong>หยุดคิว</strong> — มันไม่เขียน status ให้เลย
+    และเมื่อไม่มีใครเขียน <code>net/http</code> ก็เติม <code>200</code> ให้เป็น default
+    <br>ผลคือ frontend อ่านว่า "สำเร็จแต่ไม่มีข้อมูล" ซึ่งเป็นอาการที่ debug ยากที่สุดแบบหนึ่ง ·
+    ตัวเลือกที่ 2 คือผลของ <code>c.AbortWithStatus(401)</code> ซึ่งผมรันเทียบไว้ใน CASE 3 ·
+    ตัวเลือกที่ 3 ผิดเพราะ 500 เกิดจาก panic ที่ <code>gin.Recovery()</code> จับได้ ไม่ใช่จาก Abort ·
+    ตัวเลือกที่ 4 ผิดเพราะ gin ไม่เคยเดา 204 ให้ใคร
+    <br>กับดักฝาแฝดคือเขียน <code>c.JSON(401)</code> แต่ลืม <code>Abort</code> —
+    handler จะรันต่อจริง ผมรันแล้วได้ body <code>{"error":"unauthorized"}ok</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. โค้ดเขียน <code>r.GET("/before", h)</code> ก่อน แล้วค่อย <code>r.Use(cors.Default())</code> ทีหลัง — เว็บที่เรียก <code>/before</code> จะเจออะไร?</p>
+  <div class="opts">
+    <button class="opt">โดนบล็อกตั้งแต่ preflight เพราะ <code>OPTIONS /before</code> ตอบ <code>404</code> กลับมา</button>
+    <button class="opt">ผ่านทั้งคู่ เพราะ <code>Use</code> ผูก middleware เข้ากับ engine ทั้งตัวย้อนหลังให้</button>
+    <button class="opt">โดนบล็อกทั้งคู่ พร้อม <code>403 Forbidden</code> ทั้ง preflight และ request จริง</button>
+    <button class="opt">preflight ผ่าน <code>204</code> ครบ header แต่ request จริงไม่มี <code>Allow-Origin</code></button>
+  </div>
+  <div class="explain">
+    <p>ผมยิงจริงทั้งสองแบบ: <code>OPTIONS /before</code> ได้ <code>204</code> พร้อม
+    <code>Access-Control-Allow-Origin: *</code> และ <code>Allow-Methods</code> ครบ
+    แต่ <code>GET /before</code> ได้ <code>200</code> ที่<strong>ไม่มี CORS header สักตัว</strong> → เบราว์เซอร์บล็อก
+    <br>สาเหตุ: gin ก๊อปคิว middleware ณ ตอนลงทะเบียน route — <code>/before</code>
+    จึงไม่มี cors ติดไป · ส่วน <code>OPTIONS /before</code> ไม่เคยถูกลงทะเบียนเลย
+    มันจึงตกไปสาย NoRoute (คิวสำรองสำหรับ path ที่ไม่มี route ตรง) ที่ gin สร้างใหม่ตอน
+    <code>Use()</code> ซึ่ง<em>มี</em> cors อยู่
+    <br>ตัวเลือกที่ 1 ผิดเพราะ preflight ได้ 204 ไม่ใช่ 404 (แต่ path มั่ว ๆ อย่าง
+    <code>/totally-unknown</code> ได้ <code>404</code> ที่<em>มี</em> header — หลักฐานของสาย NoRoute) ·
+    ตัวเลือกที่ 2 ผิดตรงคำว่า "ย้อนหลัง" ซึ่ง gin ทำไม่ได้ ·
+    ตัวเลือกที่ 3 คือผลของ <code>cors.New</code> ที่ origin ไม่อยู่ในลิสต์ คนละเรื่องกัน</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำ endpoint สร้างสูตรอาหารที่ไม่ปฏิเสธผู้ใช้ที่ทำถูก</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำให้ POST ผ่าน" — เป้าหมายคือ
+    <strong>ทำให้มันปฏิเสธข้อมูลที่ถูกต้องให้ดูก่อน แล้วค่อยแก้ และเขียนเทสที่จับการปฏิเสธนั้นได้</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งโปรเจกต์:</strong> สร้างโฟลเดอร์ใหม่ · <code>cd</code> เข้าไป ·
+        <code>go mod init recipes</code> · <code>go get github.com/gin-gonic/gin</code> ·
+        สร้าง <code>main.go</code> ที่มี <code>func main()</code> เปิด server ด้วย
+        <code>r := gin.Default()</code> + <code>r.Run(":8080")</code>
+        (<a href="./0038-gin-routing.html">บทเรียน 38</a>)
+        <br>แล้วทำ <code>POST /recipes</code> ที่รับ
+        <code>title</code> (string) · <code>servings</code> (int) · <code>published</code> (bool)
+        ทั้งสามช่องใส่ <code>binding:"required"</code> ไว้ก่อน</li>
+    <li><strong>ทำให้มันพัง:</strong> ยิง
+        <code>{"title":"ผัดกะเพรา","servings":2,"published":false}</code>
+        <br><strong>ต้องได้ 400</strong> — ถ้าได้ 200 แปลว่าคุณเขียน tag ไม่ครบ ย้อนไปดูข้อ 1
+        <br>แล้วยิง <code>{"title":"ผัดกะเพรา","servings":2}</code> (ตัด <code>published</code> ทิ้งไปเลย) เทียบ
+        <br><strong>ข้อความ error สองอันนี้จะออกมาเหมือนกันเป๊ะ — ตอบให้ได้ว่าทำไม</strong>
+        ทั้งที่เคสแรกผู้ใช้ส่ง <code>published</code> มาจริง ๆ ส่วนเคสหลังไม่ได้ส่ง</li>
+    <li><strong>แก้ด้วย pointer:</strong> เปลี่ยนเฉพาะ field ที่ zero value มีความหมาย
+        แล้วพิสูจน์สองเคส: ส่ง <code>false</code> มา → 200 · ไม่ส่ง key มาเลย → 400
+        <br><strong>ตอบให้ได้ว่าทำไม <code>Title</code> ไม่ควรเปลี่ยนเป็น <code>*string</code></strong></li>
+    <li><strong>เก็บ error ให้สุภาพ:</strong> ใช้ <code>errors.As</code> แยก
+        <code>validator.ValidationErrors</code> ออกจาก JSON parse error
+        แล้วตอบเป็น <code>{"fields":{"Title":"required"}}</code> แทน <code>err.Error()</code> ดิบ ๆ
+        (key คือ <code>fe.Field()</code> · value คือ <code>fe.Tag()</code>)
+        <br>ยิง body พัง ๆ อย่าง <code>{"title":</code> ดูว่าตกทางไหน</li>
+    <li><strong>เขียน middleware สองตัว:</strong> <code>RequestID</code> ที่ <code>c.Set("rid", ...)</code>
+        ขาไป และ <code>Timing</code> ที่ log <code>c.Writer.Status()</code> ขากลับ
+        <br><strong>พิมพ์ลำดับให้เห็นด้วยตา</strong> ว่าอันไหนขึ้นก่อน-หลัง แล้วอธิบายว่าทำไม
+        <code>Timing</code> อ่าน status ได้ทั้งที่ตัวเองรันก่อน handler</li>
+    <li><strong>auth middleware:</strong> ผูกกับ group <code>/admin</code> เท่านั้น ·
+        ตรวจ header <code>X-Token</code> · ไม่ผ่านให้ <code>c.AbortWithStatusJSON(401, ...)</code>
+        <br>แล้ว<strong>ลองเปลี่ยนเป็น <code>c.Abort()</code> เฉย ๆ ดูหนึ่งรอบ</strong> —
+        curl แล้วดู status ที่ได้ · เปลี่ยนกลับ</li>
+    <li><strong>CORS:</strong> ใส่ <code>cors.New</code> ที่อนุญาต origin เดียวและ header
+        <code>Authorization</code> · ยิง preflight ด้วย
+        <code>curl -X OPTIONS -H "Origin: ..." -H "Access-Control-Request-Method: POST"</code>
+        <br><strong>แล้วย้ายบรรทัด <code>r.Use(cors...)</code> ไปไว้ใต้ <code>r.POST</code></strong>
+        แล้วยิงซ้ำ — อธิบายว่าทำไม preflight ยังผ่านอยู่</li>
+    <li><strong>เขียนเทสพิสูจน์</strong> (ต่อยอด <a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16</a>):
+        table-driven test ที่ยิง body หลายแบบเข้า router เดียวกันแล้ว assert
+        <strong>status</strong> ทุกเคส โดยเฉพาะเคส <code>"published":false</code> ต้องได้ 200
+        <br><strong>เทสนี้ต้อง fail ถ้าคุณเปลี่ยน <code>*bool</code> กลับเป็น <code>bool</code></strong> —
+        ถ้าเปลี่ยนแล้วยังผ่าน แปลว่าเทสยังไม่ได้เทสอะไร
+        <br>(ยิง request ในเทสด้วย <code>httptest.NewRecorder()</code> +
+        <code>r.ServeHTTP(w, req)</code> — <a href="./0040-httptest-handler.html">บทเรียน 40</a> จะลงลึกเรื่องนี้)</li>
+    <li><strong>ท้าทาย:</strong> เขียน handler ที่เรียก <code>c.ShouldBindJSON</code>
+        <strong>สองครั้ง</strong>ติดกัน — <em>ทายก่อนรัน</em> ว่าครั้งที่สอง error ว่าอะไร
+        แล้วแก้ด้วย <code>c.ShouldBindBodyWith</code> ให้ได้ค่าครบทั้งสองครั้ง</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 5 — ทำไม Timing อ่าน status ได้</button>
+  <div class="answer">
+    <p>เพราะ <code>c.Next()</code> ไม่ใช่ "คำสั่งจบงาน" แต่เป็น
+    <strong>"หยุดฉันไว้ตรงนี้ ไปรันคิวที่เหลือจนจบ แล้วค่อยกลับมา"</strong>
+    <br>โค้ดที่อยู่ใต้ <code>c.Next()</code> จึงรัน<em>หลัง</em> handler เขียน response เสร็จแล้ว
+    ตอนนั้น <code>c.Writer.Status()</code> จึงมีค่าจริงให้อ่าน · ผมรันยืนยันลำดับไว้แบบนี้:</p>
+    <pre style="margin:0.6rem 0"><code>A: before Next
+B: before Next
+HANDLER: /ping
+<strong>B: after Next
+A: after Next</strong></code></pre>
+    <p style="margin-bottom:0">
+      สังเกตว่า <code>A</code> ที่ <code>Use()</code> ก่อน กลับเป็นตัวที่พิมพ์
+      <strong>ขากลับทีหลังสุด</strong> — เพราะมันเป็นชั้นนอกสุดของหัวหอม
+      <br>ถ้าคุณย้าย <code>log</code> ไปไว้เหนือ <code>c.Next()</code> คุณจะได้
+      status เป็น <code>200</code> ทุกครั้งไม่ว่าจริง ๆ จะตอบอะไร เพราะตอนนั้นยังไม่มีใครเขียน response
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 8 คือข้อที่ผมอยากเห็นผลมากที่สุดของบทนี้</strong> —
+    เพราะเทสที่ยัง<em>ผ่าน</em>หลังจากเปลี่ยน <code>*bool</code> กลับเป็น <code>bool</code>
+    คือเทสที่กำลังหลอกคุณอยู่ ซึ่งเป็นบทเรียนเดียวกับเรื่อง mock ใน
+    <a href="../../day-7/lessons/0028-mockery.html">บทเรียน 28</a>
+    <br>ถ้ารันแล้วได้ output ไม่ตรงกับในบทนี้ <strong>ส่ง output มาได้เลย</strong>
+    ผมอยากรู้ว่าเครื่องคุณต่างจากเครื่องผมตรงไหน — โดยเฉพาะถ้าคุณใช้ gin คนละเวอร์ชัน
+    เพราะทุกบรรทัดในหน้านี้วัดบน gin v1.12.0 + validator v10.30.1 + cors v1.7.7 เท่านั้น
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0038-gin-routing.html">← บทเรียน 38</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0040-httptest-handler.html">บทเรียน 40 → httptest</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://gin-gonic.com/en/docs/binding/binding-and-validation/">Gin — Model binding and validation</a> — ต้นทางของ <code>ShouldBindJSON</code> และตาราง <code>Should*</code> vs <code>Must*</code></li>
+  <li><a href="https://pkg.go.dev/github.com/go-playground/validator/v10">pkg.go.dev — validator/v10</a> — <strong>อ่านหัวข้อ Baked-in Validations</strong>: รายชื่อ tag ทั้งหมด และนิยามของ <code>required</code> ที่ว่า "ไม่เป็น zero value ของชนิดนั้น"</li>
+  <li><a href="https://gin-gonic.com/en/docs/binding/bind-uri/">Gin — Bind Uri</a> · <a href="https://gin-gonic.com/en/docs/binding/bind-body-into-different-structs/">Bind body into different structs</a> — ที่มาของ tag <code>uri</code> และ <code>ShouldBindBodyWith</code></li>
+  <li><a href="https://gin-gonic.com/en/docs/middleware/using-middleware/">Gin — Using middleware</a> · <a href="https://gin-gonic.com/en/docs/middleware/custom-middleware/">Custom middleware</a> — <code>r.Use</code>, <code>c.Next</code>, <code>c.Set</code></li>
+  <li><a href="https://pkg.go.dev/github.com/gin-gonic/gin#Context">pkg.go.dev — <code>gin.Context</code></a> — เอกสารของ <code>Next</code> / <code>Abort</code> / <code>AbortWithStatusJSON</code> / <code>MustGet</code></li>
+  <li><a href="https://github.com/gin-contrib/cors">github.com/gin-contrib/cors</a> · <a href="https://pkg.go.dev/github.com/gin-contrib/cors">pkg.go.dev</a> — ค่า default ของ <code>cors.Default()</code> และทุกช่องใน <code>cors.Config</code></li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS">MDN — Cross-Origin Resource Sharing</a> — <strong>อ่านหัวข้อ Preflight requests</strong>: เงื่อนไขว่า request แบบไหนถึงจะโดน <code>OPTIONS</code> ก่อน</li>
+  <li><a href="../reference/cheatsheet.html">Cheat sheet Day 8</a> — tag ที่ใช้บ่อยและตารางกับดักรวมทั้งวัน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 35 — query · body · header</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 35 · Day 8 · Request</p>
+  <h1>query · body · header — ส่งข้อมูลเข้าไปทางไหน</h1>
+  <p class="meta">~13 นาที · ต้องมี: <a href="./0033-rest-resource-method.html">บทเรียน 33</a> (resource กับ method), <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> (JSON กับ struct tag)</p>
+  <p class="standfirst">
+    หนึ่ง request มี <strong>สี่ช่อง</strong> ให้ยัดข้อมูลเข้าไป — path, query, body, header
+    <br>ช่องพวกนี้<strong>ไม่ได้ต่อถึงกัน</strong> ส่งผิดช่องแล้วฝั่ง server อ่านไม่เจอเงียบ ๆ ไม่มี error
+    <br>และมีช่องหนึ่งที่ทุกอย่างที่คุณใส่ลงไป<strong>ถูกจดลง log ไว้เต็ม ๆ</strong> —
+    บทนี้จะยิง token ผ่านช่องนั้นให้ดู แล้วเปิด log ให้เห็นกับตา
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ต้องมีถ้าจะพิมพ์ตาม</strong></p>
+  <ul>
+    <li>Go (บทนี้รันบน <code>go1.26.5 darwin/arm64</code>)</li>
+    <li>โฟลเดอร์ใหม่ + <code>go mod init</code> ของตัวเอง แล้ว
+        <code>go get github.com/gin-gonic/gin@v1.12.0</code>
+        (ตัวที่ติดมาด้วยคือ <code>github.com/go-playground/validator/v10 v10.30.1</code>)</li>
+    <li><code>curl</code> — ทุกผลรันในบทนี้มาจากเครื่องจริง ไม่ใช่ของแต่ง</li>
+  </ul>
+  <p>
+    บทนี้ <strong>ไม่ใช่</strong>บทสอน Gin — Gin เป็นแค่เครื่องมือที่ทำให้เห็นว่าแต่ละช่องมาถึง server ยังไง
+    เรื่อง routing/middleware เต็ม ๆ อยู่บทถัด ๆ ไป
+  </p>
+  <p style="margin-bottom:0.4rem">
+    ถ้ายังไม่เคยเปิด HTTP server มาก่อน นี่คือ <code>main.go</code> เต็ม ๆ ที่<strong>โค้ดทุกชิ้นในบทนี้อยู่ข้างใน</strong> —
+    ต่อจากนี้ผมจะตัดมาโชว์เฉพาะบรรทัดที่กำลังพูดถึง:
+  </p>
+  <pre><code><span class="k">package</span> main
+
+<span class="k">import</span> <span class="s">"github.com/gin-gonic/gin"</span>
+
+<span class="k">func</span> <span class="f">main</span>() {
+    <span class="k">r</span> := gin.<span class="f">Default</span>()          <span class="c">// r = router: ตัวจับคู่ "method + path" เข้ากับ handler</span>
+
+    <span class="k">r</span>.<span class="f">GET</span>(<span class="s">"/ping"</span>, <span class="k">func</span>(c *gin.Context) {   <span class="c">// handler = ฟังก์ชันที่ถูกเรียกเมื่อมี request ตรงกับ route นี้</span>
+        c.<span class="f">JSON</span>(<span class="n">200</span>, gin.H{<span class="s">"ok"</span>: <span class="k">true</span>})     <span class="c">// c = Context: กล่องที่มีทั้ง request ขาเข้าและ response ขาออก</span>
+    })
+
+    <span class="k">r</span>.<span class="f">Run</span>(<span class="s">"127.0.0.1:8080"</span>)      <span class="c">// เปิดรับ request ค้างไว้ จนกว่าจะกด Ctrl+C</span>
+}</code></pre>
+  <p style="margin-bottom:0">
+    วางไฟล์นี้ในโฟลเดอร์ที่ <code>go mod init</code> ไว้แล้ว สั่ง <code>go run .</code> <em>ในโฟลเดอร์นั้น</em>
+    แล้วเปิดอีกหน้าต่างมายิง <code>curl http://127.0.0.1:8080/ping</code>
+    <br>ถ้าตัวอย่างไหนใช้ <code>io.ReadAll</code> ต้องเพิ่ม <code>"io"</code> เข้าไปในวงเล็บ <code>import</code> ด้วย
+  </p>
+</div>
+
+<h2>1 · หนึ่ง request มีสี่ช่อง ไม่ใช่ช่องเดียว</h2>
+
+<p>
+  ตอนคุณกดปุ่มในเว็บ สิ่งที่วิ่งออกไปคือ<strong>ข้อความธรรมดา</strong>ก้อนหนึ่ง
+  ที่มีรูปแบบตายตัว หน้าตาแบบนี้เป๊ะ ๆ:
+</p>
+
+<div class="diagram">
+<pre>POST /recipes?draft=true HTTP/1.1        <span class="c">← บรรทัดแรก: method + path + query</span>
+Host: api.example.com                    <span class="c">┐</span>
+Authorization: Bearer abc123             <span class="c">│ header — บอกว่า "ใครขอ / ขอแบบไหน"</span>
+Content-Type: application/json           <span class="c">┘</span>
+                                         <span class="c">← บรรทัดว่าง = เส้นแบ่งหัวกับตัว</span>
+{"title":"ต้มยำกุ้ง","minutes":30}        <span class="c">← body — เนื้อข้อมูล</span></pre>
+</div>
+
+<p>
+  อ่านจากบนลงล่างแล้วจะเห็นว่า <strong>ทั้งสี่ช่องอยู่คนละที่กันทางกายภาพ</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ช่อง</th><th>อยู่ตรงไหนของ request</th><th>ใช้ใส่อะไร</th><th>ยาวได้แค่ไหน</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>path</strong></td>
+      <td>บรรทัดแรก ก่อนเครื่องหมาย <code>?</code></td>
+      <td>ระบุว่า <em>resource ไหน</em> — <code>/recipes/42</code></td>
+      <td>สั้น</td>
+    </tr>
+    <tr>
+      <td><strong>query</strong></td>
+      <td>บรรทัดแรก หลัง <code>?</code></td>
+      <td>กรอง / เรียง / แบ่งหน้า — <code>?sort=name</code></td>
+      <td>สั้น (เป็นส่วนหนึ่งของ URL)</td>
+    </tr>
+    <tr>
+      <td><strong>header</strong></td>
+      <td>บรรทัดถัด ๆ มา จนถึงบรรทัดว่าง</td>
+      <td>metadata ของการเชื่อมต่อ (= ข้อมูล<em>เกี่ยวกับ</em>คำขอ ไม่ใช่ตัวข้อมูลเอง) — token, ชนิดข้อมูล</td>
+      <td>สั้น</td>
+    </tr>
+    <tr>
+      <td><strong>body</strong></td>
+      <td>ทุกอย่างหลังบรรทัดว่าง</td>
+      <td>เนื้อข้อมูลที่จะบันทึก — JSON ทั้งก้อน</td>
+      <td>ยาวได้ (ไหลมาเป็น<strong>สตรีม</strong> คือทยอยมาทีละส่วน ไม่ได้มาทั้งก้อนพร้อมกัน)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทีนี้ประเด็นที่ทำให้มือใหม่เสียเวลาเป็นชั่วโมง:
+  <strong>server ไม่ได้เอาสี่ช่องนี้มากองรวมกันแล้วให้คุณค้นทีเดียว</strong>
+  ฟังก์ชันอ่าน query อ่านได้เฉพาะ query · ฟังก์ชันอ่าน body อ่านได้เฉพาะ body
+  <br>ถ้าส่งผิดช่อง คุณจะ<strong>ไม่ได้ error</strong> — คุณจะได้ค่าว่าง ซึ่งอ่านยากกว่ามาก
+</p>
+
+<h2>2 · พิสูจน์ว่ามันแยกกันจริง</h2>
+
+<p>
+  ผมเขียน <strong>handler</strong> (ฟังก์ชันที่ทำงานเมื่อ request วิ่งมาถึง route นี้) ตัวเดียว
+  ที่พยายามอ่านคำว่า <code>sort</code> จาก<em>ทุกช่อง</em>พร้อมกัน
+  แล้วยิงเข้าไปสองรอบ — รอบแรกส่ง <code>sort=name</code> ทาง <strong>body</strong>
+  รอบสองส่งทาง <strong>query</strong> ทั้งที่ค่าเหมือนกันเป๊ะ:
+</p>
+
+<pre><code><span class="k">r</span>.<span class="f">POST</span>(<span class="s">"/probe"</span>, <span class="k">func</span>(c *gin.Context) {
+    q  := c.<span class="f">Query</span>(<span class="s">"sort"</span>)      <span class="c">// อ่านจาก query string</span>
+    pf := c.<span class="f">PostForm</span>(<span class="s">"sort"</span>)   <span class="c">// อ่านจาก body แบบ form</span>
+    raw, _ := io.<span class="f">ReadAll</span>(c.Request.Body)
+    c.<span class="f">JSON</span>(<span class="n">200</span>, gin.H{
+        <span class="s">"Query_sort"</span>: q, <span class="s">"PostForm_sort"</span>: pf,
+        <span class="s">"GetHeader_ct"</span>: c.<span class="f">GetHeader</span>(<span class="s">"Content-Type"</span>),
+        <span class="s">"rawBody_after"</span>: <span class="k">string</span>(raw),
+    })
+})</code></pre>
+
+<div class="predict">
+  <pre><code><span class="c"># รอบ 1 — sort อยู่ใน body ติดป้าย Content-Type: application/x-www-form-urlencoded</span>
+<span class="c">#          (= รูปแบบ body ที่หน้าตาเหมือน query string คือ key=value คั่นด้วย &amp; แบบที่ฟอร์ม HTML ส่งมา)</span>
+POST /probe            body: sort=name
+
+<span class="c"># รอบ 2 — sort อยู่ใน query</span>
+POST /probe?sort=name  body: (ว่าง)</code></pre>
+  <p class="ask">
+    ทั้งสองรอบส่งคำว่า <code>sort=name</code> เท่ากัน —
+    <strong><code>Query_sort</code> กับ <code>PostForm_sort</code> ของแต่ละรอบจะได้อะไร?</strong>
+    <br>และแถมอีกข้อที่<em>ตั้งใจให้ทายผิด</em>: <code>rawBody_after</code>
+    (อ่าน body ดิบ<em>หลัง</em>เรียก <code>PostForm</code> ไปแล้ว) จะได้อะไร?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== 1) ช่องทางแยกกันไหม: ส่ง sort=name ผ่าน body แบบ form ===
+POST   /probe            -&gt; 200 {"GetHeader_ct":"application/x-www-form-urlencoded",
+                                 <strong>"PostForm_sort":"name","Query_sort":""</strong>,"rawBody_after":""}
+=== 1b) ส่ง sort=name ผ่าน query ===
+POST   /probe?sort=name  -&gt; 200 {"GetHeader_ct":"",
+                                 <strong>"PostForm_sort":"","Query_sort":"name"</strong>,"rawBody_after":""}</code></pre>
+    <p>
+      <strong>สลับกันคนละช่องเป๊ะ ๆ</strong> — ตัวที่อ่านผิดช่องได้ <code>""</code> เฉย ๆ
+      ไม่มี error ไม่มี log ไม่มีอะไรเตือน
+      <br>นี่คือหน้าตาของบั๊ก "ส่งไปแล้วแต่ไม่เข้า": frontend ยืนยันว่าส่งแล้ว
+      backend ยืนยันว่าไม่ได้รับ — <strong>ถูกทั้งคู่ เพราะคนละช่อง</strong>
+    </p>
+    <p style="margin-bottom:0">
+      ส่วน <code>rawBody_after</code> ได้ <code>""</code> ทั้งสองรอบ เพราะ body เป็น<strong>สตรีมที่อ่านได้ครั้งเดียว</strong> —
+      <code>PostForm</code> อ่านไปหมดแล้ว พออ่านซ้ำจึงไม่เหลืออะไร
+      (ในบทถัดไปจะเจอเรื่องเดียวกันตอนเรียก <code>ShouldBindJSON</code> สองครั้ง)
+    </p>
+  </div>
+</div>
+
+<h2>3 · คำถามสามข้อ ตัดสินให้จบว่าข้อมูลชิ้นนี้ไปช่องไหน</h2>
+
+<p>
+  หัวใจของบทนี้ไม่ใช่ชื่อฟังก์ชันของ Gin แต่คือ<strong>การตัดสินใจ</strong>
+  เวลามีข้อมูลชิ้นใหม่โผล่มาในสเปก ("อยากค้นตามความยากง่ายด้วย")
+  ให้เดินไล่คำถามจากบนลงล่าง <strong>เจอ "ใช่" ข้อไหนก่อนก็จบที่ข้อนั้น</strong>:
+</p>
+
+<div class="diagram">
+<pre>ข้อมูลหนึ่งชิ้นมาถึงมือคุณ
+   │
+   ├─ 1. มันระบุว่า "resource ไหน" ไหม? ─────── ใช่ ─▶ <strong>path</strong>    /recipes/42
+   │      ถ้าไม่มีมัน server ไม่รู้จะทำกับอะไร
+   │
+   ├─ 2. มันกรอง / เรียง / แบ่งหน้า ไหม? ────── ใช่ ─▶ <strong>query</strong>   ?sort=name&amp;limit=10
+   │      ตัดออกก็ยังตอบได้ แค่ได้ผลกว้างกว่าเดิม
+   │
+   ├─ 3. มันคือเนื้อข้อมูลที่จะบันทึก ไหม? ───── ใช่ ─▶ <strong>body</strong>    {"title":"ต้มยำกุ้ง"}
+   │      ของใหม่ที่ server ยังไม่มี / ของที่จะถูกแก้
+   │
+   └─ 4. มันเป็น metadata ของการเชื่อมต่อ ไหม? ─ ใช่ ─▶ <strong>header</strong>  Authorization: Bearer …
+          ไม่ใช่ข้อมูลของ resource แต่บอกว่า "ใครขอ / ขอมาแบบไหน / อยากได้กลับแบบไหน"</pre>
+</div>
+
+<p>
+  ลองเดินคำถามกับสเปกจริงของ Day 8 (เว็บรวมสูตรอาหาร) ดู:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ข้อมูลที่อยากส่ง</th><th>ตอบข้อไหนว่า "ใช่"</th><th>ลงเอยที่</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>สูตรหมายเลข 42</td><td>1 — ไม่มีเลขนี้ก็ไม่รู้จะเปิดสูตรไหน</td><td><code>GET /recipes/<strong>42</strong></code></td></tr>
+    <tr><td>เรียงตามคะแนน เอา 10 อันแรก</td><td>2 — ตัดออกก็ยังได้รายการ แค่ไม่เรียง</td><td><code>GET /recipes<strong>?sort=rating&amp;limit=10</strong></code></td></tr>
+    <tr><td>ค้นคำว่า "ต้มยำ"</td><td>2 — เป็นตัวกรองของ collection เดิม</td><td><code>GET /recipes<strong>?q=ต้มยำ</strong></code></td></tr>
+    <tr><td>ชื่อเมนู + วัตถุดิบ + ขั้นตอน ของสูตรใหม่</td><td>3 — เป็นของใหม่ที่จะถูกบันทึก</td><td><code>POST /recipes</code> + <strong>body JSON</strong></td></tr>
+    <tr><td>token ของคนที่กำลังล็อกอิน</td><td>4 — ไม่ใช่ข้อมูลของสูตร แต่บอกว่าใครขอ</td><td><strong><code>Authorization: Bearer …</code></strong></td></tr>
+    <tr><td>"ที่ส่งไปเป็น JSON นะ"</td><td>4 — บอกวิธีอ่านของที่แนบมา</td><td><strong><code>Content-Type: application/json</code></strong></td></tr>
+    <tr><td>"ขอคำตอบกลับเป็น JSON"</td><td>4 — บอกวิธีที่อยากได้ของกลับ</td><td><strong><code>Accept: application/json</code></strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong>เส้นแบ่งที่คนสับสนที่สุดคือข้อ 2 กับ 3</strong> — "ค้นหา" ควรเป็น query หรือ body?
+    <br>ใช้ไม้บรรทัดนี้: <strong>query คือของที่ก๊อป URL ส่งให้เพื่อนแล้วเพื่อนเห็นหน้าเดียวกัน</strong>
+    <br><code>/recipes?q=ต้มยำ&amp;sort=rating</code> ส่งลิงก์ให้เพื่อนได้ · bookmark ได้ · กด back แล้วกลับมาที่เดิมได้
+    <br>ถ้าเอา <code>q</code> ไปไว้ใน body ของ <code>POST</code> ทั้งสามอย่างนั้นหายหมดทันที
+    <br>(มีข้อยกเว้นจริงอยู่: เงื่อนไขค้นหาที่ซับซ้อนมากจน URL ยาวเกินไป — แต่ต้องเป็นเคสที่วัดแล้วว่ายาวเกินจริง ๆ ไม่ใช่เดา)
+  </p>
+</div>
+
+<h2>4 · query — ตัวกรอง ไม่ใช่ตัวระบุ</h2>
+
+<p>
+  ฝั่ง Gin อ่าน query ได้สามแบบ และสามแบบนี้<strong>ไม่ได้ต่างกันแค่ความสวย</strong>
+  ผมรันทั้งสามตัวกับสามสถานการณ์: ส่งค่ามา · ไม่ส่งเลย · ส่ง key มาแต่ค่าว่าง
+  <br>handler ที่ใช้เรียกทั้งสามตัวกับคีย์ <code>q</code> แล้วตอบกลับเป็น JSON —
+  <code>c.Query("q")</code> → ช่อง <code>Query</code> ·
+  <code>c.DefaultQuery("q","x")</code> → ช่อง <code>DefaultQuery</code> ·
+  <code>c.GetQuery("q")</code> คืนสองค่า → ช่อง <code>GetQuery_val</code> กับ <code>GetQuery_ok</code>
+</p>
+
+<pre><code><span class="c"># ค่า default ที่ใส่ไว้คือ "x" — ผลรันจริง (body ที่ handler ตอบกลับ)</span>
+GET /search?q=go
+  {"DefaultQuery":"go","GetQuery_ok":true,"GetQuery_val":"go","Query":"go","Query_len":2}
+GET /search
+  {"DefaultQuery":<strong>"x"</strong>,"GetQuery_ok":<strong>false</strong>,"GetQuery_val":"","Query":"","Query_len":0}
+GET /search?q=
+  {"DefaultQuery":<strong>""</strong>,"GetQuery_ok":<strong>true</strong>,"GetQuery_val":"","Query":"","Query_len":0}</code></pre>
+
+<p>
+  บรรทัดที่สองกับสามคือหัวใจ — <strong>"ไม่ส่งมาเลย" กับ "ส่งมาแต่ว่าง" ไม่ใช่เรื่องเดียวกัน</strong>
+  <br><code>c.Query</code> ได้ <code>""</code> เท่ากันทั้งคู่ แยกไม่ออก ·
+  <code>c.DefaultQuery("q","x")</code> ก็แยกไม่ออกในทางที่อันตรายกว่า:
+  พอ client ส่ง <code>?q=</code> มา <strong>ค่า default ไม่ทำงาน</strong> (ได้ <code>""</code> ไม่ใช่ <code>"x"</code>)
+  <br>มีแต่ <code>c.GetQuery</code> ที่คืนตัวที่สองเป็น <code>ok</code> — ตัวเดียวที่แยกสองกรณีนี้ออกจากกันได้
+</p>
+
+<div class="win">
+  <span class="label">🔍 เลือกยังไง</span>
+  <p style="margin-bottom:0">
+    <strong>ไม่ส่งมา = ใช้ค่า default</strong> → <code>c.DefaultQuery</code> พอ (แต่รู้ไว้ว่า <code>?q=</code> จะทะลุ default)
+    <br><strong>"ส่งค่าว่างมา" มีความหมายต่างจาก "ไม่ส่ง"</strong> (เช่น <code>?category=</code> แปลว่า "ขอเฉพาะอันที่ไม่มีหมวด")
+    → ต้อง <code>c.GetQuery</code> เท่านั้น
+  </p>
+</div>
+
+<p>อีกสองพฤติกรรมที่ต้องรู้ก่อนไปเจอเองตอนดึกสองยาม — ผมรันทั้งคู่:</p>
+
+<pre><code><span class="c">// คีย์ซ้ำได้ และ Query() คืนแค่ตัวแรก</span>
+GET /multi?tag=go&amp;tag=web&amp;tag=api
+  -&gt; {"Query":<strong>"go"</strong>, "QueryArray":<strong>["go","web","api"]</strong>}
+
+<span class="c">// query แยกตัวพิมพ์เล็กใหญ่ แต่ header ไม่แยก</span>
+GET /case?sort=name&amp;Sort=NAME   (ส่ง header  Authorization: Bearer abc123)
+  -&gt; {"header_AUTHORIZATION":<strong>"Bearer abc123"</strong>,"header_Authorization":"Bearer abc123",
+      "header_authorization":<strong>"Bearer abc123"</strong>,"query_Sort":<strong>"NAME"</strong>,"query_sort":<strong>"name"</strong>}</code></pre>
+
+<p>
+  <strong>query: <code>sort</code> กับ <code>Sort</code> คือคนละคีย์กันจริง ๆ</strong> — พิมพ์ผิดตัวเดียวคือหาย
+  <br><strong>header: เรียกด้วยตัวพิมพ์แบบไหนก็ได้ค่าเดียวกัน</strong> เพราะสเปก HTTP บอกว่าชื่อ header ไม่แยกเล็กใหญ่
+  และ Go แปลงชื่อให้เป็นรูปมาตรฐานให้เอง
+  <br>สองบรรทัดนี้คือเหตุผลว่าทำไม <code>c.GetHeader("authorization")</code> ใช้ได้
+  แต่ <code>c.Query("Sort")</code> ทำให้ฟีเจอร์เรียงลำดับเงียบไปทั้งฟีเจอร์
+</p>
+
+<h2>5 · ผูก query ทั้งชุดเป็น struct — และ tag ที่คนใส่ผิดกันทุกคน</h2>
+
+<p>
+  พอ query มีสี่ห้าตัว การเรียก <code>c.Query</code> ทีละตัวแล้ว <code>strconv.Atoi</code> เองจะเริ่มเละ
+  Gin ให้ผูกทั้งชุดเข้า struct ได้ด้วย <code>ShouldBindQuery</code> —
+  <strong>แต่มันอ่าน tag ชื่อ <code>form</code> ไม่ใช่ <code>json</code></strong>
+</p>
+
+<pre><code><span class="k">type</span> ListQuery <span class="k">struct</span> {
+    Sort  <span class="k">string</span> <span class="s">`form:"sort,default=created_at" binding:"omitempty,oneof=created_at name rating"`</span>
+    Limit <span class="k">int</span>    <span class="s">`form:"limit,default=20" binding:"min=1,max=100"`</span>
+    Page  <span class="k">int</span>    <span class="s">`form:"page,default=1" binding:"min=1"`</span>
+}
+
+<span class="k">r</span>.<span class="f">GET</span>(<span class="s">"/recipes"</span>, <span class="k">func</span>(c *gin.Context) {
+    <span class="k">var</span> q ListQuery
+    <span class="k">if</span> err := c.<span class="f">ShouldBindQuery</span>(&amp;q); err != <span class="k">nil</span> {
+        c.<span class="f">JSON</span>(<span class="n">400</span>, gin.H{<span class="s">"error"</span>: err.<span class="f">Error</span>()})
+        <span class="k">return</span>
+    }
+    c.<span class="f">JSON</span>(<span class="n">200</span>, gin.H{<span class="s">"sort"</span>: q.Sort, <span class="s">"limit"</span>: q.Limit, <span class="s">"page"</span>: q.Page})
+})</code></pre>
+
+<p>
+  อ่าน tag แถวแรกทีละท่อน: <code>form:"sort"</code> = ไปหยิบ query ชื่อ <code>sort</code> ·
+  <code>default=created_at</code> = ถ้าไม่ส่งมาให้ใช้ค่านี้แทน (อยู่ใน tag <code>form</code>) ·
+  <code>binding:"..."</code> = กฎตรวจค่าหลังหยิบมาแล้ว โดย <code>omitempty</code> แปลว่า
+  "ว่างได้ ถ้าว่างก็ข้ามกฎที่เหลือไป" ส่วน <code>oneof=</code> คือรายชื่อค่าที่ยอมรับ
+</p>
+
+<p>ผลรันจริงทั้งห้าเคส:</p>
+
+<pre><code>GET /recipes?sort=name&amp;limit=10&amp;page=2  -&gt; 200 {"limit":10,"page":2,"sort":"name"}
+GET /recipes                            -&gt; 200 {"limit":<strong>20</strong>,"page":<strong>1</strong>,"sort":<strong>"created_at"</strong>}
+GET /recipes?limit=1000                 -&gt; 400 {"error":"Key: 'ListQuery.Limit' Error:Field validation for 'Limit' failed on the 'max' tag"}
+GET /recipes?sort=price                 -&gt; 400 {"error":"Key: 'ListQuery.Sort' Error:Field validation for 'Sort' failed on the 'oneof' tag"}
+GET /recipes?limit=abc                  -&gt; 400 {"error":"strconv.ParseInt: parsing \"abc\": invalid syntax"}</code></pre>
+
+<p>
+  สามอย่างที่ได้มาฟรีจาก struct เดียว: <strong>ค่า default</strong> (<code>default=20</code>),
+  <strong>แปลงชนิดให้</strong> (query เป็นสตริงเสมอ แต่ <code>q.Limit</code> เป็น <code>int</code> แล้ว),
+  และ <strong>กันค่าประหลาด</strong> — <code>?limit=1000</code> ถูกปฏิเสธตั้งแต่ประตู
+  ไม่ทันได้ไปถาม database ว่า "ขอ 1000 แถว"
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ กับดัก tag</span>
+  <p style="margin-bottom:0">
+    struct ที่มี field <code>Q</code> ติดแค่ <code>json:"q" binding:"required"</code> (ลืม <code>form</code>)
+    แล้วเรียก <code>ShouldBindQuery</code> →
+    <strong>ค่าจาก query ไม่เข้า field เลย</strong> ยิง <code>?q=go</code> มาก็ยังได้
+    <code>Field validation for 'Q' failed on the 'required' tag</code>
+    (มันฟ้อง <code>required</code> เพราะ field ยังว่างอยู่ ไม่ใช่เพราะ tag ผิด)
+    <br>จำสามคู่นี้ให้ขึ้นใจ: <strong>query ใช้ <code>form</code></strong> ·
+    <strong>path param ใช้ <code>uri</code></strong> (<code>ShouldBindUri</code>) ·
+    <strong>body JSON ใช้ <code>json</code></strong> (<code>ShouldBindJSON</code>)
+    <br>ใส่ <code>form:"id"</code> แทน <code>uri:"id"</code> ก็เจอ error หน้าตาเดียวกันเป๊ะ —
+    error บอกว่า "ไม่มีค่า" ไม่เคยบอกว่า "คุณใส่ tag ผิดชื่อ"
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧩 <strong>สังเกต error สองแบบในผลรันข้างบน</strong> —
+    <code>?limit=1000</code> ให้ <code>ValidationErrors</code> (ผ่านการแปลงชนิดแล้ว แต่ค่าไม่อยู่ในกรอบ)
+    ส่วน <code>?limit=abc</code> ให้ <code>strconv.ParseInt: ... invalid syntax</code>
+    (แปลงชนิดไม่ผ่านตั้งแต่ต้น จึงยังไม่ถึงขั้น validate)
+    <br>ทั้งคู่ควรตอบ <strong>400</strong> เหมือนกัน แต่ข้อความดิบจาก validator
+    <strong>ไม่เหมาะจะส่งให้ผู้ใช้ตรง ๆ</strong> (มันโผล่ชื่อ struct ภายในของคุณออกไป)
+    — บทเรียน 34 พูดเรื่องรูปแบบ error response ไว้แล้ว
+  </p>
+</div>
+
+<h2>6 · body — เนื้อข้อมูลที่จะบันทึก</h2>
+
+<p>
+  body คือช่องเดียวที่<strong>ยาวได้ไม่จำกัดในทางปฏิบัติ</strong> และเป็นช่องเดียวที่ไม่ปรากฏใน URL
+  มันจึงเป็นที่ของ "ของใหม่ที่จะถูกเก็บ" — คู่กับ method ที่แปลว่าเขียน: <code>POST</code> / <code>PUT</code> / <code>PATCH</code>
+</p>
+
+<pre><code>POST /recipes                      <span class="c">// สร้างของใหม่ — body คือของทั้งชิ้น</span>
+Content-Type: application/json
+{"title":"ต้มยำกุ้ง","minutes":30,"difficulty":"medium"}
+
+PUT /recipes/42                    <span class="c">// แทนที่ทั้งชิ้น — path บอกว่าชิ้นไหน, body บอกว่าเป็นอะไร</span>
+{"title":"ต้มยำกุ้งน้ำข้น","minutes":35,"difficulty":"medium"}
+
+PATCH /recipes/42                  <span class="c">// แก้บางส่วน — body มีเฉพาะ field ที่จะแก้</span>
+{"minutes":35}</code></pre>
+
+<p>
+  สังเกตว่า <code>PUT /recipes/42</code> ใช้<strong>สองช่องพร้อมกัน</strong> —
+  <code>42</code> อยู่ใน path (ระบุตัว) ส่วนเนื้อหาอยู่ใน body (เนื้อข้อมูล)
+  <br>คนใหม่มักเผลอยัด <code>id</code> ลงไปใน body ด้วย แล้วเกิดคำถามที่ตอบไม่ได้:
+  ถ้า <code>PUT /recipes/42</code> แต่ body เขียน <code>{"id":99,...}</code> จะเชื่อใคร?
+  <strong>ให้ path เป็นเจ้าของคำตอบเสมอ</strong> แล้ว <code>id</code> ใน body ก็ไม่ต้องมีตั้งแต่แรก
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ยัดทุกอย่างลง body</h4>
+    <pre><code>POST /recipes/search
+{"id":42,
+ "q":"ต้มยำ",
+ "sort":"rating",
+ "limit":10}</code></pre>
+    <p style="margin-bottom:0">
+      ก๊อป URL ส่งให้เพื่อนไม่ได้ · bookmark ไม่ได้ · กด refresh แล้วเบราว์เซอร์ถามว่าจะส่งซ้ำไหม ·
+      cache ฝั่ง CDN (เครื่องกลางที่ช่วยจำคำตอบไว้แทน server) ทำไม่ได้
+      เพราะ <code>POST</code> ที่ URL เดียวกันคือคนละคำขอ
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ แยกตามหน้าที่</h4>
+    <pre><code>GET /recipes/42
+
+GET /recipes
+    ?q=ต้มยำ
+    &amp;sort=rating
+    &amp;limit=10</code></pre>
+    <p style="margin-bottom:0">
+      URL เดียวเล่าเรื่องได้ทั้งเรื่อง · แชร์ได้ · เก็บ cache ได้ ·
+      และคน<em>อ่าน log</em> รู้ทันทีว่าเกิดอะไรขึ้น โดยไม่ต้องไปขุด body
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>Content-Type ไม่ใช่แค่ป้ายประดับ</strong> — มันคือคำสั่งว่า "จงอ่าน body ด้วยวิธีนี้"
+    <br>ในผลรันหัวข้อ 2 จะเห็น <code>application/x-www-form-urlencoded</code> ทำให้
+    <code>c.PostForm</code> อ่าน <code>sort=name</code> ออก · ถ้าเป็น JSON ก็ต้องอ่านด้วย
+    <code>ShouldBindJSON</code> แทน
+    <br>ฝั่ง Gin มีความต่างที่ทำให้งงได้: <code>ShouldBindJSON</code>
+    <strong>บังคับอ่านเป็น JSON ไม่สนใจ header เลย</strong> ส่วน <code>ShouldBind</code> เฉย ๆ
+    <strong>เลือกวิธีอ่านจาก Content-Type</strong>
+    <br>ส่ง JSON มาแต่ติดป้าย <code>text/plain</code> → <code>ShouldBind</code> จะไปอ่านแบบ form
+    แล้วได้ค่าว่าง จบด้วย error ว่า field <code>required</code> ไม่ผ่าน ทั้งที่ JSON ถูกทุกตัวอักษร
+    ส่วน <code>ShouldBindJSON</code> เคสเดียวกันนี้อ่านผ่านสบาย ๆ
+  </p>
+</div>
+
+<h2>7 · header — metadata ของการเชื่อมต่อ</h2>
+
+<p>
+  ไม้บรรทัดของ header คือ: <strong>มันจะยังจริงอยู่ไหมถ้าเปลี่ยนไปเรียก endpoint อื่น</strong>
+  (<em>endpoint</em> = คู่ "method + path" หนึ่งคู่ เช่น <code>GET /recipes</code> คือ endpoint หนึ่ง)
+  <br>token ของฉัน — จริงอยู่ทุก endpoint · "ฉันส่ง JSON" — จริงทุกครั้งที่ฉันส่ง JSON ·
+  แต่ "เรียงตามคะแนน" จริงเฉพาะกับ <code>GET /recipes</code> เท่านั้น → อันหลังคือ query ไม่ใช่ header
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>header</th><th>ทิศทาง</th><th>แปลว่า</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>Authorization: Bearer &lt;token&gt;</code></td><td>client → server</td><td>"นี่คือหลักฐานว่าฉันเป็นใคร" — ไม่ใช่ข้อมูลของ resource จึงไม่ควรอยู่ใน URL หรือ body</td></tr>
+    <tr><td><code>Content-Type: application/json</code></td><td>ทั้งสองทาง</td><td>"ของที่แนบมากับ<em>ข้อความนี้</em> เป็นชนิดนี้ จงอ่านด้วยวิธีนั้น"</td></tr>
+    <tr><td><code>Accept: application/json</code></td><td>client → server</td><td>"ตอบกลับมาเป็นชนิดนี้ได้ไหม" — เป็นคำขอ ไม่ใช่คำสั่ง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  คู่ที่คนสลับกันบ่อยที่สุดคือ <code>Content-Type</code> กับ <code>Accept</code>
+  <br>อยู่ใน request เหมือนกันแต่คนละเรื่อง: <strong><code>Content-Type</code> พูดถึงของที่แนบไปกับ request นี้</strong>
+  ส่วน <strong><code>Accept</code> พูดถึงของที่อยากได้กลับมา</strong>
+  <br>เวลาส่ง <code>GET</code> ที่ไม่มี body การใส่ <code>Content-Type</code> จึงไม่มีความหมายอะไรเลย —
+  ไม่มีของให้ติดป้าย
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔤 <strong>ชื่อ header ไม่แยกตัวพิมพ์เล็กใหญ่</strong> (พิสูจน์ในหัวข้อ 4 แล้ว:
+    <code>Authorization</code> / <code>authorization</code> / <code>AUTHORIZATION</code> ได้ค่าเดียวกัน)
+    <br>แต่ <strong>ค่า</strong>ข้างในแยก — <code>Bearer abc123</code> กับ <code>bearer abc123</code>
+    ไม่ใช่สตริงเดียวกัน ถ้าโค้ดคุณตัดคำหน้าออกด้วยการเทียบสตริงตรง ๆ ก็จะพังกับ client บางตัว
+  </p>
+</div>
+
+<h2>8 · กับดักตัวจริง — อย่าส่ง token หรือ password ทาง query</h2>
+
+<p>
+  ถึงหัวข้อที่ผมอยากให้จำมากที่สุดของบท มันไม่ใช่เรื่องความสวยงามของ API
+  แต่เป็นเรื่องที่ทำให้บริษัทต้อง revoke token ทั้งระบบ (= ยกเลิกบัตรผ่านของทุกคนแล้วออกใหม่)
+  <br>ผมเปิด server จริงด้วย <code>gin.Default()</code> ซึ่งมี Logger ติดมาให้ตามค่า default —
+  Logger คือตัวที่พิมพ์ <strong>access log</strong> ออกมาหนึ่งบรรทัดต่อหนึ่ง request
+  (เวลา · status · path ที่ถูกเรียก) แล้วยิงสามครั้ง — ส่งความลับคนละช่องกัน:
+</p>
+
+<div class="predict">
+  <pre><code>$ curl "http://127.0.0.1:18135/orders?token=SECRET-abc123&amp;sort=name"
+
+$ curl -H "Authorization: Bearer SECRET-abc123" \
+       "http://127.0.0.1:18135/orders?sort=name"
+
+$ curl -X POST -H "Content-Type: application/json" \
+       -d '{"password":"p@ssw0rd"}' "http://127.0.0.1:18135/login"</code></pre>
+  <p class="ask">
+    ทั้งสามครั้งตอบ <code>200</code> เหมือนกันหมด —
+    <strong>แล้วใน access log ที่ server พ่นออกมา จะเห็นความลับของครั้งไหนบ้าง?</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>[GIN] 2026/08/20 - 22:04:34 | 200 | 104.125µs |       127.0.0.1 | GET      "/orders?<strong>token=SECRET-abc123</strong>&amp;sort=name"
+[GIN] 2026/08/20 - 22:04:34 | 200 |  111.75µs |       127.0.0.1 | GET      "/orders?sort=name"
+[GIN] 2026/08/20 - 22:04:34 | 200 |  74.25µs |       127.0.0.1 | POST     "/login"</code></pre>
+    <p>
+      <strong>บรรทัดแรกมี token เต็ม ๆ อยู่ใน log</strong> —
+      ส่วนบรรทัดสองที่ส่ง token ตัวเดียวกันทาง header และบรรทัดสามที่ส่ง password ทาง body
+      <strong>ไม่มีร่องรอยของความลับเลยสักตัวอักษร</strong>
+    </p>
+    <p style="margin-bottom:0">
+      และนี่คือ log ของ Gin เปล่า ๆ ที่ไม่ได้ตั้งค่าอะไรเป็นพิเศษ
+      ของจริง log ก้อนนี้จะถูกส่งต่อไปอีกหลายที่
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ทำไม query ถึงอันตรายกว่าช่องอื่น</span>
+  <p style="margin-bottom:0">
+    เพราะ query เป็น<strong>ส่วนหนึ่งของ URL</strong> และ URL ถูกจดไว้ทุกที่ตลอดทาง:
+    <br><strong>1.</strong> access log ของ server (เห็นกับตาข้างบนแล้ว) และของทุกเครื่องกลางที่ request วิ่งผ่าน
+    ก่อนถึงเรา (reverse proxy / load balancer — ตัวรับ request แทน server แล้วส่งต่อเข้ามาให้)
+    <br><strong>2.</strong> ประวัติการเข้าเว็บของ browser — ซึ่งอาจ sync ขึ้น cloud ของผู้ใช้
+    <br><strong>3.</strong> header <code>Referer</code> ที่ browser แนบไปให้เว็บอื่นตอนผู้ใช้กดลิงก์ออกจากหน้านั้น
+    <br><strong>4.</strong> ระบบรวม log / monitoring ที่ทีมเปิดดูกันได้ทั้งทีม และเก็บย้อนหลังเป็นเดือน
+    <br>ทั้งสี่ที่นี้ <strong>ยังจดต่อไปแม้คุณจะใช้ HTTPS</strong> — HTTPS ป้องกันคนแอบดักกลางทาง
+    ไม่ได้ป้องกันปลายทางที่ตั้งใจจดเอง
+    <br>ส่วน header กับ body <strong>ไม่ได้อยู่ใน log พวกนี้โดยค่า default</strong> ตามที่รันให้ดู
+  </p>
+</div>
+
+<p>
+  มาตรฐาน OAuth 2.0 Bearer Token (RFC 6750) เองก็นิยามวิธีส่ง token ทาง query ไว้จริง
+  แต่กำกับไว้ว่า <strong>ไม่ควรใช้</strong> และให้เหตุผลตรงกับที่เราเพิ่งเห็น —
+  URL ที่มี token มีโอกาสสูงมากที่จะถูกจดลง log
+  <br>สรุปเป็นกฎที่ใช้ได้ตลอดชีวิต: <strong>อะไรที่หลุดแล้วต้องรีเซ็ต — ห้ามอยู่ใน URL</strong>
+  (token, password, OTP, เลขบัตร, เลขบัตรประชาชน)
+  ให้ไป header หรือ body เท่านั้น
+</p>
+
+<h2>9 · GET ที่มี body — ทำได้ แต่ห้ามพึ่ง</h2>
+
+<p>
+  คำถามที่ต้องมีคนถามเสมอ: "ถ้าเงื่อนไขค้นหาซับซ้อนมาก ส่ง <code>GET</code> พร้อม body JSON เลยได้ไหม"
+  <br>ทางเทคนิค — ได้ ผมรัน server จริงแล้วยิงด้วย <code>curl</code> ตรง ๆ handler อ่าน body ออกครบ:
+</p>
+
+<pre><code>$ curl -X GET -H "Content-Type: application/json" -d '{"sort":"name"}' http://127.0.0.1:18136/echo
+{"body":"{\"sort\":\"name\"}","bodyLen":<strong>15</strong>,"method":"GET"}
+
+$ curl http://127.0.0.1:18136/echo
+{"body":"","bodyLen":<strong>0</strong>,"method":"GET"}</code></pre>
+
+<p>
+  แต่ "รันบนเครื่องตัวเองแล้วได้" กับ "ใช้ได้จริงบนอินเทอร์เน็ต" คนละเรื่องกัน
+  <br>สเปก HTTP (RFC 9110) บอกไว้ว่า <strong>body ที่ติดมากับ <code>GET</code> ไม่มีความหมายที่นิยามไว้</strong>
+  และ server มีสิทธิ์ปฏิเสธ request แบบนั้นได้ — ซึ่งแปลว่าทุกตัวที่อยู่ระหว่างทาง
+  (proxy, CDN, gateway, API client library, เครื่องมือทดสอบ) <strong>มีสิทธิ์ตัด body ทิ้งอย่างถูกต้องตามสเปก</strong>
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ ทำไมบั๊กแบบนี้ถึงเจ็บที่สุด</span>
+  <p style="margin-bottom:0">
+    เพราะมัน <strong>ทำงานได้ตอน dev</strong> (ไม่มี proxy คั่น) แล้วไปเงียบตอน production
+    โดย<strong>ไม่มี error</strong> — server แค่ได้ body ว่าง แล้วตอบ "ไม่พบผลลัพธ์" อย่างสุภาพ
+    <br>ผมทดสอบให้ดูได้แค่ว่า "ส่งตรงถึงกันแล้วอ่านออก" (ตัวเลข 15 ข้างบน) —
+    <strong>ผมทดสอบ proxy จริงไม่ได้ในบทนี้ จึงไม่มีตัวเลขให้ดู</strong>
+    เชื่อได้เฉพาะสิ่งที่รันให้ดู ที่เหลือคือสิ่งที่สเปกอนุญาตให้เขาทำ
+    <br>ทางออกที่ปลอดภัย: ถ้าเงื่อนไขยาวเกิน URL จริง ๆ ให้ทำเป็น
+    <code>POST /recipes/search</code> ไปเลย — ยอมเสียความเป็น GET อย่างเปิดเผย
+    ดีกว่าใช้ GET ที่อาจโดนถอดไส้ระหว่างทาง
+  </p>
+</div>
+
+<h2>10 · สรุปเป็นตารางเดียว</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th>path</th><th>query</th><th>body</th><th>header</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>ตอบคำถามว่า</strong></td><td>อันไหน</td><td>เอาแบบไหนบ้าง</td><td>ข้อมูลคืออะไร</td><td>ใครขอ / ขอยังไง</td></tr>
+    <tr><td><strong>ตัดออกแล้ว</strong></td><td>ไม่รู้จะทำกับอะไร</td><td>ยังตอบได้ แค่กว้างกว่า</td><td>ไม่มีของจะบันทึก</td><td>ไม่รู้ว่าเป็นใคร</td></tr>
+    <tr><td><strong>โผล่ใน log ไหม</strong></td><td>โผล่</td><td><strong>โผล่</strong></td><td>ไม่โผล่</td><td>ไม่โผล่</td></tr>
+    <tr><td><strong>แชร์ URL ได้ไหม</strong></td><td>ได้</td><td>ได้</td><td>ไม่ได้</td><td>ไม่ได้</td></tr>
+    <tr><td><strong>Gin อ่านด้วย</strong></td><td><code>c.Param</code> / tag <code>uri</code></td><td><code>c.Query</code> / tag <code>form</code></td><td><code>ShouldBindJSON</code> / tag <code>json</code></td><td><code>c.GetHeader</code></td></tr>
+    <tr><td><strong>ตัวพิมพ์เล็กใหญ่</strong></td><td>แยก</td><td><strong>แยก</strong></td><td>ไม่แยก (ชื่อ field)</td><td>ไม่แยก (ชื่อ header)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แถวสุดท้ายมีตัวเดียวที่ต้องระวัง: <strong>query เท่านั้นที่แยกตัวพิมพ์เล็กใหญ่</strong>
+  <br>ผมยิง <code>{"TITLE":"ต้มยำ"}</code> เข้า struct ที่ติด <code>json:"title"</code> แล้วได้
+  <code>200 {"title":"ต้มยำ"}</code> — เข้า field ปกติ เพราะ <code>encoding/json</code> ของ Go
+  เทียบชื่อแบบไม่สนตัวพิมพ์ให้อยู่แล้ว
+  <br>แต่ <code>?Sort=name</code> กับ <code>?sort=name</code> คือคนละคีย์จริง ๆ ตามที่รันให้ดูในหัวข้อ 4
+</p>
+
+<div class="win">
+  <span class="label">🏁 สามประโยคที่พอจะเอาไปใช้ทั้งอาชีพ</span>
+  <p style="margin-bottom:0">
+    <strong>1.</strong> ถามตัวเองว่า "ตัดข้อมูลชิ้นนี้ออกแล้ว request ยังมีความหมายไหม" —
+    ถ้า<em>ไม่มี</em> มันคือ path หรือ body · ถ้า<em>ยังมี</em> มันคือ query
+    <br><strong>2.</strong> ถ้าข้อมูลชิ้นนั้นจริงกับทุก endpoint ไม่ใช่แค่อันนี้ — มันคือ header
+    <br><strong>3.</strong> ถ้าหลุดแล้วต้องรีเซ็ต — <strong>ห้ามอยู่ใน URL</strong> ไม่ว่าจะสะดวกแค่ไหน
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ทีมหนึ่งส่ง access token ด้วย <code>GET /orders?token=SECRET-abc123</code> ปัญหาหลักคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">URL ยาวเกินขีดจำกัดของเบราว์เซอร์ จน request ถูกตัดทิ้งกลางทางแบบเงียบ ๆ</button>
+    <button class="opt">token ไปโผล่เต็ม ๆ ใน access log ของ server และในประวัติของเบราว์เซอร์</button>
+    <button class="opt">query string ถูกเข้ารหัสคนละแบบกับ header ทำให้ฝั่ง server อ่านค่ากลับไม่ตรง</button>
+    <button class="opt">Gin อ่าน query ไม่ได้ถ้าค่ามีขีดกลางปนอยู่ ต้อง URL-encode ก่อนเสมอ</button>
+  </div>
+  <div class="explain">
+    <p>ผมยิงจริงสามครั้งด้วยความลับคนละช่อง แล้วอ่าน log ของ <code>gin.Default()</code>:
+    บรรทัดที่ส่งทาง query ขึ้นว่า
+    <code>GET "/orders?token=SECRET-abc123&amp;sort=name"</code> <strong>เต็ม ๆ</strong>
+    ส่วนบรรทัดที่ส่ง token ตัวเดียวกันทาง <code>Authorization</code> header
+    และบรรทัดที่ส่ง password ทาง body <strong>ไม่มีความลับโผล่เลย</strong>
+    <br>และ log ไม่ได้อยู่ที่เดียว — reverse proxy, ระบบรวม log, ประวัติ browser และ
+    header <code>Referer</code> ก็จดต่ออีก <strong>แม้จะใช้ HTTPS</strong>
+    เพราะ HTTPS กันคนดักกลางทาง ไม่ได้กันปลายทางที่ตั้งใจจดเอง
+    <br>ตัวเลือกที่ 1 ผิด — token ขนาดนี้ไม่ทำให้ URL ยาวเกิน และถ้ายาวเกินจริงจะได้ status error ไม่ใช่เงียบ ·
+    ตัวเลือกที่ 3 ผิด ทั้ง query และ header ส่งเป็นข้อความธรรมดาเหมือนกัน อ่านค่ากลับได้ตรงทั้งคู่ ·
+    ตัวเลือกที่ 4 ผิด ผมยิง <code>token=SECRET-abc123</code> ที่มีขีดกลางแล้วอ่านได้ปกติ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. ส่ง <code>sort=name</code> ไปใน <strong>body</strong> แบบ form แต่ handler เรียก <code>c.Query("sort")</code> จะได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้ <code>"name"</code> เพราะ Gin รวมค่าจาก query กับ form เข้าด้วยกันให้อัตโนมัติ</button>
+    <button class="opt">ได้ <code>""</code> เพราะ <code>c.Query</code> อ่านเฉพาะ query string ไม่แตะ body เลย</button>
+    <button class="opt">handler panic เพราะ Content-Type เป็น form แต่ไปเรียกฟังก์ชันฝั่ง query</button>
+    <button class="opt">ได้ <code>"name"</code> เฉพาะตอนที่ตั้ง Content-Type เป็น <code>application/json</code></button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงจาก handler ที่อ่านทุกช่องพร้อมกัน:
+    <br>ส่งทาง body → <code>{"PostForm_sort":"name","Query_sort":""}</code>
+    <br>ส่งทาง query → <code>{"PostForm_sort":"","Query_sort":"name"}</code>
+    <br><strong>สลับกันคนละช่องเป๊ะ ๆ และไม่มี error สักตัว</strong> — ตัวที่อ่านผิดช่องแค่ได้สตริงว่าง
+    ซึ่งคือหน้าตาของบั๊ก "frontend บอกส่งแล้ว backend บอกไม่ได้รับ"
+    <br>ตัวเลือกที่ 1 ผิด Gin ไม่รวมช่องให้ (มี <code>c.Query</code> กับ <code>c.PostForm</code> แยกกันชัดเจน) ·
+    ตัวเลือกที่ 3 ผิด ไม่มี panic เลย ทั้งสองรอบตอบ <code>200</code> ·
+    ตัวเลือกที่ 4 ผิด Content-Type บอกแค่วิธีอ่าน <em>body</em> ไม่มีผลกับ query string</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. อยากแยก "ไม่ส่ง <code>q</code> มาเลย" ออกจาก "ส่ง <code>?q=</code> มาแต่ค่าว่าง" ต้องใช้ตัวไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>c.Query</code> แยกได้ เพราะคืน <code>nil</code> ตอนไม่ส่ง และคืน <code>""</code> ตอนส่งค่าว่าง</button>
+    <button class="opt"><code>c.DefaultQuery("q","x")</code> แยกได้ เพราะคืน <code>"x"</code> เฉพาะตอนที่ค่าว่างเท่านั้น</button>
+    <button class="opt"><code>c.GetQuery</code> แยกได้ เพราะคืน <code>ok=false</code> ตอนไม่ส่ง และ <code>ok=true</code> ตอนส่งค่าว่าง</button>
+    <button class="opt">แยกไม่ได้เลยสักตัว ต้องไปอ่าน <code>c.Request.URL.RawQuery</code> แล้วแกะสตริงเอง</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันสามสถานการณ์:
+    <br><code>?q=go</code> → <code>Query:"go"</code>, <code>DefaultQuery:"go"</code>, <code>GetQuery:("go", true)</code>
+    <br>ไม่ส่งเลย → <code>Query:""</code>, <code>DefaultQuery:<strong>"x"</strong></code>, <code>GetQuery:("", <strong>false</strong>)</code>
+    <br><code>?q=</code> → <code>Query:""</code>, <code>DefaultQuery:<strong>""</strong></code>, <code>GetQuery:("", <strong>true</strong>)</code>
+    <br>มีแต่ตัวที่สามที่คืนค่าที่ต่างกันระหว่างสองกรณีหลัง
+    <br>ตัวเลือกที่ 1 ผิด <code>c.Query</code> คืน <code>string</code> ไม่เคยคืน <code>nil</code> และได้ <code>""</code> เท่ากันทั้งสองกรณี ·
+    ตัวเลือกที่ 2 <strong>ผิดกลับด้าน</strong>: <code>DefaultQuery</code> คืน <code>"x"</code> ตอน<em>ไม่ส่ง</em>
+    แต่พอส่ง <code>?q=</code> มาจริงกลับได้ <code>""</code> — ค่า default ทะลุ ซึ่งเป็นกับดักของมันเอง ·
+    ตัวเลือกที่ 4 ผิดเพราะ <code>GetQuery</code> ทำให้แล้ว ไม่ต้องแกะสตริงเอง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. จะผูก <code>?sort=name&amp;limit=10</code> เข้า struct ด้วย <code>c.ShouldBindQuery</code> ต้องติด tag อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>form:"sort"</code> เพราะ <code>ShouldBindQuery</code> อ่านชื่อ field จาก tag ชื่อ <code>form</code></button>
+    <button class="opt"><code>json:"sort"</code> เพราะ Gin แปลง query string เป็น JSON ก่อนแล้วค่อย unmarshal</button>
+    <button class="opt"><code>query:"sort"</code> เพราะชื่อ tag ตั้งตามชื่อช่องที่ค่ามาจริง ๆ เสมอ</button>
+    <button class="opt"><code>uri:"sort"</code> เพราะ query string นับเป็นส่วนหนึ่งของ URI ทั้งก้อน</button>
+  </div>
+  <div class="explain">
+    <p>รันจริงกับ struct ที่ใส่ <code>form:"limit,default=20"</code>:
+    ยิง <code>/recipes?sort=name&amp;limit=10&amp;page=2</code> → <code>200 {"limit":10,"page":2,"sort":"name"}</code>
+    และยิง <code>/recipes</code> เปล่า ๆ → <code>200 {"limit":20,"page":1,"sort":"created_at"}</code>
+    <br>ส่วน struct ที่ใส่ <strong><code>json</code> อย่างเดียว</strong> แล้วยิง <code>?q=go</code> มาให้
+    ยังได้ <code>Field validation for 'Q' failed on the 'required' tag</code> —
+    ค่าไม่เข้า field เลย และ<strong>ข้อความ error ไม่เคยบอกว่าคุณใส่ tag ผิดชื่อ</strong>
+    <br>ตัวเลือกที่ 2 ผิด ไม่มีขั้นตอนแปลงเป็น JSON เลย — <code>json</code> เป็น tag ของ <code>ShouldBindJSON</code> ·
+    ตัวเลือกที่ 3 ผิด Gin ไม่มี tag ชื่อ <code>query</code> ·
+    ตัวเลือกที่ 4 ผิด <code>uri</code> เป็น tag ของ <code>ShouldBindUri</code> ที่ใช้กับ path param
+    (ใส่ <code>form:"id"</code> แทน <code>uri:"id"</code> ก็ไม่เข้าเหมือนกัน)</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ส่งผิดช่องให้เห็นกับตา แล้วแก้ แล้วล็อกไว้ด้วยเทส</span>
+  <p>
+    ทำในโฟลเดอร์ใหม่ (<code>go mod init</code> ของตัวเอง +
+    <code>go get github.com/gin-gonic/gin@v1.12.0</code>) เป้าหมายไม่ใช่เขียน API ให้เสร็จ —
+    เป้าหมายคือ<strong>พิสูจน์ให้ตัวเองเห็นว่าสี่ช่องแยกกันจริง</strong>
+    <br>ทุกข้อเขียนรวมใน <code>main.go</code> ไฟล์เดียว โดยเริ่มจากโครงในกล่อง 🧰 หัวบท
+    แล้วเติม route ทีละข้อ · รันด้วย <code>go run .</code> ในโฟลเดอร์นั้น แล้วยิง <code>curl</code> จากอีกหน้าต่าง
+  </p>
+  <ol>
+    <li><strong>ทำ <code>GET /recipes</code> ที่รับ query ทั้งชุด</strong> ด้วย <code>ShouldBindQuery</code>:
+        <code>q</code>, <code>sort</code> (<code>oneof=created_at name rating</code>),
+        <code>limit</code> (<code>default=20</code>, <code>min=1,max=100</code>),
+        <code>page</code> (<code>default=1</code>, <code>min=1</code>)
+        <br>ยิงสี่เคส: ครบทุกตัว · ไม่ส่งอะไรเลย · <code>?limit=1000</code> · <code>?limit=abc</code>
+        <br><strong>สองเคสหลังได้ error คนละชนิดกัน — อธิบายให้ได้ว่าทำไม</strong></li>
+    <li><strong>ทำให้พังด้วยตัวเอง:</strong> เปลี่ยน tag จาก <code>form:"sort"</code> เป็น
+        <code>json:"sort"</code> แล้วยิง <code>?sort=name</code> อีกครั้ง
+        <br>จดไว้ว่า error ที่ได้<strong>บอกสาเหตุจริงหรือเปล่า</strong></li>
+    <li><strong>ทำ <code>POST /recipes</code></strong> ที่รับ body JSON
+        (<code>title</code>, <code>minutes</code>, <code>difficulty</code>) แล้วลองส่ง
+        <code>title</code> ไปทาง query แทน (<code>curl -X POST "…/recipes?title=abc"</code> โดยไม่ใส่ body)
+        — <strong>ทายก่อนรัน</strong>ว่าจะได้ status อะไร
+        <br><em>ทำถูกแล้วจะเห็น:</em> <code>400</code> พร้อม error <code>EOF</code> —
+        <code>ShouldBindJSON</code> ไปเปิด body แล้วไม่เจออะไรเลย ไม่เคยมองที่ query</li>
+    <li><strong>อ่าน token จาก header:</strong> เขียน handler ที่ตอบ 401 ถ้าไม่มี
+        <code>Authorization</code> แล้วลองเรียก <code>c.GetHeader</code> ด้วยตัวพิมพ์สามแบบ
+        (<code>Authorization</code> / <code>authorization</code> / <code>AUTHORIZATION</code>)
+        <br>เทียบกับ <code>c.Query</code> ด้วย <code>sort</code> กับ <code>Sort</code> —
+        <strong>ทำไมสองอันนี้ไม่เหมือนกัน</strong>
+        <br><em>ทำถูกแล้วจะเห็น:</em> header สามแบบได้ค่าเดียวกันหมด แต่ query สองแบบได้คนละค่า</li>
+    <li><strong>เห็นการรั่วกับตา:</strong> รันด้วย <code>gin.Default()</code> จริง ๆ แล้ว
+        <code>curl</code> สองครั้ง — ครั้งแรกส่ง token ทาง <code>?token=</code>
+        ครั้งที่สองส่งทาง header
+        <br>เปิด log เทียบสองบรรทัด แล้ว<strong>เขียนกฎของทีมคุณเองหนึ่งบรรทัด</strong>ว่าอะไรห้ามอยู่ใน URL</li>
+    <li><strong>ท้าทาย:</strong> ยิง <code>curl -X GET -d '{"q":"ต้มยำ"}'</code> เข้า handler ที่อ่าน
+        <code>c.Request.Body</code> — อ่านออกไหม? แล้วตอบให้ได้ว่า
+        <strong>ทำไม "อ่านออกบนเครื่องเรา" ยังไม่พอที่จะเอาไปใช้จริง</strong>
+        <br><em>ทำถูกแล้วจะเห็น:</em> ความยาว body ไม่เป็น <code>0</code> — คือมันมาถึงจริง
+        ซึ่งเป็นเหตุผลที่กับดักนี้หลอกคนได้</li>
+    <li><strong>เขียนเทสพิสูจน์</strong> (<code>httptest</code> + <a href="../../day-5/lessons/0016-table-driven-test.html">table-driven</a>):
+        เขียนเทสหนึ่งตัวที่ยิง <code>sort=name</code> เข้าทาง <strong>body</strong>
+        แล้ว assert ว่า handler ตอบด้วยค่า default (<code>created_at</code>) ไม่ใช่ <code>name</code>
+        <br><strong>เทสนี้ต้อง fail ทันทีถ้ามีคนแอบเปลี่ยนโค้ดไปอ่าน body</strong> —
+        นี่คือเทสที่ล็อก "สัญญาว่าช่องไหนเป็นของใคร" ไว้ให้ทั้งทีม</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 1 (เคส limit)</button>
+  <div class="answer">
+    <p>ผลรันจริงของผมสองเคสนั้น:</p>
+    <pre style="margin:0.6rem 0"><code>GET /recipes?limit=1000  -&gt; 400 {"error":"Key: 'ListQuery.Limit' Error:Field validation for 'Limit' failed on the 'max' tag"}
+GET /recipes?limit=abc   -&gt; 400 {"error":"strconv.ParseInt: parsing \"abc\": invalid syntax"}</code></pre>
+    <p style="margin-bottom:0">
+      <strong>คนละด่านกัน</strong> — <code>1000</code> แปลงเป็น <code>int</code> สำเร็จ
+      แล้วไปตกที่ด่าน validate (<code>max</code>) · ส่วน <code>abc</code>
+      <strong>ตกตั้งแต่ด่านแปลงชนิด</strong> จึงยังไม่มีโอกาสได้เจอ validator เลย
+      <br>ทั้งคู่ควรตอบ <strong>400</strong> เหมือนกัน แต่<strong>อย่าส่งข้อความดิบสองอันนี้ให้ผู้ใช้</strong> —
+      อันแรกโผล่ชื่อ struct ภายในของคุณ อันหลังโผล่ชื่อฟังก์ชันของ Go
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p class="ask" style="margin-bottom:0">
+    💬 <strong>ตรงไหนที่รันแล้วได้ไม่ตรงกับในบท ส่ง output มาได้เลย</strong> —
+    โดยเฉพาะข้อ 5 ถ้า log ในเครื่องคุณหน้าตาต่างจากของผม ผมอยากเห็น
+    <br>และถ้ามีข้อมูลชิ้นไหนในโปรเจกต์จริงของคุณที่<strong>เดินคำถามสามข้อแล้วยังตัดสินไม่ได้ว่าไปช่องไหน</strong>
+    เอามาถามได้ — เคสก้ำกึ่งคือเคสที่สอนได้ดีที่สุด
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0034-http-status-code.html">← บทเรียน 34</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0036-rest-naming-idempotency.html">บทเรียน 36 → กฎตั้งชื่อ</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.1">RFC 9110 §9.3.1 — GET</a> — สเปกบอกเองว่า body ที่ติดมากับ <code>GET</code> ไม่มีความหมายที่นิยามไว้ และ server ปฏิเสธได้</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-5.1">RFC 9110 §5.1 — Field Names</a> — ที่มาของ "ชื่อ header ไม่แยกตัวพิมพ์เล็กใหญ่"</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc6750#section-2.3">RFC 6750 §2.3 — URI Query Parameter</a> — วิธีส่ง token ทาง query มีนิยามอยู่จริง แต่กำกับว่า <strong>SHOULD NOT</strong> ใช้ เพราะ URL มักถูกจดลง log</li>
+  <li><a href="https://pkg.go.dev/github.com/gin-gonic/gin#Context.GetQuery">pkg.go.dev — <code>Context.GetQuery</code></a> · <a href="https://pkg.go.dev/github.com/gin-gonic/gin#Context.DefaultQuery">DefaultQuery</a> · <a href="https://pkg.go.dev/github.com/gin-gonic/gin#Context.QueryArray">QueryArray</a></li>
+  <li><a href="https://pkg.go.dev/github.com/gin-gonic/gin#Context.ShouldBindQuery">pkg.go.dev — <code>ShouldBindQuery</code></a> · <a href="https://pkg.go.dev/github.com/gin-gonic/gin#Context.ShouldBindUri">ShouldBindUri</a> — ตัวไหนอ่าน tag อะไร</li>
+  <li><a href="https://pkg.go.dev/net/http#Header.Get">pkg.go.dev — <code>http.Header.Get</code></a> — อธิบายว่าทำไมตัวพิมพ์ของชื่อ header ไม่สำคัญ</li>
+  <li><a href="https://pkg.go.dev/github.com/go-playground/validator/v10">pkg.go.dev — validator/v10</a> — ที่มาของ tag <code>oneof</code>, <code>min</code>, <code>max</code> ที่ใช้ในบทนี้</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept">MDN — <code>Accept</code></a> · <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Type">Content-Type</a> — เส้นแบ่งระหว่าง "ของที่ส่งไป" กับ "ของที่อยากได้กลับ"</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -23,7 +23,7 @@ assets/lesson.css             ← ทุกหน้าใช้ร่วมก�
 assets/quiz.js                ← quiz + predict + ปุ่มเฉลย + ติ๊ก "เรียนจบบทนี้"
 assets/progress.js            ← ติ๊กบทที่ทำเสร็จในหน้าแรก (localStorage)
 assets/md.js                  ← markdown → HTML ใช้โดย docs.html เท่านั้น
-day-N/lessons/NNNN-slug.html  ← เลขบทเรียนต่อเนื่องข้ามวัน (global) ตอนนี้ day-1..day-7
+day-N/lessons/NNNN-slug.html  ← เลขบทเรียนต่อเนื่องข้ามวัน (global) ตอนนี้ day-1..day-8
 day-N/reference/cheatsheet.html
 vercel.json  .gitignore  robots.txt  README.md   ← สำหรับ deploy
 from_teacher/                 ← PDF ต้นฉบับจากผู้สอน · gitignore ไว้ ไม่ push ขึ้น repo
@@ -31,7 +31,7 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
 
 **เวลาเพิ่มวันใหม่:**
 1. `mkdir -p day-N/lessons day-N/reference`
-2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0032)
+2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0042)
 3. เขียน `day-N/reference/cheatsheet.html` ครอบคลุมสไลด์ทั้งวัน
 4. เพิ่ม `<section class="day">` ใน `index.html` + อัปเดตตัวเลขใน `.progress-summary`
    + แก้การ์ด `.upcoming` ให้เป็นวันถัดไป
@@ -71,17 +71,25 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
 - **ตั้งแต่ Day 6 ทุกบทที่เจอ deadlock ต้องชี้ไปที่ `goroutine N [...]`** —
   ผู้เรียนมีจุดเริ่มวินิจฉัยที่แน่นอนจุดเดียว ดีกว่าจำอาการทีละแบบ ·
   ตาราง "แปลคำในวงเล็บ" อยู่ใน cheat sheet Day 6 หัวข้อ 11
+- **Day 8 แบ่งเป็นสองครึ่งที่คนละธรรมชาติ** — บท 33–36 **ไม่มีโค้ด Go เลย**
+  (REST · status code · query/body/header · กฎตั้งชื่อ) เพราะการเลือก `404` หรือ `409`
+  ไม่ใช่เรื่องของภาษา · บท 37–42 เป็นโค้ดล้วน · ถ้าเอาสองครึ่งปนกัน ผู้เรียนจะจำ API
+  ของ Gin ได้แต่ยังออกแบบ endpoint ไม่เป็น (ดู `learning-records/0009`)
+- **ตั้งแต่บท 37 ทุกบทที่มี handler ต้องลงท้ายด้วย `httptest`** — เป็นวิธีเดียว
+  ที่ทำให้ภารกิจ "เขียนเทสพิสูจน์" (กฎตั้งแต่ Day 5) ยังใช้ได้เมื่อโค้ดกลายเป็น HTTP server
+- **สอน `net/http` ให้จบก่อนแตะ Gin เสมอ** — สไลด์แสดง net/http แค่ครึ่งหน้าแล้วข้ามไป Gin
+  ถ้าทำตามสไลด์ ผู้เรียนจะไม่มีวันรู้ว่า framework ทำอะไรให้ · บท 38 จึงเป็น
+  **การรีแฟกเตอร์โค้ดบท 37 ทีละบรรทัด** ไม่ใช่บทสอน Gin ตั้งแต่ศูนย์
 - **`go vet ./...` เลื่อนขั้นเป็นคำสั่งประจำวันตั้งแต่ Day 6** —
   เป็นวันแรกที่ vet จับบั๊กที่ compiler จับไม่ได้ถึง 3 แบบ
   (copy lock · lostcancel · stdversion)
 
 ## Backlog บทเรียนถัดไป
 
-1. **`net/http` + routing** — สไลด์ Day 6 มี `handler.go` ที่ใช้
-   `http.ResponseWriter`/`*http.Request` แต่ไม่เคยสอน · บทเรียน 27 จึงอธิบาย
-   *หน้าที่* ของ handler แต่ภารกิจหยุดที่ service/repository ·
-   **เป็นช่องว่างที่ใหญ่ที่สุดตอนนี้** และเป็นเนื้อหาสัปดาห์ที่ 3
-2. **`httptest`** — จำเป็นทันทีที่เริ่ม REST API · ต่อยอดจากบท 14–17
+1. ~~**`net/http` + routing**~~ — **ทำแล้วในบท 37** (ServeMux + method pattern
+   Go 1.22+ + `r.PathValue`) และบท 38 (Gin) · ช่องว่างที่ใหญ่ที่สุดปิดแล้ว
+2. ~~**`httptest`**~~ — **ทำแล้วในบท 40** ครบทั้ง `NewRecorder`, table-driven,
+   `assert.JSONEq` และการเรียก handler ตรง ๆ โดยไม่ผ่าน router
 3. ~~**เขียนเทสให้ repository ที่ต่อ database จริง**~~ — **ทำแล้วในบท 29–30**
    ด้วย Testcontainers (container จริง ไม่ใช่ DB ที่ลงในเครื่อง)
 4. **Closure + first-class function** — ยังอยู่ใน cheat sheet Day 3 อย่างเดียว
@@ -104,7 +112,18 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
     `errgroup` คือ WaitGroup ที่รวบ error ได้ ต่อยอดจากบท 21+25 ตรง ๆ
 12. ~~รอสไลด์ Day 7~~ — **มาแล้ว ทำเป็นบท 28–32**
     (Mockery · Testcontainers · Goose · Redis) · ครึ่งแรกของสไลด์ซ้ำกับบท 27 จึงข้าม
-13. รอสไลด์ Day 8 — เหลือส่วนที่เป็น API จริง ๆ: build / secure / deploy RESTful API
+13. ~~รอสไลด์ Day 8~~ — **มาแล้ว ทำเป็นบท 33–42** (REST · net/http · Gin · Swagger) ·
+    ครึ่งแรกของสไลด์ (Cache/Redis) ซ้ำกับบท 32 จึงข้าม เหลือแค่ `SET … EX` กับ `GETDEL`
+    ที่ยกไปไว้ใน cheat sheet
+14. **`http.Server` + timeout + graceful shutdown** — บท 37 ใช้ `http.ListenAndServe`
+    ซึ่งไม่มี timeout สักตัว · production ต้องใช้ `&http.Server{ReadTimeout, WriteTimeout}`
+    + `srv.Shutdown(ctx)` ต่อยอดจาก `context` ในบท 25 ตรง ๆ
+15. **pagination ที่ทำถูกวิธี** — บท 35 สอน `?page=&limit=` แต่ยังไม่ได้พูดถึง
+    cursor-based ที่ไม่พังเมื่อข้อมูลถูกแทรกระหว่างหน้า
+16. **auth จริง ๆ (Keycloak / JWT)** — สไลด์ Day 8 มีแค่ endpoint ใน API spec
+    (`/login` `/callback` `/exchange` `/logout`) ยังไม่มีเนื้อหา · น่าจะมาใน Day 9
+17. **rate limiting · structured logging (`log/slog`)** — ไม่มีในสไลด์
+    แต่เป็นสองอย่างแรกที่จะต้องเพิ่มทันทีที่ API ขึ้นจริง
 
 ## เรื่องที่ต้องถามผู้เรียน (ยังค้าง)
 
@@ -131,12 +150,32 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
 - **ก่อนยิง workflow ยาว ๆ ให้ `node --check` สคริปต์ก่อน** — Day 7 ลืมประกาศตัวแปร
   ทำให้เฟส Write พังทั้งหมด · กู้ได้ด้วย `resumeFromRunId` (ผลตรวจที่แพงถูก cache ไว้)
   แต่เสียเวลารอบหนึ่งฟรี ๆ
+- ⚠️ **brief ที่เราเขียนให้ agent ก็ผิดได้** (บทเรียนจาก Day 8) — ผมเขียนใน brief ว่า
+  "`/users/:id` ชนกับ `/users/me` แล้ว Gin panic" ซึ่ง**ผิด** · agent เฟส Verify รันจริง
+  ได้ `OK (no panic)` แล้วไปรันซ้ำบน gin v1.9.1 ยืนยันอีกรอบ · agent ที่เขียนบทเลือกเชื่อผลรัน
+  ไม่เชื่อ brief แล้วเอาความเข้าใจผิดนั้นไปทำเป็น predict-the-output เสียเลย
+  **→ ประโยคที่กันไว้ได้คือ "ถ้าผลจริงต่างจากที่คำถามคาดไว้ ให้รายงานตามจริง อย่าดัดให้ตรงคำถาม"**
+  ต้องมีในคำสั่งของ agent ตรวจทุกครั้ง
+- **แยกเฟส Verify ออกจาก Write ได้ผลกว่าให้ agent ตัวเดียวทำทั้งคู่** (Day 8) —
+  Day 7 ให้ agent ตรวจกับเขียนพร้อมกัน มันรายงาน "สไลด์ผิด" 21 จุด จริง 5 จุด ·
+  Day 8 แยกเฟส (5 ตรวจ → 10 เขียน → 10 audit) agent ที่ตรวจไม่มีแรงจูงใจจะสรุปแทนคนเขียน
+- **ข้อห้าม "ห้ามแต่ง output" ต้องเขียนในคำสั่งของ audit ด้วย ไม่ใช่แค่ตอนเขียน** —
+  จาก 25 จุดที่ auditor เลือกไม่แก้ มี 8 จุดที่เหตุผลคือ *"แก้แล้วเท่ากับปลอม output"*
+  (เลขบรรทัดใน `go test`, ชื่อ module ที่รันคนละโฟลเดอร์, `0.493s` vs `0.494s`)
+- **`swag` CLI กับ `github.com/swaggo/swag` ใน `go.mod` ต้องเป็นรุ่นใกล้กัน** —
+  `gin-swagger v1.6.1` ลาก library v1.8.12 มา แต่ CLI `@latest` เป็น v1.16.4 →
+  `unknown field LeftDelim` คอมไพล์ไม่ผ่าน · แก้ด้วย `go get github.com/swaggo/swag@latest`
 - เพิ่ม component ใหม่ให้ใส่ใน `assets/` **อย่า inline ในบทเรียน**
 - **ปุ่ม `.reveal` ใช้ได้ทั้งใน `.predict` และ `.task`** (เพิ่มตอน Day 6) —
   contract: `button.reveal` + `div.answer` เป็นลูกของ card **หนึ่งปุ่มต่อหนึ่ง card**
   · `quiz.js` ผูกจากตัวปุ่มขึ้นไปหา `closest('.predict, .task')`
   ⚠️ ตอน Day 6 เคยใส่ปุ่มใน `.task` ก่อนแก้ `assets/` → เฉลยโผล่ทันทีและปุ่มกดไม่ได้
   **ถ้าจะใช้ component เดิมในที่ใหม่ ต้องเช็ค CSS + JS ว่ารองรับก่อน**
+- **`.ask` เป็น `<p class="ask">` แทรกได้หลายจุดในบท ไม่ใช่ `<div>` ก้อนเดียวท้ายบท** —
+  ตอน Day 8 เขียน brief ผิดเป็น `<div class="ask">` ก่อน `nav` · agent ทำตามของจริงในไฟล์
+  (บท 32 มี 3 จุด) แล้วรายงานว่า brief ไม่ตรง — ถูกแล้ว **ยึดไฟล์จริงเป็นสัญญา ไม่ใช่ brief**
+- **"ตัวเลือกที่ N" ในคำอธิบาย quiz นับเริ่มที่ 1** (ตรงกับที่ผู้เรียนเห็น)
+  ส่วน `data-answer` นับเริ่มที่ 0 — สองอย่างนี้ตั้งใจให้ต่างกัน อย่าไปไล่แก้
 - quiz: ตัวเลือกทุกข้อควรยาวเท่ากัน (คำ/ตัวอักษร) ไม่ให้เดาได้จากรูปแบบ
 - ทุกบทต้องมี: predict-the-output ≥1 · quiz 4 ข้อ · ภารกิจ 1 ชุด ·
   แหล่งอ้างอิงหลัก 1 แหล่ง · คำเชิญให้ถามกลับ
@@ -152,7 +191,7 @@ push ขึ้น `main` แล้ว deploy อัตโนมัติ · bran
   ถ้าจะเปลี่ยนใจ ลบบรรทัดสุดท้ายใน `.gitignore`
 - **`vercel.json` มีแค่ 2 เรื่อง**: cache header · เสิร์ฟ `.md` เป็น
   `text/plain; charset=utf-8` (ไม่งั้นเบราว์เซอร์ดาวน์โหลดไฟล์แทนที่จะเปิดอ่าน)
-- **`cleanUrls` ตั้ง `false` โดยตั้งใจ** — ลิงก์ภายในทั้ง 331 เส้นลงท้าย `.html`
+- **`cleanUrls` ตั้ง `false` โดยตั้งใจ** — ลิงก์ภายในทั้ง 583 เส้นลงท้าย `.html`
   ถ้าเปิด clean URL ทุกลิงก์จะโดน redirect 308 ก่อนเสมอ ช้าโดยไม่ได้อะไร
 - ⚠️ **`docs.html` ใช้ `fetch()` จึงเปิดด้วย `file://` ไม่ได้** (CORS)
   หน้าอื่นเปิดตรง ๆ ได้หมด · ถ้าจะดู docs ในเครื่อง ให้รัน

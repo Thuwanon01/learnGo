@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 33 — REST: ทุกอย่างคือ resource</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 33 · Day 8 · REST</p>
+  <h1>REST — ทุกอย่างคือ resource</h1>
+  <p class="meta">~14 นาที · ต้องมี: <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> (JSON กับ struct tag)</p>
+  <p class="standfirst">
+    32 บทที่ผ่านมาเราคุยกับข้อมูลผ่าน <strong>ฟังก์ชันในโปรแกรมเดียวกัน</strong> —
+    เรียกผิดคอมไพเลอร์ด่าให้ทันที
+    <br>ตั้งแต่บทนี้ไป คนเรียกอยู่<strong>คนละเครื่อง</strong> ไม่มีคอมไพเลอร์คนกลาง
+    เหลือแค่ข้อความสองก้อนวิ่งข้ามสาย — <em>คำขอ</em> กับ <em>คำตอบ</em>
+    <br>REST คือชุดข้อตกลงว่าข้อความสองก้อนนั้นควรหน้าตายังไง
+    บทนี้จะพิสูจน์ให้ดูสองเรื่องที่คนใหม่พลาดเสมอ:
+    <strong>server จำอะไรไม่ได้เลยจริง ๆ</strong> และ
+    <strong><code>PUT</code> กินอีเมลของ user หายไปได้โดยไม่มี error สักบรรทัด</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p>
+    <strong>📐 บทนี้ไม่มีโค้ด Go ให้พิมพ์ตาม</strong> — เป็นบท<strong>ออกแบบ</strong>
+    ทุกตัวอย่างจึงเป็น request/response ที่เป็นข้อความล้วน
+    <br>แต่ผลลัพธ์ทุกก้อนในหน้านี้<strong>ยิงจริงใส่ server จริง</strong>
+    (Go 1.26.5 darwin/arm64, <code>net/http</code> ล้วน ไม่มี framework, ยิงด้วย <code>curl 8.13.0</code>)
+    <br>โค้ดฝั่ง server ที่ทำให้เกิดผลพวกนี้จะได้เขียนเองในบทถัด ๆ ไปของ Day 8
+    <br>คุณจึงยัง<strong>รันตามไม่ได้ในบทนี้</strong> — อ่านผลที่แปะไว้ให้เข้าใจก่อนพอ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>อ่านบรรทัด <code>curl</code> ยังไง</strong> — <code>curl</code> คือโปรแกรมบน terminal
+    ที่ยิง HTTP request ออกไปหนึ่งครั้งแล้วพิมพ์คำตอบออกมา ใช้แทน browser ตอนทดสอบ API
+    <br><code>-X PUT</code> = เลือก method (ไม่ใส่ = <code>GET</code>) ·
+    <code>-d '…'</code> = ส่ง body ก้อนนี้ไปด้วย ·
+    <code>-H 'ชื่อ: ค่า'</code> = แนบ header หนึ่งบรรทัด ·
+    <code>-i</code> = ให้พิมพ์ <em>header ของคำตอบ</em> ออกมาด้วย ไม่ใช่แค่ body
+    <br>เพราะงั้นตัวอย่างที่ขึ้นต้นด้วย <code>HTTP/1.1 200 OK</code> คือตัวอย่างที่ผมใส่ <code>-i</code>
+    ส่วนตัวอย่างที่เห็นแต่ JSON คือไม่ได้ใส่
+  </p>
+</div>
+
+<h2>1 · API คืออะไร — และทำไมมือถือถึงไม่ยิง SQL ตรง ๆ</h2>
+
+<p>
+  ลองคิดแบบไร้เดียงสาที่สุดก่อน: เรามี PostgreSQL อยู่แล้ว
+  แอปมือถือก็แค่ต่อเข้า database ตรง ๆ แล้ว
+  <code>SELECT * FROM recipes</code> เอง จบ ไม่ต้องมี server ตรงกลางให้เปลืองแรง
+  <br>ฟังดูเข้าท่า จนกว่าจะถามสี่คำถามนี้:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ถามว่า</th><th>ถ้าให้ client ต่อ DB ตรง ๆ</th></tr>
+  <tr>
+    <td><strong>รหัส DB ไปอยู่ที่ไหน</strong></td>
+    <td>ต้องฝังอยู่ในแอปที่ติดตั้งบนมือถือของคนทั้งประเทศ — ใครแกะไฟล์แอปออกมาก็ได้รหัสไปเต็ม ๆ และเปลี่ยนรหัสทีต้องบังคับให้ทุกคนอัปเดตแอป</td>
+  </tr>
+  <tr>
+    <td><strong>กฎธุรกิจอยู่ที่ไหน</strong></td>
+    <td>"แก้สูตรได้เฉพาะเจ้าของสูตร" ต้องเขียนซ้ำในแอป iOS, แอป Android และเว็บ — สามที่ สามคนเขียน สามแบบ และไม่มีใครบังคับให้ตรงกัน</td>
+  </tr>
+  <tr>
+    <td><strong>เปลี่ยน schema แล้วไง</strong></td>
+    <td>เปลี่ยนชื่อคอลัมน์เดียว แอปทุกเวอร์ชันที่ยังมีคนใช้อยู่พังพร้อมกันทันที และเราสั่งให้ทุกคนอัปเดตแอปไม่ได้</td>
+  </tr>
+  <tr>
+    <td><strong>ใครกันคนที่พิมพ์คำสั่ง</strong></td>
+    <td>ทุกคนที่ถือรหัสส่ง SQL อะไรก็ได้ — รวมถึง <code>DELETE FROM users</code></td>
+  </tr>
+</table>
+</div>
+
+<p>
+  <strong>API คือกำแพงที่แก้ทั้งสี่ข้อพร้อมกัน</strong> —
+  เราไม่เปิด database ให้โลกภายนอก แต่เปิด<strong>รายการคำขอที่อนุญาต</strong>ให้แทน
+  ข้างในกำแพงจะเป็น PostgreSQL, MySQL หรือไฟล์ JSON ก็เรื่องของเรา ไม่มีใครข้างนอกต้องรู้
+</p>
+
+<div class="diagram">
+<pre>  <span class="c">แบบไร้เดียงสา</span>                        <span class="c">แบบที่ใช้ได้จริง</span>
+
+  📱 แอป ──── SQL ────▶ 🗄️ DB        📱 แอป ─┐
+  💻 เว็บ ──── SQL ────▶ 🗄️ DB        💻 เว็บ ─┼─ HTTP ─▶ 🧱 <strong>API</strong> ─ SQL ─▶ 🗄️ DB
+  🤖 บอท ──── SQL ────▶ 🗄️ DB        🤖 บอท ─┘         (กฎธุรกิจ+สิทธิ์
+                                                       อยู่ตรงนี้ที่เดียว)
+  รหัส DB กระจายอยู่ 3 ที่                รหัส DB อยู่ที่เดียว
+  กฎธุรกิจเขียนซ้ำ 3 รอบ                  ใครแก้ schema ก็แก้แค่หลังกำแพง</pre>
+</div>
+
+<p>
+  ถ้าประโยคนี้คุ้น ๆ ก็เพราะมันคือเรื่องเดียวกับ
+  <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a> เป๊ะ ๆ —
+  <strong>interface คือสัญญาที่บอกว่า "เรียกอะไรได้" โดยไม่บอกว่า "ข้างในทำยังไง"</strong>
+  <br>API ก็คือ interface ตัวหนึ่ง เพียงแต่คนเรียกอยู่คนละเครื่อง
+  และ<em>ไม่มีคอมไพเลอร์คอยตรวจให้ว่าเรียกถูก</em> — ความผิดพลาดทุกอย่างจะไปโผล่ตอน runtime
+  ในมือของลูกค้าจริง ๆ เท่านั้น
+</p>
+
+<h2>2 · จะคุยกันด้วย protocol อะไร — และทำไมคอร์สนี้เลือก HTTP</h2>
+
+<p>
+  <strong>protocol</strong> แปลว่า "ข้อตกลงว่าสองเครื่องจะส่งข้อความหากันด้วยหน้าตาแบบไหน" —
+  เทียบได้กับการตกลงว่าจะเขียนจดหมายด้วยภาษาอะไรและวางหัวจดหมายตรงไหน ก่อนจะเริ่มเขียนเนื้อความ
+  <br>"คุยข้ามเครื่อง" ไม่ได้มีวิธีเดียว สี่แบบที่เจอบ่อยที่สุดในงานจริงมีจุดขายคนละอย่าง —
+  อ่านตารางนี้เพื่อ<strong>รู้ว่ามันมีอยู่</strong>ก็พอ ไม่ต้องจำรายละเอียด:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>protocol</th><th>รูปแบบการคุย</th><th>เด่นตรงไหน</th><th>ราคาที่จ่าย</th></tr>
+  <tr>
+    <td><strong>HTTP</strong> (+REST)</td>
+    <td>ถาม 1 ครั้ง ตอบ 1 ครั้ง แล้วตัดสาย</td>
+    <td>ทุกอย่างในโลกพูดได้ — browser, <code>curl</code>, มือถือ, proxy, CDN · debug ด้วยตาเปล่าได้เพราะเป็นตัวหนังสือ</td>
+    <td>อยากได้ข้อมูล 3 ก้อนต้องยิง 3 ครั้ง · server ทักไปหา client เองไม่ได้</td>
+  </tr>
+  <tr>
+    <td><strong>GraphQL</strong></td>
+    <td>ยิงครั้งเดียว แต่ client เขียนเองว่าอยากได้ field ไหนบ้าง</td>
+    <td>หน้าจอเดียวดึงของหลายก้อนได้ในนัดเดียว ไม่ได้ field เกินมาเปล่า ๆ</td>
+    <td>ฝั่ง server ซับซ้อนขึ้นมาก · cache ยากเพราะทุก request หน้าตาไม่เหมือนกัน</td>
+  </tr>
+  <tr>
+    <td><strong>gRPC</strong></td>
+    <td>เรียกฟังก์ชันข้ามเครื่อง ส่งข้อมูลเป็นไบต์ (ไม่ใช่ตัวหนังสือ)</td>
+    <td>เร็วและกินแบนด์วิดท์น้อย · มีไฟล์สัญญา (<code>.proto</code>) ที่ generate โค้ดให้ทั้งสองฝั่ง</td>
+    <td>เปิดดูด้วยตาเปล่าไม่ได้ · browser เรียกตรง ๆ ไม่ได้ · เหมาะกับ service คุยกันเองหลังบ้าน</td>
+  </tr>
+  <tr>
+    <td><strong>WebSocket</strong></td>
+    <td>เปิดสายค้างไว้ ทั้งสองฝั่งพูดเมื่อไหร่ก็ได้</td>
+    <td>chat, ราคาหุ้นวิ่ง, ตำแหน่งคนส่งอาหาร — เรื่องที่ server ต้องเป็นฝ่ายทัก</td>
+    <td>ต้องคาสายไว้ทุกคน = เปลืองทรัพยากรและ scale ยากกว่ามาก</td>
+  </tr>
+</table>
+</div>
+
+<p>
+  คอร์สนี้ใช้ <strong>HTTP</strong> ด้วยเหตุผลข้อเดียวที่สำคัญกว่าข้ออื่นรวมกัน:
+  <strong>มันเป็นตัวหนังสือที่คุณอ่านออก</strong>
+  <br>เวลาระบบพัง คุณเปิดดูได้ทั้ง request และ response ด้วยตาเปล่า
+  ทดสอบด้วย <code>curl</code> บรรทัดเดียวได้โดยไม่ต้องมีเครื่องมือพิเศษ
+  — สำหรับคนกำลังเรียน นี่มีค่ามากกว่าความเร็ว
+</p>
+
+<h2>3 · REST คืออะไร — สี่หลักที่ต้องจำ</h2>
+
+<p>
+  HTTP บอกแค่ว่า "ข้อความต้องมีหน้าตายังไงถึงจะส่งได้" แต่<strong>ไม่ได้บอกว่าควรตั้งชื่ออะไร</strong>
+  <br>ถ้าไม่มีข้อตกลงเพิ่ม ทีมสามคนจะได้ API สามสไตล์ในโปรเจกต์เดียว:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <p><strong>❌ ไม่มีข้อตกลง — ต้องเปิดคู่มือทุกครั้ง</strong></p>
+<pre><code>POST /getUserById
+POST /user_delete
+GET  /updateUserName?id=1&amp;n=x
+POST /api/DoRecipeSearch</code></pre>
+    <p style="margin-bottom:0">ทุกอันเป็น <code>POST</code> หมด ทุกอันตั้งชื่อคนละแบบ
+    <br>อยากรู้ว่าลบ user ยังไง = ต้องไปถามคนเขียน</p>
+  </div>
+  <div class="side good">
+    <p><strong>✅ REST — เดาถูกโดยไม่ต้องถามใคร</strong></p>
+<pre><code>GET    /users/1
+DELETE /users/1
+PATCH  /users/1
+GET    /recipes?q=x</code></pre>
+    <p style="margin-bottom:0">เห็น <code>GET /users/1</code> ครั้งเดียว
+    <br>ก็เดา <code>GET /recipes/1</code> และ <code>DELETE /recipes/1</code> ได้เอง</p>
+  </div>
+</div>
+
+<p>
+  ก่อนอ่านตารางถัดไป ขอนิยามสองคำที่จะใช้ตลอดทั้ง Day 8 ก่อน:
+  <br><strong>resource</strong> = "ของ" หนึ่งอย่างที่ API เปิดให้ยุ่งด้วย — เป็นได้ทั้งกอง
+  (<code>/recipes</code> = สูตรทั้งหมด) และชิ้นเดียว (<code>/recipes/7</code> = สูตรที่ 7)
+  <br><strong>endpoint</strong> = หนึ่งคู่ของ <em>method + path</em> ที่ server รับ —
+  <code>GET /recipes/7</code> คือหนึ่ง endpoint ส่วน <code>DELETE /recipes/7</code>
+  เป็นอีก endpoint หนึ่ง ถึงจะ path เดียวกันก็ตาม
+</p>
+
+<p>REST ยืนบนสี่หลักนี้ — สามข้อแรกเป็นวิธีทำ ข้อสุดท้ายคือ<em>ผลลัพธ์</em>ที่เราต้องการจริง ๆ:</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>หลัก</th><th>แปลเป็นภาษาคน</th><th>ทดสอบตัวเองว่าทำได้ไหม</th></tr>
+  <tr>
+    <td><strong>resource-based</strong></td>
+    <td>URL ชี้ไปที่ <em>ของ</em> ไม่ใช่ <em>การกระทำ</em> — ตั้งชื่อด้วยคำนามเสมอ</td>
+    <td>อ่าน URL ออกเสียงแล้วได้คำนามไหม? <code>/users/1</code> ✅ · <code>/getUser</code> ❌</td>
+  </tr>
+  <tr>
+    <td><strong>stateless</strong></td>
+    <td>server ไม่จำอะไรจาก request ก่อนหน้าเลย ทุก request ต้องพกของมาเองครบ</td>
+    <td>ถ้ามี server 5 ตัวแล้ว request นี้สุ่มไปโดนตัวไหนก็ได้ ผลจะเหมือนกันไหม?</td>
+  </tr>
+  <tr>
+    <td><strong>ใช้ method ให้ตรงความหมาย</strong></td>
+    <td>"จะทำอะไรกับของชิ้นนั้น" บอกด้วย HTTP method ไม่ใช่บอกด้วยชื่อ URL</td>
+    <td>ปิดชื่อ URL ทิ้ง เหลือแค่ method — ยังบอกได้ไหมว่านี่คืออ่านหรือลบ?</td>
+  </tr>
+  <tr>
+    <td><strong>uniform interface</strong></td>
+    <td>ทุก resource ในระบบใช้กติกาชุดเดียวกันหมด ไม่มีข้อยกเว้นเฉพาะตัว</td>
+    <td>คนที่เพิ่งเข้าทีมวันนี้ เดา endpoint ที่ยังไม่เคยเห็นถูกไหม?</td>
+  </tr>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>คุณค่าที่แท้จริงของ REST คือข้อสุดท้าย</strong> — สามข้อแรกมีไว้เพื่อให้ข้อสี่เกิด
+    <br>REST ไม่ได้ทำให้ API เร็วขึ้นแม้แต่นิดเดียว
+    มันทำให้ API <strong>เดาได้</strong> — และ "เดาได้" คือสิ่งที่ทำให้ทีม 10 คน
+    เขียน endpoint 200 ตัวแล้วยังหน้าตาเหมือนคนเดียวเขียน
+  </p>
+</div>
+
+<h2>4 · resource-based: URL คือคำนาม ไม่ใช่คำกริยา</h2>
+
+<p>
+  กฎมีข้อเดียว: <strong>URL บอกว่า "ของชิ้นไหน" · method บอกว่า "จะทำอะไรกับมัน"</strong>
+  <br>คนใหม่มักเผลอเอาคำกริยาไปยัดใน URL เพราะมันเป็นวิธีที่เราตั้งชื่อฟังก์ชันมาตลอด 32 บท
+  (<code>getUser</code>, <code>deleteUser</code>) — แต่ HTTP มีช่องสำหรับคำกริยาแยกไว้ให้แล้ว คือ method
+  <br>พอเขียนคำกริยาไว้สองที่ มันจะขัดกันเองได้ทันที: <code>POST /recipes/7/delete</code>
+  อ่านฝั่ง method ว่า "สร้าง" แต่อ่านฝั่ง URL ว่า "ลบ" — แล้วเครื่องมือที่อ่าน method
+  (เช่นตัวที่ตัดสินใจว่า retry ได้ไหม) ก็เชื่อฝั่งที่ผิด
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>อยากทำ</th><th>❌ คำกริยาใน URL</th><th>✅ คำนาม + method</th></tr>
+  <tr><td>ดูสูตรทั้งหมด</td><td><code>GET /getAllRecipes</code></td><td><code>GET /recipes</code></td></tr>
+  <tr><td>ดูสูตรที่ 7</td><td><code>GET /recipe/detail?id=7</code></td><td><code>GET /recipes/7</code></td></tr>
+  <tr><td>สร้างสูตรใหม่</td><td><code>POST /createRecipe</code></td><td><code>POST /recipes</code></td></tr>
+  <tr><td>ลบสูตรที่ 7</td><td><code>POST /recipes/7/delete</code></td><td><code>DELETE /recipes/7</code></td></tr>
+  <tr><td>ดูสูตรของ user 3</td><td><code>GET /getRecipesByUser?u=3</code></td><td><code>GET /users/3/recipes</code></td></tr>
+</table>
+</div>
+
+<p>
+  สังเกตคอลัมน์ขวา: มีชื่อ resource อยู่แค่<strong>สองคำ</strong>ทั้งตาราง
+  (<code>/recipes</code> กับ <code>/users</code>) ส่วนคอลัมน์กลางมีชื่อไม่ซ้ำกันเลยห้าอัน
+  <br>นี่คือเหตุผลที่ REST ทำให้ระบบเล็กลงในหัวคน — <strong>จำนวนชื่อที่ต้องจำ
+  โตตามจำนวน "ของ" ไม่ใช่ตามจำนวน "สิ่งที่ทำได้"</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทำไมถึงใช้พหูพจน์ <code>/users</code> ไม่ใช่ <code>/user</code></strong> —
+    เพราะ <code>/users</code> แปลว่า "ตู้เก็บ user ทั้งกอง" ซึ่งอ่านแล้วเข้ากันได้ทั้งสองแบบ:
+    <code>GET /users</code> = ขอทั้งกอง · <code>GET /users/1</code> = ขอตัวที่ 1 จากกอง
+    <br>จะเลือกเอกพจน์ทั้งระบบก็ไม่ผิดหลัก REST — <strong>ที่ผิดคือปนกัน</strong>
+    เช่นมี <code>/user</code> กับ <code>/recipes</code> อยู่ในระบบเดียวกัน
+    เพราะแบบนั้นคนใช้เดาไม่ถูกอีกต่อไป ซึ่งพังตรงหลักข้อสี่พอดี
+  </p>
+</div>
+
+<h2>5 · URI · path · path parameter — สามคำที่คนใช้ปนกัน</h2>
+
+<p>
+  ก่อนคุยเรื่อง method ต้องแยกศัพท์สามคำนี้ให้ออกก่อน เพราะทั้ง Day 8 จะพูดถึงมันตลอด
+  <br>ผมเปิด server แล้ว<strong>ดักอ่านไบต์ดิบ</strong>ที่ <code>curl</code> ส่งออกไปจริง ๆ — หน้าตาแบบนี้:
+</p>
+
+<pre><code>PATCH /users/42?fields=name HTTP/1.1
+Host: 127.0.0.1:8793
+User-Agent: curl/8.13.0
+Accept: */*
+Authorization: Bearer abc123
+Content-Type: application/json
+Content-Length: 21
+
+{"name":"Somchai Jr"}</code></pre>
+
+<p>
+  ทั้งหมดนี้คือ <strong>"หนึ่ง request"</strong> — ตัวหนังสือล้วน ๆ ไม่มีเวทมนตร์อะไรเลย
+  แบ่งเป็นสามส่วนเรียงจากบนลงล่างเสมอ:
+</p>
+
+<ul>
+  <li><strong>บรรทัดแรก</strong> — <code>method</code> + <code>path</code> (+ query ถ้ามี) + เวอร์ชัน HTTP
+      · นี่คือหัวใจ: "จะทำอะไร" กับ "ของชิ้นไหน" อยู่ในบรรทัดเดียวนี้</li>
+  <li><strong>header</strong> — บรรทัด <code>ชื่อ: ค่า</code> ต่อกันกี่บรรทัดก็ได้
+      เป็น<em>ข้อมูลประกอบ</em>ของ request เช่น <code>Content-Type</code> บอกว่า body เป็นข้อมูลชนิดไหน
+      · <code>Authorization</code> บอกว่าใครเป็นคนยิง</li>
+  <li><strong>body</strong> — ก้อนข้อมูลจริงที่ส่งไป อยู่หลัง<strong>บรรทัดว่างหนึ่งบรรทัด</strong>
+      (บรรทัดว่างนั้นแหละคือเส้นแบ่งว่า header จบแล้ว) · <code>GET</code> ปกติไม่มีส่วนนี้</li>
+</ul>
+
+<p>
+  ทีนี้ซูมเข้าไปดูเฉพาะ "ที่อยู่" ในบรรทัดแรก — ผมเขียนแบบเต็มพร้อมชื่อ server ให้เห็นครบทุกชิ้น:
+</p>
+
+<div class="diagram">
+<pre>  <span class="s">https://api.wongnok.com</span><span class="f">/users/42/orders</span><span class="n">?status=paid&amp;page=2</span>
+  └──────────┬───────────┘└───────┬──────┘└──────────┬──────────┘
+        <span class="s">ที่อยู่ของ server</span>          <span class="f">path</span>              <span class="n">query string</span>
+     (ไม่ได้อยู่ในบรรทัดแรก        <span class="f">= "ของชิ้นไหน"</span>       <span class="n">= "กรอง/เรียงยังไง"</span>
+      แต่อยู่ใน header Host)          │
+                                     └─▶ <span class="f">/users/</span><strong>42</strong><span class="f">/orders</span>
+                                                  ▲
+                                          <strong>path parameter</strong> — ช่องว่างใน path
+                                          ที่เปลี่ยนค่าได้ · เขียนเป็น <code>/users/{id}/orders</code>
+
+  <span class="c">ทั้งบรรทัดรวมกัน = URI (ที่อยู่เต็มของ resource ชิ้นนั้น)</span></pre>
+</div>
+
+<p>
+  ฝั่ง server มองเห็นเป็นคนละชิ้นแยกกันจริง ๆ ไม่ใช่แค่การเรียกให้ต่างกัน —
+  ผมยิง <code>GET /users/42/orders?status=paid&amp;page=2</code> ใส่ server อีกตัวที่พิมพ์ทุกอย่างที่มันเห็นออกมา
+  (คนละตัวกับตัวที่พิมพ์ไบต์ดิบข้างบน จึงคนละพอร์ต):
+</p>
+
+<pre><code>Method      = "GET"
+Host        = "127.0.0.1:8792"
+URL.Path    = "/users/42/orders"
+PathValue   = "42"
+RawQuery    = "status=paid&amp;page=2"
+Query status= "paid"
+RequestURI  = "/users/42/orders?status=paid&amp;page=2"
+header Accept           = "application/json"
+header User-Agent       = "curl/8.13.0"</code></pre>
+
+<p>
+  ชื่อทางซ้ายไม่ใช่ศัพท์ REST — เป็น<strong>ชื่อช่องที่ Go เตรียมไว้ให้อ่าน</strong> ในบทถัด ๆ ไปของ Day 8
+  เราจะเรียกมันเองกับมือ ตอนนี้แค่รู้ว่ามันแยกกันจริงก็พอ
+  <br>ที่ต้องสังเกตคือ <code>PathValue = "42"</code> — Go ได้เลข 42 มาเพราะ server ลงทะเบียนไว้ว่า
+  path หน้าตาแบบ <code>/users/{id}/orders</code> แล้ว <code>{id}</code> คือช่องว่างที่รอรับค่า
+  <br>ส่วน <code>RawQuery</code> คือ query ทั้งเส้นที่ยังไม่ได้แยก และ <code>Query status</code>
+  คือค่าที่แยกออกมาแล้วเฉพาะตัว <code>status</code>
+</p>
+
+<p>
+  <strong>เส้นแบ่งที่ใช้ตัดสินใจได้จริง</strong> —
+  ถ้าเอาส่วนนั้นออกแล้ว<em>ไม่รู้ว่าพูดถึงของชิ้นไหน</em> มันคือ <strong>path parameter</strong>
+  (<code>/users/orders</code> เพียว ๆ ไม่มีความหมาย)
+  <br>ถ้าเอาออกแล้วยัง<em>รู้ว่าพูดถึงของกองไหน แค่ได้มาเยอะขึ้น</em> มันคือ
+  <strong>query parameter</strong> (<code>/users/42/orders</code> ยังแปลว่า "order ของ user 42 ทั้งหมด")
+</p>
+
+<h2>6 · หัวใจของบท — "stateless" แปลว่าอะไรจริง ๆ</h2>
+
+<p>
+  คำนี้ถูกแปลผิดบ่อยที่สุดในบรรดาศัพท์ REST ทั้งหมด
+  <br><strong>stateless ไม่ได้แปลว่า "ห้ามเก็บข้อมูล"</strong> — เก็บลง database ได้เต็มที่ นั่นคืองานของมัน
+  <br>มันแปลว่า: <strong>server ไม่จำอะไรเกี่ยวกับ <em>ตัวคุณ</em> ระหว่าง request สองอันติดกัน</strong>
+  <br>request แต่ละอันมาถึงในสภาพ<em>คนแปลกหน้า</em> เสมอ ต่อให้เพิ่งคุยกันไปเมื่อ 0.2 วินาทีที่แล้ว
+</p>
+
+<p>
+  ผมเปิด server ที่นับ request ให้ดูด้วย แล้วยิงสามครั้งติดกันจาก terminal เดียวกัน
+  <br>ครั้งที่สองผมแนบ <strong>token</strong> ไปด้วย — <em>token คือข้อความสั้น ๆ ที่ server ออกให้ตอน login
+  แล้ว client เก็บไว้ใช้เป็นบัตรประจำตัวในครั้งถัด ๆ ไป</em> ส่งไปในบรรทัด header ชื่อ
+  <code>Authorization</code>
+  <br>ตัวเลขที่ตอบกลับมา (<code>401</code>, <code>200</code>) คือ <strong>status code</strong> —
+  ตัวเลขสามหลักที่สรุปว่าผลเป็นยังไง ความหมายของแต่ละตัวอยู่ใน
+  <a href="./0034-http-status-code.html">บทเรียน 34</a> ตอนนี้อ่านแค่ว่า
+  <code>200</code> = ผ่าน · <code>401</code> = ไม่รู้ว่าคุณเป็นใคร ก็พอ
+</p>
+
+<pre><code>$ curl -i http://127.0.0.1:8791/me                              <span class="c"># ครั้งที่ 1 ไม่ส่งอะไรมา</span>
+<strong>HTTP/1.1 401 Unauthorized</strong>
+Content-Type: application/json; charset=utf-8
+Content-Length: 99
+
+{"error":"missing Authorization header","request_no":1,"server_knows":"nothing about who you are"}
+
+$ curl -i http://127.0.0.1:8791/me -H 'Authorization: Bearer abc123'   <span class="c"># ครั้งที่ 2 ส่ง token</span>
+<strong>HTTP/1.1 200 OK</strong>
+Content-Type: application/json; charset=utf-8
+Content-Length: 63
+
+{"request_no":2,"token_seen":"Bearer abc123","user":"Somchai"}
+
+$ curl -i http://127.0.0.1:8791/me                              <span class="c"># ครั้งที่ 3 ไม่ส่ง token อีก</span>
+<strong>HTTP/1.1 401 Unauthorized</strong>
+...
+{"error":"missing Authorization header","request_no":3,"server_knows":"nothing about who you are"}</code></pre>
+
+<p>
+  ดู <code>request_no</code> ให้ดี: <strong>2 แล้ว 3 — เป็น server ตัวเดียวกัน
+  ยังไม่ได้ restart อะไรเลย</strong>
+  <br>ครั้งที่ 2 มันเพิ่งรู้จักคุณเมื่อเสี้ยววินาทีก่อน ครั้งที่ 3 มัน<strong>ตอบ 401 หน้าตาย</strong>
+  <br>นี่ไม่ใช่บั๊ก — นี่คือธรรมชาติของ HTTP: <strong>สิ่งเดียวที่ server รู้ คือสิ่งที่อยู่ใน
+  request ก้อนที่กำลังอ่านอยู่ตอนนี้</strong> ก้อนก่อนหน้าไม่มีอยู่ในโลกของมันแล้ว
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>นี่คือคำตอบว่าทำไมต้องแนบ token ไปทุก request</strong> —
+    ไม่ใช่เพราะ framework บังคับ ไม่ใช่เพราะกลัวไม่ปลอดภัย
+    แต่เพราะ<strong>ไม่มีที่ให้ server จำ</strong>
+    <br>login ครั้งเดียวได้ token มา แล้ว token นั้นต้องเดินทางไปกับ
+    <em>ทุก</em> request ต่อจากนั้น ในฐานะ<strong>บัตรประจำตัวที่พกติดตัว</strong>
+    ไม่ใช่ทะเบียนที่ฝากไว้ที่ server
+  </p>
+</div>
+
+<p>
+  "แล้ว session ที่เคยได้ยินล่ะ?" — เก็บ session ไว้ใน RAM ของ server ก็ทำได้ และมันจะ<em>ทำงาน</em>
+  ตอนที่คุณรัน server ตัวเดียวบนเครื่องตัวเอง
+  <br>แต่จำเรื่องจาก <a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32</a> ได้ไหม —
+  ตอน deploy จริงเราไม่ได้รันโปรแกรมตัวเดียว เรารัน<strong>สำเนาของโปรแกรมเดียวกันหลายตัว</strong>
+  (สำเนาแต่ละตัวเรียกว่า <strong>instance</strong>) แล้วมีตัวกระจาย request สุ่มไปตัวไหนก็ได้
+  <br>สำคัญตรงนี้: instance แต่ละตัวคือคนละ process มี RAM ของใครของมัน —
+  ตัวที่ 1 จำอะไรไว้ ตัวที่ 7 มองไม่เห็นเลย
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ อาการที่จะเจอถ้าเก็บ session ไว้ใน RAM ของ server</span>
+  <p style="margin-bottom:0">
+    ลูกค้า login ผ่าน instance ตัวที่ 1 → ตัวที่ 1 จำได้ → กดปุ่มถัดไปโดนสุ่มไป instance ตัวที่ 7
+    → ตัวที่ 7 ไม่เคยเห็นหน้าคุณ → <strong>เด้งออกจากระบบทั้งที่เพิ่ง login เสร็จ</strong>
+    <br>และมันจะพังแบบ<strong>สุ่ม ๆ</strong> — บางคลิกผ่าน บางคลิกเด้ง ไม่มี error ในล็อก ไล่จับยากที่สุด
+    <br>ที่โหดกว่านั้นคือบนเครื่อง dev ของคุณมันจะไม่พังเลยสักครั้ง เพราะที่นั่นมี instance เดียว
+    <br>ทางออกคือ<strong>อย่าให้ server ต้องจำ</strong>: state ที่ต้องข้าม request ให้ไปอยู่ที่อื่น —
+    ใน token ที่ client พกมาเอง หรือในของกลางอย่าง Redis / database
+  </p>
+</div>
+
+<h2>7 · method 5 ตัว — และคู่ที่คนใหม่พลาดบ่อยที่สุด</h2>
+
+<p>
+  URL บอกว่า "ของชิ้นไหน" แล้ว · ที่เหลือคือ "จะทำอะไรกับมัน" ซึ่งบอกด้วย method:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>method</th><th>แปลว่า</th><th>ตัวอย่างบน <code>/recipes</code></th><th>มี body ไหม</th></tr>
+  <tr><td><strong><code>GET</code></strong></td><td>ขอดู — <strong>ห้ามเปลี่ยนอะไร</strong></td><td><code>GET /recipes</code> · <code>GET /recipes/7</code></td><td>ไม่มี</td></tr>
+  <tr><td><strong><code>POST</code></strong></td><td>สร้างของใหม่ในกอง (id ให้ server ตั้งให้)</td><td><code>POST /recipes</code></td><td>มี — ข้อมูลของใหม่</td></tr>
+  <tr><td><strong><code>PUT</code></strong></td><td><strong>แทนที่ทั้งก้อน</strong> ด้วยของที่ส่งไป</td><td><code>PUT /recipes/7</code></td><td>มี — <strong>ต้องครบทุก field</strong></td></tr>
+  <tr><td><strong><code>PATCH</code></strong></td><td><strong>แก้เฉพาะ field ที่ส่งไป</strong> ที่เหลือไม่แตะ</td><td><code>PATCH /recipes/7</code></td><td>มี — เฉพาะที่จะแก้</td></tr>
+  <tr><td><strong><code>DELETE</code></strong></td><td>ลบของชิ้นนั้น</td><td><code>DELETE /recipes/7</code></td><td>ปกติไม่มี</td></tr>
+</table>
+</div>
+
+<p>
+  สังเกตว่า <code>POST</code> ยิงใส่<strong>กอง</strong> (<code>/recipes</code>)
+  ส่วน <code>PUT</code> / <code>PATCH</code> / <code>DELETE</code> ยิงใส่<strong>ชิ้น</strong>
+  (<code>/recipes/7</code>) — เพราะจะสร้างของใหม่ เรายังไม่รู้ id ของมัน จึงชี้เจาะจงไม่ได้
+</p>
+
+<p>
+  ทีนี้มาถึงจุดที่คนใหม่พลาดกันแทบทุกคน — และมันไม่ใช่ความผิดพลาดที่คอมไพเลอร์หรือ test จะจับให้:
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — user คนที่ 1 ตอนนี้มีข้อมูลครบสี่ช่อง แล้วผมยิง <code>PUT</code> ด้วย body ที่มีแค่ <code>name</code></p>
+  <pre><code>$ curl http://127.0.0.1:8791/users/1
+{"id":1,"name":"Somchai","email":"somchai@example.com","role":"member"}
+
+$ curl -X PUT http://127.0.0.1:8791/users/1 \
+       -H 'Content-Type: application/json' \
+       -d '{"name":"Somchai Jr"}'</code></pre>
+  <p class="ask">
+    บรรทัดสุดท้ายจะได้ status อะไร และหลังจากนั้น
+    <strong><code>email</code> กับ <code>role</code> ยังอยู่ไหม</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ curl -X PUT .../users/1 -d '{"name":"Somchai Jr"}'
+{"id":1,"name":"Somchai Jr",<strong>"email":"","role":""</strong>}
+
+$ curl .../users/1                     <span class="c"># อ่านซ้ำเพื่อยืนยันว่าไม่ใช่แค่ response หลอกตา</span>
+{"id":1,"name":"Somchai Jr",<strong>"email":"","role":""</strong>}</code></pre>
+    <p>
+      <strong>200 OK · ไม่มี error สักตัว · แต่อีเมลกับ role หายเกลี้ยง</strong>
+      <br>เพราะ <code>PUT</code> แปลว่า <em>"เอาก้อนนี้ไปวางแทนก้อนเดิม"</em> —
+      field ที่คุณไม่ได้ส่ง แปลว่าคุณ<strong>ตั้งใจให้มันว่าง</strong> ไม่ใช่ "ไม่ต้องแตะ"
+      <br>ฝั่ง Go มันชัดมาก — <em>handler คือฟังก์ชันที่ server เรียกเมื่อมี request เข้ามาตรง
+      endpoint นั้น (จะได้เขียนเองในบทถัด ๆ ไปของ Day 8)</em>:
+      handler ตัวนี้ decode JSON ลง <code>User</code> ที่เพิ่งประกาศใหม่
+      field ที่ไม่มีใน JSON เลยคง <strong>zero value</strong> ไว้ตามที่เรียนมาใน
+      <a href="../../day-1/lessons/0002-var-and-types.html">บทเรียน 2</a> —
+      <code>string</code> ที่ไม่มีใครเซ็ตคือ <code>""</code> แล้ว <code>""</code> ก็ถูกเขียนทับลง store ตรง ๆ
+    </p>
+    <p>ยิงแบบเดียวกันเป๊ะ ๆ แต่เปลี่ยนเป็น <code>PATCH</code> (หลังกู้ข้อมูลกลับมาแล้ว):</p>
+    <pre style="margin:0.6rem 0"><code>$ curl -X PATCH .../users/1 -d '{"name":"Somchai Jr"}'
+{"id":1,"name":"Somchai Jr",<strong>"email":"somchai@example.com","role":"member"</strong>}</code></pre>
+    <p style="margin-bottom:0">
+      ต่างกันที่ฝั่ง server ทำอะไรก่อน decode: <code>PATCH</code> อ่านของเดิมขึ้นมาก่อน
+      แล้วให้ JSON ทับลงไปเฉพาะช่องที่ส่งมา — ช่องที่ไม่มีใน JSON จึงเก็บค่าเดิมไว้
+      <br><strong>สรุปที่ต้องจำไปทั้งชีวิต:</strong>
+      ถ้า client ส่ง field มาไม่ครบแล้วคุณใช้ <code>PUT</code> —
+      <strong>คุณกำลังลบข้อมูลลูกค้าโดยตอบ 200 กลับไปว่าสำเร็จ</strong>
+    </p>
+  </div>
+</div>
+
+<div class="compare">
+  <div class="side bad">
+    <p><strong><code>PUT /users/1</code> = แทนที่ทั้งก้อน</strong></p>
+<pre><code>ก่อน: {name:"Somchai", email:"s@ex.com", role:"member"}
+ส่ง:  {name:"Somchai Jr"}
+หลัง: {name:"Somchai Jr", email:<strong>""</strong>, role:<strong>""</strong>}</code></pre>
+    <p style="margin-bottom:0">ใช้ได้ต่อเมื่อ client มี<strong>ข้อมูลครบทุก field</strong>อยู่ในมือ
+    เช่นฟอร์มแก้ไขที่โหลดของเดิมมาแสดงครบแล้ว</p>
+  </div>
+  <div class="side good">
+    <p><strong><code>PATCH /users/1</code> = แก้เฉพาะที่ส่ง</strong></p>
+<pre><code>ก่อน: {name:"Somchai", email:"s@ex.com", role:"member"}
+ส่ง:  {name:"Somchai Jr"}
+หลัง: {name:"Somchai Jr", email:<strong>"s@ex.com"</strong>, role:<strong>"member"</strong>}</code></pre>
+    <p style="margin-bottom:0">ใช้กับหน้าจอที่แก้ทีละช่อง เช่นปุ่ม "เปลี่ยนอีเมล" —
+    ซึ่งเป็น<strong>กรณีที่พบบ่อยกว่ามากในงานจริง</strong></p>
+  </div>
+</div>
+
+<p>
+  <strong>อย่าอ่านกล่องซ้ายว่า "<code>PUT</code> คือของผิด"</strong> — <code>PUT</code> ไม่ได้ผิด
+  และเราจะใช้มันจริงในบทถัด ๆ ไป
+  <br>ที่ผิดคือ<em>เลือกไม่ตรงกับสิ่งที่ client มีอยู่ในมือ</em> ณ ตอนกดปุ่ม
+  <br>คำถามเดียวที่ใช้ตัดสิน: <strong>ตอนนี้ client ถือข้อมูลครบทั้งก้อนอยู่หรือเปล่า</strong> —
+  ครบ → <code>PUT</code> ได้ · ไม่ครบ → ต้อง <code>PATCH</code>
+</p>
+
+<h2>8 · ยิงซ้ำแล้วโลกเปลี่ยนไหม — idempotent</h2>
+
+<p>
+  เน็ตหลุดระหว่างรอคำตอบเป็นเรื่องปกติมาก แอปทุกตัวจึง<strong>ยิงซ้ำอัตโนมัติ</strong>
+  <br>คำถามที่ต้องตอบให้ได้ตั้งแต่ตอนออกแบบคือ: <em>ยิงซ้ำแล้วเกิดอะไรขึ้น</em>
+  <br>คำว่า <strong>idempotent</strong> แปลว่า "ยิง 1 ครั้งกับยิง 10 ครั้ง
+  <strong>สภาพสุดท้ายของข้อมูลเหมือนกัน</strong>"
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — server เปล่า ๆ ยังไม่มี user เลย ผมยิง <code>POST</code> ด้วย body เดียวกันเป๊ะ ๆ สองครั้ง (จำลองเน็ตหลุดแล้ว retry)</p>
+  <pre><code>$ curl -i -X POST http://127.0.0.1:8794/users -d '{"name":"Somchai"}'
+$ curl -i -X POST http://127.0.0.1:8794/users -d '{"name":"Somchai"}'
+$ curl http://127.0.0.1:8794/users</code></pre>
+  <p class="ask">บรรทัดที่ 3 จะได้ user กี่คน?</p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code><span class="c"># ครั้งที่ 1</span>
+HTTP/1.1 201 Created
+Location: /users/1
+{"id":1,"name":"Somchai"}
+
+<span class="c"># ครั้งที่ 2 — body เดิมทุกตัวอักษร</span>
+HTTP/1.1 201 Created
+Location: <strong>/users/2</strong>
+{"id":<strong>2</strong>,"name":"Somchai"}
+
+$ curl .../users
+<strong>[{"id":1,"name":"Somchai"},{"id":2,"name":"Somchai"}]</strong></code></pre>
+    <p>
+      <strong>ได้สองคน</strong> — เพราะ <code>POST</code> แปลว่า "เพิ่มของใหม่เข้ากอง"
+      ยิงสองครั้งก็คือสั่งเพิ่มสองครั้ง ตรงตามที่มันสัญญาไว้ทุกประการ
+      <br>(<code>Location:</code> ที่โผล่มาคือ header ที่ server ใช้บอกว่า
+      "ของที่คุณเพิ่งสร้าง ไปดูได้ที่ path นี้" — ครั้งที่สองมันชี้ไปคนละที่
+      นั่นคือหลักฐานว่าได้ของใหม่มาอีกชิ้น ไม่ใช่ชิ้นเดิม)
+      <br><code>POST</code> จึง<strong>ไม่ idempotent</strong> และนี่คือเหตุผลที่ปุ่ม "จ่ายเงิน"
+      กดรัวสองทีแล้วเงินออกสองรอบได้จริง
+    </p>
+    <p style="margin-bottom:0">
+      เทียบกับ <code>PUT</code>: ผมยิง <code>PUT /users/1</code> ด้วย body ที่มี field
+      <strong>ครบทั้งก้อน</strong> (<code>name</code> + <code>email</code> + <code>role</code>)
+      สองครั้งติดกัน แล้วอ่านกลับมาได้
+      <code>{"id":1,"name":"Somchai","email":"somchai@example.com","role":"admin"}</code>
+      เท่ากันทั้งสองครั้ง — ไม่มี user เพิ่มขึ้นมา
+      <br>เพราะ <code>PUT</code> แปลว่า "ทำให้ก้อนนี้<em>เป็น</em>แบบนี้" ไม่ใช่ "เพิ่มอีกก้อน"
+      สั่งซ้ำอีกสิบครั้งมันก็เป็นแบบเดิมอยู่ดี
+    </p>
+  </div>
+</div>
+
+<p>
+  <code>DELETE</code> ก็ idempotent แต่มีจุดที่ทำให้คนสับสน — <strong>status ไม่เท่ากันทั้งสองครั้ง</strong>:
+</p>
+
+<pre><code>$ curl -i -X DELETE http://127.0.0.1:8794/users/1     <span class="c"># ครั้งแรก</span>
+<strong>HTTP/1.1 204 No Content</strong>
+
+$ curl -i -X DELETE http://127.0.0.1:8794/users/1     <span class="c"># ยิงซ้ำ</span>
+<strong>HTTP/1.1 404 Not Found</strong>
+Content-Type: application/json; charset=utf-8
+Content-Length: 27
+
+{"error":"user not found"}</code></pre>
+
+<p>
+  ครั้งแรกไม่มี body ตามมาเลยเพราะ <code>204</code> แปลว่า "สำเร็จ แต่ไม่มีอะไรจะส่งกลับให้"
+  <br>ตรงนี้ต้องแยกให้ชัด: <strong>idempotent พูดถึง "สภาพของข้อมูล" ไม่ใช่ "status ที่ตอบกลับ"</strong>
+  <br>หลังยิงครั้งแรก user 1 หายไป · หลังยิงครั้งที่สอง user 1 ก็ยังหายไปอยู่ดี —
+  <em>สภาพสุดท้ายเหมือนกัน</em> จึงถือว่า idempotent เต็มตัว
+  ส่วน <code>404</code> เป็นแค่การรายงานว่า "ไม่มีอะไรให้ลบแล้วนะ"
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>method</th><th>เปลี่ยนข้อมูลไหม</th><th>ยิงซ้ำแล้วสภาพสุดท้ายเหมือนเดิมไหม</th><th>retry อัตโนมัติได้ไหม</th></tr>
+  <tr><td><code>GET</code></td><td>ไม่</td><td>เหมือน</td><td>ได้สบาย</td></tr>
+  <tr><td><code>PUT</code></td><td>เปลี่ยน</td><td>เหมือน</td><td>ได้</td></tr>
+  <tr><td><code>DELETE</code></td><td>เปลี่ยน</td><td>เหมือน (status ต่างได้)</td><td>ได้</td></tr>
+  <tr><td><code>PATCH</code></td><td>เปลี่ยน</td><td><strong>แล้วแต่ที่เขียน</strong> — <code>{"role":"admin"}</code> เหมือน แต่ "บวกคะแนนอีก 1" ไม่เหมือน</td><td>ต้องดูเป็นราย endpoint</td></tr>
+  <tr><td><code>POST</code></td><td>เปลี่ยน</td><td><strong>ไม่เหมือน</strong> — ได้ของใหม่เพิ่มทุกครั้ง</td><td><strong>ไม่ได้</strong> ถ้าไม่ออกแบบกันซ้ำเพิ่ม</td></tr>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ทั้งบทรวบเป็นสองประโยค</strong>
+    <br><strong>1.</strong> URL คือ<em>คำนาม</em> · method คือ<em>คำกริยา</em> ·
+    ห้ามเขียนคำกริยาซ้ำลงไปใน URL อีก
+    <br><strong>2.</strong> server ไม่จำอะไรระหว่าง request —
+    ทุกอย่างที่มันต้องใช้ตัดสินใจ ต้องเดินทางมาพร้อม request ก้อนนั้น
+    ไม่ว่าจะเป็น token, id ใน path หรือ filter ใน query
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. หลัก "stateless" ของ REST แปลว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">server ห้ามเก็บข้อมูลลง database ต้องคำนวณคำตอบขึ้นมาใหม่ทุกครั้งที่มี request เข้ามา</button>
+    <button class="opt">server ไม่จำอะไรจาก request ก่อนหน้าเลย ทุก request ต้องพกข้อมูลที่ตัวเองต้องใช้มาให้ครบ</button>
+    <button class="opt">client ห้ามเก็บ token ไว้ในเครื่องตัวเอง ต้องขอ token ใหม่จาก server ทุกครั้งก่อนยิงงานจริง</button>
+    <button class="opt">server ต้องตอบทุก request ด้วย status code ชุดเดียวกัน ไม่ว่าจะเรียก endpoint ไหนก็ตาม</button>
+  </div>
+  <div class="explain">
+    <p>stateless พูดถึง<strong>ความจำเกี่ยวกับตัวคุณระหว่าง request</strong> ไม่ได้ห้ามเก็บข้อมูลลง database
+    (เก็บได้เต็มที่ นั่นคืองานของมัน)
+    <br>ผมยิงสามครั้งจาก terminal เดียวกันติด ๆ กัน: <code>request_no 2</code> แนบ
+    <code>Authorization: Bearer abc123</code> ได้ <strong>200</strong> พร้อม
+    <code>"user":"Somchai"</code> · <code>request_no 3</code> ไม่แนบ ได้ <strong>401</strong>
+    พร้อม <code>"server_knows":"nothing about who you are"</code> — server ตัวเดิม ไม่ได้ restart
+    <br>ตัวเลือกที่ 1 ผิดเพราะสับสนระหว่าง "ข้อมูลของระบบ" กับ "สถานะของ session" ·
+    ตัวเลือกที่ 3 ผิดกลับด้าน — stateless ทำให้ client <em>ต้อง</em> ถือ token ไว้เองต่างหาก
+    เพราะไม่มีที่ให้ server ฝาก · ตัวเลือกที่ 4 ไม่เกี่ยวกับ stateless เลย
+    (status code แต่ละแบบมีความหมายของตัวเอง — บทเรียน 34)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. อยากแก้แค่ <code>email</code> ของ user 1 โดยไม่ให้ field อื่นเปลี่ยน ควรทำยังไง?</p>
+  <div class="opts">
+    <button class="opt">ยิง <code>PUT /users/1</code> พร้อม body <code>{"email":"..."}</code> เพราะ <code>PUT</code> คือ method สำหรับแก้ของที่มีอยู่แล้ว</button>
+    <button class="opt">ยิง <code>POST /users/1/update-email</code> พร้อม body <code>{"email":"..."}</code> เพื่อให้ชื่อ URL บอกชัดว่ากำลังทำอะไร</button>
+    <button class="opt">ยิง <code>GET /users/1?email=...</code> เพราะ query parameter คือช่องมาตรฐานสำหรับส่งค่าใหม่เข้าไปที่ server</button>
+    <button class="opt">ยิง <code>PATCH /users/1</code> พร้อม body <code>{"email":"..."}</code> หรือใช้ <code>PUT</code> ก็ได้ถ้าส่ง field ครบทั้งก้อน</button>
+  </div>
+  <div class="explain">
+    <p><code>PATCH</code> = แก้เฉพาะที่ส่งมา · <code>PUT</code> = แทนที่ทั้งก้อน
+    <br>ผมยิงจริงทั้งสองแบบด้วย body <code>{"name":"Somchai Jr"}</code> เท่ากันเป๊ะ:
+    <code>PUT</code> ได้ <code>{"id":1,"name":"Somchai Jr","email":"","role":""}</code>
+    (<strong>200 OK ไม่มี error แต่ข้อมูลหาย</strong>) ส่วน <code>PATCH</code> ได้
+    <code>{"id":1,"name":"Somchai Jr","email":"somchai@example.com","role":"member"}</code>
+    <br>ตัวเลือกที่ 1 จึงเป็นกับดักตัวจริง — มันทำงาน "สำเร็จ" แล้วลบอีเมลลูกค้าทิ้งเงียบ ๆ ·
+    ตัวเลือกที่ 2 เอาคำกริยา (<code>update-email</code>) ยัดกลับเข้า URL ทั้งที่ method สื่อได้อยู่แล้ว ·
+    ตัวเลือกที่ 3 ผิดหนักที่สุด เพราะ <code>GET</code> สัญญาว่าจะ<strong>ไม่เปลี่ยนอะไร</strong>
+    — ทำ <code>GET</code> ที่แก้ข้อมูลเมื่อไหร่ ตัวที่พังคือทุกอย่างที่ cache หน้าเว็บ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. ใน <code>GET /users/42/orders?status=paid&amp;page=2</code> — ส่วนไหนคือ path parameter?</p>
+  <div class="opts">
+    <button class="opt"><code>42</code> — เป็นค่าที่เสียบอยู่ในช่อง <code>{id}</code> ของ path เอาไว้ระบุว่าจะเอา resource ตัวไหน</button>
+    <button class="opt"><code>status=paid</code> — เป็นค่าที่แนบมากับ path เพื่อบอกว่าจะเอา order ที่มีสถานะแบบไหน</button>
+    <button class="opt"><code>orders</code> — เป็นชื่อที่อยู่ท้าย path จึงเป็นตัวแปรที่ handler ฝั่ง server อ่านค่าออกมาได้</button>
+    <button class="opt"><code>page=2</code> — เป็นค่าที่เปลี่ยนได้อิสระทุก request จึงถือเป็นพารามิเตอร์ของ path เสมอ</button>
+  </div>
+  <div class="explain">
+    <p>server เห็นเป็นคนละชิ้นจริง ๆ — ผมยิงเข้าไปแล้วให้มันพิมพ์ทุกอย่างที่เห็นออกมา:
+    <code>URL.Path = "/users/42/orders"</code> · <code>PathValue = "42"</code> ·
+    <code>RawQuery = "status=paid&amp;page=2"</code>
+    <br>เส้นแบ่งคือ <strong>เอาออกแล้วยังรู้ไหมว่าพูดถึงของชิ้นไหน</strong>:
+    ตัด <code>42</code> ทิ้งเหลือ <code>/users/orders</code> ซึ่งไม่มีความหมาย → เป็น path parameter
+    <br>ตัวเลือกที่ 2 กับ 4 คือ <strong>query parameter</strong> — ตัดทิ้งแล้ว
+    <code>/users/42/orders</code> ยังแปลได้ว่า "order ทั้งหมดของ user 42" แค่ไม่ได้กรอง ·
+    ตัวเลือกที่ 3 ผิดเพราะ <code>orders</code> เป็นชื่อ resource ที่เขียนตายตัวไว้ใน pattern
+    ไม่ใช่ช่องว่างที่รับค่า</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">4. เน็ตหลุดตอนกดสร้างสูตร แอปเลย retry — ยิง <code>POST /recipes</code> ด้วย body เดิมเป๊ะ ๆ สองครั้ง ผลเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">ได้สูตรเดิมกลับมา เพราะ server เห็นว่า body ซ้ำกับของเดิมจึงคืนตัวที่สร้างไว้แล้วให้แทน</button>
+    <button class="opt">ครั้งที่สองได้ <code>409 Conflict</code> เพราะ <code>POST</code> ไม่อนุญาตให้สร้าง resource ที่ข้อมูลซ้ำของเดิม</button>
+    <button class="opt">ได้สูตรสองอันที่ข้อมูลเหมือนกันคนละ id เพราะ <code>POST</code> ไม่ idempotent อยู่แล้วโดยธรรมชาติ</button>
+    <button class="opt">ครั้งที่สองไม่มีผลอะไรกับข้อมูล เพราะ <code>POST</code> เป็น idempotent เหมือน <code>PUT</code> และ <code>DELETE</code></button>
+  </div>
+  <div class="explain">
+    <p>ผมยิงจริงสองครั้งด้วย <code>{"name":"Somchai"}</code> เท่ากันทุกตัวอักษร:
+    ครั้งแรก <code>201 Created</code> + <code>Location: /users/1</code> ·
+    ครั้งที่สอง <code>201 Created</code> + <code>Location: /users/2</code>
+    แล้ว <code>GET</code> กองได้ <code>[{"id":1,...},{"id":2,...}]</code> — <strong>สองอัน</strong>
+    <br><code>POST</code> แปลว่า "เพิ่มของใหม่เข้ากอง" สั่งสองครั้งก็เพิ่มสองครั้ง ตรงตามสัญญาของมัน
+    <br>ตัวเลือกที่ 1 กับ 2 ผิดเพราะ HTTP <strong>ไม่มีกลไกกันซ้ำติดมาให้เอง</strong> —
+    ถ้าอยากได้แบบนั้นต้องออกแบบเพิ่มเอง (เช่นให้ client ส่ง key ประจำคำสั่งมาด้วย
+    แล้ว server จำว่าเคยเห็น key นี้แล้ว) ·
+    ตัวเลือกที่ 4 ผิดชัด และเป็นความเข้าใจผิดที่ทำให้ปุ่มจ่ายเงินตัดเงินสองรอบ</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ออกแบบ API ของ Wongnok บนกระดาษ</span>
+  <p>
+    บทนี้ยังไม่เขียนโค้ด แต่<strong>การออกแบบผิดตอนนี้ แพงกว่าเขียนโค้ดผิดสิบเท่า</strong> —
+    เพราะพอมี client ใช้แล้ว URL จะแก้ไม่ได้อีก
+    <br>โจทย์: เว็บรวมสูตรอาหาร · คนทั่วไปค้นสูตรได้ · สมาชิกสร้าง/แก้/ลบสูตรของตัวเอง
+    และให้คะแนนสูตรคนอื่นได้
+  </p>
+  <ol>
+    <li><strong>เขียนตาราง 3 คอลัมน์</strong> (method · path · ทำอะไร) ให้ครบทุกอย่างที่โจทย์ต้องการ —
+        อย่างน้อยต้องมี: ดูสูตรทั้งหมด · ดูสูตรเดียว · สร้าง · แก้ · ลบ
+        <br>กติกา: <strong>ห้ามมีคำกริยาใน path แม้แต่ตัวเดียว</strong></li>
+    <li><strong>ค้นหา:</strong> "หาสูตรจากชื่อเมนู" กับ "หาสูตรที่ทำเสร็จใน 30 นาที และง่าย"
+        ต้องเป็น path ใหม่ หรือเป็น query บน path เดิม? <strong>ตอบพร้อมเหตุผล</strong>
+        <br>(ใช้เส้นแบ่งจากหัวข้อ 5: ตัดส่วนนั้นทิ้งแล้วยังรู้ไหมว่าพูดถึงของกองไหน)</li>
+    <li><strong>ความสัมพันธ์:</strong> "ดูสูตรทั้งหมดของ user 3" ควรเป็น URL อะไร —
+        แล้วเทียบกับ "ให้คะแนนสูตรที่ 7" ว่าใครควรเป็น resource หลัก</li>
+    <li><strong>เลือก method ให้ถูก:</strong> หน้าจอ "แก้ไขสูตร" ของคุณโหลดข้อมูลเดิมมาแสดงครบทุกช่อง
+        ก่อนให้ผู้ใช้แก้ — ควรใช้ <code>PUT</code> หรือ <code>PATCH</code>?
+        <br>แล้วปุ่ม "เปลี่ยนรูปหน้าปกสูตร" ปุ่มเดียวล่ะ? <strong>ตอบให้ต่างกันและบอกเหตุผล</strong></li>
+    <li><strong>ทดสอบหลัก stateless:</strong> ไล่ทีละ endpoint แล้วเขียนว่า
+        <em>ข้อมูลอะไรบ้างต้องเดินทางมากับ request นั้น</em> เพื่อให้ server ตัดสินใจได้ครบ
+        <br>โดยเฉพาะ <code>DELETE</code> สูตรที่ 7 — <strong>server จะรู้ได้ยังไงว่าคนยิงคือเจ้าของสูตร</strong>
+        ถ้ามันจำ login ครั้งก่อนไม่ได้เลย</li>
+    <li><strong>หา idempotency ที่จะทำให้เจ็บ:</strong> ไล่ทุกแถวในตารางแล้วติดดาวไว้ที่แถวที่
+        <em>ยิงซ้ำแล้วผลไม่เหมือนเดิม</em> — มีกี่แถว? แถวไหนที่ผู้ใช้จริงจะกดรัวได้ง่ายที่สุด?</li>
+    <li><strong>เขียนตารางเคสเทส</strong> — สำหรับ endpoint แก้สูตร ให้เขียนเป็นแถว
+        (ชื่อเคส · request ที่ส่ง · สภาพข้อมูลที่คาดหวังหลังจบ) อย่างน้อย 4 แถว
+        ต้องมีเคส <strong>"ส่ง field มาไม่ครบ"</strong> อยู่ด้วย
+        <br>ตารางนี้คือ <strong>input ของ table-driven test</strong>
+        (<a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16</a>) ตรง ๆ —
+        พอเขียน handler เป็นในบทถัด ๆ ไปของ Day 8 คุณจะเอาตารางนี้ไปแปะเป็นเทสได้ทันที
+        โดยไม่ต้องคิดเคสใหม่</li>
+  </ol>
+  <p style="margin-bottom:0">
+    <strong>ทำที่ไหน:</strong> กระดาษ สมุด หรือไฟล์ <code>.md</code> เปล่า ๆ ก็ได้ ยังไม่ต้องเปิดโปรเจกต์ Go
+    <br><strong>ตรวจงานตัวเองก่อนกดเฉลย</strong> — ตารางของคุณผ่านครบสี่ข้อนี้ไหม
+  </p>
+  <ul>
+    <li>อ่าน path ทุกอันออกเสียง แล้วได้<strong>คำนามล้วน</strong> ไม่มีคำกริยาโผล่แม้แต่คำเดียว</li>
+    <li>ปิดคอลัมน์ "ทำอะไร" ทิ้ง แล้วยัง<strong>เดาได้ทุกแถว</strong>ว่าแถวนั้นทำอะไร</li>
+    <li>ชื่อ resource ที่โผล่ในตารางมี<strong>ไม่เกิน 3 ชื่อ</strong> (เช่น <code>recipes</code>,
+        <code>users</code>, <code>ratings</code>) ถ้ามากกว่านั้นแปลว่าเผลอเอาคำกริยาไปตั้งเป็นชื่อของแล้ว</li>
+    <li>ทุกแถวตอบได้ว่า <strong>request นั้นต้องพกอะไรมาบ้าง</strong> server ถึงจะตัดสินใจได้
+        โดยไม่ต้องจำอะไรจากครั้งก่อน</li>
+  </ul>
+  <button class="reveal">เฉลยข้อ 2 · 3 · 4</button>
+  <div class="answer">
+    <p>
+      <strong>ข้อ 2 — เป็น query บน <code>/recipes</code> เดิม</strong>
+      ไม่ใช่ path ใหม่: <code>GET /recipes?q=ต้มยำ</code> และ
+      <code>GET /recipes?max_minutes=30&amp;difficulty=easy</code>
+      <br>เหตุผลตามเส้นแบ่งในหัวข้อ 5: ตัด <code>?q=...</code> ทิ้งแล้วเหลือ <code>/recipes</code>
+      ซึ่ง<em>ยังมีความหมายครบ</em> (สูตรทั้งหมด) — แปลว่ามันคือ<strong>ตัวกรอง</strong> ไม่ใช่<strong>ตัวชี้</strong>
+      <br>ที่สำคัญกว่านั้น: ถ้าทำเป็น path เช่น <code>/recipes/search/ต้มยำ</code> พอวันหนึ่ง
+      อยากค้นด้วยสองเงื่อนไขพร้อมกัน คุณจะต้องเพิ่ม path ใหม่อีกอัน แล้วอีกอัน ไม่จบ —
+      ส่วน query เพิ่มกี่ตัวก็ได้บน path เดิม
+    </p>
+    <p>
+      <strong>ข้อ 3 — <code>GET /users/3/recipes</code></strong> อ่านออกเสียงได้ว่า
+      "สูตรทั้งหลาย ของ user 3" — path ไล่จากของใหญ่ไปของเล็กเสมอ
+      <br>ส่วนให้คะแนน: <code>POST /recipes/7/ratings</code> — คราวนี้
+      <strong>สูตรเป็นเจ้าของกอง</strong> เพราะสิ่งที่เรากำลังเพิ่มคือคะแนน<em>ของสูตรนั้น</em>
+      <br>หลักคือ <strong>อะไรคือ "กอง" ที่ของชิ้นใหม่จะไปอยู่ ตัวนั้นขึ้นก่อนใน path</strong>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>ข้อ 4 — หน้าจอแก้ไขเต็มหน้าใช้ <code>PUT</code> ได้</strong>
+      เพราะ client โหลดของเดิมมาครบแล้ว จะส่งกลับครบทุก field
+      ซึ่งตรงกับความหมาย "แทนที่ทั้งก้อน" พอดี
+      <br><strong>ปุ่มเปลี่ยนรูปหน้าปกใช้ <code>PATCH /recipes/7</code></strong> เพราะหน้าจอนั้น
+      ไม่มีข้อมูลช่องอื่นอยู่ในมือเลย ถ้าใช้ <code>PUT</code> คุณจะซ้ำรอยหัวข้อ 7 เป๊ะ ๆ:
+      ได้ <code>200 OK</code> กลับมา แล้วส่วนผสมกับวิธีทำของสูตรนั้นกลายเป็นค่าว่างทั้งหมด
+      <br><em>คำถามที่ใช้ตัดสินได้ทุกครั้ง: ตอนกดปุ่มนี้ client มีข้อมูลครบทั้งก้อนอยู่ในมือหรือเปล่า?</em>
+      มีครบ → <code>PUT</code> ได้ · ไม่ครบ → ต้อง <code>PATCH</code>
+    </p>
+  </div>
+</div>
+
+<div class="ask note">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 5 คือข้อที่ผมอยากเห็นคำตอบที่สุด</strong> —
+    เพราะคำถาม "server จะรู้ได้ยังไงว่าคุณเป็นเจ้าของสูตร ถ้ามันจำอะไรไม่ได้เลย"
+    คือประตูเข้าสู่เรื่อง auth ทั้งหมดของ Day 8
+    <br>ถ้าตารางที่คุณออกแบบมามีจุดที่ไม่แน่ใจว่า "แบบนี้ REST หรือเปล่า"
+    <strong>ส่งตารางมาได้เลย</strong> — ผมอยากเห็นเหตุผลที่คุณใช้ตัดสินใจ
+    มากกว่าคำตอบที่ถูกอยู่แล้ว เพราะหลัก REST มีข้อเดียวที่ตายตัวจริง ๆ คือ
+    <em>ทำอย่างไรก็ได้ ขอให้คนอ่านเดาข้อถัดไปถูก</em>
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="../../day-7/lessons/0032-redis-cache.html">← บทเรียน 32</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0034-http-status-code.html">บทเรียน 34 → status code</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods">MDN — HTTP request methods</a> — นิยามของ <code>GET</code>/<code>POST</code>/<code>PUT</code>/<code>PATCH</code>/<code>DELETE</code> พร้อมตารางว่าอันไหน safe / idempotent / cacheable</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.4">RFC 9110 §9.3.4 — <code>PUT</code></a> — ประโยคต้นทางที่บอกว่า <code>PUT</code> คือการ <em>replace</em> ทั้ง representation</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc5789">RFC 5789 — <code>PATCH</code> Method for HTTP</a> — เอกสารที่ตั้ง <code>PATCH</code> ขึ้นมาเพราะ <code>PUT</code> แก้บางส่วนไม่ได้</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2">RFC 9110 §9.2.2 — Idempotent Methods</a> — นิยามที่พูดถึง "ผลต่อ server" ไม่ใช่ "status ที่ตอบกลับ"</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/URI">MDN — URI ประกอบด้วยอะไรบ้าง</a> — แยก scheme / host / path / query ให้เห็นเป็นชิ้น ๆ</li>
+  <li><a href="https://ics.uci.edu/~fielding/pubs/dissertation/rest_arch_style.htm">Roy Fielding — REST (บทที่ 5 ของวิทยานิพนธ์ต้นฉบับ)</a> — <strong>อ่านหัวข้อ 5.1.3 Stateless</strong> ถ้าอยากเห็นเหตุผลดั้งเดิมว่าทำไมถึงตัดความจำของ server ทิ้ง</li>
+  <li><a href="https://pkg.go.dev/net/http#ServeMux">pkg.go.dev — <code>net/http.ServeMux</code></a> — pattern <code>"GET /users/{id}"</code> และ <code>r.PathValue("id")</code> ที่ใช้รันตัวอย่างทั้งบทนี้ (จะได้เขียนเองในบทถัดไปของ Day 8)</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

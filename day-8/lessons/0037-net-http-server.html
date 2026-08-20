@@ -1,0 +1,1196 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 37 — net/http: เซิร์ฟเวอร์ตัวแรก</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 37 · Day 8 · net/http</p>
+  <h1>net/http — เซิร์ฟเวอร์ตัวแรก ไม่ใช้ framework</h1>
+  <p class="meta">~18 นาที · ต้องมี: <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a> (<code>error</code>), <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> (<code>encoding/json</code>)</p>
+  <p class="standfirst">
+    ผ่านมา 36 บท เราเขียน Go มาเยอะมาก — แต่<strong>ยังไม่เคยเปิดพอร์ตสักครั้ง</strong>
+    บทนี้เปิด และเปิดด้วย stdlib ล้วน ไม่ลง library อะไรเลย
+    <br>หัวใจของบทไม่ใช่ "เขียน server ยังไง" — แต่คือกฎข้อเดียวที่ทำให้ API พังเงียบ ๆ ทั้งทีม:
+    <strong><code>ResponseWriter</code> เขียนได้ครั้งเดียว</strong>
+    ผมจะทำให้ handler (ฟังก์ชันที่รับ request แล้วเขียนคำตอบกลับ) ที่ "ดูเหมือนตอบ 400" ตอบ 200 ให้ดูกับตา
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 เตรียมเครื่องก่อนอ่าน</strong> — บทนี้เบามาก ไม่ต้องมี Docker ไม่ต้องมีเน็ต</p>
+  <ol>
+    <li><strong>Go 1.22 ขึ้นไป</strong> — เช็คด้วย <code>go version</code>
+        (เครื่องที่ผมรันทุกผลลัพธ์ในบทนี้คือ <code>go1.26.5 darwin/arm64</code>)
+        <br>ทำไมต้อง 1.22: <strong>ทั้งบทนี้พึ่ง routing แบบใหม่</strong>
+        (<code>"GET /hello"</code> และ <code>{id}</code>) ที่เพิ่งมีใน Go 1.22 —
+        Go 1.21 ลงไปจะแปลสตริงพวกนี้ผิดความหมายทั้งหมด</li>
+    <li><strong>โฟลเดอร์เปล่า ๆ อันหนึ่ง</strong> แล้ว <code>go mod init w37</code>
+        <br>ไม่มี <code>go get</code> ในบทนี้เลยแม้แต่บรรทัดเดียว — <code>net/http</code>
+        มาพร้อม Go ตั้งแต่ติดตั้ง</li>
+    <li><strong><code>curl</code></strong> — macOS มีมาให้อยู่แล้ว
+        <br>ในบทนี้ผมใช้ <code>curl -s -i</code> ตลอด
+        (<code>-i</code> = แสดง response header ด้วย · <code>-s</code> = ไม่ต้องโชว์แถบ progress ให้รก)
+        เพราะสิ่งที่บทนี้จะสอนคือ<em>เรื่องที่เกิดใน header</em> ถ้าดูแต่ body จะไม่เห็นอะไรผิดเลย</li>
+  </ol>
+  <p style="margin-bottom:0">
+    ทุก output ในหน้านี้ผมรันจริงแล้ว copy มาวาง — <strong>ถ้าคุณรันได้ไม่ตรง ส่งมาให้ดูได้</strong>
+  </p>
+</div>
+
+<h2>1 · เซิร์ฟเวอร์ที่เล็กที่สุดที่ทำงานได้จริง</h2>
+
+<p>
+  ก่อนอื่นต้องตกลงกันว่า "HTTP server" คืออะไรในเชิงโค้ด — มันไม่ใช่ของวิเศษ
+  <br>มันคือโปรแกรมที่ <strong>(1)</strong> จอง TCP port ไว้หนึ่งพอร์ต ·
+  <strong>(2)</strong> นั่งรอจนมีใครต่อเข้ามา ·
+  <strong>(3)</strong> อ่านตัวอักษรที่เข้ามาว่าเป็นคำขออะไร ·
+  <strong>(4)</strong> เขียนตัวอักษรกลับไปตามรูปแบบที่ browser อ่านออก
+  <br>ทั้งสี่ข้อ <code>net/http</code> ทำให้หมดแล้ว งานที่เหลือของเราคือข้อเดียว:
+  <strong>บอกมันว่า path ไหนให้เรียกฟังก์ชันไหน</strong>
+  <br>ฟังก์ชันที่ถูกเรียกตอน request เข้ามาตรง path นั้น เรียกว่า <strong>handler</strong> —
+  จำคำนี้ไว้ เพราะตั้งแต่บรรทัดนี้ไปจนจบ Day 8 เราจะพูดถึงมันตลอด
+</p>
+
+<p>โค้ดนี้คือฝั่งซ้ายของสไลด์ Day 8 หน้า 41 — เอาไปวางใน <code>main.go</code> แล้ว <code>go run .</code> ได้เลย</p>
+
+<pre><code><span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"fmt"</span>
+    <span class="s">"net/http"</span>
+)
+
+<span class="k">func</span> <span class="f">main</span>() {
+    mux := http.<span class="f">NewServeMux</span>()                     <span class="c">// 1. สมุดจดเส้นทาง</span>
+
+    mux.<span class="f">HandleFunc</span>(<span class="s">"GET /hello"</span>, <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+        fmt.<span class="f">Fprintln</span>(w, <span class="s">"hello from GET /hello"</span>)   <span class="c">// 3. เขียนคำตอบลง w</span>
+    })                                             <span class="c">// 2. จดว่า path นี้ใครรับ</span>
+
+    http.<span class="f">ListenAndServe</span>(<span class="s">":8080"</span>, mux)             <span class="c">// 4. เปิดพอร์ตแล้วนั่งรอ</span>
+}</code></pre>
+
+<p>ยิงดู (ผมรันที่พอร์ต 8765 ตอนตรวจ — คุณรัน <code>:8080</code> ก็เปลี่ยนเลขตาม):</p>
+
+<pre><code>$ curl -s -i http://127.0.0.1:8765/hello
+<strong>HTTP/1.1 200 OK</strong>
+Date: Thu, 20 Aug 2026 14:48:52 GMT
+Content-Length: 22
+<strong>Content-Type: text/plain; charset=utf-8</strong>
+
+hello from GET /hello</code></pre>
+
+<p>สี่ชิ้นนี้คือทั้งหมดที่ต้องเข้าใจ ผมขยายทีละชิ้น</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ชิ้นส่วน</th><th>มันคืออะไรจริง ๆ</th><th>ถ้าไม่มีมันจะเป็นยังไง</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>http.NewServeMux()</code></td>
+      <td><strong>ตารางจับคู่</strong> จาก "method + path" ไปเป็นฟังก์ชัน — ชื่อเต็มคือ <em>multiplexer</em> (ตัวแยกสาย) · ภาษาอื่นเรียกของแบบนี้ว่า <strong>router</strong></td>
+      <td>ต้องเขียน <code>if r.URL.Path == ...</code> เองทุกเส้นทาง</td>
+    </tr>
+    <tr>
+      <td><code>mux.HandleFunc(pattern, fn)</code></td>
+      <td><strong>จดหนึ่งบรรทัดลงตาราง</strong> — ทำตอน startup ครั้งเดียว ไม่ได้ทำตอนมี request</td>
+      <td>ตารางว่าง ทุก request ได้ <code>404 page not found</code></td>
+    </tr>
+    <tr>
+      <td><code>fmt.Fprintln(w, ...)</code></td>
+      <td>เขียนตัวอักษรลง <code>w</code> — <strong>สิ่งที่เขียนลง <code>w</code> คือสิ่งที่ client ได้</strong></td>
+      <td>client ได้ <code>200</code> พร้อม body ว่าง (ไม่ error)</td>
+    </tr>
+    <tr>
+      <td><code>http.ListenAndServe(addr, mux)</code></td>
+      <td>จองพอร์ตแล้ว<strong>บล็อกอยู่ตรงนั้น</strong> วนรับ request ไปเรื่อย ๆ</td>
+      <td><code>main</code> จบทันที โปรแกรมตายก่อนใครจะยิงมาได้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ สังเกตว่า import มีแค่สองบรรทัด และไม่มี <code>go get</code> เลย</strong> —
+    Go เขียน HTTP server ได้จาก stdlib ล้วน
+    <br>นี่คือเหตุผลที่ Day 8 เริ่มที่บทนี้ก่อน Gin: <strong>Gin ไม่ได้แทน <code>net/http</code>
+    มันสร้างทับ <code>net/http</code></strong> ถ้าไม่รู้ชั้นล่าง เวลา Gin ทำอะไรแปลก ๆ
+    จะไล่ไม่ถูกว่าเป็นความผิดของ Gin หรือของ HTTP เอง
+  </p>
+</div>
+
+<h2>2 · อ่าน signature ให้ขาด — ทำไม <code>w</code> ไม่มี <code>*</code> แต่ <code>r</code> มี</h2>
+
+<p>
+  บรรทัดนี้จะตามคุณไปทุกที่ในชีวิตการเขียน Go backend:
+</p>
+
+<pre><code><span class="k">func</span>(w http.ResponseWriter, r *http.Request)</code></pre>
+
+<p>
+  คำถามที่มือใหม่ทุกคนถาม (และส่วนใหญ่ถูกตอบว่า "จำ ๆ ไปเถอะ") คือ
+  <strong>ทำไมตัวหนึ่งมีดาว ตัวหนึ่งไม่มี</strong>
+  <br>คำตอบไม่ใช่เรื่องสไตล์ — มันคือของคนละชนิดกันเลย ผมพิสูจน์ให้ดู
+</p>
+
+<h3><code>w</code> เป็น <em>interface</em> ไม่ใช่ struct</h3>
+
+<p>เปิดดูของจริงด้วย <code>go doc</code> (ตัดคอมเมนต์ยาว ๆ ออก):</p>
+
+<pre><code>$ go doc net/http.ResponseWriter
+
+<span class="k">type</span> ResponseWriter <span class="k">interface</span> {
+    <span class="f">Header</span>() Header
+    <span class="f">Write</span>([]<span class="k">byte</span>) (<span class="k">int</span>, <span class="k">error</span>)
+    <span class="f">WriteHeader</span>(statusCode <span class="k">int</span>)
+}</code></pre>
+
+<p>
+  มีแค่สาม method — <strong>นี่คือ interface ตามบทเรียน
+  <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">10</a> เป๊ะ ๆ</strong>
+  <br>และค่า interface ใน Go <em>ถือ pointer ของของจริงไว้ข้างในอยู่แล้ว</em>
+  การใส่ <code>*</code> ทับลงไปอีกจึงไม่ได้อะไรเพิ่ม (และทำให้เรียก method ไม่ได้ตรง ๆ ด้วย)
+</p>
+
+<p>
+  พิสูจน์ว่ามันเป็น interface จริง — ผมพิมพ์ <strong>ชนิดจริง</strong>ของ <code>w</code> ในสองสถานการณ์
+  <br><small>(<code>./wr</code>, <code>./lasrv</code>, <code>./conflict</code> ที่จะเห็นต่อจากนี้
+  คือโฟลเดอร์ที่ผมใช้ตรวจเอง <strong>ไม่ต้องมีในเครื่องคุณ</strong> — ดูผลรันอย่างเดียวพอ)</small>
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">h</span>(w http.ResponseWriter, r *http.Request) {
+    fmt.<span class="f">Printf</span>(<span class="s">"  ชนิดจริงของ w = %T\n"</span>, w)
+    fmt.<span class="f">Fprintln</span>(w, <span class="s">"hi"</span>)
+}</code></pre>
+
+<pre><code>$ go run ./wr
+ยิงผ่าน httptest:
+  ชนิดจริงของ w = <strong>*httptest.ResponseRecorder</strong>
+ยิงผ่าน server จริง:
+  ชนิดจริงของ w = <strong>*http.response</strong></code></pre>
+
+<p>
+  <strong>โค้ด handler ตัวเดียวกัน แต่ <code>w</code> เป็นคนละชนิดกันเลย</strong>
+  <br>ตอนรัน server จริง Go ยัด <code>*http.response</code> (ตัวที่เขียนลง TCP socket จริง) เข้ามา ·
+  ตอนเทส <code>httptest</code> ยัด <code>*httptest.ResponseRecorder</code> (ตัวที่เก็บลง buffer ใน RAM) เข้ามา
+  <br>นี่คือ<strong>เหตุผลทั้งหมด</strong>ที่ handler ของเราเทสได้โดยไม่ต้องเปิดพอร์ต —
+  และถ้า <code>ResponseWriter</code> เป็น struct ธรรมดา เรื่องนี้จะเป็นไปไม่ได้เลย
+</p>
+
+<h3><code>r</code> เป็น struct — ก้อนใหญ่ที่ห้ามคัดลอก</h3>
+
+<p>ผมวัดขนาดจริงด้วย <code>unsafe.Sizeof</code> บนเครื่องเดียวกัน:</p>
+
+<pre><code>$ go run ./wr
+unsafe.Sizeof(http.Request{})      = <strong>304 bytes</strong>
+unsafe.Sizeof(&amp;http.Request{})     = <strong>8 bytes</strong> (pointer)
+unsafe.Sizeof(interface ค่า w)     = <strong>16 bytes</strong></code></pre>
+
+<p>
+  ถ้า signature เป็น <code>r http.Request</code> (ไม่มีดาว) ทุก ๆ request ที่เข้ามา
+  Go จะต้อง<strong>คัดลอก 304 ไบต์นั้นทั้งก้อน</strong> ทุกครั้งที่ส่งต่อให้ handler
+  <br>แย่กว่าเรื่องความเร็วคือ <strong>ตัวสำเนาจะแก้อะไรไม่ถึงต้นฉบับ</strong>
+</p>
+<p>
+  เรื่องนี้จะสำคัญมากตอนเจอ <strong>middleware</strong> — คำนี้แปลว่า
+  <em>ฟังก์ชันที่ห่อ handler อีกชั้น เพื่อทำงานบางอย่างก่อน/หลัง handler ตัวจริง</em>
+  (เช่น log, เช็ค token) เราจะเขียนของจริงกันในบทเรียน
+  <a href="./0039-gin-binding-middleware.html">39</a>
+  <br>วิธีที่ middleware ส่งข้อมูลลงไปให้ handler ชั้นในคือ<em>เปลี่ยนตัว <code>r</code>
+  ที่ชั้นในจะได้รับ</em> เช่นการแนบ context ลง request (บทเรียน
+  <a href="../../day-6/lessons/0025-context.html">25</a>) — ถ้าแต่ละชั้นได้แค่สำเนา
+  ชั้นในก็จะได้ของเก่าเสมอ ทั้ง pattern ก็พังทันที
+  <br>นี่คือกฎเดียวกับบทเรียน <a href="../../day-3/lessons/0007-value-vs-pointer.html">7</a>
+  ที่เคยเจอมาแล้ว แค่คราวนี้เจอในของจริง
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th><code>w http.ResponseWriter</code></th><th><code>r *http.Request</code></th></tr>
+  </thead>
+  <tbody>
+    <tr><td>ชนิด</td><td><strong>interface</strong> (3 method)</td><td><strong>pointer ไปยัง struct</strong></td></tr>
+    <tr><td>ทิศทาง</td><td>ขาออก — เราเขียนใส่</td><td>ขาเข้า — เราอ่านจากมัน</td></tr>
+    <tr><td>ทำไมไม่มี/มี <code>*</code></td><td>interface พก pointer อยู่แล้ว</td><td>struct 304 ไบต์ ห้ามคัดลอก</td></tr>
+    <tr><td>ตอนเทสถูกแทนด้วย</td><td><code>*httptest.ResponseRecorder</code></td><td><code>httptest.NewRequest(...)</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">⚠️ pointer ไม่ได้แปลว่าแก้ได้ตามใจ</span>
+    เอกสารทางการของ <code>net/http.Handler</code> เขียนไว้ตรง ๆ ว่า
+    <em>"Except for reading the body, handlers should not modify the provided Request."</em>
+    <br>แปลว่า <code>r</code> เป็น pointer <strong>เพื่อประสิทธิภาพและเพื่อให้ middleware
+    เปลี่ยนตัวชี้ได้</strong> ไม่ใช่เพื่อให้เราไปแก้ field ในนั้นเล่น ๆ
+    <br>วิธีที่ถูกคือ<strong>สร้าง request ตัวใหม่</strong>ด้วย <code>r.WithContext(ctx)</code>
+    แล้วส่งตัวใหม่ต่อ — ไม่ใช่ไปยัดค่าลง <code>r</code> ตัวเดิม
+  </p>
+</div>
+
+<h3>แล้ว <code>HandleFunc</code> เกี่ยวอะไร</h3>
+
+<p>
+  จริง ๆ แล้ว <code>net/http</code> รู้จักแค่ interface เดียวชื่อ <code>Handler</code>:
+</p>
+
+<pre><code>$ go doc net/http.Handler
+<span class="k">type</span> Handler <span class="k">interface</span> {
+    <span class="f">ServeHTTP</span>(ResponseWriter, *Request)
+}
+
+$ go doc net/http.HandlerFunc
+<span class="k">type</span> HandlerFunc <span class="k">func</span>(ResponseWriter, *Request)
+    The HandlerFunc type is an adapter to allow the use of ordinary
+    functions as HTTP handlers.
+
+<span class="k">func</span> (f HandlerFunc) <span class="f">ServeHTTP</span>(w ResponseWriter, r *Request)
+    ServeHTTP calls f(w, r).</code></pre>
+
+<p>
+  อ่านสามบรรทัดนี้ช้า ๆ แล้วจะเห็นทริกที่สวยมากของ Go:
+  <code>HandlerFunc</code> คือ <strong>ชนิดที่มี underlying type เป็นฟังก์ชัน</strong>
+  (บทเรียน <a href="../../day-4/lessons/0009-underlying-type.html">9</a>) และมันติด method
+  <code>ServeHTTP</code> ที่ทำแค่ "เรียกตัวเอง"
+  <br>เพราะแบบนี้ <strong>ฟังก์ชันธรรมดาถึงกลายเป็น <code>Handler</code> ได้</strong> โดยไม่ต้องประกาศ struct
+  — <code>HandleFunc</code> ก็แค่ห่อฟังก์ชันที่เราส่งไปด้วย <code>HandlerFunc(...)</code> แล้วจดลงตาราง
+</p>
+
+<h2>3 · pattern <code>"GET /hello"</code> — ของใหม่ที่มาพร้อม Go 1.22</h2>
+
+<p>
+  ก่อน Go 1.22 <code>ServeMux</code> ดูแต่ path — จะกรอง method ต้องเขียน
+  <code>if r.Method != "GET" { ... }</code> เองในทุก handler
+  <br>ตั้งแต่ 1.22 ใส่ method ไว้หน้า path ในสตริงเดียวกันได้เลย และ mux จะจัดการ method ที่ไม่ตรงให้เอง
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — server ลง pattern ไว้<strong>อันเดียว</strong>คือ <code>"GET /hello"</code>
+     แล้วผมยิงสี่แบบนี้ใส่มัน</p>
+  <pre><code>$ curl -s -i         http://127.0.0.1:8765/hello   <span class="c"># GET  ปกติ</span>
+$ curl -s -i -X POST http://127.0.0.1:8765/hello   <span class="c"># POST</span>
+$ curl -s -i -X OPTIONS http://127.0.0.1:8765/hello
+$ curl -s -I         http://127.0.0.1:8765/hello   <span class="c"># -I ตัวใหญ่ = ยิง HEAD</span></code></pre>
+  <p class="ask">
+    แต่ละอันได้ status อะไร? และอันที่ไม่ใช่ 200 จะมี header อะไรติดมาบอกเราบ้าง?
+    <br><strong>คำใบ้: มีอันหนึ่งที่ได้ 200 ทั้งที่เราไม่ได้ลงทะเบียนมันไว้</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ curl -s -i http://127.0.0.1:8765/hello
+<strong>HTTP/1.1 200 OK</strong>
+Content-Length: 22
+Content-Type: text/plain; charset=utf-8
+
+hello from GET /hello
+
+$ curl -s -i -X POST http://127.0.0.1:8765/hello
+<strong>HTTP/1.1 405 Method Not Allowed</strong>
+<strong>Allow: GET, HEAD</strong>
+Content-Type: text/plain; charset=utf-8
+X-Content-Type-Options: nosniff
+Content-Length: 19
+
+Method Not Allowed
+
+$ curl -s -i -X OPTIONS http://127.0.0.1:8765/hello
+<strong>HTTP/1.1 405 Method Not Allowed</strong>
+Allow: GET, HEAD
+...
+Method Not Allowed
+
+$ curl -s -I http://127.0.0.1:8765/hello
+<strong>HTTP/1.1 200 OK</strong>
+Date: Thu, 20 Aug 2026 14:50:58 GMT
+Content-Length: 22
+Content-Type: text/plain; charset=utf-8</code></pre>
+    <p>สามเรื่องที่ต้องเก็บไป:</p>
+    <p>
+      <strong>1. <code>Allow: GET, HEAD</code> ทั้งที่เราลงแค่ <code>GET</code></strong> —
+      Go แถม <code>HEAD</code> ให้ฟรีทุก pattern ที่ลง <code>GET</code> ไว้
+      (HEAD = "ขอแต่ header ไม่เอา body" ซึ่ง Go ทำให้ได้เองจาก handler ตัวเดียวกัน)
+      เพราะแบบนี้ <code>curl -I</code> จึงได้ <strong>200 ไม่ใช่ 405</strong>
+      <br><strong>2. <code>OPTIONS</code> ไม่ได้ฟรี</strong> — ได้ 405 เหมือน method อื่น
+      จำบรรทัดนี้ไว้ให้ดี เพราะ <strong>CORS preflight ของ browser ยิงด้วย <code>OPTIONS</code></strong>
+      <br><em>preflight</em> = ก่อนที่ browser จะยอมให้หน้าเว็บจากอีกโดเมนยิง API ของเรา
+      มันจะ<em>ยิง <code>OPTIONS</code> ไปถามก่อนหนึ่งครั้ง</em>ว่าอนุญาตไหม
+      ถ้าเราไม่เขียนรับ <code>OPTIONS</code> เอง คำถามนั้นได้ 405 → frontend เรียก API ไม่ได้เลย
+      (เรื่องเต็มอยู่ในบทเรียน <a href="./0039-gin-binding-middleware.html">39</a>)
+      <br><strong>3. body ของ 405 คือ <code>Method Not Allowed</code> เป็น text ธรรมดา ไม่ใช่ JSON</strong>
+      — frontend ที่ <code>JSON.parse</code> ทุก response จะพังตรงนี้
+      <br><small>(ส่วน <code>X-Content-Type-Options: nosniff</code> ที่เห็นติดมาด้วย คือ Go บอก browser ว่า
+      "อย่าเดาชนิดไฟล์เอง ให้เชื่อ <code>Content-Type</code>" — เป็นของที่ Go ใส่ให้เอง ไม่ต้องทำอะไรกับมัน)</small>
+    </p>
+    <p style="margin-bottom:0">
+      ลงหลาย method ก็ได้ <code>Allow</code> ครบและ<strong>เรียงตามตัวอักษร</strong> —
+      ผมลง <code>GET/POST/PUT</code> แล้วยิง <code>DELETE</code> ได้
+      <code>Allow="GET, HEAD, POST, PUT"</code>
+    </p>
+  </div>
+</div>
+
+<h3>สตริง pattern พิมพ์ผิดนิดเดียว = พังคนละแบบ</h3>
+
+<p>
+  <code>"GET /hello"</code> เป็น<strong>สตริงธรรมดา</strong> — compiler ไม่ช่วยตรวจให้เลย
+  ผมเลยลองพิมพ์ผิดทุกแบบที่คนพิมพ์ผิดกันจริง แล้วดูว่าเกิดอะไร
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>เขียนว่า</th><th>ยิง <code>GET /hello</code> แล้วได้</th><th>เกิดอะไรขึ้นจริง ๆ</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>"GET /hello"</code></td>
+      <td>200 <code>HIT</code></td>
+      <td>ถูกต้อง</td>
+    </tr>
+    <tr>
+      <td><code>"GET  /hello"</code> (เว้นวรรคสองครั้ง)</td>
+      <td>200 <code>HIT</code></td>
+      <td>Go ยอมให้ — ไม่ต้องกังวล</td>
+    </tr>
+    <tr>
+      <td><code>"get /hello"</code> (method ตัวเล็ก)</td>
+      <td><strong>405</strong> <code>Allow="get"</code></td>
+      <td><strong>register ผ่านเงียบ ๆ ไม่ panic</strong> แต่ HTTP method เป็น case-sensitive — browser ยิง <code>GET</code> ตัวใหญ่เสมอ จึงไม่มีวันตรงกัน</td>
+    </tr>
+    <tr>
+      <td><code>"GET/hello"</code> (ลืมเว้นวรรค)</td>
+      <td><strong>404</strong> <code>page not found</code></td>
+      <td>Go ตีเป็น <strong>host = <code>"GET"</code>, path = <code>/hello</code></strong> → รอ request ที่มาจากโฮสต์ชื่อ GET ซึ่งไม่มีวันเกิด <strong>ไม่มี warning ใด ๆ</strong></td>
+    </tr>
+    <tr>
+      <td><code>"GET hello"</code> (ลืม <code>/</code>)</td>
+      <td colspan="2"><strong>panic ทันทีตอน startup</strong>: <code>parsing "GET hello": at offset 4: host/path missing /</code> — อันนี้ดีที่สุดในตาราง เพราะรู้ตัวทันที</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">⚠️ สังเกตความร้ายของสองแถวกลาง</span>
+    <code>"get /hello"</code> และ <code>"GET/hello"</code> <strong>รันขึ้น ไม่มี error ไม่มี log</strong>
+    — คุณจะเห็นแค่ "ทำไมยิงแล้วไม่เข้า handler" แล้วนั่งไล่โค้ดใน handler ทั้งวัน
+    ทั้งที่ความผิดอยู่ในสตริงบรรทัดที่ลงทะเบียน
+    <br><strong>นิสัยที่ควรติด:</strong> ใช้ค่าคงที่ของ stdlib แทนการพิมพ์เอง —
+    <code>http.MethodGet</code> คือ <code>"GET"</code> และพิมพ์ผิดเมื่อไหร่ <em>compiler ฟ้อง</em>
+  </p>
+</div>
+
+<h2>4 · <code>{id}</code> ใน path และ <code>r.PathValue</code></h2>
+
+<p>
+  ของจริงเราไม่ได้มีแค่ <code>/hello</code> — เราต้องการ <code>/users/1</code>, <code>/users/2</code>, …
+  โดยเขียน handler ตัวเดียว
+  <br>Go 1.22 ให้ใส่ <strong>ปีกกา</strong>ลงใน pattern แล้วดึงค่าออกมาด้วย <code>r.PathValue</code>
+</p>
+
+<pre><code>mux.<span class="f">HandleFunc</span>(<span class="s">"GET /users/{id}"</span>, <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+    fmt.<span class="f">Fprintf</span>(w, <span class="s">"id=%q missing=%q\n"</span>, r.<span class="f">PathValue</span>(<span class="s">"id"</span>), r.<span class="f">PathValue</span>(<span class="s">"nope"</span>))
+})</code></pre>
+
+<pre><code>$ curl -s -i http://127.0.0.1:8765/users/42
+HTTP/1.1 200 OK
+...
+<strong>id="42" missing=""</strong>
+
+$ curl -s -i http://127.0.0.1:8765/users/42/posts
+<strong>HTTP/1.1 404 Not Found</strong>
+X-Content-Type-Options: nosniff
+...
+404 page not found</code></pre>
+
+<p>สามข้อสังเกตจากผลรันข้างบน:</p>
+
+<p>
+  <strong>1. key ที่ไม่มีคืนสตริงว่าง ไม่ panic และไม่มีตัวที่สองแบบ <code>value, ok</code></strong>
+  <br><code>r.PathValue("nope")</code> ได้ <code>""</code> เฉย ๆ — แปลว่าถ้าคุณพิมพ์ชื่อ key ผิด
+  (ลง <code>{id}</code> แต่อ่าน <code>PathValue("ID")</code>) โค้ดจะทำงานต่อด้วยสตริงว่าง
+  แล้วไปพังลึก ๆ ในชั้น database แทน <strong>ชื่อใน pattern กับชื่อที่อ่านต้องตรงกันเป๊ะ</strong>
+</p>
+<p>
+  <strong>2. ทุกค่าที่ได้เป็น <code>string</code> เสมอ</strong> — <code>/users/abc</code> ก็เข้า handler ได้
+  ถ้าโค้ดต้องการตัวเลขก็ต้อง <code>strconv.Atoi</code> เองแล้ว<strong>ตอบ 400 เมื่อแปลงไม่ได้</strong>
+  (routing ไม่ใช่ validation)
+</p>
+<p>
+  <strong>3. <code>{id}</code> กินได้แค่ segment เดียว</strong> — <code>/users/42/posts</code> ไม่ match
+  จึงได้ 404 ถ้าอยากให้กินทั้งหางใช้ <code>{path...}</code> (มีจุดสามจุด):
+</p>
+
+<pre><code><span class="c">// pattern: "GET /static/{path...}"</span>
+$ curl -s -i http://127.0.0.1:8767/static/css/app.css
+HTTP/1.1 200 OK
+...
+<strong>path...="css/app.css"</strong> url="/static/css/app.css"
+
+$ curl -s -i http://127.0.0.1:8767/static/
+HTTP/1.1 200 OK
+...
+<strong>path...=""</strong> url="/static/"</code></pre>
+
+<h3>ลง <code>/users/{id}</code> คู่กับ <code>/users/me</code> ชนกันไหม</h3>
+
+<p>ไม่ชน และ<strong>ตัวที่เจาะจงกว่าชนะ</strong> — ผมลง <code>{id}</code> <em>ก่อน</em> <code>me</code> ด้วยซ้ำ:</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ เจาะจงกว่าชนะ ไม่สนลำดับ</h4>
+    <pre><code>$ curl -s -i .../users/me
+HTTP/1.1 200 OK
+this is /users/me (literal)
+
+$ curl -s -i .../users/42
+HTTP/1.1 200 OK
+id="42" missing=""</code></pre>
+    <p style="margin-bottom:0">
+      กติกาคือ <strong>"เจาะจงกว่าชนะ"</strong> ไม่ใช่ "ลงก่อนชนะ" —
+      ต่างจาก router หลายตัวในภาษาอื่นที่ไล่จากบนลงล่าง
+    </p>
+  </div>
+  <div class="side bad">
+    <h4>❌ เจาะจงเท่ากัน → panic ตอน startup</h4>
+    <pre><code>$ go run ./conflict
+registered GET /users/{id}
+<strong>panic:</strong> pattern "GET /users/{name}"
+conflicts with pattern "GET /users/{id}":
+  GET /users/{name} matches the same
+  requests as GET /users/{id}</code></pre>
+    <p style="margin-bottom:0">
+      พังตอน <strong>register</strong> ไม่ใช่ตอน request —
+      แปลว่ารู้ตัวตั้งแต่ยังไม่ deploy ถือว่าโชคดี
+    </p>
+  </div>
+</div>
+
+<p>
+  กรณีที่ทับกันบางส่วนแต่ไม่มีใครเจาะจงกว่า ข้อความ panic ยัง<strong>ยกตัวอย่าง path ที่ชนให้ดูด้วย</strong>
+  ซึ่งช่วยชีวิตมาก:
+</p>
+
+<pre><code>$ go run ./conflict2
+registered GET /a/{x}/c
+panic: pattern "GET /a/b/{y}" conflicts with pattern "GET /a/{x}/c":
+	<strong>GET /a/b/{y} and GET /a/{x}/c both match some paths, like "/a/b/c".</strong>
+	But neither is more specific than the other.
+	GET /a/b/{y} matches "/a/b/y", but GET /a/{x}/c doesn't.
+	GET /a/{x}/c matches "/a/x/c", but GET /a/b/{y} doesn't.</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>🔗 เกร็ดที่ทำคนงงบ่อย: <code>/files</code> กับ <code>/files/</code> ไม่ใช่อันเดียวกัน</strong>
+    <br>pattern ที่ลงท้ายด้วย <code>/</code> คือ <strong>subtree</strong> — match ทุกอย่างที่ขึ้นต้นด้วยมัน
+    (<code>/files/a/b/c.txt</code> ก็เข้า)
+    <br>และถ้าลง <code>/files/</code> ไว้แล้วมีคนยิง <code>/files</code> เฉย ๆ mux จะ redirect ให้เอง
+    ด้วย <strong><code>307 Temporary Redirect</code></strong> พร้อม <code>Location: /files/</code>
+    <br><strong>ระวัง: บทความเก่าเกือบทั้งอินเทอร์เน็ตเขียนว่า 301</strong> — นั่นคือพฤติกรรมของ mux รุ่นก่อน Go 1.22
+    ผมยืนยันด้วยการเปิดของเก่ากลับมาด้วย <code>GODEBUG=httpmuxgo121=1</code> แล้วได้
+    <code>301 Moved Permanently</code> จริง ส่วน default ของ Go 1.26.5 คือ <strong>307</strong>
+    <br>ถ้าอยากได้ "<code>/exact/</code> เป๊ะ ๆ ห้าม subtree" ใช้ <code>"/exact/{$}"</code> —
+    แล้ว <code>/exact/sub</code> จะได้ 404 ตามที่ควร
+  </p>
+</div>
+
+<h2>5 · ตอบ JSON — และลำดับสามบรรทัดที่ห้ามสลับ</h2>
+
+<p>
+  API จริงตอบ JSON ไม่ใช่ text ธรรมดา และเครื่องมือคือ <code>encoding/json</code> จาก
+  <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> ตัวเดิม
+  <br>แต่มีทางเลือกสองทาง และผมอยากให้เลือกทางที่สอง:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>วิธี</th><th>เกิดอะไร</th><th>ควรใช้เมื่อ</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>b, err := json.Marshal(v)</code><br><code>w.Write(b)</code></td>
+      <td>สร้าง <code>[]byte</code> ทั้งก้อนใน RAM ก่อน แล้วค่อยเขียน — <em>marshal</em> = แปลง struct ให้เป็น JSON (บทเรียน <a href="../../day-4/lessons/0013-json-and-struct-tags.html">13</a>)</td>
+      <td>อยากรู้ขนาด/อยากตรวจ error <strong>ก่อน</strong>เริ่มตอบ</td>
+    </tr>
+    <tr>
+      <td><code>json.NewEncoder(w).Encode(v)</code></td>
+      <td>เขียนตรงลง <code>w</code> เป็นสาย ไม่พักใน RAM · <strong>ใส่ <code>\n</code> ท้ายให้เสมอ</strong></td>
+      <td><strong>เกือบทุกกรณี</strong> — สั้นกว่าและไม่กินหน่วยความจำเพิ่ม</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทีนี้ประเด็นสำคัญ: <strong><code>Encode</code> ไม่ได้บอก client ว่านี่คือ JSON</strong>
+  <br>ถ้าไม่ set <code>Content-Type</code> เอง Go จะ<em>เดา</em>จาก 512 ไบต์แรกของ body
+  (ฟังก์ชัน <code>http.DetectContentType</code>) และมัน<strong>เดา JSON ไม่ออก</strong>:
+</p>
+
+<pre><code>DetectContentType(json bytes) = <strong>"text/plain; charset=utf-8"</strong>
+encoded bytes = "{\"id\":\"7\",\"name\":\"Somchai\"}\n"
+
+$ curl -s -i http://127.0.0.1:8765/json-nosniff
+HTTP/1.1 200 OK
+Content-Length: 28
+<strong>Content-Type: text/plain; charset=utf-8</strong>
+
+{"id":"7","name":"Somchai"}</code></pre>
+
+<p>
+  body เป็น JSON ถูกต้องทุกตัวอักษร แต่ป้ายบอกว่าเป็น <code>text/plain</code> —
+  client บางตัวก็ยังอ่านได้ แต่บางตัว (เช่น <code>fetch</code> ที่เช็ค Content-Type
+  หรือ SDK ที่ generate มา) จะปฏิเสธ <strong>แล้วคุณจะหาสาเหตุไม่เจอเพราะ body ดูถูกทุกอย่าง</strong>
+</p>
+
+<p>ทางแก้คือ set เอง — แต่ <strong>ต้อง set ให้ถูกจังหวะ</strong> ผมรันเทียบให้ดูสองแบบ:</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ set ก่อน WriteHeader</h4>
+    <pre><code>w.<span class="f">Header</span>().<span class="f">Set</span>(<span class="s">"Content-Type"</span>,
+    <span class="s">"application/json; charset=utf-8"</span>)
+w.<span class="f">WriteHeader</span>(http.StatusCreated)
+json.<span class="f">NewEncoder</span>(w).<span class="f">Encode</span>(u)</code></pre>
+    <pre><code>$ curl -s -i .../json-before
+HTTP/1.1 201 Created
+<strong>Content-Type: application/json; charset=utf-8</strong>
+Content-Length: 28
+
+{"id":"7","name":"Somchai"}</code></pre>
+  </div>
+  <div class="side bad">
+    <h4>❌ set หลัง WriteHeader</h4>
+    <pre><code>w.<span class="f">WriteHeader</span>(http.StatusCreated)
+w.<span class="f">Header</span>().<span class="f">Set</span>(<span class="s">"Content-Type"</span>,
+    <span class="s">"application/json; charset=utf-8"</span>)  <span class="c">// สาย</span>
+json.<span class="f">NewEncoder</span>(w).<span class="f">Encode</span>(u)</code></pre>
+    <pre><code>$ curl -s -i .../json-after
+HTTP/1.1 201 Created
+Content-Length: 28
+<strong>Content-Type: text/plain; charset=utf-8</strong>
+
+{"id":"7","name":"Somchai"}</code></pre>
+    <p style="margin-bottom:0">
+      <strong>ไม่มี error ไม่มี log ไม่มี panic</strong> — บรรทัด <code>Set</code> นั้นแค่ไม่มีผล
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ จำเป็นลำดับตายตัวสามขั้น — ห้ามสลับ</strong>
+    <br><code>w.Header().Set(...)</code> → <code>w.WriteHeader(status)</code> →
+    <code>w.Write(...)</code> / <code>Encode(...)</code>
+    <br>วิธีที่ไม่ต้องจำ: <strong>เขียนฟังก์ชัน <code>writeJSON</code> ไว้ตัวเดียวแล้วเรียกมันทุกที่</strong>
+    ลำดับจะถูกอัตโนมัติทั้งโปรเจกต์ (ในภารกิจท้ายบทเราจะเขียนตัวนี้กัน)
+  </p>
+</div>
+
+<h2>6 · หัวใจของบท — <code>ResponseWriter</code> เขียนได้ครั้งเดียว</h2>
+
+<p>
+  ทุกอย่างในหัวข้อ 5 มาจากกฎเดียวกัน และกฎนี้คือสิ่งที่ผมอยากให้จำจากบทนี้มากที่สุด
+  <br><strong>HTTP response ส่งออกเรียงลำดับ: status line → headers → body</strong>
+  พอ byte แรกของ status line ออกจากเครื่องไปแล้ว มัน<em>ดึงกลับไม่ได้</em>
+  — ไม่ใช่ข้อจำกัดของ Go แต่เป็นข้อจำกัดของโปรโตคอล
+  <br><strong>"เขียนได้ครั้งเดียว" หมายถึงอะไรกันแน่:</strong> body จะเขียนกี่ครั้งก็ได้
+  (<code>Write</code> ต่อกันไปเรื่อย ๆ ได้) — ที่ส่งได้<em>ครั้งเดียว</em>คือ
+  <strong>status + header ทั้งชุด</strong> ซึ่งออกไปพร้อมกันทีเดียวตอน <code>WriteHeader</code>
+</p>
+
+<div class="diagram">
+<pre>เวลาเดินจากบนลงล่าง — เส้นประคือ <strong>"จุดไม่ย้อนกลับ"</strong>
+
+  w.<span class="f">Header</span>().<span class="f">Set</span>(...)     แก้ได้ตามใจ ยังไม่มีอะไรออกจากเครื่อง
+        │
+  ─ ─ ─ ┼ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+        │  w.<span class="f">WriteHeader</span>(201)   ← status + header <strong>ทั้งชุด</strong> ถูกส่งออกไปแล้ว
+        ▼
+  w.<span class="f">Header</span>().<span class="f">Set</span>(...)     <strong>สาย</strong> — ไม่มีผล ไม่มี error ไม่มี log
+  w.<span class="f">WriteHeader</span>(400)      <strong>สาย</strong> — ไม่มีผล แต่ <em>มี log</em> ฝั่ง server
+  w.<span class="f">Write</span>(...)            ต่อ body ได้เรื่อย ๆ ตามปกติ</pre>
+</div>
+
+<p>
+  แล้วถ้า<strong>ไม่เคยเรียก <code>WriteHeader</code> เลย</strong>ล่ะ? เอกสารของ
+  <code>ResponseWriter.Write</code> ตอบไว้ว่า:
+  <em>"If WriteHeader has not yet been called, Write calls WriteHeader(http.StatusOK)"</em>
+  <br>แปลว่า <strong>การเขียน body ครั้งแรก = การประกาศ 200 โดยปริยาย</strong>
+  — และนี่แหละคือกับดัก
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — handler ตัวนี้ตั้งใจจะตอบ <code>400</code>
+     พร้อม body ที่บอกว่าอะไรผิด อ่านแล้วดู<em>สมเหตุสมผลมาก</em></p>
+  <pre><code><span class="k">func</span> <span class="f">broken</span>(w http.ResponseWriter, r *http.Request) {
+    json.<span class="f">NewEncoder</span>(w).<span class="f">Encode</span>(<span class="k">map</span>[<span class="k">string</span>]<span class="k">string</span>{<span class="s">"error"</span>: <span class="s">"id ต้องเป็นตัวเลข"</span>})
+    w.<span class="f">WriteHeader</span>(http.StatusBadRequest)
+}</code></pre>
+  <p class="ask">
+    client ได้ status อะไร? · <code>Content-Type</code> เป็นอะไร? ·
+    โปรแกรม panic ไหม? · <strong>ฝั่ง server มีอะไรบอกเราไหมว่ามีอะไรผิด</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผมรัน handler ข้างบน<strong>ตัวนั้นเป๊ะ ๆ</strong> ผ่าน <code>httptest</code> ได้:</p>
+    <pre style="margin:0.6rem 0"><code>=== RUN   TestBroken
+    main_test.go:19: <strong>w.Code = 200</strong>
+    main_test.go:20: Content-Type = <strong>"text/plain; charset=utf-8"</strong>
+    main_test.go:21: body = "{\"error\":\"id ต้องเป็นตัวเลข\"}\n"
+--- PASS: TestBroken (0.00s)</code></pre>
+    <p>
+      และผมรันบั๊กรูปแบบเดียวกัน (เขียน body ก่อน แล้วค่อยสั่ง status) บน
+      <strong>server จริง</strong> ที่ยิงด้วย <code>curl</code> ได้ผลสอดคล้องกัน —
+      คราวนี้ body เป็น text ธรรมดาเพื่อให้เห็นชัดว่า<em>สิ่งที่เขียนหลัง</em>
+      <code>WriteHeader</code> ก็ยังไหลออกไปตามปกติ:
+    </p>
+    <pre style="margin:0.6rem 0"><code>$ curl -s -i http://127.0.0.1:8765/late-status
+<strong>HTTP/1.1 200 OK</strong>
+Content-Length: 37
+Content-Type: text/plain; charset=utf-8
+
+body written first
+after WriteHeader</code></pre>
+    <p>
+      <strong>สถานะเป็น 200 · Content-Type เป็น text/plain · ไม่ panic · request สำเร็จเรียบร้อย</strong>
+      <br>ทั้งที่ body บอกว่า error — ฝั่ง client จะเห็นว่า "สำเร็จ" แล้วเอา
+      <code>{"error": ...}</code> ไปแสดงเป็นข้อมูลผู้ใช้
+    </p>
+    <p>สิ่งเดียวที่บอกเราคือ <strong>log ฝั่ง server หนึ่งบรรทัด</strong>:</p>
+    <pre style="margin:0.6rem 0"><code>2026/08/20 21:51:17 http: <strong>superfluous response.WriteHeader call</strong> from main.main.func8 (main.go:60)</code></pre>
+    <p style="margin-bottom:0">
+      <code>superfluous</code> = "เกินความจำเป็น" · <code>main.main.func8 (main.go:60)</code>
+      คือ<strong>ชื่อ handler และบรรทัดที่เรียก <code>WriteHeader</code> ผิด</strong> — พาไปหาต้นเหตุได้ทันที
+      <br>ถ้าวันไหนเห็นคำว่า <code>superfluous</code> ใน log แปลว่า
+      <strong>มี endpoint ที่ตอบ status ผิดอยู่ตอนนี้</strong> อย่าปล่อยผ่าน
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">⚠️ ทำไมบั๊กชนิดนี้ถึงอยู่รอดใน production ได้นาน</span>
+    เพราะมัน<strong>ไม่ทำให้อะไรพัง</strong> — ไม่ panic ไม่ตัด connection ไม่ทำให้ test crash
+    <br>มันแค่ทำให้ <strong>error ทุกตัวของ endpoint นั้นกลายเป็น 200</strong>
+    ซึ่งแปลว่า retry logic ไม่ทำงาน · alert ไม่ดัง · dashboard เขียวสวยตลอด
+    <br>และเทสก็จับไม่ได้ ถ้าเทสดูแต่ <code>w.Body</code> — <strong>ต้อง assert <code>w.Code</code> ด้วยเสมอ</strong>
+  </p>
+</div>
+
+<h3>ทางแก้: <code>return</code> ทุกครั้งที่ตอบเสร็จ</h3>
+
+<p>
+  สาเหตุที่แท้จริงของกับดักนี้ไม่ใช่ "สลับสองบรรทัด" — ของจริงมันหน้าตาแบบนี้:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ลืม return — ตอบสองครั้ง</h4>
+    <pre><code>u, ok := users[r.<span class="f">PathValue</span>(<span class="s">"id"</span>)]
+<span class="k">if</span> !ok {
+    <span class="f">writeJSON</span>(w, <span class="n">404</span>, errNotFound)
+    <span class="c">// ← ลืม return ตรงนี้</span>
+}
+<span class="f">writeJSON</span>(w, <span class="n">200</span>, u)   <span class="c">// วิ่งต่อเสมอ!</span></code></pre>
+    <p style="margin-bottom:0">
+      ผมรันจริง ยิง <code>/users/999</code> ได้ <code>HTTP/1.1 404 Not Found</code>
+      (ครั้งแรกชนะ) แต่ body ออกมา<strong>สองก้อนต่อกัน</strong>:
+      <br><code>{"error":"user not found"}</code> แล้วตามด้วย <code>{"id":"","name":""}</code>
+      <br>และ server log ว่า <code>superfluous response.WriteHeader call from
+      main.writeJSON (main.go:18)</code>
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ guard clause — ตอบแล้วออก</h4>
+    <pre><code>u, ok := users[id]
+<span class="k">if</span> !ok {
+    <span class="f">writeJSON</span>(w, <span class="n">404</span>, errNotFound)
+    <span class="k">return</span>                    <span class="c">// ← ขาดไม่ได้</span>
+}
+<span class="f">writeJSON</span>(w, <span class="n">200</span>, u)</code></pre>
+    <p style="margin-bottom:0">
+      แบบเดียวกับบทเรียน
+      <a href="../../day-2/lessons/0004-guard-clauses.html">4</a> เป๊ะ ๆ —
+      แค่คราวนี้ "ลืม return" ไม่ได้ทำให้ค่าผิด แต่ทำให้ <strong>HTTP response ผิด</strong>
+    </p>
+  </div>
+</div>
+
+<h2>7 · <code>ListenAndServe</code> คืน <code>error</code> เสมอ — อย่ากลืนมัน</h2>
+
+<p>
+  โค้ดในหัวข้อ 1 ผมเขียน <code>http.ListenAndServe(":8080", mux)</code> ลอย ๆ
+  <strong>โดยไม่รับค่าที่มันคืน</strong> — ซึ่ง Go ยอมให้ทำ และนั่นคือปัญหา
+  <br>ผมรันสามสถานการณ์ให้ดูว่ามันคืนอะไรบ้าง:
+</p>
+
+<pre><code>$ go run ./lasrv
+<span class="c">// เปิด server ตัวที่สองทับพอร์ตที่ตัวแรกจองอยู่</span>
+srv2 return: <strong>listen tcp 127.0.0.1:8971: bind: address already in use</strong>
+srv2 err == nil ? <strong>false</strong>
+
+<span class="c">// สั่งปิดตัวแรกอย่างสุภาพด้วย srv.Shutdown()</span>
+srv1 return: <strong>http: Server closed</strong> | errors.Is(err, http.ErrServerClosed)=<strong>true</strong>
+
+<span class="c">// ขอจองพอร์ต 80 ในฐานะ user ธรรมดา</span>
+port80 return: <strong>listen tcp 127.0.0.1:80: bind: permission denied</strong></code></pre>
+
+<p>
+  สรุปจากผลรัน: <strong><code>ListenAndServe</code> ไม่เคยคืน <code>nil</code></strong>
+  ถ้ามันคืนค่าเมื่อไหร่แปลว่า server หยุดแล้ว และมีสองสาเหตุเท่านั้น —
+  <em>เปิดไม่ขึ้นตั้งแต่แรก</em> หรือ <em>ถูกสั่งปิด</em>
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ กลืน error</h4>
+    <pre><code>http.<span class="f">ListenAndServe</span>(<span class="s">":8080"</span>, mux)</code></pre>
+    <p style="margin-bottom:0">
+      พอร์ตชน → ฟังก์ชันคืนค่าทันที → <code>main</code> จบ →
+      <strong>process ออกด้วย exit code 0 อย่างเงียบสนิท</strong>
+      <br>คุณจะเห็นแค่ "container ขึ้นแล้วดับ ไม่มี log อะไรเลย"
+      ซึ่งเป็นหนึ่งในเคสที่ debug ยากที่สุดตอน deploy
+    </p>
+  </div>
+  <div class="side good">
+    <h4>✅ บังคับให้มันดัง</h4>
+    <pre><code>log.<span class="f">Println</span>(<span class="s">"listening on :8080"</span>)
+<span class="k">if</span> err := http.<span class="f">ListenAndServe</span>(<span class="s">":8080"</span>, mux);
+    err != <span class="k">nil</span> &amp;&amp; !errors.<span class="f">Is</span>(err, http.ErrServerClosed) {
+    log.<span class="f">Fatal</span>(err)
+}</code></pre>
+    <p style="margin-bottom:0">
+      พิมพ์สาเหตุออกมาแล้ว exit ด้วย code 1 — ตัวที่คอยรันโปรแกรมให้เรา
+      (Docker, Kubernetes, systemd) เห็น exit code ที่ไม่ใช่ 0 แล้วรู้ว่าพัง
+      <br>ที่ยกเว้น <code>ErrServerClosed</code> เพราะการปิดที่<em>เราสั่งเอง</em> ไม่ใช่ความผิดพลาด
+      (ใช้ <code>errors.Is</code> จาก <a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>)
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>💡 <code>":8080"</code> กับ <code>"127.0.0.1:8080"</code> ไม่เหมือนกัน</strong>
+    <br>ละ host ไว้ (<code>":8080"</code>) = ฟังทุก network interface — เครื่องอื่นในวงเน็ตเดียวกันยิงเข้ามาได้
+    และบน macOS จะเด้ง popup ขออนุญาต firewall
+    <br><code>"127.0.0.1:8080"</code> = ฟังเฉพาะเครื่องตัวเอง — <strong>ตอนพัฒนาใช้อันนี้ปลอดภัยกว่า</strong>
+    (ตัวอย่างในบทนี้ผมใช้ <code>127.0.0.1</code> ทั้งหมดด้วยเหตุผลนี้)
+  </p>
+</div>
+
+<h2>8 · เทส handler โดยไม่ต้องเปิดพอร์ต</h2>
+
+<p>
+  ยังจำหัวข้อ 2 ได้ไหมว่า <code>w</code> เป็น interface? ตรงนี้แหละที่มันคืนกำไร
+  <br><strong>เราไม่ต้องรัน server ไม่ต้องยิง curl ไม่ต้องหาพอร์ตว่าง</strong> —
+  แค่เอา <code>ResponseWriter</code> ปลอมยัดเข้าไปแล้วเรียก <code>mux.ServeHTTP</code> ตรง ๆ
+</p>
+
+<pre><code>w := httptest.<span class="f">NewRecorder</span>()                          <span class="c">// ResponseWriter ปลอม (เก็บลง buffer)</span>
+req := httptest.<span class="f">NewRequest</span>(http.MethodGet, <span class="s">"/users/1"</span>, <span class="k">nil</span>)  <span class="c">// Request ปลอม</span>
+mux.<span class="f">ServeHTTP</span>(w, req)                                <span class="c">// เรียกเข้า mux เหมือน request จริง</span>
+
+<span class="c">// จากนั้นอ่านผลจาก w ได้เลย — สามบรรทัดล่างนี้แค่โชว์ว่ามีอะไรให้อ่านบ้าง</span>
+<span class="c">// เวลาใช้จริงต้องเอาไปใส่ใน if/t.Errorf ไม่ใช่วางลอย ๆ แบบนี้</span>
+w.Code                        <span class="c">// int         เช่น 200</span>
+w.Body.<span class="f">String</span>()               <span class="c">// string      body ทั้งก้อน</span>
+w.<span class="f">Header</span>().<span class="f">Get</span>(<span class="s">"Content-Type"</span>)  <span class="c">// string      header ที่ handler set</span></code></pre>
+
+<p>
+  สังเกตว่าเรายิงเข้า <code>mux</code> ไม่ใช่เรียก handler ตรง ๆ —
+  ทำแบบนี้จะได้<strong>ทดสอบ routing และ pattern ของเราไปพร้อมกัน</strong>
+  ซึ่งจากหัวข้อ 3 เรารู้แล้วว่า pattern พิมพ์ผิดคือกับดักที่เงียบที่สุด
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>📌 บทนี้ใช้ <code>httptest</code> แค่พอทำภารกิจได้</strong> —
+    เรื่องเต็ม ๆ (<code>NewRecorder</code> เทียบ <code>NewServer</code> ·
+    กับดัก recorder ใช้ซ้ำ · <code>assert.JSONEq</code> · เทสไฟล์อัปโหลดและ middleware)
+    อยู่ใน <strong>บทเรียน 40</strong> ท้าย Day 8
+  </p>
+</div>
+
+<h2>9 · แล้วทำไมยังต้องมี Gin</h2>
+
+<p>
+  พออ่านมาถึงตรงนี้คำถามที่ควรผุดขึ้นคือ "ก็ครบแล้วนี่ จะ framework ไปทำไม"
+  <br>คำตอบที่ซื่อสัตย์คือ <strong>ครบจริงสำหรับ API เล็ก ๆ</strong> — ของที่ Gin ให้เพิ่มคือของที่
+  <em>เขียนเองได้แต่ต้องเขียนซ้ำทุกโปรเจกต์</em>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>เรื่อง</th><th><code>net/http</code> (Go 1.26.5)</th><th>Gin (v1.12.0)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>method ไม่ตรง</td>
+      <td><strong>405 + <code>Allow</code> ให้เอง</strong></td>
+      <td><strong>404</strong> จนกว่าจะเปิด <code>HandleMethodNotAllowed</code></td>
+    </tr>
+    <tr>
+      <td>path param</td>
+      <td><code>{id}</code> + <code>r.PathValue("id")</code></td>
+      <td><code>:id</code> + <code>c.Param("id")</code></td>
+    </tr>
+    <tr>
+      <td>static ชนกับ param<br>(<code>/users/me</code> vs <code>/users/{id}</code>)</td>
+      <td colspan="2" style="text-align:center"><strong>เหมือนกันทั้งคู่ — static ชนะ ไม่สนลำดับที่ลง</strong></td>
+    </tr>
+    <tr>
+      <td>อ่าน JSON body + validate</td>
+      <td>เขียน <code>json.Decode</code> + เช็คทีละ field เอง</td>
+      <td><code>c.ShouldBindJSON</code> + tag <code>binding:"required"</code></td>
+    </tr>
+    <tr>
+      <td>ตอบ JSON</td>
+      <td>set header เอง แล้ว <code>Encode</code> (ลำดับสามขั้นในหัวข้อ 5)</td>
+      <td><code>c.JSON(200, obj)</code> — set <code>Content-Type</code> ให้เอง</td>
+    </tr>
+    <tr>
+      <td>middleware / group</td>
+      <td>ห่อ <code>Handler</code> เองทีละชั้น</td>
+      <td><code>r.Use(...)</code> · <code>r.Group("/api/v1")</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ เก็บไปจากบทนี้:</strong> Gin ไม่ได้มาแทน <code>net/http</code> — Gin
+    <strong>รับ <code>ResponseWriter</code> กับ <code>*Request</code> ตัวเดียวกันนี้แหละ</strong>
+    ไปห่อไว้ใน <code>*gin.Context</code>
+    <br>แปลว่ากฎทุกข้อในบทนี้ <em>ยังใช้อยู่ตอนเขียน Gin</em>: ตอบซ้ำสองครั้งก็ยังได้
+    <code>superfluous</code> · เขียน header หลังตอบก็ยังไม่มีผล
+    <br><strong>คุณเพิ่งเรียนชั้นที่อยู่ใต้ทุก framework ของ Go ไปแล้ว</strong> —
+    บทเรียน 38 ค่อยขึ้นไปชั้นบน
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ลง pattern ไว้อันเดียวคือ <code>"GET /hello"</code> แล้วยิง <code>curl -I http://.../hello</code> (ซึ่งคือ method <code>HEAD</code>) จะได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">405 Method Not Allowed พร้อม header <code>Allow: GET</code> เพราะลงไว้แค่ GET</button>
+    <button class="opt">200 OK เพราะ Go แถม HEAD ให้ฟรีทุก pattern ที่ลงทะเบียน GET เอาไว้</button>
+    <button class="opt">404 page not found เพราะไม่มี pattern ไหนในตารางตรงกับ HEAD เลย</button>
+    <button class="opt">501 Not Implemented เพราะ ServeMux ยังไม่รองรับ method ตัวนี้</button>
+  </div>
+  <div class="explain">
+    <p>ผมยิงจริงได้ <code>HTTP/1.1 200 OK</code> พร้อม <code>Content-Length: 22</code>
+    — Go สร้าง <code>HEAD</code> จาก handler ตัวเดียวกับ <code>GET</code> ให้อัตโนมัติ
+    (ส่ง header แต่ตัด body ทิ้ง)
+    <br>หลักฐานอีกชิ้นอยู่ที่ header ของเคสที่ผิด method จริง ๆ: ยิง <code>POST /hello</code>
+    ได้ <code>405</code> พร้อม <strong><code>Allow: GET, HEAD</code></strong> —
+    คำว่า <code>HEAD</code> โผล่มาเองทั้งที่เราไม่ได้พิมพ์
+    <br>ตัวเลือกที่ 1 ผิดสองจุด: ทั้ง status และค่าใน <code>Allow</code> (มี <code>HEAD</code> ด้วยเสมอ) ·
+    ตัวเลือกที่ 3 ผิดเพราะ path ตรง จึงไม่ใช่ 404 — 404 จะเกิดตอน<em>ไม่มี path นี้</em>เท่านั้น ·
+    ตัวเลือกที่ 4 ผิดเพราะ <code>ServeMux</code> ไม่เคยตอบ 501
+    <br><strong>ข้อควรจำที่ต่างกันสุดขั้ว:</strong> <code>OPTIONS</code> <em>ไม่</em>ได้ฟรีแบบ HEAD —
+    ผมยิงแล้วได้ 405 ซึ่งกระทบ CORS preflight โดยตรง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">2. handler เรียก <code>json.NewEncoder(w).Encode(errBody)</code> ก่อน แล้วบรรทัดถัดมาจึงเรียก <code>w.WriteHeader(400)</code> — client เห็นอะไร?</p>
+  <div class="opts">
+    <button class="opt">400 พร้อม body JSON ตามที่ตั้งใจ เพราะ <code>WriteHeader</code> เขียนทับค่าเดิมได้</button>
+    <button class="opt">connection ถูกตัดกลางคัน client ได้ empty reply เพราะฝั่ง server panic</button>
+    <button class="opt">200 OK พร้อม body JSON นั้น และฝั่ง server มี log <code>superfluous</code> หนึ่งบรรทัด</button>
+    <button class="opt">500 Internal Server Error เพราะ <code>net/http</code> ตรวจเจอความผิดพลาดนี้เอง</button>
+  </div>
+  <div class="explain">
+    <p>ผมรัน handler รูปนี้ผ่าน <code>httptest</code> ได้ <code>w.Code = 200</code>
+    และรันบั๊กแบบเดียวกันบน server จริงแล้วยิงด้วย <code>curl</code> ก็ได้
+    <code>HTTP/1.1 200 OK</code> เหมือนกัน
+    <br>เหตุผลอยู่ในเอกสารของ <code>Write</code>: <em>ถ้ายังไม่เคยเรียก <code>WriteHeader</code>
+    ตัว <code>Write</code> จะเรียก <code>WriteHeader(http.StatusOK)</code> ให้ก่อน</em>
+    — <code>Encode</code> เขียน body ก็คือเรียก <code>Write</code> จึงล็อกสถานะเป็น 200 ไปแล้ว
+    ตอนที่บรรทัด <code>WriteHeader(400)</code> ทำงาน
+    <br>สิ่งเดียวที่เตือนเราคือ log ฝั่ง server:
+    <code>http: superfluous response.WriteHeader call from main.main.func8 (main.go:60)</code>
+    ซึ่งบอกทั้งชื่อ handler และเลขบรรทัด
+    <br>ตัวเลือกที่ 1 ผิดเพราะ status ที่ส่งออกไปแล้วดึงกลับไม่ได้ (ข้อจำกัดของโปรโตคอล ไม่ใช่ของ Go) ·
+    ตัวเลือกที่ 2 ผิดเพราะ<strong>ไม่ panic ไม่ตัด connection</strong> request จบสวยงามด้วยซ้ำ ·
+    ตัวเลือกที่ 4 ผิดเพราะ <code>net/http</code> แค่ log ไม่เปลี่ยน response ให้
+    <br>สังเกตด้วยว่า <code>Content-Type</code> กลายเป็น <code>text/plain; charset=utf-8</code>
+    เพราะไม่ได้ set ก่อน — บั๊กสองตัวมาจากกฎเดียวกัน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. ทำไม signature ถึงเป็น <code>w http.ResponseWriter</code> (ไม่มีดาว) แต่ <code>r *http.Request</code> (มีดาว)?</p>
+  <div class="opts">
+    <button class="opt">เพราะ <code>ResponseWriter</code> เป็น interface ซึ่งถือ pointer ของจริงไว้อยู่แล้ว ส่วน <code>Request</code> เป็น struct</button>
+    <button class="opt">เพราะ Go ห้ามใส่ pointer ให้ parameter ตัวแรกของฟังก์ชันที่จะเอาไปใช้เป็น handler</button>
+    <button class="opt">เพราะ <code>ResponseWriter</code> เป็น struct ที่เล็กกว่า <code>Request</code> จึงคัดลอกทั้งก้อนได้คุ้มกว่า</button>
+    <button class="opt">เพราะ handler มีสิทธิ์เขียนลง <code>w</code> แต่ห้ามอ่านจาก <code>r</code> ทั้งคู่จึงเขียนคนละรูปแบบ</button>
+  </div>
+  <div class="explain">
+    <p><code>go doc net/http.ResponseWriter</code> บอกตรง ๆ ว่ามันคือ
+    <code>interface</code> ที่มีสาม method: <code>Header()</code>, <code>Write()</code>,
+    <code>WriteHeader()</code> — และค่า interface ใน Go ถือ pointer ของ implementation ไว้ข้างในแล้ว
+    <br>ผมพิสูจน์โดยพิมพ์ <code>%T</code> ของ <code>w</code> ในสองสถานการณ์ ได้
+    <strong><code>*http.response</code></strong> ตอนรัน server จริง และ
+    <strong><code>*httptest.ResponseRecorder</code></strong> ตอนรันผ่าน <code>httptest</code>
+    — โค้ด handler ตัวเดียวกันแท้ ๆ
+    <br>ส่วน <code>Request</code> ผมวัดได้ <code>unsafe.Sizeof(http.Request{}) = 304 bytes</code>
+    เทียบกับ pointer ที่ <code>8 bytes</code> — ส่งเป็นค่าจะคัดลอกทุก request และ middleware แก้อะไรไม่ถึงกัน
+    <br>ตัวเลือกที่ 2 ผิดเพราะ Go ไม่มีกฎแบบนั้นเลย เขียน <code>*T</code> ตำแหน่งไหนก็ได้ ·
+    ตัวเลือกที่ 3 ผิดที่คำว่า struct — ถ้ามันเป็น struct จริง การสลับตัวปลอมตอนเทสจะทำไม่ได้ ·
+    ตัวเลือกที่ 4 ผิดกลับด้าน: handler <em>ต้อง</em>อ่านจาก <code>r</code> (นั่นคือหน้าที่หลักของมัน)
+    สิ่งที่เอกสารห้ามคือ<em>แก้</em> <code>r</code> ไม่ใช่อ่าน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. เขียน <code>http.ListenAndServe(":8080", mux)</code> ลอย ๆ ไม่รับค่าคืน แล้วบังเอิญพอร์ต 8080 ถูกใช้อยู่ — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">โปรแกรมค้างรออยู่เรื่อย ๆ จนกว่าพอร์ตเดิมจะว่างแล้วจึงเริ่มรับ request ต่อ</button>
+    <button class="opt">คอมไพล์ไม่ผ่าน เพราะ Go บังคับให้รับค่าคืนของฟังก์ชันที่คืน <code>error</code> เสมอ</button>
+    <button class="opt">โปรแกรม panic ทันทีพร้อม stack trace ที่ระบุว่าพอร์ตนั้นถูกใช้งานอยู่แล้ว</button>
+    <button class="opt">ฟังก์ชันคืนค่าทันที <code>main</code> จบเงียบ ๆ ทั้งที่ไม่มีอะไรฟังพอร์ตนั้นเลย</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันจริงแล้วมันคืน error ทันที:
+    <code>listen tcp 127.0.0.1:8971: bind: address already in use</code> (และ <code>err == nil</code> เป็น <code>false</code>)
+    <br>แต่เมื่อโค้ด<strong>ไม่รับค่าที่คืนมา</strong> ไม่มีใครอ่าน error นั้น →
+    <code>main</code> เดินต่อจนจบฟังก์ชัน → process ออกด้วย exit code 0
+    <strong>โดยไม่พิมพ์อะไรเลยสักบรรทัด</strong> ซึ่งตอน deploy จะเห็นแค่ "ขึ้นแล้วดับ"
+    <br>ตัวเลือกที่ 1 ผิดเพราะ <code>bind</code> ที่ล้มเหลวคือจบเลย ไม่มีการรอคิว ·
+    ตัวเลือกที่ 2 ผิดเพราะ Go บังคับเรื่องนี้เฉพาะกับ<em>ตัวแปรที่ประกาศแล้วไม่ได้ใช้</em>
+    ไม่ได้บังคับให้รับค่าคืนของฟังก์ชัน ·
+    ตัวเลือกที่ 3 ผิดเพราะไม่มี panic — มันคืน error ธรรมดา
+    <br>ทางแก้: <code>if err := http.ListenAndServe(...); err != nil &amp;&amp;
+    !errors.Is(err, http.ErrServerClosed) { log.Fatal(err) }</code>
+    <br>ที่ต้องยกเว้น <code>ErrServerClosed</code> เพราะตอนสั่งปิดเอง
+    <code>ListenAndServe</code> คืน <code>http: Server closed</code> ซึ่ง
+    <code>errors.Is(err, http.ErrServerClosed)</code> เป็น <code>true</code> — อันนั้นไม่ใช่ความผิดพลาด</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — server ตัวแรกของคุณ แล้วพิสูจน์ด้วยเทส</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำให้ curl ได้ 200" — เป้าหมายคือ
+    <strong>ทำให้บั๊ก <code>superfluous</code> เกิดขึ้นกับมือ แล้วเขียนเทสที่จับมันได้</strong>
+    ถ้าข้ามข้อ 5 กับ 6 ไป ภารกิจนี้จะไม่เหลืออะไรเลย
+  </p>
+  <ol>
+    <li><strong>ตั้งโปรเจกต์:</strong> โฟลเดอร์ใหม่ → <code>go mod init w37</code>
+        → ยืนยันด้วย <code>go version</code> ว่า <strong>1.22 ขึ้นไป</strong>
+        (ต่ำกว่านี้ pattern <code>"GET /health"</code> จะถูกตีเป็น path ชื่อประหลาด ไม่ใช่ method)
+        <br>ไม่ต้อง <code>go get</code> อะไรทั้งสิ้น</li>
+
+    <li><strong>เขียน <code>writeJSON</code> ก่อนเขียน handler:</strong>
+        ฟังก์ชันเดียวที่รับ <code>(w, status int, v any)</code> แล้วทำสามขั้น
+        <strong>ตามลำดับของหัวข้อ 5</strong> — <code>Header().Set</code> →
+        <code>WriteHeader</code> → <code>json.NewEncoder(w).Encode</code>
+        <br>เขียนตัวนี้ก่อนเพราะมันคือที่เดียวที่ลำดับจะผิดได้ — ที่เหลือของโปรแกรมเรียกมันอย่างเดียว</li>
+
+    <li><strong>สอง endpoint:</strong>
+        <br><code>GET /health</code> → <code>200</code> body <code>{"status":"ok"}</code>
+        <br><code>GET /users/{id}</code> → อ่าน id ด้วย <code>r.PathValue("id")</code>
+        หาใน map ที่ hardcode ไว้ —
+        เจอตอบ <code>200</code> พร้อม user · ไม่เจอตอบ <code>404</code> body
+        <code>{"error":"user not found"}</code>
+        <br><strong>อย่าลืม <code>return</code> หลังตอบ 404</strong>
+        <br>ข้อมูลปลอมให้ใช้ชุดนี้ไปเลย จะได้ตรงกับเฉลย:
+        <code>var users = map[string]User{"1": {ID: "1", Name: "Somchai"}}</code>
+        โดย struct <code>User</code> <strong>ต้องมี json tag ตัวเล็ก</strong>
+        (<code>`json:"id"`</code> · <code>`json:"name"`</code> — บทเรียน
+        <a href="../../day-4/lessons/0013-json-and-struct-tags.html">13</a>)
+        ไม่งั้น body จะออกมาเป็น <code>{"ID":...,"Name":...}</code> ตัวใหญ่
+        แล้วเทสในข้อ 7 จะไม่ผ่าน</li>
+
+    <li><strong>รันแล้วยิงด้วย <code>curl -i</code> สี่ครั้ง</strong> —
+        <br><small>(เปิดสองเทอร์มินัล: หน้าต่างแรกรัน <code>go run .</code> แล้วปล่อยค้างไว้
+        เพราะ <code>ListenAndServe</code> บล็อกอยู่ตรงนั้น · หน้าต่างที่สองใช้ยิง <code>curl</code>)</small>
+        <br>
+        <code>/health</code> · <code>/users/1</code> · <code>/users/999</code> ·
+        และ <code>-X DELETE /users/1</code>
+        <br>ต้องตอบให้ได้สามข้อ: อันสุดท้ายได้ status อะไร · header <code>Allow</code> เขียนว่าอะไร ·
+        <strong>ทำไมมีคำที่คุณไม่ได้ลงทะเบียนโผล่อยู่ใน <code>Allow</code></strong></li>
+
+    <li><strong>ทำให้มันพังด้วยมือ:</strong> ใน <code>writeJSON</code> ลอง<strong>สลับสองบรรทัดแรก</strong>
+        (<code>WriteHeader</code> ขึ้นก่อน <code>Header().Set</code>) แล้วยิง <code>/users/999</code>
+        <br>ตอบให้ได้: status ยังเป็น 404 ไหม · <strong><code>Content-Type</code> เปลี่ยนเป็นอะไร</strong> ·
+        มี error หรือ log ไหม</li>
+
+    <li><strong>ทำให้มันพังแบบที่สอง:</strong> เขียน handler ใหม่หนึ่งตัวที่
+        <code>Encode</code> body ก่อน แล้วค่อย <code>w.WriteHeader(400)</code>
+        <br>ยิงด้วย <code>curl -i</code> แล้ว<strong>ดูเทอร์มินัลฝั่ง server ด้วย</strong> —
+        client ได้ status อะไร และ server พิมพ์อะไรออกมา (ควรมีคำว่า <code>superfluous</code>)</li>
+
+    <li><strong>เขียนเทสพิสูจน์</strong> — table-driven ตามบทเรียน
+        <a href="../../day-5/lessons/0016-table-driven-test.html">16</a> ใช้
+        <code>httptest.NewRecorder()</code> + <code>httptest.NewRequest(...)</code> +
+        <code>mux.ServeHTTP(w, req)</code> ครอบสี่เคส:
+        <code>200 /health</code> · <code>200 /users/1</code> · <code>404 /users/999</code> ·
+        <code>405 DELETE /users/1</code>
+        <br><strong>ต้อง assert ทั้ง <code>w.Code</code> และ <code>w.Body</code></strong>
+        (ดูข้อ 8 ว่าทำไม assert แค่ body ถึงจับบั๊กของบทนี้ไม่ได้เลย)
+        <br>สร้าง <code>httptest.NewRecorder()</code> <strong>ใหม่ทุกเคสภายใน <code>t.Run</code></strong></li>
+
+    <li><strong>ตรวจว่าเทสของคุณ "เทสจริง":</strong> เอา handler พังจากข้อ 6 มาเขียนเทสที่
+        <code>assert</code> ว่าได้ <code>400</code>
+        <br><strong>เทสนี้ต้อง fail</strong> — ผมรันแล้วได้ <code>code = 200, want 400</code>
+        <br>ถ้าเทสของคุณ<em>ผ่าน</em> แปลว่าคุณ assert แต่ body อยู่ ซึ่งคือเหตุผลที่บั๊กชนิดนี้
+        รอดไปถึง production ได้</li>
+
+    <li><strong>ปิดท้ายด้วยเรื่อง <code>ListenAndServe</code>:</strong> ห่อมันด้วย
+        <code>if err := ...; err != nil &amp;&amp; !errors.Is(err, http.ErrServerClosed) { log.Fatal(err) }</code>
+        แล้วเปิดโปรแกรมสองหน้าต่างพร้อมกันที่พอร์ตเดียวกัน
+        <br>เทียบกับตอนที่เขียนลอย ๆ ไม่รับค่า — <strong>ต่างกันตรงไหนในสิ่งที่คุณเห็นบนจอ</strong></li>
+
+    <li><strong>ท้าทาย:</strong> ลง <code>"GET /users/{id}"</code> คู่กับ
+        <code>"GET /users/me"</code> แล้วยิงทั้งสอง · จากนั้นลองเพิ่ม
+        <code>"GET /users/{name}"</code> เข้าไปอีกอัน — <strong>ทายก่อนรัน</strong>ว่า
+        พังตอน compile, ตอน startup, หรือตอน request</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 7 (โครงเทส + ผลรันจริง)</button>
+  <div class="answer">
+    <p>ผมแยก <code>NewMux()</code> ออกจาก <code>main()</code> เพื่อให้เทสหยิบไปใช้ได้:</p>
+    <pre style="margin:0.6rem 0"><code><span class="k">type</span> User <span class="k">struct</span> {
+    ID   <span class="k">string</span> <span class="s">`json:"id"`</span>
+    Name <span class="k">string</span> <span class="s">`json:"name"`</span>
+}
+
+<span class="k">var</span> users = <span class="k">map</span>[<span class="k">string</span>]User{<span class="s">"1"</span>: {ID: <span class="s">"1"</span>, Name: <span class="s">"Somchai"</span>}}
+
+<span class="c">// writeJSON คือตัวที่เขียนไว้ตั้งแต่ข้อ 2 — Header().Set → WriteHeader → Encode</span>
+
+<span class="k">func</span> <span class="f">NewMux</span>() *http.ServeMux {
+    mux := http.<span class="f">NewServeMux</span>()
+
+    mux.<span class="f">HandleFunc</span>(<span class="s">"GET /health"</span>, <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+        <span class="f">writeJSON</span>(w, http.StatusOK, <span class="k">map</span>[<span class="k">string</span>]<span class="k">string</span>{<span class="s">"status"</span>: <span class="s">"ok"</span>})
+    })
+
+    mux.<span class="f">HandleFunc</span>(<span class="s">"GET /users/{id}"</span>, <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+        u, ok := users[r.<span class="f">PathValue</span>(<span class="s">"id"</span>)]
+        <span class="k">if</span> !ok {
+            <span class="f">writeJSON</span>(w, http.StatusNotFound, <span class="k">map</span>[<span class="k">string</span>]<span class="k">string</span>{<span class="s">"error"</span>: <span class="s">"user not found"</span>})
+            <span class="k">return</span>
+        }
+        <span class="f">writeJSON</span>(w, http.StatusOK, u)
+    })
+
+    <span class="k">return</span> mux
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    log.<span class="f">Println</span>(<span class="s">"listening on 127.0.0.1:8080"</span>)
+    <span class="k">if</span> err := http.<span class="f">ListenAndServe</span>(<span class="s">"127.0.0.1:8080"</span>, <span class="f">NewMux</span>()); err != <span class="k">nil</span> {
+        log.<span class="f">Fatal</span>(err)
+    }
+}</code></pre>
+    <p>ฝั่งเทส — <code>w</code> ใหม่ทุกเคส และเทียบ body หลัง <code>TrimSpace</code>
+       (เพราะ <code>Encode</code> ใส่ <code>\n</code> ท้ายให้เสมอ):</p>
+    <pre style="margin:0.6rem 0"><code>tests := []<span class="k">struct</span> {
+    name, method, path, wantBody <span class="k">string</span>
+    wantCode <span class="k">int</span>
+}{
+    {<span class="s">"health ตอบ ok"</span>, http.MethodGet, <span class="s">"/health"</span>, <span class="s">`{"status":"ok"}`</span>, http.StatusOK},
+    {<span class="s">"เจอ user"</span>, http.MethodGet, <span class="s">"/users/1"</span>, <span class="s">`{"id":"1","name":"Somchai"}`</span>, http.StatusOK},
+    {<span class="s">"ไม่เจอ user"</span>, http.MethodGet, <span class="s">"/users/999"</span>, <span class="s">`{"error":"user not found"}`</span>, http.StatusNotFound},
+    {<span class="s">"method ผิด"</span>, http.MethodDelete, <span class="s">"/users/1"</span>, <span class="s">"Method Not Allowed"</span>, http.StatusMethodNotAllowed},
+}
+
+<span class="k">for</span> _, tc := <span class="k">range</span> tests {
+    t.<span class="f">Run</span>(tc.name, <span class="k">func</span>(t *testing.T) {
+        w := httptest.<span class="f">NewRecorder</span>()          <span class="c">// ← ใน t.Run เท่านั้น</span>
+        req := httptest.<span class="f">NewRequest</span>(tc.method, tc.path, <span class="k">nil</span>)
+        mux.<span class="f">ServeHTTP</span>(w, req)
+
+        <span class="k">if</span> w.Code != tc.wantCode {
+            t.<span class="f">Fatalf</span>(<span class="s">"code = %d, want %d (body=%s)"</span>, w.Code, tc.wantCode, w.Body.<span class="f">String</span>())
+        }
+        <span class="k">if</span> got := strings.<span class="f">TrimSpace</span>(w.Body.<span class="f">String</span>()); got != tc.wantBody {
+            t.<span class="f">Errorf</span>(<span class="s">"body = %q, want %q"</span>, got, tc.wantBody)
+        }
+    })
+}</code></pre>
+    <p>
+      ผลรันจริงบนเครื่องผม (ผมใส่ <code>t.Logf</code> เพิ่มเพื่อให้เห็น header ด้วย)
+      <br><small>ตอนตรวจผมวางไฟล์ไว้ในโฟลเดอร์ย่อย <code>api/</code> จึงสั่ง <code>go test -v ./api/</code>
+      — ถ้าคุณวางไว้ที่รากโปรเจกต์เลย ให้สั่ง <code>go test -v .</code> แทน ผลที่ได้เหมือนกัน</small>
+    </p>
+    <pre style="margin:0.6rem 0"><code>$ go test -v ./api/
+=== RUN   TestAPI
+=== RUN   TestAPI/health_ตอบ_ok
+    main_test.go:39: code=200 ct="application/json; charset=utf-8" allow="" body={"status":"ok"}
+=== RUN   TestAPI/เจอ_user
+    main_test.go:39: code=200 ct="application/json; charset=utf-8" allow="" body={"id":"1","name":"Somchai"}
+=== RUN   TestAPI/ไม่เจอ_user
+    main_test.go:39: code=404 ct="application/json; charset=utf-8" allow="" body={"error":"user not found"}
+=== RUN   TestAPI/method_ผิด
+    main_test.go:39: code=405 ct=<strong>"text/plain; charset=utf-8"</strong> allow=<strong>"GET, HEAD"</strong> body=Method Not Allowed
+--- PASS: TestAPI (0.00s)
+PASS
+ok  	w37/api	0.448s</code></pre>
+    <p style="margin-bottom:0">
+      <strong>บรรทัดสุดท้ายคือของแถมที่ผมอยากให้สังเกตที่สุด</strong> — เคส 405 นั้น
+      <code>Content-Type</code> เป็น <code>text/plain</code> และมี <code>Allow: GET, HEAD</code>
+      <br>ทั้งสองค่านี้<strong>ไม่ได้มาจากโค้ดที่เราเขียนสักบรรทัด</strong> —
+      <code>ServeMux</code> ตอบให้เองก่อนที่ handler ของเราจะถูกเรียกด้วยซ้ำ
+      นั่นคือสิ่งที่ Gin <em>ไม่</em>ทำให้ (ตอบ 404 แทน) ตามตารางในหัวข้อ 9
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 8 คือข้อที่ผมอยากเห็นผลที่สุด</strong> — เทสที่ "ผ่านทั้งที่โค้ดตอบ status ผิด"
+    คือเทสที่หลอกคุณอยู่ และมันจะหลอกทั้งทีมต่อไปอีกเป็นปี
+    <br>ถ้ารันแล้วได้ผลไม่ตรงกับในบทนี้ <strong>ส่ง output มาได้เลย</strong> —
+    โดยเฉพาะถ้า Go ของคุณต่ำกว่า 1.22 (pattern จะทำงานคนละแบบทั้งหมด) หรือถ้าเห็นคำว่า
+    <code>superfluous</code> โผล่ในที่ที่ไม่ได้ตั้งใจ
+    <br>ตัวเลขและ output ทุกบรรทัดในหน้านี้รันบน <strong>go1.26.5 darwin/arm64</strong> ด้วย stdlib ล้วน
+    ไม่มี dependency ภายนอกเลยแม้แต่ตัวเดียว
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0036-rest-naming-idempotency.html">← บทเรียน 36</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0038-gin-routing.html">บทเรียน 38 → Gin</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/net/http#ServeMux">pkg.go.dev — <code>net/http.ServeMux</code></a> — <strong>อ่านหัวข้อ "Patterns" ให้จบ</strong>: กติกา method, <code>{wildcard}</code>, <code>{$}</code> และนิยามของคำว่า "เจาะจงกว่า" (precedence)</li>
+  <li><a href="https://go.dev/blog/routing-enhancements">Go Blog — Routing Enhancements for Go 1.22</a> — ทีม Go อธิบายเองว่าทำไมถึงเพิ่ม method กับ wildcard เข้า <code>ServeMux</code> และตัดสินใจเรื่อง 307 อย่างไร</li>
+  <li><a href="https://pkg.go.dev/net/http#ResponseWriter">pkg.go.dev — <code>ResponseWriter</code></a> — ประโยคสำคัญอยู่ใน doc ของ <code>Write</code>: ถ้ายังไม่เรียก <code>WriteHeader</code> มันจะเรียก <code>WriteHeader(StatusOK)</code> ให้เอง</li>
+  <li><a href="https://pkg.go.dev/net/http#Request.PathValue">pkg.go.dev — <code>Request.PathValue</code></a> · <a href="https://pkg.go.dev/net/http#Request.SetPathValue">SetPathValue</a> — คืนสตริงว่างเมื่อไม่มี key ที่ขอ</li>
+  <li><a href="https://pkg.go.dev/net/http#ListenAndServe">pkg.go.dev — <code>ListenAndServe</code></a> · <a href="https://pkg.go.dev/net/http#ErrServerClosed">ErrServerClosed</a> — "ListenAndServe always returns a non-nil error"</li>
+  <li><a href="https://pkg.go.dev/net/http/httptest">pkg.go.dev — <code>net/http/httptest</code></a> — <code>NewRecorder</code> และ <code>NewRequest</code> (เรื่องเต็มอยู่บทเรียน 40)</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/405">MDN — 405 Method Not Allowed</a> — สเปกบอกว่า response 405 <strong>ต้อง</strong>มี header <code>Allow</code> ซึ่งอธิบายว่าทำไม Go ใส่ให้เอง</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

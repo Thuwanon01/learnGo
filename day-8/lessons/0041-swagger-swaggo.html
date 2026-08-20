@@ -1,0 +1,1186 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 41 — Swagger: เอกสารที่ไม่มีวันเก่ากว่าโค้ด</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 41 · Day 8 · Swagger</p>
+  <h1>Swagger — เอกสารที่ไม่มีวันเก่ากว่าโค้ด</h1>
+  <p class="meta">~18 นาที · ต้องมี: <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> (project layout <code>cmd/</code> + <code>internal/</code>), <a href="./0038-gin-routing.html">บทเรียน 38</a> (Gin routing)</p>
+  <p class="standfirst">
+    สไลด์ของคอร์สนี้เขียนประโยคหนึ่งไว้ ผมว่ามันคือทั้งบท:
+    <strong>“เอกสารที่ไม่ตรงกับโค้ด อันตรายกว่าไม่มีเอกสาร”</strong>
+    <br>เพราะไม่มีเอกสาร frontend จะ<em>มาถาม</em> · แต่มีเอกสารที่ผิด frontend จะ<strong>เชื่อ</strong>
+    แล้วเขียนโค้ดทั้งหน้าจอบนคำโกหกนั้น
+    <br>บทนี้จะไม่สอนแค่ “พิมพ์คอมเมนต์แล้วรัน <code>swag init</code>” —
+    จะพาไป<strong>ทำให้มันพังทีละแบบให้ดูกับตา</strong> แล้วอ่าน error จริงว่ามันบอกอะไร
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่บทนี้ใช้จริง</strong> — ตัวเลข ผลรัน และข้อความ error ทุกบรรทัดในหน้านี้
+  มาจากการรันบนเครื่องจริง ไม่ได้พิมพ์เอาเอง</p>
+  <ul>
+    <li>Go <strong>1.26.5</strong> darwin/arm64</li>
+    <li><code>swag</code> CLI <strong>v1.16.4</strong> · <code>github.com/swaggo/swag</code> (library ใน <code>go.mod</code>) <strong>v1.16.6</strong></li>
+    <li><code>github.com/gin-gonic/gin</code> <strong>v1.12.0</strong> ·
+        <code>github.com/swaggo/gin-swagger</code> <strong>v1.6.1</strong> ·
+        <code>github.com/swaggo/files</code> <strong>v1.0.1</strong></li>
+    <li>โปรเจกต์ตัวอย่างชื่อ module <code>wongnok</code> โครงเดียวกับ
+        <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a>:
+        <code>cmd/api/main.go</code> · <code>internal/user/</code> · <code>internal/httputil/</code></li>
+  </ul>
+  <p style="margin-bottom:0">
+    ถ้าเครื่องคุณได้ผลไม่ตรง <strong>อย่าเพิ่งคิดว่าตัวเองผิด</strong> —
+    เวอร์ชันต่างกันนิดเดียวผลก็ต่างได้ หัวข้อ 9 จะสอนวิธีเช็คด้วยตัวเอง
+  </p>
+</div>
+
+<h2>1 · ปัญหาที่ Swagger เกิดมาแก้</h2>
+
+<p>
+  ลองนึกภาพจริง ๆ: คุณเขียน <code>POST /api/v1/users</code> เสร็จ
+  แล้วเปิด Google Docs พิมพ์ว่า body ต้องมี <code>name</code> กับ <code>email</code> ส่ง link ให้ frontend
+  <br>อีกสองสัปดาห์คุณเพิ่ม <code>binding:"required"</code> ที่ <code>email</code> —
+  แล้ว<strong>ลืมกลับไปแก้ Docs</strong>
+</p>
+
+<p>
+  ที่เกิดขึ้นต่อจากนั้นไม่ใช่ “เอกสารไม่อัปเดตนิดหน่อย” แต่คือ:
+  frontend ส่ง request ที่ตรงตามเอกสารเป๊ะ ๆ แล้ว<strong>ได้ 400 กลับไป</strong>
+  เขาจะไม่สงสัยเอกสารก่อน เขาจะสงสัย<em>โค้ดตัวเอง</em>ก่อนเป็นชั่วโมง
+  <br>นี่คือเหตุผลที่ประโยค “เอกสารที่ไม่ตรงกับโค้ด อันตรายกว่าไม่มีเอกสาร” ไม่ใช่คำสวย ๆ —
+  <strong>เอกสารที่ผิดคือ bug ที่ไม่มีใครเห็นว่ามันเป็น bug</strong>
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ เขียนเอกสารด้วยมือ</h4>
+    <ul style="margin-bottom:0">
+      <li>อยู่คนละที่กับโค้ด → แก้โค้ดแล้วลืมแก้เอกสาร</li>
+      <li>ไม่มีใครรู้ว่าเวอร์ชันไหนล่าสุด</li>
+      <li>frontend ต้องเดา หรือเดินมาถาม</li>
+      <li><strong>ผิดได้เงียบ ๆ</strong> ไม่มีอะไรเตือน</li>
+    </ul>
+  </div>
+  <div class="side good">
+    <h4>✅ generate จากโค้ด</h4>
+    <ul style="margin-bottom:0">
+      <li>คอมเมนต์อยู่<strong>ติดกับ handler</strong> ในไฟล์เดียวกัน</li>
+      <li>เข้า git ไปพร้อม commit เดียวกับโค้ด</li>
+      <li>frontend เปิด Swagger UI กดยิงลองได้เอง</li>
+      <li>ยัง<strong>ผิดได้อยู่</strong> ถ้าลืม generate ใหม่ — หัวข้อ 10 จะพิสูจน์ให้ดู</li>
+    </ul>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">⚠️ อย่าเพิ่งเชื่อคำโฆษณา</span>
+    Swagger <strong>ไม่ได้</strong>ทำให้เอกสารตรงกับโค้ดโดยอัตโนมัติ
+    <br>สิ่งที่มันทำคือ <em>ย้ายเอกสารมาอยู่ข้าง ๆ โค้ด</em> เพื่อให้คุณ<strong>มีโอกาส</strong>แก้พร้อมกัน
+    <br>ตัวที่ทำให้มันตรงจริง ๆ คือ<strong>ขั้นตอนรัน <code>swag init</code></strong> ที่คุณต้องไม่ลืม —
+    และนั่นคือกับดักอันดับหนึ่งของบทนี้
+  </p>
+</div>
+
+<h2>2 · OpenAPI คือ “มาตรฐาน” · Swagger คือ “ชุดเครื่องมือ”</h2>
+
+<p>
+  สองคำนี้ถูกใช้ปนกันจนคนใหม่งง แยกให้ขาดตั้งแต่ตอนนี้ แล้วทุกอย่างที่เหลือจะเข้าที่:
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>📄 OpenAPI Specification (OAS)</h4>
+    <p style="margin-bottom:0">
+      คือ<strong>มาตรฐาน</strong>ว่า “จะอธิบาย REST API เป็นไฟล์ยังไงให้เครื่องอ่านรู้เรื่อง”
+      <br>ผลลัพธ์คือ<strong>ไฟล์ JSON หรือ YAML หนึ่งไฟล์</strong> —
+      เป็นแค่<em>ข้อความ</em> ไม่ใช่โปรแกรม รันไม่ได้ ไม่มีอะไรเกี่ยวกับ Go เลย
+    </p>
+  </div>
+  <div class="side good">
+    <h4>🧰 Swagger</h4>
+    <p style="margin-bottom:0">
+      คือ<strong>ชุดเครื่องมือ</strong>ที่<em>กิน</em>ไฟล์ spec นั้นเข้าไป
+      แล้วเปลี่ยนเป็นของที่ใช้ได้จริง — หน้าเว็บ, โค้ด client, ตัวตรวจ spec
+    </p>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เครื่องมือ</th><th>ทำอะไร</th></tr>
+  <tr><td><strong>Swagger UI</strong></td><td>หน้าเว็บอ่านเอกสาร + กดยิง API ได้จริง ← <strong>ตัวที่บทนี้ใช้</strong></td></tr>
+  <tr><td>Swagger Editor</td><td>เขียน/ตรวจ spec แล้วเห็นผลทันที</td></tr>
+  <tr><td>Swagger Codegen</td><td>ร่างโค้ด client หรือ server จาก spec</td></tr>
+</table>
+</div>
+
+<p>
+  ส่วนเรื่อง<strong>เวอร์ชัน</strong> เป็นจุดที่คนใหม่พลาดตอนไปหา Google บ่อยมาก
+  เพราะชื่อมันเปลี่ยนกลางคัน:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เวอร์ชัน</th><th>ชื่อที่คนเรียกกัน</th><th>เครื่องมือฝั่ง Go</th></tr>
+  <tr><td><strong>Swagger 2.0</strong></td><td>= OpenAPI 2.0</td><td><code>swaggo/swag</code> v1 ← <strong>ที่คอร์สนี้ใช้</strong></td></tr>
+  <tr><td>OpenAPI 3.x</td><td>รุ่นใหม่กว่า</td><td><code>swaggo/swag</code> v2 (ยังเป็น rc)</td></tr>
+</table>
+</div>
+
+<p>
+  นี่ไม่ใช่เกร็ดไร้สาระ — มัน<strong>โผล่ในไฟล์ที่คุณจะได้จริง</strong>
+  บรรทัดแรกของ <code>docs/swagger.json</code> ที่ผมรันออกมาคือ:
+</p>
+
+<pre><code>{
+  <span class="s">"swagger"</span>: <span class="s">"2.0"</span>,
+  <span class="s">"info"</span>: {
+    <span class="s">"description"</span>: <span class="s">"API สำหรับจัดการข้อมูลผู้ใช้ของ Wongnok"</span>,
+    <span class="s">"title"</span>: <span class="s">"Wongnok API"</span>,
+    <span class="s">"contact"</span>: {},
+    <span class="s">"version"</span>: <span class="s">"1.0"</span>
+  },
+  <span class="s">"host"</span>: <span class="s">"localhost:8080"</span>,
+  <span class="s">"basePath"</span>: <span class="s">"/api/v1"</span>,
+  <span class="s">"schemes"</span>: [<span class="s">"http"</span>, <span class="s">"https"</span>],
+  ...</code></pre>
+
+<p>
+  <strong>มันเขียนว่า <code>"swagger": "2.0"</code> ไม่ใช่ <code>"openapi": "3.x"</code></strong>
+  <br>ถ้าวันหนึ่งคุณเอาไฟล์นี้ไปให้เครื่องมือที่รับแต่ OpenAPI 3 แล้วมันบ่น —
+  คุณจะรู้ทันทีว่าปัญหาอยู่ตรงไหน แทนที่จะงงอยู่ครึ่งวัน
+</p>
+
+<h2>3 · flow ทั้งหมดมี 5 ขั้น และเราแตะแค่ขั้นเดียว</h2>
+
+<p>
+  ก่อนอื่นขอนิยามคำที่จะเจอทั้งบท: <strong>annotation</strong> ในที่นี้คือ
+  <strong>คอมเมนต์ Go ธรรมดา ๆ ที่ขึ้นต้นบรรทัดด้วย <code>@</code></strong>
+  เช่น <code>// @Summary ดึงข้อมูล User</code>
+  <br>คอมไพเลอร์ Go มองว่ามันเป็นคอมเมนต์เปล่า ๆ ไม่มีความหมาย —
+  มีแต่โปรแกรม <code>swag</code> เท่านั้นที่อ่านมันแล้วเอาไปทำอะไรต่อ
+</p>
+
+<p>
+  <strong>วิธีอ่านแผนภาพ:</strong> ไล่จากซ้ายไปขวา
+  ช่องแรกช่องเดียวคือของที่<em>มือเราพิมพ์</em> ที่เหลือเครื่องสร้างให้หมด
+</p>
+
+<div class="diagram">
+<pre>   <strong>1</strong>                <strong>2</strong>               <strong>3</strong>                  <strong>4</strong>                <strong>5</strong>
+เขียน annotation ─▶ รัน swag init ─▶ ได้โฟลเดอร์ docs/ ─▶ Swagger UI ─▶ เอา spec ไปใช้ต่อ
+
+คอมเมนต์ //  @...   สแกนโค้ด        docs.go            /swagger/         GitLab viewer
+เหนือ handler       ทั้งโปรเจกต์     swagger.json       index.html        Postman
+                                    swagger.yaml                         openapi-generator
+
+└─ <strong>เราเขียนเอง</strong> ─┘   └──────────── <strong>เครื่องสร้างให้อัตโนมัติ</strong> ────────────┘</pre>
+</div>
+
+<p>
+  จำโครงนี้ไว้ให้แม่น เพราะ<strong>เกือบทุกอาการพังในบทนี้ คือ “ขั้นใดขั้นหนึ่งไม่ได้เกิดขึ้น”</strong>:
+  <br>ขั้น 2 ไม่ได้รัน → เอกสารเป็นของเก่า ·
+  ขั้น 3 ไม่มีไฟล์ → UI ไม่มีอะไรอ่าน ·
+  ขั้น 4 route ผิด → เปิดหน้าไม่เจอ
+</p>
+
+<h2>4 · ติดตั้งสามตัว — และกับดักเวอร์ชันที่สไลด์ไม่ได้เตือน</h2>
+
+<p>ของที่ต้องลงมีสามชิ้น หน้าที่ต่างกันชัดเจน อย่าสับสน:</p>
+
+<pre><code><span class="c"># 1) swag CLI — โปรแกรมที่อ่านคอมเมนต์ในโค้ดแล้วสร้าง docs/ (ไม่ได้อยู่ใน go.mod)</span>
+$ go install github.com/swaggo/swag/cmd/swag@latest
+$ swag --version
+<strong>swag version v1.16.4</strong>
+
+<span class="c"># 2) + 3) library ฝั่ง Gin สองตัว — handler ที่เสิร์ฟหน้า Swagger UI (อยู่ใน go.mod)</span>
+$ go get -u github.com/swaggo/gin-swagger
+$ go get -u github.com/swaggo/files</code></pre>
+
+<p style="margin-top:0.6rem">
+  <strong>รันที่ไหน?</strong> คำสั่ง <code>go install</code> (ข้อ 1) รันจากโฟลเดอร์ไหนก็ได้
+  เพราะมันลงโปรแกรมลงเครื่อง ไม่เกี่ยวกับโปรเจกต์
+  <br>แต่ <code>go get</code> (ข้อ 2) <strong>ต้องรันในโฟลเดอร์ root ของโปรเจกต์</strong>
+  — โฟลเดอร์ที่มีไฟล์ <code>go.mod</code> อยู่ — เพราะมันไปเขียนบรรทัดใหม่ลงใน <code>go.mod</code>
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ตัว</th><th>หน้าที่</th><th>อยู่ที่ไหน</th></tr>
+  <tr><td><code>swag</code> (CLI)</td><td>อ่าน annotation แล้วสร้าง <code>docs/</code></td><td>เครื่องคุณ (<code>$(go env GOPATH)/bin</code>)</td></tr>
+  <tr><td><code>gin-swagger</code></td><td>handler ที่เสิร์ฟหน้า Swagger UI</td><td><code>go.mod</code> ของโปรเจกต์</td></tr>
+  <tr><td><code>files</code></td><td>ไฟล์ static (HTML/JS/CSS) ของ Swagger UI</td><td><code>go.mod</code> ของโปรเจกต์</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong>พิมพ์ <code>swag</code> แล้วขึ้น <code>command not found</code></strong> —
+    ไม่ได้แปลว่าลงไม่สำเร็จ <code>go install</code> วางไฟล์ไว้ที่
+    <code>$(go env GOPATH)/bin</code> ซึ่ง shell อาจยังไม่รู้จัก
+    <br>แก้ด้วย <code>export PATH=$PATH:$(go env GOPATH)/bin</code>
+    (ใส่ไว้ใน <code>~/.zshrc</code> จะได้ไม่ต้องพิมพ์ทุกครั้ง)
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">⚠️ กับดักที่สไลด์ไม่ได้พูดถึง — CLI ใหม่กว่า library แล้ว build พัง</h3>
+
+<p>
+  อ่านสองคำสั่งข้างบนอีกรอบ แล้วสังเกตว่ามัน<strong>ไม่ได้คุยกัน</strong>:
+  <br><code>go install ...@latest</code> ลง CLI รุ่น<em>ล่าสุด</em>ลงเครื่อง ·
+  แต่ <code>go get gin-swagger</code> ลาก <code>github.com/swaggo/swag</code>
+  เวอร์ชัน<em>ที่มันเลือกให้</em>เข้ามาใน <code>go.mod</code>
+  <br>บนเครื่องผม <code>gin-swagger v1.6.1</code> ลาก <code>swag</code> library
+  <strong>v1.8.12</strong> เข้ามา ขณะที่ CLI เป็น <strong>v1.16.4</strong>
+</p>
+
+<p>
+  <code>docs/docs.go</code> ที่ CLI รุ่นใหม่สร้าง จึงอ้าง field ที่ library รุ่นเก่ายังไม่มี
+  ผลคือ <strong>โปรเจกต์คอมไพล์ไม่ผ่าน</strong> ทั้งที่คุณยังไม่ได้เขียนโค้ดผิดสักบรรทัด:
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    ⏱️ <strong>อาการนี้จะยังไม่โผล่ตอนนี้</strong> — มันโผล่หลังจากคุณรัน <code>swag init</code>
+    (หัวข้อ 9) ไปแล้วเท่านั้น เพราะต้องมีไฟล์ <code>docs/docs.go</code> อยู่ก่อน
+    ยกมาเล่าไว้ตรงนี้เพราะมันเป็น<em>เรื่องเวอร์ชันตอนติดตั้ง</em> ไม่ใช่เรื่องของ <code>swag init</code>
+  </p>
+</div>
+
+<pre><code>$ go test ./cmd/api/
+<span class="c"># wongnok/docs</span>
+docs/docs.go:169:2: unknown field LeftDelim in struct literal of type <span class="s">"github.com/swaggo/swag"</span>.Spec
+docs/docs.go:170:2: unknown field RightDelim in struct literal of type <span class="s">"github.com/swaggo/swag"</span>.Spec
+FAIL	wongnok/cmd/api [build failed]</code></pre>
+
+<p>
+  <strong>วิธีอ่าน error นี้ให้เป็น:</strong> มันชี้ไปที่ <code>docs/docs.go</code>
+  ซึ่งเป็นไฟล์ที่<em>เครื่องสร้าง</em> ไม่ใช่ไฟล์ที่เราเขียน —
+  พอเห็นบรรทัดแรกเป็น <code># wongnok/docs</code> ให้คิดถึงเรื่องเวอร์ชันทันที
+  อย่าไปนั่งไล่อ่าน <code>docs.go</code> ทีละบรรทัด (มันไม่ใช่ความผิดของไฟล์นั้น)
+  <br>ทางแก้ที่ได้ผลจริงคือดึง library ให้ตามทัน CLI:
+</p>
+
+<pre><code>$ go get github.com/swaggo/swag@latest
+go: upgraded github.com/swaggo/swag v1.8.12 =&gt; <strong>v1.16.6</strong></code></pre>
+
+<div class="win">
+  <span class="label">🧠 หลักที่ต้องเก็บไป</span>
+  <p style="margin-bottom:0">
+    <code>swag</code> <strong>CLI</strong> กับ <code>github.com/swaggo/swag</code> ใน <strong><code>go.mod</code></strong>
+    ต้องเป็นรุ่นใกล้กันเสมอ
+    <br>ถ้าทีมคุณมีคนหนึ่งรัน <code>swag init</code> แล้ว commit <code>docs/</code> ขึ้นไป
+    แล้วอีกคน build ไม่ผ่าน — <strong>เช็ค <code>swag --version</code> ของทั้งสองเครื่องก่อนเสมอ</strong>
+  </p>
+</div>
+
+<h2>5 · ต่อ Swagger UI เข้ากับ Gin — สองบรรทัดที่คนพลาดมากที่สุด</h2>
+
+<p>
+  โค้ดที่ต้องเติมใน <code>cmd/api/main.go</code> สั้นมาก แต่มีสองจุดที่ผิดแล้ว<strong>ไม่มีใครเตือน</strong>:
+</p>
+
+<pre><code><span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"github.com/gin-gonic/gin"</span>
+    swaggerFiles <span class="s">"github.com/swaggo/files"</span>
+    ginSwagger <span class="s">"github.com/swaggo/gin-swagger"</span>
+
+    _ <span class="s">"wongnok/docs"</span>          <span class="c">// ← จุดที่ 1: blank import</span>
+    <span class="s">"wongnok/internal/user"</span>
+)
+
+<span class="k">func</span> <span class="f">main</span>() {
+    router := gin.<span class="f">Default</span>()
+    userHandler := user.<span class="f">NewHandler</span>()
+
+    v1 := router.<span class="f">Group</span>(<span class="s">"/api/v1"</span>)
+    {
+        v1.<span class="f">POST</span>(<span class="s">"/users"</span>, userHandler.Create)
+        v1.<span class="f">GET</span>(<span class="s">"/users/:id"</span>, userHandler.FindByID)
+    }
+
+    <span class="c">// ← จุดที่ 2: ต้องมี *any ต่อท้าย</span>
+    router.<span class="f">GET</span>(<span class="s">"/swagger/*any"</span>, ginSwagger.<span class="f">WrapHandler</span>(swaggerFiles.Handler))
+    router.<span class="f">Run</span>(<span class="s">":8080"</span>)
+}</code></pre>
+
+<p>
+  นี่คือ <code>main.go</code> เดิมจาก <a href="./0038-gin-routing.html">บทเรียน 38</a> /
+  <a href="./0039-gin-binding-middleware.html">บทเรียน 39</a> ที่<strong>เติมเข้าไปแค่สองบรรทัดที่มีคอมเมนต์ <code>←</code> กำกับ</strong>
+  (บวก import อีกสามบรรทัด) — ไม่ต้องสร้างไฟล์ใหม่
+  <br>เมื่อทุกอย่างครบแล้ว วิธีดูผลคือรัน <code>go run ./cmd/api</code>
+  แล้วเปิดเบราว์เซอร์ไปที่ <code>http://localhost:8080/swagger/index.html</code>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🤔 <strong>ทำไม URL เป็น <code>/swagger/doc.json</code> ทั้งที่ไฟล์ชื่อ <code>docs/swagger.json</code>?</strong>
+    <br>เพราะ <code>gin-swagger</code> <strong>ไม่ได้อ่านไฟล์จากดิสก์เลย</strong> —
+    มันเรียก <code>swag.ReadDoc()</code> ไปเอา spec ที่ถูกลงทะเบียนไว้ใน<em>หน่วยความจำ</em>
+    (ตัวที่ <code>docs/docs.go</code> ลงทะเบียนให้ตอน <code>init()</code> — จุดที่ 1 ข้างล่าง)
+    แล้วเสิร์ฟออกมาที่ path ชื่อ <code>doc.json</code> ซึ่งเป็นค่า default ของ library
+    <br>สรุป: <code>docs/swagger.json</code> = ไฟล์บนดิสก์ไว้ให้<strong>คนอื่น</strong>เอาไปใช้ต่อ ·
+    <code>/swagger/doc.json</code> = ช่องที่<strong>หน้า Swagger UI</strong> ดึง spec ไปแสดง
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">จุดที่ 1 — <code>_ "wongnok/docs"</code> ทำไมต้อง import ของที่ไม่ได้ใช้</h3>
+
+<p>
+  ตอน <code>swag init</code> ทำงาน มันสร้าง <code>docs/docs.go</code> ขึ้นมา
+  ข้างในไฟล์นั้นมี <code>func init()</code> ที่<strong>เอา spec ไปลงทะเบียนไว้ในตัวแปรกลาง</strong>
+  ของ library <code>swaggo/swag</code>
+  <br>ทีนี้ Go มีกฎว่า <strong>package ที่ไม่มีใคร import จะไม่ถูกรวมเข้าไปในไบนารีเลย</strong>
+  — <code>init()</code> ก็เลยไม่เคยทำงาน
+  <br><code>_</code> (blank identifier) แปลว่า “ฉันไม่ได้จะเรียกอะไรจาก package นี้
+  แต่ฉันต้องการ<strong>ผลข้างเคียงของ <code>init()</code></strong>”
+  <br>เป็นเทคนิคเดียวกับที่ database driver ใช้ —
+  ถ้าเคยเห็น <code>_ "github.com/lib/pq"</code> ก็คืออันนี้
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — ผมเขียนเทสด้วย <code>httptest</code> (<a href="./0040-httptest-handler.html">บทเรียน 40</a>)
+  สามเคส ต่อ route แบบเดียวกันทั้งหมด ต่างกันแค่รายละเอียดเล็ก ๆ</p>
+  <pre><code><span class="c">// เคส A — route "/swagger/*any" + มี blank import ครบ</span>
+GET /swagger/index.html
+GET /swagger/doc.json
+
+<span class="c">// เคส B — route "/swagger" เฉย ๆ (ลืม *any)</span>
+GET /swagger/index.html
+
+<span class="c">// เคส C — route "/swagger/*any" แต่ไฟล์ที่ตั้ง router ไม่ได้ import _ "wongnok/docs"</span>
+GET /swagger/index.html
+GET /swagger/doc.json</code></pre>
+  <p class="ask">
+    แต่ละบรรทัดได้ status code อะไร? <strong>โดยเฉพาะเคส C สองบรรทัด —
+    มันได้เลขเดียวกันหรือคนละเลข</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code><span class="c">// เคส A — ครบทุกอย่าง</span>
+[/swagger/*any] GET /swagger/index.html -&gt; <strong>200</strong>  body="\n&lt;!DOCTYPE html&gt;\n&lt;html lang=\"en\"&gt;\n&lt;head&gt;… &lt;title&gt;Swagger UI&lt;/title&gt;…"
+[/swagger/*any] GET /swagger/doc.json  -&gt; <strong>200</strong>  body="{\n \"schemes\": [\"http\",\"https\"],\n \"swagger\": \"2.0\",\n \"info\": {…"
+
+<span class="c">// เคส B — ลืม *any</span>
+[/swagger เฉย ๆ]  GET /swagger/index.html -&gt; <strong>404</strong>  body="404 page not found"
+
+<span class="c">// เคส C — ไม่มี blank import</span>
+ไม่มี blank import — GET /swagger/index.html -&gt; <strong>200</strong>  body="\n&lt;!DOCTYPE html&gt;… &lt;title&gt;Swagger UI&lt;/title&gt;…"
+ไม่มี blank import — GET /swagger/doc.json  -&gt; <strong>500</strong>  body=""</code></pre>
+    <p>
+      <strong>เคส B ตรงกับที่สไลด์บอกเป๊ะ</strong> — ไม่มี <code>*any</code> แล้วเปิด
+      <code>/swagger/index.html</code> ได้ <code>404 page not found</code> จริง
+    </p>
+    <p style="margin-bottom:0">
+      <strong>แต่เคส C คือจุดที่ผมอยากให้ดูให้ดี</strong> —
+      สไลด์ p.55 เขียนว่า “ไม่ใส่ blank import = เปิดหน้า Swagger แล้ว 404”
+      <br>ผลรันจริงบอกว่า<strong>หน้า Swagger เปิดได้ 200 ตามปกติ</strong>
+      (เพราะไฟล์ HTML/JS ของ UI มากับ <code>swaggo/files</code> ซึ่ง import ไว้แล้ว)
+      แต่ <code>/swagger/doc.json</code> คืน <strong>500 พร้อม body ว่างเปล่า</strong>
+      — ตรงกับที่โค้ดของ <code>gin-swagger</code> ทำ: พอ <code>swag.ReadDoc()</code> หา spec
+      ที่ลงทะเบียนไว้ไม่เจอ มันสั่ง <code>AbortWithStatus(500)</code> ซึ่ง<strong>ไม่เขียน body ใด ๆ</strong>
+      <br>อาการที่คุณจะเห็นบนจอจริงจึงเป็น <em>“หน้า Swagger เปิดขึ้นมาสวย ๆ
+      แต่ไม่มี endpoint สักอัน / ขึ้น error ตอนโหลด definition”</em> ไม่ใช่ 404 ทั้งหน้า
+      <br><strong>หลักการของสไลด์ไม่ผิด</strong> — blank import จำเป็นจริง ๆ —
+      แค่<em>อาการ</em>ต่างจากที่บรรยายไว้ และการรู้อาการที่ถูก
+      คือความต่างระหว่าง “แก้ได้ใน 1 นาที” กับ “นั่งไล่ route อยู่ครึ่งชั่วโมง”
+    </p>
+  </div>
+</div>
+
+<h3 style="margin-top:1.4rem">จุดที่ 2 — ทำไมต้อง <code>/swagger/*any</code></h3>
+
+<p>
+  จาก <a href="./0038-gin-routing.html">บทเรียน 38</a> เรารู้ว่า Gin มี path parameter สองแบบ:
+  <code>:name</code> จับ<strong>หนึ่งช่วง</strong> · <code>*name</code> จับ<strong>ทุกอย่างที่เหลือรวม <code>/</code></strong>
+  <br>Swagger UI ไม่ใช่หน้าเดียว มันโหลดไฟล์ย่อยเป็นกอง —
+  <code>index.html</code>, <code>doc.json</code>, <code>swagger-ui.css</code>, ไฟล์ JS อีกหลายตัว
+  <br>route <code>/swagger</code> เฉย ๆ ตรงกับ path เดียวคือ <code>/swagger</code> พอดิบพอดี
+  พอ browser ขอ <code>/swagger/index.html</code> Gin หาไม่เจอ → 404 ตามผลรันข้างบน
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">⚠️ ชื่อ <code>any</code> ไม่ใช่คำสงวน</span>
+    <code>*any</code> คือชื่อตัวแปรที่เราตั้งเอง จะเขียน <code>*filepath</code> ก็ได้
+    ของสำคัญคือ<strong>เครื่องหมาย <code>*</code></strong> ไม่ใช่คำว่า <code>any</code>
+    <br>แต่แนะนำให้ใช้ <code>*any</code> ตามคนอื่น เพราะเวลาไปลอกตัวอย่างจากอินเทอร์เน็ตจะได้ตรงกัน
+  </p>
+</div>
+
+<h2>6 · General API Info — ข้อมูลหัวเอกสาร เขียนครั้งเดียว</h2>
+
+<p>
+  annotation ชุดนี้เขียน<strong>เหนือ <code>func main()</code></strong> และมีที่เดียวในทั้งโปรเจกต์
+  มันอธิบาย API <em>ทั้งตัว</em> ไม่ใช่ endpoint ใดอันหนึ่ง
+</p>
+
+<pre><code><span class="c">//	@title			Wongnok API</span>
+<span class="c">//	@version		1.0</span>
+<span class="c">//	@description	API สำหรับจัดการข้อมูลผู้ใช้ของ Wongnok</span>
+<span class="c">//	@host			localhost:8080</span>
+<span class="c">//	@BasePath		/api/v1</span>
+<span class="c">//	@schemes		http https</span>
+
+<span class="c">//	@securityDefinitions.apikey	BearerAuth</span>
+<span class="c">//	@in							header</span>
+<span class="c">//	@name						Authorization</span>
+<span class="c">//	@description				ใส่ค่าเป็น "Bearer {token}"</span>
+<span class="k">func</span> <span class="f">main</span>() { ... }</code></pre>
+
+<p>
+  มันมีสองก้อน แยกด้วยบรรทัดว่าง — <strong>ก้อนบนคือข้อมูลหัวเอกสาร</strong> (ตารางข้างล่างอธิบายทีละบรรทัด)
+  · <strong>ก้อนล่างสี่บรรทัด (<code>@securityDefinitions.apikey</code> / <code>@in</code> /
+  <code>@name</code> / <code>@description</code>) คือเรื่องการล็อกอิน</strong>
+  ข้ามไปก่อนได้ เดี๋ยวหัวข้อ 7.3 จะอธิบายว่ามันทำให้เกิดอะไรขึ้นบนหน้าจอ
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>annotation</th><th>ความหมาย</th><th>จำเป็น?</th><th>ไปโผล่ที่ key ไหนใน swagger.json</th></tr>
+  <tr><td><code>@title</code></td><td>ชื่อ API</td><td>✓</td><td><code>info.title</code></td></tr>
+  <tr><td><code>@version</code></td><td>เวอร์ชัน API</td><td>✓</td><td><code>info.version</code></td></tr>
+  <tr><td><code>@description</code></td><td>คำอธิบาย</td><td>–</td><td><code>info.description</code></td></tr>
+  <tr><td><code>@host</code></td><td><code>host:port</code> ที่ปุ่ม Try it out จะยิงไป</td><td>–</td><td><code>host</code></td></tr>
+  <tr><td><code>@BasePath</code></td><td>path นำหน้าทุก endpoint</td><td>–</td><td><code>basePath</code></td></tr>
+  <tr><td><code>@schemes</code></td><td><code>http</code> / <code>https</code></td><td>–</td><td><code>schemes</code></td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🎯 <strong><code>@BasePath</code> คือช่องที่คนใหม่ตั้งผิดบ่อยที่สุด</strong>
+    <br>ในโค้ดเราลงทะเบียน route เป็น <code>router.Group("/api/v1")</code> แล้วข้างในเป็น <code>/users</code>
+    <br>ในเอกสาร <code>@Router</code> จึงต้องเขียน <strong><code>/users</code> เฉย ๆ</strong>
+    เพราะ <code>@BasePath</code> เติม <code>/api/v1</code> ให้แล้ว
+    <br>ถ้าเผลอเขียน <code>@Router /api/v1/users</code> ปุ่ม Try it out จะยิงไป
+    <code>/api/v1/api/v1/users</code> แล้วได้ 404 — <strong>โดยที่เอกสารดู “ถูก” ทุกอย่าง</strong>
+  </p>
+</div>
+
+<h2>7 · annotation ระดับ endpoint</h2>
+
+<p>
+  ชุดนี้เขียนเหนือ handler แต่ละตัว นี่คือของจริงจาก <code>internal/user/handler.go</code>
+  ที่ผมรัน <code>swag init</code> ผ่านแล้ว:
+</p>
+
+<pre><code><span class="c">// FindByID godoc</span>
+<span class="c">//</span>
+<span class="c">//	@Summary		ดึงข้อมูล User รายคน</span>
+<span class="c">//	@Description	ค้นหา User จาก UUID แล้วคืนข้อมูลกลับมา</span>
+<span class="c">//	@Tags			users</span>
+<span class="c">//	@Produce		json</span>
+<span class="c">//	@Param			id	path		string	true	"User ID (UUID)"	format(uuid)</span>
+<span class="c">//	@Success		200	{object}	user.UserResponse</span>
+<span class="c">//	@Failure		400	{object}	httputil.ErrorResponse</span>
+<span class="c">//	@Failure		404	{object}	httputil.ErrorResponse</span>
+<span class="c">//	@Security		BearerAuth</span>
+<span class="c">//	@Router			/users/{id} [get]</span>
+<span class="k">func</span> (handler *Handler) <span class="f">FindByID</span>(ctx *gin.Context) { ... }</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>annotation</th><th>หน้าที่</th></tr>
+  <tr><td><code>@Summary</code></td><td>หัวข้อสั้น — บรรทัดที่ขึ้นบนสุดใน UI</td></tr>
+  <tr><td><code>@Description</code></td><td>คำอธิบายยาว กางออกมาเมื่อกดเปิด endpoint</td></tr>
+  <tr><td><code>@Tags</code></td><td>จัดกลุ่ม endpoint ใน UI — endpoint ที่ tag เดียวกันอยู่กล่องเดียวกัน</td></tr>
+  <tr><td><code>@Accept</code> / <code>@Produce</code></td><td>content-type ที่<strong>รับเข้า</strong> / <strong>ส่งออก</strong></td></tr>
+  <tr><td><code>@Param</code></td><td>พารามิเตอร์ที่รับเข้า (หัวข้อ 7.1)</td></tr>
+  <tr><td><code>@Success</code> / <code>@Failure</code></td><td>รูปแบบ response แต่ละ status</td></tr>
+  <tr><td><code>@Security</code></td><td>endpoint นี้ต้องมี token</td></tr>
+  <tr><td><strong><code>@Router</code></strong></td><td><strong>path + method — ตัวเดียวที่ทำให้ endpoint “มีตัวตน” ในเอกสาร</strong></td></tr>
+</table>
+</div>
+
+<h3 style="margin-top:1.4rem">7.1 · <code>@Param</code> มี 6 ช่อง คั่นด้วยช่องว่าง</h3>
+
+<div class="diagram">
+<pre>@Param   &lt;ชื่อ&gt;   &lt;paramType&gt;   &lt;dataType&gt;   &lt;บังคับ?&gt;   "&lt;คำอธิบาย&gt;"   &lt;attribute&gt;
+            │           │              │            │             │              │
+            │           │              │            │             │              └─ Enums(), default(), format(), minimum()
+            │           │              │            │             └─ ข้อความที่ขึ้นใน Swagger UI (ต้องมี " ")
+            │           │              │            └─ true / false
+            │           │              └─ int, string, bool หรือชื่อ struct
+            │           └─ path | query | header | body | formData
+            └─ ชื่อที่ client ส่งมา</pre>
+</div>
+
+<p>
+  ช่องที่คนสับสนคือช่องที่ 2 (<code>paramType</code>) กับช่องที่ 3 (<code>dataType</code>)
+  — ช่องที่ 2 บอกว่า “ค่านี้<em>เดินทางมาทางไหน</em>” ตรงกับที่เรียนไปใน
+  <a href="./0035-query-body-header.html">บทเรียน 35</a> เป๊ะ ๆ:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>paramType</th><th>ใช้เมื่อไหร่</th><th>ตัวอย่าง</th></tr>
+  <tr><td><code>path</code></td><td>ระบุ resource ด้วย ID</td><td><code>/users/{id}</code></td></tr>
+  <tr><td><code>query</code></td><td>กรอง / เรียง / แบ่งหน้า</td><td><code>?status=active</code></td></tr>
+  <tr><td><code>header</code></td><td>token, API key, request id</td><td><code>Authorization</code></td></tr>
+  <tr><td><code>body</code></td><td>ข้อมูลก้อนใหญ่ตอนสร้าง / แก้</td><td><code>CreateUserRequest</code></td></tr>
+</table>
+</div>
+
+<p>
+  ผมเขียน endpoint ค้นหาเพิ่มหนึ่งอันเพื่อยิงทุกช่องพร้อมกัน แล้วรัน <code>swag init</code> ดูของจริง:
+</p>
+
+<pre><code><span class="c">//	@Param		q				query		string	false	"คำค้นจากชื่อ"</span>
+<span class="c">//	@Param		status			query		string	false	"สถานะ"			Enums(active, banned)	default(active)</span>
+<span class="c">//	@Param		limit			query		int		false	"จำนวนต่อหน้า"	minimum(1)	maximum(100)	default(20)</span>
+<span class="c">//	@Param		X-Request-ID	header		string	false	"id สำหรับ trace"</span>
+<span class="c">//	@Success	200				{array}		user.UserResponse</span>
+<span class="c">//	@Router		/users [get]</span></code></pre>
+
+<p>ได้ <code>parameters</code> ใน <code>docs/swagger.json</code> ออกมาแบบนี้ (ตัดมาจากไฟล์จริง):</p>
+
+<pre><code>[
+  { <span class="s">"type"</span>: <span class="s">"string"</span>, <span class="s">"description"</span>: <span class="s">"คำค้นจากชื่อ"</span>, <span class="s">"name"</span>: <span class="s">"q"</span>, <span class="s">"in"</span>: <span class="s">"query"</span> },
+  { <span class="s">"enum"</span>: [<span class="s">"active"</span>, <span class="s">"banned"</span>], <span class="s">"type"</span>: <span class="s">"string"</span>, <span class="s">"default"</span>: <span class="s">"active"</span>,
+    <span class="s">"description"</span>: <span class="s">"สถานะ"</span>, <span class="s">"name"</span>: <span class="s">"status"</span>, <span class="s">"in"</span>: <span class="s">"query"</span> },
+  { <span class="s">"maximum"</span>: <span class="n">100</span>, <span class="s">"minimum"</span>: <span class="n">1</span>, <span class="s">"type"</span>: <span class="s">"integer"</span>, <span class="s">"default"</span>: <span class="n">20</span>,
+    <span class="s">"description"</span>: <span class="s">"จำนวนต่อหน้า"</span>, <span class="s">"name"</span>: <span class="s">"limit"</span>, <span class="s">"in"</span>: <span class="s">"query"</span> },
+  { <span class="s">"type"</span>: <span class="s">"string"</span>, <span class="s">"description"</span>: <span class="s">"id สำหรับ trace"</span>, <span class="s">"name"</span>: <span class="s">"X-Request-ID"</span>, <span class="s">"in"</span>: <span class="s">"header"</span> }
+]</code></pre>
+
+<p>
+  สังเกตสองอย่าง: <code>Enums(active, banned)</code> กลายเป็น <code>"enum": [...]</code>
+  ที่ Swagger UI จะเรนเดอร์เป็น<strong>ช่อง dropdown ให้เลือก</strong>ไม่ใช่ช่องพิมพ์เปล่า ·
+  และ <code>minimum(1) maximum(100)</code> โผล่ครบทั้งคู่
+  <br>attribute พวกนี้เขียนเพิ่มไม่กี่ตัวอักษร แต่<strong>ประหยัดคำถามจาก frontend ไปได้เป็นสิบข้อความ</strong>
+</p>
+
+<h3 style="margin-top:1.4rem">7.2 · <code>@Success</code> / <code>@Failure</code> — บอกว่าคืนอะไรกลับไป</h3>
+
+<pre><code>@Success  &lt;httpCode&gt;  {&lt;รูปแบบ&gt;}  &lt;dataType&gt;</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>รูปแบบ</th><th>ความหมาย</th><th>ผลใน JSON</th></tr>
+  <tr><td><code>{object}</code></td><td>คืน object ตัวเดียว</td><td><code>"schema": { "$ref": "#/definitions/..." }</code></td></tr>
+  <tr><td><code>{array}</code></td><td>คืนเป็น array</td><td><code>"schema": { "type": "array", "items": { "$ref": ... } }</code></td></tr>
+  <tr><td><code>{string}</code></td><td>คืนค่าพื้นฐาน</td><td><code>"schema": { "type": "string" }</code></td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">⚠️ ชื่อ type ต้องเป็น <code>package.Struct</code> เสมอ</span>
+    เขียน <code>user.UserResponse</code> และ <code>httputil.ErrorResponse</code> —
+    <strong>เขียน <code>UserResponse</code> เฉย ๆ swag หาไม่เจอ</strong>
+    <br>เหตุผลคือ swag สแกน<em>ทั้งโปรเจกต์</em> ไม่ได้อยู่ใน scope ของ package ใด package หนึ่ง
+    มันเลยไม่มีทางเดาได้ว่า <code>UserResponse</code> ที่คุณหมายถึงคือของ package ไหน
+  </p>
+</div>
+
+<p>
+  <strong>ทำไมต้องมี <code>httputil.ErrorResponse</code> แยกออกมาเป็น package กลาง?</strong>
+  <br>เพราะทุก endpoint ในระบบควรคืน error รูปแบบเดียวกัน frontend จะได้เขียนโค้ดอ่าน error ครั้งเดียวใช้ได้ทั้งเว็บ —
+  ตรงกับเรื่อง response contract ใน <a href="./0034-http-status-code.html">บทเรียน 34</a>
+  <br>โครงมันเรียบง่ายมาก:
+</p>
+
+<pre><code><span class="k">package</span> httputil
+
+<span class="c">// ErrorResponse คือรูปแบบ error ที่ทุก endpoint ใช้ร่วมกัน</span>
+<span class="k">type</span> ErrorResponse <span class="k">struct</span> {
+    Message <span class="k">string</span> <span class="s">`json:"message" example:"user not found"`</span>
+}</code></pre>
+
+<h3 style="margin-top:1.4rem">7.3 · <code>@Security BearerAuth</code> — ปุ่ม Authorize</h3>
+
+<p>
+  ทำงานเป็นคู่ 2 จุด ขาดจุดใดจุดหนึ่งก็ไม่เกิดผล:
+  <br><strong>1.</strong> ประกาศ <code>@securityDefinitions.apikey BearerAuth</code> เหนือ <code>func main()</code> (หัวข้อ 6) —
+  บอกว่า “ระบบนี้มีวิธีล็อกอินชื่อ <code>BearerAuth</code> ซึ่งส่งมาทาง header ชื่อ <code>Authorization</code>”
+  <br><strong>2.</strong> ใส่ <code>@Security BearerAuth</code> เหนือ handler ที่ต้องล็อกอิน —
+  บอกว่า “<em>อันนี้แหละที่ต้องใช้</em>”
+</p>
+
+<p>ผลใน <code>docs/swagger.json</code> ที่ได้จริง แยกกันคนละที่ตามนั้น:</p>
+
+<pre><code><span class="c">// ระดับเอกสาร มาจากข้อ 1</span>
+<span class="s">"securityDefinitions"</span>: {
+  <span class="s">"BearerAuth"</span>: {
+    <span class="s">"description"</span>: <span class="s">"ใส่ค่าเป็น \"Bearer {token}\""</span>,
+    <span class="s">"type"</span>: <span class="s">"apiKey"</span>,
+    <span class="s">"name"</span>: <span class="s">"Authorization"</span>,
+    <span class="s">"in"</span>: <span class="s">"header"</span>
+  }
+}
+
+<span class="c">// ระดับ endpoint มาจากข้อ 2 (อยู่ใต้ paths./users/{id}.get)</span>
+<span class="s">"security"</span>: [ { <span class="s">"BearerAuth"</span>: [] } ]</code></pre>
+
+<p>
+  ผลที่ผู้ใช้เห็นบนหน้า Swagger UI: มี<strong>ปุ่ม Authorize มุมขวาบน</strong> ·
+  ใส่ token ครั้งเดียวใช้ได้ทุก endpoint ·
+  endpoint ที่ล็อกอินจะมี<strong>รูปกุญแจ</strong> ·
+  กด Try it out แล้วมันแนบ header <code>Authorization</code> ให้เอง
+  <br>ประโยชน์จริงคือ frontend <strong>ทดลอง endpoint ที่ต้องล็อกอินได้โดยไม่ต้องเปิด Postman</strong>
+</p>
+
+<h2>8 · struct tag ที่มีผลกับเอกสาร</h2>
+
+<p>
+  จาก <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> เรารู้จัก <code>json:</code> tag
+  และจาก <a href="./0039-gin-binding-middleware.html">บทเรียน 39</a> รู้จัก <code>binding:</code> tag แล้ว
+  <br>ข่าวดีคือ <strong>swag อ่านทั้งสองอันที่มีอยู่แล้ว</strong> โดยเราไม่ต้องเขียนอะไรซ้ำ —
+  มีของใหม่แค่ <code>example:</code> ตัวเดียว
+</p>
+
+<pre><code><span class="k">type</span> CreateUserRequest <span class="k">struct</span> {
+    Name  *<span class="k">string</span> <span class="s">`json:"name" example:"สมชาย ใจดี"`</span>
+    Email <span class="k">string</span>  <span class="s">`json:"email" binding:"required,email" example:"somchai@pea.co.th"`</span>
+}
+
+<span class="k">type</span> UserResponse <span class="k">struct</span> {
+    ID    <span class="k">string</span> <span class="s">`json:"id" example:"3f0c1a7e-2b19-4c5e-9f3a"`</span>
+    Name  <span class="k">string</span> <span class="s">`json:"name,omitempty" example:"สมชาย ใจดี"`</span>
+    Email <span class="k">string</span> <span class="s">`json:"email" example:"somchai@pea.co.th"`</span>
+}</code></pre>
+
+<p>รัน <code>swag init</code> แล้วเปิด <code>docs/swagger.json</code> ได้ของจริงแบบนี้:</p>
+
+<pre><code><span class="s">"user.CreateUserRequest"</span>: {
+  <span class="s">"type"</span>: <span class="s">"object"</span>,
+  <span class="s">"required"</span>: [<span class="s">"email"</span>],
+  <span class="s">"properties"</span>: {
+    <span class="s">"email"</span>: { <span class="s">"type"</span>: <span class="s">"string"</span>, <span class="s">"example"</span>: <span class="s">"somchai@pea.co.th"</span> },
+    <span class="s">"name"</span>:  { <span class="s">"type"</span>: <span class="s">"string"</span>, <span class="s">"example"</span>: <span class="s">"สมชาย ใจดี"</span> }
+  }
+}</code></pre>
+
+<div class="win">
+  <span class="label">🔍 สามพฤติกรรมที่ยืนยันแล้วจากไฟล์จริง</span>
+  <p style="margin-bottom:0">
+    <strong>1.</strong> <code>Name *string</code> → เอกสารเขียนแค่ <code>"type": "string"</code> —
+    <strong>swag ถอด pointer ทิ้ง</strong> เพราะ JSON ไม่มีแนวคิดเรื่อง pointer
+    (ฝั่ง Go เราใช้ pointer เพื่อแยก “ไม่ได้ส่งมา” ออกจาก “ส่งมาเป็นค่าว่าง” —
+    แต่ในเอกสารมันคือ string ที่ไม่บังคับ เท่านั้น)
+    <br><strong>2.</strong> <code>json:"name,omitempty"</code> → ชื่อ field ในเอกสารคือ
+    <code>name</code> เฉย ๆ — <strong>swag ตัด <code>,omitempty</code> ทิ้ง</strong>
+    เพราะ <code>,omitempty</code> เป็นเรื่องของตอน marshal
+    (จังหวะที่ Go แปลง struct เป็น JSON แล้วตัด field ที่ค่าว่างทิ้ง — <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a>)
+    ไม่ใช่ชื่อ field
+    <br><strong>3.</strong> <code>binding:"required,email"</code> → โผล่เป็น
+    <code>"required": ["email"]</code> — <strong>กฎ validation กลายเป็นเอกสารเอง</strong>
+    ไม่ต้องมานั่งจดซ้ำ และไม่มีทางไม่ตรงกับโค้ด
+  </p>
+</div>
+
+<p>
+  ข้อ 3 คือหัวใจของทั้งเรื่อง: กลับไปดูสถานการณ์ในหัวข้อ 1 อีกที —
+  วันที่คุณเติม <code>binding:"required"</code> ที่ <code>email</code>
+  <strong>เอกสารเปลี่ยนตามไปเองในการ generate ครั้งถัดไป</strong>
+  ไม่มี Google Docs ให้ลืมแก้อีกแล้ว
+</p>
+
+<h2>9 · <code>swag init</code> — พิมพ์ตกไปนิดเดียว แล้วไม่ได้อะไรเลย</h2>
+
+<p>
+  <strong>รันจากโฟลเดอร์ไหน?</strong> รันที่ <strong>root ของโปรเจกต์</strong> เสมอ —
+  โฟลเดอร์ที่มี <code>go.mod</code> อยู่ ไม่ใช่ใน <code>cmd/api/</code>
+  <br>ดูบรรทัด <code>search dir:./</code> ในผลรันข้างล่างเป็นหลักฐาน:
+  <code>./</code> คือโฟลเดอร์ที่คุณกำลังยืนอยู่ตอนกด Enter
+</p>
+
+<p>
+  โครง <code>wongnok</code> วาง <code>main.go</code> ไว้ที่ <code>cmd/api/main.go</code>
+  ตาม <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a>
+  ซึ่งเป็นเรื่องดี — แต่มัน<strong>ชนกับค่า default ของ swag ตรง ๆ</strong>
+</p>
+
+<pre><code>$ swag init
+2026/08/20 22:15:46 Generate swagger docs....
+2026/08/20 22:15:46 Generate general API Info, search dir:./
+2026/08/20 22:15:46 warning: failed to get package name in dir: ./, error: execute go list command, exit status 1, stdout:, stderr:no Go files in &lt;โปรเจกต์&gt;
+2026/08/20 22:15:46 cannot parse source files &lt;โปรเจกต์&gt;/main.go: open &lt;โปรเจกต์&gt;/main.go: <strong>no such file or directory</strong>
+
+$ ls docs
+<strong>ls: docs: No such file or directory</strong></code></pre>
+
+<p>
+  <strong>ไม่มีโฟลเดอร์ <code>docs/</code> เกิดขึ้นเลยแม้แต่ไฟล์เดียว</strong>
+  <br>สไลด์สรุปอาการนี้ว่า “หา <code>@title</code> ไม่เจอ” ซึ่งถูกในเชิงผลลัพธ์
+  แต่<strong>ข้อความจริงตรงกว่านั้นมาก</strong> — มันบอกตรง ๆ ว่าหาไฟล์
+  <code>main.go</code> ที่ root ไม่เจอ
+  <br>เหตุผล: <code>swag init --help</code> เขียนไว้ว่า
+  <code>--generalInfo value, -g value  Go file path in which 'swagger general API Info'
+  is written (default: "main.go")</code>
+  <br>แปลว่า <code>-g</code> คือช่องบอกว่า “ไฟล์ไหนมี annotation ก้อนหัวเอกสารของหัวข้อ 6”
+  และค่า default ของมันคือ <code>main.go</code> — มันจึงไปหา <code>./main.go</code>
+  ซึ่งโครงเรา<em>ไม่มี</em>
+</p>
+
+<p>คำสั่งที่ถูกต้องคือชี้ไฟล์ให้มันดู:</p>
+
+<pre><code>$ swag init -g cmd/api/main.go
+2026/08/20 22:15:53 Generate swagger docs....
+2026/08/20 22:15:53 Generate general API Info, search dir:./
+2026/08/20 22:15:53 warning: failed to get package name in dir: ./, ...
+2026/08/20 22:15:53 Generating user.UserResponse
+2026/08/20 22:15:53 Generating httputil.ErrorResponse
+2026/08/20 22:15:53 Generating user.CreateUserRequest
+2026/08/20 22:15:53 create docs.go at docs/docs.go
+2026/08/20 22:15:53 create swagger.json at docs/swagger.json
+2026/08/20 22:15:53 create swagger.yaml at docs/swagger.yaml</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    😌 <strong>บรรทัด <code>warning: failed to get package name in dir: ./</code> ยังขึ้นอยู่ดี</strong>
+    แม้คำสั่งจะสำเร็จครบทุกไฟล์ — <strong>อันนี้ไม่ต้องตกใจ</strong>
+    <br>วิธีดูว่าสำเร็จจริงไหมคือมองสามบรรทัด <code>create ... at docs/...</code> ตอนท้าย
+    ไม่ใช่มองว่ามี warning หรือเปล่า
+  </p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ไฟล์ใน <code>docs/</code></th><th>คืออะไร</th><th>ใครอ่าน</th></tr>
+  <tr><td><code>docs.go</code></td><td>โค้ด Go ที่ฝัง spec ไว้เป็น string</td><td><strong>ตัวที่เรา blank import</strong> — โปรแกรมเรา</td></tr>
+  <tr><td><code>swagger.json</code></td><td>spec มาตรฐาน เอาไปใช้ต่อได้</td><td>GitLab / Postman / codegen</td></tr>
+  <tr><td><code>swagger.yaml</code></td><td>spec เดียวกันแต่เป็น YAML</td><td>คน (อ่านง่ายกว่า)</td></tr>
+</table>
+</div>
+
+<h3 style="margin-top:1.4rem">เรื่อง <code>--parseDependency --parseInternal</code> — ผลจริงต่างจากสไลด์</h3>
+
+<p>
+  สไลด์ p.62 บอกว่าโครง <code>wongnok</code> <strong>ต้อง</strong>ใช้
+  <code>swag init -g cmd/api/main.go --parseDependency --parseInternal</code>
+  ไม่งั้น “definition หายหมด” เพราะโค้ดอยู่ใน <code>internal/</code>
+  <br>ผมลองทั้งสองแบบแล้วเทียบ <code>docs/swagger.json</code> ทีละบรรทัด —
+  <strong>ในโครงนี้ กับ swag v1.16.4 ผลออกมาไม่เป็นแบบนั้น</strong>
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ ไม่ใส่ flag เพิ่ม</h4>
+    <pre><code>$ swag init -g cmd/api/main.go</code></pre>
+    <p style="margin-bottom:0">definitions ที่ได้ <strong>ครบ 3 ตัว</strong>:
+    <br><code>httputil.ErrorResponse</code>
+    <br><code>user.CreateUserRequest</code>
+    <br><code>user.UserResponse</code></p>
+  </div>
+  <div class="side good">
+    <h4>✅ ใส่ทั้งสอง flag</h4>
+    <pre><code>$ swag init -g cmd/api/main.go \
+    --parseDependency --parseInternal</code></pre>
+    <p style="margin-bottom:0">ได้ครบ 3 ตัวเหมือนกัน แต่<strong>ชื่อเปลี่ยน</strong>:
+    <br><code>httputil.ErrorResponse</code> (เท่าเดิม)
+    <br><code>internal_user.CreateUserRequest</code>
+    <br><code>internal_user.UserResponse</code></p>
+  </div>
+</div>
+
+<p>ตัว diff ของไฟล์ทั้งสองแบบ ต่างกันแค่ชื่อ definition จริง ๆ:</p>
+
+<pre><code>- <span class="s">"$ref"</span>: <span class="s">"#/definitions/user.CreateUserRequest"</span>
++ <span class="s">"$ref"</span>: <span class="s">"#/definitions/internal_user.CreateUserRequest"</span>
+- <span class="s">"user.UserResponse"</span>:
++ <span class="s">"internal_user.UserResponse"</span>:</code></pre>
+
+<p>
+  น่าสนใจตรงที่ <strong>annotation ในโค้ดยังเขียน <code>user.UserResponse</code> เหมือนเดิม</strong>
+  แล้ว swag แก้ <code>$ref</code> ให้เอง — ใช้งานได้ปกติทั้งสองแบบ
+  <br>สิ่งที่ <code>--parseInternal</code> ทำจริงในเคสนี้จึงคือ<strong>ทำให้ชื่อ definition
+  ยาวขึ้นเพื่อกัน type ชื่อซ้ำกันข้าม package</strong>
+  ซึ่งจะสำคัญมากเมื่อโปรเจกต์โตจนมี <code>user.Response</code> และ <code>recipe.Response</code>
+  <br>เอกสารของ <code>swag init --help</code> เองก็เขียนตรง ๆ ว่า
+  <code>--parseInternal  Parse go files in internal packages, disabled by default</code>
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">🤝 อย่าเพิ่งสรุปว่าสไลด์ผิด</span>
+    ผมทดสอบกับ <strong>โครงย่อ ๆ ที่มี 3 struct</strong> บน <strong>swag v1.16.4</strong> เท่านั้น
+    <br>โปรเจกต์จริงที่อาจารย์ใช้อาจมี type ที่อ้างข้าม package ลึกกว่านี้ หรือ CLI คนละรุ่น
+    ซึ่ง <code>--parseInternal</code> อาจจำเป็นจริง ๆ
+    <br><strong>วิธีตอบด้วยตัวเองใน 30 วินาที ดีกว่าเถียงกัน</strong>:
+    <br><code>swag init -g cmd/api/main.go &amp;&amp; cp docs/swagger.json /tmp/a.json</code>
+    <br><code>swag init -g cmd/api/main.go --parseDependency --parseInternal</code>
+    <br><code>diff /tmp/a.json docs/swagger.json</code>
+    <br>ไม่มีบรรทัดต่าง = ไม่ต้องใส่ · มีบรรทัดหาย = ต้องใส่
+    <strong>ผลของเครื่องคุณคือคำตอบของโปรเจกต์คุณ</strong>
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    ✨ <strong>เกร็ด: <code>swag fmt</code></strong> — annotation ในบทนี้เว้นวรรคเป็นคอลัมน์สวย ๆ
+    ไม่ใช่เพราะผมนั่งเคาะ space
+    <br>ผมพิมพ์แบบมั่ว ๆ <code>// @Summary สวัสดี</code> แล้วรัน <code>swag fmt</code>
+    มันจัดให้เป็น <code>//	@Summary	สวัสดี</code> (คั่นด้วย tab) พร้อมเว้นบรรทัด
+    <code>//</code> ใต้บรรทัด <code>godoc</code> ให้เอง
+    <br>ประโยชน์ที่แท้จริงไม่ใช่ความสวย — มันคือ<strong>ทั้งทีมจะได้ diff ไม่ชนกันเพราะ whitespace</strong>
+  </p>
+</div>
+
+<h2>10 · หัวใจของบท — สองกับดักที่ทำให้เอกสารกลับไปโกหกเหมือนเดิม</h2>
+
+<p>
+  ถึงตรงนี้ทุกอย่างทำงานหมดแล้ว และนี่คือจุดที่คนส่วนใหญ่หยุดอ่าน
+  <br>แต่<strong>สองเรื่องข้างล่างนี้ต่างหากที่ตัดสินว่าเอกสารของคุณจะเชื่อถือได้หรือไม่</strong>
+</p>
+
+<h3 style="margin-top:1.4rem">กับดัก 1 — แก้ annotation แล้วลืมรัน <code>swag init</code></h3>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — ผมรันเทสที่ยิง <code>GET /swagger/doc.json</code>
+  แล้วพิมพ์ทุก path + summary ที่อยู่ในนั้นออกมา
+  <br>(รันบน<strong>โปรเจกต์ตั้งต้นที่มีแค่สอง endpoint</strong> — ยังไม่ได้ใส่ endpoint ค้นหา
+  ที่ลองเล่นในหัวข้อ 7.1 เข้าไป) ครั้งแรกได้แบบนี้:</p>
+  <pre><code>doc.json: get /users/{id}  summary=ดึงข้อมูล User รายคน
+doc.json: post /users      summary=สร้าง User ใหม่</code></pre>
+  <p class="ask">
+    จากนั้นผมไป<strong>แก้ annotation ในโค้ด</strong> — เปลี่ยนข้อความ <code>@Summary</code>
+    และ<strong>เพิ่ม endpoint ใหม่ทั้งอัน</strong> (<code>@Router /users/{id} [delete]</code>)
+    แล้วสั่ง <code>go test -count=1</code> ให้ build ใหม่ทั้งหมด
+    <strong>แต่ไม่ได้รัน <code>swag init</code></strong>
+    <br>เทสรอบสองจะพิมพ์อะไรออกมา?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code><span class="c"># แก้ annotation + build ใหม่ (-count=1) แต่ยังไม่ swag init</span>
+doc.json: get /users/{id}  summary=ดึงข้อมูล User รายคน
+doc.json: post /users      summary=สร้าง User ใหม่
+<span class="c">                                    ↑ เหมือนเดิมทุกตัวอักษร ไม่มี delete โผล่มา</span>
+
+<span class="c"># รัน swag init -g cmd/api/main.go แล้ว build ใหม่</span>
+doc.json: <strong>delete</strong> /users/{id}  summary=<strong>ลบ User</strong>
+doc.json: get /users/{id}     summary=ดึงข้อมูล User รายคน <strong>(แก้ข้อความแล้ว)</strong>
+doc.json: post /users         summary=สร้าง User ใหม่</code></pre>
+    <p>
+      <strong>build ใหม่ไม่ช่วยอะไรเลย</strong> เพราะ spec ถูก<em>แช่แข็ง</em>ไว้เป็น string
+      ใน <code>docs/docs.go</code> ตั้งแต่ตอน generate ครั้งที่แล้ว —
+      ตัวคอมไพเลอร์ Go ไม่เคยอ่าน <code>@Summary</code> ของคุณเลยสักตัว
+      มันเห็นแค่คอมเมนต์ธรรมดา
+    </p>
+    <p style="margin-bottom:0">
+      และนี่แหละคือความน่ากลัว: <strong>ไม่มี error · ไม่มี warning · เทสก็ยังเขียว</strong>
+      คุณ deploy ขึ้นไปได้เรียบร้อยพร้อมเอกสารเวอร์ชันเมื่อสองสัปดาห์ก่อน
+      <br>เอกสารกลับไปโกหกเหมือน Google Docs ในหัวข้อ 1 เป๊ะ ๆ —
+      <strong>เครื่องมือใหม่ ปัญหาเดิม</strong>
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">⚠️ กฎเหล็ก (สไลด์เขียนไว้เอง)</span>
+    <strong>แก้ annotation แล้วต้องรัน <code>swag init</code> ใหม่ทุกครั้ง แล้ว restart server</strong>
+    <br>ทางกันลืมที่ใช้ได้จริง: ใส่เป็น target ใน <code>Makefile</code> ให้มันมาคู่กับคำสั่งรัน
+    หรือถ้าจะเอาให้แน่จริง — <strong>ใส่ใน CI ว่าให้รัน <code>swag init</code>
+    แล้วเช็คว่า <code>git diff</code> ต้องว่าง</strong>
+    ถ้าไม่ว่างแปลว่ามีคนลืม generate แล้ว pipeline แดงทันที
+  </p>
+</div>
+
+<h3 style="margin-top:1.4rem">กับดัก 2 — ลืม <code>@Router</code> แล้ว endpoint หายเงียบ ๆ</h3>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — ผมเพิ่ม handler ใหม่พร้อม annotation ครบเกือบทุกช่อง
+  แต่<strong>ไม่มีบรรทัด <code>@Router</code></strong> แล้วรัน <code>swag init</code></p>
+  <pre><code><span class="c">// Ping godoc</span>
+<span class="c">//</span>
+<span class="c">//	@Summary	เช็คว่าเซิร์ฟเวอร์ยังอยู่</span>
+<span class="c">//	@Tags		health</span>
+<span class="c">//	@Produce	json</span>
+<span class="c">//	@Success	200	{object}	user.UserResponse</span>
+<span class="k">func</span> (handler *Handler) <span class="f">Ping</span>(ctx *gin.Context) { ... }</code></pre>
+  <p class="ask">
+    <code>swag init</code> จะ<strong>ล้มเหลว</strong> หรือ<strong>เตือน</strong>
+    หรือ<strong>เงียบ</strong>? และ <code>paths</code> ในไฟล์ที่ได้จะมีกี่อัน?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ swag init -g cmd/api/main.go
+2026/08/20 22:17:07 Generating user.UserResponse
+2026/08/20 22:17:07 Generating httputil.ErrorResponse
+2026/08/20 22:17:07 Generating user.CreateUserRequest
+<span class="c"># ...create docs.go / swagger.json / swagger.yaml ครบตามปกติ</span>
+exit=<strong>0</strong>
+
+paths: ['/users', '/users/{id}']
+ops:   ['delete /users/{id}', 'get /users', 'get /users/{id}', 'post /users']</code></pre>
+    <p>
+      <strong>สำเร็จเรียบร้อย exit code 0 ไม่มี warning สักบรรทัด</strong>
+      แต่ <code>Ping</code> <strong>ไม่โผล่ในเอกสารเลย</strong> —
+      ไม่มี path ไหนเพิ่มขึ้นมาจากเดิม
+    </p>
+    <p style="margin-bottom:0">
+      เหตุผลตรงไปตรงมา: <strong><code>@Router</code> คือสิ่งเดียวที่บอก swag ว่า
+      “คอมเมนต์ก้อนนี้คือ endpoint ที่ path ไหน method อะไร”</strong>
+      ไม่มีมัน swag ก็ไม่รู้จะเอาไปวางตรงไหนใน <code>paths</code> เลยข้ามทิ้ง
+      <br>อาการที่คุณจะเจอจริงคือ <em>“เขียน annotation ไปตั้งเยอะ ทำไม Swagger UI ไม่ขึ้น”</em>
+      — <strong>เช็ค <code>@Router</code> ก่อนเป็นอันดับแรกเสมอ</strong>
+    </p>
+  </div>
+</div>
+
+<h2>11 · ได้ <code>swagger.json</code> มาแล้ว เอาไปทำอะไรต่อได้บ้าง</h2>
+
+<p>
+  ประเด็นที่หัวข้อ 2 ย้ำไว้กำลังจะออกดอกออกผลตรงนี้:
+  <strong><code>swagger.json</code> เป็นไฟล์มาตรฐาน ไม่ใช่ของเฉพาะ Go</strong>
+  เครื่องมืออื่นในโลกจึงอ่านมันได้หมด
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ปลายทาง</th><th>ได้อะไร</th><th>ต้องทำอะไร</th></tr>
+  <tr>
+    <td><strong>GitLab viewer</strong></td>
+    <td>หน้า Swagger UI ในตัว repo ไม่ต้อง deploy อะไรเพิ่ม</td>
+    <td>commit <code>docs/</code> เข้า repo → เปิดไฟล์ <code>docs/swagger.json</code> → กด <code>Display rendered file</code></td>
+  </tr>
+  <tr>
+    <td><strong>Postman</strong></td>
+    <td>collection ครบทุก endpoint ไม่ต้องสร้าง request ทีละอัน</td>
+    <td>Import → File → <code>swagger.json</code></td>
+  </tr>
+  <tr>
+    <td><strong>openapi-generator</strong></td>
+    <td>โค้ด client ให้ทีม frontend (TypeScript / Dart / Java …)</td>
+    <td><code>openapi-generator generate -i swagger.json -g typescript-axios -o ./client</code></td>
+  </tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>เงื่อนไขของ GitLab viewer ที่คนพลาดบ่อย</strong> —
+    มันจะเรนเดอร์ให้ก็ต่อเมื่อ<strong>ชื่อไฟล์มีคำว่า <code>openapi</code> หรือ <code>swagger</code></strong>
+    และนามสกุลเป็น <code>.json</code> / <code>.yaml</code> / <code>.yml</code>
+    <br><code>swagger.json</code> ✓ · <code>swagger.yaml</code> ✓ · <code>openapi_wongnok.yml</code> ✓ ·
+    <code>api-spec.json</code> ✗ (ไม่มีคำว่า swagger/openapi)
+    <br>ข่าวดีคือ <code>swag init</code> ตั้งชื่อให้ตรงเงื่อนไขอยู่แล้ว —
+    <strong>ที่ต้องระวังคืออย่าเผลอใส่ <code>docs/</code> ลงใน <code>.gitignore</code></strong>
+    ไม่งั้นไม่มีไฟล์ให้ GitLab อ่าน
+  </p>
+</div>
+
+<div class="win">
+  <span class="label">🏁 สรุปทั้งบทเป็นประโยคเดียว</span>
+  <p style="margin-bottom:0">
+    เขียน annotation ครั้งเดียวเหนือ handler → ได้ทั้ง<strong>เอกสารบน GitLab</strong>,
+    <strong>collection ใน Postman</strong> และ<strong>โค้ด client ให้ frontend</strong>
+    <br>แต่ทั้งหมดนี้จะเป็นจริงก็ต่อเมื่อคุณ<strong>ไม่ลืม <code>swag init</code></strong> —
+    เพราะเอกสารที่ generate แล้วลืม regenerate
+    ก็คือเอกสารที่ไม่ตรงกับโค้ด ซึ่ง<strong>อันตรายกว่าไม่มีเอกสาร</strong> เหมือนเดิม
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="3">
+  <p class="q">1. OpenAPI กับ Swagger ต่างกันยังไง?</p>
+  <div class="opts">
+    <button class="opt">OpenAPI คือชุดเครื่องมือที่เรนเดอร์หน้าเว็บ ส่วน Swagger คือมาตรฐานไฟล์ JSON/YAML</button>
+    <button class="opt">ทั้งสองคำหมายถึงของสิ่งเดียวกัน ต่างแค่ชื่อเก่ากับชื่อใหม่ ใช้แทนกันได้ทุกที่</button>
+    <button class="opt">OpenAPI อธิบายได้ทั้ง REST/gRPC/GraphQL ส่วน Swagger จำกัดอยู่แค่ REST อย่างเดียว</button>
+    <button class="opt">OpenAPI คือมาตรฐานที่อธิบาย API เป็นไฟล์ ส่วน Swagger คือชุดเครื่องมือที่กินไฟล์นั้น</button>
+  </div>
+  <div class="explain">
+    <p><strong>OpenAPI = ข้อตกลงว่าจะเขียนไฟล์อธิบาย API ยังไง</strong> (เป็นแค่ข้อความ รันไม่ได้)
+    · <strong>Swagger = โปรแกรมที่เอาไฟล์นั้นไปทำอะไรต่อ</strong> เช่น Swagger UI, Editor, Codegen
+    <br>ตัวเลือกที่ 1 <strong>สลับกัน</strong> ·
+    ตัวเลือกที่ 2 ผิดเพราะถ้าใช้แทนกันได้จริง คำว่า “Swagger UI” คงไม่มีความหมาย —
+    และ <code>docs/swagger.json</code> ที่รันออกมาจริงก็เขียนว่า <code>"swagger": "2.0"</code>
+    ซึ่ง<em>เท่ากับ</em> OpenAPI 2.0 คนละอย่างกับ OpenAPI 3.x ·
+    ตัวเลือกที่ 3 ผิดเพราะ OpenAPI ออกแบบมาสำหรับ REST/HTTP โดยเฉพาะ
+    (gRPC มี protobuf ของตัวเอง, GraphQL มี schema ของตัวเอง)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. ลืมใส่ <code>_ "wongnok/docs"</code> ใน <code>main.go</code> แล้วเปิดเบราว์เซอร์ดู จะเจออะไร?</p>
+  <div class="opts">
+    <button class="opt">คอมไพล์ไม่ผ่านตั้งแต่แรก เพราะ <code>ginSwagger.WrapHandler</code> ต้องรับ docs เป็น argument</button>
+    <button class="opt">หน้า Swagger UI เปิดได้ 200 ตามปกติ แต่ <code>/swagger/doc.json</code> คืน 500 body ว่าง</button>
+    <button class="opt">ทุก path ใต้ <code>/swagger</code> คืน <code>404 page not found</code> เพราะ route ไม่ถูกลงทะเบียน</button>
+    <button class="opt">Swagger UI เปิดได้ปกติ เพราะมันไปอ่าน annotation จากไฟล์ <code>.go</code> ตอน runtime เอง</button>
+  </div>
+  <div class="explain">
+    <p>ผมเทสจาก package ที่ตั้งใจไม่ import <code>docs</code> เลย ได้ผลจริง:
+    <code>GET /swagger/index.html -&gt; <strong>200</strong></code> ·
+    <code>GET /swagger/doc.json -&gt; <strong>500</strong> body=""</code>
+    <br>เพราะไฟล์ static ของ UI มากับ <code>swaggo/files</code> ที่ import ไว้แล้ว — <strong>หน้าเว็บจึงเปิดได้</strong>
+    แต่ตัว spec ถูกลงทะเบียนผ่าน <code>init()</code> ใน <code>docs/docs.go</code> ซึ่งไม่เคยถูกรัน
+    <br>ตัวเลือกที่ 1 ผิดเพราะ <code>WrapHandler</code> รับแค่ <code>swaggerFiles.Handler</code> —
+    <strong>คอมไพล์ผ่านสบาย ๆ</strong> นี่คือเหตุผลที่มันอันตราย ·
+    ตัวเลือกที่ 3 คืออาการของการ<em>ลืม <code>*any</code></em> ต่างหาก (เทสได้ 404 จริงในเคสนั้น) ·
+    ตัวเลือกที่ 4 ผิด — ไม่มีใครอ่านคอมเมนต์ตอน runtime, spec เป็น string ที่ฝังไว้ตอน generate</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. แก้ <code>@Summary</code> ในโค้ด แล้ว <code>go build</code> ใหม่ แต่ไม่ได้รัน <code>swag init</code> — <code>/swagger/doc.json</code> จะเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">เปลี่ยนตามทันที เพราะ <code>docs.go</code> อ่าน annotation จากซอร์สโค้ดใหม่ทุกครั้งที่ build</button>
+    <button class="opt">คอมไพเลอร์ขึ้น error ว่า <code>docs/</code> เก่ากว่าโค้ด บังคับให้ generate ใหม่ก่อน build ผ่าน</button>
+    <button class="opt">ยังเป็นข้อความเดิมทุกตัวอักษร เพราะ spec ถูกแช่ไว้ใน <code>docs/docs.go</code> ตั้งแต่ generate</button>
+    <button class="opt">กลายเป็น <code>paths</code> ว่างเปล่า เพราะ swag ตรวจพบว่า annotation ไม่ตรงกับไฟล์ที่ generate</button>
+  </div>
+  <div class="explain">
+    <p>ผมทดลองจริง: แก้ <code>@Summary</code> + เพิ่ม endpoint <code>[delete]</code> ทั้งอัน
+    แล้ว <code>go test -count=1</code> (บังคับ build ใหม่ ไม่ใช้ cache) ได้ผลเดิมเป๊ะ
+    <br>พอรัน <code>swag init -g cmd/api/main.go</code> แล้ว build อีกที
+    <code>delete /users/{id}</code> ถึงโผล่ และ summary ถึงเปลี่ยน
+    <br>ตัวเลือกที่ 1 ผิดเพราะ<strong>คอมไพเลอร์ Go มอง <code>@Summary</code> เป็นคอมเมนต์ธรรมดา</strong> ไม่มีความหมายใด ๆ ·
+    ตัวเลือกที่ 2 ผิด และนี่คือใจกลางของปัญหา — <strong>ไม่มีอะไรเตือนเลยสักอย่าง</strong>
+    ไม่ error ไม่ warning เทสยังเขียว ·
+    ตัวเลือกที่ 4 ผิดเพราะ swag ไม่ได้ทำงานตอน build มันเป็นโปรแกรมแยกที่เรารันเอง
+    <br>ทางกันลืม: ใส่ <code>swag init</code> ไว้ใน <code>Makefile</code> หรือให้ CI เช็คว่า <code>git diff</code> ต้องว่าง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. เขียน annotation ครบทุกช่องยกเว้น <code>@Router</code> แล้วรัน <code>swag init</code> — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">สำเร็จ exit code 0 สร้างไฟล์ครบตามปกติ แต่ endpoint นั้นหายไปจากเอกสารโดยไม่มี warning</button>
+    <button class="opt">ล้มเหลวและไม่สร้างไฟล์ใด ๆ ใน <code>docs/</code> เพราะ <code>@Router</code> เป็น annotation บังคับ</button>
+    <button class="opt">swag เดา path จากชื่อ method ให้เอง endpoint จึงไปโผล่เป็น <code>/ping</code> ใน <code>paths</code></button>
+    <button class="opt">endpoint ขึ้นใน Swagger UI ตามปกติ แต่กดปุ่ม Try it out แล้วยิงไม่ออกเพราะไม่รู้ path</button>
+  </div>
+  <div class="explain">
+    <p>ผมเพิ่ม <code>Ping</code> ที่มี <code>@Summary/@Tags/@Produce/@Success</code> ครบแต่ไม่มี <code>@Router</code>
+    แล้วรันจริง: <code>exit=0</code> · สร้าง <code>docs.go</code>/<code>swagger.json</code>/<code>swagger.yaml</code> ครบ ·
+    <code>paths: ['/users', '/users/{id}']</code> — <strong>เท่าเดิม ไม่มี Ping</strong>
+    <br><code>@Router</code> คือสิ่งเดียวที่บอกว่า “คอมเมนต์ก้อนนี้คือ endpoint ที่ path ไหน method อะไร”
+    ไม่มีมัน swag ก็ไม่รู้จะวางไว้ตรงไหนใน <code>paths</code> เลยข้ามเงียบ ๆ
+    <br>ตัวเลือกที่ 2 ผิด และเป็นสิ่งที่<em>เราอยากให้มันเป็น</em> — ถ้ามันพังจะดีกว่านี้เยอะ เพราะเรารู้ทันที ·
+    ตัวเลือกที่ 3 ผิดเพราะ swag ไม่มีทางรู้ว่าเราลงทะเบียน route ไว้ที่ path ไหนใน Gin
+    (มันอ่านคอมเมนต์ ไม่ได้อ่าน <code>router.GET(...)</code>) ·
+    ตัวเลือกที่ 4 ผิดเพราะ endpoint ไม่ได้ขึ้นใน UI ตั้งแต่แรก
+    <br>อาการที่จะเจอจริง: “เขียน annotation ตั้งเยอะ ทำไมไม่ขึ้นสักอัน” → <strong>เช็ค <code>@Router</code> ก่อนเสมอ</strong></p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำเอกสารให้ขึ้น แล้วทำให้มันโกหก แล้วเขียนเทสจับ</span>
+  <p>
+    ทำต่อจากโปรเจกต์ Gin ที่คุณมีอยู่แล้วจาก
+    <a href="./0038-gin-routing.html">บทเรียน 38</a> /
+    <a href="./0039-gin-binding-middleware.html">บทเรียน 39</a> ได้เลย
+    ไม่ต้องเริ่มใหม่ · เป้าหมายไม่ใช่ “ทำให้ Swagger UI ขึ้น” เฉย ๆ
+    แต่คือ<strong>พิสูจน์ว่าคุณจับได้เมื่อเอกสารเริ่มโกหก</strong>
+  </p>
+  <ol>
+    <li><strong>ลงเครื่องมือ + ยืนยันเวอร์ชัน:</strong>
+        <code>go install github.com/swaggo/swag/cmd/swag@latest</code> แล้ว <code>swag --version</code>
+        <br>จากนั้น <code>go get -u github.com/swaggo/gin-swagger</code> และ
+        <code>go get -u github.com/swaggo/files</code>
+        <br><strong>เทียบ <code>swag --version</code> กับบรรทัด <code>github.com/swaggo/swag</code>
+        ใน <code>go.mod</code> ของคุณ</strong> — ห่างกันเยอะไหม? ถ้าเยอะ
+        <code>go get github.com/swaggo/swag@latest</code> ไว้ก่อนเลย</li>
+    <li><strong>เขียน General API Info</strong> เหนือ <code>func main()</code>:
+        <code>@title @version @description @host @BasePath @schemes</code>
+        <br><strong>ระวัง <code>@BasePath</code> ให้ตรงกับ <code>router.Group()</code> ของจริง</strong></li>
+    <li><strong>ต่อ Swagger UI:</strong> ใส่ <code>_ "&lt;module&gt;/docs"</code> +
+        <code>router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))</code>
+        <br>รัน <code>swag init -g cmd/api/main.go</code> แล้วเปิด
+        <code>http://localhost:8080/swagger/index.html</code></li>
+    <li><strong>ทำให้พังสองแบบ แล้วจดอาการไว้:</strong>
+        <br>(ก) ลบ <code>*any</code> ออกเหลือ <code>/swagger</code> → เปิดหน้าแล้วได้อะไร
+        <br>(ข) ลบ blank import ออก → หน้าเปิดขึ้นไหม, กด F12 ดู tab Network ว่า
+        <code>doc.json</code> ได้ status อะไร
+        <br><strong>สองอาการนี้ต้องแยกออกจากกันให้ได้ด้วยตาเปล่า</strong></li>
+    <li><strong>เขียน annotation ให้ครบหนึ่ง endpoint</strong> ที่มี
+        <code>@Param</code> ทั้งแบบ <code>path</code> และ <code>query</code>
+        (ลอง <code>Enums()</code> กับ <code>default()</code> ด้วย) +
+        <code>@Success</code> + <code>@Failure</code> + <code>@Security BearerAuth</code>
+        <br>แล้วเติม <code>example:</code> tag ใน dto — <strong>เปิด Swagger UI ดูว่า example โผล่ตรงไหน</strong></li>
+    <li><strong>ตอบคำถาม <code>--parseInternal</code> ด้วยตัวเอง:</strong>
+        <br><code>swag init -g cmd/api/main.go &amp;&amp; cp docs/swagger.json /tmp/a.json</code>
+        <br><code>swag init -g cmd/api/main.go --parseDependency --parseInternal</code>
+        <br><code>diff /tmp/a.json docs/swagger.json</code>
+        <br><strong>โปรเจกต์ของคุณต้องใส่ flag นี้ไหม? ตอบพร้อมหลักฐาน</strong></li>
+    <li><strong>ลบ <code>@Router</code> ออกหนึ่งอัน</strong> แล้ว <code>swag init</code> —
+        exit code เท่าไหร่, มี warning ไหม, endpoint ยังอยู่ในเอกสารไหม</li>
+    <li><strong>เขียนเทสพิสูจน์</strong> (ต่อยอด <a href="./0040-httptest-handler.html">บทเรียน 40</a>):
+        เทสที่ใช้ <code>httptest</code> ยิง <code>GET /swagger/doc.json</code>
+        แล้ว unmarshal JSON ออกมา ตรวจสามอย่าง —
+        <strong>(ก)</strong> status ต้องเป็น 200 ·
+        <strong>(ข)</strong> ทุก path ที่คุณลงทะเบียนไว้ใน router ต้องมีอยู่ใน <code>paths</code> ครบ ·
+        <strong>(ค)</strong> endpoint ที่ต้องล็อกอินต้องมี key <code>security</code>
+        <br><strong>เทสนี้ต้อง fail ถ้าคุณแก้ annotation แล้วลืมรัน <code>swag init</code></strong> —
+        ถ้าแก้แล้วยังผ่าน แปลว่าเทสยังไม่ได้เทสอะไร</li>
+  </ol>
+  <button class="reveal">คำใบ้ข้อ 8</button>
+  <div class="answer">
+    <p>
+      โครงที่ผมใช้ในบทนี้เอง: <code>gin.New()</code> → ลงทะเบียน
+      <code>/swagger/*any</code> → <code>httptest.NewRecorder()</code> +
+      <code>httptest.NewRequest(http.MethodGet, "/swagger/doc.json", nil)</code>
+      → <code>r.ServeHTTP(w, req)</code>
+      <br>แล้ว <code>json.Unmarshal(w.Body.Bytes(), &amp;spec)</code> เข้า struct ที่มีแค่ field ที่สนใจ
+      เช่น <code>Paths map[string]map[string]struct{ Summary string `json:"summary"` }</code>
+      — <strong>ไม่ต้องแกะทั้ง spec</strong> แกะเฉพาะที่จะ assert ก็พอ
+    </p>
+    <p style="margin-bottom:0">
+      💡 <strong>จุดที่ต้องระวังตอนพิสูจน์ว่าเทส fail จริง</strong>:
+      Go cache ผลเทสไว้ ถ้าไม่ได้แก้ไฟล์ <code>.go</code> มันจะขึ้น <code>(cached)</code>
+      แล้วคุณจะเข้าใจผิดว่าเทสรันแล้ว
+      <br>ใช้ <code>go test -count=1</code> เสมอเวลาทดลองเรื่องนี้ —
+      ผมเองก็เกือบสรุปผิดตอนทำหัวข้อ 10 เพราะบรรทัดนี้
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p class="ask" style="margin-bottom:0">
+    💬 <strong>ข้อ 6 กับข้อ 8 คือสองข้อที่ผมอยากเห็นผลที่สุด</strong> —
+    ข้อ 6 เพราะผลบนเครื่องผมขัดกับสไลด์ ผมอยากรู้ว่าโปรเจกต์ของคุณได้ <code>diff</code> ออกมาแบบไหน
+    · ข้อ 8 เพราะมันคือเส้นแบ่งระหว่าง “มีเอกสาร” กับ “มีเอกสารที่เชื่อได้”
+    <br>รันแล้วได้ output ไม่ตรงกับในบทนี้ตรงไหน <strong>ส่ง output มาได้เลย</strong>
+    บอก <code>swag --version</code> กับบรรทัด <code>swaggo/swag</code> ใน <code>go.mod</code> มาด้วย
+    (ทั้งบทนี้รันบน Go 1.26.5 darwin/arm64 · swag CLI v1.16.4 · swag library v1.16.6 ·
+    gin v1.12.0 · gin-swagger v1.6.1 · files v1.0.1)
+    <br>บทหน้าเราจะเลิกลอกตัวอย่าง แล้ว<strong>ออกแบบ API ของ Wongnok เองทั้งชุด</strong>
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0040-httptest-handler.html">← บทเรียน 40</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0042-wongnok-api-spec.html">บทเรียน 42 → ออกแบบ API เอง</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://github.com/swaggo/swag">swaggo/swag — repo</a> · <a href="https://github.com/swaggo/swag#declarative-comments-format">Declarative Comments Format</a> — <strong>รายการ annotation ทั้งหมดอยู่หน้านี้หน้าเดียว</strong> ทั้ง General API Info และระดับ endpoint</li>
+  <li><a href="https://github.com/swaggo/swag#attribute">swaggo/swag — Attribute</a> — <code>Enums()</code>, <code>default()</code>, <code>minimum()</code>, <code>format()</code> ใช้ได้กับ type ไหนบ้าง</li>
+  <li><a href="https://github.com/swaggo/gin-swagger">swaggo/gin-swagger</a> — ที่มาของ <code>WrapHandler</code> และตัวอย่าง route <code>/swagger/*any</code></li>
+  <li><a href="https://pkg.go.dev/github.com/swaggo/files">pkg.go.dev — swaggo/files</a> — ไฟล์ static ของ Swagger UI ที่ทำให้หน้าเว็บเปิดได้แม้ยังไม่มี spec</li>
+  <li><a href="https://swagger.io/specification/v2/">Swagger 2.0 / OpenAPI 2.0 Specification</a> — นิยามของ key ทุกตัวใน <code>swagger.json</code> (<code>paths</code>, <code>definitions</code>, <code>securityDefinitions</code>)</li>
+  <li><a href="https://www.openapis.org/">OpenAPI Initiative</a> · <a href="https://openapi-generator.tech/">openapi-generator</a> — รายชื่อภาษาที่ generate client ได้</li>
+  <li><a href="https://gin-gonic.com/en/docs/examples/param-in-path/">Gin — param in path</a> — ที่มาของความต่างระหว่าง <code>:name</code> กับ <code>*name</code></li>
+  <li><a href="../reference/cheatsheet.html">Cheat sheet Day 8</a> · <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27 — project layout</a> — เหตุผลที่ <code>main.go</code> ไปอยู่ <code>cmd/api/</code> ตั้งแต่แรก</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

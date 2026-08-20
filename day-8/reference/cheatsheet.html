@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheat Sheet — Go Day 8</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<style>
+  /* หน้านี้เป็นเอกสารอ้างอิง — แน่นกว่า lesson และออกแบบให้พิมพ์ลงกระดาษได้ */
+  body { font-size: 15.5px; }
+  main { max-width: 54rem; }
+  h2 { margin-top: 2.2rem; font-size: 1.2rem; }
+  h3 { margin-top: 1.4rem; font-size: 1rem; }
+  pre { font-size: 0.78rem; padding: 0.75rem 0.9rem; margin-bottom: 0.9rem; }
+  table { font-size: 0.86rem; }
+  p, ul, ol { margin-bottom: 0.8rem; }
+  .toc { columns: 2; font-size: 0.9rem; padding-left: 1.1rem; }
+  .toc li { break-inside: avoid; }
+  .rule { font-weight: 650; color: var(--accent-dk); }
+  @media print { body { font-size: 9.5pt; } main { max-width: none; } h2 { margin-top: 1.2rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Cheat sheet · Day 8</p>
+  <h1>REST · Gin · Swagger — แผ่นเดียวจบ</h1>
+  <p class="meta">คู่กับ <a href="../lessons/0033-rest-resource-method.html">บทเรียน 33–42</a> ·
+    ทุกผลลัพธ์ในหน้านี้มาจากการรันจริงบน Go 1.26.5 darwin/arm64</p>
+  <p class="standfirst">
+    หน้านี้ไม่ได้เขียนไว้ให้อ่านรวดเดียว — เขียนไว้ให้<strong>เปิดตอนมือติดคีย์บอร์ด</strong>
+    ตารางกับดัก (หัวข้อ 16) กับตารางแปล error (หัวข้อ 17) คือสองอันที่จะได้ใช้บ่อยที่สุด
+  </p>
+</header>
+
+<main>
+
+<h2>สารบัญ</h2>
+<ol class="toc">
+  <li><a href="#v">เวอร์ชันที่ทุกอย่างในหน้านี้รันผ่าน</a></li>
+  <li><a href="#method">REST — method กับความหมาย</a></li>
+  <li><a href="#status">Status code — เลือกตัวไหน</a></li>
+  <li><a href="#naming">กฎตั้งชื่อ 7 ข้อ</a></li>
+  <li><a href="#where">query / body / header / path — ข้อมูลไปทางไหน</a></li>
+  <li><a href="#nethttp">net/http — โครงที่ก็อปไปใช้ได้</a></li>
+  <li><a href="#pattern">net/http — ไวยากรณ์ pattern (Go 1.22+)</a></li>
+  <li><a href="#gin">Gin — โครงที่ก็อปไปใช้ได้</a></li>
+  <li><a href="#ginctx">Gin — Context ที่ใช้บ่อย</a></li>
+  <li><a href="#binding">Gin — binding tag + ข้อความ error จริง</a></li>
+  <li><a href="#mw">Gin — middleware &amp; CORS</a></li>
+  <li><a href="#httptest">httptest — โครงเทสที่ก็อปไปใช้ได้</a></li>
+  <li><a href="#swagger">Swagger — คำสั่ง + annotation ครบชุด</a></li>
+  <li><a href="#redis">Redis — สองคำสั่งที่เพิ่มจาก Day 7</a></li>
+  <li><a href="#wongnok">Wongnok API spec</a></li>
+  <li><a href="#traps">ตารางกับดักรวมทั้งวัน</a></li>
+  <li><a href="#errors">ตารางแปล error / panic ที่เจอบ่อย</a></li>
+</ol>
+
+<h2 id="v">1 · เวอร์ชันที่ทุกอย่างในหน้านี้รันผ่าน</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ของ</th><th>เวอร์ชัน</th><th>ติดตั้งยังไง</th></tr></thead>
+  <tbody>
+    <tr><td>Go</td><td>1.26.5 darwin/arm64</td><td>—</td></tr>
+    <tr><td><code>github.com/gin-gonic/gin</code></td><td>v1.12.0</td><td><code>go get github.com/gin-gonic/gin</code></td></tr>
+    <tr><td><code>github.com/gin-contrib/cors</code></td><td>v1.7.7</td><td><code>go get github.com/gin-contrib/cors</code></td></tr>
+    <tr><td><code>github.com/go-playground/validator/v10</code></td><td>v10.30.1</td><td>ติดมากับ gin</td></tr>
+    <tr><td><code>github.com/stretchr/testify</code></td><td>v1.12.1</td><td><code>go get github.com/stretchr/testify</code></td></tr>
+    <tr><td><code>swag</code> (CLI)</td><td>v1.16.4</td><td><code>go install github.com/swaggo/swag/cmd/swag@latest</code></td></tr>
+    <tr><td><code>github.com/swaggo/swag</code> (library)</td><td>v1.16.6</td><td><code>go get github.com/swaggo/swag@latest</code> ← <strong>ต้องทำ</strong> ดูหัวข้อ 13</td></tr>
+    <tr><td><code>github.com/swaggo/gin-swagger</code></td><td>v1.6.1</td><td><code>go get -u github.com/swaggo/gin-swagger</code></td></tr>
+    <tr><td><code>github.com/swaggo/files</code></td><td>v1.0.1</td><td><code>go get -u github.com/swaggo/files</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">PATH</span>
+  <p style="margin-bottom:0">พิมพ์ <code>swag</code> แล้วขึ้น <code>command not found</code> แปลว่า
+  <code>GOPATH/bin</code> ไม่อยู่ใน <code>PATH</code> — แก้ด้วย<br>
+  <code>export PATH=$PATH:$(go env GOPATH)/bin</code></p>
+</div>
+
+<h2 id="method">2 · REST — method กับความหมาย</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Method</th><th>แปลว่า</th><th>มี body ไหม</th><th>idempotent</th><th>ตัวอย่าง</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET</code></td><td>อ่าน — ห้ามเปลี่ยนอะไร</td><td>ไม่</td><td>✔</td><td><code>GET /recipes/12</code></td></tr>
+    <tr><td><code>POST</code></td><td>สร้างใหม่ / สั่งให้ทำ</td><td>ใช่</td><td>✘</td><td><code>POST /recipes</code></td></tr>
+    <tr><td><code>PUT</code></td><td>แทนที่<strong>ทั้งก้อน</strong></td><td>ใช่</td><td>✔</td><td><code>PUT /recipes/12</code></td></tr>
+    <tr><td><code>PATCH</code></td><td>แก้<strong>บางส่วน</strong></td><td>ใช่</td><td>✘*</td><td><code>PATCH /recipes/12</code></td></tr>
+    <tr><td><code>DELETE</code></td><td>ลบ</td><td>ไม่</td><td>✔</td><td><code>DELETE /recipes/12</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>idempotent</strong> = ยิงซ้ำกี่ครั้งผลสุดท้ายเหมือนยิงครั้งเดียว —
+ไม่ได้แปลว่า “ได้ status เดิม” · <code>DELETE</code> ครั้งแรกได้ <code>204</code>
+ครั้งที่สองได้ <code>404</code> ก็ยังถือว่า idempotent เพราะ<strong>สถานะของ server เหมือนกัน</strong></p>
+
+<p>* <code>PATCH</code> idempotent หรือไม่<strong>ขึ้นกับว่าเขียนยังไง</strong> —
+<code>{"stock": 5}</code> idempotent แต่ <code>{"stock": "+1"}</code> ไม่</p>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong>PUT ที่คนใหม่พลาดที่สุด</strong> —
+  <code>PUT /users/1</code> ด้วย body <code>{"name":"ใหม่"}</code> ตามนิยามคือ
+  <strong>แทนที่ทั้ง resource</strong> แปลว่า <code>email</code> ที่ไม่ได้ส่งมาควรถูกลบทิ้ง
+  ถ้าอยากแก้แค่ชื่อต้องใช้ <code>PATCH</code></p>
+</div>
+
+<h2 id="status">3 · Status code — เลือกตัวไหน</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Code</th><th>ใช้เมื่อ</th><th>อย่าใช้เมื่อ</th></tr></thead>
+  <tbody>
+    <tr><td><code>200 OK</code></td><td>สำเร็จ และมี body จะตอบ</td><td>สร้างของใหม่ (ใช้ 201)</td></tr>
+    <tr><td><code>201 Created</code></td><td>สร้าง resource สำเร็จ — ควรใส่ <code>Location</code> ชี้ของใหม่</td><td>แก้ของเดิม</td></tr>
+    <tr><td><code>204 No Content</code></td><td>สำเร็จ แต่<strong>ไม่มีอะไรจะตอบ</strong> เช่น DELETE</td><td>เมื่อยังอยากส่ง body (204 ห้ามมี body)</td></tr>
+    <tr><td><code>400 Bad Request</code></td><td>รูปแบบ request ผิด / validation ไม่ผ่าน</td><td>ยังไม่ได้ล็อกอิน (ใช้ 401)</td></tr>
+    <tr><td><code>401 Unauthorized</code></td><td><strong>ยังไม่รู้ว่าคุณเป็นใคร</strong> — ไม่มี token / token ผิด</td><td>รู้ว่าเป็นใครแล้วแต่ห้ามทำ (ใช้ 403)</td></tr>
+    <tr><td><code>403 Forbidden</code></td><td><strong>รู้ว่าคุณเป็นใครแล้ว แต่ไม่มีสิทธิ์</strong></td><td>token หมดอายุ (ใช้ 401)</td></tr>
+    <tr><td><code>404 Not Found</code></td><td>ไม่มี resource นี้</td><td>มีของแต่ห้ามดู (403 หรือ 404 ก็ได้ ถ้าตั้งใจซ่อน)</td></tr>
+    <tr><td><code>409 Conflict</code></td><td>ชนกับสถานะปัจจุบัน เช่น email ซ้ำ</td><td>ข้อมูลผิดรูป (ใช้ 400)</td></tr>
+    <tr><td><code>500 Internal Server Error</code></td><td><strong>เราผิดเอง</strong> — bug, DB ล่ม</td><td>ผู้ใช้ส่งข้อมูลผิด (นั่นคือ 4xx)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">เส้นแบ่งเดียวที่ต้องจำ</span>
+  <p style="margin-bottom:0"><strong>4xx = ฝั่ง client ต้องแก้ · 5xx = ฝั่งเราต้องแก้</strong><br>
+  ตอบ <code>200</code> พร้อม <code>{"error": "..."}</code> คือความผิดพลาดที่แพงที่สุด —
+  client library ที่เช็ค status จะคิดว่าสำเร็จ และ dashboard จะมองไม่เห็น error rate เลย</p>
+</div>
+
+<h2 id="naming">4 · กฎตั้งชื่อ 7 ข้อ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>กฎ</th><th>✔ ทำแบบนี้</th><th>✘ อย่าทำ</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>ใช้ noun ไม่ใช่ verb</td><td><code>GET /users</code></td><td><code>GET /getUsers</code></td></tr>
+    <tr><td>2</td><td>ชื่อ resource ต้องสม่ำเสมอทั้งระบบ</td><td><code>/users /orders /products</code></td><td><code>/user /orders /product-list</code></td></tr>
+    <tr><td>3</td><td>lowercase</td><td><code>/users</code></td><td><code>/Users</code> <code>/PRODUCTS</code></td></tr>
+    <tr><td>4</td><td>หลายคำคั่นด้วย <code>-</code></td><td><code>/payment-methods</code></td><td><code>/paymentMethods</code> <code>/payment_methods</code></td></tr>
+    <tr><td>5</td><td>ความสัมพันธ์ใช้ path</td><td><code>/users/123/orders</code></td><td><code>/orders?userId=123</code> (ใช้ได้ แต่สื่อความเป็นเจ้าของน้อยกว่า)</td></tr>
+    <tr><td>6</td><td>filter ใช้ query</td><td><code>/orders?status=paid</code></td><td><code>/orders/status/paid</code></td></tr>
+    <tr><td>7</td><td>อย่าใส่ action ใน URI ถ้า method สื่อได้แล้ว</td><td><code>POST /users</code> · <code>DELETE /users/123</code></td><td><code>POST /users/create</code> · <code>POST /users/123/delete</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ สไลด์หน้า 35 ติดเครื่องหมายกลับด้าน</span>
+  <p style="margin-bottom:0">สไลด์เขียน <code>// ✅ แนะนำ</code> ไว้เหนือ <code>POST /users/create</code>
+  และ <code>// ❌ ไม่แนะนำ</code> เหนือ <code>POST /users</code> ซึ่ง<strong>สลับกัน</strong> —
+  ขัดกับตัวกฎข้อ 7 เอง และขัดกับสไลด์หน้า 22 ที่บอกว่า <code>POST /users</code> = สร้าง ·
+  ตารางข้างบนนี้คือฉบับที่ถูก</p>
+</div>
+
+<p><strong>ข้อยกเว้นของกฎ 7 ที่ถูกต้อง</strong> — action ที่ HTTP method สื่อไม่ได้จริง ๆ ใส่ใน path ได้
+(สไลด์หน้า 36 เขียนถูก): <code>PATCH /users/123/suspend</code> · <code>PATCH /users/123/reset-password</code>
+· <code>POST /orders/123/cancel</code></p>
+
+<h3>Versioning</h3>
+<pre><code><span class="c">// stable</span>
+/api/v1/users
+<span class="c">// เมื่อมี breaking change</span>
+/api/v2/users</code></pre>
+<p><span class="rule">breaking</span> = ลบ field · เปลี่ยน type · เปลี่ยนความหมายของค่าเดิม ·
+เปลี่ยน field ที่ required &nbsp;|&nbsp;
+<span class="rule">ไม่ breaking</span> = เพิ่ม field ใหม่ที่ optional · เพิ่ม endpoint ใหม่ · เพิ่มค่า enum ใหม่</p>
+
+<h2 id="where">5 · query / body / header / path — ข้อมูลไปทางไหน</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ถามตัวเองว่า…</th><th>ไปที่</th><th>ตัวอย่าง</th></tr></thead>
+  <tbody>
+    <tr><td>มันคือ<strong>ตัวระบุ</strong>ว่า resource ไหน</td><td>path</td><td><code>/recipes/12</code></td></tr>
+    <tr><td>มันคือการ<strong>กรอง / เรียง / แบ่งหน้า</strong></td><td>query</td><td><code>?difficulty=easy&amp;page=2</code></td></tr>
+    <tr><td>มันคือ<strong>เนื้อข้อมูล</strong>ที่จะบันทึก</td><td>body (JSON)</td><td><code>{"name":"ผัดไทย"}</code></td></tr>
+    <tr><td>มันคือ<strong>metadata ของการเชื่อมต่อ</strong></td><td>header</td><td><code>Authorization: Bearer …</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">อย่าส่ง token ทาง query</span>
+  <p style="margin-bottom:0"><code>?token=eyJhb…</code> ไปโผล่ใน access log ของทุก proxy ที่ผ่าน,
+  ใน browser history, และใน <code>Referer</code> ที่ส่งต่อไปเว็บอื่น — ใส่ใน header เสมอ</p>
+</div>
+
+<h3>Header สามตัวที่ต้องรู้จัก</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Header</th><th>ใครส่ง</th><th>บอกอะไร</th></tr></thead>
+  <tbody>
+    <tr><td><code>Authorization</code></td><td>client</td><td>credential เช่น <code>Bearer &lt;token&gt;</code></td></tr>
+    <tr><td><code>Content-Type</code></td><td>ทั้งคู่</td><td>“body ที่ผมส่งมาเป็นรูปแบบนี้”</td></tr>
+    <tr><td><code>Accept</code></td><td>client</td><td>“ผมอยากได้คำตอบเป็นรูปแบบนี้”</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="nethttp">6 · net/http — โครงที่ก็อปไปใช้ได้</h2>
+
+<pre><code><span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"encoding/json"</span>
+    <span class="s">"log"</span>
+    <span class="s">"net/http"</span>
+)
+
+<span class="k">type</span> User <span class="k">struct</span> {
+    ID   <span class="k">string</span> <span class="s">`json:"id"`</span>
+    Name <span class="k">string</span> <span class="s">`json:"name"`</span>
+}
+
+<span class="k">func</span> <span class="f">getUser</span>(w http.ResponseWriter, r *http.Request) {
+    id := r.<span class="f">PathValue</span>(<span class="s">"id"</span>)          <span class="c">// Go 1.22+</span>
+
+    <span class="c">// ลำดับนี้ห้ามสลับ: Header → WriteHeader → Encode</span>
+    w.<span class="f">Header</span>().<span class="f">Set</span>(<span class="s">"Content-Type"</span>, <span class="s">"application/json; charset=utf-8"</span>)
+    w.<span class="f">WriteHeader</span>(http.StatusOK)
+    json.<span class="f">NewEncoder</span>(w).<span class="f">Encode</span>(User{ID: id, Name: <span class="s">"Somchai"</span>})
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    mux := http.<span class="f">NewServeMux</span>()
+    mux.<span class="f">HandleFunc</span>(<span class="s">"GET /health"</span>, <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+        w.<span class="f">Write</span>([]<span class="k">byte</span>(<span class="s">"ok"</span>))
+    })
+    mux.<span class="f">HandleFunc</span>(<span class="s">"GET /users/{id}"</span>, getUser)
+
+    log.<span class="f">Fatal</span>(http.<span class="f">ListenAndServe</span>(<span class="s">":8080"</span>, mux))
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong>ทำไม <code>w</code> ไม่ใช่ pointer แต่ <code>r</code> เป็น</strong> —
+  <code>http.ResponseWriter</code> เป็น <em>interface</em> (ข้างในมี pointer อยู่แล้ว)
+  ส่วน <code>http.Request</code> เป็น <em>struct</em> ก้อนใหญ่ จึงส่งเป็น <code>*http.Request</code></p>
+</div>
+
+<h3>สิ่งที่ net/http ทำให้ฟรี</h3>
+<pre><code><span class="c"># ยิง POST ไปที่ route ที่ลงเป็น GET</span>
+$ curl -s -i -X POST http://127.0.0.1:8765/hello
+HTTP/1.1 405 Method Not Allowed
+Allow: GET, HEAD
+Content-Type: text/plain; charset=utf-8
+X-Content-Type-Options: nosniff
+
+Method Not Allowed</code></pre>
+<p><strong>405 พร้อม <code>Allow</code> header มาให้เอง</strong> — Gin ไม่ทำให้ (ดูหัวข้อ 9)</p>
+
+<h2 id="pattern">7 · net/http — ไวยากรณ์ pattern (Go 1.22+)</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียน</th><th>แมตช์อะไร</th><th>หมายเหตุ</th></tr></thead>
+  <tbody>
+    <tr><td><code>"/hello"</code></td><td>path เป๊ะ ทุก method</td><td></td></tr>
+    <tr><td><code>"GET /hello"</code></td><td>เฉพาะ GET (และ HEAD)</td><td>method ต้อง<strong>ตัวใหญ่</strong> + เว้นวรรค 1 ที</td></tr>
+    <tr><td><code>"/users/{id}"</code></td><td>1 segment</td><td>อ่านด้วย <code>r.PathValue("id")</code></td></tr>
+    <tr><td><code>"/files/{path...}"</code></td><td>ที่เหลือทั้งหมด</td><td>ต้องอยู่ท้าย pattern</td></tr>
+    <tr><td><code>"/files/"</code></td><td>subtree — ทุกอย่างใต้ <code>/files/</code></td><td>ยิง <code>/files</code> จะถูก redirect <strong>307</strong></td></tr>
+    <tr><td><code>"/exact/{$}"</code></td><td><code>/exact/</code> เป๊ะ ๆ ห้าม subtree</td><td></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>ลำดับความสำคัญ</strong>: pattern ที่<em>เจาะจงกว่า</em>ชนะเสมอ ไม่เกี่ยวกับลำดับที่ลงทะเบียน —
+<code>/users/me</code> ชนะ <code>/users/{id}</code> · และ ServeMux <strong>ไม่ panic</strong> เมื่อลงทั้งสองอัน</p>
+
+<h3>ไวยากรณ์ที่พิมพ์ผิดแล้วพังเงียบ ๆ</h3>
+<pre><code>pattern=<span class="s">"get /hello"</span>    <span class="c">// ลงทะเบียนผ่าน! แต่ GET จริงได้ 405 Allow: get</span>
+pattern=<span class="s">"GET/hello"</span>     <span class="c">// Go ตีเป็น host="GET" path="/hello" → 404 ทุกครั้ง เงียบสนิท</span>
+pattern=<span class="s">"GET  /hello"</span>   <span class="c">// เว้นวรรคเกิน → ใช้ได้ปกติ</span>
+pattern=<span class="s">"GET hello"</span>     <span class="c">// PANIC: parsing "GET hello": at offset 4: host/path missing /</span></code></pre>
+
+<h2 id="gin">8 · Gin — โครงที่ก็อปไปใช้ได้</h2>
+
+<pre><code><span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"net/http"</span>
+    <span class="s">"github.com/gin-gonic/gin"</span>
+)
+
+<span class="k">func</span> <span class="f">NewRouter</span>() *gin.Engine {
+    r := gin.<span class="f">Default</span>()                <span class="c">// = New() + Logger() + Recovery()</span>
+    r.HandleMethodNotAllowed = <span class="k">true</span>    <span class="c">// อยากได้ 405 ต้องเปิดเอง</span>
+
+    v1 := r.<span class="f">Group</span>(<span class="s">"/api/v1"</span>)
+    {
+        v1.<span class="f">GET</span>(<span class="s">"/users/:id"</span>, getUser)
+        v1.<span class="f">POST</span>(<span class="s">"/users"</span>, createUser)
+    }
+    <span class="k">return</span> r
+}
+
+<span class="k">func</span> <span class="f">getUser</span>(c *gin.Context) {
+    c.<span class="f">JSON</span>(http.StatusOK, gin.H{<span class="s">"id"</span>: c.<span class="f">Param</span>(<span class="s">"id"</span>)})
+}
+
+<span class="k">func</span> <span class="f">main</span>() { <span class="f">NewRouter</span>().<span class="f">Run</span>(<span class="s">":8080"</span>) }</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">แยก <code>NewRouter()</code> ออกจาก <code>main()</code>
+  <strong>ไม่ใช่เรื่องความสวย</strong> — เป็นเงื่อนไขที่ทำให้เขียนเทสด้วย <code>httptest</code> ได้
+  (หัวข้อ 12) เพราะเทสต้องหยิบ <code>*gin.Engine</code> มาใช้โดยไม่เปิด port</p>
+</div>
+
+<h2 id="ginctx">9 · Gin — Context ที่ใช้บ่อย</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียน</th><th>ได้อะไร</th><th>ตอนไม่ส่งมา</th></tr></thead>
+  <tbody>
+    <tr><td><code>c.Param("id")</code></td><td>ค่าจาก <code>/users/:id</code></td><td>ไม่เข้า handler เลย → <strong>404</strong></td></tr>
+    <tr><td><code>c.Query("q")</code></td><td><code>string</code></td><td><code>""</code></td></tr>
+    <tr><td><code>c.DefaultQuery("q","x")</code></td><td><code>string</code></td><td><code>"x"</code> — แต่ <code>?q=</code> ให้ <code>""</code></td></tr>
+    <tr><td><code>c.GetQuery("q")</code></td><td><code>(string, bool)</code></td><td><code>("", false)</code> ← ตัวเดียวที่แยก “ไม่ส่ง” ออกจาก “ส่งมาว่าง” ได้</td></tr>
+    <tr><td><code>c.GetHeader("Authorization")</code></td><td><code>string</code></td><td><code>""</code></td></tr>
+    <tr><td><code>c.JSON(code, obj)</code></td><td>ตอบ JSON</td><td>ใส่ <code>Content-Type: application/json; charset=utf-8</code> ให้เอง</td></tr>
+    <tr><td><code>c.Status(code)</code></td><td>ตั้ง status เปล่า ๆ</td><td>ใช้กับ <code>204</code></td></tr>
+    <tr><td><code>gin.H{...}</code></td><td><code>map[string]any</code></td><td>ใช้ตอบ JSON เร็ว ๆ ไม่ต้องประกาศ struct</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Gin ต่างจาก net/http ตรงไหนจริง ๆ</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>net/http (Go 1.22+)</th><th>Gin v1.12.0</th></tr></thead>
+  <tbody>
+    <tr><td>method ผิด</td><td><strong>405 + <code>Allow</code></strong> อัตโนมัติ</td><td><strong>404</strong> จนกว่าจะตั้ง <code>HandleMethodNotAllowed = true</code></td></tr>
+    <tr><td><code>/users/:id</code> + <code>/users/me</code></td><td>ได้ static ชนะ</td><td>ได้เหมือนกัน static ชนะ (<strong>ไม่ panic</strong>)</td></tr>
+    <tr><td>route ชนกันจริง ๆ</td><td>รับไว้ก่อน</td><td><strong>panic ตอน register</strong> (ดูหัวข้อ 17)</td></tr>
+    <tr><td>อ่าน path param</td><td><code>r.PathValue("id")</code></td><td><code>c.Param("id")</code></td></tr>
+    <tr><td>ตอบ JSON</td><td>ต้อง set header เอง ไม่งั้นได้ <code>text/plain</code></td><td><code>c.JSON</code> จัดการให้</td></tr>
+    <tr><td>อ่าน+ตรวจ body</td><td>เขียนเอง</td><td><code>ShouldBindJSON</code> + tag</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="binding">10 · Gin — binding tag + ข้อความ error จริง</h2>
+
+<pre><code><span class="k">type</span> CreateRecipeRequest <span class="k">struct</span> {
+    Name       <span class="k">string</span>  <span class="s">`json:"name"       binding:"required"`</span>
+    Email      <span class="k">string</span>  <span class="s">`json:"email"      binding:"required,email"`</span>
+    Level      <span class="k">int</span>     <span class="s">`json:"level"      binding:"min=1,max=5"`</span>
+    Difficulty <span class="k">string</span>  <span class="s">`json:"difficulty" binding:"oneof=easy medium hard"`</span>
+    Note       *<span class="k">string</span> <span class="s">`json:"note"`</span>   <span class="c">// pointer = แยก "ไม่ส่งมา" ออกจาก "ส่งค่าว่าง"</span>
+}
+
+<span class="k">func</span> <span class="f">create</span>(c *gin.Context) {
+    <span class="k">var</span> req CreateRecipeRequest
+    <span class="k">if</span> err := c.<span class="f">ShouldBindJSON</span>(&amp;req); err != <span class="k">nil</span> {   <span class="c">// ShouldBind เสมอ ไม่ใช่ Bind</span>
+        c.<span class="f">JSON</span>(http.StatusBadRequest, gin.H{<span class="s">"message"</span>: err.<span class="f">Error</span>()})
+        <span class="k">return</span>
+    }
+    c.<span class="f">JSON</span>(http.StatusCreated, req)
+}</code></pre>
+
+<h3>ข้อความ error ที่ได้จริง</h3>
+<pre><code>body={"age":0}              → Key: 'ReqAge.Age' Error:Field validation for 'Age' failed on the 'required' tag
+body={"email":"not-an-email"} → Key: 'ReqEmail.Email' Error:Field validation for 'Email' failed on the 'email' tag
+body={"level":9,...}        → Key: 'ReqRange.Level' Error:Field validation for 'Level' failed on the 'max' tag
+                              Key: 'ReqRange.Difficulty' Error:Field validation for 'Difficulty' failed on the 'oneof' tag</code></pre>
+<p>ผิดหลาย field พร้อมกัน → error ทุกอันต่อกันด้วย <code>\n</code> ในสตริงเดียว</p>
+
+<div class="warn">
+  <span class="label">กับดัก required + zero value</span>
+  <p style="margin-bottom:0"><code>Age int `binding:"required"`</code> แล้วผู้ใช้ส่ง <code>{"age":0}</code> มา
+  → <strong>ไม่ผ่าน</strong> เพราะ validator เช็ค “ไม่ใช่ zero value” ไม่ใช่ “มี key นี้”
+  เจอกับ <code>0</code>, <code>""</code>, <code>false</code> เหมือนกันหมด<br>
+  <strong>แก้ด้วย pointer</strong>: <code>Age *int `binding:"required"`</code> —
+  ส่ง <code>0</code> มาผ่าน แต่ไม่ส่งมาเลยไม่ผ่าน</p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เมธอด</th><th>อ่านจาก</th><th>tag ที่ใช้</th></tr></thead>
+  <tbody>
+    <tr><td><code>ShouldBindJSON</code></td><td>body</td><td><code>json</code> + <code>binding</code></td></tr>
+    <tr><td><code>ShouldBindQuery</code></td><td>query string</td><td><code>form</code> + <code>binding</code></td></tr>
+    <tr><td><code>ShouldBindUri</code></td><td>path param</td><td><code>uri</code> + <code>binding</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="mw">11 · Gin — middleware &amp; CORS</h2>
+
+<pre><code><span class="k">func</span> <span class="f">RequireAuth</span>() gin.HandlerFunc {
+    <span class="k">return</span> <span class="k">func</span>(c *gin.Context) {
+        <span class="k">if</span> c.<span class="f">GetHeader</span>(<span class="s">"Authorization"</span>) == <span class="s">""</span> {
+            c.<span class="f">AbortWithStatusJSON</span>(http.StatusUnauthorized, gin.H{<span class="s">"message"</span>: <span class="s">"no token"</span>})
+            <span class="k">return</span>
+        }
+        c.<span class="f">Set</span>(<span class="s">"userID"</span>, <span class="s">"u-123"</span>)
+        c.<span class="f">Next</span>()                 <span class="c">// ปล่อยให้ตัวถัดไปทำงาน</span>
+        <span class="c">// โค้ดตรงนี้รัน "ขากลับ" หลัง handler เสร็จแล้ว</span>
+    }
+}
+
+r.<span class="f">Use</span>(<span class="f">RequireAuth</span>())              <span class="c">// ทั้งเว็บ</span>
+admin := r.<span class="f">Group</span>(<span class="s">"/admin"</span>)
+admin.<span class="f">Use</span>(<span class="f">RequireAuth</span>())          <span class="c">// เฉพาะกลุ่มนี้</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียน</th><th>ผล</th></tr></thead>
+  <tbody>
+    <tr><td><code>c.Next()</code></td><td>เรียกตัวถัดไป แล้วกลับมาทำโค้ดที่เหลือ</td></tr>
+    <tr><td><code>c.Abort()</code> เปล่า ๆ</td><td>หยุด handler ถัดไป <strong>แต่ไม่ได้เขียน response</strong> → client ได้ <code>200</code> body ว่าง</td></tr>
+    <tr><td><code>c.AbortWithStatusJSON(401, …)</code></td><td>หยุด + ตอบ JSON — <strong>ใช้ตัวนี้เสมอ</strong></td></tr>
+    <tr><td><code>c.Set / c.Get</code></td><td>ส่งค่าให้ handler ถัดไป · <code>c.MustGet</code> panic ถ้าไม่มี key</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>CORS — ผลรันจริง</h3>
+<pre><code><span class="c"># request จริง (มี Origin) กับ cors.Default()</span>
+$ curl -s -i -H <span class="s">"Origin: https://evil.example.com"</span> http://127.0.0.1:39182/data
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+
+<span class="c"># preflight</span>
+$ curl -s -i -X OPTIONS -H <span class="s">"Origin: https://evil.example.com"</span> \
+    -H <span class="s">"Access-Control-Request-Method: POST"</span> http://127.0.0.1:39182/data
+HTTP/1.1 204 No Content
+Access-Control-Allow-Headers: Origin,Content-Length,Content-Type
+Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 43200</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ cors.Default() ไม่อนุญาต Authorization</span>
+  <p style="margin-bottom:0">ดู <code>Access-Control-Allow-Headers</code> ข้างบน — มีแค่
+  <code>Origin, Content-Length, Content-Type</code> · เว็บที่ส่ง JWT ผ่าน
+  <code>Authorization: Bearer …</code> จะโดนเบราว์เซอร์บล็อก<strong>ทั้งที่ server ตอบ 204</strong><br>
+  ต้องเขียนเองด้วย <code>cors.New</code>:</p>
+</div>
+
+<pre><code>r.<span class="f">Use</span>(cors.<span class="f">New</span>(cors.Config{
+    AllowOrigins: []<span class="k">string</span>{<span class="s">"https://app.example.com"</span>},
+    AllowMethods: []<span class="k">string</span>{<span class="s">"GET"</span>, <span class="s">"POST"</span>, <span class="s">"PUT"</span>, <span class="s">"DELETE"</span>},
+    AllowHeaders: []<span class="k">string</span>{<span class="s">"Origin"</span>, <span class="s">"Content-Type"</span>, <span class="s">"Authorization"</span>},
+}))</code></pre>
+
+<p><strong>CORS ไม่ใช่ระบบความปลอดภัยของ server</strong> — เป็นกฎที่<em>เบราว์เซอร์</em>บังคับตัวเอง
+<code>curl</code> และ Postman ไม่สนใจ CORS เลย ยิงได้ตลอด</p>
+
+<h2 id="httptest">12 · httptest — โครงเทสที่ก็อปไปใช้ได้</h2>
+
+<pre><code><span class="k">func</span> <span class="f">TestGetUser</span>(t *testing.T) {
+    gin.<span class="f">SetMode</span>(gin.TestMode)
+    router := <span class="f">NewRouter</span>()
+
+    w := httptest.<span class="f">NewRecorder</span>()
+    req := httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, <span class="s">"/users/1"</span>, <span class="k">nil</span>)
+    router.<span class="f">ServeHTTP</span>(w, req)
+
+    assert.<span class="f">Equal</span>(t, <span class="n">200</span>, w.Code)
+    assert.<span class="f">JSONEq</span>(t, <span class="s">`{"id":"1","name":"Somchai"}`</span>, w.Body.<span class="f">String</span>())
+    assert.<span class="f">Equal</span>(t, <span class="s">"application/json; charset=utf-8"</span>, w.<span class="f">Header</span>().<span class="f">Get</span>(<span class="s">"Content-Type"</span>))
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียน</th><th>ได้</th></tr></thead>
+  <tbody>
+    <tr><td><code>w.Code</code></td><td><code>int</code> เช่น <code>200</code></td></tr>
+    <tr><td><code>w.Body.String()</code></td><td>body ทั้งก้อนเป็นสตริง</td></tr>
+    <tr><td><code>w.Header().Get("X")</code></td><td>header — ไม่ต้องเรียก <code>w.Result()</code></td></tr>
+    <tr><td><code>httptest.NewRequest</code></td><td><strong>panic</strong> ถ้า URL พัง — ใช้ในเทส</td></tr>
+    <tr><td><code>http.NewRequest</code></td><td>คืน <code>error</code> — ใช้ในโค้ด production</td></tr>
+    <tr><td><code>assert.JSONEq</code></td><td>เทียบเชิงความหมาย — สลับลำดับ key ก็ผ่าน</td></tr>
+    <tr><td><code>assert.Equal</code> กับสตริง</td><td>เทียบตัวอักษร — เปราะ ใช้เฉพาะตอนอยากล็อกรูปแบบเป๊ะ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>NewRecorder</code> = ยิงเข้า router <strong>ในหน่วยความจำ ไม่เปิด port</strong> —
+ใช้ 99% ของเวลา &nbsp;|&nbsp; <code>httptest.NewServer</code> = เปิด server จริงบน port สุ่ม
+ใช้เมื่อต้องทดสอบตัว HTTP client ของเราเอง</p>
+
+<h2 id="swagger">13 · Swagger — คำสั่ง + annotation ครบชุด</h2>
+
+<h3>ติดตั้ง</h3>
+<pre><code>go install github.com/swaggo/swag/cmd/swag@latest
+go get -u github.com/swaggo/gin-swagger
+go get -u github.com/swaggo/files
+go get github.com/swaggo/swag@latest        <span class="c"># ← สำคัญ ดูกล่องเตือนข้างล่าง</span></code></pre>
+
+<div class="warn">
+  <span class="label">⚠ CLI ใหม่กว่า library แล้วคอมไพล์ไม่ผ่าน</span>
+  <p><code>gin-swagger v1.6.1</code> ลาก <code>swaggo/swag</code> <strong>v1.8.12</strong> เข้ามา
+  แต่ <code>swag</code> CLI ที่เพิ่งลงเป็น <strong>v1.16.4</strong> → <code>docs.go</code> ที่มันสร้างใช้ field ที่ library เก่ายังไม่มี:</p>
+<pre><code># wongnok/docs
+docs/docs.go:169:2: unknown field LeftDelim in struct literal of type "github.com/swaggo/swag".Spec
+docs/docs.go:170:2: unknown field RightDelim in struct literal of type "github.com/swaggo/swag".Spec
+FAIL	wongnok/cmd/api [build failed]</code></pre>
+  <p style="margin-bottom:0">แก้ด้วย <code>go get github.com/swaggo/swag@latest</code>
+  (<code>v1.8.12 =&gt; v1.16.6</code>) แล้วผ่านทันที · <strong>สไลด์ไม่ได้บอกขั้นตอนนี้</strong></p>
+</div>
+
+<h3>General API Info — เขียนเหนือ <code>func main</code></h3>
+<pre><code><span class="c">//	@title			Wongnok API</span>
+<span class="c">//	@version		1.0</span>
+<span class="c">//	@description	API สำหรับจัดการข้อมูลผู้ใช้</span>
+<span class="c">//	@host			localhost:8080</span>
+<span class="c">//	@BasePath		/api/v1</span>
+<span class="c">//	@schemes		http https</span>
+
+<span class="c">//	@securityDefinitions.apikey	BearerAuth</span>
+<span class="c">//	@in							header</span>
+<span class="c">//	@name						Authorization</span>
+<span class="c">//	@description				ใส่ค่าเป็น "Bearer {token}"</span>
+<span class="k">func</span> <span class="f">main</span>() { <span class="c">/* … */</span> }</code></pre>
+
+<h3>ระดับ endpoint</h3>
+<pre><code><span class="c">// FindByID godoc</span>
+<span class="c">//</span>
+<span class="c">//	@Summary		ดึงข้อมูล User รายคน</span>
+<span class="c">//	@Description	ค้นหา User จาก UUID แล้วคืนข้อมูลกลับมา</span>
+<span class="c">//	@Tags			users</span>
+<span class="c">//	@Produce		json</span>
+<span class="c">//	@Param			id	path		string	true	"User ID (UUID)"	format(uuid)</span>
+<span class="c">//	@Success		200	{object}	user.UserResponse</span>
+<span class="c">//	@Failure		404	{object}	httputil.ErrorResponse</span>
+<span class="c">//	@Security		BearerAuth</span>
+<span class="c">//	@Router			/users/{id} [get]</span>
+<span class="k">func</span> (handler *Handler) <span class="f">FindByID</span>(ctx *gin.Context) { <span class="c">/* … */</span> }</code></pre>
+
+<p><code>@Param</code> มี 6 ช่อง: <code>&lt;ชื่อ&gt; &lt;path|query|header|body|formData&gt;
+&lt;type&gt; &lt;true|false&gt; "&lt;คำอธิบาย&gt;" &lt;attribute&gt;</code></p>
+
+<p><code>@Success</code>/<code>@Failure</code>: <code>&lt;code&gt; {object|array|string} &lt;package&gt;.&lt;Struct&gt;</code>
+— <strong>ชื่อ type ต้องมี package นำหน้าเสมอ</strong> เขียน <code>UserResponse</code> เฉย ๆ swag หาไม่เจอ</p>
+
+<h3>ต่อเข้ากับ Gin</h3>
+<pre><code><span class="k">import</span> (
+    swaggerFiles <span class="s">"github.com/swaggo/files"</span>
+    ginSwagger   <span class="s">"github.com/swaggo/gin-swagger"</span>
+    _ <span class="s">"wongnok/docs"</span>          <span class="c">// blank import — ไม่ใส่แล้วโหลด spec ไม่ขึ้น</span>
+)
+
+router.<span class="f">GET</span>(<span class="s">"/swagger/*any"</span>, ginSwagger.<span class="f">WrapHandler</span>(swaggerFiles.Handler))
+<span class="c">// เปิดที่ localhost:8080/swagger/index.html</span></code></pre>
+
+<h3>รัน swag init</h3>
+<pre><code><span class="c"># โครงที่ main.go อยู่ cmd/api/ ใช้แบบนี้ไม่ได้</span>
+swag init
+<span class="c">#   → cannot parse source files .../main.go: no such file or directory</span>
+<span class="c">#   → ไม่มีโฟลเดอร์ docs/ เกิดขึ้นเลย</span>
+
+<span class="c"># ต้องชี้ไฟล์ด้วย -g</span>
+swag init -g cmd/api/main.go</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Flag</th><th>ทำอะไร</th><th>ผลที่วัดได้จริง (swag v1.16.4)</th></tr></thead>
+  <tbody>
+    <tr><td><code>-g cmd/api/main.go</code></td><td>ชี้ไฟล์ที่มี General API Info</td><td><strong>จำเป็น</strong> เมื่อ <code>main.go</code> ไม่ได้อยู่ root</td></tr>
+    <tr><td><code>--parseInternal</code></td><td>สแกน package <code>internal</code></td><td>ในโครงนี้<strong>ไม่ใส่ก็ได้ definition ครบ</strong> · ใส่แล้วชื่อเปลี่ยนเป็น <code>internal_user.UserResponse</code></td></tr>
+    <tr><td><code>--parseDependency</code></td><td>สแกน struct จาก module อื่น</td><td>ใช้เมื่อ response อ้าง type จาก external package</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ไฟล์ที่ได้: <code>docs/docs.go</code> (ตัวที่ blank import) · <code>docs/swagger.json</code> · <code>docs/swagger.yaml</code>
+<br>บรรทัด <code>warning: failed to get package name in dir: ./</code> ขึ้นแม้ตอนสำเร็จ — ไม่เป็นไร</p>
+
+<h3>struct tag ที่มีผลกับเอกสาร</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>tag</th><th>ผลใน Swagger UI</th></tr></thead>
+  <tbody>
+    <tr><td><code>json:"name"</code></td><td>ชื่อ field ในเอกสาร</td></tr>
+    <tr><td><code>example:"ผัดไทย"</code></td><td>ค่าตัวอย่างในกล่อง Example Value</td></tr>
+    <tr><td><code>binding:"required"</code></td><td>field ขึ้นเป็น required</td></tr>
+    <tr><td><code>enums:"a,b,c"</code></td><td>แสดงเป็น dropdown</td></tr>
+    <tr><td><code>swaggerignore:"true"</code></td><td>ซ่อน field จากเอกสาร</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>สามพฤติกรรมของ swag ที่ยืนยันด้วยผลรันจริง: <code>Name *string</code> → เอกสารขึ้นเป็น
+<code>string</code> ธรรมดา · <code>json:"name,omitempty"</code> → ใช้ชื่อ <code>name</code>
+· method อย่าง <code>ToUser()</code> ถูกมองข้าม swag สนใจแค่ field</p>
+
+<h3>เอา <code>swagger.json</code> ไปใช้ต่อ</h3>
+<ul>
+  <li><strong>GitLab</strong> — commit <code>docs/</code> เข้า repo (อย่าใส่ใน <code>.gitignore</code>)
+    แล้วเปิดไฟล์ กด <em>Display rendered file</em> · ชื่อไฟล์ต้องมีคำว่า <code>swagger</code> หรือ
+    <code>openapi</code> และนามสกุล <code>.json/.yaml/.yml</code></li>
+  <li><strong>Postman</strong> — Import → File → <code>swagger.json</code> ได้ collection ครบทุก endpoint</li>
+  <li><strong>openapi-generator</strong> — <code>openapi-generator generate -i swagger.json -g typescript-axios -o ./client</code></li>
+</ul>
+
+<h2 id="redis">14 · Redis — สองคำสั่งที่เพิ่มจาก Day 7</h2>
+
+<p>เรื่อง Redis ที่เหลือทั้งหมดอยู่ใน
+<a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32</a> และ
+<a href="../../day-7/reference/cheatsheet.html">cheat sheet Day 7</a> แล้ว
+สไลด์ Day 8 มีของใหม่จริง ๆ แค่สองคำสั่งนี้</p>
+
+<pre><code><span class="c"># SET พร้อมตั้งเวลาหมดอายุในคำสั่งเดียว (นิยมใช้สุด)</span>
+SET username "devpool" EX 60
+
+<span class="c"># GETDEL — อ่านค่าแล้วลบทิ้งในคำสั่งเดียว (atomic)</span>
+GETDEL username</code></pre>
+
+<p><code>SET … EX 60</code> ดีกว่า <code>SET</code> แล้วตามด้วย <code>EXPIRE</code> เพราะ
+ถ้าโปรเซสตายระหว่างสองคำสั่ง key จะค้างอยู่<strong>ตลอดไป</strong></p>
+
+<h2 id="wongnok">15 · Wongnok API spec</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Resource</th><th>Endpoint</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="5">Recipes</td><td><code>POST /recipes</code> — สร้างสูตรอาหาร</td></tr>
+    <tr><td><code>GET /recipes</code> — แสดงสูตรของทุกคน</td></tr>
+    <tr><td><code>GET /recipes/:id</code> — รายละเอียดสูตรนั้น</td></tr>
+    <tr><td><code>PUT /recipes/:id</code> — แก้ไขสูตร</td></tr>
+    <tr><td><code>DELETE /recipes/:id</code> — ลบสูตร</td></tr>
+    <tr><td rowspan="2">Favorite</td><td><code>POST /recipes/:id/favorite</code></td></tr>
+    <tr><td><code>DELETE /recipes/:id/favorite</code></td></tr>
+    <tr><td>Rating</td><td><code>POST /recipes/:id/rating</code></td></tr>
+    <tr><td rowspan="2">User</td><td><code>GET /users/:id</code></td></tr>
+    <tr><td><code>PUT /users/:id</code></td></tr>
+    <tr><td rowspan="4">Auth</td><td><code>GET /login</code> — เข้าสู่ระบบด้วย Keycloak</td></tr>
+    <tr><td><code>GET /callback</code> — รับข้อมูล authentication</td></tr>
+    <tr><td><code>POST /exchange</code> — แลก one-time code เป็น access token</td></tr>
+    <tr><td><code>GET /logout</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>กลุ่ม Auth ขัดกฎข้อ 1 และ 7 (เป็น verb และ <code>GET</code> ที่เปลี่ยน state)
+แต่มีเหตุผลรองรับ — OAuth redirect flow ต้องให้เบราว์เซอร์พาไปเอง ซึ่งทำได้แค่ <code>GET</code>
+· ดู <a href="../lessons/0042-wongnok-api-spec.html">บทเรียน 42</a></p>
+
+<h2 id="traps">16 · ตารางกับดักรวมทั้งวัน</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียนแบบนี้</th><th>สิ่งที่เกิดขึ้นจริง</th><th>แก้</th></tr></thead>
+  <tbody>
+    <tr><td><code>w.Header().Set(…)</code> หลัง <code>w.WriteHeader(…)</code></td><td>ไม่มีผล <strong>เงียบสนิท</strong> ไม่มี error ไม่มี log</td><td>ลำดับ Header → WriteHeader → Write</td></tr>
+    <tr><td><code>w.WriteHeader(400)</code> หลังเขียน body แล้ว</td><td>status ยังเป็น <code>200</code> · server log <code>http: superfluous response.WriteHeader call</code></td><td><code>return</code> ทันทีหลังตอบ error</td></tr>
+    <tr><td><code>json.NewEncoder(w).Encode(…)</code> โดยไม่ set Content-Type</td><td>client ได้ <code>text/plain; charset=utf-8</code></td><td>set เองก่อน <code>WriteHeader</code></td></tr>
+    <tr><td><code>mux.HandleFunc("GET/hello", …)</code></td><td>Go ตีเป็น host=<code>GET</code> → <strong>404 ทุก request</strong></td><td>เว้นวรรคหลัง method</td></tr>
+    <tr><td>Gin: ยิง method ผิด</td><td>ได้ <code>404</code> ไม่ใช่ <code>405</code></td><td><code>r.HandleMethodNotAllowed = true</code></td></tr>
+    <tr><td><code>c.BindJSON</code> แล้วเขียน <code>c.JSON(422, …)</code> ต่อ</td><td>ได้ <code>400</code> ไม่ใช่ 422 · <code>[GIN-debug] [WARNING] Headers were already written.</code></td><td>ใช้ <code>c.ShouldBindJSON</code> เสมอ</td></tr>
+    <tr><td><code>Age int `binding:"required"`</code></td><td>ส่ง <code>0</code> มาแล้ว<strong>ไม่ผ่าน</strong></td><td>เปลี่ยนเป็น <code>*int</code></td></tr>
+    <tr><td><code>c.Abort()</code> เปล่า ๆ</td><td>client ได้ <code>200</code> body ว่าง</td><td><code>c.AbortWithStatusJSON(…)</code></td></tr>
+    <tr><td><code>r.Use(cors…)</code> <strong>หลัง</strong> ลง route แล้ว</td><td>route นั้นไม่ได้ middleware เลย</td><td><code>Use</code> ก่อนลง route เสมอ</td></tr>
+    <tr><td><code>cors.Default()</code> + JWT</td><td>เบราว์เซอร์บล็อก <code>Authorization</code></td><td><code>cors.New</code> แล้วใส่ <code>AllowHeaders</code> เอง</td></tr>
+    <tr><td>ทดสอบ CORS ด้วย <code>curl</code> ธรรมดา</td><td>ไม่มี CORS header ออกมาสักตัว</td><td>ต้องใส่ <code>-H "Origin: …"</code></td></tr>
+    <tr><td><code>assert.Equal</code> กับ body JSON</td><td>พังเมื่อลำดับ key เปลี่ยน</td><td><code>assert.JSONEq</code></td></tr>
+    <tr><td>เทียบ <code>"application/json"</code> เฉย ๆ</td><td>พัง — Gin ใส่ <code>; charset=utf-8</code> ด้วย</td><td>เทียบสตริงเต็ม</td></tr>
+    <tr><td><code>router.GET("/swagger", …)</code></td><td><code>/swagger/index.html</code> → <code>404 page not found</code></td><td>ต้องเป็น <code>/swagger/*any</code></td></tr>
+    <tr><td>ลืม <code>_ "wongnok/docs"</code></td><td>หน้า UI ยัง <strong>200</strong> แต่ <code>/swagger/doc.json</code> คืน <strong>500 body ว่าง</strong> → UI เปิดได้แต่ไม่มี endpoint</td><td>ใส่ blank import</td></tr>
+    <tr><td>แก้ annotation แล้วไม่รัน <code>swag init</code></td><td>เอกสารเป็นของเก่า</td><td>รันใหม่ทุกครั้ง + restart server</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="errors">17 · ตารางแปล error / panic ที่เจอบ่อย</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อความ</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>http: superfluous response.WriteHeader call from main.func8 (main.go:60)</code></td><td>เขียน status ซ้ำ — ตัวเลขในวงเล็บคือ<strong>บรรทัดที่ต้องไปแก้</strong></td></tr>
+    <tr><td><code>parsing "GET hello": at offset 4: host/path missing /</code></td><td>pattern ของ ServeMux ลืม <code>/</code> นำหน้า path</td></tr>
+    <tr><td><code>':userId' in new path '/users/:userId' conflicts with existing wildcard ':id'</code></td><td>Gin: param ตำแหน่งเดียวกันต้องชื่อเดียวกันทั้ง tree</td></tr>
+    <tr><td><code>handlers are already registered for path '/users/:id'</code></td><td>Gin: ลง path+method เดิมซ้ำ</td></tr>
+    <tr><td><code>catch-all routes are only allowed at the end of the path in path '/a/*any/b'</code></td><td>Gin: <code>*</code> ต้องอยู่ท้ายสุด</td></tr>
+    <tr><td><code>Key: 'Req.Age' Error:Field validation for 'Age' failed on the 'required' tag</code></td><td>validator: field เป็น zero value — ดูกล่องเตือนหัวข้อ 10</td></tr>
+    <tr><td><code>[GIN-debug] [WARNING] Headers were already written. Wanted to override status code 400 with 422</code></td><td>เขียน response ไปแล้วครั้งหนึ่ง — มักเกิดจาก <code>BindJSON</code></td></tr>
+    <tr><td><code>unknown field LeftDelim in struct literal of type "github.com/swaggo/swag".Spec</code></td><td>เวอร์ชัน <code>swag</code> CLI กับ library ไม่ตรงกัน</td></tr>
+    <tr><td><code>cannot parse source files .../main.go: no such file or directory</code></td><td><code>swag init</code> หา <code>main.go</code> ที่ root ไม่เจอ — ต้องใช้ <code>-g</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="ask">
+  <p style="margin-bottom:0">เจอ error ที่ไม่มีในตารางนี้ ส่งข้อความเต็ม ๆ มาได้เลย
+  เดี๋ยวรันซ้ำแล้วเพิ่มลงตาราง — ตารางนี้โตมาจากของที่รันเจอจริงทั้งหมด ไม่ได้ลอกมาจากที่ไหน</p>
+</div>
+
+<nav class="nav">
+  <a href="../lessons/0033-rest-resource-method.html">← บทเรียน 33</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../lessons/0042-wongnok-api-spec.html">บทเรียน 42 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status">MDN — HTTP response status codes</a> — คำนิยามทางการของทุก status</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS">MDN — CORS</a> · <a href="https://developer.mozilla.org/en-US/docs/Glossary/Preflight_request">Preflight request</a></li>
+  <li><a href="https://pkg.go.dev/net/http#ServeMux">pkg.go.dev — <code>net/http.ServeMux</code></a> — ไวยากรณ์ pattern และกฎ precedence ฉบับทางการ</li>
+  <li><a href="https://pkg.go.dev/net/http/httptest">pkg.go.dev — <code>net/http/httptest</code></a></li>
+  <li><a href="https://gin-gonic.com/docs/">Gin Documentation</a> · <a href="https://pkg.go.dev/github.com/gin-gonic/gin">pkg.go.dev</a></li>
+  <li><a href="https://github.com/go-playground/validator">go-playground/validator</a> — รายการ <code>binding</code> tag ทั้งหมด</li>
+  <li><a href="https://github.com/gin-contrib/cors">gin-contrib/cors</a></li>
+  <li><a href="https://github.com/swaggo/swag#declarative-comments-format">swaggo/swag — Declarative Comments Format</a> — annotation ครบทุกตัว</li>
+  <li><a href="https://swagger.io/specification/v2/">OpenAPI 2.0 (Swagger 2.0) Specification</a></li>
+  <li><a href="../../day-7/reference/cheatsheet.html">Cheat sheet Day 7</a> — Mockery · Testcontainers · Goose · Redis</li>
+</ul>
+
+</main>
+
+</body>
+</html>

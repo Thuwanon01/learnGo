@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 34 — Status code: ตัวเลขที่บอกว่าใครผิด</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 34 · Day 8 · Status code</p>
+  <h1>Status code — ตัวเลขที่บอกว่าใครผิด</h1>
+  <p class="meta">~13 นาที · ต้องมี: <a href="./0033-rest-resource-method.html">บทเรียน 33</a> (REST: resource + method)</p>
+  <p class="standfirst">
+    บท 33 สอนว่า <strong>URL บอกว่าคุยเรื่องอะไร</strong> และ <strong>method บอกว่าจะทำอะไรกับมัน</strong> —
+    ทั้งสองอย่างเป็นฝั่ง<em>คำถาม</em>
+    <br>บทนี้คือฝั่ง<em>คำตอบ</em>: ตัวเลขสามหลักที่ทุกฝ่ายอ่านตรงกัน
+    และเส้นแบ่งเส้นเดียวที่ตัดสินว่า<strong>ใครต้องตื่นมาแก้ — client หรือ server</strong>
+    <br>ผมจะรัน API เล็ก ๆ ตัวหนึ่งให้ดูจนครบทุกรหัสในบท แล้วจะทำให้เห็นว่า
+    <strong>การตอบ 200 พร้อมข้อความ error</strong> ทำให้ระบบเงียบสนิทตอนพังได้ยังไง
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>🧰 บทนี้ไม่ต้องลงอะไรเพิ่มเลย</strong> — โค้ดทุกชิ้นใช้ <code>net/http</code> +
+    <code>net/http/httptest</code> ที่ติดมากับ Go อยู่แล้ว
+    <code>go mod init</code> แล้ว <code>go run .</code> ได้ทันที
+    <br>ผลรันทุกบรรทัดในหน้านี้มาจากเครื่องจริง: <code>go version go1.26.5 darwin/arm64</code>
+    (ส่วนที่พูดถึง Gin คือ <code>github.com/gin-gonic/gin v1.12.0</code>)
+  </p>
+</div>
+
+<h2>1 · ตัวเลขสามหลักคือ "หัวข้อ" ของคำตอบ ไม่ใช่ของประดับ</h2>
+
+<p>
+  มือใหม่เกือบทุกคนคิดแบบนี้ตอนเริ่ม: <em>"ก็ตอบ JSON ไปสิ ในนั้นมี field <code>error</code> อยู่แล้ว
+  ใครอยากรู้ก็อ่านเอา"</em> — ฟังดูสมเหตุสมผล จนกระทั่งนึกออกว่า
+  <strong>คนที่อ่านคำตอบของคุณไม่ได้มีแค่โปรแกรมเมอร์คนเดียว</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📖 <strong>สามคำที่จะใช้ทั้งบท</strong> — บทนี้ยังไม่ต้องเขียน server เอง (บท 37 ค่อยเขียน)
+    แต่ต้องรู้จักคำพวกนี้ก่อน:
+    <br><strong>handler</strong> = ฟังก์ชันที่เราเขียนไว้ให้ทำงานเมื่อมี request เข้ามาตรง URL หนึ่ง —
+    หน้าที่ของมันคือ<em>ประกอบคำตอบ</em>
+    <br><strong>router</strong> (ใน <code>net/http</code> เรียกว่า <code>ServeMux</code>) = ตัวที่ยืนอยู่หน้าสุด
+    ดูว่า request นี้ควรส่งไปให้ handler ตัวไหน
+    <br><strong>response</strong> = คำตอบหนึ่งชุด ประกอบด้วย 3 ส่วน: <strong>status code</strong> (ตัวเลข 3 หลัก) ·
+    <strong>header</strong> (ข้อมูลกำกับ) · <strong>body</strong> (เนื้อหา เช่น JSON) — บทนี้โฟกัสส่วนแรก
+  </p>
+</div>
+
+<div class="diagram">
+<pre>   handler ของคุณตอบกลับไป
+        │
+        ├─▶ <strong>client library</strong>   ดู "ตัวเลข" ก่อนเสมอ แล้วค่อยตัดสินใจว่าจะแกะ body ไหม
+        │
+        ├─▶ <strong>เบราว์เซอร์</strong>       ตัดสินใจ cache / redirect / ถาม username จาก "ตัวเลข"
+        │
+        ├─▶ <strong>proxy · load balancer</strong>  นับ error rate จาก "ตัวเลข" (มันไม่แกะ body ให้คุณ)
+        │
+        ├─▶ <strong>monitoring / alert</strong>    กราฟ 4xx / 5xx ที่ทีม on-call จ้องอยู่ = "ตัวเลข" ล้วน
+        │
+        └─▶ <strong>คน</strong>                คนเดียวในลิสต์นี้ที่อ่าน body เป็น</pre>
+</div>
+
+<p>
+  ทุกคนในภาพยกเว้นบรรทัดสุดท้าย <strong>ไม่รู้จัก field <code>error</code> ของคุณเลย</strong>
+  พวกเขารู้จักแค่ตัวเลข เพราะตัวเลขคือส่วนเดียวของคำตอบที่มี<strong>ความหมายมาตรฐาน</strong>
+  ไม่ว่าจะเขียนด้วยภาษาอะไร ทีมไหน บริษัทไหน
+  <br>ดังนั้นกฎข้อแรกของบทนี้คือ:
+  <strong>ตัวเลขคือคำตอบที่เครื่องอ่าน · body คือคำตอบที่คนอ่าน — ต้องพูดตรงกันเสมอ</strong>
+</p>
+
+<h2>2 · อ่านหลักแรกให้เป็น แล้วที่เหลือเดาได้ครึ่งทาง</h2>
+
+<p>
+  status code มี 3 หลัก แต่<strong>หลักแรกหลักเดียว</strong>บอกได้แล้วว่าเรื่องนี้จบยังไง
+  สองหลักหลังเป็นแค่รายละเอียดว่า "จบแบบไหน"
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>กลุ่ม</th><th>แปลว่า</th><th>ในงานจริงเจอตอนไหน</th></tr>
+  <tr>
+    <td><strong>1xx</strong></td>
+    <td>รับทราบแล้ว ยังไม่จบ</td>
+    <td>แทบไม่ได้เขียนเอง — เป็นเรื่องของ protocol (เช่นตอน upgrade ไป WebSocket)</td>
+  </tr>
+  <tr>
+    <td><strong>2xx</strong></td>
+    <td><strong>สำเร็จ</strong></td>
+    <td>เส้นทางปกติของ handler ที่ทำงานได้</td>
+  </tr>
+  <tr>
+    <td><strong>3xx</strong></td>
+    <td>ของอยู่ที่อื่น ตามไปต่อ</td>
+    <td>redirect · ส่วนใหญ่ framework จัดการให้เอง (หัวข้อ 8)</td>
+  </tr>
+  <tr>
+    <td><strong>4xx</strong></td>
+    <td><strong>คำขอมีปัญหา — client ต้องแก้</strong></td>
+    <td>ส่งข้อมูลผิด · ไม่ได้ล็อกอิน · ขอของที่ไม่มี</td>
+  </tr>
+  <tr>
+    <td><strong>5xx</strong></td>
+    <td><strong>คำขอไม่มีปัญหา แต่ server ทำให้ไม่ได้ — server ต้องแก้</strong></td>
+    <td>DB ล่ม · โค้ดพัง · dependency timeout</td>
+  </tr>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">🎯 หัวใจของทั้งบท</span>
+  <p style="margin-bottom:0">
+    <strong>4xx = "คุณส่งมาแบบนี้ ผมทำให้ไม่ได้" · 5xx = "คุณส่งมาถูกแล้ว แต่ผมเองมีปัญหา"</strong>
+    <br>เส้นแบ่งนี้ไม่ใช่เรื่องความสุภาพ มันคือ<strong>การชี้ตัวคนที่ต้องลงมือแก้</strong>
+    <br>ตอบ 4xx = ส่งงานกลับไปให้คนเรียก API · ตอบ 5xx = รับงานไว้เองและ<strong>ควรมี log ที่ฝั่งคุณเสมอ</strong>
+    <br>ตอบผิดฝั่งเมื่อไหร่ คนที่ถูกตามตัวตอนตีสองก็ผิดคนทันที
+  </p>
+</div>
+
+<p>
+  ลองตัวอย่างเดียวกันสองแบบ: ผู้ใช้สมัครสมาชิกด้วยอีเมลที่มีคนใช้แล้ว
+  <br>ถ้าคุณตอบ <strong>409 Conflict</strong> → กราฟ 4xx ขยับ ทีม server มองแล้วรู้ว่า
+  "คนใช้กรอกอีเมลซ้ำเยอะขึ้น" ซึ่งอาจแปลว่าหน้าเว็บสื่อสารไม่ดี — ไม่ใช่ระบบพัง
+  <br>ถ้าคุณตอบ <strong>500</strong> → กราฟ 5xx พุ่ง alert ดัง คนถูกปลุกมาไล่ดู log
+  แล้วพบว่า "ทุกอย่างปกติ แค่อีเมลซ้ำ" — เสียแรงคนทั้งกะ และที่แย่กว่าคือ
+  <strong>ครั้งหน้าที่ 5xx พุ่งจริง ๆ จะไม่มีใครเชื่อกราฟนั้นอีก</strong>
+</p>
+
+<h2>3 · เก้าตัวที่ต้องคล่อง — รันจริงทั้งชุดในคราวเดียว</h2>
+
+<p>
+  ผมเขียน API เล็ก ๆ ด้วย <code>net/http</code> ตัวเดียว
+  (สมัครสมาชิก + ลบผู้ใช้ที่ให้เฉพาะแอดมิน) แล้วยิงมันด้วย client จริงผ่าน
+  <code>httptest.NewServer</code> (ตัวช่วยที่ติดมากับ Go: เปิด server ชั่วคราวบนพอร์ตสุ่มให้ยิงทดสอบ
+  แล้วปิดทิ้ง — หัวข้อ 10 จะใช้อีกที) — ทุกบรรทัดข้างล่างนี้คือ output ที่ออกมาจริง
+  ไม่ได้พิมพ์เอง:
+</p>
+
+<p style="margin-top:-0.4rem">
+  <em>วิธีอ่าน:</em> บรรทัดที่ขึ้นต้นด้วย <code>$</code> คือ<strong>คำขอ</strong>ที่ยิงเข้าไป
+  (เขียนย่อ ๆ ให้อ่านง่าย <strong>ไม่ใช่คำสั่งที่พิมพ์ในเทอร์มินัลได้</strong>) ·
+  บรรทัดที่ขึ้นต้นด้วย <code>-&gt;</code> คือ<strong>คำตอบ</strong>ที่ได้กลับมา
+</p>
+
+<pre><code>$ POST /users  body={<span class="s">"email":"new@example.com"</span>}
+  -&gt; <strong>201 Created</strong>   Location: /users/2
+     {<span class="s">"id":"2","email":"new@example.com"</span>}
+$ POST /users  body={<span class="s">"email":"new@example.com"</span>}      <span class="c"># อีเมลเดิมซ้ำ</span>
+  -&gt; <strong>409 Conflict</strong>
+     {<span class="s">"error":"email already registered"</span>}
+$ POST /users  body={<span class="s">"email":"ไม่ใช่อีเมล"</span>}
+  -&gt; <strong>422 Unprocessable Entity</strong>
+     {<span class="s">"error":"email is not a valid address"</span>}
+$ POST /users  body={<span class="s">"email":</span>                        <span class="c"># JSON ขาดครึ่ง</span>
+  -&gt; <strong>400 Bad Request</strong>
+     {<span class="s">"error":"invalid json body"</span>}
+$ DELETE /users/1                                <span class="c"># ไม่ส่ง token</span>
+  -&gt; <strong>401 Unauthorized</strong>   WWW-Authenticate: Bearer realm=<span class="s">"api"</span>
+     {<span class="s">"error":"missing token"</span>}
+$ DELETE /users/1  Authorization: Bearer user-token
+  -&gt; <strong>403 Forbidden</strong>
+     {<span class="s">"error":"admin only"</span>}
+$ DELETE /users/1  Authorization: Bearer admin-token
+  -&gt; <strong>204 No Content</strong>
+                                                 <span class="c"># ← body ว่างจริง ๆ</span>
+$ DELETE /users/1  Authorization: Bearer admin-token   <span class="c"># ลบซ้ำ ของหายไปแล้ว</span>
+  -&gt; <strong>404 Not Found</strong>
+     {<span class="s">"error":"user not found"</span>}
+$ PATCH /users/1  Authorization: Bearer admin-token
+  -&gt; <strong>405 Method Not Allowed</strong>
+     Method Not Allowed                          <span class="c"># ← อันนี้ Go ตอบเอง ไม่ได้เขียน</span></code></pre>
+
+<p>
+  สังเกตว่า <strong>request แทบเหมือนกันหมด</strong> — <code>DELETE /users/1</code> ตัวเดียวกัน
+  ได้ 401, 403, 204 และ 404 ตามลำดับ เพราะสิ่งที่เปลี่ยนคือ<em>บริบท</em>: ใครถาม · ถามตอนไหน
+  <br>นี่คือเหตุผลที่ status code ไม่ใช่ "ตารางที่ต้องท่อง" แต่เป็น<strong>คำถามที่ต้องตอบให้ตรง</strong>
+</p>
+
+<p>
+  ผลรันข้างบนมี 422 กับ 405 แถมมาด้วย (สองตัวนี้พูดถึงในหัวข้อ 6 และ 8) —
+  แต่<strong>เก้าตัวที่ต้องคล่องจริง ๆ คือตารางข้างล่างนี้</strong> ยึดตารางนี้เป็นหลัก
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>รหัส</th><th>ตอบเมื่อ</th><th>ที่คนใหม่ใช้ผิดบ่อย</th></tr>
+  <tr><td><strong>200</strong> OK</td><td>สำเร็จ และมีข้อมูลจะส่งกลับ</td><td>เอาไปใช้กับทุกอย่างรวมทั้งตอน error (หัวข้อ 7)</td></tr>
+  <tr><td><strong>201</strong> Created</td><td>สำเร็จ และ<strong>เพิ่งสร้างของใหม่</strong></td><td>ใช้ 200 กับ <code>POST</code> ที่สร้างของ</td></tr>
+  <tr><td><strong>204</strong> No Content</td><td>สำเร็จ และ<strong>ไม่มีอะไรจะส่งกลับ</strong></td><td>ส่ง body ตามไปด้วย (หัวข้อ 4)</td></tr>
+  <tr><td><strong>400</strong> Bad Request</td><td>อ่านคำขอไม่รู้เรื่อง — รูปแบบผิด</td><td>เอาไปใช้แทน 401/403/409 หมดทุกอย่าง</td></tr>
+  <tr><td><strong>401</strong> Unauthorized</td><td><strong>ไม่รู้ว่าคุณเป็นใคร</strong> — ไม่มี token / token ใช้ไม่ได้</td><td>สลับกับ 403</td></tr>
+  <tr><td><strong>403</strong> Forbidden</td><td><strong>รู้ว่าคุณเป็นใครแล้ว แต่คุณทำสิ่งนี้ไม่ได้</strong></td><td>สลับกับ 401</td></tr>
+  <tr><td><strong>404</strong> Not Found</td><td>ไม่มี resource ตาม URL นี้</td><td>ใช้กับ "มีของ แต่คุณไม่มีสิทธิ์ดู" ทั้งที่ควรเป็น 403</td></tr>
+  <tr><td><strong>409</strong> Conflict</td><td>คำขอถูกทุกอย่าง แต่<strong>ชนกับสถานะปัจจุบัน</strong></td><td>ตอบ 400 หรือ 500 แทน</td></tr>
+  <tr><td><strong>500</strong> Internal Server Error</td><td><strong>ฝั่งเราพัง</strong> — และต้องมี log ที่ฝั่งเรา</td><td>ใช้กับความผิดของ client</td></tr>
+</table>
+</div>
+
+<h2>4 · ฝั่งสำเร็จ: 200 vs 201 vs 204 ต่างกันที่ "มีอะไรกลับไปไหม"</h2>
+
+<p>
+  ทั้งสามตัวแปลว่า<em>สำเร็จ</em>เหมือนกัน คำถามที่ใช้แยกมีข้อเดียว:
+  <strong>หลังทำเสร็จ มีของส่งกลับหรือเปล่า และของนั้นเพิ่งเกิดใหม่ไหม</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th>มี body กลับไป?</th><th>ใช้กับ</th></tr>
+  <tr><td><strong>200 OK</strong></td><td>มี</td><td><code>GET /users/1</code> · <code>PUT /users/1</code> ที่ตอบของที่แก้แล้ว</td></tr>
+  <tr><td><strong>201 Created</strong></td><td>มี (ของที่เพิ่งสร้าง) + ควรมี header <code>Location</code></td><td><code>POST /users</code></td></tr>
+  <tr><td><strong>204 No Content</strong></td><td><strong>ไม่มี — ห้ามมี</strong></td><td><code>DELETE /users/1</code> · <code>PUT</code> ที่ไม่ตอบอะไรกลับ</td></tr>
+</table>
+</div>
+
+<p>
+  <code>Location</code> ในคำตอบ 201 คือการบอกว่า "ของที่คุณเพิ่งสร้าง ไปหาได้ที่ URL นี้"
+  ผมรันแล้วได้ <code>Location: /users/2</code> จริงตามผลในหัวข้อ 3 —
+  client ที่ฉลาดหน่อยจะเอาไปใช้ต่อได้เลยโดยไม่ต้องเดาว่า id อยู่ตรงไหนใน body
+</p>
+
+<p>
+  ส่วน 204 มีข้อบังคับที่ทำให้คนใหม่งงบ่อยที่สุด: <strong>มันห้ามมี body</strong>
+  ไม่ใช่ "ไม่ควร" แต่ "ห้าม" ระดับ protocol — แล้วถ้าเราเผลอเขียน body ตามไปล่ะ?
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — handler นี้สั่ง 204 แล้วยัง <code>Write</code> ตามไปอีก</p>
+  <p style="margin-top:-0.3rem">
+    <em>อ่านโค้ดก่อน (เจอครั้งแรก):</em> <code>mux.HandleFunc("GET /x", f)</code> = บอก router ว่า
+    "ถ้ามี <code>GET /x</code> เข้ามา ให้เรียก <code>f</code>" ·
+    <code>w</code> (<code>http.ResponseWriter</code>) = ปลายปากกาที่เราใช้<strong>เขียนคำตอบ</strong>ออกไป ·
+    <code>r</code> = คำขอที่เข้ามา ·
+    <code>w.WriteHeader(code)</code> = สั่ง status · <code>w.Write(b)</code> = เขียน body
+  </p>
+  <pre><code>mux.<span class="f">HandleFunc</span>(<span class="s">"GET /x"</span>, <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+    w.<span class="f">WriteHeader</span>(http.StatusNoContent)
+    n, err := w.<span class="f">Write</span>([]<span class="k">byte</span>(<span class="s">`{"message":"deleted"}`</span>))
+    fmt.<span class="f">Printf</span>(<span class="s">"[server] w.Write -&gt; n=%d err=%v\n"</span>, n, err)
+})</code></pre>
+  <p class="ask">
+    ฝั่ง client จะได้ status อะไร body อะไร · และบรรทัด <code>[server]</code> จะพิมพ์ว่าอะไร —
+    <strong>มี error ไหม และถ้ามี ใครเห็นมัน</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>[server] w.Write -&gt; n=0 err=<strong>http: request method or response status code does not allow body</strong>
+[client] status=<span class="s">"204 No Content"</span> ContentLength=0</code></pre>
+    <p>
+      <strong>Go บอกคุณแล้ว — แต่บอกผ่านค่าที่แทบไม่มีใครรับ</strong>
+      <br><code>w.Write</code> คืน <code>(n int, err error)</code> เสมอ และตรงนี้มันคืน error จริง ๆ
+      แต่โค้ดที่เราเขียนกันทุกวัน (<code>fmt.Fprintln(w, ...)</code>,
+      <code>json.NewEncoder(w).Encode(v)</code>) <strong>ไม่ได้เช็คค่านั้น</strong>
+      ผลคือ body หายไปเงียบ ๆ ไม่มี log ไม่มี panic
+    </p>
+    <p style="margin-bottom:0">
+      บทเรียนที่ต้องเก็บ: <strong>ถ้าอยากส่งข้อความกลับ อย่าใช้ 204</strong> ใช้ 200 แล้วส่ง body ไป
+      <br>เลือก 204 เมื่อ<em>ตั้งใจ</em>จะไม่ส่งอะไรกลับเท่านั้น — ไม่ใช่เพราะเห็นว่ามันดูเท่กว่า
+    </p>
+  </div>
+</div>
+
+<h2>5 · 401 vs 403 — "ไม่รู้ว่าคุณเป็นใคร" กับ "รู้แล้ว แต่คุณทำไม่ได้"</h2>
+
+<p>
+  คู่นี้สลับกันบ่อยที่สุดในโลก ส่วนหนึ่งเพราะชื่อมันหลอก:
+  <strong>401 ชื่อ Unauthorized แต่ความหมายจริงคือ "unauthenticated" = ยังไม่ได้พิสูจน์ตัวตน</strong>
+  ส่วน 403 Forbidden ต่างหากที่แปลว่า "ไม่ได้รับอนุญาต"
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>401 — ยังไม่รู้ว่าคุณเป็นใคร</h4>
+    <pre><code>$ DELETE /users/1        <span class="c"># ไม่ส่ง token</span>
+-&gt; 401 Unauthorized
+   WWW-Authenticate: Bearer realm="api"
+   {"error":"missing token"}</code></pre>
+    <p style="margin-bottom:0">
+      ทางแก้ของ client: <strong>ล็อกอินแล้วลองใหม่</strong>
+      <br>เจอตอน: ไม่มี token · token หมดอายุ · token ปลอม
+    </p>
+  </div>
+  <div class="side good">
+    <h4>403 — รู้แล้วว่าคุณเป็นใคร</h4>
+    <pre><code>$ DELETE /users/1
+  Authorization: Bearer user-token
+-&gt; 403 Forbidden
+   {"error":"admin only"}</code></pre>
+    <p style="margin-bottom:0">
+      ทางแก้ของ client: <strong>ไม่มี</strong> — ล็อกอินใหม่กี่รอบก็ได้ 403 เหมือนเดิม
+      <br>เจอตอน: สิทธิ์ไม่ถึง · ไม่ใช่เจ้าของข้อมูล
+    </p>
+  </div>
+</div>
+
+<p>
+  ทำไมต้องแยก? เพราะ <strong>frontend ทำคนละอย่างกับสองรหัสนี้</strong>
+  <br>เจอ 401 → เด้งไปหน้า login (หรือใช้ refresh token ต่ออายุแล้วยิงซ้ำ)
+  <br>เจอ 403 → ต้องขึ้นข้อความ "คุณไม่มีสิทธิ์" <strong>ห้ามเด้งไป login</strong>
+  เพราะผู้ใช้ล็อกอินอยู่แล้ว การเด้งไปหน้า login จะกลายเป็นลูปที่ผู้ใช้ออกไม่ได้
+  <br>ตอบสลับสองตัวนี้ = frontend ทำงานผิด ทั้งที่โค้ด frontend ถูก
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong><code>WWW-Authenticate</code> คืออะไร</strong> — header ที่แนบไปกับ 401 เพื่อบอกว่า
+    "ถ้าจะพิสูจน์ตัวตน ให้ใช้วิธีไหน" ในผลรันข้างบนคือ <code>Bearer realm="api"</code>
+    แปลว่า "ส่ง token มาทาง <code>Authorization: Bearer ...</code>"
+    <br>เป็นคู่หูประจำตัวของ 401 (403 ไม่มี เพราะไม่มีอะไรให้ลองใหม่)
+    ส่วนเรื่อง header ทั้งชุดจะลงรายละเอียดใน
+    <a href="./0035-query-body-header.html">บทเรียน 35</a>
+  </p>
+</div>
+
+<h2>6 · 400 vs 422 vs 409 — ผิดที่รูปแบบ · ผิดที่ค่า · ผิดที่จังหวะ</h2>
+
+<p>
+  ทั้งสามตัวเป็น 4xx เหมือนกัน (client ต้องแก้) ต่างกันที่ <strong>คำขอเดินมาได้ไกลแค่ไหนก่อนตาย</strong>
+  ผมเรียง handler ให้ตรวจตามลำดับนี้เป๊ะ ๆ แล้วรันจริง:
+</p>
+
+<div class="diagram">
+<pre>  request เข้ามา
+      │
+      ├─ แกะ JSON ไม่ออกเลย ─────────────▶ <strong>400</strong>  {"error":"invalid json body"}
+      │   (วงเล็บไม่ปิด · ไม่ใช่ JSON)
+      │
+      ├─ แกะออกแล้ว แต่ค่าไม่ผ่านกฎ ─────▶ <strong>422</strong>  {"error":"email is not a valid address"}
+      │   (อีเมลไม่มี @ · อายุติดลบ)
+      │
+      ├─ ค่าถูกทุกอย่าง แต่ชนของที่มีอยู่ ──▶ <strong>409</strong>  {"error":"email already registered"}
+      │   (อีเมลซ้ำ · ลบของที่ถูกลบไปแล้ว)
+      │
+      └─ ผ่านหมด ───────────────────────▶ <strong>201</strong>  + Location</pre>
+</div>
+
+<p>
+  โครง <code>if</code> ที่เรียงแบบนี้ก็คือ <strong>guard clause</strong> ตัวเดียวกับที่ฝึกใน
+  <a href="../../day-2/lessons/0004-guard-clauses.html">บทเรียน 4</a>:
+  ตรวจเคสที่ผิดแล้ว <code>return</code> ทันที เรียงจากผิดหยาบไปผิดละเอียด
+  เส้นทางสำเร็จจึงเหลืออยู่ล่างสุดโดยไม่มี <code>else</code> สักตัว
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ เรื่อง 422 ที่ต้องพูดให้ตรง</span>
+  <p style="margin-bottom:0">
+    <strong>422 ไม่ได้อยู่ในสไลด์ของคอร์สนี้ และหลายทีมก็ไม่ใช้มันเลย</strong> —
+    ใช้ 400 คลุมทั้ง "JSON พัง" และ "ค่าไม่ผ่าน validation" ก็<strong>ไม่ผิด</strong>
+    <br>ที่ผิดจริงคือ<strong>ใช้ไม่คงเส้นคงวา</strong>: endpoint นี้ 400 endpoint หน้า 422
+    ทั้งที่เป็นความผิดแบบเดียวกัน — client เขียนโค้ดรับมือไม่ถูก
+    <br>สิ่งที่ทีมต้องทำคือ<strong>ตกลงกันครั้งเดียวแล้วเขียนลงเอกสาร API</strong>
+    ส่วน 409 ต่างออกไปชัดเจนจนไม่ควรเอาไปรวมกับ 400: มันแปลว่า
+    <em>"คำขอคุณไม่ได้ผิดอะไรเลย แต่โลกตอนนี้ไม่ยอมให้ทำ"</em> — ลองใหม่พรุ่งนี้อาจสำเร็จก็ได้
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔮 <strong>เรื่องที่จะย้อนมาหลอนตอนเรียน Gin</strong> — ในบทท้าย ๆ ของ Day 8 จะเจอ
+    <code>c.BindJSON</code> ที่<strong>เขียน status 400 ให้เองทันทีที่ validate ไม่ผ่าน</strong>
+    ทดสอบบน gin v1.12.0 แล้วเขียน <code>c.JSON(422, ...)</code> ต่อ จะได้แบบนี้:
+  </p>
+  <pre style="margin:0.6rem 0"><code>[GIN-debug] [WARNING] Headers were already written. Wanted to override status code 400 with 422
+STATUS=400</code></pre>
+  <p style="margin:0.6rem 0 0">
+    <strong>ขอ 422 แต่ได้ 400</strong> เพราะ status ถูกส่งออกไปแล้ว เปลี่ยนไม่ได้อีก —
+    เก็บไว้ก่อนว่า <strong>status เขียนได้ครั้งเดียวต่อหนึ่ง response</strong> เดี๋ยวหัวข้อ 9 จะเจอกฎเดียวกันนี้ในฝั่ง <code>net/http</code>
+  </p>
+</div>
+
+<h2>7 · กับดักที่แพงที่สุด: ตอบ 200 พร้อม <code>{"error":"not found"}</code></h2>
+
+<p>
+  นี่คือโค้ดที่เจอในโปรเจกต์จริงบ่อยมาก และมักเกิดจากความหวังดี —
+  "ตอบ 200 ไว้ก่อน เดี๋ยว frontend อ่าน field <code>error</code> เอง จะได้ไม่ต้องมี try/catch"
+  <br>ผมเขียน client แบบที่ทุกคนเขียนกัน แล้วยิงใส่ server สองตัวที่ <em>body เหมือนกันเป๊ะ</em>
+  ต่างกันแค่ตัวเลข:
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — client ตัวเดียวกันข้างล่างนี้ ยิงใส่ server สองตัวที่ตอบ
+    body <code>{"error":"user not found"}</code> <em>เหมือนกันเป๊ะ</em>
+    ต่างกันแค่ตัวเลข: <strong>A ตอบ 200</strong> · <strong>B ตอบ 404</strong></p>
+  <pre><code><span class="k">func</span> <span class="f">fetchUser</span>(url <span class="k">string</span>) (<span class="k">string</span>, <span class="k">error</span>) {
+    resp, err := http.<span class="f">Get</span>(url)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        <span class="k">return</span> <span class="s">""</span>, err
+    }
+    <span class="k">defer</span> resp.Body.<span class="f">Close</span>()
+
+    <span class="k">if</span> resp.StatusCode &gt;= <span class="n">400</span> {                    <span class="c">// ← ด่านเดียวที่ client มี</span>
+        <span class="k">return</span> <span class="s">""</span>, fmt.<span class="f">Errorf</span>(<span class="s">"api error: %s"</span>, resp.Status)
+    }
+    b, _ := io.<span class="f">ReadAll</span>(resp.Body)
+    <span class="k">var</span> u <span class="k">struct</span> {
+        ID   <span class="k">string</span> <span class="s">`json:"id"`</span>
+        Name <span class="k">string</span> <span class="s">`json:"name"`</span>
+    }
+    json.<span class="f">Unmarshal</span>(b, &amp;u)
+    <span class="k">return</span> fmt.<span class="f">Sprintf</span>(<span class="s">"โหลดสำเร็จ: id=%q name=%q"</span>, u.ID, u.Name), <span class="k">nil</span>
+}</code></pre>
+  <p class="ask">
+    ฝั่ง A: <code>err</code> ที่ได้กลับมาเป็นอะไร · แล้วสตริงที่พิมพ์ออกมาหน้าตายังไง —
+    เทียบกับฝั่ง B ที่ body เดียวกันเป๊ะ
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== A: server ตอบ 200 + {"error":"user not found"} ===
+err = <strong>&lt;nil&gt;</strong>
+out = <strong>โหลดสำเร็จ: id="" name=""</strong>
+
+=== B: server ตอบ 404 + {"error":"user not found"} ===
+err = <strong>api error: 404 Not Found</strong>
+out =</code></pre>
+    <p>
+      <strong>ฝั่ง A ไม่มี error สักตัว</strong> — <code>json.Unmarshal</code> ก็ไม่บ่น
+      เพราะ JSON ถูกต้องตามไวยากรณ์ทุกประการ แค่ไม่มี field <code>id</code> กับ <code>name</code>
+      ที่ struct ต้องการ ผลคือได้ <strong>zero value</strong> ทั้งคู่
+      <br>โปรแกรมจึงเดินต่อไปพร้อมกับ user ที่ <code>Name == ""</code> —
+      แล้วไปโผล่บนหน้าเว็บว่า <em>"สวัสดีคุณ &nbsp;"</em> หรือถูกเซฟลง DB เป็นแถวว่าง
+    </p>
+    <p style="margin-bottom:0">
+      สังเกตว่าฝั่ง B ที่ตอบ 404 <strong>ใช้ body เดียวกันเป๊ะ</strong> แต่ client จับได้ทันที —
+      สิ่งเดียวที่เปลี่ยนคือตัวเลข
+    </p>
+  </div>
+</div>
+
+<p>
+  ความเสียหายไม่ได้จบแค่ client ตัวเดียว ผมนับ error rate แบบเดียวกับที่ monitoring ทำ
+  (คือดูแค่หลักแรกของ status) ได้ผลนี้:
+</p>
+
+<pre><code>A(200) -&gt; StatusCode=200  class=2xx  นับเป็น error? <strong>false</strong>
+B(404) -&gt; StatusCode=404  class=4xx  นับเป็น error? <strong>true</strong></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ ทำไมกับดักนี้ถึงแพงกว่ากับดักอื่นทั้งหมดในบท</span>
+  <p style="margin-bottom:0">
+    <strong>1. client library เชื่อตัวเลข</strong> — ไม่ว่าจะเป็น <code>http.Get</code> ของ Go,
+    axios, retrofit หรือ SDK ที่ลูกค้าเขียนเอง ทั้งหมด<em>ตัดสินใจจาก status ก่อน</em>
+    เสมอ ตอบ 200 = สั่งให้ทุกตัวคิดว่าสำเร็จ
+    <br><strong>2. monitoring มองไม่เห็น</strong> — กราฟ error rate ของคุณจะเป็นเส้นตรงสวยงาม
+    ตลอดเวลาที่ระบบตอบผิดอยู่ ไม่มี alert ดัง ไม่มีใครรู้จนกว่าลูกค้าจะโทรมา
+    <br><strong>3. มันพังแบบเงียบและสะสม</strong> — bug ที่ crash เราเจอใน 5 นาที
+    ส่วน bug ที่ตอบ 200 เราเจอตอนมีข้อมูลว่าง ๆ ค้างใน DB เป็นหมื่นแถว
+    <br>→ กฎที่ถือไว้ได้ตลอดชีวิตการทำงาน:
+    <strong>ถ้า body มีคำว่า error อยู่ในนั้น ตัวเลขต้องไม่ใช่ 2xx</strong>
+  </p>
+</div>
+
+<h2>8 · status ที่คุณไม่ได้สั่ง แต่มันตอบไปแล้ว</h2>
+
+<p>
+  ก่อนจะโทษตัวเองว่าเขียน status ผิด ต้องรู้ก่อนว่า<strong>ไม่ใช่ทุกตัวเลขที่ออกจาก handler ของคุณ</strong>
+  บางตัว router ตอบไปตั้งแต่ก่อนถึงโค้ดที่คุณเขียนแล้ว — และของแต่ละเจ้าไม่เหมือนกันด้วย
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4><code>net/http</code> — method ผิดได้ 405 ฟรี</h4>
+    <pre><code>$ curl -s -i -X POST http://127.0.0.1:8765/hello
+HTTP/1.1 <strong>405 Method Not Allowed</strong>
+Allow: GET, HEAD
+Content-Type: text/plain; charset=utf-8
+X-Content-Type-Options: nosniff
+
+Method Not Allowed</code></pre>
+    <p style="margin-bottom:0">
+      ลงทะเบียนไว้แค่ <code>"GET /hello"</code> แต่ <code>Allow</code> โผล่มาเป็น
+      <strong><code>GET, HEAD</code></strong> — Go แถม <code>HEAD</code> ให้เอง
+    </p>
+  </div>
+  <div class="side bad">
+    <h4>Gin — method ผิดได้ <strong>404</strong> ไม่ใช่ 405</h4>
+    <pre><code>=== default HandleMethodNotAllowed = false ===
+GET    /only-post   -&gt; <strong>404</strong>  body=404 page not found
+DELETE /users/42    -&gt; <strong>404</strong>  body=404 page not found
+
+=== ตั้ง r.HandleMethodNotAllowed = true ===
+GET    /only-post   -&gt; <strong>405</strong>  Allow="POST, PUT"</code></pre>
+    <p style="margin-bottom:0">
+      Gin ปิดไว้เป็น default → path ที่มีอยู่จริงแต่ยิงผิด method
+      <strong>ดูเหมือนไม่มี endpoint นี้เลย</strong>
+    </p>
+  </div>
+</div>
+
+<p>
+  ทั้งสองผลรันจริงบน Go 1.26.5 / gin v1.12.0 และเป็นเรื่องที่<strong>ต้องรู้ตอน debug</strong>:
+  เจอ 404 ทั้งที่แน่ใจว่าเขียน route ไว้แล้ว — คำถามแรกที่ต้องถามคือ
+  <em>"method ตรงไหม"</em> ไม่ใช่ "path พิมพ์ผิดหรือเปล่า"
+</p>
+
+<p>
+  อีกสองตัวที่โผล่มาเองบ่อย:
+</p>
+
+<ul>
+  <li><strong>307 Temporary Redirect</strong> — ลงทะเบียน pattern ไว้เป็น <code>/files/</code>
+      (มี <code>/</code> ปิดท้าย = คลุมทุก path ที่ขึ้นต้นด้วย <code>/files/</code>)
+      แล้วมีคนยิง <code>/files</code> เฉย ๆ ไม่มีสแลช — <code>ServeMux</code> จะ redirect ให้เอง
+      (<code>Location: /files/</code>) · ตำราเก่าเขียนว่า 301 แต่ผลรันบน Go 1.26.5 คือ <strong>307</strong></li>
+  <li><strong>ไม่มี status เลย</strong> — handler ที่ <code>panic</code> โดยไม่มีใครจับ
+      ผมรันสองเส้นทางเทียบกัน: <code>/users/1</code> คือ handler ที่ <em>เขียน 500 เอง</em> ·
+      <code>/boom</code> คือ handler ที่ <code>panic</code> เฉย ๆ
+      <pre style="margin:0.5rem 0"><code>GET /users/1 -&gt; 500 Internal Server Error  body="{\"error\":\"internal error\"}\n"
+GET /boom    -&gt; client error: Get "http://127.0.0.1:55237/boom": <strong>EOF</strong></code></pre>
+      <p style="margin:0.4rem 0">
+        <strong><code>EOF</code> ไม่ใช่ status code</strong> — มันคือ "สายถูกตัดกลางคัน"
+        (<code>net/http</code> เจอ panic แล้วปิด connection ทิ้ง ไม่ส่งตัวเลขอะไรกลับมาเลย)
+        ซึ่งแย่กว่า 500 เพราะ client แยกไม่ออกว่าเป็นเน็ตหลุดหรือ server พัง
+      </p>
+      <p style="margin:0.4rem 0">
+        ฝั่ง server ไม่ได้เงียบนะ — มันพิมพ์ <code>http: panic serving 127.0.0.1:55462: explode</code>
+        พร้อม stack trace ยาว ๆ ลง log ให้ <strong>แต่ client ไม่มีทางเห็นบรรทัดนั้น</strong>
+      </p>
+      <p style="margin:0.4rem 0 0">
+        Gin ต่างออกไป: <code>gin.Default()</code> มี Recovery ติดมาให้ จึงตอบ <code>status=500</code> แทน ·
+        ส่วน <code>gin.New()</code> ที่ไม่มี Recovery ได้ <code>curl status=000</code>
+        (คือ curl ไม่ได้รับ status เลย = อาการเดียวกับ <code>EOF</code> ข้างบน)
+      </p></li>
+</ul>
+
+<h2>9 · เขียนใน Go ยังไงไม่ให้พลาด</h2>
+
+<p>
+  <strong>อย่าพิมพ์เลขดิบ</strong> — <code>net/http</code> มีค่าคงที่ให้ครบทุกตัว
+  ผมพิมพ์ออกมาดูพร้อมชื่อข้อความประจำรหัส:
+</p>
+
+<pre><code>http.StatusOK                    = <span class="n">200</span>  StatusText = <span class="s">"OK"</span>
+http.StatusCreated               = <span class="n">201</span>  StatusText = <span class="s">"Created"</span>
+http.StatusNoContent             = <span class="n">204</span>  StatusText = <span class="s">"No Content"</span>
+http.StatusBadRequest            = <span class="n">400</span>  StatusText = <span class="s">"Bad Request"</span>
+http.StatusUnauthorized          = <span class="n">401</span>  StatusText = <span class="s">"Unauthorized"</span>
+http.StatusForbidden             = <span class="n">403</span>  StatusText = <span class="s">"Forbidden"</span>
+http.StatusNotFound              = <span class="n">404</span>  StatusText = <span class="s">"Not Found"</span>
+http.StatusConflict              = <span class="n">409</span>  StatusText = <span class="s">"Conflict"</span>
+http.StatusUnprocessableEntity   = <span class="n">422</span>  StatusText = <span class="s">"Unprocessable Entity"</span>
+http.StatusInternalServerError   = <span class="n">500</span>  StatusText = <span class="s">"Internal Server Error"</span></code></pre>
+
+<p>
+  <code>http.StatusNotFound</code> ยาวกว่า <code>404</code> ก็จริง แต่มันทำสองอย่างที่เลขดิบทำไม่ได้:
+  <strong>1) อ่านแล้วรู้เจตนาทันที</strong> — <code>StatusNotFound</code> บอกตัวเองว่าแปลว่าอะไร
+  <br><strong>2) พิมพ์ชื่อผิดแล้ว compile ไม่ผ่าน</strong> — เคาะเป็น <code>http.StatusNotFund</code>
+  คอมไพเลอร์ฟ้องทันทีตั้งแต่ยังไม่ได้รัน
+  <br>เทียบกับเลขดิบ: เผลอพิมพ์ <code>440</code> แทน <code>404</code>
+  <strong>คอมไพเลอร์ไม่มีทางรู้</strong> เพราะมันก็เป็นแค่ <code>int</code> ตัวหนึ่ง — จะรู้ตอน client บ่นเท่านั้น
+</p>
+
+<p>
+  ต่อมาคือลำดับที่ห้ามสลับ ทดสอบมาแล้วทั้งสามแบบ:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>เขียนแบบนี้</th><th>ผลจริงที่ client ได้</th></tr>
+  <tr>
+    <td><code>Header().Set(...)</code> → <code>WriteHeader(201)</code> → <code>Encode(u)</code></td>
+    <td>✅ <code>201 Created</code> + <code>Content-Type: application/json; charset=utf-8</code></td>
+  </tr>
+  <tr>
+    <td><code>WriteHeader(201)</code> → <code>Header().Set(...)</code> → <code>Encode(u)</code></td>
+    <td>201 แต่ <code>Content-Type: text/plain; charset=utf-8</code> — <strong>ตั้งช้าไป header ที่ Set ทีหลังไม่มีผล</strong> และไม่มี error ไม่มี log ให้เห็นเลย</td>
+  </tr>
+  <tr>
+    <td>เขียน body ก่อน แล้วค่อย <code>WriteHeader(400)</code></td>
+    <td><strong>ได้ 200</strong> + log ที่ฝั่ง server: <code>http: superfluous response.WriteHeader call from main.main.func8 (main.go:60)</code></td>
+  </tr>
+</table>
+</div>
+
+<p>
+  เหตุผลเบื้องหลังทั้งตารางมีข้อเดียว: <strong><code>WriteHeader</code> คือจังหวะที่ status กับ header
+  ถูกส่งออกสายไปแล้ว</strong> ของที่ตั้งทีหลังจึงตามไปไม่ทัน (แถว 2) และ <code>Write</code> ครั้งแรก
+  ก็เรียก <code>WriteHeader(200)</code> ให้เองอัตโนมัติถ้ายังไม่เคยเรียก (แถว 3)
+  <br>แถวสุดท้ายคือต้นตอคลาสสิกของ "ทำไม error ตอบ 200" ที่ไม่ได้เกิดจากตั้งใจเลย —
+  แค่เผลอ <code>fmt.Fprintln(w, ...)</code> ไปก่อนหนึ่งบรรทัด status ก็ถูกล็อกที่ 200 ทันที
+  <br>ข่าวดีคือ log บอกชื่อฟังก์ชันและเลขบรรทัดมาให้เสร็จ — <strong>เห็น <code>superfluous</code> เมื่อไหร่
+  ให้ตามไปที่บรรทัดนั้นได้เลย</strong>
+  <br>กฎเดียวที่ต้องจำ: <strong><code>Header().Set()</code> → <code>WriteHeader()</code> → <code>Write()/Encode()</code></strong>
+  และเขียน status ได้<strong>ครั้งเดียว</strong>ต่อหนึ่ง response
+</p>
+
+<h2>10 · พิสูจน์ด้วยเทส — status คือสิ่งที่เทสง่ายที่สุดในทั้ง API</h2>
+
+<p>
+  ข้อดีของ status code คือมันเป็น <code>int</code> ตัวเดียว จะ assert ก็ง่ายที่สุดในบรรดาทุกอย่างของ API
+  ใช้ <code>httptest</code> ที่ติดมากับ Go ได้เลย ไม่ต้องเปิด server จริง
+  โครงเป็น table-driven test แบบเดียวกับ
+  <a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16</a>:
+</p>
+
+<p style="margin-top:-0.4rem">
+  <em>สามชิ้นที่เจอครั้งแรก:</em>
+  <code>NewRouter()</code> = ฟังก์ชัน<strong>ของเราเอง</strong> ที่คืน <code>*http.ServeMux</code>
+  ที่ลงทะเบียน route ไว้หมดแล้ว (ในภารกิจข้างล่างต้องเขียนเอง) ·
+  <code>httptest.NewRequest</code> = ปั้น request ปลอมขึ้นมาหนึ่งอัน ·
+  <code>httptest.NewRecorder()</code> = กระดาษเปล่าที่รับคำตอบแทน client จริง
+  แล้วอ่านผลได้ที่ <code>w.Code</code> กับ <code>w.Body</code>
+  <br>เรียก <code>router.ServeHTTP(w, req)</code> = สั่งให้ router ทำงานตรง ๆ
+  <strong>โดยไม่ต้องเปิดพอร์ตจริงเลย</strong> เทสจึงเร็วและไม่ชนกันเอง
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">TestUserStatus</span>(t *testing.T) {
+    tests := []<span class="k">struct</span> {
+        name     <span class="k">string</span>
+        path     <span class="k">string</span>
+        wantCode <span class="k">int</span>
+    }{
+        {<span class="s">"เจอ user -&gt; 200"</span>, <span class="s">"/users/1"</span>, http.StatusOK},
+        {<span class="s">"ไม่เจอ user -&gt; 404"</span>, <span class="s">"/users/999"</span>, http.StatusNotFound},
+    }
+    router := <span class="f">NewRouter</span>()
+    <span class="k">for</span> _, tc := <span class="k">range</span> tests {
+        t.<span class="f">Run</span>(tc.name, <span class="k">func</span>(t *testing.T) {
+            w := httptest.<span class="f">NewRecorder</span>()                <span class="c">// recorder ใหม่ทุกเคส</span>
+            router.<span class="f">ServeHTTP</span>(w, httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, tc.path, <span class="k">nil</span>))
+            <span class="k">if</span> w.Code != tc.wantCode {
+                t.<span class="f">Fatalf</span>(<span class="s">"อยากได้ %d แต่ได้ %d  body=%s"</span>, tc.wantCode, w.Code, w.Body.<span class="f">String</span>())
+            }
+        })
+    }
+}</code></pre>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ handler ที่ตอบ 404 ตอนไม่เจอ</h4>
+    <pre><code>$ go test -v -count=1 ./prove/
+=== RUN   TestUserStatus
+=== RUN   TestUserStatus/เจอ_user_-&gt;_200
+=== RUN   TestUserStatus/ไม่เจอ_user_-&gt;_404
+--- PASS: TestUserStatus (0.00s)
+    --- PASS: TestUserStatus/เจอ_user_-&gt;_200 (0.00s)
+    --- PASS: TestUserStatus/ไม่เจอ_user_-&gt;_404 (0.00s)
+PASS
+ok  	check34/prove	0.452s</code></pre>
+  </div>
+  <div class="side bad">
+    <h4>❌ handler เดิม แต่ตอบ 200 พร้อม error body</h4>
+    <pre><code>$ BUG=1 go test -v -count=1 ./prove/
+=== RUN   TestUserStatus
+=== RUN   TestUserStatus/เจอ_user_-&gt;_200
+=== RUN   TestUserStatus/ไม่เจอ_user_-&gt;_404
+    app_test.go:24: <strong>อยากได้ 404 แต่ได้ 200  body={"error":"user not found"}</strong>
+--- FAIL: TestUserStatus (0.00s)
+    --- PASS: TestUserStatus/เจอ_user_-&gt;_200 (0.00s)
+    --- FAIL: TestUserStatus/ไม่เจอ_user_-&gt;_404 (0.00s)
+FAIL
+FAIL	check34/prove	0.236s
+FAIL</code></pre>
+  </div>
+</div>
+
+<p>
+  นี่คือเทสที่<strong>จับกับดักของหัวข้อ 7 ได้ก่อนขึ้น production</strong> —
+  และสังเกตว่าเคส "เจอ user" ยัง PASS อยู่ทั้งสองฝั่ง
+  ซึ่งตรงกับความเป็นจริง: bug แบบนี้ไม่เคยทำให้ happy path พัง มันซ่อนอยู่ในเส้นทาง error เสมอ
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ กับดักในตัวเทสเอง</strong> — <code>httptest.NewRecorder()</code>
+    มีค่า <code>w.Code</code> เริ่มต้นเป็น <strong>200</strong> ตั้งแต่ยังไม่ถูกเขียนอะไรเลย
+    <br>แปลว่า <code>assert</code> ว่า <code>w.Code == 200</code> เฉย ๆ
+    <strong>พิสูจน์ไม่ได้ว่า handler ทำงานจริง</strong> — ต้อง assert body ควบไปด้วยเสมอ
+    <br>และต้องสร้าง recorder ใหม่ทุกเคส: ใช้ตัวเดิมยิงซ้ำ <code>w.Code</code> จะ<strong>ค้างที่ครั้งแรก</strong>
+    และ body ต่อกันเป็นพืด — เทสจะ "ผ่าน" แบบผิด ๆ
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ระบบสมัครสมาชิกตอบ <code>500</code> ทุกครั้งที่อีเมลซ้ำ — ผลเสียที่ตรงที่สุดคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">client จะยิงซ้ำไม่ได้เลย เพราะ 500 เป็นรหัสที่ HTTP ห้าม retry โดยเด็ดขาด</button>
+    <button class="opt">เบราว์เซอร์จะ cache คำตอบ 500 เอาไว้ ทำให้สมัครใหม่ไม่ได้จนกว่าจะล้าง cache</button>
+    <button class="opt">ทีม server จะถูกตามให้แก้ ทั้งที่ต้นเหตุคือข้อมูลที่ client ส่งเข้ามาเอง</button>
+    <button class="opt">ฝั่ง server จะ panic เพราะรหัส 500 ต้องมาจาก recover เท่านั้น เขียนเองไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p><strong>4xx = client ต้องแก้ · 5xx = server ต้องแก้</strong> —
+    อีเมลซ้ำคือคำขอที่ชนกับสถานะปัจจุบัน จึงเป็น <code>409 Conflict</code>
+    ซึ่งเป็น 4xx การตอบ 500 จึงเท่ากับ<em>รับผิดแทน client</em> ทำให้กราฟ 5xx พุ่ง
+    alert ดัง คน on-call ตื่นมาไล่ log แล้วพบว่าไม่มีอะไรพังเลย
+    <br>ที่แพงกว่านั้นคือ ครั้งต่อไปที่ 5xx พุ่งเพราะ DB ล่มจริง จะไม่มีใครเชื่อกราฟนั้นอีก
+    <br>ตัวเลือกที่ 1 ผิด — HTTP ไม่ได้ห้าม retry 500 (ตรงกันข้าม 5xx คือกลุ่มที่ retry แล้วมีโอกาสสำเร็จมากกว่า 4xx ด้วยซ้ำ) ·
+    ตัวเลือกที่ 2 ผิดเพราะ 500 ไม่ใช่คำตอบที่ถูก cache โดยปริยาย ·
+    ตัวเลือกที่ 4 ผิดชัดเจน เราเขียน <code>w.WriteHeader(http.StatusInternalServerError)</code> เองได้ตลอด</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. ผู้ใช้ล็อกอินสำเร็จแล้วในฐานะสมาชิกธรรมดา กด <code>DELETE /users/1</code> ที่ให้เฉพาะแอดมิน ควรตอบอะไร?</p>
+  <div class="opts">
+    <button class="opt">401 Unauthorized เพราะ token ที่ส่งมาไม่ใช่ token ของแอดมิน จึงถือว่าใช้ไม่ได้</button>
+    <button class="opt">403 Forbidden เพราะรู้แล้วว่าเป็นใคร แต่คนนี้ไม่มีสิทธิ์ทำสิ่งที่ขอมา</button>
+    <button class="opt">400 Bad Request เพราะเป็นคำขอที่ระบบไม่ยอมให้ทำ จึงนับว่าคำขอไม่ถูกต้อง</button>
+    <button class="opt">204 No Content เพราะ server ไม่ได้ทำอะไรให้เลย จึงไม่มีเนื้อหาจะตอบกลับ</button>
+  </div>
+  <div class="explain">
+    <p><strong>401 = ยังไม่รู้ว่าคุณเป็นใคร · 403 = รู้แล้ว แต่คุณทำไม่ได้</strong>
+    เคสนี้ระบบอ่าน token ออกและรู้ว่าเป็นสมาชิกคนไหนแล้ว จึงเป็น 403
+    <br>ที่สำคัญคือมันเปลี่ยนพฤติกรรม frontend: เจอ 401 ให้เด้งไปหน้า login ·
+    เจอ 403 <strong>ห้ามเด้ง</strong> เพราะล็อกอินอยู่แล้ว จะกลายเป็นลูปที่ผู้ใช้ออกไม่ได้
+    <br>ผมรันจริงได้ทั้งสองเคส: ไม่ส่ง token → <code>401 Unauthorized</code> พร้อม
+    <code>WWW-Authenticate: Bearer realm="api"</code> · ส่ง token ที่ไม่ใช่แอดมิน → <code>403 Forbidden</code>
+    <br>ตัวเลือกที่ 1 ผิดเพราะ token ใช้ได้ปกติ แค่สิทธิ์ไม่ถึง ·
+    ตัวเลือกที่ 3 ผิดเพราะ 400 ไว้ใช้กับคำขอที่รูปแบบผิด ไม่ใช่เรื่องสิทธิ์ ·
+    ตัวเลือกที่ 4 ผิดหนักสุด เพราะ 204 เป็น 2xx = บอก client ว่าลบสำเร็จแล้ว</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. server ตอบ <code>200</code> พร้อม body <code>{"error":"user not found"}</code> — client ที่เช็ค <code>if resp.StatusCode &gt;= 400</code> จะเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt"><code>json.Unmarshal</code> จะคืน error เพราะ body ไม่มี field ที่ struct ปลายทางประกาศไว้</button>
+    <button class="opt">client จะเห็น field <code>error</code> ใน body แล้วแปลงเป็น error ให้อัตโนมัติตามมาตรฐาน</button>
+    <button class="opt">โปรแกรมจะ panic ตอนแกะ JSON เพราะ field ที่ struct ต้องการหายไปทั้งสองตัว</button>
+    <button class="opt">เข้าเส้นทางสำเร็จตามปกติ ได้ struct ที่ทุก field เป็นค่าว่าง และ <code>err</code> เป็น <code>nil</code></button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงของ client ตัวเดียวกันยิงใส่ server สองตัวที่ <em>body เหมือนกันเป๊ะ</em>:
+    <br>ตอบ 200 → <code>err = &lt;nil&gt;</code> และ <code>โหลดสำเร็จ: id="" name=""</code>
+    <br>ตอบ 404 → <code>err = api error: 404 Not Found</code>
+    <br><strong>สิ่งเดียวที่ต่างกันคือตัวเลข</strong> และมันตัดสินทุกอย่าง
+    <br>ตัวเลือกที่ 1 กับ 3 ผิดด้วยเหตุผลเดียวกัน: <code>{"error":"user not found"}</code>
+    เป็น JSON ที่ถูกไวยากรณ์ทุกประการ <code>Unmarshal</code> จึงสำเร็จ แค่<strong>ไม่มี field ให้เติม</strong>
+    ก็ปล่อยเป็น zero value ไป ไม่ error และไม่ panic ·
+    ตัวเลือกที่ 2 ผิดเพราะไม่มีมาตรฐานไหนบอกว่า field ชื่อ <code>error</code> มีความหมายพิเศษ —
+    มันเป็นชื่อที่เราตั้งเองล้วน ๆ
+    <br>ผลตามมาคือ monitoring ก็มองไม่เห็น: นับ class ได้ <code>2xx</code> → <code>นับเป็น error? false</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. handler สั่ง <code>w.WriteHeader(http.StatusNoContent)</code> แล้วเขียน <code>{"message":"deleted"}</code> ต่อ — client ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">204 กับ body ว่าง — Go ทิ้ง body ให้เงียบ ๆ ส่วน <code>w.Write</code> คืน error ที่แทบไม่มีใครเช็ค</button>
+    <button class="opt">204 พร้อม body ครบถ้วน เพราะ 204 กำหนดแค่ความหมายของ status ไม่ได้ห้ามส่ง body</button>
+    <button class="opt">200 พร้อม body ครบถ้วน เพราะการเขียน body ทับ status ที่ตั้งไว้ก่อนหน้าเสมอ</button>
+    <button class="opt">server panic ทันทีที่เขียน body หลังสั่ง 204 เพราะถือเป็นการเขียน response ซ้ำ</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง:
+    <br><code>[server] w.Write -&gt; n=0 err=http: request method or response status code does not allow body</code>
+    <br><code>[client] status="204 No Content" ContentLength=0</code>
+    <br><strong>Go บอกเราแล้ว แต่บอกผ่าน return value ที่เราไม่ได้รับ</strong> —
+    <code>fmt.Fprintln(w, ...)</code> และ <code>json.NewEncoder(w).Encode(v)</code>
+    ไม่ได้เช็ค error ตัวนั้นให้ ผลคือ body หายเงียบ ไม่มี log ไม่มี panic
+    <br>ตัวเลือกที่ 2 ผิดเพราะ 204 <strong>ห้าม</strong>มี body ระดับ protocol ·
+    ตัวเลือกที่ 3 ผิดเพราะ status เขียนได้ครั้งเดียว การเขียน body ทีหลังไม่เปลี่ยนตัวเลข
+    (ตรงกันข้าม ถ้าเขียน body ก่อนแล้วค่อย <code>WriteHeader(400)</code> จะได้ 200 พร้อม log
+    <code>superfluous response.WriteHeader call</code>) ·
+    ตัวเลือกที่ 4 ผิดเพราะไม่มี panic เลย
+    <br>สรุปสั้น: <strong>อยากส่งข้อความกลับ ใช้ 200 · เลือก 204 เมื่อจะไม่ส่งอะไรจริง ๆ</strong></p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำ API ที่ตอบเก้ารหัสให้ครบ แล้วจับตัวเองที่ตอบ 200 ผิด</span>
+  <p>
+    ใช้ <code>net/http</code> ล้วน ๆ ไม่ต้องลง dependency อะไรเลย เริ่มจากศูนย์แบบนี้:
+  </p>
+  <pre style="margin:0.5rem 0"><code>mkdir status-lab &amp;&amp; cd status-lab
+go mod init statuslab</code></pre>
+  <p style="margin:0.5rem 0">
+    แล้วสร้างไฟล์ <code>main.go</code> (ขึ้นต้นด้วย <code>package main</code>) ที่มี
+    <code>func main()</code> สร้าง <code>mux := http.NewServeMux()</code> ·
+    ลงทะเบียน route · ปิดท้ายด้วย <code>http.ListenAndServe(":8080", mux)</code>
+    <br>ทุกคำสั่งข้างล่างนี้รันจาก<strong>ในโฟลเดอร์ <code>status-lab</code></strong>:
+    เปิด server ด้วย <code>go run .</code> ไว้เทอร์มินัลหนึ่ง แล้วเปิดอีกเทอร์มินัลไว้ยิง <code>curl</code>
+    ไปที่ <code>http://127.0.0.1:8080/...</code>
+  </p>
+  <ol>
+    <li><strong>สร้าง resource เดียวก่อน</strong> — <code>POST /users</code> กับ
+        <code>DELETE /users/{id}</code> เก็บข้อมูลไว้ใน <code>map</code> ในหน่วยความจำก็พอ
+        <br>ยังไม่ต้องมี DB ยังไม่ต้องมี framework</li>
+    <li><strong>ไล่ตอบให้ครบเก้ารหัส</strong> ตามตารางในหัวข้อ 3:
+        201 (สร้างสำเร็จ + <code>Location</code>) · 409 (อีเมลซ้ำ) · 400 (JSON พัง) ·
+        401 (ไม่มี token) · 403 (token ไม่ใช่แอดมิน) · 204 (ลบสำเร็จ) ·
+        404 (ลบซ้ำ) · 200 (<code>GET</code> ที่เจอ) · 500 (จำลอง dependency ล่ม)
+        <br><strong>ใช้ค่าคงที่ <code>http.Status...</code> เท่านั้น ห้ามพิมพ์เลขดิบสักตัว</strong></li>
+    <li><strong>ยิงด้วย <code>curl -i</code> ทุกเคส</strong> แล้วเก็บบรรทัดแรกของแต่ละอันไว้
+        <br>ยิง method ที่ไม่ได้ลงทะเบียนด้วย เช่น
+        <code>curl -i -X PATCH http://127.0.0.1:8080/users/1</code> —
+        <strong>ได้อะไร และใครเป็นคนตอบ</strong> (ใบ้: บรรทัด <code>Allow:</code> จะบอกเอง)</li>
+    <li><strong>ลอง 204 ให้พัง</strong> — หลัง <code>WriteHeader(204)</code> ให้เขียน
+        <code>n, err := w.Write(...)</code> แล้ว <code>log</code> ค่า <code>err</code> ออกมาดู
+        <br>เทียบกับตอนใช้ <code>json.NewEncoder(w).Encode(v)</code> —
+        <strong>ทำไมแบบหลังถึงเงียบสนิท</strong></li>
+    <li><strong>สลับลำดับให้พัง</strong> — ย้าย <code>w.Header().Set("Content-Type", ...)</code>
+        ไปไว้<em>หลัง</em> <code>WriteHeader</code> แล้วดู <code>Content-Type</code> ที่ client ได้จริง
+        <br>จากนั้นลองเขียน body ก่อนแล้วค่อย <code>WriteHeader(400)</code> —
+        <strong>ดู log ฝั่ง server ให้เจอคำว่า <code>superfluous</code></strong></li>
+    <li><strong>ทำกับดักหัวข้อ 7 ให้เกิดกับตัวเอง</strong> — เปลี่ยนเคส "ไม่เจอ user"
+        ให้ตอบ 200 พร้อม <code>{"error":"user not found"}</code>
+        แล้วเขียน client สั้น ๆ ที่เช็คแค่ <code>resp.StatusCode &gt;= 400</code> ยิงใส่
+        <br><strong>พิมพ์ค่าที่ได้ออกมาให้เห็นกับตาว่า <code>err</code> เป็น <code>nil</code></strong></li>
+    <li><strong>เขียนเทสพิสูจน์</strong> — สร้าง <code>main_test.go</code> ไว้ในโฟลเดอร์เดียวกัน
+        เขียน table-driven test ด้วย <code>httptest.NewRecorder()</code>
+        ครอบคลุมทั้งเก้ารหัส แต่ละเคส assert ทั้ง <code>w.Code</code> และ body
+        แล้วรันด้วย <code>go test -v -count=1 ./...</code>
+        <br>เงื่อนไขที่ถือว่าผ่านภารกิจ: <strong>ย้อนข้อ 6 กลับมา (ตอบ 200) แล้วเทสต้องแดง</strong>
+        และแก้กลับเป็น 404 แล้วต้องเขียว
+        <br>ถ้าตอบ 200 แล้วเทสยังเขียวอยู่ แปลว่าเทสยังไม่ได้เทสอะไร (เช็คว่าสร้าง recorder ใหม่ทุกเคสหรือยัง)</li>
+    <li><strong>ท้าทาย:</strong> ลองเรียก <code>w.WriteHeader</code> สองครั้งในเส้นทางเดียว
+        แล้วตอบสามข้อ — client ได้เลขไหน · ฝั่ง server มี log ไหม · โปรแกรมตายหรือเปล่า</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 3 (เฉพาะเคส method ผิด)</button>
+  <div class="answer">
+    <p>
+      ถ้าลง route ไว้แค่ <code>"DELETE /users/{id}"</code> แล้วยิง <code>PATCH</code> เข้าไป
+      <strong>คุณจะไม่ได้เข้า handler ตัวเองเลย</strong> — <code>ServeMux</code> ตอบให้ก่อน
+      ด้วย <code>405 Method Not Allowed</code> พร้อม <code>Allow: DELETE</code>
+      <br>ข้างล่างคือผลรันของพฤติกรรมเดียวกัน แต่บน route ตัวอย่างที่ลงไว้แค่
+      <code>"GET /hello"</code> (ดูบรรทัด <code>Allow</code> เทียบกัน):
+    </p>
+    <pre style="margin:0.6rem 0"><code>$ curl -s -i -X POST http://127.0.0.1:8765/hello
+HTTP/1.1 <strong>405 Method Not Allowed</strong>
+Allow: GET, HEAD
+Content-Type: text/plain; charset=utf-8
+X-Content-Type-Options: nosniff
+
+Method Not Allowed</code></pre>
+    <p style="margin-bottom:0">
+      สองจุดที่ควรสังเกต: <strong>1)</strong> ลงไว้แค่ <code>GET</code> แต่ <code>Allow</code>
+      ขึ้น <code>GET, HEAD</code> เพราะ Go แถม <code>HEAD</code> ให้เอง ·
+      <strong>2)</strong> body เป็น <code>text/plain</code> ไม่ใช่ JSON —
+      ถ้า client ของคุณ <code>Unmarshal</code> ทุก response โดยไม่ดู status ก่อน มันจะพังตรงนี้
+      <br>และถ้าย้ายโค้ดนี้ไปอยู่บน Gin เมื่อไหร่ เคสเดียวกันจะได้ <strong>404</strong> แทน 405
+      เพราะ <code>HandleMethodNotAllowed</code> ปิดไว้เป็น default (หัวข้อ 8)
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 6 กับข้อ 7 คือสองข้อที่ผมอยากเห็นผลที่สุด</strong> —
+    เพราะวันที่คุณเห็น <code>err = &lt;nil&gt;</code> ออกมาจากคำตอบที่มีคำว่า
+    <code>"error"</code> อยู่ในนั้นด้วยตาตัวเอง คุณจะไม่มีวันเขียน <code>c.JSON(200, gin.H{"error": ...})</code>
+    อีกเลยตลอดชีวิต
+    <br>ถ้ารันแล้วได้ผลไม่ตรงกับในบท <strong>ส่ง output มาได้เลย</strong> —
+    โดยเฉพาะถ้าคุณใช้ Go คนละเวอร์ชัน เพราะเรื่อง 307/301 กับ 405 เปลี่ยนไปตามเวอร์ชันของ <code>ServeMux</code> จริง ๆ
+    <br>บทถัดไป: ข้อมูลที่ client ส่งมามีสามช่องทาง — query, body, header —
+    และการเลือกช่องผิดทำให้ได้ค่าว่างแบบเงียบ ๆ ได้เหมือนกัน
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0033-rest-resource-method.html">← บทเรียน 33</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0035-query-body-header.html">บทเรียน 35 → query/body/header</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status">MDN — HTTP response status codes</a> — คำนิยามของทุกรหัสในบทนี้ อ่านหน้าเดียวได้ครบ</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401">MDN — 401 Unauthorized</a> · <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403">403 Forbidden</a> — อ่านคู่กัน จะเห็นว่าทำไม 401 ถึงต้องมี <code>WWW-Authenticate</code> ส่วน 403 ไม่มี</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-status-codes">RFC 9110 §15 — Status Codes</a> — ตัวข้อกำหนดจริง รวมถึงข้อความที่ระบุว่า 204 ต้องไม่มี body</li>
+  <li><a href="https://pkg.go.dev/net/http#pkg-constants">pkg.go.dev — <code>net/http</code> constants</a> — รายชื่อ <code>http.Status...</code> ทั้งหมด ใช้แทนเลขดิบ</li>
+  <li><a href="https://pkg.go.dev/net/http#ResponseWriter">pkg.go.dev — <code>http.ResponseWriter</code></a> — เอกสารอธิบายเองว่าทำไมลำดับต้องเป็น <code>Header</code> → <code>WriteHeader</code> → <code>Write</code></li>
+  <li><a href="https://pkg.go.dev/net/http/httptest">pkg.go.dev — <code>net/http/httptest</code></a> — <code>NewRecorder</code> / <code>NewRequest</code> / <code>NewServer</code> ที่ใช้ในหัวข้อ 10</li>
+  <li><a href="../reference/cheatsheet.html">Cheat sheet Day 8</a> — ตารางเลือก status code และกับดักรวมทั้งวัน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

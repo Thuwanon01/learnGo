@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 38 — Gin: router ที่อ่านออก และ Context ที่ทำงานแทน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 38 · Day 8 · Gin</p>
+  <h1>Gin — router ที่อ่านออก และ Context ที่ทำงานแทน</h1>
+  <p class="meta">~16 นาที · ต้องมี: <a href="./0037-net-http-server.html">บทเรียน 37</a> (<code>net/http</code> + <code>ServeMux</code>), <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> (<code>json</code> struct tag)</p>
+  <p class="standfirst">
+    Gin ทำให้ handler สั้นลงจริง — สามบรรทัดที่ใช้ตอบ JSON ในบท 37 เหลือ<strong>บรรทัดเดียว</strong>
+    <br>แต่บทนี้ไม่ได้มาขาย Gin ผมเอาโค้ดบท 37 มารีแฟกเตอร์ทีละบรรทัด
+    แล้ววาง response จริงของทั้งสองฝั่งเทียบกัน — และมีอยู่ช่องหนึ่งที่ตัวเลขเปลี่ยนจาก
+    <strong>405 เป็น 404</strong> เงียบ ๆ โดยไม่มีใครเตือน <strong>นั่นแหละคือราคาที่คุณจ่าย</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 เตรียมเครื่องก่อนอ่าน</strong> — บทนี้รันของจริงทั้งบท ถ้าจะพิมพ์ตามให้ทำสามข้อนี้</p>
+  <ol>
+    <li>สร้างโฟลเดอร์ใหม่ชื่อ <code>day8</code> เข้าไปข้างในแล้วสั่ง <code>go mod init day8</code></li>
+    <li><code>go get github.com/gin-gonic/gin@v1.12.0</code> — <strong>สั่งในโฟลเดอร์เดียวกันนั้น</strong>
+        (ต้องมี <code>go.mod</code> อยู่ก่อน ไม่งั้น go จะไม่รู้ว่าจะเขียน dependency ลงไฟล์ไหน) · ต่อเน็ตครั้งเดียว</li>
+    <li>ตรวจว่าตรงกับเครื่องผม: <code>go version</code> ต้องได้ <code>go1.26.5</code></li>
+  </ol>
+  <p style="margin-bottom:0">
+    ผลรันทุกก้อนในหน้านี้มาจาก <code>go version go1.26.5 darwin/arm64</code> +
+    <code>github.com/gin-gonic/gin v1.12.0</code> —
+    <strong>ถ้าเครื่องคุณได้ไม่ตรง ส่ง output มาได้เลย</strong>
+  </p>
+</div>
+
+<h2>1 · Gin ไม่ได้มาแทน <code>net/http</code> — มันมานั่งทับ</h2>
+
+<p>
+  ความเข้าใจผิดข้อแรกของทุกคนคือคิดว่า Gin เป็น "web server คนละตัว" กับที่เรียนมาในบท 37
+  <br>ไม่ใช่ครับ — <strong>Gin ยังใช้ <code>net/http</code> เป็นคนรับ TCP และ parse HTTP อยู่เหมือนเดิมทุกตัวอักษร</strong>
+  <code>*gin.Engine</code> เป็นแค่ <code>http.Handler</code> ตัวหนึ่ง (มี method <code>ServeHTTP</code>)
+  ที่คุณเอาไปเสียบแทน <code>*http.ServeMux</code> ได้ตรง ๆ
+</p>
+
+<p>
+  ผมพิสูจน์ข้อนี้ตลอดทั้งบทโดยไม่รู้ตัว — โค้ดที่ผมใช้ยิงทดสอบทุกอันเขียนแบบนี้:
+</p>
+
+<pre><code>ts := httptest.<span class="f">NewServer</span>(r)   <span class="c">// r คือ *gin.Engine — httptest รับ http.Handler เท่านั้น</span></code></pre>
+
+<p>
+  <code>httptest.NewServer</code> รับพารามิเตอร์เป็น <code>http.Handler</code>
+  ถ้า <code>*gin.Engine</code> ไม่ใช่ <code>http.Handler</code> บรรทัดนี้จะ<strong>คอมไพล์ไม่ผ่าน</strong>
+  แต่มันผ่าน และ server ทำงานได้ — นี่คือ interface กับ duck typing จาก
+  <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a> ทำงานให้เห็นของจริง
+</p>
+
+<div class="diagram">
+<pre>  request จาก browser
+      │
+      ▼
+  <strong>net/http</strong>            ← รับ TCP, parse HTTP, จัดการ goroutine ต่อ connection
+      │                  (ตัวนี้ไม่หายไปไหน แม้ใช้ Gin)
+      ▼
+  <strong>http.Handler</strong>        ← ช่องเสียบเดียว: เสียบ ServeMux ก็ได้ เสียบ gin.Engine ก็ได้
+      │
+      ├─▶ *http.ServeMux   → handler(w http.ResponseWriter, r *http.Request)
+      │
+      └─▶ *gin.Engine      → handler(c *gin.Context)
+                              (c ห่อ w กับ r ไว้ข้างในอีกที)</pre>
+</div>
+
+<p>
+  สิ่งที่ Gin เพิ่มเข้ามาจริง ๆ มีสองอย่างเท่านั้น:
+</p>
+
+<ol>
+  <li><strong>router ที่เร็วกว่าและเขียน param ได้สั้นกว่า</strong> — ข้างในเป็น <strong>radix tree</strong>
+    (ต้นไม้ที่เก็บ path โดยรวบส่วนที่ขึ้นต้นเหมือนกันไว้กิ่งเดียว เช่น <code>/users/me</code> กับ
+    <code>/users/:id</code> ใช้กิ่ง <code>/users/</code> ร่วมกัน — หา route เจอโดยไม่ต้องไล่เทียบทีละเส้น)
+    ที่ยกมาจาก <a href="https://github.com/julienschmidt/httprouter">httprouter</a>
+    (ไฟล์ <code>tree.go</code> ใน Gin ยังติด license header ของ httprouter อยู่เลย)</li>
+  <li><strong><code>*gin.Context</code></strong> — ตัวห่อ <code>w</code> กับ <code>r</code>
+    พร้อมเมธอดสำเร็จรูปที่คุณเคยเขียนเองในบท 37 (<code>c.Param</code>, <code>c.Query</code>, <code>c.JSON</code>)</li>
+</ol>
+
+<h2>2 · เขียน Gin ตัวแรก — แล้วอ่าน log ที่มันพ่นออกมาให้ออก</h2>
+
+<pre><code><span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"net/http"</span>
+
+    <span class="s">"github.com/gin-gonic/gin"</span>
+)
+
+<span class="k">func</span> <span class="f">main</span>() {
+    r := gin.<span class="f">Default</span>()
+
+    r.<span class="f">GET</span>(<span class="s">"/ping"</span>, <span class="k">func</span>(c *gin.Context) {
+        c.<span class="f">JSON</span>(http.StatusOK, gin.H{<span class="s">"message"</span>: <span class="s">"pong"</span>})
+    })
+
+    r.<span class="f">Run</span>(<span class="s">":8080"</span>)
+}</code></pre>
+
+<p>
+  ก่อนอ่านตาราง — สองคำนี้จะโผล่ทั้งบท ขอนิยามให้ชัดก่อน
+</p>
+<ul>
+  <li><strong>engine</strong> คือ <code>*gin.Engine</code> — ตัวที่เก็บตาราง route ทั้งหมดไว้
+      เทียบตรง ๆ กับ <code>*http.ServeMux</code> ของบท 37</li>
+  <li><strong>middleware</strong> คือ<strong>ฟังก์ชันที่ถูกเรียกก่อน (และหลัง) handler ของเรา ทุก request</strong>
+      เช่นตัวที่คอยพิมพ์ log หรือคอยดัก panic — เขียนหน้าตาเหมือน handler เป๊ะ
+      (<code>func(c *gin.Context)</code>) ต่างกันแค่ว่ามันไม่ได้เป็นคนตอบ แต่เป็นคนที่ยืนขวางทางอยู่</li>
+</ul>
+
+<p>ห้าชิ้นในโค้ดนี้ ต้องแยกให้ออกว่าอันไหนคืออะไร:</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>ชิ้น</th><th>คืออะไร</th><th>ของเทียบในบท 37</th></tr></thead>
+<tbody>
+<tr><td><code>gin.Default()</code></td><td>สร้าง engine พร้อม middleware 2 ตัว</td><td><code>http.NewServeMux()</code> (แต่ mux ไม่มี middleware ให้)</td></tr>
+<tr><td><code>r.GET(path, h)</code></td><td>ลง route เฉพาะ method GET</td><td><code>mux.HandleFunc("GET /ping", h)</code></td></tr>
+<tr><td><code>gin.H{...}</code></td><td>ชื่อย่อของ <code>map[string]any</code> เฉย ๆ</td><td><code>map[string]any{...}</code></td></tr>
+<tr><td><code>c.JSON(code, v)</code></td><td>set Content-Type + WriteHeader + Encode ในบรรทัดเดียว</td><td>สามบรรทัดที่เรียงผิดไม่ได้</td></tr>
+<tr><td><code>r.Run(":8080")</code></td><td>สร้าง <code>&amp;http.Server{…}</code> แล้วเรียก <code>ListenAndServe</code> ให้</td><td><code>http.ListenAndServe(":8080", mux)</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong><code>gin.H</code> เป็น map — ไม่ใช่ struct</strong>
+    แปลว่า key ที่ออกมาใน JSON <strong>เรียงตามตัวอักษรเสมอ</strong> ไม่ใช่ตามลำดับที่คุณพิมพ์
+    ผมรันจริง <code>gin.H{"id":…, "nope":…, "nope_n":…, "count":42, "ok":true}</code> ได้ออกมาแบบนี้:
+    <br><code>{"count":42,"id":"42","nope":"","nope_n":0,"ok":true}</code>
+    <br>ถ้า response ต้องมีสัญญาแน่นอน (contract) ให้ใช้ <strong>struct + json tag</strong> จาก
+    <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> แทน —
+    <code>gin.H</code> เหมาะกับ error message สั้น ๆ มากกว่า
+  </p>
+</div>
+
+<h3>log ตอน boot ที่คนใหม่ตกใจ</h3>
+
+<p>
+  พอรัน <code>gin.Default()</code> ในโหมด default มันพ่นก้อนนี้ออกมาก่อนรับ request สักตัว
+  <br>(ก้อนนี้มาจาก<strong>โปรแกรมทดสอบของผม</strong> ซึ่งลง route ไว้สองเส้นคือ <code>/ping</code> กับ
+  <code>/boom</code> และฟังพอร์ต <code>:18081</code> — ถ้าคุณรันโค้ดข้างบนตรง ๆ จะเห็นแค่บรรทัด
+  <code>/ping</code> และท้ายสุดเป็น <code>:8080</code> ที่เหลืออกมาเหมือนกันทุกบรรทัด)
+</p>
+
+<pre><code>[GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /ping                     --&gt; main.main.func1 (3 handlers)
+[GIN-debug] GET    /boom                     --&gt; main.main.func2 (3 handlers)
+[GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
+Please check https://github.com/gin-gonic/gin/blob/master/docs/doc.md#dont-trust-all-proxies for details.
+[GIN-debug] Listening and serving HTTP on :18081</code></pre>
+
+<p>
+  <strong>อ่านให้ออกทีละบรรทัด</strong> — ไม่มีบรรทัดไหนคือ error สักบรรทัด
+</p>
+<ul>
+  <li><code>[GIN-debug] GET /ping --&gt; main.main.func1</code> คือ<strong>ตาราง route ที่ลงทะเบียนสำเร็จ</strong>
+      ใช้ตรวจว่าพิมพ์ path ตกหรือเปล่าได้ดีมาก</li>
+  <li><code>(3 handlers)</code> ไม่ได้แปลว่ามี 3 route — แปลว่า request ที่เข้า path นี้จะวิ่งผ่านฟังก์ชัน 3 ตัว
+      คือ <strong>Logger + Recovery + handler ของเรา</strong> (เดี๋ยวหัวข้อ 3 พิสูจน์ตัวเลขนี้)</li>
+  <li>บรรทัด <code>trusted all proxies</code> โผล่ตอน <code>r.Run()</code> เท่านั้น
+      <br><em>reverse proxy</em> คือเครื่องที่ยืนอยู่<strong>หน้า</strong>เซิร์ฟเวอร์เรา (เช่น nginx, load balancer)
+      รับ request จาก browser แล้วส่งต่อมาให้เราอีกที — พอเป็นแบบนั้น IP ที่เราเห็นจะเป็นของ proxy
+      ไม่ใช่ของผู้ใช้จริง proxy เลยแปะ IP จริงมาให้ใน header ชื่อ <code>X-Forwarded-For</code>
+      <br>ที่ Gin เตือนคือ: มันจะ<strong>เชื่อ header ตัวนั้นจากใครก็ได้</strong> แปลว่าใครยิงตรงเข้ามาก็ปลอม IP ตัวเองได้
+      — ยังไม่ต้องแก้ตอนเรียน แต่ต้องรู้ว่าบรรทัดนี้ไม่ใช่ error</li>
+</ul>
+
+<p>และเมื่อมี request เข้ามา Logger จะพ่นบรรทัดนี้ต่อ 1 request:</p>
+
+<pre><code>[GIN] 2026/08/20 - 21:49:10 | 200 |  87.25µs |       127.0.0.1 | GET      "/ping"</code></pre>
+
+<h2>3 · <code>gin.Default()</code> vs <code>gin.New()</code> — ต่างกันสองบรรทัด แต่ต่างกันคนละโลก</h2>
+
+<p>
+  ทุกคนพิมพ์ <code>gin.Default()</code> ตามตัวอย่าง โดยไม่เคยรู้ว่ามันแถมอะไรมาให้บ้าง
+  ผมเลยเปิดฝาดูด้วยการนับ <code>Handlers</code> แล้วพิมพ์<strong>ชื่อฟังก์ชันจริง</strong>ออกมา
+  <br>(<code>./p1</code> คือชื่อโฟลเดอร์โปรแกรมทดสอบของผมเอง ไม่ใช่คำสั่งมาตรฐานอะไร —
+  ของคุณจะชื่ออะไรก็ได้ ถ้าโค้ดอยู่ในโฟลเดอร์ปัจจุบันก็สั่ง <code>go run .</code> เฉย ๆ)
+</p>
+
+<pre><code>$ go run ./p1
+len(Default().Handlers) = 2
+len(New().Handlers)     = 0
+Default handler[0] = github.com/gin-gonic/gin.LoggerWithConfig.func1
+Default handler[1] = github.com/gin-gonic/gin.CustomRecoveryWithWriter.func1</code></pre>
+
+<p>
+  จบ — <strong><code>Default()</code> = <code>New()</code> + Logger + Recovery เป๊ะ ๆ</strong> ไม่มีอย่างอื่นแถม
+  <br>นี่ยังอธิบาย <code>(3 handlers)</code> เมื่อกี้ด้วย: 2 ตัวนี้ + handler ของเรา = 3
+  <br>ถ้าสร้างด้วย <code>gin.New()</code> route เดียวกันจะขึ้น <code>(1 handlers)</code>
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — สอง engine นี้ต่างกันแค่บรรทัดที่สร้าง โค้ด route เหมือนกันเป๊ะ</p>
+  <pre><code>d := gin.<span class="f">Default</span>()                                    <span class="c">// ฟังอยู่ที่ :18081</span>
+d.<span class="f">GET</span>(<span class="s">"/boom"</span>, <span class="k">func</span>(c *gin.Context) { <span class="f">panic</span>(<span class="s">"explode"</span>) })
+
+n := gin.<span class="f">New</span>()                                        <span class="c">// ฟังอยู่ที่ :18082</span>
+n.<span class="f">GET</span>(<span class="s">"/boom"</span>, <span class="k">func</span>(c *gin.Context) { <span class="f">panic</span>(<span class="s">"explode"</span>) })</code></pre>
+  <p class="ask">
+    ยิง <code>curl</code> ไปที่ <code>/boom</code> ของทั้งสองตัว — ได้ status อะไร?
+    และที่สำคัญกว่านั้น <strong>ตัวที่ไม่มี Recovery จะตายทั้ง process ไหม</strong>
+    (จำ <a href="../../day-3/lessons/0008-defer.html">บทเรียน 8</a> เรื่อง <code>recover</code> ไว้ก่อนตอบ)
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ curl -s -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:18081/boom   <span class="c"># gin.Default()</span>
+status=<strong>500</strong>
+
+$ curl -s -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:18082/boom   <span class="c"># gin.New()</span>
+<strong>FAILED: curl status=000</strong></code></pre>
+    <p>
+      <strong>ฝั่ง <code>Default()</code></strong> — Recovery จับ panic ได้ ตอบ 500 แล้ว log ก้อนนี้ให้
+      (ตัดมาจริงบางส่วน สังเกตว่ามันบอก<strong>บรรทัดที่ panic</strong> ให้เลย):
+    </p>
+    <pre style="margin:0.6rem 0"><code>2026/08/20 21:49:10 [Recovery] 2026/08/20 - 21:49:10 panic recovered:
+GET /boom HTTP/1.1
+Host: 127.0.0.1:18081
+Accept: */*
+User-Agent: curl/8.13.0
+
+explode
+.../verify-gin/p1/main.go:21 (0x1030d504b)
+	main.func2: d.GET("/boom", func(c *gin.Context) { panic("explode") })
+...
+[GIN] 2026/08/20 - 21:49:10 | 500 | 681.584µs |       127.0.0.1 | GET      "/boom"</code></pre>
+    <p>
+      <strong>ฝั่ง <code>New()</code></strong> — <code>status=000</code> ของ curl แปลว่า
+      <em>"ไม่ได้ response กลับมาเลย"</em> ไม่ใช่ 500 · panic ไหลทะลุ Gin ไปถึง <code>net/http</code>
+      ซึ่ง<strong>ปิด connection ทิ้ง</strong>แล้ว log ให้เอง:
+    </p>
+    <pre style="margin:0.6rem 0"><code>2026/08/20 21:50:10 http: panic serving 127.0.0.1:54717: explode
+goroutine 35 [running]:
+net/http.(*conn).serve.func1()
+...</code></pre>
+    <p style="margin-bottom:0">
+      <strong>แต่ process ไม่ตาย</strong> — <code>net/http</code> มี <code>recover()</code> ของตัวเองอยู่ชั้นนอกสุด
+      ยิง route อื่นต่อได้ปกติ:
+      <br><code>$ curl … http://127.0.0.1:18082/ping</code> → <code>status=200</code>
+      <br>สรุปความต่างที่ต้องจำ: <strong>ไม่มี Recovery ≠ เซิร์ฟเวอร์ล่ม
+      แต่ = ลูกค้าคนนั้นได้ connection ขาดกลางอากาศแทน error page</strong>
+      ซึ่ง<em>ดีบั๊กยากกว่า</em> เพราะฝั่ง client ไม่มี status code ให้ดูเลย
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <span class="label">✅ กฎที่ใช้ได้จริง</span>
+  <p style="margin-bottom:0">
+    ใช้ <code>gin.Default()</code> ตอนเรียนและตอน dev ·
+    ใช้ <code>gin.New()</code> เมื่อคุณต้องการ <strong>เปลี่ยน</strong> Logger เป็นของตัวเอง
+    (เช่น พ่น log เป็น JSON เพื่อส่งเข้าระบบรวม log ของทีม) — แต่ <strong>ต้อง <code>r.Use(gin.Recovery())</code> กลับเข้าไปเสมอ</strong>
+    ไม่งั้นคุณกำลังแลก error 500 ที่ดีบั๊กได้ กับ connection ขาดที่ดีบั๊กไม่ได้
+  </p>
+</div>
+
+<h2>4 · <code>c.Param</code> — path parameter ที่สั้นกว่า แต่กติกาต่างกัน</h2>
+
+<p>
+  บท 37 เขียน <code>{id}</code> แล้วอ่านด้วย <code>r.PathValue("id")</code> ·
+  Gin เขียน <code>:id</code> แล้วอ่านด้วย <code>c.Param("id")</code> — แค่นั้น
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>net/http (บท 37)</h4>
+    <pre><code>mux.<span class="f">HandleFunc</span>(<span class="s">"GET /users/{id}"</span>,
+  <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+    id := r.<span class="f">PathValue</span>(<span class="s">"id"</span>)
+    …
+})</code></pre>
+  </div>
+  <div class="side">
+    <h4>Gin</h4>
+    <pre><code>r.<span class="f">GET</span>(<span class="s">"/users/:id"</span>,
+  <span class="k">func</span>(c *gin.Context) {
+    id := c.<span class="f">Param</span>(<span class="s">"id"</span>)
+    …
+})</code></pre>
+  </div>
+</div>
+
+<p>
+  ผมลง route สองอันพร้อมกัน — <code>/users/:id</code> กับ <code>/users/me</code> — แล้วยิงจริงห้าแบบ
+  <br>handler ของ <code>/users/me</code> ตอบ <code>gin.H{"who": "me (static)"}</code> เฉย ๆ ส่วน handler ของ
+  <code>:id</code> ตั้งใจตอบ <strong>ห้า field</strong> เพื่อดูหลายอย่างในนัดเดียว:
+  <code>id</code> = <code>c.Param("id")</code> · <code>nope</code> = <code>c.Param("nope")</code>
+  (ชื่อ param ที่<em>ไม่มีอยู่จริง</em>) · <code>nope_n</code> = <code>len()</code> ของค่านั้น ·
+  <code>count</code> กับ <code>ok</code> เป็นค่าคงที่ที่ใส่ไว้ให้เห็นการเรียงคีย์ของ <code>gin.H</code>
+</p>
+
+<pre><code>  GET    /users/me        -&gt; 200  body={"who":"me (static)"}
+  GET    /users/42        -&gt; 200  body={"count":42,"id":"42","nope":"","nope_n":0,"ok":true}
+  GET    /users/mex       -&gt; 200  body={"count":42,"id":"mex","nope":"","nope_n":0,"ok":true}
+  GET    /users/          -&gt; 404  body=404 page not found
+  GET    /users           -&gt; 404  body=404 page not found</code></pre>
+
+<p>สามข้อสรุปจากห้าบรรทัดนี้:</p>
+
+<ol>
+  <li><strong>static ชนะ param</strong> — <code>/users/me</code> เข้า handler ของ <code>me</code>
+      ไม่ใช่ <code>:id</code> ที่ได้ <code>id="me"</code> · และไม่ใช่เพราะลงก่อนหลัง
+      แต่เพราะ router มองว่า <em>เจาะจงกว่าชนะ</em> — <strong>เหมือน <code>net/http</code> เป๊ะ</strong>
+      (แต่ <code>/users/mex</code> ที่แค่ขึ้นต้นเหมือนกัน ตกไปที่ <code>:id</code> ตามปกติ)</li>
+  <li><strong><code>c.Param("nope")</code> คืนสตริงว่าง ไม่ panic</strong> —
+      <code>nope_n</code> คือ <code>len()</code> ของมัน ได้ <code>0</code>
+      พฤติกรรมเดียวกับ <code>r.PathValue</code> คือ<strong>ไม่มีตัวที่สองบอก <code>ok</code></strong>
+      พิมพ์ชื่อ param ผิดจึงเงียบสนิท ไม่มี error ให้เห็น</li>
+  <li><strong><code>/users/</code> ได้ 404 ไม่ใช่ <code>id=""</code></strong> —
+      <code>:id</code> ต้องมีอย่างน้อยหนึ่งตัวอักษร มัน<em>ไม่เข้า handler เลย</em>
+      เพราะฉะนั้นอย่าเขียน <code>if id == "" { … }</code> เพื่อกันเคสนี้ — โค้ดนั้นจะไม่มีวันทำงาน</li>
+</ol>
+
+<h2>5 · <code>Query</code> / <code>DefaultQuery</code> / <code>GetQuery</code> — ทำไมต้องมีสามตัว</h2>
+
+<p>
+  query string คือส่วนหลัง <code>?</code> เช่น <code>/search?q=go</code> — เขียนเป็นคู่ <code>key=value</code>
+  ต่อกันด้วย <code>&amp;</code> ธรรมเนียมของ REST API คือใช้ query สำหรับ
+  <strong>filter / sort / paginate</strong> (กรอง / เรียง / แบ่งหน้า) ส่วน path เอาไว้ระบุ<em>ตัวของ</em>
+  ข้อมูลที่จะหยิบ — <code>/users/42</code> คือ "ผู้ใช้คนที่ 42" ส่วน <code>/users?dept=hr</code> คือ
+  "ผู้ใช้ทั้งหมด แต่กรองเอาเฉพาะแผนก hr"
+  <br>Gin ให้มาสามเมธอดสำหรับอ่าน query ซึ่งดูซ้ำซ้อนจนกว่าจะเจอเคสที่สาม
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — handler เดียว อ่าน <code>q</code> ด้วยสามวิธี แล้วยิงสามแบบ</p>
+  <pre><code>r.<span class="f">GET</span>(<span class="s">"/search"</span>, <span class="k">func</span>(c *gin.Context) {
+    v, ok := c.<span class="f">GetQuery</span>(<span class="s">"q"</span>)
+    c.<span class="f">JSON</span>(<span class="n">200</span>, gin.H{
+        <span class="s">"Query"</span>:        c.<span class="f">Query</span>(<span class="s">"q"</span>),
+        <span class="s">"DefaultQuery"</span>: c.<span class="f">DefaultQuery</span>(<span class="s">"q"</span>, <span class="s">"x"</span>),
+        <span class="s">"GetQuery_val"</span>: v,
+        <span class="s">"GetQuery_ok"</span>:  ok,
+        <span class="s">"Query_len"</span>:    <span class="f">len</span>(c.<span class="f">Query</span>(<span class="s">"q"</span>)),
+    })
+})
+
+<span class="c">// ยิงสามแบบ: /search?q=go   ·   /search   ·   /search?q=</span></code></pre>
+  <p class="ask">
+    แบบที่ 3 คือ <strong>ส่ง key <code>q</code> มาแต่ค่าว่าง</strong> —
+    <code>DefaultQuery("q","x")</code> จะคืน <code>"x"</code> หรือ <code>""</code>?
+    และ <code>GetQuery</code> จะให้ <code>ok</code> เป็นอะไร
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>GET /search?q=go   -&gt; {"DefaultQuery":"go","GetQuery_ok":true, "GetQuery_val":"go","Query":"go","Query_len":2}
+GET /search        -&gt; {"DefaultQuery":<strong>"x"</strong>, "GetQuery_ok":<strong>false</strong>,"GetQuery_val":"",  "Query":"","Query_len":0}
+GET /search?q=     -&gt; {"DefaultQuery":<strong>""</strong>,  "GetQuery_ok":<strong>true</strong>, "GetQuery_val":"",  "Query":"","Query_len":0}</code></pre>
+    <p>
+      บรรทัดที่ 2 กับ 3 คือหัวใจ: <strong><code>Query</code> คืน <code>""</code> เหมือนกันทั้งคู่</strong> —
+      มันแยกไม่ออกว่า "ไม่ได้ส่งมา" หรือ "ส่งมาแต่ว่าง"
+      <br><code>DefaultQuery</code> ก็แยกออกแค่ครึ่งเดียว: ไม่ส่งมาเลยได้ <code>"x"</code> ·
+      ส่ง <code>?q=</code> มาได้ <code>""</code> <strong>ไม่ใช่ <code>"x"</code></strong>
+      (คนส่วนใหญ่ทายผิดข้อนี้ — เพราะคิดว่า "ค่าว่างก็คือไม่มีค่า")
+      <br>มีแค่ <strong><code>GetQuery</code> ที่แยกสองเคสนี้ออกจากกันได้</strong> ผ่านตัวที่สอง <code>ok</code>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>เมื่อไหร่ที่ความต่างนี้สำคัญจริง?</strong> เวลาที่ค่าว่างมี<em>ความหมาย</em>:
+      <code>/users?department=</code> ที่แปลว่า "ขอคนที่ยังไม่มีแผนก" ต่างจาก
+      <code>/users</code> ที่แปลว่า "ขอทุกคน" — ถ้าใช้ <code>Query</code> ตัวเดียว API จะตอบผิดเงียบ ๆ
+      รูปแบบ <code>value, ok</code> นี้เป็นตัวเดียวกับที่คุณเจอในบทที่แล้ว ๆ มา:
+      <code>v, ok := m[key]</code> และ <code>v, ok := x.(T)</code> จาก
+      <a href="../../day-4/lessons/0011-type-assertion-and-switch.html">บทเรียน 11</a>
+    </p>
+  </div>
+</div>
+
+<h2>6 · <code>r.Group</code> — versioning ที่ไม่ต้องพิมพ์ <code>/api/v1</code> ห้ารอบ</h2>
+
+<p>
+  สไลด์บอกว่า API ควรมีเวอร์ชันใน path: <code>/api/v1/users</code> → วันหนึ่งเปลี่ยน contract ก็เปิด
+  <code>/api/v2/users</code> ขนานกันไปโดยไม่ทำ client เก่าพัง
+  <br>ปัญหาคือถ้าพิมพ์ prefix เองทุก route <strong>คุณจะพิมพ์ตกสักตัวแน่นอน</strong> และมันจะไม่ error ให้ด้วย
+  — แค่กลายเป็น 404 เงียบ ๆ · <code>r.Group</code> แก้ปัญหานี้ตรง ๆ
+</p>
+
+<pre><code>r := gin.<span class="f">Default</span>()
+
+v1 := r.<span class="f">Group</span>(<span class="s">"/api/v1"</span>)
+v1.<span class="f">GET</span>(<span class="s">"/recipes"</span>,      listRecipes)
+v1.<span class="f">POST</span>(<span class="s">"/recipes"</span>,     createRecipe)
+v1.<span class="f">GET</span>(<span class="s">"/recipes/:id"</span>,  getRecipe)
+v1.<span class="f">PUT</span>(<span class="s">"/recipes/:id"</span>,  updateRecipe)
+v1.<span class="f">DELETE</span>(<span class="s">"/recipes/:id"</span>, deleteRecipe)</code></pre>
+
+<p>
+  <code>listRecipes</code>, <code>createRecipe</code>, … คือฟังก์ชันที่<strong>คุณเขียนเองไว้ในไฟล์เดียวกัน</strong>
+  หน้าตา <code>func listRecipes(c *gin.Context) { … }</code> — เขียนแยกเป็นชื่อแบบนี้แทนที่จะยัด
+  <code>func(c *gin.Context){…}</code> ลงไปในบรรทัด route ทำให้ตาราง route ที่ Gin พิมพ์ออกมาอ่านรู้เรื่องด้วย:
+</p>
+
+<pre><code>[GIN-debug] GET    /api/v1/recipes           --&gt; main.listRecipes (3 handlers)
+[GIN-debug] POST   /api/v1/recipes           --&gt; main.createRecipe (3 handlers)
+[GIN-debug] GET    /api/v1/recipes/:id       --&gt; main.getRecipe (3 handlers)
+[GIN-debug] PUT    /api/v1/recipes/:id       --&gt; main.updateRecipe (3 handlers)
+[GIN-debug] DELETE /api/v1/recipes/:id       --&gt; main.deleteRecipe (3 handlers)
+--- v1.BasePath() = /api/v1</code></pre>
+
+<p>
+  (บรรทัดสุดท้ายเป็นของผมเอง ไม่ใช่ของ Gin — ผมเรียก <code>v1.BasePath()</code> มาพิมพ์
+  เพื่อยืนยันว่า group จำ prefix อะไรไว้)
+</p>
+
+<p>
+  สังเกตสองอย่าง: (1) prefix <code>/api/v1</code> ถูก<strong>เติมให้ตอน register</strong>
+  ไม่ใช่ตอน request — ค่าที่เก็บไว้จริงคือ path เต็ม
+  (2) path ที่ลงคือ <code>/api/v1/recipes</code> เท่านั้น ยิง <code>/recipes</code> เฉย ๆ ได้ <strong>404</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ทำไม group ถึงสำคัญกว่าที่คิด</strong> — บทหน้าคุณจะเอา middleware มาแปะทั้ง group ทีเดียว
+    เช่น <code>auth := r.Group("/api/v1", AuthRequired())</code> แล้วทุก route ใน group นั้น
+    ต้องผ่าน auth หมดโดยไม่ต้องไปแปะทีละตัว —
+    <strong>นั่นคือเหตุผลจริงที่ group มีอยู่</strong> ไม่ใช่แค่ประหยัดการพิมพ์
+  </p>
+</div>
+
+<h2>7 · หัวใจของบท — รีแฟกเตอร์โค้ดบท 37 เป็น Gin ทีละบรรทัด</h2>
+
+<p>
+  เอา handler ที่คุณเขียนในบท 37 มาวางจริง ๆ แล้วแปลงทีละบรรทัด
+  <strong>ห้ามเปลี่ยน behavior</strong> — เป้าหมายคือให้ response เหมือนเดิมทุกไบต์
+</p>
+
+<p>
+  สองก้อนข้างล่างเป็น<strong>ท่อนกลางของ <code>main()</code></strong> ไม่ใช่ไฟล์เต็ม
+  ถ้าจะ copy ไปรัน ต้องมีของอีกสามอย่างในไฟล์เดียวกันด้วย:
+  <code>package main</code> · <code>import</code> (ฝั่งซ้ายใช้ <code>net/http</code> + <code>encoding/json</code> ·
+  ฝั่งขวาใช้ <code>net/http</code> + <code>github.com/gin-gonic/gin</code> —
+  ฝั่งขวายัง <code>import "net/http"</code> อยู่เพราะยังใช้ค่าคงที่ <code>http.StatusOK</code>) ·
+  และ struct <code>User</code> จากบท 37:
+  <code>type User struct { ID string `json:"id"`; Name string `json:"name"` }</code>
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>ก่อน — <code>net/http</code></h4>
+<pre><code>mux := http.<span class="f">NewServeMux</span>()
+
+mux.<span class="f">HandleFunc</span>(<span class="s">"GET /api/v1/users/{id}"</span>,
+ <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+
+  id := r.<span class="f">PathValue</span>(<span class="s">"id"</span>)
+
+  <span class="k">if</span> id == <span class="s">"0"</span> {
+    w.<span class="f">Header</span>().<span class="f">Set</span>(<span class="s">"Content-Type"</span>,
+        <span class="s">"application/json; charset=utf-8"</span>)
+    w.<span class="f">WriteHeader</span>(http.StatusNotFound)
+    json.<span class="f">NewEncoder</span>(w).<span class="f">Encode</span>(
+        <span class="k">map</span>[<span class="k">string</span>]<span class="k">string</span>{<span class="s">"error"</span>: <span class="s">"user not found"</span>})
+    <span class="k">return</span>
+  }
+
+  w.<span class="f">Header</span>().<span class="f">Set</span>(<span class="s">"Content-Type"</span>,
+      <span class="s">"application/json; charset=utf-8"</span>)
+  w.<span class="f">WriteHeader</span>(http.StatusOK)
+  json.<span class="f">NewEncoder</span>(w).<span class="f">Encode</span>(
+      User{ID: id, Name: <span class="s">"Somchai"</span>})
+})
+
+http.<span class="f">ListenAndServe</span>(<span class="s">":8080"</span>, mux)</code></pre>
+  </div>
+  <div class="side">
+    <h4>หลัง — Gin</h4>
+<pre><code>r := gin.<span class="f">Default</span>()
+v1 := r.<span class="f">Group</span>(<span class="s">"/api/v1"</span>)
+
+v1.<span class="f">GET</span>(<span class="s">"/users/:id"</span>,
+ <span class="k">func</span>(c *gin.Context) {
+
+  id := c.<span class="f">Param</span>(<span class="s">"id"</span>)
+
+  <span class="k">if</span> id == <span class="s">"0"</span> {
+    c.<span class="f">JSON</span>(http.StatusNotFound,
+        gin.H{<span class="s">"error"</span>: <span class="s">"user not found"</span>})
+    <span class="k">return</span>
+  }
+
+  c.<span class="f">JSON</span>(http.StatusOK,
+      User{ID: id, Name: <span class="s">"Somchai"</span>})
+})
+
+r.<span class="f">Run</span>(<span class="s">":8080"</span>)</code></pre>
+  </div>
+</div>
+
+<p><strong>แปลทีละบรรทัด — จำตารางนี้พอ:</strong></p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th><code>net/http</code></th><th>Gin</th><th>สิ่งที่หายไป</th></tr></thead>
+<tbody>
+<tr><td><code>http.NewServeMux()</code></td><td><code>gin.Default()</code></td><td>—</td></tr>
+<tr><td><code>"GET /api/v1/users/{id}"</code></td><td><code>Group("/api/v1")</code> + <code>GET("/users/:id")</code></td><td>prefix ที่ต้องพิมพ์ซ้ำ</td></tr>
+<tr><td><code>w, r *http.Request</code> (2 ตัว)</td><td><code>c *gin.Context</code> (1 ตัว)</td><td>—</td></tr>
+<tr><td><code>r.PathValue("id")</code></td><td><code>c.Param("id")</code></td><td>—</td></tr>
+<tr><td><code>Header().Set → WriteHeader → Encode</code></td><td><code>c.JSON(code, v)</code></td><td><strong>โอกาสเรียงผิดลำดับ</strong></td></tr>
+<tr><td><code>http.ListenAndServe(addr, mux)</code></td><td><code>r.Run(addr)</code></td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>
+  บรรทัดที่กำไรจริงคือแถวที่ห้า — สามบรรทัดเหลือหนึ่ง
+  <br>และมันไม่ได้กำไรแค่ "สั้นกว่า" · จำบทเรียนเจ็บ ๆ จากบท 37 ได้ไหม —
+  <code>Header().Set()</code> <strong>หลัง</strong> <code>WriteHeader()</code> จะไม่มีผล
+  แบบเงียบสนิท ไม่ error ไม่ log ทำให้ Content-Type กลายเป็น <code>text/plain</code> โดยที่คุณไม่รู้ตัว
+  <br><strong><code>c.JSON</code> ทำให้เขียนผิดลำดับไม่ได้ตั้งแต่แรก</strong> เพราะมันเป็นบรรทัดเดียว —
+  นี่คือกำไรที่แท้จริง ไม่ใช่จำนวนบรรทัด
+</p>
+
+<h3>แล้ว response จริงเหมือนกันไหม? ผมยิงเทียบทั้งสี่เคส</h3>
+
+<pre><code>=== net/http (แบบบท 37) ===
+  GET    /api/v1/users/42     -&gt; 200  Content-Type="application/json; charset=utf-8"
+        body={"id":"42","name":"Somchai"}
+  GET    /api/v1/users/0      -&gt; 404  Content-Type="application/json; charset=utf-8"
+        body={"error":"user not found"}
+  POST   /api/v1/users/42     -&gt; <strong>405</strong>  Content-Type="text/plain; charset=utf-8"
+        body=Method Not Allowed
+  GET    /api/v1/nope         -&gt; 404  Content-Type="text/plain; charset=utf-8"
+        body=404 page not found
+
+=== Gin (refactor แล้ว) ===
+  GET    /api/v1/users/42     -&gt; 200  Content-Type="application/json; charset=utf-8"
+        body={"id":"42","name":"Somchai"}
+  GET    /api/v1/users/0      -&gt; 404  Content-Type="application/json; charset=utf-8"
+        body={"error":"user not found"}
+  POST   /api/v1/users/42     -&gt; <strong>404</strong>  Content-Type="text/plain"
+        body=404 page not found
+  GET    /api/v1/nope         -&gt; 404  Content-Type="text/plain"
+        body=404 page not found</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">⚠️ สองเคสแรกเหมือนกันทุกไบต์ เคสที่สาม<strong>ไม่เหมือน</strong></span>
+    <code>POST</code> ไปที่ path ที่ลงไว้แค่ <code>GET</code>:
+    <strong><code>net/http</code> ตอบ 405 · Gin ตอบ 404</strong>
+    <br>คุณเพิ่งรีแฟกเตอร์โดย "ไม่เปลี่ยน behavior" แต่ behavior เปลี่ยนไปแล้ว
+    และ<strong>ไม่มี compile error ไม่มี warning ไม่มี log สักบรรทัด</strong>
+    ถ้า client ฝั่งหน้าเว็บเขียน <code>if (res.status === 405)</code> ไว้ — มันเพิ่งพังโดยไม่มีใครรู้
+  </p>
+</div>
+
+<h2>8 · ราคาที่ Gin เก็บ — สามอย่างที่ต้องรู้ก่อนใช้ของจริง</h2>
+
+<h3>ราคาที่ 1 — 405 กลายเป็น 404 (และเปิดคืนได้)</h3>
+
+<p>
+  <code>net/http</code> ให้ <code>405 Method Not Allowed</code> พร้อม header <code>Allow</code>
+  <strong>ฟรีตั้งแต่บรรทัดแรก</strong> · Gin ปิดความสามารถนี้ไว้เป็น default
+  <br>ผมรันเทียบชัด ๆ — <code>HandleMethodNotAllowed</code> ค่า default คือ <code>false</code>
+  <br>(โปรแกรมทดสอบนี้ลง route ไว้สองเส้น: <code>/only-post</code> ลงไว้เฉพาะ <code>POST</code> กับ
+  <code>PUT</code> ส่วน <code>/users/:id</code> ลงไว้เฉพาะ <code>GET</code> — จำไว้ตอนอ่านค่า
+  <code>Allow</code> ข้างล่าง เพราะมันคือรายชื่อ method ที่ลงไว้กับ path นั้นเป๊ะ ๆ):
+</p>
+
+<pre><code>=== default (HandleMethodNotAllowed = false) ===
+GET    /only-post   -&gt; status=404  Content-Type="text/plain"  body=404 page not found
+DELETE /users/42    -&gt; status=404  Content-Type="text/plain"  body=404 page not found
+
+=== r.HandleMethodNotAllowed = true ===
+GET    /only-post   -&gt; status=<strong>405</strong>  Allow="POST, PUT"  body=405 method not allowed
+GET    /nope        -&gt; status=404  body=404 page not found</code></pre>
+
+<p>
+  แก้ด้วยบรรทัดเดียว: <code>r.HandleMethodNotAllowed = <span class="k">true</span></code>
+  แล้ว Gin จะคำนวณ header <code>Allow</code> ให้เองด้วย
+  <br><strong>ทำไมมันถึงไม่เปิดให้เป็น default?</strong> เพราะการจะตอบ 405 ได้
+  router ต้องไปไล่ดูทุก method ที่ลงไว้กับ path นั้นก่อน = งานเพิ่มต่อ request ที่ miss
+  — Gin เลือก "เร็วที่สุด" มากกว่า "ถูกต้องตาม HTTP ที่สุด" · เป็นการแลกที่<em>ตั้งใจ</em> ไม่ใช่บั๊ก
+</p>
+
+<h3>ราคาที่ 2 — 404 ของ Gin ไม่ใช่ JSON</h3>
+
+<p>
+  สังเกต Content-Type ในผลรันข้างบน: 404 ของ Gin คือ <code>"text/plain"</code>
+  <strong>เปล่า ๆ ไม่มี <code>charset</code> ต่อท้ายด้วยซ้ำ</strong> และ body คือข้อความ
+  <code>404 page not found</code> ไม่ใช่ JSON
+</p>
+
+<p>
+  แปลว่า API ของคุณที่ตั้งใจตอบ JSON ทุกเส้นทาง <strong>ตอบ JSON ไม่ครบ</strong> —
+  เส้นทางที่พิมพ์ path ผิดจะได้ text กลับไป ฝั่ง client ที่เรียก <code>res.json()</code>
+  จะพังเป็น parse error แทนที่จะเห็น error message ที่อ่านออก
+  <br>แก้ด้วย <code>r.NoRoute(...)</code> ให้ตอบ JSON ของเราเอง:
+</p>
+
+<pre><code>r.<span class="f">NoRoute</span>(<span class="k">func</span>(c *gin.Context) {
+    c.<span class="f">JSON</span>(http.StatusNotFound, gin.H{<span class="s">"error"</span>: <span class="s">"route not found"</span>})
+})</code></pre>
+
+<h3>ราคาที่ 3 — Gin panic ตอนลง route ในเคสที่ <code>net/http</code> รับได้สบาย</h3>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>ศัพท์ที่ต้องรู้ก่อนอ่านข้อนี้ — <code>*any</code></strong>
+    <br>นอกจาก <code>:id</code> ที่กินแค่<strong>หนึ่ง</strong>ช่วง path แล้ว Gin ยังมี <code>*</code> ที่เรียกว่า
+    <strong>catch-all</strong> (หรือ wildcard) — <code>/swagger/*any</code> แปลว่า
+    "ทุกอย่างที่ขึ้นต้นด้วย <code>/swagger/</code> ไม่ว่าจะเหลือกี่ช่วงก็ตาม"
+    เช่น <code>/swagger/index.html</code> หรือ <code>/swagger/a/b/c</code> ก็เข้า route นี้หมด
+    แล้วอ่านส่วนที่เหลือด้วย <code>c.Param("any")</code>
+    <br>ของฝั่ง <code>net/http</code> ที่ทำหน้าที่คล้ายกันคือ pattern ที่ลงท้ายด้วย <code>/</code> เช่น
+    <code>"GET /files/"</code> ซึ่งเรียกว่า <strong>subtree</strong> — แมตช์ทุก path ที่ขึ้นต้นด้วย
+    <code>/files/</code> เหมือนกัน
+    <br>สองอันนี้จะโผล่ในโจทย์ข้างล่างและในบทหน้า (Swagger UI ต้องใช้ <code>/swagger/*any</code>)
+  </p>
+</div>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — เจ็ดคู่นี้ ลงทะเบียน route แล้ว<strong>คู่ไหน panic</strong> คู่ไหนผ่าน?</p>
+  <pre><code>A: /users/:id      แล้วตามด้วย /users/me
+B: /users/me       แล้วตามด้วย /users/:id
+C: /users/:id      แล้วตามด้วย /users/:userId
+D: /users/:id      แล้วตามด้วย /users/:id  (path เดิม method เดิม)
+E: /swagger/*any   แล้วตามด้วย /swagger/foo
+F: /users/:id (GET) แล้วตามด้วย /users/me (POST)
+G: /a/*any/b       (wildcard ไม่อยู่ท้าย path)</code></pre>
+  <p class="ask">
+    ข้อ A กับ B คือข้อที่คนตอบผิดเยอะที่สุด — <strong>"static ชนกับ param" ทำให้ Gin panic ไหม
+    และลำดับการลงมีผลหรือเปล่า</strong>
+    (ใบ้: หัวข้อ 4 คุณเห็นผลรันของคู่นี้ไปแล้ว)
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>[A: /users/:id then /users/me] <strong>OK (no panic)</strong>
+[B: /users/me then /users/:id] <strong>OK (no panic)</strong>
+[C: /users/:id then /users/:userId] PANIC: ':userId' in new path '/users/:userId' conflicts with existing wildcard ':id' in existing prefix '/users/:id'
+[D: /users/:id twice (same path, same method)] PANIC: handlers are already registered for path '/users/:id'
+[E: /swagger/*any then /swagger/foo] PANIC: '/foo' in new path '/swagger/foo' conflicts with existing wildcard '/*any' in existing prefix '/swagger/*any'
+[F: /users/:id (GET) and /users/me (POST) - different methods] <strong>OK (no panic)</strong>
+[G: wildcard not at end: /a/*any/b] PANIC: catch-all routes are only allowed at the end of the path in path '/a/*any/b'</code></pre>
+    <p>
+      <strong>A และ B ไม่ panic ทั้งคู่</strong> — และลำดับไม่มีผล ผมรันซ้ำบน gin
+      <strong>v1.9.1</strong> ก็ได้ผลเหมือนกันทุกบรรทัด
+      <br>ที่คน (และบทความจำนวนมาก) เข้าใจผิดว่า "static ชนกับ param แล้ว Gin panic" —
+      <strong>ไม่จริงอย่างน้อยตั้งแต่ v1.9.1 ถึง v1.12.0</strong>
+      สิ่งที่ panic จริงคือ <strong>param สองตัวคนละชื่อในตำแหน่งเดียวกัน</strong> (ข้อ C)
+      ซึ่งเป็นบั๊กที่เกิดจริงเวลาแยกไฟล์ route: ไฟล์หนึ่งเขียน <code>:id</code> อีกไฟล์เขียน <code>:userId</code>
+    </p>
+    <p style="margin-bottom:0">
+      ข้อสำคัญที่สุดของทั้งก้อน: <strong>Gin panic ตอน <em>register</em> ไม่ใช่ตอน request</strong>
+      แปลว่าถ้าลง route ชนกัน<strong>โปรแกรมจะตายตั้งแต่ตอนบูต</strong> ไม่ได้ตายกลางดึกตอนมีลูกค้ายิงเข้ามา
+      — <em>ในแง่นี้ panic คือของขวัญ</em> ไม่ใช่ปัญหา
+    </p>
+  </div>
+</div>
+
+<p>
+  แล้วคู่ไหนที่ <strong>Gin panic แต่ <code>net/http</code> ไม่ panic</strong>?
+  ผมเอา pattern คู่เดียวกันไปลงทั้งสองฝั่ง — subtree/wildcard คู่กับ path เจาะจง:
+</p>
+
+<pre><code>=== A) net/http: mux.HandleFunc("GET /files/") + mux.HandleFunc("GET /files/foo") ===
+  GET     /files/foo             -&gt; 200  body="LITERAL foo"
+  GET     /files/bar             -&gt; 200  body="SUBTREE"
+[net/http /files/ + /files/foo] <strong>OK (no panic)</strong>
+
+=== B) gin: r.GET("/files/*any") + r.GET("/files/foo") ===
+[gin /files/*any + /files/foo] <strong>PANIC:</strong> '/foo' in new path '/files/foo' conflicts with existing wildcard '/*any' in existing prefix '/files/*any'</code></pre>
+
+<p>
+  <code>net/http</code> รับได้สบาย แล้วใช้กติกา "เจาะจงกว่าชนะ" ตัดสินตอน request —
+  <code>/files/foo</code> ไปที่ literal, <code>/files/bar</code> ตกลง subtree
+  <br>Gin <strong>ไม่ยอมให้มีสองอันนี้อยู่ด้วยกันตั้งแต่แรก</strong> เพราะ radix tree ของมัน
+  ตัดสินใจว่า node นี้เป็น catch-all ไปแล้ว จะแตกลูกออกไปอีกไม่ได้
+  <br>เคสนี้ไม่ใช่เคสสมมติ — มันคือเคสที่คุณจะเจอในบทเรียนถัดไปตอนเสียบ Swagger UI ที่ต้องลง
+  <code>/swagger/*any</code> แล้วดันมี route <code>/swagger/something</code> อยู่ก่อน
+</p>
+
+<div class="win">
+  <span class="label">🎯 สรุปการแลกทั้งหมดในหน้าเดียว</span>
+  <div class="table-wrap">
+  <table>
+  <thead><tr><th>เรื่อง</th><th><code>net/http</code> (Go 1.26.5)</th><th>Gin v1.12.0</th></tr></thead>
+  <tbody>
+  <tr><td>ตอบ JSON</td><td>3 บรรทัด เรียงผิดลำดับได้เงียบ ๆ</td><td><code>c.JSON</code> 1 บรรทัด ✅</td></tr>
+  <tr><td>path param</td><td><code>{id}</code> + <code>PathValue</code></td><td><code>:id</code> + <code>Param</code> (เท่ากัน)</td></tr>
+  <tr><td>prefix ซ้ำ ๆ</td><td>พิมพ์เองทุก route</td><td><code>r.Group</code> ✅</td></tr>
+  <tr><td>middleware</td><td>ต้องห่อ handler เอง</td><td><code>r.Use</code> + Logger/Recovery แถม ✅</td></tr>
+  <tr><td>method ผิด</td><td><strong>405 + <code>Allow</code> ฟรี ✅</strong></td><td>404 จนกว่าจะเปิดเอง ❌</td></tr>
+  <tr><td>404 body</td><td><code>text/plain; charset=utf-8</code></td><td><code>text/plain</code> — ต้องเขียน <code>NoRoute</code> เอง ❌</td></tr>
+  <tr><td>route ทับกัน</td><td>เจาะจงกว่าชนะ / ambiguous แล้วค่อย panic</td><td>panic ตอน register บ่อยกว่า</td></tr>
+  <tr><td>dependency</td><td><strong>0 ตัว</strong> (อยู่ใน Go เอง) ✅</td><td>Gin + อีก 18 module ที่ติดตามมา ❌</td></tr>
+  </tbody>
+  </table>
+  </div>
+  <p style="margin:0.6rem 0 0">
+    <strong>คำตอบที่ซื่อสัตย์คือ: Gin ชนะเรื่องที่คุณทำวันละสิบครั้ง (ตอบ JSON, group, middleware)
+    และแพ้เรื่องที่คุณเจอเดือนละครั้งแต่เจ็บ (405, 404 body)</strong>
+    — ซึ่งเป็นการแลกที่คุ้มสำหรับทีมส่วนใหญ่ <em>ถ้ารู้ตัวว่าแลกอะไรไป</em>
+    บทนี้มีอยู่เพื่อให้คุณรู้ตัว
+    <br><small>(เลข 18 มาจากการนับจริงบนเครื่องผมด้วย
+    <code>go list -deps -f '{{if .Module}}{{.Module.Path}}{{end}}' github.com/gin-gonic/gin | sort -u</code>
+    ซึ่งได้ 19 บรรทัดรวมตัว Gin เอง — ลองนับบนเครื่องคุณดูได้ ตัวเลขอาจต่างเล็กน้อยตาม OS/CPU)</small>
+  </p>
+</div>
+
+<h2>9 · ก่อนขึ้น production — <code>gin.SetMode(gin.ReleaseMode)</code></h2>
+
+<p>
+  โค้ดเดียวกันเป๊ะ ต่างแค่เรียก <code>SetMode</code> หรือไม่
+  <br>(<code>./p5</code> เป็นโฟลเดอร์โปรแกรมทดสอบของผมอีกตัว ผมเขียนให้มัน<strong>รับ argument</strong>
+  ชื่อ <code>release</code> แล้วค่อยเรียก <code>gin.SetMode(gin.ReleaseMode)</code> —
+  ไม่ใช่ความสามารถของ Gin แต่เป็นโค้ดที่ผมเขียนเองเพื่อรันเทียบสองโหมดจากไฟล์เดียว)
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ debug (ค่า default)</h4>
+<pre><code>$ go run ./p5
+&gt;&gt;&gt; gin.Mode() = debug
+[GIN-debug] [WARNING] Creating an Engine instance …
+[GIN-debug] [WARNING] Running in "debug" mode. …
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /ping   --&gt; main.main.func1 (3 handlers)
+[GIN] 2026/08/20 - 21:50:30 | 200 |     41µs | 127.0.0.1 | GET "/ping"</code></pre>
+  </div>
+  <div class="side good">
+    <h4>✅ release</h4>
+<pre><code>$ go run ./p5 release
+&gt;&gt;&gt; gin.Mode() = release
+[GIN] 2026/08/20 - 21:50:31 | 200 |  36.75µs | 127.0.0.1 | GET "/ping"</code></pre>
+    <p style="margin-bottom:0">
+      บรรทัด <code>[GIN-debug]</code> หายหมด — ทั้ง warning ทั้งตาราง route
+    </p>
+  </div>
+</div>
+
+<p>
+  จุดที่ต้องอ่านให้ออกคือ <strong>access log <code>[GIN]</code> ยังอยู่</strong>
+  เพราะมันมาจาก <strong>Logger middleware</strong> ไม่ได้มาจากโหมด debug — คนละเรื่องกัน
+  <br>ตั้งผ่าน environment ก็ได้ผลเดียวกัน: <code>export GIN_MODE=release</code>
+  ซึ่งเป็นวิธีที่ควรใช้ตอน deploy จริง เพราะไม่ต้องแก้โค้ดระหว่าง dev กับ prod
+</p>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. เปลี่ยนจาก <code>gin.Default()</code> เป็น <code>gin.New()</code> แล้ว handler เกิด <code>panic</code> ขึ้นมา — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">process ตายทั้งตัวทันที request ที่ค้างอยู่ของลูกค้าคนอื่นหลุดตามไปหมดด้วย</button>
+    <button class="opt">client ยังได้ 500 พร้อม stack trace ใน body เพราะ Gin จับ panic ให้เสมออยู่แล้ว</button>
+    <button class="opt">client ไม่ได้ response กลับมาเลย (curl ได้ <code>status=000</code>) แต่ process ยังรับ request อื่นต่อได้</button>
+    <button class="opt">Gin ปฏิเสธตั้งแต่ตอน register route เพราะ handler ที่ไม่มี Recovery คุ้มอยู่ลงไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันเทียบสอง engine พร้อมกัน: <code>Default()</code> ที่ <code>:18081</code> ได้ <code>status=500</code> ·
+    <code>New()</code> ที่ <code>:18082</code> ได้ <strong><code>FAILED: curl status=000</code></strong>
+    <br><code>000</code> ของ curl แปลว่า <em>ไม่มี response เลย</em> เพราะ panic ทะลุ Gin ไปถึง
+    <code>net/http</code> ซึ่งปิด connection ทิ้ง
+    <br>ตัวเลือกที่ 1 ผิดตรง "process ตาย" — ผมยิง <code>/ping</code> ของ engine ตัวเดียวกันต่อทันที
+    ได้ <code>status=200</code> เพราะ <code>net/http</code> มี <code>recover()</code> ของตัวเองอยู่ชั้นนอกสุด ·
+    ตัวเลือกที่ 2 ผิดเพราะ <strong>Recovery ไม่ได้ติดมากับ <code>New()</code></strong> —
+    ผมนับได้ <code>len(New().Handlers) = 0</code> เทียบกับ <code>len(Default().Handlers) = 2</code> ·
+    ตัวเลือกที่ 4 ผิดเพราะ Gin ไม่รู้เลยว่า handler จะ panic ตอน register — panic เกิดตอน request</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. ลง route ไว้แค่ <code>r.GET("/users/:id", …)</code> แล้วมี client ยิง <code>DELETE /users/42</code> เข้ามา — Gin ที่ไม่ได้ตั้งค่าอะไรเพิ่มตอบว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">405 Method Not Allowed พร้อม header <code>Allow: GET</code> เหมือนกับ <code>net/http</code> ทุกประการ</button>
+    <button class="opt">404 page not found เป็น <code>text/plain</code> เพราะ <code>HandleMethodNotAllowed</code> default เป็น <code>false</code></button>
+    <button class="opt">501 Not Implemented เพราะ Gin ถือว่า method นี้ยังไม่ได้ implement บน resource ตัวนั้น</button>
+    <button class="opt">200 พร้อม body ว่าง เพราะ Gin จับคู่ path ได้แล้วจึงเข้า handler ตัวเดิมโดยไม่สน method</button>
+  </div>
+  <div class="explain">
+    <p>ผมยิงจริง: <code>DELETE /users/42 -&gt; status=404 Content-Type="text/plain" body=404 page not found</code>
+    <br>Gin ตั้ง <code>HandleMethodNotAllowed = false</code> ไว้เป็น default เพราะการตอบ 405 ต้องไล่ดูทุก
+    method ที่ลงกับ path นั้นก่อน = งานเพิ่มต่อ request ที่ไม่แมตช์ · ตั้ง
+    <code>r.HandleMethodNotAllowed = true</code> เองแล้วจึงได้
+    <code>405</code> body <code>405 method not allowed</code> พร้อม header <code>Allow</code>
+    ที่ลิสต์ method ที่<strong>ลงไว้กับ path นั้น</strong> (โจทย์ข้อนี้ลงแต่ <code>GET</code> ก็จะได้
+    <code>Allow: GET</code>) — ผลรันที่ผมยกมาในหัวข้อ 8 ขึ้น <code>Allow="POST, PUT"</code>
+    เพราะเป็นคนละ route คือ <code>/only-post</code> ที่ผมลง <code>POST</code> กับ <code>PUT</code> ไว้
+    <br>ตัวเลือกที่ 1 คือพฤติกรรมของ <code>net/http</code> (บท 37 ยิง <code>POST</code> ได้
+    <code>405 Allow: GET, HEAD</code>) — <strong>นี่คือความสามารถที่หายไปตอนรีแฟกเตอร์</strong> ·
+    ตัวเลือกที่ 3 ผิดเพราะ Gin ไม่เคยตอบ 501 เอง · ตัวเลือกที่ 4 ผิดเพราะ
+    <code>r.GET</code> ลงเฉพาะ method GET เท่านั้น ไม่ใช่ทุก method</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">3. client ยิง <code>/search?q=</code> (ส่ง key <code>q</code> มาแต่ค่าว่าง) แล้ว handler เรียก <code>c.DefaultQuery("q", "x")</code> — ได้ค่าอะไรกลับมา?</p>
+  <div class="opts">
+    <button class="opt">ได้ <code>"x"</code> เพราะค่าที่ส่งมาเป็นสตริงว่าง Gin จึงถือว่าไม่มีค่าแล้วใช้ default แทน</button>
+    <button class="opt">ได้ <code>""</code> เพราะ key มีอยู่จริงใน query string ค่า default จึงไม่ถูกหยิบมาใช้เลย</button>
+    <button class="opt">ได้ error กลับมาเป็นตัวที่สอง เพราะ query ที่มี key แต่ไม่มีค่าถือว่ารูปแบบไม่ถูกต้อง</button>
+    <button class="opt">ได้ <code>"q"</code> คือชื่อ key เพราะ Gin คืนชื่อ key เมื่อไม่สามารถหาค่าของมันเจอ</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงสามเคสเรียงกัน:
+    <code>?q=go</code> → <code>DefaultQuery:"go"</code> · <code>ไม่ส่ง q</code> → <code>DefaultQuery:"x"</code> ·
+    <strong><code>?q=</code> → <code>DefaultQuery:""</code></strong>
+    <br>กติกาคือ <strong>default ใช้เมื่อ "ไม่มี key" เท่านั้น ไม่ใช่ "ค่าว่าง"</strong>
+    ตัวที่แยกสองเคสนี้ออกจริง ๆ มีตัวเดียวคือ <code>GetQuery</code>:
+    ไม่ส่งมาได้ <code>ok=false</code> · ส่ง <code>?q=</code> มาได้ <code>ok=true</code>
+    <br>ตัวเลือกที่ 1 คือคำตอบที่คนทายเยอะที่สุดและผิด ·
+    ตัวเลือกที่ 3 ผิดเพราะ <code>DefaultQuery</code> คืนค่าเดียว ไม่มี error และ <code>?q=</code> ถูกต้องตามสเปก ·
+    ตัวเลือกที่ 4 ผิดเพราะไม่มีเมธอดไหนของ Gin คืนชื่อ key</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. เอา <code>/files/</code> (subtree) คู่กับ <code>/files/foo</code> ใน <code>net/http</code> ไปเขียนเป็น <code>/files/*any</code> คู่กับ <code>/files/foo</code> ใน Gin — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">Gin panic ตอน register ส่วน <code>net/http</code> รับได้ทั้งคู่แล้วให้ path ที่เจาะจงกว่าชนะ</button>
+    <button class="opt">ทั้งสองตัว panic ตอน register เหมือนกัน เพราะ pattern สองอันนี้ทับกันชัดเจนอยู่แล้ว</button>
+    <button class="opt">ทั้งสองตัวรับได้ปกติ แต่ Gin ให้ wildcard ชนะเสมอ <code>/files/foo</code> จึงไม่เคยถูกเรียก</button>
+    <button class="opt"><code>net/http</code> panic ตอน register ส่วน Gin รับได้และให้ wildcard ชนะทุก request</button>
+  </div>
+  <div class="explain">
+    <p>ผมลง pattern คู่เดียวกันทั้งสองฝั่งแล้วรัน:
+    <br><code>net/http</code> → <strong>ไม่ panic</strong> · <code>/files/foo</code> ได้ <code>"LITERAL foo"</code> ·
+    <code>/files/bar</code> ได้ <code>"SUBTREE"</code> — กติกา "เจาะจงกว่าชนะ" ตัดสินตอน request
+    <br>Gin → <strong>PANIC</strong>: <code>'/foo' in new path '/files/foo' conflicts with existing wildcard '/*any' in existing prefix '/files/*any'</code>
+    เพราะ radix tree ตัดสินไปแล้วว่า node นี้เป็น catch-all จะแตกลูกออกไปอีกไม่ได้
+    <br>ตัวเลือกที่ 2 ผิดครึ่งเดียว — <code>net/http</code> panic เฉพาะตอนสอง pattern
+    <em>ทับกันโดยไม่มีใครเจาะจงกว่า</em> ซึ่งเคสนี้ไม่ใช่ ·
+    ตัวเลือกที่ 3 และ 4 ผิดเพราะโค้ด Gin ชุดนี้<strong>ไม่มีวันได้รับ request สักตัว</strong>
+    มันตายตั้งแต่ตอนบูตแล้ว — และนั่นคือข้อดี: รู้ตอน deploy ดีกว่ารู้ตอนลูกค้ายิงเข้ามา</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — รีแฟกเตอร์บท 37 เป็น Gin แล้วพิสูจน์ว่าคุณ<em>เสีย</em>อะไรไป</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำให้ Gin ทำงาน" — เป้าหมายคือ
+    <strong>ทำให้เห็นความต่างระหว่างสองตัวด้วยตาตัวเอง แล้วเขียนเทสล็อกมันไว้</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งโปรเจกต์:</strong> สร้างโฟลเดอร์ <code>day8/gin/</code> แล้วสั่ง
+        <code>go mod init day8</code> · <code>go get github.com/gin-gonic/gin@v1.12.0</code> ·
+        สร้างไฟล์ <code>main.go</code> แล้ววางโค้ดจากหัวข้อ 2 ลงไป
+        <br>รัน <code>go run .</code> หนึ่งครั้ง — <strong>อ่าน log ตอน boot ให้ครบทุกบรรทัด
+        แล้วตอบให้ได้ว่า <code>(3 handlers)</code> คือใครบ้าง</strong>
+        <br><em>ถูกแล้วดูยังไง:</em> เห็นบรรทัด <code>[GIN-debug] GET /ping … (3 handlers)</code>
+        และ <code>curl http://127.0.0.1:8080/ping</code> ได้ <code>{"message":"pong"}</code></li>
+    <li><strong>ย้ายโค้ดบท 37 มา:</strong> handler <code>GET /api/v1/users/{id}</code>
+        ที่ตอบ 200 กับ 404 เป็น JSON → เขียนใหม่ด้วย <code>r.Group</code> + <code>c.Param</code> + <code>c.JSON</code>
+        <br><strong>ห้ามลบไฟล์เดิมของบท 37</strong> — แก้ให้ฝั่ง <code>net/http</code> ฟัง
+        <code>:8080</code> ส่วนฝั่ง Gin ฟัง <code>:8081</code> แล้วเปิดสอง terminal รันคู่กัน
+        จะได้ยิงเทียบในข้อถัดไปโดยไม่ต้องปิด ๆ เปิด ๆ</li>
+    <li><strong>ยิงเทียบสี่เคสเดียวกับหัวข้อ 7</strong> (path เต็มเพราะอยู่ใน group <code>/api/v1</code>):
+        <code>GET /api/v1/users/42</code> · <code>GET /api/v1/users/0</code> ·
+        <code>POST /api/v1/users/42</code> · <code>GET /api/v1/nope</code>
+        <br>ใช้ <code>curl -i</code> ทั้งสองฝั่ง แล้ว<strong>ชี้ให้ได้ว่าเคสไหนคือเคสที่ต่าง</strong> และต่างที่ header อะไรบ้าง
+        <br><em>ถูกแล้วดูยังไง:</em> สองเคสแรกตรงกันทุกบรรทัด · เคส <code>POST</code> ฝั่ง
+        <code>net/http</code> ได้ <code>405</code> แต่ฝั่ง Gin ได้ <code>404</code></li>
+    <li><strong>ซ่อมสิ่งที่หายไป:</strong> เติม <code>r.HandleMethodNotAllowed = true</code>
+        และ <code>r.NoRoute(...)</code> ที่ตอบ JSON
+        <br>ยิงซ้ำสี่เคสเดิม — <strong>ตอนนี้เหมือน <code>net/http</code> ครบทุกช่องหรือยัง</strong>
+        (ดู header <code>Allow</code> ด้วย)</li>
+    <li><strong>ทำให้มัน panic ให้ได้:</strong> ลง <code>/users/:id</code> คู่กับ <code>/users/:userId</code>
+        <br>อ่าน panic message แล้วตอบว่า <strong>มัน panic ตอนไหน — ตอน <code>go run</code> หรือตอนยิง request</strong></li>
+    <li><strong>ลอง query ให้ครบสามเคส:</strong> ทำ <code>/search</code> ที่พิมพ์ทั้ง
+        <code>Query</code> / <code>DefaultQuery</code> / <code>GetQuery</code>
+        แล้วยิง <code>?q=go</code> · ไม่ส่ง <code>q</code> · <code>?q=</code>
+        <br><strong>เขียนอธิบายด้วยคำพูดตัวเองว่าทำไม <code>GetQuery</code> ถึงจำเป็น</strong></li>
+    <li><strong>เขียนเทสพิสูจน์</strong> (ต่อยอด <a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16</a> table-driven):
+        <br><code>*gin.Engine</code> เป็น <code>http.Handler</code> จึงเสียบ
+        <code>httptest.NewServer(r)</code> ได้ตรง ๆ ไม่ต้องเปิด port จริง
+        <br>ทำตาราง <code>{method, path, wantStatus, wantContentType}</code> ครอบสี่เคสในข้อ 3
+        <br><strong>เทสข้อ <code>POST /users/42</code> ต้อง fail ทันทีที่คุณลบบรรทัด
+        <code>HandleMethodNotAllowed = true</code> ออก</strong> — ถ้าลบแล้วยังเขียว แปลว่าเทสยังไม่ได้เทสอะไร</li>
+    <li><strong>ท้าทาย:</strong> ตั้ง <code>gin.SetMode(gin.ReleaseMode)</code> แล้วรันข้อ 5 ซ้ำ —
+        <strong>ทายก่อนรัน:</strong> route ที่ชนกันยัง panic อยู่ไหม หรือ release mode ทำให้มันเงียบไป?</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 8</button>
+  <div class="answer">
+    <p style="margin-bottom:0">
+      <strong>ยัง panic เหมือนเดิม</strong> — ผมใช้ <code>gin.SetMode(gin.ReleaseMode)</code>
+      ในโปรแกรมทดสอบ route ชนกันของตัวเองตลอด แล้วก็ยังได้
+      <code>PANIC: '/foo' in new path '/files/foo' conflicts with existing wildcard …</code> ออกมาปกติ
+      <br>เหตุผล: <code>ReleaseMode</code> คุมแค่ว่า<strong>จะพิมพ์บรรทัด <code>[GIN-debug]</code> ไหม</strong>
+      ส่วนการตรวจ route ชนกันเป็นงานของ radix tree ตอน insert ซึ่งทำงานเสมอทุกโหมด
+      <br>สิ่งที่คุณ<em>เสีย</em>ไปตอนขึ้น release คือ<strong>ตาราง route ที่เอาไว้ตรวจว่าพิมพ์ path ตกหรือเปล่า</strong>
+      — เพราะงั้นตรวจตารางนั้นให้ครบตั้งแต่ตอน dev
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>เกร็ดจากสไลด์</strong> — สไลด์ Day 8 หน้า 41 วางโค้ด <code>net/http</code> กับ Gin
+    เทียบกันแบบซ้าย-ขวา เหมือนหัวข้อ 7 ของบทนี้เป๊ะ
+    <br>แต่ตัวอย่างในสไลด์เทียบเฉพาะ <strong>เส้นทางที่ทุกอย่างถูก</strong> (<code>GET /hello</code> → 200)
+    ซึ่งสองฝั่งเหมือนกันจริง ๆ — ผลรันในหัวข้อ 7 ยืนยันว่าสองเคสแรกตรงกันทุกไบต์
+    <br>ความต่างมันซ่อนอยู่ในเส้นทางที่<em>ผิด</em>เท่านั้น และนั่นคือเส้นทางที่สไลด์ไม่ได้พูดถึง
+  </p>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 4 กับข้อ 7 คือสองข้อที่ผมอยากเห็นผลที่สุด</strong> —
+    เพราะเทสที่ยังเขียวหลังจากลบ <code>HandleMethodNotAllowed</code> ออก คือเทสที่กำลังหลอกคุณอยู่
+    <br>ถ้ารันแล้วได้ผลไม่ตรงกับที่เขียนไว้ในบทนี้ <strong>ส่ง output มาได้เลย</strong> —
+    ผมอยากรู้ว่าเวอร์ชัน Gin ของคุณต่างจาก <code>v1.12.0</code> ตรงไหน
+    <br>หรือถ้ายังงงว่า "แล้วสรุปควรใช้ Gin ไหม" — ถามมาพร้อมบอกด้วยว่าโปรเจกต์คุณมีกี่ route
+    และมี middleware กี่ตัว <strong>คำตอบขึ้นกับสองเลขนี้มากกว่าความชอบส่วนตัว</strong>
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0037-net-http-server.html">← บทเรียน 37</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0039-gin-binding-middleware.html">บทเรียน 39 → binding &amp; middleware</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/github.com/gin-gonic/gin">pkg.go.dev — gin</a> — API reference ตัวจริง: ดู <code>Context.Param</code>, <code>Context.Query</code>, <code>Context.GetQuery</code>, <code>Context.JSON</code> และ field <code>Engine.HandleMethodNotAllowed</code></li>
+  <li><a href="https://gin-gonic.com/en/docs/quickstart/">Gin — Quickstart</a> · <a href="https://gin-gonic.com/en/docs/examples/">ตัวอย่างทางการ</a> — <code>gin.Default()</code>, route group, <code>gin.H</code></li>
+  <li><a href="https://github.com/gin-gonic/gin">GitHub — gin-gonic/gin</a> — README บอกเองว่า router มาจาก httprouter เวอร์ชันดัดแปลง และไฟล์ <code>tree.go</code> ยังติด license header ของ httprouter</li>
+  <li><a href="https://github.com/julienschmidt/httprouter">julienschmidt/httprouter</a> — <strong>อ่านหัวข้อ "Named parameters" และ "Catch-All parameters"</strong> เพื่อเข้าใจว่าทำไม <code>*any</code> ต้องอยู่ท้าย path เสมอ</li>
+  <li><a href="https://pkg.go.dev/net/http#ServeMux">pkg.go.dev — <code>net/http.ServeMux</code></a> — อ่านหัวข้อ "Patterns" และ "Precedence" เทียบกับกติกาของ Gin ในบทนี้</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/405">MDN — 405 Method Not Allowed</a> — สเปกบอกว่า response 405 <strong>ต้อง</strong> มี header <code>Allow</code> ซึ่งเป็นเหตุผลว่าทำไม 404 ของ Gin ถึงไม่ตรงสเปก</li>
+  <li><a href="./0037-net-http-server.html">บทเรียน 37</a> — โค้ดต้นทางที่เอามารีแฟกเตอร์ในหัวข้อ 7 · <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> — struct tag ที่ <code>c.JSON</code> ใช้อยู่ข้างใน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

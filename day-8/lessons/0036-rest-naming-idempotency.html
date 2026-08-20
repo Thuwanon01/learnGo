@@ -1,0 +1,939 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 36 — กฎตั้งชื่อ 7 ข้อ · versioning · idempotency</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 36 · Day 8 · API design</p>
+  <h1>กฎตั้งชื่อ 7 ข้อ · versioning · idempotency</h1>
+  <p class="meta">~16 นาที · ต้องมี: <a href="./0033-rest-resource-method.html">บทเรียน 33</a>–35 (resource, method, status code, query/body/header) · ใช้ <code>json.Unmarshal</code> จาก <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a></p>
+  <p class="standfirst">
+    กฎ 7 ข้อในสไลด์อ่านผ่าน ๆ เหมือนเรื่อง<strong>ความสวยของ URL</strong> — ไม่ใช่เลย
+    <br>มันคือกฎที่ทำให้คนอื่น<strong>เดา endpoint ของคุณถูกโดยไม่ต้องเปิดเอกสาร</strong>
+    และบทนี้จะรันให้ดูว่าเดาผิดตัวเดียวจะเกิดอะไรขึ้น
+    <br>ระหว่างทางเราจะเจอว่า<strong>สไลด์หน้า 35 ติด ✅ กับ ❌ กลับด้าน</strong>
+    — ผมจะไม่บอกก่อน แต่จะให้คุณจับผิดเอง แล้วเราจะปิดท้ายด้วยคำถามที่แพงที่สุดในบทนี้:
+    <strong>ยิงจ่ายเงินซ้ำสองครั้ง เงินจะออกสองรอบไหม</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>🧰 บทนี้พิมพ์ตามได้ แต่ยังไม่ต้องเขียน HTTP server</strong> —
+    ผลรันทุกอันในหน้านี้มาจากเซิร์ฟเวอร์เล็ก ๆ ที่ผมเขียนไว้ก่อนแล้วยิงด้วย <code>curl</code>
+    (Go 1.26.5 darwin/arm64) กับเทส <code>go test</code> ที่ใช้แค่ <code>encoding/json</code>
+    <br>เลข port <code>53691</code> ที่เห็นในคำสั่ง <code>curl</code> เป็นของเซิร์ฟเวอร์สาธิตตัวนั้น
+    — <strong>คุณ copy ไปยิงตามตรง ๆ ไม่ได้</strong> ให้อ่านเอาผลลัพธ์อย่างเดียว
+    <br>โค้ดฝั่ง server จะสอนกันจริงจังใน
+    <a href="./0037-net-http-server.html">บทเรียน 37</a> — บทนี้โฟกัสที่<strong>การตัดสินใจ</strong>
+    ว่า endpoint ควรหน้าตายังไง ก่อนที่จะมีบรรทัดโค้ดสักบรรทัด
+  </p>
+</div>
+
+<h2>1 · URL ไม่ใช่เรื่องความสวย มันคือ signature ของฟังก์ชันที่ compiler ไม่ช่วยเช็ค</h2>
+
+<p>
+  ตลอด 35 บทที่ผ่านมา เวลาคุณเรียกฟังก์ชันผิดชื่อ Go จะด่าคุณทันทีตอน compile —
+  พิมพ์ <code>repo.FindById</code> ทั้งที่ของจริงชื่อ <code>FindByID</code> โปรแกรมไม่ยอมสร้างไฟล์ให้ด้วยซ้ำ
+  <br>แต่ HTTP ไม่มีขั้นตอนนั้น <strong>คนที่เรียก API ของคุณคือโปรแกรมของคนอื่น
+  ที่พิมพ์ path เป็น "สตริง"</strong> — พิมพ์ผิดตัวเดียวไม่มีใครเตือน จะรู้ตัวก็ตอน request วิ่งจริงแล้ว
+</p>
+
+<p>
+  ผม<strong>ลงทะเบียน</strong> (= บอก router ว่ามี path นี้อยู่ ตามที่เจอใน
+  <a href="./0034-http-status-code.html">บทเรียน 34</a>) ไว้แค่ <code>GET /payment-methods</code>
+  เส้นเดียว แล้วยิงด้วยการสะกดแบบต่าง ๆ:
+</p>
+
+<pre><code>GET /payment-methods     -&gt; <strong>200</strong>
+GET /Payment-Methods     -&gt; <strong>404</strong>
+GET /PAYMENT-METHODS     -&gt; <strong>404</strong>
+GET /payment_methods     -&gt; <strong>404</strong>
+GET /paymentMethods      -&gt; <strong>404</strong></code></pre>
+
+<p>
+  สี่บรรทัดล่างคือ<strong>คนที่เข้าใจว่า API ของคุณมีอยู่จริง เขาแค่เดาการสะกดผิด</strong>
+  และสิ่งที่เขาได้กลับไปคือ 404 — status code เดียวกับ "ไม่มีข้อมูลนี้"
+  เขาจะแยกไม่ออกเลยว่า <em>ผมพิมพ์ path ผิด</em> หรือ <em>ข้อมูลไม่มีจริง</em>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong>ทำไม <code>/Users</code> กับ <code>/users</code> ถึงคนละเส้น</strong>
+    <br>มาตรฐาน URI (RFC 3986) บอกว่า <strong>scheme กับ host เท่านั้นที่ไม่สนตัวพิมพ์</strong>
+    (<code>HTTP://EXAMPLE.COM</code> = <code>http://example.com</code>)
+    ส่วน<strong>ทุกอย่างหลังจากนั้น รวมถึง path — สนตัวพิมพ์เล็กใหญ่</strong>
+    <br>นี่คือเหตุผลที่กฎข้อ 3 (lowercase) ไม่ใช่รสนิยม: มันคือการเลือกตัวสะกด<em>แบบเดียว</em>
+    จากหลายแบบที่ระบบมองว่าเป็นคนละเส้นทางกันหมด
+  </p>
+</div>
+
+<h2>2 · กฎ 7 ข้อ จริง ๆ แล้วตอบอยู่แค่สองคำถาม</h2>
+
+<p>
+  ถ้าท่องเป็น 7 ข้อจะลืม แต่ถ้าเห็นว่ามันแบ่งเป็นสองกลุ่มจะจำได้ตลอดชีวิต
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>กฎ</th><th>✅ สไลด์บอก</th><th>❌ สไลด์บอก</th><th>กลุ่ม</th></tr>
+  <tr>
+    <td><strong>1</strong> ใช้ Noun มากกว่า Verb</td>
+    <td><code>GET /users</code><br><code>POST /users</code></td>
+    <td><code>GET /getUsers</code><br><code>POST /createUser</code></td>
+    <td rowspan="4"><strong>A · "ของสิ่งนี้ชื่ออะไร"</strong><br>เป้าหมาย = คนอื่น<em>เดาถูก</em></td>
+  </tr>
+  <tr>
+    <td><strong>2</strong> ชื่อ resource consistent</td>
+    <td><code>/users /orders /products</code></td>
+    <td><code>/user /orders /product-list</code></td>
+  </tr>
+  <tr>
+    <td><strong>3</strong> lowercase</td>
+    <td><code>/users /orders /products</code></td>
+    <td><code>/Users /Orders /PRODUCTS</code></td>
+  </tr>
+  <tr>
+    <td><strong>4</strong> หลายคำใช้ <code>-</code></td>
+    <td><code>/payment-methods</code></td>
+    <td><code>/paymentMethods</code><br><code>/payment_methods</code><br><code>/PaymentMethods</code></td>
+  </tr>
+  <tr>
+    <td><strong>5</strong> relationship ใช้ path</td>
+    <td><code>/users/123/orders</code></td>
+    <td>—</td>
+    <td rowspan="3"><strong>B · "ข้อมูลชิ้นนี้ควรไปช่องไหน"</strong><br>path / query / method</td>
+  </tr>
+  <tr>
+    <td><strong>6</strong> filter ใช้ query</td>
+    <td><code>/orders?status=paid</code></td>
+    <td><code>/orders/status/paid</code></td>
+  </tr>
+  <tr>
+    <td><strong>7</strong> อย่าใส่ action ใน URI<br>ถ้า method สื่อได้แล้ว</td>
+    <td colspan="2"><strong>หัวข้อ 3 ของบทนี้ทั้งหัวข้อ</strong></td>
+  </tr>
+</table>
+</div>
+
+<p>
+  <strong>กลุ่ม A (ข้อ 1–4) คือกฎการสะกด</strong> — ทุกข้อแก้ปัญหาเดียวกับที่คุณเพิ่งเห็นในหัวข้อ 1
+  คือมี "ตัวสะกดที่ถูก" อยู่แบบเดียว แล้วที่เหลือกลายเป็น 404 หมด
+  <br>ข้อ 2 ที่ดูจุกจิกที่สุด (<code>/user</code> เอกพจน์ปนกับ <code>/orders</code> พหูพจน์)
+  จริง ๆ แล้วแพงที่สุด เพราะมันทำให้คนที่ใช้ API ของคุณ<strong>เดาไม่ได้อีกต่อไป</strong> —
+  พอเจอ <code>/user</code> ครั้งหนึ่ง เขาต้องเปิดเอกสารทุกครั้งไปตลอด ไม่กล้าเดาอีกเลย
+</p>
+
+<p>
+  <strong>กลุ่ม B (ข้อ 5–7) คือกฎการจัดที่อยู่ของข้อมูล</strong> —
+  ต่อยอดจาก <a href="./0035-query-body-header.html">บทเรียน 35</a> โดยตรง:
+  <br>ข้อ 5 = สิ่งที่<strong>ระบุตัวของ</strong> (id, ความเป็นเจ้าของ) ไปอยู่ที่ <strong>path</strong>
+  <br>ข้อ 6 = สิ่งที่<strong>กรอง/เรียง/แบ่งหน้า</strong> ไปอยู่ที่ <strong>query</strong>
+  <br>ข้อ 7 = สิ่งที่บอกว่า<strong>จะทำอะไรกับของชิ้นนั้น</strong> ไปอยู่ที่ <strong>method</strong>
+</p>
+
+<div class="win">
+  <span class="label">🔍 ทำไมข้อ 6 ถึงสำคัญกว่าที่คิด</span>
+  <p style="margin-bottom:0">
+    <code>/orders/status/paid</code> ดูสวยดี จนวันที่ PM ขอเพิ่มตัวกรองที่สอง —
+    คุณจะได้ <code>/orders/status/paid/from/2026-01-01</code> แล้วก็ต้อง<em>ลงทะเบียน route ใหม่</em>
+    ทุกครั้งที่มีตัวกรองเพิ่ม และลำดับก็มีความหมายขึ้นมาเฉย ๆ
+    <br>ส่วน <code>/orders?status=paid&amp;from=2026-01-01</code> คือ<strong>เส้นเดิม</strong>
+    — สลับลำดับได้ ตัดออกได้ เพิ่มได้ โดยไม่แตะ routing สักบรรทัด
+    <br>หลักที่ใช้ตัดสิน: <strong>path = ของชิ้นไหน · query = เอาเซ็ตย่อยแบบไหนของของชุดนั้น</strong>
+  </p>
+</div>
+
+<h2>3 · จับผิดสไลด์หน้า 35</h2>
+
+<p>
+  หน้า 29–34 ของสไลด์ไล่กฎข้อ 1–6 มาถูกหมด พอถึงหน้า 35 ซึ่งเป็นตัวอย่างของ<strong>กฎข้อ 7</strong>
+  หน้าจอโชว์แบบนี้ (ผมลอกมาทั้งบล็อกตามที่เห็นในสไลด์ รวมเลขบรรทัด):
+</p>
+
+<div class="predict">
+  <pre><code><span class="n">1</span>  <span class="c">// ✅ แนะนำ</span>
+<span class="n">2</span>  POST /users/create
+<span class="n">3</span>  POST /users/123/delete
+<span class="n">4</span>
+<span class="n">5</span>  <span class="c">// ❌ แบบนี้ไม่แนะนำ</span>
+<span class="n">6</span>  POST /users
+<span class="n">7</span>  DELETE /users/123</code></pre>
+  <p class="ask">
+    หน้านี้อยู่ใต้หัวข้อ <strong>Rule 7 — อย่าใส่ Action ใน URI ถ้า HTTP Method สื่อได้แล้ว</strong>
+    <br>อ่านมันเทียบกับตัวกฎเอง แล้วตอบสองข้อ:
+    <strong>(ก) มีอะไรขัดกันเองในสไลด์หน้านี้</strong> และ
+    <strong>(ข) ถ้าย้อนไปดูสไลด์หน้า 22 (REST – Method) จะเจอหลักฐานอะไรเพิ่ม</strong>
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>
+      <strong>สไลด์ติดเครื่องหมายกลับด้าน</strong> — บรรทัด 1 ควรเป็น ❌ และบรรทัด 5 ควรเป็น ✅
+    </p>
+    <p>
+      <strong>(ก) มันขัดกับหัวข้อของตัวเอง:</strong> <code>create</code> กับ <code>delete</code>
+      คือ action ที่วางอยู่ใน URI เต็ม ๆ ทั้งที่ HTTP method สื่อได้อยู่แล้ว —
+      นั่นคือสิ่งที่กฎข้อ 7 <em>ห้าม</em> ตรงตัวอักษร แต่กลับถูกติด ✅ ว่าแนะนำ
+      <br>แถมยังขัดกฎข้อ 1 ด้วย เพราะ <code>create</code>/<code>delete</code> เป็น verb
+      ซึ่งหน้า 29 เพิ่งบอกไปเองว่าอย่าใช้
+    </p>
+    <p>
+      <strong>(ข) หน้า 22 (REST – Method) เขียนไว้ตรง ๆ ว่า:</strong>
+      <br><code>// สร้าง User</code> → <code>POST /users</code>
+      <br><code>// ลบ User 123</code> → <code>DELETE /users/123</code>
+      <br>ซึ่งคือคู่ที่หน้า 35 ติด ❌ ไว้พอดี — <strong>สไลด์ชุดเดียวกันสอนสองแบบขัดกันเอง</strong>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>สิ่งที่ถูกคือ:</strong>
+    </p>
+    <div class="compare">
+      <div class="side bad">
+        <h4>คู่นี้ต่างหากที่ต้องติด ❌</h4>
+        <pre><code>POST /users/create
+POST /users/123/delete</code></pre>
+        <p style="margin-bottom:0">
+          verb ซ้อนอยู่ใน URI · <code>POST</code> ถูกใช้ทำทุกอย่าง
+          จน method ไม่เหลือความหมาย
+        </p>
+      </div>
+      <div class="side good">
+        <h4>คู่นี้ต่างหากที่ต้องติด ✅</h4>
+        <pre><code>POST /users
+DELETE /users/123</code></pre>
+        <p style="margin-bottom:0">
+          URI บอกว่า<em>ของอะไร</em> · method บอกว่า<em>ทำอะไร</em>
+          — ตรงตามกฎข้อ 1 และข้อ 7
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ย้ำให้ชัด: นี่คือสไลด์พิมพ์ผิด ไม่ใช่คุณอ่านผิด</strong>
+    <br>ผมเปิดภาพสไลด์หน้า 35 ยืนยันแล้วว่าเครื่องหมายเป็นอย่างนั้นจริง —
+    ถ้าคุณอ่านหน้านั้นแล้วรู้สึกว่า "เอ๊ะ มันไม่ใช่หรือเปล่า" <strong>ความรู้สึกนั้นถูกแล้ว</strong>
+    <br>และนี่คือทักษะที่มีค่ากว่าการจำกฎ: <strong>เอกสารทุกฉบับพิมพ์ผิดได้</strong>
+    วิธีตรวจคือเอาตัวอย่างไปทาบกับกฎที่มันอ้างอิง ถ้าตัวอย่างขัดกับกฎของตัวเอง
+    ให้เชื่อกฎ แล้วไปหาหลักฐานยืนยันจากที่อื่นในเอกสารเดียวกัน (ในเคสนี้คือหน้า 22)
+    <br><em>(สไลด์ชุดนี้มีอีกจุดหนึ่งคล้าย ๆ กัน: หน้า 47 หัวข้อเขียนว่า "CORS Middleware"
+    แต่คำอธิบายใต้หัวข้อกลับเป็นนิยามของ idempotency — เป็นข้อความตกค้างจากการ copy-paste)</em>
+  </p>
+</div>
+
+<h2>4 · แล้ว <code>PATCH /users/123/suspend</code> ล่ะ ทำไมถึงถูก</h2>
+
+<p>
+  หน้า 36 ของสไลด์ต่อจากหน้า 35 ทันที และหน้านี้<strong>เขียนถูก</strong>:
+</p>
+
+<pre><code><span class="c">// ✅ แนะนำ</span>
+PATCH /users/123/suspend
+PATCH /users/123/reset-password</code></pre>
+
+<p>
+  ตรงนี้มือใหม่งงกันเยอะมาก — <em>เมื่อกี้บอกว่าห้ามใส่ verb ใน URI แล้วนี่มันไม่ใช่ verb เหรอ</em>
+  <br>คำตอบอยู่ในตัวกฎเอง: <strong>"อย่าใส่ Action ใน URI <u>ถ้า HTTP Method สื่อได้แล้ว</u>"</strong>
+  — เงื่อนไขท้ายประโยคคือหัวใจ
+</p>
+
+<p>
+  HTTP มี method ให้เลือกอยู่ไม่กี่ตัว และมันสื่อได้แค่ 5 อย่าง:
+  อ่าน (<code>GET</code>) / สร้าง (<code>POST</code>) / แทนที่ทั้งก้อน (<code>PUT</code>) /
+  แก้บาง field (<code>PATCH</code>) / ลบ (<code>DELETE</code>)
+  <br>ทีนี้ลองถามว่า <strong>"ระงับบัญชี" คือหนึ่งใน 5 อย่างนั้นไหม</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>คำถามตรวจสอบ</th><th><code>create</code> / <code>delete</code></th><th><code>suspend</code></th></tr>
+  <tr>
+    <td>method ตัวไหนสื่อได้ตรง ๆ ไหม</td>
+    <td><strong>ได้</strong> — <code>POST</code> / <code>DELETE</code></td>
+    <td><strong>ไม่ได้</strong> — ไม่มี method ชื่อ SUSPEND</td>
+  </tr>
+  <tr>
+    <td>มันคือการแก้ field เฉย ๆ หรือมีกฎธุรกิจของตัวเอง</td>
+    <td>—</td>
+    <td>มีกฎของตัวเอง (ยกเลิก session, ส่งเมล, เขียน audit log)</td>
+  </tr>
+  <tr>
+    <td>ถ้าเขียนเป็น <code>PATCH /users/123</code> เฉย ๆ จะเป็นยังไง</td>
+    <td>—</td>
+    <td>client ต้องส่ง <code>{"status":"suspended"}</code> เอง<br>= เปิดให้ client เซ็ต status เป็นอะไรก็ได้</td>
+  </tr>
+  <tr>
+    <td>สรุป</td>
+    <td><strong>ผิดกฎ 7</strong></td>
+    <td><strong>เป็นข้อยกเว้นที่ถูกต้อง</strong></td>
+  </tr>
+</table>
+</div>
+
+<p>
+  แถวที่สามคือเหตุผลที่แข็งแรงที่สุด: <code>PATCH /users/123</code> ที่รับ
+  <code>{"status":"suspended"}</code> แปลว่าคุณกำลังบอกโลกว่า
+  <strong><code>status</code> เป็น field ที่แก้ได้ตามใจ</strong> —
+  พรุ่งนี้จะมีคนส่ง <code>{"status":"admin"}</code> มาให้เห็น
+  <br>ส่วน <code>PATCH /users/123/suspend</code> คือประตูบานเดียวที่เปิดไปได้ทางเดียว
+  — <strong>ตัว URI เองกลายเป็นการจำกัดสิทธิ์</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>กฎง่าย ๆ ที่ใช้ได้จริงเวลาตัดสินใจ</strong>
+    <br>ถ้า action ที่คุณอยากทำ<strong>แปลเป็นภาษา CRUD ได้</strong> (สร้าง/อ่าน/แทนที่/ลบ ของสิ่งหนึ่ง)
+    → ห้ามใส่ verb ใช้ method อย่างเดียว
+    <br>ถ้ามัน<strong>เป็น "การเปลี่ยนสถานะ" ที่มีกฎธุรกิจของตัวเอง</strong>
+    (suspend, reset-password, publish, cancel, refund)
+    → ใส่เป็น sub-path ได้ และใช้ <code>POST</code> หรือ <code>PATCH</code>
+    <br><em>เกร็ด:</em> อีกสำนักหนึ่งจะแปลง action นั้นให้กลายเป็น resource ไปเลย เช่น
+    <code>PUT /users/123/suspension</code> — ทั้งสองแบบมีคนใช้จริงในระดับ production
+    ข้อสำคัญกว่าคือ<strong>ทั้งโปรเจกต์เลือกแบบเดียวกัน</strong> (นั่นคือกฎข้อ 2 อีกที)
+  </p>
+</div>
+
+<h2>5 · ก่อนเขียนโค้ด ต้องตอบ 5 ช่องนี้ให้ครบ</h2>
+
+<p>
+  สไลด์หน้า 38 ให้ checklist มา 5 บรรทัด และมันสั้นจนอ่านผ่านได้ง่ายมาก
+  แต่นี่คือสิ่งที่แยก "endpoint ที่ทีมอื่นเอาไปใช้ได้" ออกจาก "endpoint ที่ต้องเดินไปถามคนเขียน"
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ช่อง</th><th>คำถามที่ต้องตอบ</th><th>ตัวอย่าง: <code>POST /recipes</code> ของ Wongnok</th></tr>
+  <tr><td><strong>Request body</strong></td><td>ส่งอะไรเข้ามา field ไหนบังคับ</td><td>4 field: <code>name</code> · <code>cooking_time</code> · <code>difficulty</code> · <code>ingredients</code><br>— บังคับแค่ <code>name</code></td></tr>
+  <tr><td><strong>Response status</strong></td><td>สำเร็จแล้วตอบเลขอะไร</td><td><code>201 Created</code> (สร้างของใหม่ ไม่ใช่ 200)</td></tr>
+  <tr><td><strong>Response body</strong></td><td>ตอบอะไรกลับ</td><td>สูตรที่เพิ่งสร้าง <strong>พร้อม <code>id</code> ที่ server เป็นคนตั้ง</strong></td></tr>
+  <tr><td><strong>Error status</strong></td><td>พังแบบไหนได้บ้าง แต่ละแบบเลขอะไร</td><td>400 กรอกไม่ครบ · 401 ไม่ได้ล็อกอิน · 409 ชื่อซ้ำ</td></tr>
+  <tr><td><strong>Error body</strong></td><td>หน้าตา error <strong>เหมือนกันทั้งระบบไหม</strong></td><td><code>{"error":"..."}</code> รูปแบบเดียวทุก endpoint</td></tr>
+</table>
+</div>
+
+<p>
+  ช่องที่คนลืมบ่อยที่สุดคือ<strong>ช่องสุดท้าย</strong> และมันเจ็บที่สุด
+  <br>ถ้า endpoint หนึ่งตอบ <code>{"error":"..."}</code> อีก endpoint ตอบ <code>{"message":"..."}</code>
+  อีกอันตอบข้อความเปล่า ๆ ไม่ใช่ JSON — <strong>ฝั่ง frontend ต้องเขียนโค้ดอ่าน error สามแบบ</strong>
+  และจะมีวันที่เขาอ่านพลาดแล้วโชว์ <code>undefined</code> ให้ลูกค้าเห็น
+</p>
+
+<p>
+  ทั้ง 5 ช่องนี้รวมกันเรียกว่า <strong>contract</strong> และคำนี้ต้องเข้าใจตามตัวอักษร: มัน<em>คือสัญญา</em>
+  <br>พอมีคนเอา endpoint ของคุณไปใช้แล้ว <strong>คุณแก้ contract ฝ่ายเดียวไม่ได้อีก</strong>
+  <br>นั่นคือเหตุผลที่ต้องมี versioning ซึ่งเป็นหัวข้อสุดท้ายของบทนี้
+  — แต่ก่อนจะไปถึงตรงนั้น มีคำถามที่แพงกว่ารออยู่
+</p>
+
+<h2>6 · Idempotency — คำที่แปลว่า "ยิงซ้ำได้ไม่พัง"</h2>
+
+<p>
+  สไลด์หน้า 39 นิยามไว้ว่า
+  <strong>"หากมีการเรียก operation เดิมซ้ำหลายครั้ง ผลลัพธ์สุดท้ายควรเหมือนเรียกเพียงครั้งเดียว"</strong>
+  แล้วยกตัวอย่างที่ทุกคนกลัว: <code>POST /payments</code> แล้ว retry — <em>จ่ายสองรอบไหม?</em>
+</p>
+
+<p>
+  ก่อนไปต่อ ต้องเข้าใจว่า<strong>ทำไมถึงมี retry ตั้งแต่แรก</strong> —
+  ไม่ใช่เพราะผู้ใช้กดปุ่มรัว แต่เพราะ<strong>เน็ตขาดตอนกลางทางแล้วไม่มีใครรู้ว่าถึงหรือยัง</strong>:
+</p>
+
+<div class="diagram">
+<pre>  client                                server
+    │                                     │
+    │──── POST /payments ────────────────▶│  ตัดเงินเรียบร้อย ✔
+    │                                     │
+    │◀╌╌╌ 201 Created ╌╌╌╌✂╌╌ (เน็ตขาด) ╌╌│  <strong>server ทำงานเสร็จแล้ว</strong>
+    │                                     │
+  timeout — client เห็นแค่ "ไม่มีคำตอบ"
+    │
+    ├─▶ ยิงซ้ำ  = เสี่ยงตัดเงินสองรอบ
+    └─▶ ไม่ยิงซ้ำ = เสี่ยงลูกค้าจ่ายไม่สำเร็จทั้งที่เงินออกไปแล้ว</pre>
+</div>
+
+<p>
+  <strong>client ไม่มีทางรู้เลย</strong>ว่า request ตายก่อนถึง server หรือตายตอนขากลับ —
+  สองเคสนี้หน้าตาเหมือนกันเป๊ะจากฝั่ง client
+  นี่คือเหตุผลที่ทุก HTTP client ในโลกจริงมี retry และเป็นเหตุผลที่ idempotency ต้องมีอยู่
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>method</th><th>safe<br><small>(ไม่เปลี่ยนอะไรเลย)</small></th><th>idempotent<br><small>(ยิงซ้ำแล้ว state ปลายทางเหมือนเดิม)</small></th><th>เหตุผล</th></tr>
+  <tr><td><code>GET</code></td><td>✅</td><td>✅</td><td>แค่อ่าน ยิงกี่ครั้งก็ไม่แตะข้อมูล</td></tr>
+  <tr><td><code>PUT</code></td><td>❌</td><td>✅</td><td>"แทนที่ทั้งก้อนด้วยค่านี้" ทับซ้ำก็ได้ผลเดิม</td></tr>
+  <tr><td><code>DELETE</code></td><td>❌</td><td>✅</td><td>ลบซ้ำ ปลายทางก็คือ "ไม่มีของชิ้นนี้" เหมือนกัน</td></tr>
+  <tr><td><code>POST</code></td><td>❌</td><td><strong>❌</strong></td><td>"สร้างของใหม่" ยิงสองครั้งได้ของสองชิ้น</td></tr>
+  <tr><td><code>PATCH</code></td><td>❌</td><td><strong>แล้วแต่ที่คุณเขียน</strong></td><td><code>{"name":"A"}</code> ซ้ำได้ · <code>{"add_points":10}</code> ซ้ำไม่ได้</td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ idempotent วัดที่ "สถานะปลายทางของ server" ไม่ใช่ที่ "response ที่ client ได้"</strong>
+    <br>นี่คือประโยคที่ต้องอ่านสามรอบ เพราะเดี๋ยวหัวข้อ 7 จะโชว์เคสที่
+    <strong>status code ต่างกันในสองครั้ง แต่ยัง idempotent อยู่</strong>
+    <br>และสังเกตว่า <code>PATCH</code> ไม่ได้ถูกกำหนดมาให้ idempotent —
+    <strong>มันขึ้นกับว่าคุณออกแบบ body ยังไง</strong> body ที่บอก "ค่าใหม่คือเท่านี้" ซ้ำได้
+    ส่วน body ที่บอก "เอาของเดิมบวกเพิ่ม" ซ้ำไม่ได้
+  </p>
+</div>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — endpoint <code>POST /payments</code> ตัดเงินครั้งละ 500 บาท
+  แล้วคืนยอดสะสมที่ตัดไปแล้วทั้งหมดมาด้วย ผมยิงมันสามครั้งติดกัน<strong>โดยไม่เปลี่ยนอะไรเลย</strong>
+  (จำลอง client ที่ retry เพราะ timeout)</p>
+  <pre><code>$ curl -X POST http://127.0.0.1:53691/payments   <span class="c"># ยิงสามครั้งติด</span></code></pre>
+  <p class="ask">
+    ทั้งสามครั้งได้ status อะไร · <code>payment_id</code> เหมือนกันไหม ·
+    และสุดท้าย <code>charged_total</code> เป็นเท่าไหร่
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>{"payment_id":"<strong>pay_1</strong>","amount":500,"charged_total":<strong>500</strong>}   &lt;- 201
+{"payment_id":"<strong>pay_2</strong>","amount":500,"charged_total":<strong>1000</strong>}  &lt;- 201
+{"payment_id":"<strong>pay_3</strong>","amount":500,"charged_total":<strong>1500</strong>}  &lt;- 201
+
+$ curl http://127.0.0.1:53691/total
+charged_total=<strong>1500</strong> payments=<strong>pay_1,pay_2,pay_3</strong></code></pre>
+    <p>
+      <strong>ทั้งสามครั้งสำเร็จหมด ได้ 201 ครบ ไม่มี error สักตัว</strong> —
+      และลูกค้าโดนตัดเงินไป <strong>1,500 บาท</strong> จากการกดจ่าย 500 บาทครั้งเดียว
+    </p>
+    <p style="margin-bottom:0">
+      จุดที่ต้องเห็นให้ชัด: <strong>ไม่มีอะไรพังเลย</strong> ไม่มี exception ไม่มี 500
+      log สวยงามทั้งสามบรรทัด — <em>server ทำถูกต้องตามที่ถูกสั่งทุกประการ</em>
+      ปัญหาไม่ได้อยู่ที่โค้ดพัง ปัญหาอยู่ที่<strong>คำสั่ง "สร้าง payment ใหม่"
+      ถูกส่งมาสามครั้งจริง ๆ</strong> — และ server ไม่มีทางรู้ว่าสามครั้งนั้นคือเจตนาเดียวกัน
+    </p>
+  </div>
+</div>
+
+<p>
+  เทียบกับ <code>PUT</code> ที่ยิงซ้ำแบบเดียวกัน — ผมยิงสองครั้งด้วย body เดิม:
+</p>
+
+<pre><code>$ curl -X PUT -d '{"name":"Somchai"}' http://127.0.0.1:53691/users/9   <span class="c"># ยิงสองครั้ง</span>
+{"id":"9","name":"Somchai"}  &lt;- 200
+{"id":"9","name":"Somchai"}  &lt;- 200</code></pre>
+
+<p>
+  เหมือนกันทุกตัวอักษร เพราะ <code>PUT</code> แปลว่า <em>"ทำให้ user 9 มีหน้าตาเป็นแบบนี้"</em>
+  ไม่ใช่ <em>"เพิ่มอีกหนึ่ง"</em> — <strong>ความต่างอยู่ที่ความหมายของคำสั่ง ไม่ได้อยู่ที่ความเก่งของโค้ด</strong>
+</p>
+
+<h2>7 · <code>DELETE /users/1</code> สองครั้ง ครั้งที่สองควรตอบ 404 หรือ 204</h2>
+
+<p>
+  นี่เป็นคำถามที่ถูกเถียงกันในทุกทีมที่เคยทำ API และ<strong>มันไม่มีคำตอบเดียว</strong> —
+  แต่การรู้ว่าทำไมถึงไม่มีคำตอบเดียว มีค่ากว่าการจำคำตอบ ผมเขียนทั้งสองแบบแล้วยิงจริง
+  <br><em>(กล่องแดง/เขียวข้างล่างเป็นแค่สีของกล่องเปรียบเทียบ <strong>ไม่ได้แปลว่าแบบ A ผิด</strong>
+  — เดี๋ยวจะเห็นว่าถูกทั้งคู่)</em>
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>แบบ A — ครั้งที่สองตอบ 404</h4>
+    <pre><code>1st DELETE /users/1 -&gt; <strong>204</strong>
+2nd DELETE /users/1 -&gt; <strong>404</strong>
+{"error":"user not found"}</code></pre>
+    <p style="margin-bottom:0">
+      พูดความจริงว่า <em>"ตอนคุณสั่ง มันไม่มีอยู่แล้ว"</em>
+      <br>แต่ client ที่ retry อัตโนมัติจะเห็น error ทั้งที่งานสำเร็จไปแล้ว
+    </p>
+  </div>
+  <div class="side good">
+    <h4>แบบ B — ตอบ 204 เสมอ</h4>
+    <pre><code>1st DELETE /users/2 -&gt; <strong>204</strong>
+2nd DELETE /users/2 -&gt; <strong>204</strong></code></pre>
+    <p style="margin-bottom:0">
+      พูดถึงผลลัพธ์ว่า <em>"ตอนนี้ไม่มี user 2 แล้ว ตามที่คุณต้องการ"</em>
+      <br>retry เงียบสนิท แต่ client แยกไม่ออกว่าเพิ่งลบ หรือไม่เคยมี
+    </p>
+  </div>
+</div>
+
+<p>
+  <strong>สำคัญที่สุด: ทั้งสองแบบ idempotent ทั้งคู่</strong>
+  <br>เพราะ idempotency วัดที่<em>สถานะปลายทางของ server</em> — และปลายทางของทั้งสองแบบเหมือนกันเป๊ะ
+  คือ "ไม่มี user คนนี้" ไม่ว่าจะยิงกี่ครั้ง · <strong>status code ที่ต่างกันไม่ได้ทำให้มันเลิก idempotent</strong>
+</p>
+
+<p>
+  เวลาเลือกจริง ให้ถามว่า<strong>ใครเป็นคนเรียก endpoint นี้</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สถานการณ์</th><th>เลือก</th><th>เพราะ</th></tr>
+  <tr>
+    <td>หน้าเว็บที่ผู้ใช้กดปุ่มลบเอง</td>
+    <td><strong>404</strong></td>
+    <td>ถ้าของหายไปแล้ว ผู้ใช้ควรได้รู้ว่าหน้าจอตัวเองเก่า ไม่ใช่กดแล้วเงียบ</td>
+  </tr>
+  <tr>
+    <td>job / service อื่นที่มี retry อัตโนมัติ</td>
+    <td><strong>204</strong></td>
+    <td>retry ที่ "สำเร็จซ้ำ" ไม่ควรกลายเป็น error ใน log จนคนตามหาสาเหตุผิดทาง</td>
+  </tr>
+  <tr>
+    <td>ตัดสินใจไม่ได้จริง ๆ</td>
+    <td><strong>อันไหนก็ได้</strong></td>
+    <td><strong>แต่ต้องเขียนลงช่อง "Error status" ของ contract</strong> แล้วทำเหมือนกันทั้งระบบ</td>
+  </tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ สิ่งที่ผิดแน่ ๆ ไม่ว่าจะเลือกแบบไหน</strong>
+    <br><strong>1.</strong> ตอบ <code>500</code> เพราะ "ลบไม่ได้" — ไม่มีอะไรพังที่ฝั่ง server เลย
+    การลบของที่ไม่มีไม่ใช่ความผิดพลาดของระบบ
+    <br><strong>2.</strong> ตอบ <code>200</code> พร้อม body ว่างเปล่า — ถ้าไม่มีอะไรจะส่งกลับ
+    <code>204 No Content</code> คือ status ที่ตรงความหมายกว่า
+    <br><strong>3.</strong> ตอบไม่เหมือนกันในแต่ละ endpoint — <code>DELETE /recipes/1</code> ตอบ 404
+    แต่ <code>DELETE /users/1</code> ตอบ 204 คือฝันร้ายของคนที่ใช้ API คุณ
+  </p>
+</div>
+
+<h2>8 · แล้ว <code>POST</code> ที่ retry ไม่ได้ล่ะ — <code>Idempotency-Key</code></h2>
+
+<p>
+  <code>POST</code> จะไม่มีวัน idempotent ได้ด้วยตัวมันเอง เพราะความหมายของมันคือ "สร้างของใหม่"
+  <br>ทางออกจึงไม่ใช่การแก้ method แต่คือ<strong>ให้ client บอก server ว่า
+  "สาม request นี้คือเจตนาเดียวกันนะ"</strong> — ด้วย header ที่ client เป็นคนสร้างค่าเอง
+</p>
+
+<div class="diagram">
+<pre>  client สร้าง key <strong>ครั้งเดียว</strong> ก่อนยิงครั้งแรก  →  key = "8f3c-01"
+    │
+    ├─▶ POST /payments   Idempotency-Key: 8f3c-01
+    │      server: ยังไม่เคยเห็น key นี้ → ตัดเงินจริง → <strong>เก็บ (key → คำตอบ) ไว้</strong>
+    │
+    ├─▶ POST /payments   Idempotency-Key: 8f3c-01   (retry เพราะ timeout)
+    │      server: เคยเห็นแล้ว → <strong>ไม่ทำอะไรใหม่</strong> → คืนคำตอบเดิมที่เก็บไว้
+    │
+    └─▶ POST /payments   Idempotency-Key: 8f3c-02   (ผู้ใช้ตั้งใจจ่ายรอบใหม่จริง ๆ)
+           server: key ใหม่ → ตัดเงินอีกรอบ ถูกต้องแล้ว</pre>
+</div>
+
+<p>
+  ผมทำ endpoint แบบนี้แล้วยิง key เดิมสามครั้ง แล้วตามด้วย key ใหม่หนึ่งครั้ง
+  (<code>...</code> ในคำสั่งข้างล่างคือ <code>http://127.0.0.1:53691</code> ตัวเดิม ย่อไว้ให้อ่านง่าย):
+</p>
+
+<pre><code>$ curl -X POST -H 'Idempotency-Key: 8f3c-01' .../idem/payments   <span class="c"># สามครั้ง</span>
+{"payment_id":"<strong>pay_4</strong>","amount":500,"charged_total":<strong>2000</strong>}  &lt;- 201
+{"payment_id":"<strong>pay_4</strong>","amount":500,"charged_total":<strong>2000</strong>}  &lt;- 201
+{"payment_id":"<strong>pay_4</strong>","amount":500,"charged_total":<strong>2000</strong>}  &lt;- 201
+
+<span class="c"># คนละ key = คนละเจตนา</span>
+$ curl -X POST -H 'Idempotency-Key: 8f3c-02' .../idem/payments
+{"payment_id":"<strong>pay_5</strong>","amount":500,"charged_total":<strong>2500</strong>}  &lt;- 201</code></pre>
+
+<p>
+  <code>charged_total</code> ขยับจาก 1500 → 2000 <strong>ครั้งเดียว</strong> ตลอดสาม request แรก
+  แล้วขยับเป็น 2500 ตอนเปลี่ยน key — นี่คือพฤติกรรมที่เราต้องการเป๊ะ ๆ
+</p>
+
+<p>
+  สังเกตว่า<strong>ครั้งที่ 2 และ 3 ก็ยังตอบ <code>201 Created</code></strong>
+  ทั้งที่ไม่ได้สร้างอะไรใหม่ — เพราะ server กำลัง<em>เล่นเทปคำตอบเดิม</em> ให้ฟัง
+  จุดนี้คนออกแบบมักเติม header บอกไว้ให้ client รู้ตัว ผมใส่ไว้ด้วย:
+</p>
+
+<pre><code><span class="c"># -D -  = พิมพ์ response header ออกจอ · -o /dev/null = ทิ้ง body ไม่ต้องโชว์</span>
+$ curl -D - -o /dev/null -X POST -H 'Idempotency-Key: 8f3c-01' .../idem/payments
+HTTP/1.1 <strong>201 Created</strong>
+<strong>Idempotent-Replay: true</strong></code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ กับดักที่ทำให้ Idempotency-Key ไร้ประโยชน์ทันที</strong>
+    <br><strong>1. client สร้าง key ใหม่ทุกครั้งที่ retry</strong> — key ต้องเกิด
+    <em>ครั้งเดียวตอนผู้ใช้กดปุ่ม</em> แล้วใช้ค่าเดิมตลอดทุก retry ถ้าสร้างใหม่ทุกรอบ
+    มันก็แค่ POST ธรรมดาที่มี header ประดับ
+    <br><strong>2. เก็บ key ไว้ใน RAM ของ process</strong> — deploy ใหม่หรือมีหลาย instance
+    แล้ว key หายทันที (นี่คือปัญหาเดียวกับที่
+    <a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32</a> พูดถึง —
+    ต้องเก็บใน store กลาง)
+    <br><strong>3. ไม่ผูก key กับผู้ใช้</strong> — ถ้า key เป็นของกลางทั้งระบบ
+    คนอื่นเดา key ชนแล้วจะได้เห็นคำตอบของคนอื่น · เก็บเป็น (user_id, key) เสมอ
+    <br><strong>4. เก็บตลอดกาล</strong> — ตั้งอายุให้มันด้วย (24 ชม. เป็นค่าที่หลายเจ้าใช้)
+    ไม่งั้นตารางนี้จะโตไม่หยุด
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>สถานะของ header ตัวนี้</strong> — <code>Idempotency-Key</code>
+    <strong>ยังไม่ใช่มาตรฐาน HTTP อย่างเป็นทางการ</strong> ตอนนี้เป็น Internet-Draft ของ IETF อยู่
+    <br>แต่มันเป็น<em>ธรรมเนียมที่ผู้ให้บริการชำระเงินใช้ตรงกันมานาน</em> (Stripe ใช้ชื่อนี้)
+    จนถือเป็นชื่อมาตรฐานโดยพฤตินัยไปแล้ว — ใช้ชื่อนี้ อย่าไปตั้งชื่อเองใหม่
+  </p>
+</div>
+
+<h2>9 · Versioning — "breaking change" คืออะไรกันแน่</h2>
+
+<p>
+  สไลด์หน้า 37 บอกว่า versioning มีไว้ <em>"รองรับกรณีที่เกิด Breaking Change
+  เพื่อให้ Client เดิมที่ยังไม่ Migrate สามารถทำงานต่อไปได้ในช่วงเวลาที่กำหนด"</em>
+  แล้วโชว์ <code>/api/v1/users</code> → <code>/api/v2/users</code>
+</p>
+
+<p>
+  ประโยคนั้นถูก แต่มันข้ามคำถามที่ยากที่สุดไป: <strong>รู้ได้ยังไงว่าอะไรคือ breaking change</strong>
+  <br>คำจำกัดความที่ใช้ได้จริงมีข้อเดียว — <strong>"client ตัวเก่าที่ไม่ได้แก้อะไรเลย
+  ยังทำงานถูกต้องอยู่ไหม"</strong> ถ้าคำตอบคือไม่ นั่นคือ breaking
+  <br>ผมเลยทดลองเป็น client เก่าจริง ๆ: struct ตัวนี้เขียนไว้ตั้งแต่ v1 แล้วไม่เคยแก้อีกเลย
+</p>
+
+<div class="predict">
+  <pre><code><span class="c">// client เก่า — ไม่เคยแก้ตั้งแต่ v1</span>
+<span class="k">type</span> <span class="f">Recipe</span> <span class="k">struct</span> {
+    ID          <span class="k">int</span>    <span class="s">`json:"id"`</span>
+    Name        <span class="k">string</span> <span class="s">`json:"name"`</span>
+    CookingTime <span class="k">int</span>    <span class="s">`json:"cooking_time"`</span>
+}
+
+<span class="c">// แล้วเอา JSON 5 แบบนี้มา json.Unmarshal ใส่ struct เดิม</span>
+เพิ่ม field ใหม่   {"id":7,"name":"ต้มยำกุ้ง","cooking_time":30,<strong>"difficulty":"medium"</strong>}
+ลบ field ทิ้ง      {"id":7,"name":"ต้มยำกุ้ง"}
+เปลี่ยนชื่อ field  {"id":7,"name":"ต้มยำกุ้ง",<strong>"cookingTime"</strong>:30}
+เปลี่ยน type      {"id":7,"name":"ต้มยำกุ้ง","cooking_time":<strong>"30 นาที"</strong>}
+เปลี่ยนความหมาย   {"id":7,"name":"ต้มยำกุ้ง","cooking_time":<strong>1800</strong>}  <span class="c">// เปลี่ยนหน่วยนาที→วินาที</span></code></pre>
+  <p class="ask">
+    ห้าแบบนี้ <strong>แบบไหนได้ <code>err != nil</code> บ้าง</strong> และ
+    <strong>แบบไหน "ผ่านฉลุยแต่ค่าผิด"</strong> — อันหลังนี่แหละที่อันตรายกว่า
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code><span class="c">// แถวแรกคือ JSON v1 เดิม ใส่ไว้เป็นตัวเทียบ ที่เหลือคือ 5 แบบในโจทย์</span>
+v1 เดิม                err=&lt;nil&gt;
+                       ได้ {ID:7 Name:ต้มยำกุ้ง CookingTime:30}
+เพิ่ม field ใหม่       err=&lt;nil&gt;
+                       ได้ {ID:7 Name:ต้มยำกุ้ง CookingTime:30}
+ลบ field cooking_time  err=&lt;nil&gt;
+                       ได้ {ID:7 Name:ต้มยำกุ้ง CookingTime:<strong>0</strong>}
+เปลี่ยนชื่อ field      err=&lt;nil&gt;
+                       ได้ {ID:7 Name:ต้มยำกุ้ง CookingTime:<strong>0</strong>}
+เปลี่ยน type           err=<strong>json: cannot unmarshal string into Go struct field Recipe.cooking_time of type int</strong>
+                       ได้ {ID:7 Name:ต้มยำกุ้ง CookingTime:0}
+เปลี่ยนความหมาย        err=&lt;nil&gt;
+                       ได้ {ID:7 Name:ต้มยำกุ้ง CookingTime:<strong>1800</strong>}</code></pre>
+    <p>
+      <strong>มีแค่แบบเดียวที่ error</strong> คือเปลี่ยน type — อีกสี่แบบเงียบสนิท
+    </p>
+    <p style="margin-bottom:0">
+      และแบบที่<strong>อันตรายที่สุดคือแถวสุดท้าย</strong>: <code>err=&lt;nil&gt;</code>
+      ค่าเป็นเลขจำนวนเต็มสวย ๆ ไม่มีอะไรน่าสงสัยเลย —
+      แต่หน้าจอลูกค้าจะขึ้นว่าเมนูนี้ใช้เวลาทำ <strong>1800 นาที</strong>
+      <br>เทียบกับแถว "ลบ field" ที่ได้ <code>0</code> — อันนั้นยังพอมีโอกาสมีคนเอะใจว่า
+      "ทำอาหาร 0 นาทีได้ไง" <strong>แต่ 1800 ดูเหมือนตัวเลขจริงทุกประการ</strong>
+    </p>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <tr><th>การเปลี่ยนแปลง</th><th>breaking ไหม<br><small>✅ = ปลอดภัย · ❌ = พัง</small></th><th>client เก่าเจออะไร</th></tr>
+  <tr><td><strong>เพิ่ม field ใหม่</strong> ใน response</td><td>✅ <strong>ไม่ breaking</strong></td><td><code>err=&lt;nil&gt;</code> · field เดิมครบ · field ใหม่ถูกข้ามไปเฉย ๆ</td></tr>
+  <tr><td>เพิ่ม field <em>ที่ไม่บังคับ</em> ใน request</td><td>✅ <strong>ไม่ breaking</strong></td><td>client เก่าไม่ส่งมา server ใช้ค่า default</td></tr>
+  <tr><td><strong>ลบ field</strong> ออกจาก response</td><td>❌ breaking</td><td>ได้ zero value เงียบ ๆ (<code>0</code>, <code>""</code>) ไม่มี error</td></tr>
+  <tr><td><strong>เปลี่ยนชื่อ field</strong></td><td>❌ breaking</td><td>เหมือนโดนลบทุกประการ — <code>cookingTime</code> ไม่แมตช์ <code>cooking_time</code></td></tr>
+  <tr><td><strong>เปลี่ยน type</strong> (<code>int</code> → <code>string</code>)</td><td>❌ breaking</td><td>error ชัดเจน — <em>อันนี้โชคดีที่สุดแล้ว</em></td></tr>
+  <tr><td><strong>เปลี่ยนความหมาย/หน่วย</strong></td><td>❌❌ <strong>breaking ที่แย่ที่สุด</strong></td><td><strong>ไม่มีอะไรเตือนเลย</strong> ทุกอย่างดูปกติ แต่คำตอบผิด</td></tr>
+  <tr><td>เพิ่ม field <em>บังคับ</em> ใน request</td><td>❌ breaking</td><td>client เก่ายิงเหมือนเดิมแล้วโดน 400 ทันที</td></tr>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">💡 กับดักซ้อน: "เพิ่ม field" ไม่ breaking เสมอไป</span>
+  <p style="margin-bottom:0">
+    ข้อแรกของตารางมีเงื่อนไขเงียบ ๆ ซ่อนอยู่ — <strong>client ต้องยอมข้าม field ที่ไม่รู้จัก</strong>
+    <br>ซึ่งเป็นพฤติกรรม default ของ <code>json.Unmarshal</code> แต่ถ้า client เปิดโหมดเข้มงวด:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code><span class="c">// js คือสตริง JSON ก้อนเดิมที่มี "difficulty" เพิ่มเข้ามา</span>
+dec := json.<span class="f">NewDecoder</span>(strings.<span class="f">NewReader</span>(js))
+dec.<span class="f">DisallowUnknownFields</span>()      <span class="c">// เจอ field แปลกปลอม = error</span>
+err := dec.<span class="f">Decode</span>(&amp;recipe)      <span class="c">// ใช้ Decode ไม่ใช่ json.Unmarshal</span>
+
+DisallowUnknownFields err=<strong>json: unknown field "difficulty"</strong></code></pre>
+  <p style="margin:0.6rem 0 0">
+    <strong>การเพิ่ม field กลายเป็น breaking change ทันที</strong>
+    <br>บทเรียนที่ได้: <em>"breaking หรือไม่" ไม่ได้ขึ้นกับฝั่ง server ฝ่ายเดียว
+    มันขึ้นกับว่า client อ่านคำตอบยังไงด้วย</em> — เวลาออกแบบ API สาธารณะ
+    จึงต้องเขียนลง contract ไปเลยว่า <strong>"client ต้องข้าม field ที่ไม่รู้จัก"</strong>
+  </p>
+</div>
+
+<p>
+  พอรู้ว่าอะไรคือ breaking แล้ว กฎของ <code>/api/v1</code> → <code>/api/v2</code> ก็ตรงไปตรงมา:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>คำถาม</th><th>คำตอบ</th></tr>
+  <tr><td>เมื่อไหร่ขึ้น v2</td><td>เมื่อมีอย่างน้อยหนึ่งอย่างในตารางข้างบนที่เป็น breaking · <strong>ไม่ใช่ทุกครั้งที่มีฟีเจอร์ใหม่</strong></td></tr>
+  <tr><td>ขึ้น v2 แล้ว v1 ทำยังไง</td><td><strong>ยังต้องวิ่งอยู่</strong> ไปอีกช่วงเวลาที่ประกาศไว้ชัดเจน — ถ้าปิด v1 วันเดียวกับที่เปิด v2 การมี v2 ก็ไม่มีความหมาย</td></tr>
+  <tr><td>เอา version ไว้ที่ path หรือ header</td><td>สไลด์เลือก path (<code>/api/v1/...</code>) ซึ่ง<strong>มองเห็นด้วยตาใน log และ curl ได้ทันที</strong> เหมาะกับทีมที่เพิ่งเริ่ม</td></tr>
+  <tr><td>v2 ต้องเขียนใหม่ทั้งชุดไหม</td><td>ไม่ — endpoint ที่ contract ไม่เปลี่ยน ให้ v2 เรียกโค้ดตัวเดิม เปลี่ยนเฉพาะเส้นที่ contract เปลี่ยนจริง</td></tr>
+</table>
+</div>
+
+<h2>10 · เอาทั้งบทมาทาบกับ Wongnok</h2>
+
+<p>
+  สไลด์หน้า 71–72 ให้ API spec ของโปรเจกต์ Wongnok (เว็บรวมสูตรอาหาร) มาแล้ว
+  ลองเอากฎทั้งหมดในบทนี้ไปทาบดู
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>endpoint</th><th>ตรวจตามกฎ 7 ข้อ</th><th>idempotent?</th></tr>
+  <tr><td><code>GET /recipes</code> · <code>GET /recipes/:id</code></td><td>✅ noun, พหูพจน์, lowercase</td><td>✅ safe ด้วย</td></tr>
+  <tr><td><code>POST /recipes</code></td><td>✅ ตรงตามที่หน้า 22 บอก</td><td><strong>❌ ต้องระวังการยิงซ้ำ</strong></td></tr>
+  <tr><td><code>PUT /recipes/:id</code></td><td>✅</td><td>✅</td></tr>
+  <tr><td><code>DELETE /recipes/:id</code></td><td>✅ — และนี่คือเส้นที่ต้องตัดสินใจ 404 vs 204</td><td>✅</td></tr>
+  <tr><td><code>POST /recipes/:id/favorite</code></td><td>✅ relationship อยู่ที่ path (กฎ 5)</td><td><strong>ควรทำให้ idempotent</strong> — กดถูกใจซ้ำไม่ควรได้ 2 ดาว</td></tr>
+  <tr><td><code>DELETE /recipes/:id/favorite</code></td><td>✅</td><td>✅</td></tr>
+  <tr><td><code>POST /recipes/:id/rating</code></td><td>✅</td><td>ขึ้นกับกติกา: 1 คน 1 คะแนน → ควรเป็น <code>PUT</code> ด้วยซ้ำ</td></tr>
+  <tr><td><code>GET /users/:id</code> · <code>PUT /users/:id</code></td><td>✅</td><td>✅</td></tr>
+  <tr><td><code>GET /login</code> · <code>GET /callback</code><br><code>POST /exchange</code> · <code>GET /logout</code></td><td><strong>แหกกฎ 1 และ 7 เต็ม ๆ</strong> — เป็น verb ล้วน</td><td>—</td></tr>
+</table>
+</div>
+
+<p>
+  แถวสุดท้ายไม่ใช่ความผิดพลาด — <strong>endpoint กลุ่ม auth คือข้อยกเว้นที่โลกยอมรับกันทั่วไป</strong>
+  เพราะ <code>/login</code> ไม่ได้กำลัง "สร้าง resource" มันคือ<em>ขั้นตอนของโปรโตคอล</em>
+  (OAuth เรียกชื่อพวกนี้มาตายตัวอยู่แล้ว ทีมคุณเปลี่ยนชื่อเองไม่ได้)
+  <br>นี่คือบทเรียนสำคัญของทั้งบท: <strong>กฎพวกนี้เป็นค่าตั้งต้นที่ดี ไม่ใช่กฎหมาย</strong>
+  — แต่คุณควรแหกกฎ<em>เพราะมีเหตุผลที่พูดออกมาได้</em> ไม่ใช่เพราะไม่รู้ว่ามีกฎ
+</p>
+
+<p>
+  ส่วนแถว <code>POST /recipes/:id/favorite</code> คือของจริงที่คุณจะเจอในโปรเจกต์นี้:
+  ผู้ใช้กดหัวใจแล้วเน็ตช้า เขากดซ้ำอีกที <strong>ถ้าคุณเขียนเป็น "เพิ่มแถวใน favorites"
+  เขาจะได้สองแถว</strong> — แต่ถ้าเขียนเป็น "ทำให้ (user, recipe) คู่นี้อยู่ในตาราง favorites"
+  กดกี่ครั้งก็ได้ผลเดียว · <strong>ความต่างอยู่ที่ประโยคที่คุณคิดในหัว ไม่ใช่ที่ syntax</strong>
+</p>
+
+<div class="win">
+  <span class="label">🎯 สามประโยคที่ควรติดตัวออกจากบทนี้</span>
+  <p style="margin-bottom:0">
+    <strong>1.</strong> URI บอกว่า<em>ของอะไร</em> · method บอกว่า<em>ทำอะไร</em> ·
+    query บอกว่า<em>เอาชุดย่อยแบบไหน</em> — ถ้าจำได้แค่นี้ กฎ 7 ข้อจะตามมาเอง
+    <br><strong>2.</strong> idempotent วัดที่<strong>สถานะปลายทางของ server</strong>
+    ไม่ใช่ที่ status code — <code>DELETE</code> ที่ตอบ 204 กับ 404 idempotent เท่ากัน
+    <br><strong>3.</strong> breaking change ที่แพงที่สุด<strong>ไม่ทำให้เกิด error</strong> —
+    มันคือการเปลี่ยน<em>ความหมาย</em> ของ field ที่หน้าตาเหมือนเดิมทุกประการ
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. สไลด์หน้า 35 ติด ✅ ไว้เหนือ <code>POST /users/create</code> กับ <code>POST /users/123/delete</code> — ข้อไหนอธิบายสถานการณ์นี้ได้ถูกต้อง?</p>
+  <div class="opts">
+    <button class="opt">สไลด์ถูกแล้ว เพราะการเขียน verb ไว้ท้าย URI ทำให้คนที่เพิ่งเข้าทีมอ่านออกได้เร็วกว่า</button>
+    <button class="opt">สไลด์ติดเครื่องหมายกลับด้าน คู่ที่ถูกจริงคือ POST /users กับ DELETE /users/123 ตามกฎข้อ 7</button>
+    <button class="opt">ถูกทั้งสองคู่เท่ากัน เพราะ REST ไม่ได้กำหนดเรื่อง URI ไว้ ปล่อยให้แต่ละทีมเลือกเองได้</button>
+    <button class="opt">สไลด์ถูกแล้ว เพราะ DELETE ส่ง request body ไม่ได้ จึงใช้ลบแบบมีเงื่อนไขไม่ได้เลย</button>
+  </div>
+  <div class="explain">
+    <p>กฎข้อ 7 เขียนไว้เองว่า <strong>"อย่าใส่ Action ใน URI ถ้า HTTP Method สื่อได้แล้ว"</strong>
+    — <code>create</code> กับ <code>delete</code> มี <code>POST</code>/<code>DELETE</code> สื่อให้อยู่แล้ว
+    ตัวอย่างที่ติด ✅ จึงขัดกับหัวข้อของตัวเอง และขัดกฎข้อ 1 (noun ไม่ใช่ verb) ด้วย
+    <br>หลักฐานยืนยันอยู่ในสไลด์ชุดเดียวกัน <strong>หน้า 22 (REST – Method)</strong> ที่เขียนว่า
+    <code>// สร้าง User</code> → <code>POST /users</code> และ <code>// ลบ User 123</code> →
+    <code>DELETE /users/123</code> ตรงกับคู่ที่หน้า 35 ติด ❌ ไว้พอดี
+    <br>ตัวเลือกที่ 1 ผิดเพราะความอ่านง่ายมาจากการ<em>เดาได้</em> ซึ่งได้จากรูปแบบที่สม่ำเสมอ ไม่ใช่จากการเติม verb ·
+    ตัวเลือกที่ 3 ผิดเพราะสไลด์ตั้งกฎไว้เองแล้ว 7 ข้อ การบอกว่า "อะไรก็ได้" คือละเลยกฎที่ตัวเองเพิ่งสอน ·
+    ตัวเลือกที่ 4 ยกเหตุผลที่ไม่เกี่ยว — การลบด้วยเงื่อนไขใช้ query หรือ path param ได้ ไม่ต้องพึ่ง body</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. ยิง <code>DELETE /users/1</code> สองครั้งติดกัน ครั้งแรกได้ <code>204</code> ครั้งที่สองได้ <code>404</code> — แปลว่า endpoint นี้ไม่ idempotent ใช่ไหม?</p>
+  <div class="opts">
+    <button class="opt">ไม่ใช่ ยัง idempotent อยู่ เพราะวัดกันที่สถานะปลายทางของ server ไม่ใช่ที่ status code</button>
+    <button class="opt">ใช่ ไม่ idempotent แล้ว เพราะ idempotent แปลว่าทุกครั้งที่ยิงต้องได้ status code เดียวกัน</button>
+    <button class="opt">ใช่ ไม่ idempotent แล้ว เพราะ 404 คือ request ล้มเหลว ผลจึงต่างจากครั้งแรกที่สำเร็จ</button>
+    <button class="opt">ไม่ใช่ ยัง idempotent อยู่ เพราะ DELETE ถูกจัดเป็น safe method จึงไม่เปลี่ยนข้อมูลตั้งแต่แรก</button>
+  </div>
+  <div class="explain">
+    <p>นิยามของ idempotent คือ <strong>"เรียกซ้ำแล้วผลลัพธ์สุดท้ายเหมือนเรียกครั้งเดียว"</strong>
+    ซึ่ง "ผลลัพธ์สุดท้าย" หมายถึง<strong>สถานะบน server</strong> — หลังยิงหนึ่งครั้งกับสิบครั้ง
+    สถานะเหมือนกันคือ "ไม่มี user 1" จึง idempotent
+    <br>ผมรันทั้งสองแบบให้ดูในหัวข้อ 7: แบบตอบ <code>204/404</code> กับแบบตอบ <code>204/204</code>
+    <strong>idempotent เท่ากันทั้งคู่</strong> ต่างกันแค่ว่าจะเล่าเรื่องให้ client ฟังยังไง
+    <br>ตัวเลือกที่ 2 และ 3 ผิดที่จุดเดียวกัน คือเอา status code มาเป็นเกณฑ์วัด ·
+    ตัวเลือกที่ 4 สรุปถูกแต่ให้เหตุผลผิดหนัก — <strong><code>DELETE</code> ไม่ใช่ safe method</strong>
+    (safe = ไม่เปลี่ยนอะไรเลย มีแค่ <code>GET</code>/<code>HEAD</code>) มันเปลี่ยนข้อมูลจริง เพียงแต่เปลี่ยนซ้ำแล้วผลเท่าเดิม</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. client ยิง <code>POST /payments</code> แล้ว timeout ไปเฉย ๆ ไม่รู้ว่าเงินถูกตัดไปหรือยัง — ทางแก้ที่ถูกต้องคือข้อไหน?</p>
+  <div class="opts">
+    <button class="opt">ให้ client ยิงซ้ำได้เลย เพราะ server ดูจาก IP กับเวลาที่ใกล้กันก็รู้เองว่าเป็น request เดิม</button>
+    <button class="opt">เปลี่ยนเป็น GET /payments/create เพราะ GET เป็น idempotent จึงยิงซ้ำได้อย่างปลอดภัย</button>
+    <button class="opt">ให้ client สร้าง Idempotency-Key ครั้งเดียวแล้วแนบไปทุก retry ให้ server คืนคำตอบเดิม</button>
+    <button class="opt">ให้ server ตอบ 409 Conflict ทุกครั้งที่เห็นยอดเงินเท่ากันภายในหนึ่งนาที แล้วให้ client หยุดยิง</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันให้ดูแล้วว่า <code>POST /payments</code> เปล่า ๆ ยิงสามครั้งได้
+    <code>pay_1, pay_2, pay_3</code> และ <code>charged_total=1500</code> —
+    <strong>สำเร็จ 201 ครบทั้งสามครั้ง ไม่มี error สักตัว</strong>
+    <br>พอใส่ <code>Idempotency-Key: 8f3c-01</code> เหมือนกันทั้งสามครั้ง ได้ <code>pay_4</code>
+    เท่ากันหมดและ <code>charged_total</code> ขยับครั้งเดียว · <strong>สำคัญคือ key ต้องสร้างครั้งเดียว
+    ตอนผู้ใช้กดปุ่ม</strong> ถ้าสร้างใหม่ทุก retry จะไม่ต่างจาก POST ธรรมดาเลย
+    <br>ตัวเลือกที่ 1 ผิดเพราะ IP+เวลาเป็นการเดา — ผู้ใช้คนละคนหลัง NAT เดียวกันจ่ายพร้อมกันได้จริง ·
+    ตัวเลือกที่ 2 ผิดหนักที่สุด: <code>GET</code> ต้อง safe คือห้ามเปลี่ยนอะไร เอามาตัดเงินไม่ได้
+    และ browser/proxy จะ cache มันด้วย ·
+    ตัวเลือกที่ 4 ผิดเพราะจะบล็อกคนที่ตั้งใจจ่ายยอดเดิมซ้ำจริง ๆ (เช่นเติมเงิน 500 สองรอบติดกัน)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">4. ทีมกำลังจะแก้ response ของ <code>GET /recipes/:id</code> — การเปลี่ยนแบบไหน<strong>ทำให้ client เก่าพังแบบเงียบที่สุด</strong> คือไม่มี error ให้เห็นเลยสักบรรทัด?</p>
+  <div class="opts">
+    <button class="opt">เพิ่ม field difficulty เข้าไปใน response ตัวใหม่ โดยไม่แตะ field เดิมสักตัวเดียว</button>
+    <button class="opt">เปลี่ยน cooking_time จาก int เป็น string โดยยังใช้ชื่อ field เดิมไม่เปลี่ยน</button>
+    <button class="opt">เปลี่ยนหน่วยของ cooking_time จากนาทีเป็นวินาที โดยยังเป็น int ชื่อเดิม</button>
+    <button class="opt">ลบ field cooking_time ออกจาก response แล้วให้ client ไปเรียก endpoint อื่นแทน</button>
+  </div>
+  <div class="explain">
+    <p>ผมรัน <code>json.Unmarshal</code> ทั้งสี่แบบใส่ struct เดิม:
+    <br><strong>เปลี่ยนหน่วย</strong> → <code>err=&lt;nil&gt;</code> ได้ <code>CookingTime:1800</code>
+    — เลขจำนวนเต็มหน้าตาปกติทุกประการ <strong>ไม่มีอะไรผิดสังเกตเลย</strong> ลูกค้าเห็น "1800 นาที" ·
+    <strong>เปลี่ยน type</strong> → error ชัด ๆ ว่า
+    <code>cannot unmarshal string into Go struct field Recipe.cooking_time of type int</code>
+    ซึ่ง<em>โชคดีที่สุด</em>เพราะรู้ตัวทันที ·
+    <strong>ลบ field</strong> → <code>err=&lt;nil&gt;</code> แต่ได้ <code>CookingTime:0</code>
+    ซึ่งเงียบเหมือนกัน<strong>แต่ยังพอมีคนเอะใจ</strong>ว่าทำอาหาร 0 นาทีได้ยังไง ·
+    <strong>เพิ่ม field</strong> → <code>err=&lt;nil&gt;</code> ค่าเดิมครบ = <strong>ไม่ breaking</strong>
+    (ยกเว้น client เปิด <code>DisallowUnknownFields</code> ซึ่งจะได้
+    <code>json: unknown field "difficulty"</code>)
+    <br>ทั้งข้อ 2 3 4 เป็น breaking หมด แต่คำถามถามหา<em>อันที่เงียบที่สุด</em> — คือข้อที่ค่าผ่านเข้าไปได้
+    โดยดูสมเหตุสมผล</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ออกแบบ API ของ Wongnok ให้ยิงซ้ำได้โดยไม่พัง</span>
+  <p>
+    ภารกิจนี้<strong>ยังไม่ต้องเขียน HTTP server</strong> (รอบทเรียน 37) —
+    ทั้งหมดทำได้ด้วยกระดาษหนึ่งแผ่นกับไฟล์เทส Go หนึ่งไฟล์ที่ใช้แค่ <code>encoding/json</code>
+  </p>
+  <p>
+    <strong>เริ่มจากศูนย์แบบนี้</strong> — ข้อ 1–5 เขียนลงกระดาษ/ไฟล์ <code>.md</code> ก็พอ
+    ส่วนข้อ 6–7 ต้องมีโปรเจกต์ Go:
+  </p>
+  <pre><code>$ mkdir wongnok-contract &amp;&amp; cd wongnok-contract
+$ go mod init wongnok-contract
+$ touch recipe_test.go        <span class="c"># ไฟล์เดียวพอ ไม่ต้องมี main.go</span>
+$ go test ./...               <span class="c"># รันจากในโฟลเดอร์นี้</span></code></pre>
+  <ol>
+    <li><strong>ตรวจ spec ด้วยกฎ 7 ข้อ:</strong> เขียน endpoint ทั้งหมดของ Wongnok
+        (<code>recipes</code>, <code>favorite</code>, <code>rating</code>, <code>users</code>, auth)
+        แล้วทำเครื่องหมายว่าข้อไหนแหกกฎข้อไหน
+        <br><strong>ต้องอธิบายให้ได้ว่าทำไม <code>GET /login</code> ถึงยอมรับได้
+        แต่ <code>POST /recipes/create</code> ยอมไม่ได้</strong></li>
+    <li><strong>เติมกฎที่สไลด์ไม่ได้ให้มา:</strong> spec มีแค่ "ค้นสูตรจากชื่อเมนู/วัตถุดิบ/เวลา/ความยาก"
+        — ออกแบบ <code>GET /recipes</code> ให้รับตัวกรองพวกนี้ครบ
+        <br><strong>ใช้กฎข้อ 5 กับข้อ 6 ตัดสินว่าอะไรไป path อะไรไป query</strong>
+        แล้วเขียน URL เต็ม ๆ ออกมาหนึ่งเส้นที่กรองสามอย่างพร้อมกัน</li>
+    <li><strong>ทำตาราง idempotency:</strong> ทุก endpoint ตอบสามช่อง —
+        safe? · idempotent? · <em>ยิงซ้ำแล้วเกิดอะไร</em>
+        <br>ข้อที่ต้องคิดหนักที่สุด: <code>POST /recipes/:id/rating</code> —
+        <strong>ถ้ากติกาคือ 1 คน 1 คะแนน มันควรเป็น <code>POST</code> หรือ <code>PUT</code></strong></li>
+    <li><strong>ตัดสินใจเรื่อง DELETE:</strong> เลือกว่า <code>DELETE /recipes/:id</code>
+        ยิงซ้ำจะตอบ 404 หรือ 204 แล้ว<strong>เขียนเหตุผลหนึ่งบรรทัด</strong>
+        — เหตุผลต้องอ้างถึงว่า "ใครเป็นคนเรียก endpoint นี้" ไม่ใช่ "ผมชอบแบบนี้"</li>
+    <li><strong>เขียน contract 5 ช่องของ <code>POST /recipes</code></strong> ให้ครบ
+        (request body / response status / response body / error status / error body)
+        <br>แล้วตอบว่า <strong>ถ้าผู้ใช้กดปุ่ม "บันทึกสูตร" สองครั้งเพราะเน็ตช้า จะเกิดอะไรขึ้น</strong>
+        และคุณจะแก้ด้วยวิธีไหน</li>
+    <li><strong>เขียนเทสพิสูจน์:</strong> สร้าง <code>RecipeResponse</code> เวอร์ชัน v1 หนึ่ง struct
+        แล้วเขียน table-driven test (<a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16</a>)
+        ที่ <code>json.Unmarshal</code> JSON ของ "v2" ใส่ struct v1 อย่างน้อย 4 เคส:
+        เพิ่ม field · ลบ field · เปลี่ยน type · เปลี่ยนหน่วย
+        <br>assert ให้ครบสองอย่าง: <strong>เคสไหน <code>err != nil</code></strong> และ
+        <strong>เคสไหน <code>err == nil</code> แต่ค่าที่ได้ผิด</strong>
+        <br>เทสนี้คือเอกสารที่บอกทีมคุณว่า<em>อะไรคือ breaking change</em> โดยไม่ต้องเถียงกัน
+        <br><strong>รู้ได้ยังไงว่าทำถูก:</strong> <code>go test ./...</code> ขึ้น <code>ok</code>
+        โดยที่เคส "เปลี่ยน type" เป็นเคสเดียวที่คุณ assert ว่า <code>err != nil</code>
+        ส่วนเคส "ลบ field" กับ "เปลี่ยนหน่วย" assert ว่า <code>err == nil</code> แต่ค่าที่ได้
+        <em>ไม่เท่ากับ</em>ค่าที่ควรจะเป็น</li>
+    <li><strong>ท้าทาย:</strong> เติม <code>dec.DisallowUnknownFields()</code> เข้าไปในเทสเคส "เพิ่ม field"
+        — <strong>ทายก่อนรัน</strong>ว่าเคสนี้จะยังผ่านไหม แล้วอธิบายว่าผลที่ได้
+        เปลี่ยนคำตอบของข้อ "อะไรคือ breaking change" ไปยังไง</li>
+  </ol>
+  <button class="reveal">ใบ้ข้อ 3 (rating)</button>
+  <div class="answer">
+    <p>
+      คำถามที่ต้องถามคือ <strong>"ผลลัพธ์ปลายทางที่ถูกต้องคืออะไร"</strong> ไม่ใช่ "ผู้ใช้ทำกริยาอะไร"
+    </p>
+    <p style="margin-bottom:0">
+      ถ้ากติกาคือ <em>1 คน ให้คะแนนสูตรหนึ่งได้ครั้งเดียว (ให้ใหม่ = ทับของเดิม)</em>
+      แปลว่าคำสั่งจริง ๆ คือ <strong>"ทำให้คะแนนของ (ผู้ใช้คนนี้, สูตรนี้) เท่ากับ 4"</strong>
+      ซึ่งเป็นการ<em>แทนที่</em> ไม่ใช่การ<em>สร้างเพิ่ม</em> →
+      <code>PUT /recipes/:id/rating</code> ตรงความหมายกว่า และได้ idempotency มาฟรี
+      <br>แต่ถ้ากติกาคือ <em>ให้คะแนนกี่ครั้งก็ได้ แล้วเอามาเฉลี่ยกัน</em>
+      คำสั่งคือ "เพิ่มคะแนนใหม่หนึ่งใบ" → <code>POST</code> ถูกแล้ว
+      <strong>แต่คุณต้องรับผิดชอบเคสกดซ้ำเองด้วย <code>Idempotency-Key</code></strong>
+      <br>ประเด็นคือ <strong>method ถูกเลือกจากความหมายของคำสั่ง ไม่ใช่จากชื่อปุ่มบนหน้าจอ</strong>
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 6 คือข้อที่ผมอยากเห็นผลที่สุด</strong> — เพราะเทสนั้นจะกลายเป็นคำตอบถาวร
+    ให้กับคำถามที่ทีมคุณจะเถียงกันอีกหลายรอบว่า "แก้แค่นี้ต้องขึ้น v2 ไหม"
+    <br>และถ้าคุณลองรันแล้วได้ผลไม่ตรงกับที่เขียนไว้ในบทนี้ <strong>ส่ง output มาได้เลย</strong>
+    ผมอยากรู้ว่าต่างกันตรงไหน (ทุกผลรันในหน้านี้มาจาก Go 1.26.5 darwin/arm64)
+    <br>อีกอย่าง — ถ้าคุณเจอจุดอื่นในสไลด์ที่<em>รู้สึกว่ามันขัดกันเอง</em> อย่าเพิ่งคิดว่าตัวเองอ่านผิด
+    เอามาทาบกับกฎแบบที่เราทำกับหน้า 35 แล้วมาเล่าให้ฟัง
+    <br>บทถัดไปเราจะหยุดออกแบบบนกระดาษ แล้วเปิด server จริงตัวแรกด้วย
+    <code>net/http</code> — <a href="./0037-net-http-server.html">บทเรียน 37</a>
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0035-query-body-header.html">← บทเรียน 35</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0037-net-http-server.html">บทเรียน 37 → net/http</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-idempotent-methods">RFC 9110 §9.2.2 — Idempotent Methods</a> · <a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-safe-methods">§9.2.1 Safe Methods</a> — นิยามทางการของ safe/idempotent และประโยคสำคัญที่ว่า <strong>status code ที่ต่างกันไม่ได้ทำให้เลิก idempotent</strong></li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc3986#section-6.2.2.1">RFC 3986 §6.2.2.1 — Case Normalization</a> — ทำไม path ถึงสนตัวพิมพ์เล็กใหญ่ แต่ scheme/host ไม่สน</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods">MDN — HTTP request methods</a> · <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/204">204 No Content</a> — ตารางสรุป safe / idempotent / cacheable ของทุก method</li>
+  <li><a href="https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/">IETF Internet-Draft — The Idempotency-Key HTTP Header Field</a> — ร่างมาตรฐานของ header ตัวนี้ (ย้ำว่ายังเป็น draft)</li>
+  <li><a href="https://docs.stripe.com/api/idempotent_requests">Stripe API — Idempotent requests</a> — ตัวอย่างการใช้จริงระดับ production รวมถึงอายุของ key และการผูก key กับผู้ใช้</li>
+  <li><a href="https://pkg.go.dev/encoding/json#Decoder.DisallowUnknownFields">pkg.go.dev — <code>Decoder.DisallowUnknownFields</code></a> · <a href="../../day-4/lessons/0013-json-and-struct-tags.html">บทเรียน 13</a> — พฤติกรรม default ของ <code>json.Unmarshal</code> กับ field ที่ไม่รู้จัก</li>
+  <li><a href="https://cloud.google.com/apis/design/resources">Google — API Design Guide: Resource Oriented Design</a> — อีกสำนักหนึ่งที่บังคับให้ทุก action กลายเป็น resource ใช้เทียบกับกฎข้อ 7 ได้ดี</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

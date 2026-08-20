@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 40 — httptest: ทดสอบ handler โดยไม่ต้องเปิดเซิร์ฟเวอร์</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 40 · Day 8 · Testing</p>
+  <h1>httptest — ทดสอบ handler โดยไม่ต้องเปิดเซิร์ฟเวอร์</h1>
+  <p class="meta">~16 นาที · ต้องมี: <a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16</a> (table-driven test), <a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a> (<code>testify</code>), <a href="./0038-gin-routing.html">บทเรียน 38</a> (Gin) · <a href="../../day-7/lessons/0028-mockery.html">บทเรียน 28</a> (mockery — ใช้ในหัวข้อ 8)</p>
+  <p class="standfirst">
+    ตั้งแต่บท 37 เป็นต้นมาคุณเขียน handler ไปหลายตัวแล้ว
+    แต่วิธี "ตรวจว่ามันทำงาน" ยังเป็นการ <code>go run .</code> แล้วเปิดเบราว์เซอร์กด F5 อยู่เลย
+    <br>บทนี้จะพิสูจน์ว่า <strong>คุณไม่ต้องเปิด port ไม่ต้องมี DB ไม่ต้องมี curl</strong>
+    ก็ยิง request เข้า router ของตัวเองได้ — เพราะ <code>ServeHTTP</code> เป็นแค่
+    <strong>ฟังก์ชันธรรมดาที่รับ request แล้วเขียนคำตอบลงกล่อง</strong>
+    และ <code>httptest</code> ก็คือ "กล่อง" ใบนั้น
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>บทนี้ไม่มีในสไลด์ Day 8</strong> — ผมเพิ่มเข้ามาเอง
+    <br>มันเป็นการบ้านที่<strong>ค้างมาตั้งแต่ Day 5</strong>: วันนั้นเราเรียน
+    <a href="../../day-5/lessons/0016-table-driven-test.html">table-driven test</a> กับ
+    <a href="../../day-5/lessons/0017-testify.html">testify</a> แต่เทสได้แค่ฟังก์ชันคำนวณล้วน ๆ
+    เพราะยังไม่มีใครเขียน HTTP server เป็น
+    <br>ตอนนี้มี handler แล้ว — หนี้ก้อนนั้นถึงเวลาจ่าย ถ้าข้ามบทนี้ไป
+    บท 41 (Swagger) กับ Day ถัด ๆ ไปจะกลายเป็น "เขียน API ที่ไม่มีใครตรวจ" ทันที
+  </p>
+</div>
+
+<div class="note">
+  <p><strong>🧰 เตรียมโมดูลก่อนอ่าน</strong> — ทุก output ในบทนี้รันจริงบน</p>
+  <pre style="margin:0.6rem 0"><code>go version go1.26.5 darwin/arm64
+github.com/gin-gonic/gin v1.12.0
+github.com/stretchr/testify v1.12.1</code></pre>
+  <p style="margin-bottom:0">
+    <code>net/http/httptest</code> อยู่ใน standard library ของ Go <strong>ไม่ต้อง <code>go get</code></strong>
+    · ที่ต้องโหลดคือ gin กับ testify ซึ่งลงไปแล้วตั้งแต่บท 38 และบท 17
+  </p>
+</div>
+
+<h2>1 · ปัญหาก่อน แล้วค่อยดูเครื่องมือ</h2>
+
+<p>
+  ลองนึกว่าจะเทส <code>GET /users/:id</code> ด้วยความรู้ที่มีตอนนี้ ทางที่นึกออกคือ:
+  เปิดเซิร์ฟเวอร์ด้วย <code>r.Run(":8080")</code> แล้วยิง <code>http.Get("http://localhost:8080/users/1")</code>
+  <br>มันทำงานได้จริง แต่ลองไล่ราคาที่ต้องจ่ายดู:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>สิ่งที่ต้องทำ</th><th>ปัญหาที่ตามมา</th></tr>
+  <tr><td>จอง port 8080</td><td>เครื่อง CI (เครื่องกลางที่รันเทสให้อัตโนมัติทุกครั้งที่ push โค้ด) รันเทสหลายชุดพร้อมกัน → ชนกัน · เครื่องคุณมีอย่างอื่นใช้อยู่ → เทสพังทั้งที่โค้ดถูก</td></tr>
+  <tr><td>รอให้ server พร้อมก่อนยิง</td><td>ต้อง <code>time.Sleep</code> เดา ๆ ไว้ → เทสช้าลง และกลายเป็น flaky test (เทสที่บางรอบผ่านบางรอบพัง ทั้งที่โค้ดไม่ได้เปลี่ยน)</td></tr>
+  <tr><td>ปิด server ตอนจบ</td><td>ลืมปิด = เทสตัวถัดไปเจอ port ไม่ว่าง</td></tr>
+  <tr><td>ต่อ DB จริง</td><td>ต้องมี Docker + ข้อมูลตั้งต้น เพียงเพื่อจะเช็คว่า handler ตอบ 404 ถูกไหม</td></tr>
+</table>
+</div>
+
+<p>
+  ทั้งหมดนี้เป็นค่าใช้จ่ายของ<strong>ชั้น network</strong> ซึ่งเราไม่ได้อยากเทสมันเลย —
+  เราอยากรู้แค่ว่า "ยิง path นี้เข้าไป แล้ว handler ตอบ status/body อะไร"
+</p>
+
+<p>
+  ทางออกซ่อนอยู่ใน interface ที่คุณเห็นมาตั้งแต่บท 37 แล้วแต่อาจยังไม่ทันสังเกต —
+  <code>http.Handler</code> มี method เดียวเท่านั้น:
+</p>
+
+<pre><code><span class="k">type</span> Handler <span class="k">interface</span> {
+    <span class="f">ServeHTTP</span>(ResponseWriter, *Request)
+}</code></pre>
+
+<p>
+  อ่านช้า ๆ อีกรอบ: มันคือ<strong>ฟังก์ชันธรรมดาที่รับสองพารามิเตอร์</strong>
+  ตัวหนึ่งคือ "คำถาม" (<code>*http.Request</code>) อีกตัวคือ "สมุดให้เขียนคำตอบ" (<code>http.ResponseWriter</code>)
+  <br>ในโลกจริง Go เป็นคนสร้างสองตัวนี้จาก TCP socket แล้วเรียก <code>ServeHTTP</code> ให้
+  <br>แต่<strong>ไม่มีกฎข้อไหนบอกว่ามันต้องมาจาก socket</strong> — ถ้าเราประกอบสองตัวนี้ขึ้นมาเองแล้วเรียกตรง ๆ
+  handler ก็ทำงานเหมือนเดิมทุกประการ โดยไม่มี network เข้ามาเกี่ยวเลย
+</p>
+
+<div class="diagram">
+<pre><strong>ของจริง</strong>
+  browser ──TCP──▶ net/http ──สร้าง req + w ให้──▶ <strong>router.ServeHTTP(w, req)</strong> ──▶ handler
+
+<strong>ในเทส</strong>  (เราเป็นคนสร้าง req + w เอง แล้วเรียกบรรทัดเดียวกันนั้นตรง ๆ)
+  httptest.NewRequest(...) ─▶ req ─┐
+                                   ├──▶ <strong>router.ServeHTTP(w, req)</strong> ──▶ handler
+  httptest.NewRecorder()   ─▶ w  ──┘
+
+  (ไม่มี browser · ไม่มี TCP · ไม่มี port — ทุกอย่างอยู่ใน RAM ล้วน ๆ)</pre>
+</div>
+
+<p>
+  <code>net/http/httptest</code> ให้สองอย่างพอดี:
+  <strong><code>NewRequest</code></strong> ปั้น <code>*http.Request</code> ปลอมขึ้นมาจาก method + path
+  และ <strong><code>NewRecorder</code></strong> ให้ <code>ResponseWriter</code> ที่<em>ไม่ส่งอะไรออกไปไหน</em>
+  แต่<strong>จดทุกอย่างที่ handler เขียนลงไป</strong> แล้วให้เราอ่านย้อนหลังได้
+</p>
+
+<h2>2 · โค้ดที่เราจะเทสกันทั้งบท</h2>
+
+<p>
+  นี่คือของที่ต่อยอดตรงจาก <a href="./0039-gin-binding-middleware.html">บทเรียน 39</a> —
+  มี <code>c.Param</code>, มี <code>ShouldBindJSON</code> + <code>binding</code> tag ครบ
+  <br>เซฟเป็น <code>app.go</code> ในโฟลเดอร์เปล่า ๆ ที่ <code>go mod init check</code> ไว้แล้ว
+  (ทุกไฟล์ในบทนี้อยู่โฟลเดอร์เดียวกันหมด · ชื่อ package ต้องตรงกันทุกไฟล์):
+</p>
+
+<pre><code><span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"net/http"</span>
+
+    <span class="s">"github.com/gin-gonic/gin"</span>
+)
+
+<span class="k">type</span> User <span class="k">struct</span> {
+    ID   <span class="k">string</span> <span class="s">`json:"id"`</span>
+    Name <span class="k">string</span> <span class="s">`json:"name"`</span>
+}
+
+<span class="k">type</span> CreateUserReq <span class="k">struct</span> {
+    Name  <span class="k">string</span> <span class="s">`json:"name"  binding:"required"`</span>
+    Email <span class="k">string</span> <span class="s">`json:"email" binding:"required,email"`</span>
+}
+
+<span class="k">var</span> db = <span class="k">map</span>[<span class="k">string</span>]User{
+    <span class="s">"1"</span>: {ID: <span class="s">"1"</span>, Name: <span class="s">"Somchai"</span>},
+}
+
+<span class="k">func</span> <span class="f">GetUser</span>(c *gin.Context) {
+    id := c.<span class="f">Param</span>(<span class="s">"id"</span>)
+    u, ok := db[id]
+    <span class="k">if</span> !ok {
+        c.<span class="f">JSON</span>(http.StatusNotFound, gin.H{<span class="s">"error"</span>: <span class="s">"user not found"</span>})
+        <span class="k">return</span>
+    }
+    c.<span class="f">Header</span>(<span class="s">"X-Course"</span>, <span class="s">"go-day8"</span>)
+    c.<span class="f">JSON</span>(http.StatusOK, u)
+}
+
+<span class="k">func</span> <span class="f">CreateUser</span>(c *gin.Context) {
+    <span class="k">var</span> req CreateUserReq
+    <span class="k">if</span> err := c.<span class="f">ShouldBindJSON</span>(&amp;req); err != <span class="k">nil</span> {
+        c.<span class="f">JSON</span>(http.StatusBadRequest, gin.H{<span class="s">"error"</span>: err.<span class="f">Error</span>()})
+        <span class="k">return</span>
+    }
+    c.<span class="f">JSON</span>(http.StatusCreated, gin.H{<span class="s">"name"</span>: req.Name, <span class="s">"email"</span>: req.Email})
+}
+
+<span class="c">// จุดที่สำคัญที่สุดของไฟล์นี้: แยก "สร้าง router" ออกจาก "รัน server"</span>
+<span class="k">func</span> <span class="f">NewRouter</span>() *gin.Engine {
+    r := gin.<span class="f">New</span>()
+    r.<span class="f">GET</span>(<span class="s">"/users/:id"</span>, GetUser)
+    r.<span class="f">POST</span>(<span class="s">"/users"</span>, CreateUser)
+    <span class="k">return</span> r
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    <span class="f">NewRouter</span>().<span class="f">Run</span>(<span class="s">":8080"</span>)   <span class="c">// เทสไม่แตะบรรทัดนี้เลย — ดูกล่องข้างล่าง</span>
+}</code></pre>
+
+<div class="win">
+  <span class="label">🔑 บรรทัดที่ทำให้เทสได้เลยคือ <code>NewRouter()</code></span>
+  <p style="margin-bottom:0">
+    ถ้าคุณเขียน <code>r := gin.New()</code> กับ <code>r.Run(":8080")</code> ปนกันอยู่ใน
+    <code>main()</code> — เทสจะ<strong>เอื้อมไปหยิบ router ไม่ได้เลย</strong>
+    เพราะการเรียก <code>main()</code> จากเทสแปลว่าเซิร์ฟเวอร์จะบล็อกค้างอยู่ตรงนั้นตลอดไป
+    <br>กฎที่ติดตัวไปได้ทุกภาษา: <strong>แยก "ประกอบของ" ออกจาก "สั่งให้ทำงาน" เสมอ</strong>
+    — <code>main()</code> เหลือแค่บรรทัดเดียวคือ <code>NewRouter().Run(":8080")</code>
+    ส่วนเทสเรียก <code>NewRouter()</code> เฉย ๆ ได้ router มาถือไว้โดยไม่มีอะไรบล็อก
+    <br>นี่คือหลักเดียวกับ constructor injection ที่ใช้ใน
+    <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a>
+  </p>
+</div>
+
+<h2>3 · สามบรรทัดที่ต้องจำ</h2>
+
+<p>เซฟเป็น <code>basic_test.go</code> ข้าง ๆ <code>app.go</code> — <code>package</code> เดียวกัน จึงเรียก <code>NewRouter()</code> ได้เลยโดยไม่ต้อง import อะไรเพิ่ม:</p>
+
+<pre><code><span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"net/http/httptest"</span>
+    <span class="s">"testing"</span>
+
+    <span class="s">"github.com/stretchr/testify/assert"</span>
+)
+
+<span class="k">func</span> <span class="f">TestGetUser_Basic</span>(t *testing.T) {
+    router := <span class="f">NewRouter</span>()
+
+    w := httptest.<span class="f">NewRecorder</span>()                              <span class="c">// 1) กล่องรับคำตอบ</span>
+    req := httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, <span class="s">"/users/1"</span>, <span class="k">nil</span>)      <span class="c">// 2) คำถามปลอม</span>
+    router.<span class="f">ServeHTTP</span>(w, req)                                <span class="c">// 3) ยิงเข้า router ตรง ๆ</span>
+
+    assert.<span class="f">Equal</span>(t, <span class="n">200</span>, w.Code)
+    assert.<span class="f">JSONEq</span>(t, <span class="s">`{"id":"1","name":"Somchai"}`</span>, w.Body.<span class="f">String</span>())
+    assert.<span class="f">Equal</span>(t, <span class="s">"application/json; charset=utf-8"</span>, w.<span class="f">Header</span>().<span class="f">Get</span>(<span class="s">"Content-Type"</span>))
+}</code></pre>
+
+<p>รันจริงแล้วได้แบบนี้ (ผมใส่ <code>t.Logf</code> เพิ่มเพื่อพิมพ์ค่าดิบออกมาให้ดูด้วย):</p>
+
+<pre><code>$ go test -v -run TestGetUser_Basic .
+=== RUN   TestGetUser_Basic
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /users/:id                --&gt; check.GetUser (1 handlers)
+[GIN-debug] POST   /users                    --&gt; check.CreateUser (1 handlers)
+    basic_test.go:17: <strong>w.Code            = 200</strong>
+    basic_test.go:18: <strong>w.Body.String()   = "{\"id\":\"1\",\"name\":\"Somchai\"}"</strong>
+    basic_test.go:19: w.Header()        = map[Content-Type:[application/json; charset=utf-8] X-Course:[go-day8]]
+    basic_test.go:20: Content-Type      = "application/json; charset=utf-8"
+    basic_test.go:21: X-Course          = "go-day8"
+    basic_test.go:22: w.Result().Status = "200 OK"
+--- PASS: TestGetUser_Basic (0.00s)
+PASS
+ok  	check	0.322s</code></pre>
+
+<p>
+  <strong>0.322 วินาที</strong> รวมเวลาคอมไพล์ — และไม่มี port ไหนถูกจองเลยแม้แต่พอร์ตเดียว
+  นี่คือทั้งหมดของบทนี้จริง ๆ ที่เหลือคือรายละเอียดว่าจะ<strong>อ่านผลลัพธ์ให้ถูก</strong>ได้ยังไง
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>อ่านอะไร</th><th>ได้ชนิดอะไร</th><th>ค่าจริงที่รันได้</th></tr>
+  <tr><td><code>w.Code</code></td><td><code>int</code></td><td><code>200</code></td></tr>
+  <tr><td><code>w.Body.String()</code></td><td><code>string</code></td><td><code>{"id":"1","name":"Somchai"}</code></td></tr>
+  <tr><td><code>w.Header().Get("Content-Type")</code></td><td><code>string</code></td><td><code>application/json; charset=utf-8</code></td></tr>
+  <tr><td><code>w.Result().Status</code></td><td><code>string</code></td><td><code>200 OK</code></td></tr>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ <code>Content-Type</code> ของ gin มี <code>; charset=utf-8</code> ต่อท้ายเสมอ</strong>
+    <br><code>c.JSON</code> เป็นคนเติมให้เอง — ถ้าคุณเขียน
+    <code>assert.Equal(t, "application/json", w.Header().Get("Content-Type"))</code>
+    เทสจะพังทั้งที่โค้ดถูก
+    <br>อีกจุด: <code>w.Header()</code> อ่านได้ตรง ๆ <strong>ไม่ต้องเรียก <code>w.Result()</code> ก่อน</strong>
+    (จาก output ข้างบนจะเห็นทั้ง <code>Content-Type</code> และ <code>X-Course</code> ที่ handler set ไว้ครบ)
+  </p>
+</div>
+
+<h2>4 · กับดักตัวแรก: recorder เป็นของใช้ครั้งเดียว</h2>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — โค้ดนี้ใช้ <code>w</code> ตัวเดิมยิงสองครั้ง
+    ครั้งแรก <code>/users/1</code> (มีจริง) ครั้งที่สอง <code>/users/999</code> (ไม่มี)</p>
+  <pre><code><span class="c">// func TestReuseRecorder(t *testing.T) {  router := NewRouter()</span>
+w := httptest.<span class="f">NewRecorder</span>()
+
+router.<span class="f">ServeHTTP</span>(w, httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, <span class="s">"/users/1"</span>, <span class="k">nil</span>))
+t.<span class="f">Logf</span>(<span class="s">"ครั้งที่ 1: code=%d body=%s"</span>, w.Code, w.Body.<span class="f">String</span>())
+
+router.<span class="f">ServeHTTP</span>(w, httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, <span class="s">"/users/999"</span>, <span class="k">nil</span>))
+t.<span class="f">Logf</span>(<span class="s">"ครั้งที่ 2 (recorder เดิม): code=%d body=%s"</span>, w.Code, w.Body.<span class="f">String</span>())
+
+<span class="c">// แล้วยิงเคสเดิมซ้ำอีกรอบ คราวนี้สร้าง recorder ใหม่ ไว้เทียบกัน</span>
+w2 := httptest.<span class="f">NewRecorder</span>()
+router.<span class="f">ServeHTTP</span>(w2, httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, <span class="s">"/users/999"</span>, <span class="k">nil</span>))
+t.<span class="f">Logf</span>(<span class="s">"ครั้งที่ 2 (recorder ใหม่): code=%d body=%s"</span>, w2.Code, w2.Body.<span class="f">String</span>())</code></pre>
+  <p>และคำถามแถมมาจากเทสอีกตัวที่สร้าง recorder ขึ้นมาแล้ว<strong>ไม่ยิงอะไรเลย</strong>:</p>
+  <pre><code><span class="c">// func TestDefaultCode(t *testing.T) {</span>
+w := httptest.<span class="f">NewRecorder</span>()
+t.<span class="f">Logf</span>(<span class="s">"recorder ที่ยังไม่ถูกเขียน: w.Code = %d"</span>, w.Code)</code></pre>
+  <p class="ask">
+    บรรทัด <strong>"ครั้งที่ 2 (recorder เดิม)"</strong> จะพิมพ์ <code>w.Code</code> เป็นเท่าไหร่
+    และ <code>w.Body</code> หน้าตายังไง?
+    <br>คำถามแถม: <strong>ถ้ายังไม่เคยยิงอะไรเลยสักครั้ง <code>w.Code</code> เท่ากับอะไร</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== RUN   TestReuseRecorder
+    traps_test.go:14: ครั้งที่ 1: code=200 body={"id":"1","name":"Somchai"}
+    traps_test.go:18: ครั้งที่ 2 (recorder เดิม): code=<strong>200</strong> body=<strong>{"id":"1","name":"Somchai"}{"error":"user not found"}</strong>
+    traps_test.go:23: ครั้งที่ 2 (recorder ใหม่): code=404 body={"error":"user not found"}
+--- PASS: TestReuseRecorder (0.00s)
+
+=== RUN   TestDefaultCode
+    traps_test.go:40: recorder ที่ยังไม่ถูกเขียน: <strong>w.Code = 200</strong>
+--- PASS: TestDefaultCode (0.00s)</code></pre>
+    <p>
+      <strong>1. <code>w.Code</code> ค้างที่ 200</strong> — เพราะ HTTP เขียน status ได้ครั้งเดียว
+      (<a href="./0037-net-http-server.html">บทเรียน 37</a> เรื่อง <code>WriteHeader</code> เขียนซ้ำไม่ได้)
+      ครั้งแรกชนะ ครั้งที่สองถูกเมิน
+      <br><strong>2. body ต่อกันเป็นก้อนเดียว</strong> —
+      <code>{"id":"1",...}{"error":...}</code> ซึ่งไม่ใช่ JSON ที่ถูกต้องแล้วด้วยซ้ำ
+    </p>
+    <p style="margin-bottom:0">
+      <strong>3. คำถามแถมคือข้อที่อันตรายที่สุด: <code>w.Code</code> เริ่มต้นที่ <code>200</code> ทันทีที่สร้าง</strong>
+      ทั้งที่ยังไม่มีใครเขียนอะไรลงไปเลย
+      <br>แปลว่าเทสที่ assert แค่ <code>assert.Equal(t, 200, w.Code)</code> อย่างเดียว
+      <strong>พิสูจน์ไม่ได้ว่า handler ทำงาน</strong> — แม้ handler จะไม่ถูกเรียกเลยเทสก็ยังผ่าน
+      <br>→ <strong>assert body ด้วยเสมอ</strong> และ <strong>สร้าง recorder ใหม่ทุกเคส</strong>
+    </p>
+  </div>
+</div>
+
+<h2>5 · <code>assert.JSONEq</code> ไม่ใช่ของหรู มันคือของจำเป็น</h2>
+
+<p>
+  body ที่ handler ตอบมาเป็น<em>สตริง</em> แต่สิ่งที่เราสนใจจริง ๆ คือ<em>ข้อมูล</em>
+  <br>ระหว่าง <code>{"id":"1","name":"Somchai"}</code> กับ <code>{ "name": "Somchai", "id": "1" }</code>
+  — สำหรับ client สองอันนี้<strong>เหมือนกันทุกประการ</strong> แต่สำหรับ <code>==</code> มันคนละเรื่อง
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ <code>assert.Equal</code></h4>
+    <pre><code>got := w.Body.<span class="f">String</span>()   <span class="c">// = {"id":"1","name":"Somchai"}</span>
+expected := <span class="s">`{ "name": "Somchai", "id": "1" }`</span>
+assert.<span class="f">Equal</span>(t, expected, got)</code></pre>
+    <pre><code>    Error:      	Not equal:
+                	expected: "{ \"name\": \"Somchai\", \"id\": \"1\" }"
+                	actual  : "{\"id\":\"1\",\"name\":\"Somchai\"}"
+
+                	Diff:
+                	--- Expected
+                	+++ Actual
+                	@@ -1 +1 @@
+                	-{ "name": "Somchai", "id": "1" }
+                	+{"id":"1","name":"Somchai"}
+--- FAIL: TestCompareJSON (0.00s)</code></pre>
+    <p style="margin-bottom:0">เทียบ<strong>สตริงตรงตัว</strong> — สลับ key หรือเว้นวรรคก็พังแล้ว</p>
+  </div>
+  <div class="side good">
+    <h4>✅ <code>assert.JSONEq</code></h4>
+    <pre><code>got := w.Body.<span class="f">String</span>()   <span class="c">// ก้อนเดียวกันเป๊ะกับฝั่งซ้าย</span>
+expected := <span class="s">`{ "name": "Somchai", "id": "1" }`</span>
+assert.<span class="f">JSONEq</span>(t, expected, got)</code></pre>
+    <pre><code><span class="c">(ไม่มี error รายงานออกมาเลย = ผ่าน)</span></code></pre>
+    <p style="margin-bottom:0">
+      แกะทั้งสองฝั่งเป็นโครงสร้างข้อมูลก่อนแล้วค่อยเทียบ —
+      <strong>ลำดับ key และช่องว่างไม่มีผล</strong>
+    </p>
+  </div>
+</div>
+
+<p>
+  ทั้งสองบล็อกข้างบนรันกับ body ก้อนเดียวกันคือ <code>{"id":"1","name":"Somchai"}</code>
+  ต่างกันแค่ฟังก์ชันที่ใช้เทียบเท่านั้น
+  <br>ทำไมเรื่องนี้สำคัญกว่าที่คิด: <strong>ลำดับ key ใน JSON ไม่ใช่สิ่งที่คุณควบคุมได้</strong>
+  <br><code>gin.H</code> คือ <code>map</code> ซึ่ง Go ไม่รับประกันลำดับ
+  วันที่คุณเปลี่ยน handler จากตอบ struct มาเป็นตอบ <code>gin.H</code> (หรือกลับกัน)
+  ลำดับ key ก็เปลี่ยนตาม — เทสที่ใช้ <code>Equal</code> จะพังทั้งแผงทั้งที่ API ตอบข้อมูลเดิมเป๊ะ
+  <br>สรุปสั้น ๆ: <strong>body ที่เป็น JSON ให้ใช้ <code>JSONEq</code> เสมอ</strong> ·
+  <code>Equal</code> เก็บไว้ใช้กับ <code>w.Code</code> และ header ซึ่งเป็นค่าเดี่ยว ๆ ไม่มีเรื่องลำดับ
+</p>
+
+<h2>6 · table-driven: 200 / 400 / 404 ในลูปเดียว</h2>
+
+<p>
+  ตอนนี้ต่อจิ๊กซอว์ได้แล้ว — เอาโครง table-driven จาก
+  <a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16</a> มาครอบ:
+  แต่ละแถวคือ "หนึ่ง request หนึ่งคำตอบที่คาดไว้"
+</p>
+
+<pre><code><span class="c">// ในไฟล์ table_test.go — package เดียวกับ app.go</span>
+<span class="c">// import เพิ่มจากหัวข้อ 3 อีกสองตัว: "net/http" และ "strings"</span>
+router := <span class="f">NewRouter</span>()   <span class="c">// สร้างครั้งเดียว ใช้ได้ทุกเคส (เหตุผลอยู่ในกล่องถัดไป)</span>
+
+tests := []<span class="k">struct</span> {
+    name       <span class="k">string</span>
+    method     <span class="k">string</span>
+    path       <span class="k">string</span>
+    body       <span class="k">string</span>
+    wantCode   <span class="k">int</span>
+    wantJSON   <span class="k">string</span>
+    wantSubstr <span class="k">string</span>
+}{
+    {name: <span class="s">"200 เจอ user"</span>, method: http.MethodGet, path: <span class="s">"/users/1"</span>,
+        wantCode: http.StatusOK, wantJSON: <span class="s">`{"id":"1","name":"Somchai"}`</span>},
+    {name: <span class="s">"404 ไม่เจอ user"</span>, method: http.MethodGet, path: <span class="s">"/users/999"</span>,
+        wantCode: http.StatusNotFound, wantJSON: <span class="s">`{"error":"user not found"}`</span>},
+    {name: <span class="s">"400 body ไม่ผ่าน validation"</span>, method: http.MethodPost, path: <span class="s">"/users"</span>,
+        body:     <span class="s">`{"name":"","email":"ไม่ใช่อีเมล"}`</span>,
+        wantCode: http.StatusBadRequest, wantSubstr: <span class="s">"Field validation"</span>},
+}
+
+<span class="k">for</span> _, tc := <span class="k">range</span> tests {
+    t.<span class="f">Run</span>(tc.name, <span class="k">func</span>(t *testing.T) {
+        <span class="k">var</span> req *http.Request
+        <span class="k">if</span> tc.body == <span class="s">""</span> {
+            req = httptest.<span class="f">NewRequest</span>(tc.method, tc.path, <span class="k">nil</span>)
+        } <span class="k">else</span> {
+            req = httptest.<span class="f">NewRequest</span>(tc.method, tc.path, strings.<span class="f">NewReader</span>(tc.body))
+            req.Header.<span class="f">Set</span>(<span class="s">"Content-Type"</span>, <span class="s">"application/json"</span>)
+        }
+        w := httptest.<span class="f">NewRecorder</span>()          <span class="c">// recorder ใหม่ทุกเคส (หัวข้อ 4)</span>
+        router.<span class="f">ServeHTTP</span>(w, req)
+        require.<span class="f">Equal</span>(t, tc.wantCode, w.Code, <span class="s">"body=%s"</span>, w.Body.<span class="f">String</span>())
+
+        <span class="c">// แถวไหนกรอก wantJSON ไว้ก็เทียบทั้งก้อน แถวไหนกรอก wantSubstr ก็เทียบแค่ชิ้นส่วน</span>
+        <span class="k">if</span> tc.wantJSON != <span class="s">""</span> {
+            assert.<span class="f">JSONEq</span>(t, tc.wantJSON, w.Body.<span class="f">String</span>())
+        }
+        <span class="k">if</span> tc.wantSubstr != <span class="s">""</span> {
+            assert.<span class="f">Contains</span>(t, w.Body.<span class="f">String</span>(), tc.wantSubstr)
+        }
+        t.<span class="f">Logf</span>(<span class="s">"code=%d body=%s"</span>, w.Code, w.Body.<span class="f">String</span>())
+    })
+}</code></pre>
+
+<pre><code>=== RUN   TestUserHandlers_Table
+=== RUN   TestUserHandlers_Table/200_เจอ_user
+    table_test.go:69: code=200 body={"id":"1","name":"Somchai"}
+=== RUN   TestUserHandlers_Table/404_ไม่เจอ_user
+    table_test.go:69: code=404 body={"error":"user not found"}
+=== RUN   TestUserHandlers_Table/400_body_ไม่ผ่าน_validation
+    table_test.go:69: code=400 body={"error":"Key: 'CreateUserReq.Name' Error:Field validation for 'Name' failed on the 'required' tag\nKey: 'CreateUserReq.Email' Error:Field validation for 'Email' failed on the 'email' tag"}
+<strong>--- PASS: TestUserHandlers_Table (0.00s)
+    --- PASS: TestUserHandlers_Table/200_เจอ_user (0.00s)
+    --- PASS: TestUserHandlers_Table/404_ไม่เจอ_user (0.00s)
+    --- PASS: TestUserHandlers_Table/400_body_ไม่ผ่าน_validation (0.00s)</strong></code></pre>
+
+<div class="win">
+  <span class="label">🔍 สี่รายละเอียดในโค้ดข้างบนที่มีเหตุผลอยู่เบื้องหลัง</span>
+  <p style="margin-bottom:0">
+    <strong>1. <code>router</code> สร้างครั้งเดียวนอกลูปได้ แต่ <code>w</code> ต้องอยู่ใน <code>t.Run</code></strong>
+    — router ไม่มีสถานะต่อ request ส่วน recorder มี (หัวข้อ 4)
+    <br><strong>2. <code>require</code> ไม่ใช่ <code>assert</code> ตรง status</strong> —
+    ถ้า code ไม่ตรงแล้วยัง assert body ต่อ จะได้ error สองบรรทัดที่ทำให้สับสน
+    <code>require</code> หยุดเคสนั้นทันที (<a href="../../day-5/lessons/0017-testify.html">บทเรียน 17</a>)
+    <br><strong>3. <code>"body=%s"</code> ต่อท้าย <code>require.Equal</code></strong> —
+    เวลาเทสพัง สิ่งที่คุณอยากเห็นที่สุดคือ<em>เซิร์ฟเวอร์ตอบอะไรกลับมา</em> ไม่ใช่แค่ "expected 200 got 400"
+    <br><strong>4. เคส 400 ใช้ <code>wantSubstr</code> ไม่ใช่ <code>wantJSON</code></strong> —
+    เพราะ error ของ validator เป็นข้อความยาวที่<strong>อาจเปลี่ยนเมื่ออัปเวอร์ชัน</strong>
+    ผูกเทสไว้กับข้อความเป๊ะ ๆ = เทสที่พังเองโดยที่โค้ดไม่ผิด
+  </p>
+</div>
+
+<h2>7 · <code>gin.SetMode(gin.TestMode)</code> — ทำให้ output อ่านออก</h2>
+
+<p>
+  สังเกต output ในหัวข้อ 3: มี <code>[GIN-debug]</code> โผล่มาสี่ห้าบรรทัดทุกครั้งที่สร้าง router
+  ถ้ามี 30 เทสก็คูณ 30 — หา <code>--- FAIL</code> ไม่เจอเลย
+  <br>ทางแก้คือใส่ <code>TestMain</code> ไว้ไฟล์เดียวใน package (Go จะเรียกมันก่อนเทสทุกตัว):
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">TestMain</span>(m *testing.M) {
+    gin.<span class="f">SetMode</span>(gin.TestMode)
+    os.<span class="f">Exit</span>(m.<span class="f">Run</span>())
+}</code></pre>
+
+<p>
+  ผมรันไฟล์เดียวกัน 3 โหมดเทียบกัน — ไฟล์นี้ใช้ router จิ๋ว ๆ อีกตัวที่ยิง <code>/users/7</code>
+  แล้วตอบ <code>{"id":"7"}</code> กลับมา (ไม่เกี่ยวกับ <code>db</code> ในหัวข้อ 2)
+  ที่ต้องดูคือคอลัมน์สุดท้ายสองคอลัมน์ ไม่ใช่ตัวเลข 7:
+</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>ตั้งค่ายังไง</th><th><code>gin.Mode()</code></th><th><code>gin.IsDebugging()</code></th><th>ผลลัพธ์ของ request</th><th><code>[GIN-debug]</code></th></tr>
+  <tr><td>ไม่ตั้งอะไรเลย</td><td><code>debug</code></td><td><code>true</code></td><td><code>code=200 body={"id":"7"}</code></td><td>มี</td></tr>
+  <tr><td><code>gin.SetMode(gin.TestMode)</code></td><td><code>test</code></td><td><code>false</code></td><td><code>code=200 body={"id":"7"}</code></td><td><strong>ไม่มี</strong></td></tr>
+  <tr><td><code>GIN_MODE=release go test</code></td><td><code>release</code></td><td><code>false</code></td><td><code>code=200 body={"id":"7"}</code></td><td><strong>ไม่มี</strong></td></tr>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>อ่านตารางให้ถูก: คอลัมน์ "ผลลัพธ์ของ request" เหมือนกันทั้งสามแถว</strong>
+    <br><code>TestMode</code> <strong>ไม่ได้เปลี่ยนพฤติกรรมของ handler</strong> ไม่ได้ปิด validation
+    ไม่ได้ทำให้ error ต่างไป — มันแค่ทำให้ log เงียบ
+    <br>เขียนไว้เพราะ<strong>เทสที่อ่าน output ไม่ออกคือเทสที่คุณจะเลิกอ่าน</strong> เท่านั้นเอง
+    ไม่ใช่เพราะ "ไม่ใส่แล้วเทสไม่ถูกต้อง"
+  </p>
+</div>
+
+<h2>8 · ต่อยอดจาก mock — เทส handler ที่ต้องใช้ DB โดยไม่มี DB</h2>
+
+<p>
+  ตัวอย่างที่ผ่านมาใช้ <code>map</code> เป็นฐานข้อมูล ซึ่งของจริงไม่เป็นแบบนั้น
+  <br>แต่จำ <a href="../../day-7/lessons/0028-mockery.html">บทเรียน 28</a> ได้ไหม —
+  ถ้า handler ไม่ได้เรียก DB ตรง ๆ แต่เรียกผ่าน <strong>interface</strong>
+  เราก็สลับตัวจริงเป็น mock ได้ทั้งดุ้น:
+</p>
+
+<pre><code><span class="k">var</span> ErrNotFound = errors.<span class="f">New</span>(<span class="s">"user not found"</span>)   <span class="c">// sentinel error ที่ errors.Is เอาไว้เทียบ</span>
+
+<span class="k">type</span> UserService <span class="k">interface</span> {
+    <span class="f">GetUser</span>(id <span class="k">string</span>) (User, <span class="k">error</span>)
+}
+
+<span class="k">type</span> Handler <span class="k">struct</span>{ svc UserService }
+
+<span class="k">func</span> (h *Handler) <span class="f">GetUser</span>(c *gin.Context) {
+    u, err := h.svc.<span class="f">GetUser</span>(c.<span class="f">Param</span>(<span class="s">"id"</span>))
+    <span class="k">if</span> errors.<span class="f">Is</span>(err, ErrNotFound) {
+        c.<span class="f">JSON</span>(http.StatusNotFound, gin.H{<span class="s">"error"</span>: <span class="s">"user not found"</span>})
+        <span class="k">return</span>
+    }
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        c.<span class="f">JSON</span>(http.StatusInternalServerError, gin.H{<span class="s">"error"</span>: <span class="s">"internal error"</span>})
+        <span class="k">return</span>
+    }
+    c.<span class="f">JSON</span>(http.StatusOK, u)
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>สองอย่างที่เปลี่ยนไปจากหัวข้อ 2 — อ่านก่อนไม่งั้นโค้ดข้างล่างจะดูโผล่มาจากไหนไม่รู้</strong>
+    <br><strong>1.</strong> <code>NewRouter</code> ตอนนี้<strong>รับพารามิเตอร์</strong>แล้ว
+    เพราะ handler ไม่ได้เป็นฟังก์ชันลอย ๆ อีกต่อไป แต่เป็น method ของ <code>Handler</code> ที่ต้องรู้ว่าจะใช้ service ตัวไหน:
+    <br><code>func NewRouter(h *Handler) *gin.Engine { r := gin.New(); r.GET("/users/:id", h.GetUser); return r }</code>
+    <br><strong>2.</strong> <code>MockUserService</code> <strong>ไม่ใช่ของที่เราเขียนเองในบทนี้</strong> —
+    มันคือไฟล์ที่ <code>mockery</code> generate ให้จาก interface <code>UserService</code>
+    (<a href="../../day-7/lessons/0028-mockery.html">บทเรียน 28</a>) · method <code>.On()</code> / <code>.Return()</code> /
+    <code>.AssertExpectations()</code> ทั้งหมดมาจาก <code>testify/mock</code> ที่ติดมากับมัน
+  </p>
+</div>
+
+<p>ฝั่งเทสสั่ง mock ว่า "ถ้าถูกถามด้วย id นี้ ให้ตอบแบบนี้" แล้วยิงผ่าน recorder เหมือนเดิมทุกอย่าง:</p>
+
+<pre><code>svc := <span class="f">new</span>(MockUserService)
+svc.<span class="f">On</span>(<span class="s">"GetUser"</span>, <span class="s">"1"</span>).<span class="f">Return</span>(User{ID: <span class="s">"1"</span>, Name: <span class="s">"Somchai"</span>}, <span class="k">nil</span>)
+svc.<span class="f">On</span>(<span class="s">"GetUser"</span>, <span class="s">"999"</span>).<span class="f">Return</span>(User{}, ErrNotFound)
+
+router := <span class="f">NewRouter</span>(&amp;Handler{svc: svc})
+
+t.<span class="f">Run</span>(<span class="s">"200"</span>, <span class="k">func</span>(t *testing.T) {
+    w := httptest.<span class="f">NewRecorder</span>()
+    router.<span class="f">ServeHTTP</span>(w, httptest.<span class="f">NewRequest</span>(http.MethodGet, <span class="s">"/users/1"</span>, <span class="k">nil</span>))
+    require.<span class="f">Equal</span>(t, <span class="n">200</span>, w.Code)
+    assert.<span class="f">JSONEq</span>(t, <span class="s">`{"id":"1","name":"Somchai"}`</span>, w.Body.<span class="f">String</span>())
+})
+
+t.<span class="f">Run</span>(<span class="s">"404"</span>, <span class="k">func</span>(t *testing.T) {
+    w := httptest.<span class="f">NewRecorder</span>()
+    router.<span class="f">ServeHTTP</span>(w, httptest.<span class="f">NewRequest</span>(http.MethodGet, <span class="s">"/users/999"</span>, <span class="k">nil</span>))
+    require.<span class="f">Equal</span>(t, <span class="n">404</span>, w.Code)
+    assert.<span class="f">JSONEq</span>(t, <span class="s">`{"error":"user not found"}`</span>, w.Body.<span class="f">String</span>())
+})
+
+svc.<span class="f">AssertExpectations</span>(t)</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ต้องยิงให้ครบทุก <code>.On()</code> ที่สั่งไว้</strong> —
+    ถ้าตัดเคส <code>404</code> ทิ้งแต่ยังทิ้ง <code>svc.On("GetUser", "999")</code> ไว้
+    แล้วปิดท้ายด้วย <code>AssertExpectations</code> เทสจะ <strong>FAIL</strong> ทันที
+    ทั้งที่ handler ไม่ได้ผิดอะไรเลย:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>FAIL: 1 out of 2 expectation(s) were met.
+	The code you are testing needs to make 1 more call(s).</code></pre>
+</div>
+
+<p>
+  และของแถมที่ทำได้เฉพาะตอนใช้ mock — <strong>สั่งให้ "DB ล่ม" ได้ตามสั่ง</strong>
+  ซึ่งกับ DB จริงคุณต้องไปถอดสาย:
+</p>
+
+<pre><code>svc.<span class="f">On</span>(<span class="s">"GetUser"</span>, <span class="s">"1"</span>).<span class="f">Return</span>(User{},
+    errors.<span class="f">New</span>(<span class="s">"dial tcp 127.0.0.1:5432: connect: connection refused"</span>))
+
+<span class="c">// สร้าง router + recorder แล้วยิง GET /users/1 เหมือนเดิมเป๊ะ ไม่มีอะไรพิเศษ</span>
+require.<span class="f">Equal</span>(t, <span class="n">500</span>, w.Code)
+assert.<span class="f">JSONEq</span>(t, <span class="s">`{"error":"internal error"}`</span>, w.Body.<span class="f">String</span>())</code></pre>
+
+<pre><code>$ go test -v -count=1 .
+=== RUN   TestGetUser_WithMock
+=== RUN   TestGetUser_WithMock/200
+=== RUN   TestGetUser_WithMock/404
+--- PASS: TestGetUser_WithMock (0.00s)
+    --- PASS: TestGetUser_WithMock/200 (0.00s)
+    --- PASS: TestGetUser_WithMock/404 (0.00s)
+=== RUN   TestGetUser_ServiceDown
+--- PASS: TestGetUser_ServiceDown (0.00s)
+PASS
+ok  	w40	0.493s</code></pre>
+
+<div class="win">
+  <span class="label">🎯 นี่คือจุดที่ Day 7 กับ Day 8 มาบรรจบกัน</span>
+  <p style="margin-bottom:0">
+    <strong>mock ตัดตัวจริงออกจากด้านล่างของ handler · httptest ตัด network ออกจากด้านบน</strong>
+    <br>เหลือแค่ handler ตัวเปล่า ๆ ที่คุณโยนอะไรเข้าไปก็ได้ในเวลา <strong>0.493 วินาที</strong>
+    — รวมเคส "DB ล่ม" ที่ปกติแทบทดสอบไม่ได้เลย
+  </p>
+</div>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — คราวนี้ผม<strong>ลืม</strong>สั่ง <code>svc.On(...)</code>
+    (สร้าง mock เปล่า ๆ แล้วยิงเลย) และ router ตัวนี้มี <code>gin.Recovery()</code> ติดอยู่
+    แบบเดียวกับ <code>gin.Default()</code></p>
+  <pre><code>svc := <span class="f">new</span>(MockUserService)     <span class="c">// ไม่ได้ .On อะไรเลย</span>
+
+r := gin.<span class="f">New</span>()
+r.<span class="f">Use</span>(gin.<span class="f">Recovery</span>())
+r.<span class="f">GET</span>(<span class="s">"/users/:id"</span>, (&amp;Handler{svc: svc}).GetUser)
+
+w := httptest.<span class="f">NewRecorder</span>()
+r.<span class="f">ServeHTTP</span>(w, httptest.<span class="f">NewRequest</span>(http.MethodGet, <span class="s">"/users/1"</span>, <span class="k">nil</span>))
+t.<span class="f">Logf</span>(<span class="s">"code=%d body=%q"</span>, w.Code, w.Body.<span class="f">String</span>())</code></pre>
+  <p class="ask">
+    เทสนี้ <strong>FAIL หรือ PASS</strong>? · <code>w.Code</code> เป็นเท่าไหร่ · <code>w.Body</code> มีอะไรอยู่?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== RUN   TestPanicUnderRecovery
+
+2026/08/20 22:04:22 [Recovery] 2026/08/20 - 22:04:22 panic recovered:
+
+assert: mock: I don't know what to return because the method call was unexpected.
+	Either do Mock.On("GetUser").Return(...) first, or remove the GetUser() call.
+	This method was unexpected:
+		GetUser(string)
+		0: "1"
+<span class="c">   ...(stack trace อีกยาว)...</span>
+    recover_test.go:20: <strong>code=500 body=""</strong>
+<strong>--- PASS: TestPanicUnderRecovery (0.00s)</strong>
+PASS</code></pre>
+    <p>
+      <strong>PASS</strong> — และนี่คือคำตอบที่น่ากลัวที่สุดในบทนี้
+      <br>mock ที่ถูกเรียกด้วยอาร์กิวเมนต์ที่ไม่ได้สั่งไว้จะ <strong>panic</strong>
+      แต่ <code>gin.Recovery()</code> รับ panic นั้นไว้แล้วแปลงเป็น <strong>500 body ว่าง</strong>
+      — เทสไม่ crash และถ้าเผอิญคุณเขียน <code>assert.Equal(t, 500, w.Code)</code> ไว้
+      <strong>เทสจะเขียวสวยงามทั้งที่ handler ไม่เคยทำงานสำเร็จเลยสักบรรทัด</strong>
+    </p>
+    <p style="margin-bottom:0">
+      สามอย่างที่ป้องกันได้:
+      <br><strong>1.</strong> assert <strong>body</strong> ด้วยเสมอ ไม่ใช่แค่ code — body ว่างจะโป๊ะทันที
+      <br><strong>2.</strong> ปิดท้ายด้วย <code>svc.AssertExpectations(t)</code>
+      เพื่อยืนยันว่า mock ถูกเรียกครบตามที่สั่งไว้จริง
+      <br><strong>3.</strong> ถ้า router ในเทส<strong>ไม่มี</strong> <code>Recovery()</code> (คือ <code>gin.New()</code> เปล่า ๆ)
+      panic จะทะลุขึ้นมาถึง <code>go test</code> ตรง ๆ และเทส FAIL ทันที ซึ่ง<em>ดีกว่า</em>
+      — แต่ถ้าอยากเทสให้เหมือน production ที่ใช้ <code>gin.Default()</code> ก็ต้องรู้ว่าตาข่ายนี้มีอยู่
+    </p>
+  </div>
+</div>
+
+<h2>9 · แล้ว <code>httptest.NewServer</code> ล่ะ ใช้เมื่อไหร่</h2>
+
+<p>
+  <code>httptest</code> ยังมีอีกตัวที่คนมักสับสน — <code>NewServer</code> ซึ่ง<strong>เปิด port จริง</strong>:
+</p>
+
+<pre><code><span class="c">// NewRouter() ตัวเดิมจากหัวข้อ 2 (แบบไม่รับพารามิเตอร์)</span>
+srv := httptest.<span class="f">NewServer</span>(<span class="f">NewRouter</span>())
+<span class="k">defer</span> srv.<span class="f">Close</span>()
+
+resp, err := http.<span class="f">Get</span>(srv.URL + <span class="s">"/users/1"</span>)
+require.<span class="f">NoError</span>(t, err)          <span class="c">// ตกบรรทัดนี้ = คอมไพล์ไม่ผ่าน "declared and not used: err"</span>
+<span class="k">defer</span> resp.Body.<span class="f">Close</span>()
+
+body, _ := io.<span class="f">ReadAll</span>(resp.Body)  <span class="c">// ไม่มี w.Body.String() ให้ใช้แล้ว ต้องอ่านเอง</span>
+require.<span class="f">Equal</span>(t, <span class="n">200</span>, resp.StatusCode)
+assert.<span class="f">JSONEq</span>(t, <span class="s">`{"id":"1","name":"Somchai"}`</span>, <span class="k">string</span>(body))</code></pre>
+
+<pre><code>=== RUN   TestNewServer
+    server_test.go:17: srv.URL = http://127.0.0.1:54791
+    server_test.go:18: srv.Listener.Addr().Network() = tcp
+    server_test.go:24: resp.Status="200 OK" body={"id":"1","name":"Somchai"}
+    server_test.go:25: resp.Proto="HTTP/1.1" Content-Type="application/json; charset=utf-8"
+--- PASS: TestNewServer (0.00s)</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th></th><th><code>NewRecorder</code></th><th><code>NewServer</code></th></tr>
+  <tr><td>เปิดพอร์ตจริง</td><td>ไม่</td><td>ใช่ (<code>tcp</code> · พอร์ตสุ่มทุกครั้ง)</td></tr>
+  <tr><td>เรียกยังไง</td><td><code>router.ServeHTTP(w, req)</code></td><td><code>http.Get(srv.URL + "/...")</code></td></tr>
+  <tr><td>ได้อะไรกลับ</td><td><code>*httptest.ResponseRecorder</code> — อ่าน <code>w.Code</code>, <code>w.Body</code> ได้เลย</td><td><code>*http.Response</code> — status อยู่ที่ <code>resp.StatusCode</code> ส่วน body ต้อง <code>io.ReadAll(resp.Body)</code> + <code>defer resp.Body.Close()</code></td></tr>
+  <tr><td>ต้อง cleanup</td><td>ไม่ต้อง</td><td><strong>ต้อง</strong> <code>defer srv.Close()</code></td></tr>
+  <tr><td>ความเร็ว</td><td>เร็วกว่า ไม่แตะ network</td><td>ช้ากว่า</td></tr>
+</table>
+</div>
+
+<p>
+  <strong>เลือกยังไง</strong> — ถามว่า "สิ่งที่ผมกำลังเทสคือ<em>ฝั่งไหน</em>ของสาย"
+  <br>เทส <strong>handler ของเราเอง</strong> (ราว 95% ของเคส) → <code>NewRecorder</code>
+  เพราะเร็วกว่าและ assert ง่ายกว่า
+  <br>ใช้ <code>NewServer</code> เมื่อ: อยากเทส <strong>client</strong> ที่เราเขียนเอง ·
+  ทำ <strong>fake external API</strong> ให้โค้ดเราเรียก (พอร์ตสุ่ม แต่ <code>srv.URL</code> บอกให้เอง
+  จึงเอาไปยัดใส่ config ของ client ได้) ·
+  หรือเทสเรื่องที่ <code>http.Client</code> เป็นคนจัดการอย่าง redirect กับ cookie
+</p>
+
+<h2>10 · กับดักที่เหลือ (ทุกข้อรันเจอมาแล้วจริง)</h2>
+
+<div class="warn">
+  <p><span class="label">กับดัก 1 — เทสคอมไพล์ไม่ผ่านทั้งที่ยังไม่ได้เขียนอะไรผิด</span></p>
+  <pre style="margin:0.6rem 0"><code>$ go test -v -run TestGetUser_Basic ./...
+# check
+.../testify@v1.12.1/assert/yaml/yaml_default.go:31:8: missing go.sum entry for module
+providing package go.yaml.in/yaml/v3 (imported by github.com/stretchr/testify/assert/yaml);
+to add:
+	go get github.com/stretchr/testify/assert/yaml@v1.12.1
+<strong>FAIL	check [setup failed]</strong></code></pre>
+  <p style="margin-bottom:0">
+    testify v1.12.1 พึ่ง <code>go.yaml.in/yaml/v3</code> — <code>go get testify</code> เฉย ๆ ไม่ได้ดึงมันมาให้
+    <br><strong>แก้ด้วย <code>go mod tidy</code></strong> (รันในโฟลเดอร์ที่มี <code>go.mod</code>)
+    จะได้ <code>go.yaml.in/yaml/v3 v3.0.5</code> เข้ามาใน <code>go.mod</code> พร้อมคำว่า
+    <code>// indirect</code> ต่อท้าย — แปลว่า "เราไม่ได้ import เอง แต่ของที่เรา import ต้องใช้"
+    <br>สังเกตคำว่า <code>[setup failed]</code> — แปลว่า<strong>ยังไม่ได้รันเทสสักตัว</strong>
+    เป็นปัญหาโมดูล ไม่ใช่ปัญหาโค้ดของคุณ
+  </p>
+</div>
+
+<div class="warn">
+  <p><span class="label">กับดัก 2 — พิมพ์ path ผิดแล้ว <code>JSONEq</code> พังงง ๆ</span></p>
+  <pre style="margin:0.6rem 0"><code>    traps_test.go:30: code=404 body=<strong>"404 page not found"</strong> Content-Type=<strong>"text/plain"</strong>
+    traps_test.go:34: method ผิด: code=<strong>404</strong> body="404 page not found"</code></pre>
+  <p style="margin-bottom:0">
+    route ที่ไม่ได้ลงทะเบียน gin ตอบ <code>404 page not found</code> เป็น <strong><code>text/plain</code></strong>
+    ไม่ใช่ JSON → <code>assert.JSONEq</code> จะพังแบบอ่านไม่รู้เรื่อง
+    <br><strong>เห็น body เป็น <code>404 page not found</code> เมื่อไหร่ ให้สงสัย path ในเทสก่อนเลย</strong>
+    ไม่ใช่สงสัย handler
+    <br>และบรรทัดที่สอง: ยิง <code>DELETE /users/1</code> ทั้งที่ลงทะเบียนไว้แค่ <code>GET</code>
+    ก็ได้ <strong>404 ไม่ใช่ 405</strong> เพราะ <code>HandleMethodNotAllowed</code> ของ gin default เป็น <code>false</code>
+  </p>
+</div>
+
+<div class="warn">
+  <p><span class="label">กับดัก 3 — เรียก handler ตรง ๆ แล้ว <code>c.Param("id")</code> ว่างเปล่า</span></p>
+  <pre style="margin:0.6rem 0"><code>=== RUN   TestCallHandlerDirectly/ไม่ผ่าน_router,_ไม่ใส่_Params
+    direct_test.go:16: <strong>c.Param("id") = "" (len=0)</strong>
+    direct_test.go:18: code=404 body={"error":"user not found"}
+=== RUN   TestCallHandlerDirectly/ไม่ผ่าน_router_แต่ยัด_c.Params_เอง
+    direct_test.go:26: c.Param("id") = "1"
+    direct_test.go:28: code=200 body={"id":"1","name":"Somchai"}</code></pre>
+  <p style="margin-bottom:0">
+    ถึง <code>c.Request</code> จะมี URL เป็น <code>/users/1</code> ครบถ้วน <code>c.Param("id")</code> ก็ยัง<strong>ว่าง</strong>
+    เพราะ <code>:id</code> ถูกแกะโดย<strong>ตัว router</strong> ไม่ใช่แกะจาก URL — ไม่มี router ก็ไม่มีใครเติม <code>c.Params</code> ให้
+    <br>ที่ร้ายคือ<strong>มันไม่ panic</strong> แต่เงียบ ๆ ตอบ 404 → เทสอาจ "ผ่าน" แบบผิด ๆ ถ้าเผลอ assert 404 ไว้
+    <br>ถ้าจำเป็นต้องเรียกตรง ๆ ต้องยัดเอง:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>w := httptest.<span class="f">NewRecorder</span>()
+c, _ := gin.<span class="f">CreateTestContext</span>(w)   <span class="c">// ตัวที่ 2 ที่ทิ้งไปคือ *gin.Engine เปล่า ๆ</span>
+c.Request = httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, <span class="s">"/users/1"</span>, <span class="k">nil</span>)
+c.Params = gin.Params{{Key: <span class="s">"id"</span>, Value: <span class="s">"1"</span>}}   <span class="c">// &lt;- บรรทัดนี้ขาดไม่ได้</span>
+<span class="f">GetUser</span>(c)</code></pre>
+  <p style="margin-bottom:0">
+    <strong>ค่าเริ่มต้นที่แนะนำคือยิงผ่าน <code>router.ServeHTTP</code> เสมอ</strong> —
+    ได้ทดสอบ routing + middleware + binding ไปพร้อมกันในนัดเดียว
+    เก็บการเรียกตรงไว้ใช้ตอนอยาก unit test logic ล้วน ๆ ของ handler ตัวเดียวจริง ๆ
+  </p>
+</div>
+
+<div class="warn">
+  <p><span class="label">กับดัก 4 — <code>Content-Type</code> ในเทส POST</span></p>
+  <p>ผมยิง <code>POST /users</code> ด้วย body เดียวกัน 5 แบบ แล้วดูว่า header มีผลแค่ไหน:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>ยิงแบบไหน</th><th>ผลจริง</th></tr>
+    <tr><td>ไม่ set <code>Content-Type</code> เลย + <code>ShouldBindJSON</code></td><td><code>201</code> ผ่าน</td></tr>
+    <tr><td>set <code>application/json</code> + <code>ShouldBindJSON</code></td><td><code>201</code> ผ่าน</td></tr>
+    <tr><td>set ผิดเป็น <code>text/plain</code> + <code>ShouldBindJSON</code></td><td><code>201</code> ผ่าน</td></tr>
+    <tr><td>ไม่ set + ใช้ <code>c.Bind</code> แทน</td><td><strong><code>400</code></strong> ฟ้องว่า field <code>required</code> ไม่ผ่าน</td></tr>
+    <tr><td>body เป็น <code>nil</code></td><td><code>400</code> <code>{"error":"EOF"}</code></td></tr>
+  </table>
+  </div>
+  <p style="margin-bottom:0">
+    ("binder" ในที่นี้คือตัวแปลง body ดิบ ๆ ให้กลายเป็น struct — gin มีหลายตัว เช่น JSON binder, form binder, XML binder)
+    <br><code>ShouldBindJSON</code> <strong>ไม่ดู header เลย</strong> มันบังคับใช้ JSON binder ตรง ๆ เสมอ
+    <br>แต่ <code>c.Bind</code> / <code>c.ShouldBind</code> <strong>เลือก binder จาก Content-Type</strong> —
+    ไม่ set ก็ตกไปที่ form binding อ่าน JSON ไม่เจอ แล้วฟ้องว่า
+    <code>Field validation for 'Name' failed on the 'required' tag</code>
+    ซึ่งชี้ไปผิดที่จนหาสาเหตุไม่เจอ (คุณจะนึกว่า body ผิด ทั้งที่ header ต่างหาก)
+    <br>→ ในเทส <strong>set <code>Content-Type</code> ให้ตรงความจริงเสมอ</strong>
+    ไม่ใช่เพราะ <code>ShouldBindJSON</code> ต้องการ แต่เพราะเทสควรเลียนแบบ client จริง
+    และวันที่คุณเปลี่ยนไปใช้ <code>ShouldBind</code> เทสจะได้ไม่พังทั้งแผง
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong><code>httptest.NewRequest</code> กับ <code>http.NewRequest</code> ต่างกันตรงไหน</strong>
+    <br>ที่ต้องรู้ข้อเดียว: <code>httptest.NewRequest</code> คืนค่า<strong>ตัวเดียว</strong>
+    ส่วน <code>http.NewRequest</code> คืน <code>(*http.Request, error)</code> ต้องรับ err ทุกครั้ง —
+    ในเทสที่มี 20 request นั่นคือ 20 บรรทัดที่ไม่ได้ให้อะไร
+    <br>และเมื่ออาร์กิวเมนต์พัง <code>httptest.NewRequest</code> เลือก <strong>panic</strong> แทนที่จะคืน error
+    (เช่นใส่ URL <code>"://bad-url"</code> ได้
+    <code>invalid NewRequest arguments; parse "://bad-url": missing protocol scheme</code>)
+    ซึ่งในเทสถือว่าดีกว่า เพราะพังทันทีตรงจุดที่พิมพ์ผิด
+    <br><strong>ที่หลายคนเข้าใจผิด:</strong> <code>http.NewRequest("GET", "/users/1", nil)</code>
+    <em>ไม่</em> error และเอาไปยิง <code>router.ServeHTTP</code> ก็ได้ <strong>200 ถูกต้อง</strong> —
+    เพราะ <code>ServeHTTP</code> ใช้แค่ <code>req.URL.Path</code> ไม่ได้ต้องการ Host
+    ที่แนะนำ <code>httptest.NewRequest</code> เป็นเรื่อง<strong>ความสั้น</strong> ไม่ใช่เพราะอีกตัวใช้ไม่ได้
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ใช้ <code>w := httptest.NewRecorder()</code> ตัวเดิมยิง <code>/users/1</code> แล้วยิง <code>/users/999</code> ต่อ จะเกิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">body ถูกเขียนทับด้วยของรอบที่สอง และ <code>w.Code</code> เปลี่ยนเป็น 404 ตามรอบหลัง</button>
+    <button class="opt"><code>w.Code</code> ค้างอยู่ที่ 200 ส่วน body ของสองรอบต่อกันเป็นสตริงเดียว</button>
+    <button class="opt">รอบที่สอง gin จะ panic เพราะ <code>ResponseWriter</code> ตัวนี้ถูกปิดไปแล้ว</button>
+    <button class="opt">recorder รีเซ็ตตัวเองอัตโนมัติทุกครั้งที่ <code>ServeHTTP</code> ถูกเรียกใหม่</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>ครั้งที่ 2 (recorder เดิม): code=200 body={"id":"1","name":"Somchai"}{"error":"user not found"}</code>
+    <br>status เขียนได้ครั้งเดียว (ครั้งแรกชนะ) ส่วน body เป็น buffer ที่<strong>ต่อท้ายไปเรื่อย ๆ</strong>
+    ผลคือได้สตริงที่ไม่ใช่ JSON ที่ถูกต้องอีกต่อไป
+    <br>ตัวเลือกที่ 1 ผิดสองชั้น: body ไม่ได้ถูกทับ และ code ก็ไม่ได้เปลี่ยน ·
+    ตัวเลือกที่ 3 ผิดเพราะไม่มี panic เลย เทสยัง PASS สบาย ๆ ซึ่งนั่นแหละคือปัญหา ·
+    ตัวเลือกที่ 4 ผิด — ไม่มีการรีเซ็ตใด ๆ recorder เป็นของใช้ครั้งเดียว
+    <br>ทางแก้: <code>w := httptest.NewRecorder()</code> ต้องอยู่<strong>ใน</strong> <code>t.Run</code> ของทุกเคส</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. ทำไมถึงควรเทียบ body ที่เป็น JSON ด้วย <code>assert.JSONEq</code> แทน <code>assert.Equal</code>?</p>
+  <div class="opts">
+    <button class="opt">เพราะ <code>Equal</code> เทียบสตริงตรงตัว ลำดับ key หรือช่องว่างต่างนิดเดียวก็พังแล้ว</button>
+    <button class="opt">เพราะ <code>Equal</code> ใช้กับ <code>string</code> ไม่ได้ ต้องแปลงเป็น <code>[]byte</code> ก่อนเสมอ</button>
+    <button class="opt">เพราะ <code>Equal</code> หยุดเทสทันทีที่พัง ส่วน <code>JSONEq</code> ปล่อยให้เทสวิ่งต่อได้</button>
+    <button class="opt">เพราะ <code>Equal</code> อ่านภาษาไทยที่ gin encode เป็น escape ไม่ออก จึงเทียบไม่ตรง</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันเทียบให้ดูแล้ว: <code>expected := `{ "name": "Somchai", "id": "1" }`</code> กับ body จริง
+    <code>{"id":"1","name":"Somchai"}</code> — <strong><code>JSONEq</code> ผ่าน</strong> ส่วน
+    <strong><code>Equal</code> FAIL</strong> พร้อม diff ที่ต่างกันแค่ลำดับ key กับช่องว่าง
+    <br>สำคัญเพราะลำดับ key ไม่ใช่สิ่งที่เราควบคุม (<code>gin.H</code> คือ map)
+    เทสที่ผูกกับลำดับจะพังเองวันที่ refactor ทั้งที่ API ไม่เปลี่ยน
+    <br>ตัวเลือกที่ 2 ผิด <code>Equal</code> ใช้กับ string ได้ปกติ ·
+    ตัวเลือกที่ 3 สลับเรื่องกัน — เรื่อง "หยุดหรือไปต่อ" คือ <code>require</code> กับ <code>assert</code> ไม่ใช่ <code>JSONEq</code> ·
+    ตัวเลือกที่ 4 ผิด ทั้งคู่เห็นสตริงชุดเดียวกัน ไม่เกี่ยวกับภาษา</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. เทสยิง path ที่ไม่ได้ลงทะเบียนไว้ แล้ว <code>assert.JSONEq</code> พังแปลก ๆ — เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">เพราะ gin ตอบ 405 พร้อม header <code>Allow</code> ไม่ใช่ 404 อย่างที่เทสคาดไว้</button>
+    <button class="opt">เพราะ router ยังไม่ถูก build ต้องเรียก <code>r.Run()</code> ก่อน route ถึงจะมีผล</button>
+    <button class="opt">เพราะ gin ตอบ <code>404 page not found</code> เป็น <code>text/plain</code> ซึ่ง parse เป็น JSON ไม่ได้</button>
+    <button class="opt">เพราะ <code>httptest.NewRequest</code> panic ตั้งแต่บรรทัดสร้าง request ยังไม่ทันยิง</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>code=404 body="404 page not found" Content-Type="text/plain"</code>
+    <br><code>JSONEq</code> ต้องแกะทั้งสองฝั่งเป็น JSON ก่อน พอฝั่ง actual เป็นข้อความเปล่า ๆ จึงพังที่ขั้นตอนแกะ
+    <strong>อาการนี้แทบทุกครั้งแปลว่าพิมพ์ path ในเทสผิด</strong> ไม่ใช่ handler ผิด
+    <br>ตัวเลือกที่ 1 ผิด — ผมยิง <code>DELETE</code> ใส่ route ที่มีแค่ <code>GET</code> ก็ยังได้ <strong>404 ไม่ใช่ 405</strong>
+    เพราะ <code>HandleMethodNotAllowed</code> default เป็น <code>false</code> ·
+    ตัวเลือกที่ 2 ผิด — <code>r.Run()</code> คือการเปิด port ไม่เกี่ยวกับการลงทะเบียน route ·
+    ตัวเลือกที่ 4 ผิด — <code>NewRequest</code> panic เฉพาะตอน method หรือ URL ผิดรูป path ที่ไม่มี route ถือว่าปกติดี</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. เทส handler ที่ต่อกับ mock แล้วลืม <code>svc.On(...)</code> โดย router มี <code>gin.Recovery()</code> ติดอยู่ ผลคือ?</p>
+  <div class="opts">
+    <button class="opt"><code>Recovery</code> จับ panic แล้วสั่ง retry request ใหม่ mock จึงถูกเรียกซ้ำเป็นรอบสอง</button>
+    <button class="opt"><code>Recovery</code> ทำให้ <code>ServeHTTP</code> คืน error ออกมา เทสต้องรับค่าไปเช็คเองทุกครั้ง</button>
+    <button class="opt"><code>Recovery</code> ปิดไม่ให้ mock บันทึกการเรียก <code>AssertExpectations</code> จึงเห็นว่าว่างเปล่า</button>
+    <button class="opt"><code>Recovery</code> แปลง panic ของ mock เป็น 500 body ว่าง เทสจึงผ่านทั้งที่ handler พัง</button>
+  </div>
+  <div class="explain">
+    <p>mock ที่ถูกเรียกด้วยอาร์กิวเมนต์ที่ไม่ได้สั่งไว้จะ panic ว่า
+    <code>mock: I don't know what to return because the method call was unexpected</code>
+    แต่ <code>Recovery</code> รับไว้แล้วตอบ <strong><code>code=500 body=""</code></strong> — ผลรันจริงคือ <strong>PASS</strong>
+    <br>ป้องกันด้วยการ assert <strong>body</strong> ด้วยเสมอ (body ว่างจะโป๊ะทันที) และปิดท้ายด้วย
+    <code>svc.AssertExpectations(t)</code> (<a href="../../day-7/lessons/0028-mockery.html">บทเรียน 28</a>)
+    <br>ตัวเลือกที่ 1 ผิด — <code>Recovery</code> ไม่ retry อะไรทั้งนั้น มันแค่กัน panic ไม่ให้ล้มทั้งโปรเซส ·
+    ตัวเลือกที่ 2 ผิด — <code>ServeHTTP</code> ไม่คืนค่าอะไรเลยตาม signature ของ <code>http.Handler</code> ·
+    ตัวเลือกที่ 3 ผิด — mock บันทึกการเรียกตามปกติ ไม่เกี่ยวกับ middleware</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — เทส handler ของบท 39 ให้ครบสามเคส</span>
+  <p>
+    ใช้โค้ดที่คุณเขียนไว้เองใน <a href="./0039-gin-binding-middleware.html">บทเรียน 39</a>
+    (ถ้าไม่มีแล้ว ก๊อปโค้ดหัวข้อ 2 ของบทนี้มาใช้ได้เลย) — เป้าหมายไม่ใช่ "เทสผ่าน"
+    แต่คือ <strong>เทสที่จะ FAIL เมื่อโค้ดพัง และ FAIL ตรงจุดที่พังจริง</strong>
+  </p>
+  <p>
+    <strong>เริ่มจากศูนย์แบบนี้</strong> — โฟลเดอร์เปล่า ๆ หนึ่งอัน แล้วรันสามคำสั่งนี้<em>ในโฟลเดอร์นั้น</em>:
+  </p>
+  <pre style="margin:0.6rem 0"><code>go mod init check
+go get github.com/gin-gonic/gin github.com/stretchr/testify
+go mod tidy</code></pre>
+  <p style="margin-bottom:0.6rem">
+    จากนั้นสร้าง <code>app.go</code> (โค้ดหัวข้อ 2) กับ <code>app_test.go</code> ไว้ในโฟลเดอร์เดียวกัน
+    <strong>ใช้ <code>package</code> ชื่อเดียวกันทั้งสองไฟล์</strong> เทสจึงเรียก <code>NewRouter()</code> ได้โดยไม่ต้อง import
+    <br>ทุกข้อข้างล่างรันด้วย <code>go test -v -count=1 .</code> จากโฟลเดอร์นี้
+  </p>
+  <ol>
+    <li><strong>แยก <code>NewRouter()</code> ออกจาก <code>main()</code></strong> ให้ได้ก่อน
+        — ถ้ายังทำข้อนี้ไม่ได้ ข้ออื่นทำไม่ได้เลย
+        <br>เสร็จแล้ว <code>main()</code> ควรเหลือบรรทัดเดียวคือ <code>NewRouter().Run(":8080")</code></li>
+    <li><strong>เทสตัวแรกแบบสามบรรทัด</strong>: <code>NewRecorder</code> + <code>NewRequest</code> +
+        <code>ServeHTTP</code> ยิง <code>GET /users/1</code> แล้ว assert <code>w.Code</code>,
+        <code>w.Body</code> (ด้วย <code>JSONEq</code>) และ <code>Content-Type</code>
+        <br>รัน <code>go test -v</code> — ถ้าเจอ <code>[setup failed]</code> ให้ <code>go mod tidy</code> ก่อน (กับดัก 1)</li>
+    <li><strong>ทำให้ครบสามเคสด้วย table-driven</strong>: <code>200</code> · <code>404</code> ·
+        <code>400</code> (body ที่ไม่ผ่าน <code>binding</code>)
+        <br>เคส 400 ให้ assert แค่<em>ชิ้นส่วน</em>ของข้อความ error (เช่น <code>"Field validation"</code>)
+        ไม่ใช่ทั้งประโยค — <strong>ตอบให้ได้ว่าทำไม</strong></li>
+    <li><strong>พิสูจน์กับดัก recorder</strong>: จงใจใช้ <code>w</code> ตัวเดียวยิงสองเคส
+        แล้ว <code>t.Logf</code> ค่า <code>w.Code</code> กับ <code>w.Body</code> ออกมาดูกับตา
+        แล้วค่อยแก้กลับ</li>
+    <li><strong>ทำให้เทสพังให้ได้ 1 ครั้ง</strong>: แก้ handler ให้ตอบ <code>200</code> ตอนไม่เจอ user
+        แล้วยืนยันว่าเคส 404 FAIL จริง · <strong>ถ้ายังผ่านอยู่ แปลว่าเทสยังไม่ได้เทสอะไร</strong></li>
+    <li><strong>ใส่ <code>TestMain</code> + <code>gin.SetMode(gin.TestMode)</code></strong>
+        แล้วเทียบ output ก่อน/หลัง — <code>[GIN-debug]</code> หายไปกี่บรรทัด
+        และ <strong><code>w.Code</code> เปลี่ยนไหม</strong></li>
+    <li><strong>ต่อยอด mock (<a href="../../day-7/lessons/0028-mockery.html">บทเรียน 28</a>)</strong>:
+        เปลี่ยน handler ให้รับ <code>UserService</code> เป็น interface แล้วเทสด้วย mock
+        <br>เพิ่มเคสที่ mock คืน error ธรรมดา (ไม่ใช่ <code>ErrNotFound</code>) แล้ว assert <code>500</code>
+        — <strong>นี่คือเคสที่เทสกับ DB จริงแทบทำไม่ได้</strong></li>
+    <li><strong>ท้าทาย 1:</strong> ลบ <code>svc.On(...)</code> ออกหนึ่งบรรทัด แล้วรันสองแบบ:
+        router ที่มี <code>gin.Recovery()</code> กับที่ไม่มี
+        <br><strong>ทายก่อนรัน</strong>ว่าแบบไหน PASS แบบไหน FAIL แล้วอธิบายว่าทำไมแบบที่ PASS ถึงน่ากลัวกว่า</li>
+    <li><strong>ท้าทาย 2:</strong> ยิง <code>DELETE /users/1</code> ใส่ route ที่ลงทะเบียนไว้แค่ <code>GET</code>
+        <br>ได้ status อะไร · body หน้าตายังไง · <code>Content-Type</code> คืออะไร —
+        แล้วตอบว่าถ้าอยากได้ <code>405</code> ต้องไปเปิดค่าอะไรของ gin</li>
+    <li><strong>ท้าทาย 3:</strong> เขียนเคสเดียวกันซ้ำด้วย <code>httptest.NewServer</code> +
+        <code>http.Get</code> แล้วเทียบว่าต้องเขียนเพิ่มกี่บรรทัด (อย่าลืม <code>defer srv.Close()</code>
+        และ <code>defer resp.Body.Close()</code>) — <strong>ตอบให้ได้ว่าเคสนี้คุ้มจะใช้ตัวไหน</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 3 (ทำไมไม่ assert ข้อความ error ทั้งประโยค)</button>
+  <div class="answer">
+    <p>ข้อความจริงที่ validator ตอบกลับมาในเคส 400 คือก้อนนี้:</p>
+    <pre style="margin:0.6rem 0"><code>{"error":"Key: 'CreateUserReq.Name' Error:Field validation for 'Name' failed on the 'required' tag\nKey: 'CreateUserReq.Email' Error:Field validation for 'Email' failed on the 'email' tag"}</code></pre>
+    <p style="margin-bottom:0">
+      สามเหตุผล:
+      <br><strong>1.</strong> มันมี<strong>ชื่อ struct กับชื่อ field ของ Go ปนอยู่</strong>
+      (<code>CreateUserReq.Name</code>) — วันที่คุณ rename struct เทสจะพังทั้งที่ API เหมือนเดิมเป๊ะ
+      <br><strong>2.</strong> มันเป็นข้อความของ <strong>library ภายนอก</strong> ที่เราไม่ได้คุมเวอร์ชัน —
+      อัป <code>validator</code> ทีเดียวข้อความอาจเปลี่ยน
+      <br><strong>3.</strong> ลำดับของสอง error ในก้อนเดียวไม่มีใครรับประกันให้
+      <br>สิ่งที่<em>เป็นสัญญากับ client</em> จริง ๆ มีแค่ <strong>status 400</strong> —
+      เทสจึงควรผูกกับ 400 เป็นหลัก แล้วเช็คชิ้นส่วนอย่าง <code>"Field validation"</code>
+      เพียงเพื่อยืนยันว่า<em>พังเพราะ validation จริง ๆ</em> ไม่ใช่พังเพราะ JSON เสีย
+      <br>นี่คือหลักเดียวกับที่ใช้ตลอด Day 5: <strong>assert สิ่งที่เป็นสัญญา ไม่ใช่สิ่งที่บังเอิญเป็นแบบนั้นวันนี้</strong>
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p class="ask" style="margin-bottom:0">
+    💬 <strong>ข้อ 5 กับท้าทาย 1 คือสองข้อที่ผมอยากเห็นผลที่สุด</strong> —
+    เพราะทั้งคู่ตอบคำถามเดียวกันว่า "เทสของคุณจะจับได้ไหมถ้าโค้ดพัง"
+    <br>รันแล้วได้ output ไม่ตรงกับในบทนี้ตรงไหน <strong>ส่งมาได้เลย</strong>
+    บอกเวอร์ชัน gin/testify กับ OS มาด้วย ผมอยากรู้ว่าต่างกันตรงไหน
+    (ทั้งบทนี้รันบน Go 1.26.5 darwin/arm64 · gin v1.12.0 · testify v1.12.1)
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0039-gin-binding-middleware.html">← บทเรียน 39</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0041-swagger-swaggo.html">บทเรียน 41 → Swagger</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/net/http/httptest">pkg.go.dev — <code>net/http/httptest</code></a> — <code>NewRecorder</code>, <code>NewRequest</code>, <code>NewServer</code> อยู่ครบในหน้าเดียว</li>
+  <li><a href="https://pkg.go.dev/net/http/httptest#ResponseRecorder">pkg.go.dev — <code>ResponseRecorder</code></a> — เอกสารระบุเองว่า <code>Code</code> เริ่มต้นที่ 200</li>
+  <li><a href="https://pkg.go.dev/net/http#Handler">pkg.go.dev — <code>http.Handler</code></a> — interface method เดียวที่ทำให้ทั้งบทนี้เป็นไปได้</li>
+  <li><a href="https://gin-gonic.com/en/docs/testing/">Gin — Testing</a> · <a href="https://pkg.go.dev/github.com/gin-gonic/gin#CreateTestContext">pkg.go.dev — <code>gin.CreateTestContext</code></a></li>
+  <li><a href="https://pkg.go.dev/github.com/stretchr/testify/assert#JSONEq">testify — <code>assert.JSONEq</code></a> · <a href="https://pkg.go.dev/github.com/stretchr/testify/mock">testify — <code>mock</code></a></li>
+  <li><a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16 — table-driven test</a> · <a href="../../day-7/lessons/0028-mockery.html">บทเรียน 28 — mockery</a> — สองบทที่บทนี้เอามาต่อกัน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>
