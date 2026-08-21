@@ -11,6 +11,7 @@
   main { max-width: 54rem; }
   h2 { margin-top: 2.2rem; font-size: 1.2rem; }
   h3 { margin-top: 1.4rem; font-size: 1rem; }
+  h4 { margin-top: 1.1rem; font-size: 0.93rem; }
   pre { font-size: 0.78rem; padding: 0.75rem 0.9rem; margin-bottom: 0.9rem; }
   table { font-size: 0.86rem; }
   p, ul, ol { margin-bottom: 0.8rem; }
@@ -25,11 +26,14 @@
 <header>
   <p class="kicker">Cheat sheet · Day 8</p>
   <h1>REST · Gin · Swagger — แผ่นเดียวจบ</h1>
-  <p class="meta">คู่กับ <a href="../lessons/0033-rest-resource-method.html">บทเรียน 33–42</a> ·
+  <p class="meta">คู่กับ <a href="../lessons/0033-rest-resource-method.html">บทเรียน 33–44</a> ·
     ทุกผลลัพธ์ในหน้านี้มาจากการรันจริงบน Go 1.26.5 darwin/arm64</p>
   <p class="standfirst">
     หน้านี้ไม่ได้เขียนไว้ให้อ่านรวดเดียว — เขียนไว้ให้<strong>เปิดตอนมือติดคีย์บอร์ด</strong>
-    ตารางกับดัก (หัวข้อ 16) กับตารางแปล error (หัวข้อ 17) คือสองอันที่จะได้ใช้บ่อยที่สุด
+    ตารางกับดัก (หัวข้อ 16) กับตารางแปล error (หัวข้อ 17) คือสองอันที่จะได้ใช้บ่อยที่สุด<br>
+    หัวข้อ 18 เพิ่มเรื่อง <strong>environment variable</strong> — ตาราง <code>os.Getenv</code> vs
+    <code>os.LookupEnv</code> ตารางแปลง type พร้อม error จริง และวิธีตั้ง env ตั้งแต่ shell ยัน k8s ·
+    หัวข้อ 19 คือตาราง <strong>แปลง API ที่ออกแบบแย่ให้เป็น RESTful</strong> ทีละเส้น
   </p>
 </header>
 
@@ -54,6 +58,8 @@
   <li><a href="#wongnok">Wongnok API spec</a></li>
   <li><a href="#traps">ตารางกับดักรวมทั้งวัน</a></li>
   <li><a href="#errors">ตารางแปล error / panic ที่เจอบ่อย</a></li>
+  <li><a href="#env">Environment Variables — Getenv/LookupEnv · แปลง type · วิธีตั้งค่า · 12-Factor</a></li>
+  <li><a href="#badapi">ตารางแปลง API ที่ออกแบบแย่ → RESTful</a></li>
 </ol>
 
 <h2 id="v">1 · เวอร์ชันที่ทุกอย่างในหน้านี้รันผ่าน</h2>
@@ -341,7 +347,7 @@ pattern=<span class="s">"GET hello"</span>     <span class="c">// PANIC: parsing
   <tbody>
     <tr><td>method ผิด</td><td><strong>405 + <code>Allow</code></strong> อัตโนมัติ</td><td><strong>404</strong> จนกว่าจะตั้ง <code>HandleMethodNotAllowed = true</code></td></tr>
     <tr><td><code>/users/:id</code> + <code>/users/me</code></td><td>ได้ static ชนะ</td><td>ได้เหมือนกัน static ชนะ (<strong>ไม่ panic</strong>)</td></tr>
-    <tr><td>route ชนกันจริง ๆ</td><td>รับไว้ก่อน</td><td><strong>panic ตอน register</strong> (ดูหัวข้อ 17)</td></tr>
+    <tr><td>route ชนกันจริง ๆ</td><td><strong>panic ตอน register เหมือนกัน</strong> — แต่ข้อความบอกเลขบรรทัดที่ลงทะเบียน<strong>ทั้งสองที่</strong>: <code>pattern "GET /users/{id}" (registered at main.go:8) conflicts with … (registered at main.go:7)</code></td><td><strong>panic ตอน register</strong> (ดูหัวข้อ 17) · ข้อความไม่บอกเลขบรรทัด</td></tr>
     <tr><td>อ่าน path param</td><td><code>r.PathValue("id")</code></td><td><code>c.Param("id")</code></td></tr>
     <tr><td>ตอบ JSON</td><td>ต้อง set header เอง ไม่งั้นได้ <code>text/plain</code></td><td><code>c.JSON</code> จัดการให้</td></tr>
     <tr><td>อ่าน+ตรวจ body</td><td>เขียนเอง</td><td><code>ShouldBindJSON</code> + tag</td></tr>
@@ -369,10 +375,20 @@ pattern=<span class="s">"GET hello"</span>     <span class="c">// PANIC: parsing
 }</code></pre>
 
 <h3>ข้อความ error ที่ได้จริง</h3>
-<pre><code>body={"age":0}              → Key: 'ReqAge.Age' Error:Field validation for 'Age' failed on the 'required' tag
-body={"email":"not-an-email"} → Key: 'ReqEmail.Email' Error:Field validation for 'Email' failed on the 'email' tag
-body={"level":9,...}        → Key: 'ReqRange.Level' Error:Field validation for 'Level' failed on the 'max' tag
-                              Key: 'ReqRange.Difficulty' Error:Field validation for 'Difficulty' failed on the 'oneof' tag</code></pre>
+<pre><code><span class="c"># ยิงเข้า struct CreateRecipeRequest ข้างบนตรง ๆ — ทุกเคสได้ HTTP 400</span>
+
+body={"name":"","email":"a@b.co","level":3,"difficulty":"easy"}
+  Key: 'CreateRecipeRequest.Name' Error:Field validation for 'Name' failed on the 'required' tag
+
+body={"name":"ผัดกะเพรา","email":"not-an-email","level":3,"difficulty":"easy"}
+  Key: 'CreateRecipeRequest.Email' Error:Field validation for 'Email' failed on the 'email' tag
+
+body={"name":"ผัดกะเพรา","email":"a@b.co","level":9,"difficulty":"extreme"}
+  Key: 'CreateRecipeRequest.Level' Error:Field validation for 'Level' failed on the 'max' tag
+  Key: 'CreateRecipeRequest.Difficulty' Error:Field validation for 'Difficulty' failed on the 'oneof' tag</code></pre>
+<p><strong>สังเกตชื่อขึ้นต้น</strong> — <code>Key:</code> ใช้<strong>ชื่อ struct ใน Go</strong>
+(<code>CreateRecipeRequest.Name</code>) ไม่ใช่ชื่อใน json tag (<code>name</code>) ·
+ข้อความนี้จึงไม่ควรส่งกลับไปให้ผู้ใช้ตรง ๆ เพราะมันเปิดเผยโครงสร้างภายในของโค้ดเรา</p>
 <p>ผิดหลาย field พร้อมกัน → error ทุกอันต่อกันด้วย <code>\n</code> ในสตริงเดียว</p>
 
 <div class="warn">
@@ -426,6 +442,10 @@ admin.<span class="f">Use</span>(<span class="f">RequireAuth</span>())          
 </div>
 
 <h3>CORS — ผลรันจริง</h3>
+<p><strong>preflight</strong> = request <code>OPTIONS</code> ที่<em>เบราว์เซอร์ยิงเองก่อน</em>
+โดยที่โค้ดเราไม่ได้สั่ง เพื่อถามเซิร์ฟเวอร์ว่า “ขอส่ง method/header ชุดนี้ได้ไหม”
+ถ้าคำตอบไม่ผ่าน เบราว์เซอร์จะ<strong>ไม่ยิง request จริง</strong>เลย
+(ละเอียดใน <a href="../lessons/0039-gin-binding-middleware.html">บทเรียน 39</a>)</p>
 <pre><code><span class="c"># request จริง (มี Origin) กับ cors.Default()</span>
 $ curl -s -i -H <span class="s">"Origin: https://evil.example.com"</span> http://127.0.0.1:39182/data
 HTTP/1.1 200 OK
@@ -464,13 +484,25 @@ Access-Control-Max-Age: 43200</code></pre>
     router := <span class="f">NewRouter</span>()
 
     w := httptest.<span class="f">NewRecorder</span>()
-    req := httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, <span class="s">"/users/1"</span>, <span class="k">nil</span>)
+    req := httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, <span class="s">"/api/v1/users/1"</span>, <span class="k">nil</span>)
     router.<span class="f">ServeHTTP</span>(w, req)
 
     assert.<span class="f">Equal</span>(t, <span class="n">200</span>, w.Code)
-    assert.<span class="f">JSONEq</span>(t, <span class="s">`{"id":"1","name":"Somchai"}`</span>, w.Body.<span class="f">String</span>())
+    assert.<span class="f">JSONEq</span>(t, <span class="s">`{"id":"1"}`</span>, w.Body.<span class="f">String</span>())
     assert.<span class="f">Equal</span>(t, <span class="s">"application/json; charset=utf-8"</span>, w.<span class="f">Header</span>().<span class="f">Get</span>(<span class="s">"Content-Type"</span>))
 }</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <span class="label">⚠ path ต้องมี <code>/api/v1</code> นำหน้า</span>
+    เพราะ <code>NewRouter()</code> ในหัวข้อ 8 ลงทะเบียน route ไว้ใต้ <code>r.Group("/api/v1")</code> ·
+    ถ้าเทสยิง <code>/users/1</code> เฉย ๆ จะได้ <strong><code>404</code> ไม่ใช่ 200</strong>
+    และ <code>assert.JSONEq</code> จะฟ้องต่ออีกดอกว่า
+    <code>Input ('404 page not found') needs to be valid json</code>
+    <br>ทำนองเดียวกัน body ที่ assert ต้องตรงกับที่ <code>getUser</code> คืนจริง ซึ่งมีแค่ <code>id</code>
+    — <strong>เทสที่ก๊อปมาแล้วไม่ได้ดูว่า handler คืนอะไร คือเทสที่แดงตั้งแต่บรรทัดแรก</strong>
+  </p>
+</div>
 
 <div class="table-wrap">
 <table>
@@ -569,8 +601,8 @@ swag init -g cmd/api/main.go</code></pre>
   <thead><tr><th>Flag</th><th>ทำอะไร</th><th>ผลที่วัดได้จริง (swag v1.16.4)</th></tr></thead>
   <tbody>
     <tr><td><code>-g cmd/api/main.go</code></td><td>ชี้ไฟล์ที่มี General API Info</td><td><strong>จำเป็น</strong> เมื่อ <code>main.go</code> ไม่ได้อยู่ root</td></tr>
-    <tr><td><code>--parseInternal</code></td><td>สแกน package <code>internal</code></td><td>ในโครงนี้<strong>ไม่ใส่ก็ได้ definition ครบ</strong> · ใส่แล้วชื่อเปลี่ยนเป็น <code>internal_user.UserResponse</code></td></tr>
-    <tr><td><code>--parseDependency</code></td><td>สแกน struct จาก module อื่น</td><td>ใช้เมื่อ response อ้าง type จาก external package</td></tr>
+    <tr><td><code>--parseInternal</code></td><td><strong>ไม่ใช่</strong> <code>./internal</code> ของเรา — หมายถึง <code>internal</code> package ของ <em>dependency</em> และของ Go เอง</td><td>ใส่เดี่ยว ๆ <strong>ไม่มีผลอะไรเลย</strong> · md5 ของ <code>swagger.json</code> เท่ากับตอนไม่ใส่ทุกไบต์ · มีความหมายต่อเมื่อคู่กับ <code>--parseDependency</code></td></tr>
+    <tr><td><code>--parseDependency</code></td><td>สแกน struct จาก module อื่น</td><td>ใช้เมื่อ response อ้าง type จาก external package · <strong>ตัวนี้เองที่ทำให้ชื่อเปลี่ยน</strong>เป็น <code>internal_user.UserResponse</code> (ตัดสั้นด้วย <code>--useStructName</code>)</td></tr>
   </tbody>
 </table>
 </div>
@@ -671,6 +703,8 @@ GETDEL username</code></pre>
     <tr><td><code>router.GET("/swagger", …)</code></td><td><code>/swagger/index.html</code> → <code>404 page not found</code></td><td>ต้องเป็น <code>/swagger/*any</code></td></tr>
     <tr><td>ลืม <code>_ "wongnok/docs"</code></td><td>หน้า UI ยัง <strong>200</strong> แต่ <code>/swagger/doc.json</code> คืน <strong>500 body ว่าง</strong> → UI เปิดได้แต่ไม่มี endpoint</td><td>ใส่ blank import</td></tr>
     <tr><td>แก้ annotation แล้วไม่รัน <code>swag init</code></td><td>เอกสารเป็นของเก่า</td><td>รันใหม่ทุกครั้ง + restart server</td></tr>
+    <tr><td><code>os.Getenv("POSTGRES_DNS")</code> — พิมพ์ชื่อ env ผิด</td><td>คืน <code>""</code> <strong>เงียบสนิท</strong> · <code>go build</code> และ <code>go vet</code> ผ่านทั้งคู่ (<code>exit=0</code> ไม่มี output) · โปรแกรมเดินต่อได้ ไม่ panic</td><td><code>os.LookupEnv</code> แล้วเช็ค <code>ok</code> — ดูหัวข้อ 18</td></tr>
+    <tr><td>ลืมตั้ง DSN แล้วเรียก <code>sql.Open</code></td><td><code>sql.Open</code> คืน <code>err=&lt;nil&gt;</code> · error โผล่ตอนแตะ connection ครั้งแรก (<code>Ping</code>/<code>Query</code>) เป็น <code>dial tcp [::1]:5432: connect: connection refused</code> ซึ่ง<strong>ไม่มีคำว่า DSN หรือ env เลย</strong></td><td>ตรวจ env ให้ครบตั้งแต่ตอน start</td></tr>
   </tbody>
 </table>
 </div>
@@ -694,15 +728,437 @@ GETDEL username</code></pre>
 </table>
 </div>
 
-<div class="ask">
-  <p style="margin-bottom:0">เจอ error ที่ไม่มีในตารางนี้ ส่งข้อความเต็ม ๆ มาได้เลย
+<div class="note">
+  <p style="margin-bottom:0"><span class="label">💬 ถามได้</span>เจอ error ที่ไม่มีในตารางนี้ ส่งข้อความเต็ม ๆ มาได้เลย
   เดี๋ยวรันซ้ำแล้วเพิ่มลงตาราง — ตารางนี้โตมาจากของที่รันเจอจริงทั้งหมด ไม่ได้ลอกมาจากที่ไหน</p>
 </div>
+
+<h2 id="env">18 · Environment Variables — อ่านค่าคอนฟิกให้ไม่พังเงียบ</h2>
+
+<p>ทุกอย่างในหัวข้อนี้รันจริงบน Go 1.26.5 darwin/arm64 · ตัวแปรที่ใช้ทดสอบคือ
+<code>LOG_LEVEL</code> · โปรแกรมพิมพ์ค่าด้วย <code>%q</code> เครื่องหมายคำพูดในผลลัพธ์จึงเป็นของจริง</p>
+
+<h3>os.Getenv vs os.LookupEnv — สามกรณีที่ต่างกันจริง</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สถานะของตัวแปร</th><th>ตั้งยังไง</th><th><code>os.Getenv</code> คืน</th><th><code>os.LookupEnv</code> คืน</th></tr></thead>
+  <tbody>
+    <tr><td>ตั้งค่าปกติ</td><td><code>env LOG_LEVEL=DEBUG cmd</code></td><td><code>"DEBUG"</code></td><td><code>"DEBUG", ok=true</code></td></tr>
+    <tr><td><strong>ตั้งเป็นค่าว่าง</strong></td><td><code>env LOG_LEVEL= cmd</code> · <code>export LOG_LEVEL=""</code></td><td><code>""</code></td><td><code>"", ok=true</code></td></tr>
+    <tr><td><strong>ไม่ได้ตั้งเลย</strong></td><td><code>env -u LOG_LEVEL cmd</code> · <code>unset LOG_LEVEL</code></td><td><code>""</code></td><td><code>"", ok=false</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code><span class="c"># 1) ตั้งค่าปกติ</span>
+$ env LOG_LEVEL=DEBUG ./envtest
+Getenv    = "DEBUG"
+LookupEnv = "DEBUG", ok=true
+
+<span class="c"># 2) ตั้งเป็นค่าว่าง — ไม่มีอะไรหลังเครื่องหมาย =</span>
+$ env LOG_LEVEL= ./envtest
+Getenv    = ""
+LookupEnv = "", ok=true
+
+<span class="c"># 3) ไม่ได้ตั้งเลย</span>
+$ env -u LOG_LEVEL ./envtest
+Getenv    = ""
+LookupEnv = "", ok=false</code></pre>
+
+<div class="warn">
+  <span class="label">แถวที่ 2 กับ 3 คือทั้งหมดของเรื่องนี้</span>
+  <p style="margin-bottom:0"><code>os.Getenv</code> คืน <code>""</code> เหมือนกันเป๊ะทั้ง
+  “ตั้งเป็นค่าว่าง” และ “ไม่ได้ตั้งเลย” — <strong>แยกไม่ออก</strong> ·
+  <code>os.LookupEnv</code> คืน <code>ok</code> มาให้ด้วย จึงเป็นตัวเดียวที่แยกได้<br>
+  เทียบกับ <code>c.GetQuery</code> ของ Gin ในหัวข้อ 9 ได้ตรง ๆ — ปัญหาเดียวกัน แก้ด้วยวิธีเดียวกัน</p>
+</div>
+
+<p>ฝั่ง shell ก็แยกไม่ออกเหมือนกัน — <code>echo $LOG_LEVEL</code> และ <code>[ -z "$LOG_LEVEL" ]</code>
+ให้ผลเหมือนกันทั้งสองกรณี ต้องใช้ท่านี้ถึงจะเห็นความต่าง:</p>
+
+<pre><code>$ export LOG_LEVEL=""; printenv | grep -c <span class="s">'^LOG_LEVEL'</span>
+1                       <span class="c"># ตัวแปรมีอยู่จริง แค่ค่าว่าง</span>
+
+$ unset LOG_LEVEL;      printenv | grep -c <span class="s">'^LOG_LEVEL'</span>
+0                       <span class="c"># ไม่มีตัวแปรนี้แล้วจริง ๆ</span>
+
+<span class="c"># แบบสั้นในสคริปต์</span>
+$ [ -z <span class="s">"${LOG_LEVEL+x}"</span> ] &amp;&amp; echo <span class="s">'UNSET'</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong><code>os.Setenv(k, "")</code> ไม่เท่ากับ <code>os.Unsetenv(k)</code></strong> —
+  แบบแรก process ลูกเห็นตัวแปรอยู่แต่ค่าว่าง (<code>ok=true</code>) แบบหลังลูกไม่เห็นตัวแปรเลย
+  (<code>ok=false</code>) · และการแก้ env ในโปรแกรม Go มีผลกับ<strong>ลูกที่ spawn หลังจากนั้น</strong>เท่านั้น
+  <strong>ส่งกลับขึ้นไปที่ shell แม่ไม่ได้</strong> — โปรแกรมออกไปพร้อม <code>LOG_LEVEL</code> ที่ตั้งไว้
+  แต่ shell แม่ยังเห็นว่า UNSET เหมือนเดิม environment ไหลลงล่างทางเดียว</p>
+</div>
+
+<h3>แปลง type — env เป็น string เสมอ</h3>
+
+<pre><code><span class="k">func</span> <span class="f">mustEnv</span>(key <span class="k">string</span>) <span class="k">string</span> {
+    v, ok := os.<span class="f">LookupEnv</span>(key)
+    <span class="k">if</span> !ok {
+        log.<span class="f">Fatalf</span>(<span class="s">"missing required env %s"</span>, key)   <span class="c">// ตายตั้งแต่ตอน start ดีกว่าพังตอนมีคนใช้</span>
+    }
+    <span class="k">return</span> v
+}
+
+<span class="k">func</span> <span class="f">envInt</span>(key <span class="k">string</span>, def <span class="k">int</span>) <span class="k">int</span> {
+    raw, ok := os.<span class="f">LookupEnv</span>(key)
+    <span class="k">if</span> !ok || raw == <span class="s">""</span> {
+        <span class="k">return</span> def
+    }
+    n, err := strconv.<span class="f">Atoi</span>(strings.<span class="f">TrimSpace</span>(raw))   <span class="c">// TrimSpace: Atoi ไม่ตัดช่องว่างให้</span>
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        log.<span class="f">Fatalf</span>(<span class="s">"env %s=%q is not an int: %v"</span>, key, raw, err)
+    }
+    <span class="k">return</span> n
+}</code></pre>
+
+<h4><code>strconv.Atoi</code> — ผลรันจริงทุกเคส</h4>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ส่งเข้าไป</th><th>ได้ค่า</th><th>error</th></tr></thead>
+  <tbody>
+    <tr><td><code>"8080"</code></td><td><code>8080</code></td><td><code>&lt;nil&gt;</code></td></tr>
+    <tr><td><code>"+8080"</code></td><td><code>8080</code></td><td><code>&lt;nil&gt;</code></td></tr>
+    <tr><td><code>"08080"</code></td><td><code>8080</code></td><td><code>&lt;nil&gt;</code></td></tr>
+    <tr><td><code>""</code> (env ไม่ได้ตั้ง)</td><td><code>0</code></td><td><code>strconv.Atoi: parsing "": invalid syntax</code></td></tr>
+    <tr><td><code>"8080 "</code> (ช่องว่างท้าย)</td><td><code>0</code></td><td><code>strconv.Atoi: parsing "8080 ": invalid syntax</code></td></tr>
+    <tr><td><code>" 8080"</code> (ช่องว่างหน้า)</td><td><code>0</code></td><td><code>strconv.Atoi: parsing " 8080": invalid syntax</code></td></tr>
+    <tr><td><code>"8080\n"</code></td><td><code>0</code></td><td><code>strconv.Atoi: parsing "8080\n": invalid syntax</code></td></tr>
+    <tr><td><code>"8080.0"</code></td><td><code>0</code></td><td><code>strconv.Atoi: parsing "8080.0": invalid syntax</code></td></tr>
+    <tr><td><code>"8_080"</code></td><td><code>0</code></td><td><code>strconv.Atoi: parsing "8_080": invalid syntax</code></td></tr>
+    <tr><td><code>"99999999999999999999"</code></td><td><strong><code>9223372036854775807</code></strong></td><td><code>strconv.Atoi: parsing "99999999999999999999": value out of range</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ error แล้วไม่ได้ 0 เสมอ</span>
+  <p style="margin-bottom:0">แถวสุดท้าย: เลขล้น <code>int64</code> ทำให้ <code>Atoi</code> คืน
+  <code>9223372036854775807</code> (<code>math.MaxInt64</code>) <strong>พร้อม</strong> error
+  ไม่ใช่คืน <code>0</code> · ใครที่เผลอ <code>_ = err</code> แล้วใช้ค่าที่คืนมาต่อ
+  จะได้เลขมหาศาลแทนที่จะเป็นศูนย์ · และ error กรณีนี้เป็น <code>value out of range</code>
+  (<code>strconv.ErrRange</code>) ไม่ใช่ <code>invalid syntax</code></p>
+</div>
+
+<h4><code>strconv.ParseBool</code> — รับได้ 12 ค่าเท่านั้น</h4>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ได้ <code>true</code></th><th>ได้ <code>false</code></th><th>error ทั้งหมด</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>1</code> <code>t</code> <code>T</code> <code>true</code> <code>TRUE</code> <code>True</code></td>
+      <td><code>0</code> <code>f</code> <code>F</code> <code>false</code> <code>FALSE</code> <code>False</code></td>
+      <td><code>yes</code> <code>no</code> <code>on</code> <code>off</code> <code>y</code> <code>n</code> <code>Y</code> <code>N</code>
+          <code>2</code> <code>-1</code> <code>""</code> <code>tRue</code> <code>TrUe</code>
+          <code>" true"</code> <code>"true "</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>โค้ดจริงของ Go 1.26.5 (<code>src/internal/strconv/atob.go</code>) เป็น <code>switch</code> เทียบสตริงตรง ๆ
+12 case ไม่มี trim ไม่มี lowercase — นี่คือเหตุผลที่ <code>TRUE</code> ผ่านแต่ <code>tRue</code> ไม่ผ่าน</p>
+
+<pre><code>strconv.ParseBool("yes") -&gt; v=false, err=strconv.ParseBool: parsing "yes": invalid syntax
+strconv.ParseBool("")    -&gt; v=false, err=strconv.ParseBool: parsing "": invalid syntax</code></pre>
+
+<p><span class="rule">จุดที่หลอกที่สุด</span> ตอน error <code>ParseBool</code> คืน <code>false</code>
+ซึ่งหน้าตาเหมือน “ตั้งใจปิดฟีเจอร์” เป๊ะ ๆ · คนที่เขียน <code>.env</code> มาจาก YAML หรือ stack อื่น
+จะพิมพ์ <code>FEATURE_X=yes</code> แล้วงงว่าทำไมฟีเจอร์ไม่เปิด</p>
+
+<h4><code>time.ParseDuration</code> — error message มีสามแบบ</h4>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ส่งเข้าไป</th><th>ได้ค่า</th><th>error</th></tr></thead>
+  <tbody>
+    <tr><td><code>"30s"</code></td><td><code>30s</code></td><td><code>&lt;nil&gt;</code></td></tr>
+    <tr><td><code>"1h30m"</code></td><td><code>1h30m0s</code></td><td><code>&lt;nil&gt;</code></td></tr>
+    <tr><td><code>"30ms"</code></td><td><code>30ms</code></td><td><code>&lt;nil&gt;</code></td></tr>
+    <tr><td><code>"-5s"</code></td><td><code>-5s</code></td><td><code>&lt;nil&gt;</code></td></tr>
+    <tr><td><code>"0"</code></td><td><code>0s</code></td><td><code>&lt;nil&gt;</code> ← <strong>ข้อยกเว้นเดียวที่ไม่ต้องมีหน่วย</strong></td></tr>
+    <tr><td><code>""</code></td><td><code>0s</code></td><td><code>time: invalid duration ""</code></td></tr>
+    <tr><td><code>"abc"</code></td><td><code>0s</code></td><td><code>time: invalid duration "abc"</code></td></tr>
+    <tr><td><code>" 30s"</code></td><td><code>0s</code></td><td><code>time: invalid duration " 30s"</code></td></tr>
+    <tr><td><code>"30"</code> (ลืมหน่วย)</td><td><code>0s</code></td><td><code>time: missing unit in duration "30"</code></td></tr>
+    <tr><td><code>"30s "</code> (ช่องว่างท้าย)</td><td><code>0s</code></td><td><code>time: unknown unit "s " in duration "30s "</code></td></tr>
+    <tr><td><code>"30S"</code> (S ตัวใหญ่)</td><td><code>0s</code></td><td><code>time: unknown unit "S" in duration "30S"</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>TIMEOUT=30</code> ที่คนเขียนไฟล์คอนฟิกคิดว่า “สามสิบวินาที” พังทันทีด้วยข้อความ
+<code>missing unit</code> · ส่วนช่องว่างท้ายบรรทัดไปโผล่เป็น <code>unknown unit "s "</code>
+ซึ่งอ่านแล้วงงกว่ามาก — สังเกตช่องว่างในเครื่องหมายคำพูดให้ดี</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th><code>strconv</code></th><th><code>time.ParseDuration</code></th></tr></thead>
+  <tbody>
+    <tr><td>error type</td><td><code>*strconv.NumError</code></td><td><code>*time.parseDurationError</code> (<strong>ไม่ export</strong>)</td></tr>
+    <tr><td>แยกแยะเชิงโปรแกรม</td><td><code>errors.As</code> แล้วอ่าน <code>Func</code>/<code>Num</code>/<code>Err</code> · เทียบกับ <code>strconv.ErrSyntax</code> · <code>strconv.ErrRange</code></td><td>ทำได้แค่<strong>อ่านข้อความ</strong></td></tr>
+    <tr><td>รูปแบบข้อความ</td><td><code>strconv.Atoi: parsing "…": invalid syntax</code></td><td>ไม่มีคำว่า <code>parsing</code> เลย คนละแบบสิ้นเชิง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">ทำไม ignore err ตรงนี้ถึงอันตรายเป็นพิเศษ</span>
+  <p style="margin-bottom:0">ทั้งสามฟังก์ชันคืนค่าที่<strong>ดูเหมือนค่าปกติ</strong>ตอน error —
+  <code>Atoi</code> ได้ <code>0</code> (เหมือนตั้ง port 0) · <code>ParseBool</code> ได้ <code>false</code>
+  (เหมือนตั้งใจปิด) · <code>ParseDuration</code> ได้ <code>0s</code> (เหมือน timeout ทันที)<br>
+  แอปจึงไม่ crash แต่<strong>ทำงานผิด</strong> — เป็นบั๊กชนิดที่หาที่มายากที่สุด</p>
+</div>
+
+<h3>วิธีตั้ง env — ห้าที่ที่ต้องรู้จัก</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ที่ไหน</th><th>เขียนยังไง</th><th>ขอบเขต</th></tr></thead>
+  <tbody>
+    <tr><td>shell — <code>export</code></td><td><code>export APP_PORT=8080</code></td><td>ทุกคำสั่งที่รันหลังจากนี้ใน shell เดียวกัน</td></tr>
+    <tr><td>shell — <strong>ไม่มี <code>export</code></strong></td><td><code>APP_PORT=8080</code> เฉย ๆ</td><td><strong>shell เห็น แต่ process ลูกไม่เห็น</strong></td></tr>
+    <tr><td>inline หน้าคำสั่ง</td><td><code>APP_PORT=9090 ./api</code></td><td>เฉพาะ process นั้น ไม่ค้างใน shell</td></tr>
+    <tr><td>docker — ระบุค่า</td><td><code>docker run -e LOG_LEVEL=INFO …</code></td><td>container นั้น</td></tr>
+    <tr><td>docker — ส่งต่อจาก host</td><td><code>docker run -e LOG_LEVEL …</code> (ไม่มี <code>=</code>)</td><td>หยิบค่าจาก shell ปัจจุบันส่งเข้าไป — ค่าลับไม่โผล่ใน command line</td></tr>
+    <tr><td>docker — ไฟล์</td><td><code>docker run --env-file app.env …</code></td><td>ทั้งไฟล์ · <code>-e</code> ชนะ <code>--env-file</code></td></tr>
+    <tr><td>compose</td><td><code>environment:</code> / <code>env_file:</code></td><td>service นั้น</td></tr>
+    <tr><td>k8s</td><td><code>env:</code> · <code>configMapKeyRef</code> · <code>secretKeyRef</code></td><td>container นั้นใน pod</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code><span class="c"># assignment เปล่า ๆ ไม่มี export — shell เห็น แต่โปรแกรมไม่เห็น</span>
+$ APP_PORT=5555; echo <span class="s">"shell sees: $APP_PORT"</span>; ./api
+shell sees: 5555
+APP_PORT  =                      <span class="c">← ว่าง</span>
+
+<span class="c"># ใส่ export แล้วลูกถึงเห็น</span>
+$ export APP_PORT=5555; ./api
+APP_PORT  = 5555
+
+<span class="c"># inline ชนะ export — และไม่ค้างใน shell</span>
+$ export APP_PORT=8080; APP_PORT=7777 ./api; echo <span class="s">"shell still: $APP_PORT"</span>
+APP_PORT  = 7777
+shell still: 8080</code></pre>
+
+<p><strong>env ข้ามได้หลายทอดจริง</strong> — <code>shell → go run → binary</code> เป็นคนละ process กันทั้งหมด
+แต่ค่าวิ่งถึงครบ:</p>
+
+<pre><code>$ echo <span class="s">"this shell PID = $$"</span>; APP_PORT=6262 go run .
+this shell PID = 34148
+APP_PORT = 6262
+my PID = 34157  parent PID = 34151</code></pre>
+
+<h4>Docker — ไม่สืบทอดอัตโนมัติ</h4>
+<pre><code>$ docker run --rm -e LOG_LEVEL=INFO alpine printenv
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+HOSTNAME=9666ec3f3209
+LOG_LEVEL=INFO
+HOME=/root
+
+<span class="c"># -e ชื่อเปล่า ๆ = หยิบค่าจาก shell ปัจจุบัน</span>
+$ export LOG_LEVEL=FROM_HOST; docker run --rm -e LOG_LEVEL alpine printenv LOG_LEVEL
+FROM_HOST
+
+<span class="c"># --env-file vs -e : -e ชนะ</span>
+$ printf <span class="s">'LOG_LEVEL=FROM_FILE\nAPP_PORT=3000\n'</span> &gt; app.env
+$ docker run --rm --env-file app.env -e LOG_LEVEL=FROM_FLAG alpine printenv LOG_LEVEL
+FROM_FLAG</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ container ไม่สืบทอด env จาก host shell</span>
+<pre><code>$ export LOG_LEVEL=FROM_HOST
+$ echo $LOG_LEVEL
+FROM_HOST
+$ docker run --rm alpine printenv LOG_LEVEL; echo exit=$?
+exit=1                    <span class="c"># ไม่พิมพ์อะไรเลย</span></code></pre>
+  <p style="margin-bottom:0"><code>go run</code> สืบทอด env จาก shell ให้อัตโนมัติ
+  แต่ <strong>Docker ไม่</strong> — ต้องส่งด้วย <code>-e</code> หรือ <code>--env-file</code> เท่านั้น ·
+  อย่าเหมารวมว่า “process ลูกเห็นเสมอ” เพราะ container ไม่ใช่ process ลูกธรรมดา</p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong>บน macOS ที่ใช้ colima</strong> — <code>docker run</code> กับ image ที่ยังไม่มีในเครื่อง
+  อาจพังก่อนได้เห็นเรื่อง env ด้วยซ้ำ:<br>
+  <code>docker: error getting credentials - err: exec: "docker-credential-osxkeychain": executable file not found in $PATH</code><br>
+  สาเหตุคือ <code>~/.docker/config.json</code> ตั้ง <code>"credsStore": "osxkeychain"</code> ไว้แต่ไม่มี binary นั้น
+  · ทางออกง่ายสุดคือ <code>docker pull</code> image ไว้ล่วงหน้า หรือใช้ image ที่มีในเครื่องอยู่แล้ว</p>
+</div>
+
+<h4>compose และ k8s — ไวยากรณ์อ้างอิง</h4>
+<p class="meta">สองบล็อกนี้เป็น<strong>ไวยากรณ์</strong>สำหรับก็อปไปใช้ ไม่ใช่ผลรัน — ต่างจากบล็อกอื่นในหน้านี้</p>
+
+<pre><code><span class="c"># docker-compose.yml</span>
+services:
+  api:
+    image: myapi:latest
+    environment:
+      LOG_LEVEL: INFO
+      APP_PORT: <span class="s">"8080"</span>
+      POSTGRES_DSN: ${POSTGRES_DSN}   <span class="c"># หยิบจาก shell / .env ของ host</span>
+    env_file:
+      - app.env</code></pre>
+
+<pre><code><span class="c"># k8s — ส่วน env ของ container</span>
+env:
+  - name: LOG_LEVEL
+    value: <span class="s">"INFO"</span>
+
+  - name: APP_PORT              <span class="c"># ค่าธรรมดา → ConfigMap</span>
+    valueFrom:
+      configMapKeyRef:
+        name: app-config
+        key: APP_PORT
+
+  - name: POSTGRES_DSN          <span class="c"># ความลับ → Secret</span>
+    valueFrom:
+      secretKeyRef:
+        name: app-secret
+        key: POSTGRES_DSN</code></pre>
+
+<p><span class="rule">เส้นแบ่ง</span> <strong>ConfigMap</strong> = ค่าที่เปิดให้ใครดูก็ได้ (log level, port, feature flag)
+· <strong>Secret</strong> = ค่าที่หลุดแล้วเดือดร้อน (DSN ที่มีรหัสผ่าน, API key, JWT secret)
+· ทั้งคู่จบลงที่<strong>ตัวแปร env ตัวเดียวกัน</strong>ในสายตาโปรแกรม —
+โค้ด Go เขียน <code>os.LookupEnv("POSTGRES_DSN")</code> เหมือนกันหมด ไม่ต้องรู้ว่ามาจากไหน</p>
+
+<h3>12-Factor — Factor III: Config</h3>
+
+<p><strong>“เก็บ config ไว้ใน environment”</strong> · นิยามของ config ในที่นี้คือ
+<em>ทุกอย่างที่ต่างกันระหว่าง deploy</em> — dev, staging, production —
+เช่น DSN ของฐานข้อมูล, endpoint ของ service อื่น, credential, ชื่อโฮสต์
+· ส่วนที่<strong>เหมือนกันทุก deploy</strong> เช่น routing table หรือชื่อ route ไม่ใช่ config</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ทำไมต้อง env ไม่ใช่ไฟล์ในโค้ด</th><th>ผลที่ได้</th></tr></thead>
+  <tbody>
+    <tr><td>ค่าลับไม่อยู่ใน repo</td><td>เผลอ push ขึ้น GitHub แล้วรหัสผ่านไม่หลุด</td></tr>
+    <tr><td>เปลี่ยนค่าโดยไม่ต้อง build ใหม่</td><td>artifact ก้อนเดียว deploy ได้ทุก environment</td></tr>
+    <tr><td>env เป็นมาตรฐานของ OS</td><td>ใช้ได้ทุกภาษา ทุก runtime ทุก orchestrator</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong>บททดสอบข้อเดียว</strong> — ถ้า repo นี้กลายเป็น open source
+  <strong>พรุ่งนี้</strong> มีอะไรหลุดไหม · ถ้ามี แปลว่าค่านั้นควรอยู่ใน env ไม่ใช่ในโค้ด</p>
+</div>
+
+<h2 id="badapi">19 · ตารางแปลง API ที่ออกแบบแย่ → RESTful</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ของเดิม</th><th>ที่ควรเป็น</th><th>ผิดกฎข้อไหน</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>GET /getUser?id=123</code></td>
+      <td><code>GET /users/123</code></td>
+      <td>ใช้กริยาใน path (<a href="#naming">กฎ 1</a>) + ใช้ query แทน path param สำหรับระบุตัวตน (<a href="#where">หัวข้อ 5</a>)</td>
+    </tr>
+    <tr>
+      <td><code>POST /deleteUser?id=123</code></td>
+      <td><code>DELETE /users/123</code></td>
+      <td>ใช้ method ผิด ทำให้ไม่ idempotent (<a href="#method">หัวข้อ 2</a>) + action อยู่ใน URI (<a href="#naming">กฎ 7</a>)</td>
+    </tr>
+    <tr>
+      <td><code>POST /createUser?name=Alice&amp;password=123456</code></td>
+      <td><code>POST /users</code> + body</td>
+      <td><strong>ความลับอยู่ใน query string โผล่ใน log</strong> (<a href="#where">หัวข้อ 5</a>) + กริยาใน path (<a href="#naming">กฎ 1</a>)</td>
+    </tr>
+    <tr>
+      <td><code>GET /getPaidOrders</code></td>
+      <td><code>GET /orders?status=paid</code></td>
+      <td>ยัดตัวกรองไว้ในชื่อ path แทน query (<a href="#naming">กฎ 6</a>) + กริยาใน path (<a href="#naming">กฎ 1</a>)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>ทั้งสี่คู่ลงทะเบียนบน Gin v1.12.0 จริงแล้วยิงเทียบกัน — คู่ที่ 1 กับ 4 ให้ผลลัพธ์เหมือนกันเป๊ะ
+เส้นแบ่งจึงไม่ได้อยู่ที่ “ทำงานได้ไหม” แต่อยู่ที่สามอย่างข้างล่างนี้</p>
+
+<h3>① เส้นที่ 3 — password ใน query โผล่ใน access log จริง</h3>
+
+<pre><code>$ curl -s -X POST <span class="s">'http://127.0.0.1:18080/createUser?name=Alice&amp;password=123456'</span>
+$ grep -n <span class="s">'123456'</span> gin-access.log
+7:[GIN] 2026/08/21 - 13:01:28 | 200 |  54.083µs | 127.0.0.1 | POST "/createUser?name=Alice&amp;password=123456"
+
+<span class="c"># ฝั่งที่ถูก — ส่ง password ทาง body</span>
+$ curl -s -X POST <span class="s">'http://127.0.0.1:18080/users'</span> \
+    -H <span class="s">'Content-Type: application/json'</span> -d <span class="s">'{"name":"Alice","password":"123456"}'</span>
+$ grep -n <span class="s">'123456'</span> gin-access.log
+7:[GIN] … POST "/createUser?name=Alice&amp;password=123456"      <span class="c">← เจอแค่บรรทัดเดิมบรรทัดเดียว</span>
+
+<span class="c"># บรรทัดที่ log ไว้ของ POST /users มีแค่นี้</span>
+8:[GIN] 2026/08/21 - 13:01:28 | 201 | 195.958µs | 127.0.0.1 | POST "/users"</code></pre>
+
+<p><code>gin.Logger()</code> เขียน <code>path + RawQuery</code> ลง log ทุกครั้ง — รหัสผ่านจึงถูกบันทึกเป็น
+<strong>plaintext</strong> อ่านได้ตรง ๆ · ส่วน body ไม่ถูก log เลย ทั้งที่ server อ่านค่าได้ครบ
+· และนี่เพิ่งแค่ log ของ server เราเอง ยังไม่นับ proxy, CDN, browser history และ <code>Referer</code>
+ที่หัวข้อ 5 เตือนไว้</p>
+
+<h3>② เส้นที่ 2 — idempotency ไม่ได้ดูจาก status code</h3>
+
+<pre><code><span class="c"># ✔ DELETE /users/123 ยิงซ้ำ 3 ครั้ง</span>
+call 1 -&gt; {"deleted":"123","remaining":1}                  | HTTP 200
+call 2 -&gt; {"error":"user not found","id":"123",…}          | HTTP 404
+call 3 -&gt; {"error":"user not found","id":"123",…}          | HTTP 404
+
+<span class="c"># ✘ POST /deleteUser?id=123 ยิงซ้ำ 3 ครั้ง</span>
+call 1 -&gt; {"deleted":"123","remaining":1}                  | HTTP 200
+call 2 -&gt; {"error":"user not found","id":"123",…}          | HTTP 404
+call 3 -&gt; {"error":"user not found","id":"123",…}          | HTTP 404</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ ยิงซ้ำแล้วไม่เห็นความต่าง — และนั่นคือประเด็น</span>
+  <p style="margin-bottom:0">status code ออกมา <code>200, 404, 404</code> เหมือนกันเป๊ะทั้งสองแบบ
+  และ state ปลายทางก็เหมือนกัน · <strong>idempotency ไม่ใช่สิ่งที่ server สะท้อนออกมาเป็นตัวเลข</strong>
+  แต่เป็น<strong>สัญญาระดับ HTTP spec</strong> (RFC 9110 กำหนดว่า <code>DELETE</code> idempotent
+  ส่วน <code>POST</code> ไม่) ที่ client library, proxy และ retry layer เอาไปใช้ตัดสินใจว่า
+  “ยิงซ้ำเองได้ไหมเมื่อ timeout” — ใช้ <code>POST</code> แปลว่าไม่มีใครกล้า retry ให้</p>
+</div>
+
+<p>อีกจุดหนึ่ง: <code>404</code> ที่ได้ตอนยิงซ้ำ หน้าตา<strong>แยกไม่ออก</strong>จาก <code>404</code>
+ที่เกิดจากลบของที่ไม่เคยมี — <code>DELETE /users/999</code> ก็ได้ <code>404</code> ตั้งแต่ครั้งแรก
+· API หลายเจ้าจึงเลือกตอบ <code>204 No Content</code> ทุกครั้งแทน เพื่อให้ผลลัพธ์เหมือนกันจริง ๆ ทุกครั้ง</p>
+
+<h3>③ เส้นที่ 1 และ 4 — ดึงค่าจากคนละที่</h3>
+
+<pre><code>GET /getUser?id=123      -&gt; {"extracted_by":"c.Query(\"id\")",  "id":"123", …}
+GET /users/123           -&gt; {"extracted_by":"c.Param(\"id\")",  "id":"123", …}
+GET /orders?status=paid  -&gt; {"extracted_by":"c.Query(\"status\")","filter_status":"paid", …}
+POST /users (JSON body)  -&gt; {"extracted_by":"c.ShouldBindJSON (request body)","name":"Alice","password_len":6}</code></pre>
+
+<div class="warn">
+  <span class="label">กับดักคู่กับ <code>?status=paid</code></span>
+<pre><code>$ curl -s -w <span class="s">' | HTTP %{http_code}\n'</span> <span class="s">'http://127.0.0.1:18080/orders'</span>
+{"filter_status":"","orders":[{"id":"o1","status":"paid"},{"id":"o2","status":"pending"},
+ {"id":"o3","status":"paid"},{"id":"o4","status":"cancelled"}]} | HTTP 200</code></pre>
+  <p style="margin-bottom:0">ลืมใส่ <code>?status=</code> แล้ว <code>c.Query</code> คืน <code>""</code>
+  เงียบ ๆ ไม่ error ไม่ <code>400</code> — ได้ order ทั้งหมดรวม <code>cancelled</code> กลับมา
+  แทนที่จะได้ list ว่าง · ใช้ <code>c.GetQuery</code> (หัวข้อ 9) ถ้าต้องแยก “ไม่ส่งมา” ออกจาก “ส่งมาว่าง”</p>
+</div>
+
+<p><code>c.Param</code> คืนค่าที่ <strong>URL-decode แล้ว</strong> — ส่ง <code>/users/abc%20xyz</code>
+เข้าไปได้ <code>"abc xyz"</code> (มีช่องว่างจริง)</p>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong>ตอนลองเองแล้วเจอ 404 งง ๆ</strong> — ยิง
+  <code>POST /users/123</code> (route มีแค่ <code>GET</code> กับ <code>DELETE</code>) ได้ <code>404</code>
+  ไม่ใช่ <code>405</code> เพราะ <code>gin.New()</code> ตั้ง <code>HandleMethodNotAllowed = false</code>
+  เป็นค่าเริ่มต้น · เปิดเป็น <code>true</code> แล้วจะได้ <code>405</code> พร้อม header
+  <code>Allow: GET</code> — ดูหัวข้อ 8 และ 9</p>
+</div>
+
 
 <nav class="nav">
   <a href="../lessons/0033-rest-resource-method.html">← บทเรียน 33</a>
   <a href="../../index.html">🏠 หน้าแรก</a>
-  <a href="../lessons/0042-wongnok-api-spec.html">บทเรียน 42 →</a>
+  <a href="../lessons/0044-env-config.html">บทเรียน 44 →</a>
 </nav>
 
 <h2>อ้างอิง</h2>
@@ -716,6 +1172,10 @@ GETDEL username</code></pre>
   <li><a href="https://github.com/gin-contrib/cors">gin-contrib/cors</a></li>
   <li><a href="https://github.com/swaggo/swag#declarative-comments-format">swaggo/swag — Declarative Comments Format</a> — annotation ครบทุกตัว</li>
   <li><a href="https://swagger.io/specification/v2/">OpenAPI 2.0 (Swagger 2.0) Specification</a></li>
+  <li><a href="https://12factor.net/config">The Twelve-Factor App — III. Config</a> — ต้นทางของหัวข้อ 18</li>
+  <li><a href="https://pkg.go.dev/os#LookupEnv">pkg.go.dev — <code>os.Getenv</code> / <code>os.LookupEnv</code></a> · <a href="https://pkg.go.dev/strconv">strconv</a> · <a href="https://pkg.go.dev/time#ParseDuration">time.ParseDuration</a></li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-idempotent-methods">RFC 9110 §9.2.2 — Idempotent Methods</a> — นิยามทางการที่หัวข้อ 19 อ้างถึง</li>
+  <li><a href="https://docs.docker.com/reference/cli/docker/container/run/#env">Docker — <code>docker run --env</code></a> · <a href="https://kubernetes.io/docs/tasks/inject-data-application/define-environment-variable-container/">Kubernetes — Define Environment Variables</a></li>
   <li><a href="../../day-7/reference/cheatsheet.html">Cheat sheet Day 7</a> — Mockery · Testcontainers · Goose · Redis</li>
 </ul>
 

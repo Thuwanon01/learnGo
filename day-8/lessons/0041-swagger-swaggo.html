@@ -764,59 +764,90 @@ $ ls docs
   สไลด์ p.62 บอกว่าโครง <code>wongnok</code> <strong>ต้อง</strong>ใช้
   <code>swag init -g cmd/api/main.go --parseDependency --parseInternal</code>
   ไม่งั้น “definition หายหมด” เพราะโค้ดอยู่ใน <code>internal/</code>
-  <br>ผมลองทั้งสองแบบแล้วเทียบ <code>docs/swagger.json</code> ทีละบรรทัด —
-  <strong>ในโครงนี้ กับ swag v1.16.4 ผลออกมาไม่เป็นแบบนั้น</strong>
+  <br>คราวนี้ผมลอง<strong>แยกทีละ flag</strong> แล้วเทียบไฟล์ด้วย <code>md5</code> —
+  ผลคือ definition ไม่เคยหาย <strong>และตัวการที่ทำให้ไฟล์เปลี่ยน ไม่ใช่ flag ที่สไลด์ชี้</strong>
 </p>
 
-<div class="compare">
-  <div class="side good">
-    <h4>✅ ไม่ใส่ flag เพิ่ม</h4>
-    <pre><code>$ swag init -g cmd/api/main.go</code></pre>
-    <p style="margin-bottom:0">definitions ที่ได้ <strong>ครบ 3 ตัว</strong>:
-    <br><code>httputil.ErrorResponse</code>
-    <br><code>user.CreateUserRequest</code>
-    <br><code>user.UserResponse</code></p>
-  </div>
-  <div class="side good">
-    <h4>✅ ใส่ทั้งสอง flag</h4>
-    <pre><code>$ swag init -g cmd/api/main.go \
-    --parseDependency --parseInternal</code></pre>
-    <p style="margin-bottom:0">ได้ครบ 3 ตัวเหมือนกัน แต่<strong>ชื่อเปลี่ยน</strong>:
-    <br><code>httputil.ErrorResponse</code> (เท่าเดิม)
-    <br><code>internal_user.CreateUserRequest</code>
-    <br><code>internal_user.UserResponse</code></p>
-  </div>
+<pre><code>$ swag init -g cmd/api/main.go                                   <span class="c"># A</span>
+$ swag init -g cmd/api/main.go --parseInternal                    <span class="c"># B</span>
+$ swag init -g cmd/api/main.go --parseDependency                  <span class="c"># C</span>
+$ swag init -g cmd/api/main.go --parseDependency --parseInternal  <span class="c"># D</span>
+
+$ md5 -q sw_A.json sw_B.json sw_C.json sw_D.json
+27d4b4c32eba7c375b7cd69a3808fce9    <span class="c"># A</span>
+27d4b4c32eba7c375b7cd69a3808fce9    <span class="c"># B ← เท่ากับ A ทุกไบต์</span>
+e7c184f840b49b6bde994728d8cb1a2e    <span class="c"># C</span>
+e7c184f840b49b6bde994728d8cb1a2e    <span class="c"># D ← เท่ากับ C ทุกไบต์</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>รัน</th><th>flag ที่ใส่</th><th>definition ที่ได้</th><th>ขนาดไฟล์</th></tr>
+  <tr><td>A</td><td><em>ไม่ใส่อะไรเลย</em></td><td><code>httputil.ErrorResponse</code> · <code>user.CreateUserRequest</code> · <code>user.UserResponse</code></td><td>2,757 B</td></tr>
+  <tr><td>B</td><td><code>--parseInternal</code></td><td><strong>เหมือน A ทุกตัว</strong></td><td>2,757 B</td></tr>
+  <tr><td>C</td><td><code>--parseDependency</code></td><td><code>httputil.ErrorResponse</code> · <code>internal_user.CreateUserRequest</code> · <code>internal_user.UserResponse</code></td><td>2,793 B</td></tr>
+  <tr><td>D</td><td>ทั้งสอง flag</td><td><strong>เหมือน C ทุกตัว</strong></td><td>2,793 B</td></tr>
+</table>
 </div>
 
-<p>ตัว diff ของไฟล์ทั้งสองแบบ ต่างกันแค่ชื่อ definition จริง ๆ:</p>
+<p>ตารางนี้บอกสองเรื่องที่สไลด์ไม่ได้บอก:</p>
 
-<pre><code>- <span class="s">"$ref"</span>: <span class="s">"#/definitions/user.CreateUserRequest"</span>
-+ <span class="s">"$ref"</span>: <span class="s">"#/definitions/internal_user.CreateUserRequest"</span>
-- <span class="s">"user.UserResponse"</span>:
-+ <span class="s">"internal_user.UserResponse"</span>:</code></pre>
+<ol>
+  <li><strong>definition ไม่เคยหาย</strong> — แถว A ไม่ใส่ flag อะไรเลยก็ได้ครบ 3 ตัว
+      แปลว่า swag เดินเข้า <code>internal/</code> ของโปรเจกต์เรา<strong>อยู่แล้วโดยค่าเริ่มต้น</strong></li>
+  <li><strong><code>--parseInternal</code> ไม่ได้ทำอะไรเลยในโครงนี้</strong> — A เท่ากับ B และ C เท่ากับ D
+      ตัวที่เปลี่ยนชื่อ definition เป็น <code>internal_user.*</code> คือ <code>--parseDependency</code> ต่างหาก</li>
+</ol>
+
+<div class="warn">
+  <span class="label">⚠ จุดที่บทนี้เคยเขียนผิดเอง</span>
+  <p>
+    บทนี้เวอร์ชันแรกเขียนว่า “สิ่งที่ <code>--parseInternal</code> ทำจริงในเคสนี้คือทำให้ชื่อ definition ยาวขึ้น”
+    — <strong>ผิด</strong> เพราะตอนนั้นผมใส่สอง flag พร้อมกันแล้วยกความดีความชอบให้ flag ผิดตัว
+  </p>
+  <p style="margin-bottom:0">
+    บทเรียนที่ได้ตรงกับที่สอนไปทั้งคอร์ส — <strong>จะสรุปว่าตัวแปรไหนเป็นเหตุ ต้องเปลี่ยนทีละตัว</strong>
+    เปลี่ยนสองอย่างพร้อมกันแล้วเห็นผลต่าง บอกไม่ได้เลยว่าอันไหนทำ
+  </p>
+</div>
+
+<p>แล้ว <code>--parseInternal</code> มีไว้ทำอะไรกันแน่? เปิดซอร์สของ <code>swaggo/swag</code> v1.16.6 ดู — ตัวแปรนี้ถูกอ่านแค่ <strong>2 ที่</strong>:</p>
+
+<pre><code><span class="c">// golist.go:51 — ในฟังก์ชัน getAllGoFileInfoFromDepsByList</span>
+ignoreInternal := pkg.Goroot &amp;&amp; !parser.ParseInternal
+
+<span class="c">// parser.go:1868 — ในฟังก์ชัน getAllGoFileInfoFromDeps</span>
+ignoreInternal := pkg.Internal &amp;&amp; !parser.ParseInternal</code></pre>
 
 <p>
-  น่าสนใจตรงที่ <strong>annotation ในโค้ดยังเขียน <code>user.UserResponse</code> เหมือนเดิม</strong>
-  แล้ว swag แก้ <code>$ref</code> ให้เอง — ใช้งานได้ปกติทั้งสองแบบ
-  <br>สิ่งที่ <code>--parseInternal</code> ทำจริงในเคสนี้จึงคือ<strong>ทำให้ชื่อ definition
-  ยาวขึ้นเพื่อกัน type ชื่อซ้ำกันข้าม package</strong>
-  ซึ่งจะสำคัญมากเมื่อโปรเจกต์โตจนมี <code>user.Response</code> และ <code>recipe.Response</code>
-  <br>เอกสารของ <code>swag init --help</code> เองก็เขียนตรง ๆ ว่า
-  <code>--parseInternal  Parse go files in internal packages, disabled by default</code>
+  สังเกตชื่อฟังก์ชัน — ทั้งคู่ลงท้ายด้วย <code>FromDeps</code> คือ<strong>เส้นทางเดินไฟล์ของ dependency</strong>
+  ไม่ใช่เส้นทางของโปรเจกต์เรา
+  <br>คำว่า internal ตรงนี้จึงหมายถึง <code>internal</code> package <strong>ของ dependency และของ Go เอง</strong> (<code>pkg.Goroot</code>)
+  ไม่ใช่ <code>./internal</code> ที่เราสร้าง
+  <br>มันจะมีความหมายก็ต่อเมื่อใส่คู่กับ <code>--parseDependency</code> เท่านั้น — ลำพังตัวเดียว<strong>ไม่มีทางเปลี่ยนอะไรได้เลย</strong>
+  ซึ่งตรงกับที่ md5 บอก
 </p>
+
+<p>ส่วนโฟลเดอร์ของโปรเจกต์เราถูกเดินด้วย <code>walkWith</code> ที่ข้ามแค่ 4 อย่าง — ไม่มีคำว่า <code>internal</code> อยู่ในนั้นเลย:</p>
+
+<pre><code><span class="c">// parser.go:1957</span>
+if !parseVendor &amp;&amp; f.Name() == <span class="s">"vendor"</span> ||        <span class="c">// vendor</span>
+    f.Name() == <span class="s">"docs"</span> ||                          <span class="c">// docs</span>
+    len(f.Name()) &gt; 1 &amp;&amp; f.Name()[0] == <span class="s">'.'</span> {        <span class="c">// โฟลเดอร์ที่ขึ้นต้นด้วยจุด</span>
+    return filepath.SkipDir
+}
+<span class="c">// + path ที่ผู้ใช้สั่ง --exclude เอง</span></code></pre>
+
+<p>นี่คือหลักฐานตรง ๆ ว่า <code>./internal</code> <strong>ไม่เคยถูกข้าม</strong> ตั้งแต่แรก</p>
 
 <div class="warn">
   <p style="margin-bottom:0">
-    <span class="label">🤝 อย่าเพิ่งสรุปว่าสไลด์ผิด</span>
-    ผมทดสอบกับ <strong>โครงย่อ ๆ ที่มี 3 struct</strong> บน <strong>swag v1.16.4</strong> เท่านั้น
-    <br>โปรเจกต์จริงที่อาจารย์ใช้อาจมี type ที่อ้างข้าม package ลึกกว่านี้ หรือ CLI คนละรุ่น
-    ซึ่ง <code>--parseInternal</code> อาจจำเป็นจริง ๆ
-    <br><strong>วิธีตอบด้วยตัวเองใน 30 วินาที ดีกว่าเถียงกัน</strong>:
+    <span class="label">🤝 ยังไม่ต้องเชื่อผม — ตอบด้วยตัวเองใน 30 วินาที</span>
+    ผมทดสอบกับ<strong>โครงย่อที่มี 3 struct</strong> บน <strong>swag v1.16.4</strong> (ไลบรารี v1.16.6)
+    โปรเจกต์จริงของคุณอาจต่างออกไป — เปลี่ยนทีละ flag แล้ว md5 เทียบเอง:
     <br><code>swag init -g cmd/api/main.go &amp;&amp; cp docs/swagger.json /tmp/a.json</code>
-    <br><code>swag init -g cmd/api/main.go --parseDependency --parseInternal</code>
-    <br><code>diff /tmp/a.json docs/swagger.json</code>
-    <br>ไม่มีบรรทัดต่าง = ไม่ต้องใส่ · มีบรรทัดหาย = ต้องใส่
-    <strong>ผลของเครื่องคุณคือคำตอบของโปรเจกต์คุณ</strong>
+    <br><code>swag init -g cmd/api/main.go --parseInternal &amp;&amp; md5 /tmp/a.json docs/swagger.json</code>
+    <br>ค่าเท่ากัน = flag นั้นไม่มีผลกับโปรเจกต์คุณ · ค่าต่างกัน = มีผล แล้วค่อยไปดูว่าต่างตรงไหน
+    <br><strong>ผลของเครื่องคุณคือคำตอบของโปรเจกต์คุณ</strong>
   </p>
 </div>
 
@@ -1106,11 +1137,11 @@ ops:   ['delete /users/{id}', 'get /users', 'get /users/{id}', 'post /users']</c
         (ลอง <code>Enums()</code> กับ <code>default()</code> ด้วย) +
         <code>@Success</code> + <code>@Failure</code> + <code>@Security BearerAuth</code>
         <br>แล้วเติม <code>example:</code> tag ใน dto — <strong>เปิด Swagger UI ดูว่า example โผล่ตรงไหน</strong></li>
-    <li><strong>ตอบคำถาม <code>--parseInternal</code> ด้วยตัวเอง:</strong>
-        <br><code>swag init -g cmd/api/main.go &amp;&amp; cp docs/swagger.json /tmp/a.json</code>
-        <br><code>swag init -g cmd/api/main.go --parseDependency --parseInternal</code>
-        <br><code>diff /tmp/a.json docs/swagger.json</code>
-        <br><strong>โปรเจกต์ของคุณต้องใส่ flag นี้ไหม? ตอบพร้อมหลักฐาน</strong></li>
+    <li><strong>แยกให้ออกว่า flag ไหนเป็นคนทำ:</strong> รัน 4 แบบแล้วเก็บ <code>md5</code> ของ
+        <code>docs/swagger.json</code> ทุกแบบ — ไม่ใส่ flag / <code>--parseInternal</code> อย่างเดียว /
+        <code>--parseDependency</code> อย่างเดียว / ใส่ทั้งคู่
+        <br><strong>ห้ามเปลี่ยนสอง flag พร้อมกันแล้วสรุป</strong> — นั่นคือวิธีที่บทนี้เคยสรุปผิดมาแล้ว
+        <br>ตอบให้ได้ว่า <em>โปรเจกต์ของคุณ</em> ต้องใส่ flag ไหนบ้าง และ<strong>ตอบพร้อม md5 เป็นหลักฐาน</strong></li>
     <li><strong>ลบ <code>@Router</code> ออกหนึ่งอัน</strong> แล้ว <code>swag init</code> —
         exit code เท่าไหร่, มี warning ไหม, endpoint ยังอยู่ในเอกสารไหม</li>
     <li><strong>เขียนเทสพิสูจน์</strong> (ต่อยอด <a href="./0040-httptest-handler.html">บทเรียน 40</a>):

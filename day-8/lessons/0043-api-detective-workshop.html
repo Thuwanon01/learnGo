@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 43 — API Detective: ทบทวน REST · Code Review · Swagger</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 43 · Day 8 · Workshop ทบทวน</p>
+  <h1>API Detective — จับคู่ · จับผิด · จับ annotation</h1>
+  <p class="meta">~15 นาที · ต้องมี: <a href="./0033-rest-resource-method.html">บทเรียน 33</a>–<a href="./0036-rest-naming-idempotency.html">36</a> (REST) และ <a href="./0041-swagger-swaggo.html">บทเรียน 41</a> (Swagger)</p>
+  <p class="standfirst">
+    บทนี้ไม่มีของใหม่แม้แต่ชิ้นเดียว — เนื้อหามาจากสไลด์ชุด <strong>“Day 8 (Post)”</strong>
+    ที่อาจารย์เพิ่มมา<strong>หลังเรียนจบ</strong> เป็นแบบฝึกทบทวนสามส่วน:
+    <strong>จับคู่ REST</strong> (สไลด์หน้า 41–42) ·
+    <strong>API Code Review</strong> (หน้า 43–47) ·
+    <strong>จับคู่ annotation ของ Swagger</strong> (หน้า 75–76)
+    <br>กติกาข้อเดียวของบทนี้: <strong>ตอบในหัวให้ได้ก่อน แล้วค่อยกดดูเฉลย</strong>
+    การอ่านเฉลยผ่าน ๆ ให้ความรู้สึกว่าเข้าใจ แต่ไม่ได้ความเข้าใจ
+    <br>และในส่วนที่ 2 ผมจะไม่บอกแค่ว่า “เฉลยคืออะไร” — จะบอกด้วยว่า
+    <strong>มันผิดกฎข้อไหน</strong> และมี<strong>หลักฐานจากการรันจริง</strong>ยืนยันแบบไหน
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้</strong> — ทุก output ในหน้านี้มาจากการรันจริงบน</p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+github.com/gin-gonic/gin v1.12.0
+swag CLI v1.16.4  ·  github.com/swaggo/swag v1.16.6</code></pre>
+  <p style="margin-bottom:0">
+    ส่วนที่ 2 ผมเปิด server ของ Gin ตัวเดียวที่ลงทะเบียน<strong>ทั้งเส้นแบบแย่และเส้นแบบดี</strong>
+    ไว้ด้วยกัน แล้วยิงเทียบกันทีละคู่ด้วย <code>curl</code> — จะได้เห็นว่าสองแบบนี้
+    <em>ทำงานได้เหมือนกัน</em> แต่<em>คนละคุณภาพ</em> ตรงไหนบ้าง
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📖 <strong>วิธีใช้บทนี้ให้ได้ผล</strong> — ทุกกล่องที่มีปุ่ม “ดูเฉลย”
+    ให้<strong>เขียนคำตอบลงกระดาษหรือพิมพ์ในโน้ตก่อน</strong> แล้วค่อยกด
+    <br>ถ้าตอบไม่ได้ นั่นไม่ใช่เรื่องแย่ — มันคือ<strong>รายชื่อบทที่ต้องกลับไปอ่าน</strong>
+    ซึ่งมีค่ากว่าการเดาถูกแบบไม่รู้เหตุผล
+  </p>
+</div>
+
+<h2>ส่วนที่ 1 · จับคู่ REST (สไลด์หน้า 41–42)</h2>
+
+<p>
+  สไลด์หน้า 41 ให้โจทย์ 6 ข้อทางซ้าย และตัวเลือก 6 ตัวทางขวา แล้วให้ลากเส้นจับคู่
+  <br>สังเกตก่อนว่าตัวเลือกทั้งหกไม่ได้อยู่ระนาบเดียวกัน: มี<strong>ช่องใส่ข้อมูลของ request</strong>
+  (path / query / header / body — <a href="./0035-query-body-header.html">บทเรียน 35</a>) ·
+  มี<strong>HTTP method</strong> (<a href="./0033-rest-resource-method.html">บทเรียน 33</a>) ·
+  และมี<strong>สิ่งที่ server ตอบกลับ</strong> (status code —
+  <a href="./0034-http-status-code.html">บทเรียน 34</a>)
+  <br>แค่รู้ว่าโจทย์แต่ละข้อพูดถึง<em>ระนาบไหน</em> ก็ตัดตัวเลือกไปได้ครึ่งหนึ่งแล้ว
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>สิ่งที่ต้องการทำ</th><th>ตัวเลือก</th></tr></thead>
+  <tbody>
+    <tr><td><strong>1</strong></td><td>ระบุว่าต้องการ User หมายเลข <code>123</code></td><td><strong>A.</strong> Header</td></tr>
+    <tr><td><strong>2</strong></td><td>กรอง Order เฉพาะที่ <code>paid</code></td><td><strong>B.</strong> POST</td></tr>
+    <tr><td><strong>3</strong></td><td>ส่ง Access Token</td><td><strong>C.</strong> Path Parameter</td></tr>
+    <tr><td><strong>4</strong></td><td>สร้าง User ใหม่</td><td><strong>D.</strong> Query Parameter</td></tr>
+    <tr><td><strong>5</strong></td><td>ส่ง Name + Email สำหรับสร้าง User</td><td><strong>E.</strong> Status Code</td></tr>
+    <tr><td><strong>6</strong></td><td>บอกว่าสร้าง Resource สำเร็จ</td><td><strong>F.</strong> Request Body</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="predict">
+  <p class="ask">
+    <strong>จับคู่ให้ครบทั้ง 6 คู่ก่อนกดเฉลย</strong> — และสำหรับข้อ 1 กับข้อ 2
+    ให้ตอบเพิ่มอีกอย่างว่า <strong>ทำไมสองข้อนี้ถึงไปคนละช่องกัน</strong>
+    ทั้งที่ดูเผิน ๆ ก็ “ส่งค่าหนึ่งค่าไปให้ server” เหมือนกัน
+  </p>
+  <button class="reveal">ดูเฉลยทั้ง 6 คู่</button>
+  <div class="answer">
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>โจทย์</th><th>คำตอบ</th><th>หน้าตาจริง</th><th>เพราะอะไร</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>1</strong></td><td>ระบุ User 123</td><td><strong>C.</strong> Path Parameter</td>
+          <td><code>GET /users/123</code></td>
+          <td>“ระบุตัวของ” = <strong>path</strong> · หนึ่ง URL ชี้ไปที่ของชิ้นเดียวเสมอ (กฎข้อ 5, <a href="./0036-rest-naming-idempotency.html">บทเรียน 36</a>)</td>
+        </tr>
+        <tr>
+          <td><strong>2</strong></td><td>กรอง Order ที่ paid</td><td><strong>D.</strong> Query Parameter</td>
+          <td><code>GET /orders?status=paid</code></td>
+          <td>“เอาเซ็ตย่อยของของชุดเดิม” = <strong>query</strong> · ตัดออก/เพิ่ม/สลับลำดับได้โดยไม่แตะ routing (กฎข้อ 6)</td>
+        </tr>
+        <tr>
+          <td><strong>3</strong></td><td>ส่ง Access Token</td><td><strong>A.</strong> Header</td>
+          <td><code>Authorization: Bearer …</code></td>
+          <td>token คือ metadata ของ<em>การเชื่อมต่อ</em> ไม่ใช่เนื้อข้อมูล · และห้ามอยู่ใน URL เด็ดขาด (<a href="./0035-query-body-header.html">บทเรียน 35</a> หัวข้อ 8)</td>
+        </tr>
+        <tr>
+          <td><strong>4</strong></td><td>สร้าง User ใหม่</td><td><strong>B.</strong> POST</td>
+          <td><code>POST /users</code></td>
+          <td>“ทำอะไรกับของชิ้นนั้น” = <strong>method</strong> ไม่ใช่ชื่อใน URI (กฎข้อ 7)</td>
+        </tr>
+        <tr>
+          <td><strong>5</strong></td><td>ส่ง Name + Email</td><td><strong>F.</strong> Request Body</td>
+          <td><code>{"name":"…","email":"…"}</code></td>
+          <td>เนื้อข้อมูลที่จะ<strong>บันทึกลงระบบ</strong> ไปที่ body · ยาวได้ ซ้อนชั้นได้ ไม่ถูกจดลง access log</td>
+        </tr>
+        <tr>
+          <td><strong>6</strong></td><td>บอกว่าสร้างสำเร็จ</td><td><strong>E.</strong> Status Code</td>
+          <td><code>201 Created</code></td>
+          <td>สี่ข้อบนคือสิ่งที่ <em>client ส่งไป</em> ข้อนี้คือสิ่งที่ <em>server ตอบกลับ</em> (<a href="./0034-http-status-code.html">บทเรียน 34</a>)</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <p>
+      <strong>คำตอบของคำถามพ่วง (ข้อ 1 กับ 2 ต่างกันตรงไหน)</strong> —
+      ข้อ 1 ตอบคำถามว่า <em>“ของชิ้นไหน”</em> ส่วนข้อ 2 ตอบว่า <em>“เอาชุดย่อยแบบไหนของของชุดนั้น”</em>
+      <br>ทดสอบง่าย ๆ: <strong>ตัดค่านั้นทิ้งแล้ว URL ยังมีความหมายอยู่ไหม</strong>
+      <br><code>/users/</code> ที่ไม่มี <code>123</code> → ไม่รู้ว่าจะเอา user คนไหน = ค่านั้นต้องอยู่ใน path
+      <br><code>/orders</code> ที่ไม่มี <code>?status=paid</code> → ยังมีความหมายอยู่ แปลว่า “เอาทั้งหมด” = ค่านั้นเป็น query
+    </p>
+    <p style="margin-bottom:0">
+      และในโค้ด Gin สองอย่างนี้ดึงด้วยคนละเมธอด — ผมยิงจริงแล้ว echo ค่าที่ดึงได้กลับมาให้ดู
+      ว่าใครดึงด้วยอะไร:
+    </p>
+    <pre style="margin:0.6rem 0 0"><code>$ curl -s 'http://127.0.0.1:18080/users/123'
+{"extracted_by":"<strong>c.Param(\"id\")</strong>","id":"123","user":{...}}
+
+$ curl -s 'http://127.0.0.1:18080/orders?status=paid'
+{"extracted_by":"<strong>c.Query(\"status\")</strong>","filter_status":"paid","orders":[...]}</code></pre>
+  </div>
+</div>
+
+<h2>ส่วนที่ 2 · API Code Review (สไลด์หน้า 43–47)</h2>
+
+<p>
+  โจทย์บนสไลด์เขียนไว้แบบนี้: <em>“ทีมออกแบบ API แบบนี้ ให้ช่วยปรับให้ RESTful และปลอดภัยขึ้น”</em>
+</p>
+
+<div class="diagram">
+<pre>GET  /getUser?id=123
+POST /deleteUser?id=123
+POST /createUser?name=Alice&amp;password=123456
+GET  /getPaidOrders</pre>
+</div>
+
+<p>
+  ก่อนจะไล่ทีละบรรทัด มีเรื่องหนึ่งที่ต้องพูดให้ชัดก่อน เพราะมันเป็นเหตุผลที่ code review แบบนี้
+  <strong>จำเป็น</strong>: สี่บรรทัดนี้<em>ทำงานได้จริงทุกบรรทัด</em>
+  <br>ผมลงทะเบียนทั้งแบบแย่และแบบดีไว้ใน Gin ตัวเดียวกัน แล้วให้มันพิมพ์ตาราง route ของตัวเองออกมา:
+</p>
+
+<pre><code>$ curl -s http://127.0.0.1:18080/__routes
+[
+  {"method":"GET","path":"/getUser"},
+  {"method":"GET","path":"/getPaidOrders"},
+  {"method":"GET","path":"/users/:id"},
+  {"method":"GET","path":"/orders"},
+  {"method":"GET","path":"/__routes"},
+  {"method":"POST","path":"/deleteUser"},
+  {"method":"POST","path":"/createUser"},
+  {"method":"POST","path":"/users"},
+  {"method":"DELETE","path":"/users/:id"}
+]</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ ประเด็นที่ต้องเข้าใจก่อนอ่านต่อ</span>
+  <p style="margin-bottom:0">
+    <strong>ไม่มีบรรทัดไหนใน 4 บรรทัดนั้น compile ไม่ผ่าน และไม่มีบรรทัดไหน crash</strong>
+    <br>ทุกเส้นตอบ <code>200</code> สวย ๆ กลับมาได้หมด — ถ้าเกณฑ์ของคุณคือ “มันทำงานไหม”
+    API ชุดนี้ผ่านฉลุย
+    <br>เกณฑ์จริงของ code review จึงไม่ใช่ “ทำงานไหม” แต่คือ
+    <strong>“คนอื่นเดาถูกไหม · ขยายได้ไหม · มีอะไรรั่วออกไปไหม”</strong>
+  </p>
+</div>
+
+<h3>บรรทัดที่ 1 — <code>GET /getUser?id=123</code></h3>
+
+<div class="predict">
+  <p class="ask">
+    <strong>ผิดกฎกี่ข้อ ข้อไหนบ้าง</strong> (อ้างกฎ 7 ข้อจาก <a href="./0036-rest-naming-idempotency.html">บทเรียน 36</a>)
+    แล้วเขียนเส้นที่ถูกออกมา
+    <br>คำใบ้: มันผิดมากกว่าเรื่อง “ชื่อไม่สวย” หนึ่งเรื่อง
+  </p>
+  <button class="reveal">ดูเฉลยบรรทัดที่ 1</button>
+  <div class="answer">
+    <div class="compare">
+      <div class="side bad">
+        <h4>❌ ของเดิม</h4>
+        <pre><code>GET /getUser?id=123</code></pre>
+        <p style="margin-bottom:0">ทำงานได้ · แต่ผิดกฎ 3 ข้อพร้อมกัน</p>
+      </div>
+      <div class="side good">
+        <h4>✅ ที่ควรเป็น</h4>
+        <pre><code>GET /users/123</code></pre>
+        <p style="margin-bottom:0">URI บอกว่า<em>ของอะไร</em> · method บอกว่า<em>ทำอะไร</em></p>
+      </div>
+    </div>
+    <p><strong>ผิดสามข้อ:</strong></p>
+    <ul>
+      <li><strong>กฎข้อ 1 (ใช้ noun ไม่ใช่ verb)</strong> — <code>getUser</code> เป็นกริยาเต็มตัว
+          สไลด์บทเรียน 36 ยกตัวอย่าง <code>GET /getUsers</code> ไว้ในช่อง ❌ ตรง ๆ เลย</li>
+      <li><strong>กฎข้อ 7 (อย่าใส่ action ใน URI ถ้า method สื่อได้แล้ว)</strong> —
+          คำว่า <code>get</code> ซ้ำกับ method <code>GET</code> ที่อยู่ข้างหน้าอยู่แล้ว พูดสองรอบเปล่า ๆ</li>
+      <li><strong>กฎข้อ 5 (relationship/ตัวระบุใช้ path)</strong> — <code>123</code> คือ
+          <em>ตัวระบุว่าเป็นของชิ้นไหน</em> ไม่ใช่ตัวกรอง มันจึงต้องอยู่ที่ path
+          ไม่ใช่ query (ตรงกับส่วนที่ 1 ข้อ 1 ที่เพิ่งจับคู่ไป)</li>
+    </ul>
+    <p>และเมื่อยิงจริง สองเส้นนี้ให้ข้อมูลชุดเดียวกันเป๊ะ ต่างกันแค่ “ดึงค่าจากช่องไหน”:</p>
+    <pre style="margin:0.6rem 0"><code>=== BAD  GET /getUser?id=123 ===
+{"extracted_by":"c.Query(\"id\")","id":"123","user":{"id":"123","name":"Alice"}}
+HTTP 200
+
+=== GOOD GET /users/123 ===
+{"extracted_by":"c.Param(\"id\")","id":"123","user":{"id":"123","name":"Alice"}}
+HTTP 200</code></pre>
+    <div class="warn">
+      <p style="margin-bottom:0">
+        <span class="label">⚠ สังเกตสิ่งที่<em>ไม่มี</em>ใน response</span>
+        ทั้งสองเส้น<strong>ไม่คืนฟิลด์ <code>password</code></strong> กลับมาเลย
+        ทั้งที่ตอนสร้าง user เรารับ password เข้าไป — เพราะ <em>รับเข้า</em> กับ <em>ส่งออก</em>
+        ไม่จำเป็นต้องเป็น struct เดียวกัน (<a href="./0039-gin-binding-middleware.html">บทเรียน 39</a>
+        แยก request DTO กับ response DTO ไว้ด้วยเหตุผลนี้)
+        <br>ถ้า <code>GET /users/123</code> คืน password ออกมาด้วย ต่อให้ URI สวยตามกฎครบทุกข้อ
+        มันก็คือช่องโหว่ — <strong>กฎตั้งชื่อไม่ได้ช่วยอะไรถ้าข้อมูลที่ส่งออกไปผิดตั้งแต่แรก</strong>
+      </p>
+    </div>
+    <p style="margin-bottom:0">
+      <strong>นี่แหละคือหัวใจของทั้งส่วนนี้</strong> — ผลลัพธ์เหมือนกัน <code>200</code> เท่ากัน
+      ความต่างทั้งหมดอยู่ที่<em>คนอ่านคนต่อไปเดาถูกหรือเปล่า</em>
+      <br>คนที่รู้ว่าคุณมี <code>/users/123</code> จะเดา <code>/users/456</code> ได้ทันที
+      แต่คนที่เห็น <code>/getUser?id=123</code> จะเดา <code>/getOrder?id=…</code> หรือ
+      <code>/getOrderById?orderId=…</code> ดี? — เขาต้องเปิดเอกสารทุกครั้งไปตลอด
+    </p>
+  </div>
+</div>
+
+<h3>บรรทัดที่ 2 — <code>POST /deleteUser?id=123</code></h3>
+
+<div class="predict">
+  <p class="ask">
+    บรรทัดนี้ผิดทุกอย่างเหมือนบรรทัดแรก <strong>บวกอีกหนึ่งเรื่องที่หนักกว่า</strong> —
+    เรื่องนั้นคืออะไร?
+    <br>และคำถามพ่วงที่สำคัญกว่า: ถ้าเรายิง <code>DELETE /users/123</code> ซ้ำ ๆ 3 ครั้ง
+    เทียบกับยิง <code>POST /deleteUser?id=123</code> ซ้ำ ๆ 3 ครั้ง
+    <strong>status code ที่ได้จะต่างกันไหม</strong>
+  </p>
+  <button class="reveal">ดูเฉลยบรรทัดที่ 2</button>
+  <div class="answer">
+    <div class="compare">
+      <div class="side bad">
+        <h4>❌ ของเดิม</h4>
+        <pre><code>POST /deleteUser?id=123</code></pre>
+      </div>
+      <div class="side good">
+        <h4>✅ ที่ควรเป็น</h4>
+        <pre><code>DELETE /users/123</code></pre>
+      </div>
+    </div>
+    <p>
+      <strong>เรื่องที่หนักกว่า: ใช้ <code>POST</code> ทำงานลบ</strong>
+      <br>ผิดกฎข้อ 7 ในรูปแบบที่เจ็บที่สุด — พอ <code>POST</code> ถูกใช้ทำทุกอย่าง
+      (สร้างก็ POST ลบก็ POST แก้ก็ POST) <strong>method ก็ไม่เหลือความหมายอะไรเลย</strong>
+      ทุกอย่างย้ายไปอยู่ในสตริง URI ทั้งหมด ซึ่งไม่มีเครื่องมือตัวไหนในโลกอ่านเข้าใจ
+      <br>ผลตามมาที่จับต้องได้: <strong>อะไรก็ตามที่อยู่หลัง <code>POST</code>
+      ไม่มีใครกล้า retry ให้คุณ</strong> ตาม RFC 9110 <code>DELETE</code> เป็น
+      <em>idempotent</em> (ยิงซ้ำแล้วผลลัพธ์ปลายทางเท่าเดิม) ส่วน <code>POST</code> ไม่ใช่ —
+      proxy · retry layer · client library จึงตัดสินใจต่างกันสิ้นเชิงเวลาเน็ตกระตุก
+      (<a href="./0036-rest-naming-idempotency.html">บทเรียน 36</a> หัวข้อ 6)
+    </p>
+    <p><strong>คำตอบของคำถามพ่วง — และมันคือคำตอบที่คนส่วนใหญ่ตอบผิด</strong> ผมยิงจริงทั้งสองแบบ ๆ ละ 3 ครั้ง:</p>
+    <pre style="margin:0.6rem 0"><code>##### GOOD: DELETE /users/123  x3 #####
+call 1 -&gt; {"deleted":"123","remaining":1}                        | <strong>HTTP 200</strong>
+call 2 -&gt; {"error":"user not found","id":"123","remaining":1}     | <strong>HTTP 404</strong>
+call 3 -&gt; {"error":"user not found","id":"123","remaining":1}     | <strong>HTTP 404</strong>
+
+##### BAD: POST /deleteUser?id=123  x3 #####
+call 1 -&gt; {"deleted":"123","remaining":1}                        | <strong>HTTP 200</strong>
+call 2 -&gt; {"error":"user not found","id":"123","remaining":1}     | <strong>HTTP 404</strong>
+call 3 -&gt; {"error":"user not found","id":"123","remaining":1}     | <strong>HTTP 404</strong></code></pre>
+    <p style="margin-bottom:0">
+      <strong>เหมือนกันเป๊ะ</strong> — ทั้ง status code ทั้ง body ทั้ง state ปลายทาง
+      <br>ถ้าใครบอกว่า “ลองยิงซ้ำดูสิ แล้วจะเห็นความต่างเรื่อง idempotency”
+      <strong>อันนั้นพิสูจน์ไม่ได้จริง</strong> ผมรันแล้ว
+      <br>เพราะ idempotency ไม่ใช่พฤติกรรมที่ server สะท้อนออกมาเป็นตัวเลข แต่เป็น
+      <strong>สัญญาที่ผูกกับตัว method เอง</strong> ตาม HTTP spec ซึ่ง
+      <em>client · proxy · ชั้น retry</em> เอาไปใช้ตัดสินใจว่า “ยิงซ้ำได้ไหม”
+      <br>พูดอีกแบบ: การเลือก <code>DELETE</code> แทน <code>POST</code>
+      <strong>ไม่ได้เปลี่ยนสิ่งที่ server ทำ — มันเปลี่ยนสิ่งที่คนอื่นกล้าทำกับ server ของคุณ</strong>
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ สองกับดักที่โผล่มาระหว่างรันเคสนี้</span>
+  <p style="margin-bottom:0">
+    <strong>1. <code>404</code> ที่ได้ตอนยิงซ้ำ ไม่ได้แปลว่า “ลบไม่สำเร็จ”</strong> —
+    และมันหน้าตาแยกไม่ออกจาก 404 ที่เกิดจากการลบของที่ไม่เคยมี ผมยิงยืนยันแล้ว:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ curl -X DELETE 'http://127.0.0.1:18080/users/999'   <span class="c"># id ที่ไม่เคยมีอยู่เลย</span>
+{"error":"user not found","id":"999","remaining":1} | <strong>HTTP 404</strong>   ← ครั้งแรกก็ 404 แล้ว</code></pre>
+  <p style="margin-bottom:0">
+    นี่คือเหตุผลที่หลาย API เลือกให้ <code>DELETE</code> ตอบ <code>204 No Content</code>
+    ทุกครั้ง (ลบแล้วหรือไม่มีอยู่ก็ 204) เพื่อให้ผลลัพธ์<em>ที่ client เห็น</em>
+    สม่ำเสมอตามสัญญา idempotent ไปเลย — เป็นการตัดสินใจออกแบบ ไม่ใช่กฎตายตัว
+    (<a href="./0036-rest-naming-idempotency.html">บทเรียน 36</a> หัวข้อ 7 เถียงเรื่องนี้ทั้งหัวข้อ)
+    <br><br><strong>2. ยิงผิด method บนเส้นที่ถูกต้อง Gin ตอบ <code>404</code> ไม่ใช่ <code>405</code></strong> —
+    ตรงนี้ทำให้คนที่เพิ่งเปลี่ยนมาเขียนแบบ RESTful งงหนักมาก:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ curl -o /dev/null -w 'HTTP %{http_code}\n' -X POST 'http://127.0.0.1:18080/users/123'
+<strong>HTTP 404</strong>          <span class="c"># ทั้งที่ /users/:id มีอยู่จริง แค่ผิด method</span>
+
+<span class="c"># พิสูจน์สาเหตุด้วย httptest (เซิร์ฟเวอร์ตัวเดียวกัน มีทั้ง GET และ DELETE บน /users/:id):</span>
+HandleMethodNotAllowed=false -&gt; POST /users/123 = <strong>404</strong>  Allow: ""
+HandleMethodNotAllowed=true  -&gt; POST /users/123 = <strong>405</strong>  Allow: "GET, DELETE"</code></pre>
+  <p style="margin-bottom:0">
+    <code>gin.New()</code> ตั้ง <code>HandleMethodNotAllowed = false</code> เป็นค่า default
+    ต้องเปิดเองถึงจะได้ <code>405</code> พร้อม header <code>Allow</code> ที่<strong>ลิสต์ทุก method
+    ที่ path นั้นรับได้</strong> — ในเคสนี้คือ <code>GET, DELETE</code> ไม่ใช่แค่ตัวเดียว
+    <br>ถ้าไม่เปิด คนที่เรียก API ของคุณจะเห็น 404 แล้วสรุปว่า “ไม่มี endpoint นี้”
+    ทั้งที่ความจริงคือ “มี แต่คุณใช้ method ผิด”
+  </p>
+</div>
+
+<h3>บรรทัดที่ 3 — <code>POST /createUser?name=Alice&amp;password=123456</code></h3>
+
+<p>
+  ถึงบรรทัดที่สำคัญที่สุดของทั้งบท · บรรทัดนี้ผิดกฎการตั้งชื่อเหมือนสองบรรทัดบน
+  แต่ถ้าจับได้แค่นั้นแปลว่ายัง<strong>พลาดเรื่องที่หนักที่สุดไป</strong>
+</p>
+
+<div class="predict">
+  <p class="ask">
+    สมมติเส้นนี้ขึ้น production แล้วมีคนสมัครสมาชิกวันละหมื่นคน
+    <br>server ตอบ <code>200</code> ทุกครั้ง ไม่มี error สักตัว ไม่มีใครแฮ็กอะไรเลย
+    <br><strong>แล้ววันหนึ่งรหัสผ่านของผู้ใช้ทุกคนหลุดออกไป — หลุดทางไหน?</strong>
+    <br>(คำใบ้: <code>gin.Default()</code> มีอะไรติดมาให้บ้าง)
+  </p>
+  <button class="reveal">ดูเฉลยบรรทัดที่ 3</button>
+  <div class="answer">
+    <p>
+      หลุดทาง <strong>access log ของตัวเราเอง</strong> —
+      <code>gin.Default()</code> มี <code>gin.Logger()</code> ติดมาให้ตามค่า default
+      และ Logger ตัวนั้น<strong>พิมพ์ path พร้อม query string ทั้งก้อน</strong>ลง log ทุก request
+    </p>
+    <p>ผมยิงสองแบบติดกัน แล้ว <code>grep</code> หารหัสผ่านในไฟล์ log:</p>
+    <div class="compare">
+      <div class="side bad">
+        <h4>❌ password ทาง query</h4>
+        <pre><code>$ curl -X POST \
+  'http://127.0.0.1:18080/createUser?name=Alice&amp;password=123456'
+
+$ grep -n '123456' gin-access.log
+7:[GIN] 2026/08/21 - 13:01:28 | 200 | 54.083µs |
+   127.0.0.1 | POST     "/createUser?name=Alice&amp;<strong>password=123456</strong>"</code></pre>
+        <p style="margin-bottom:0">
+          รหัสผ่านถูกเขียนลงไฟล์<strong>แบบ plaintext อ่านได้ตรง ๆ</strong>
+        </p>
+      </div>
+      <div class="side good">
+        <h4>✅ password ทาง body</h4>
+        <pre><code>$ curl -X POST 'http://127.0.0.1:18080/users' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"alice","password":"123456"}'
+
+$ grep -n '123456' gin-access.log   <span class="c"># ไม่มีบรรทัดใหม่เพิ่ม</span>
+8:[GIN] 2026/08/21 - 13:01:28 | <strong>201</strong> | 195.958µs |
+   127.0.0.1 | POST     <strong>"/users"</strong></code></pre>
+        <p style="margin-bottom:0">
+          log เห็นแค่ path เปล่า ๆ · ไม่มีร่องรอยของรหัสผ่านเลย
+        </p>
+      </div>
+    </div>
+    <p>นับให้เห็นชัด ๆ ว่าทั้งไฟล์มีรหัสผ่านโผล่กี่ครั้ง:</p>
+    <pre style="margin:0.6rem 0"><code>$ grep -c '123456' gin-access.log
+<strong>1</strong>
+
+$ grep -n 'password' gin-access.log
+7:[GIN] 2026/08/21 - 13:01:28 | 200 | 54.083µs |  127.0.0.1 | POST  "/createUser?name=Alice&amp;password=123456"</code></pre>
+    <p>
+      <strong>เจอครั้งเดียว คือบรรทัดของ <code>/createUser</code> เท่านั้น</strong> —
+      ทั้งที่ฝั่ง <code>POST /users</code> server ก็อ่านรหัสผ่านได้ครบเหมือนกัน
+      (response ตอบกลับมาว่า <code>password_len:6</code>) แต่ <strong>body ไม่ถูก log</strong>
+    </p>
+    <p><strong>เส้นที่ถูก:</strong></p>
+    <pre style="margin:0.6rem 0"><code>POST /users
+Content-Type: application/json
+
+{"name":"Alice","password":"123456"}
+
+<span class="c">// server ตอบ:</span>
+HTTP <strong>201 Created</strong>
+{"created":"1000","extracted_by":"c.ShouldBindJSON (request body)","name":"alice","password_len":6}</code></pre>
+    <p style="margin-bottom:0">
+      สังเกต <strong><code>201</code></strong> ไม่ใช่ <code>200</code> —
+      เส้นแบบเดิมตอบ <code>200</code> ส่วนเส้นที่ถูกตอบ <code>201 Created</code>
+      ซึ่งเป็นรหัสของ “สร้างของใหม่ขึ้นมาสำเร็จ” (<a href="./0034-http-status-code.html">บทเรียน 34</a>)
+      — และมันคือคำตอบของข้อ 6 ในส่วนที่ 1 พอดี
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ทำไม query ถึงอันตรายกว่า body ทั้งที่ “ก็ส่งไปเหมือนกัน”</span>
+  <p style="margin-bottom:0">
+    เพราะ query เป็น<strong>ส่วนหนึ่งของ URL</strong> และ URL ถูกจดไว้ตลอดทาง —
+    access log ของ server (เห็นกับตาข้างบนแล้ว) · log ของ reverse proxy กับ load balancer
+    ที่ request วิ่งผ่านก่อนถึงเรา · ประวัติ browser · header <code>Referer</code> ·
+    และระบบรวม log ที่ทั้งทีมเปิดดูได้และเก็บย้อนหลังเป็นเดือน
+    <br><strong>HTTPS ช่วยไม่ได้เลยกับเรื่องนี้</strong> — HTTPS กันคนดักกลางทาง
+    ไม่ได้กันปลายทางที่ตั้งใจจดเอง
+    <br>กฎที่เอาไปใช้ได้ตลอดชีวิต: <strong>อะไรที่หลุดแล้วต้องรีเซ็ต ห้ามอยู่ใน URL</strong>
+    — password, token, OTP, เลขบัตร (<a href="./0035-query-body-header.html">บทเรียน 35</a> หัวข้อ 8)
+    <br>และสังเกตด้วยว่าปัญหานี้<strong>ไม่หายไปเพราะรีวิวชื่อ endpoint</strong> —
+    ต่อให้เปลี่ยนชื่อเป็น <code>POST /users?password=123456</code> ที่ชื่อสวยแล้ว
+    รหัสผ่านก็ยังลง log อยู่ดี · <strong>ต้องย้ายช่อง ไม่ใช่แค่เปลี่ยนชื่อ</strong>
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔍 <strong>เกร็ดเล็ก ๆ ที่ต้องพูด เพราะเดี๋ยวจะงงตอนเทียบกับสไลด์</strong> —
+    URL ต้นทางบนสไลด์ส่ง <code>name=Alice</code> (A ใหญ่) แต่เฉลยบนสไลด์เขียน body เป็น
+    <code>{"name":"alice"}</code> (a เล็ก)
+    <br>ไม่ใช่บั๊ก และ<strong>ไม่ใช่ว่า REST หรือ JSON binding แปลงเป็นตัวพิมพ์เล็กให้</strong> —
+    มันไม่ได้แปลงอะไรให้เลย เป็นแค่คนพิมพ์สไลด์พิมพ์ไม่ตรงกันเฉย ๆ
+    (ผมยิงจริงตามเฉลยเป๊ะ ๆ ได้ <code>{"created":"1000","name":"alice",…}</code> คือ
+    <em>ส่งอะไรไปก็ได้อันนั้นกลับมา</em>)
+  </p>
+</div>
+
+<h3>บรรทัดที่ 4 — <code>GET /getPaidOrders</code></h3>
+
+<div class="predict">
+  <p class="ask">
+    บรรทัดนี้ดูไม่มีพิษภัยที่สุดในสี่บรรทัด · ไม่มีรหัสผ่าน ไม่มีการลบอะไร
+    <br><strong>แล้วมันจะพังตอนไหน?</strong>
+    <br>คำใบ้: ลองนึกว่าอาทิตย์หน้า PM ขอ “ดู order ที่ยกเลิก” และอาทิตย์ถัดไปขอ
+    “ดู order ที่จ่ายแล้วของเดือนนี้”
+  </p>
+  <button class="reveal">ดูเฉลยบรรทัดที่ 4</button>
+  <div class="answer">
+    <div class="compare">
+      <div class="side bad">
+        <h4>❌ ของเดิม</h4>
+        <pre><code>GET /getPaidOrders
+GET /getPendingOrders      <span class="c">← อาทิตย์หน้า</span>
+GET /getCancelledOrders    <span class="c">← อาทิตย์ถัดไป</span>
+GET /getPaidOrdersThisMonth  <span class="c">← แล้วก็…</span></code></pre>
+        <p style="margin-bottom:0">
+          <strong>ทุกตัวกรองใหม่ = route ใหม่ + handler ใหม่ + เอกสารใหม่</strong>
+        </p>
+      </div>
+      <div class="side good">
+        <h4>✅ ที่ควรเป็น</h4>
+        <pre><code>GET /orders?status=paid
+GET /orders?status=pending
+GET /orders?status=cancelled
+GET /orders?status=paid&amp;from=2026-08-01</code></pre>
+        <p style="margin-bottom:0">
+          <strong>เส้นเดิมตัวเดียว</strong> — เพิ่ม/ตัด/สลับลำดับตัวกรองได้โดยไม่แตะ routing
+        </p>
+      </div>
+    </div>
+    <p>
+      ผิด<strong>กฎข้อ 1</strong> (verb) · <strong>กฎข้อ 7</strong> (action ใน URI) ·
+      และตัวหลักคือ <strong>กฎข้อ 6 — filter ต้องใช้ query</strong>
+      <br>คำว่า <code>Paid</code> ที่ฝังอยู่ในชื่อ endpoint คือ<em>ค่าของตัวกรอง</em>
+      ที่ถูกจับแช่แข็งไว้ในชื่อเส้น พอค่าเปลี่ยน ชื่อเส้นก็ต้องเปลี่ยนตาม
+    </p>
+    <p>ยิงจริงทั้งสองเส้น ได้ข้อมูลชุดเดียวกัน (ข้อมูลทดสอบมี 4 order — paid 2, pending 1, cancelled 1):</p>
+    <pre style="margin:0.6rem 0"><code>=== BAD  GET /getPaidOrders ===
+{"orders":[{"id":"o1","status":"paid"},{"id":"o3","status":"paid"}]}
+HTTP 200
+
+=== GOOD GET /orders?status=paid ===
+{"extracted_by":"c.Query(\"status\")","filter_status":"paid",
+ "orders":[{"id":"o1","status":"paid"},{"id":"o3","status":"paid"}]}
+HTTP 200</code></pre>
+    <p style="margin-bottom:0">
+      <code>o1</code> กับ <code>o3</code> เท่ากันทั้งสองเส้น — อีกครั้งที่
+      <strong>ความต่างไม่ได้อยู่ที่ผลลัพธ์วันนี้ แต่อยู่ที่ต้นทุนของวันพรุ่งนี้</strong>
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ กับดักที่มากับ <code>c.Query</code> — ลืมส่งตัวกรองแล้วไม่มีใครเตือน</span>
+  <p style="margin-bottom:0">
+    ย้ายไปใช้ query แล้วได้ความยืดหยุ่นมาก็จริง แต่ได้กับดักนี้แถมมาด้วย:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ curl -w ' | HTTP %{http_code}\n' 'http://127.0.0.1:18080/orders'   <span class="c"># ลืมใส่ ?status</span>
+{"extracted_by":"c.Query(\"status\")","filter_status":"",
+ "orders":[{"id":"o1","status":"paid"},{"id":"o2","status":"pending"},
+           {"id":"o3","status":"paid"},{"id":"o4","status":"cancelled"}]} | <strong>HTTP 200</strong></code></pre>
+  <p style="margin-bottom:0">
+    <code>c.Query("status")</code> กับ param ที่ไม่ได้ส่งมา คืน <strong>empty string เงียบ ๆ</strong>
+    ไม่ error ไม่ 400 · ผลคือ frontend ที่ลืมแนบ <code>?status=paid</code> ไปหนึ่งครั้ง
+    จะได้ order <strong>ทั้งหมดรวมที่ยกเลิกแล้ว</strong> กลับไปแสดงบนหน้าจอ โดยที่ status ยังเป็น 200
+    <br>ทางแก้: ถ้าตัวกรองนั้น<em>จำเป็น</em> ต้องเช็คเองว่าว่างหรือเปล่าแล้วตอบ
+    <code>400</code> · ถ้าไม่จำเป็นก็ต้องตั้งใจว่า “ว่าง = เอาทั้งหมด” และเขียนไว้ในเอกสาร
+    ไม่ใช่ปล่อยให้เป็นอุบัติเหตุ
+  </p>
+</div>
+
+<h3>สรุปส่วนที่ 2 เป็นตารางเดียว</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ของเดิม</th><th>ควรเป็น</th><th>ผิดกฎข้อ</th><th>ผลจริงที่วัดได้</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>GET /getUser?id=123</code></td>
+      <td><code>GET /users/123</code></td>
+      <td>1 (verb) · 7 (action ใน URI) · 5 (ตัวระบุต้องอยู่ path)</td>
+      <td>ผลเหมือนกันทั้งคู่ <code>200</code> — ต่างที่คนอื่นเดาชื่อเส้นถัดไปไม่ได้</td>
+    </tr>
+    <tr>
+      <td><code>POST /deleteUser?id=123</code></td>
+      <td><code>DELETE /users/123</code></td>
+      <td>1 · 7 · ใช้ POST ทำงานลบ</td>
+      <td>ยิงซ้ำ 3 ครั้งได้ <code>200/404/404</code> เท่ากันทั้งคู่ — ความต่างคือ<em>สัญญา</em> idempotent ที่ retry layer ใช้</td>
+    </tr>
+    <tr>
+      <td><code>POST /createUser?name=…&amp;password=…</code></td>
+      <td><code>POST /users</code> + body</td>
+      <td>1 · 7 · <strong>ความลับอยู่ใน URL</strong></td>
+      <td><code>grep -c '123456' gin-access.log</code> → <strong>1</strong> (มาจากเส้นเดิมเท่านั้น)</td>
+    </tr>
+    <tr>
+      <td><code>GET /getPaidOrders</code></td>
+      <td><code>GET /orders?status=paid</code></td>
+      <td>1 · 7 · <strong>6 (filter ต้องใช้ query)</strong></td>
+      <td>ได้ <code>o1,o3</code> เหมือนกัน — ต่างที่ตัวกรองตัวถัดไปต้องสร้าง route ใหม่หรือไม่</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>เส้นเรื่องเดียวที่ร้อยทั้งสี่บรรทัด</strong> — ไม่มีบรรทัดไหน “ทำงานไม่ได้”
+    <br>สามบรรทัดแรกเสียตรง<strong>ความเดาได้และความหมายของ method</strong> ·
+    บรรทัดที่สามเสียตรง<strong>ความปลอดภัย</strong> · บรรทัดที่สี่เสียตรง<strong>ความขยายได้</strong>
+    <br>ซึ่งทั้งสามอย่างนี้ <strong>compiler ไม่มีทางจับได้ และเทสที่เขียนแบบธรรมดาก็ไม่จับ</strong>
+    เพราะเทสจะยิงเส้นเดิมแล้วได้ 200 ตามที่คาดไว้ทุกครั้ง
+    <br>มีแค่<strong>คนอ่านโค้ด</strong> เท่านั้นที่จับได้ — นั่นแหละคือเหตุผลที่ code review มีอยู่
+  </p>
+</div>
+
+<h2>ส่วนที่ 3 · จับคู่ annotation ของ Swagger (สไลด์หน้า 75–76)</h2>
+
+<p>
+  ส่วนสุดท้ายกลับมาที่ <a href="./0041-swagger-swaggo.html">บทเรียน 41</a> —
+  โจทย์ 6 ข้อ ตัวเลือก 6 ตัว จับคู่ให้ครบ
+  <br>เตือนไว้ก่อนอ่าน: <strong>ข้อ 6 มีปัญหา</strong> ผมทดสอบแล้วเฉลยบนสไลด์ไม่ตรงกับผลจริง
+  เดี๋ยวจะแยกไปคุยกันหลังเฉลยหลัก
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>สิ่งที่ต้องการ</th><th>ตัวเลือก</th></tr></thead>
+  <tbody>
+    <tr><td><strong>1</strong></td><td>ตั้งชื่อ API ว่า “Wongnok API”</td><td><strong>A.</strong> <code>@Param id path string true "..."</code></td></tr>
+    <tr><td><strong>2</strong></td><td>รับ ID จาก URL <code>/users/{id}</code></td><td><strong>B.</strong> <code>@Router /users [post]</code></td></tr>
+    <tr><td><strong>3</strong></td><td>บอกว่า error ใช้ struct จาก <code>httputil</code></td><td><strong>C.</strong> <code>@title</code></td></tr>
+    <tr><td><strong>4</strong></td><td>กำหนดว่า endpoint นี้ต้องมี token</td><td><strong>D.</strong> <code>@Failure 404 {object} httputil.ErrorResponse</code></td></tr>
+    <tr><td><strong>5</strong></td><td>ผูก handler เข้ากับ <code>POST /users</code></td><td><strong>E.</strong> <code>--parseInternal</code></td></tr>
+    <tr><td><strong>6</strong></td><td>ให้ <code>swag</code> สแกนโค้ดใน <code>internal/</code> ด้วย</td><td><strong>F.</strong> <code>@Security BearerAuth</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="predict">
+  <p class="ask">
+    จับคู่ให้ครบ 6 คู่ · แล้วตอบเพิ่มอีกข้อว่า
+    <strong>ตัวเลือกไหนไม่ใช่ annotation เลย</strong> และมันต่างจากอีก 5 ตัวยังไง
+  </p>
+  <button class="reveal">ดูเฉลย + หลักฐานจาก swagger.json จริง</button>
+  <div class="answer">
+    <p><strong>เฉลย:</strong> 1→C · 2→A · 3→D · 4→F · 5→B · 6→E (ตามสไลด์ — แต่ข้อ 6 มีปัญหา อ่านต่อข้างล่าง)</p>
+    <p>
+      ผมสร้างโปรเจกต์เล็ก ๆ ที่มี <code>main.go</code> ที่ root และ <code>handler</code>
+      กับ <code>httputil</code> อยู่ใน <code>internal/</code> แล้วรัน <code>swag init</code>
+      จากนั้นเปิด <code>docs/swagger.json</code> ดูทีละจุดด้วย <code>jq</code>
+      (เครื่องมือ command line สำหรับดึงค่าจาก JSON) — ว่า annotation แต่ละตัวไปโผล่ตรงไหน:
+    </p>
+    <p><strong>ข้อ 1 → C. <code>@title</code></strong> — ไปอยู่ที่ <code>.info.title</code> คือ<em>ระดับเอกสารทั้งไฟล์</em></p>
+    <pre style="margin:0.6rem 0"><code>$ jq -c '.info.title' docs/swagger.json
+<strong>"Wongnok API"</strong></code></pre>
+    <p><strong>ข้อ 2 → A. <code>@Param id path string true "User ID"</code></strong> — แตกเป็น 5 ฟิลด์ใต้ operation นั้น</p>
+    <pre style="margin:0.6rem 0"><code>$ jq -c '.paths."/users/{id}".get.parameters' docs/swagger.json
+[{"type":"string","description":"User ID","<strong>name":"id","in":"path","required":true</strong>}]</code></pre>
+    <p><strong>ข้อ 3 → D. <code>@Failure 404 {object} httputil.ErrorResponse</code></strong> — ทำสองอย่างพร้อมกัน</p>
+    <pre style="margin:0.6rem 0"><code>$ jq -c '.paths."/users/{id}".get.responses."404"' docs/swagger.json
+{"description":"Not Found","schema":{"<strong>$ref":"#/definitions/httputil.ErrorResponse</strong>"}}
+
+$ jq -c '.definitions|keys' docs/swagger.json
+["handler.User","<strong>httputil.ErrorResponse</strong>"]</code></pre>
+    <p>
+      คือทั้ง<em>ใส่ response 404 ใต้ endpoint นั้น</em> และ<em>สร้าง schema เข้า <code>.definitions</code></em>
+      แล้วอ้างกลับด้วย <code>$ref</code>
+      <br>สังเกตคำว่า <code>"Not Found"</code> — อันนั้น <code>swag</code> เติมให้เองจากเลข 404
+      ไม่ได้มาจากที่เราเขียน · และชื่อ key เป็นรูปแบบ <strong>แพ็กเกจ.ชื่อ struct</strong> ไม่ใช่ import path เต็ม
+    </p>
+    <p><strong>ข้อ 4 → F. <code>@Security BearerAuth</code></strong></p>
+    <pre style="margin:0.6rem 0"><code>$ jq -c '.paths."/users/{id}".get.security' docs/swagger.json
+[{"BearerAuth":[]}]
+
+$ jq -c '.securityDefinitions' docs/swagger.json
+{"BearerAuth":{"type":"apiKey","name":"Authorization","in":"header"}}</code></pre>
+    <p><strong>ข้อ 5 → B. <code>@Router /users [post]</code></strong> — กลายเป็น key ของ path + key ของ method</p>
+    <pre style="margin:0.6rem 0"><code>$ jq -c '.paths | to_entries | map({path:.key, methods:(.value|keys)})' docs/swagger.json
+[{"path":"/users","methods":["post"]},{"path":"/users/{id}","methods":["get"]}]</code></pre>
+    <p style="margin-bottom:0">
+      <strong>คำตอบของคำถามพ่วง:</strong> ตัวเลือก <strong>E. <code>--parseInternal</code></strong>
+      คือตัวเดียวที่ไม่ใช่ annotation — อีก 5 ตัวเป็น<strong>คอมเมนต์ในไฟล์ <code>.go</code></strong>
+      ส่วนตัวนี้เป็น <strong>flag ที่พิมพ์ต่อท้ายคำสั่ง <code>swag init</code> ในเทอร์มินัล</strong>
+      คนละที่กันคนละเวลากันเลย
+      <br>ซึ่งพอมันเป็นของคนละชนิด มันก็เลยเป็นข้อที่<strong>ตรวจง่ายที่สุด</strong>ว่าเฉลยถูกหรือเปล่า —
+      แค่รันคำสั่งดูสองรอบก็รู้ และผมรันแล้ว…
+    </p>
+  </div>
+</div>
+
+<div class="predict">
+  <p><strong>ข้อ 6 — ตรวจแล้วเฉลยสไลด์ไม่ผ่าน</strong></p>
+  <div class="note">
+    <p style="margin-bottom:0">
+      เรื่องนี้ <a href="./0041-swagger-swaggo.html">บทเรียน 41</a> หัวข้อ
+      “<code>--parseDependency --parseInternal</code> — ผลจริงต่างจากสไลด์” พิสูจน์ไว้แล้ว
+      บนโปรเจกต์อีกโครงหนึ่ง · ที่เอามาเล่าซ้ำตรงนี้เพราะ<strong>สไลด์ Post
+      เอาความเข้าใจผิดอันเดียวกันมาทำเป็นเฉลยของแบบฝึกหัด</strong> —
+      ถ้าอ่านบท 41 มาแล้วจะข้ามไปหัวข้อถัดไปได้เลย
+    </p>
+  </div>
+  <p>ก่อนอื่นอ่านข้อความช่วยเหลือของ <code>swag</code> เองก่อน — นี่คือต้นเหตุที่ทุกคนเข้าใจตรงกันแบบนี้:</p>
+  <pre><code>$ swag init --help          <span class="c"># swag version v1.16.4</span>
+   --parseInternal    Parse go files in internal packages, disabled by default (default: false)</code></pre>
+  <p class="ask">
+    อ่านผิวเผินก็เหมือนตรงกับโจทย์เป๊ะ (“ให้สแกนโค้ดใน <code>internal/</code>”)
+    <br><strong>แต่ก่อนจะเชื่อ ให้ตอบก่อนว่า: จะพิสูจน์ยังไงว่ามันจริง?</strong>
+    <br>แล้วทายว่าถ้าเอาโปรเจกต์ที่มี <code>handler</code> กับ <code>httputil</code> อยู่ใน
+    <code>internal/</code> มารัน <code>swag init</code> <strong>โดยไม่ใส่ flag นี้เลย</strong> —
+    เอกสารที่ได้จะมี endpoint ทั้งสองเส้นไหม
+  </p>
+  <button class="reveal">ดูผลรันจริง</button>
+  <div class="answer">
+    <p><strong>ไม่ใส่ flag ก็สแกนครบตั้งแต่แรกแล้ว:</strong></p>
+    <pre style="margin:0.6rem 0"><code>$ rm -rf docs &amp;&amp; swag init -g main.go -d ./      <span class="c"># ไม่มี --parseInternal</span>
+2026/08/21 13:00:44 Generate swagger docs....
+2026/08/21 13:00:44 Generate general API Info, search dir:./
+2026/08/21 13:00:44 <strong>Generating handler.User</strong>
+2026/08/21 13:00:44 <strong>Generating httputil.ErrorResponse</strong>
+2026/08/21 13:00:44 create docs.go at docs/docs.go
+2026/08/21 13:00:44 create swagger.json at docs/swagger.json
+2026/08/21 13:00:44 create swagger.yaml at docs/swagger.yaml</code></pre>
+    <p>
+      <code>handler.User</code> กับ <code>httputil.ErrorResponse</code> อยู่ใน <code>internal/</code>
+      ทั้งคู่ และออกมาครบทั้ง <code>/users</code> และ <code>/users/{id}</code>
+    </p>
+    <p><strong>เทียบไบต์ต่อไบต์ระหว่างมี flag กับไม่มี:</strong></p>
+    <pre style="margin:0.6rem 0"><code>$ swag init -g main.go -d ./                <span class="c"># ไม่ใส่ flag</span>
+$ cp docs/swagger.json run1_noflag.json
+$ swag init -g main.go -d ./ --parseInternal
+$ cp docs/swagger.json run2_withflag.json
+
+$ md5 -q run1_noflag.json run2_withflag.json
+<strong>fd317e5a6fe6f8a6eafea68d2a4fc7f2</strong>
+<strong>fd317e5a6fe6f8a6eafea68d2a4fc7f2</strong>   <span class="c"># ← ค่าเดียวกันเป๊ะ</span></code></pre>
+    <div class="note">
+      <p style="margin-bottom:0">
+        ทำไมใช้ <code>md5</code> ไม่ใช้ <code>diff</code>? — <code>diff</code> เวลาไฟล์เหมือนกัน
+        มัน<strong>ไม่พิมพ์อะไรออกมาเลย</strong> ซึ่งหน้าตาแยกไม่ออกจาก “คำสั่งไม่ได้รัน”
+        <br><code>md5</code> พิมพ์ค่าออกมาให้เห็นทั้งสองบรรทัด เอาไปเทียบกับของคุณเองได้ด้วย
+      </p>
+    </div>
+    <p>
+      ลองครบทั้ง 4 ชุด flag บนโปรเจกต์นี้ — ไม่ใส่อะไรเลย · <code>--parseInternal</code> ·
+      <code>--parseDependency</code> · ใส่ทั้งคู่ — <strong>ได้ <code>md5</code> ค่าเดียวกันหมดทั้ง 4 รอบ</strong>
+      และ <code>definitions</code> เท่ากันที่ <strong>2 ตัว</strong>
+      (<code>handler.User</code> · <code>httputil.ErrorResponse</code>) ทุกรอบ
+      <br>ทุกชุด flag ที่ผมลอง <code>--parseInternal</code> ไม่เคยทำให้ผลต่างเลยสักครั้ง
+    </p>
+    <div class="note">
+      <p style="margin-bottom:0">
+        โปรเจกต์ตัวอย่างใน <a href="./0041-swagger-swaggo.html">บทเรียน 41</a> โครงต่างจากนี้เล็กน้อย
+        และที่นั่น <code>--parseDependency</code> <strong>ทำให้ชื่อ definition เปลี่ยน</strong>เป็น
+        <code>internal_user.*</code> — แต่ <code>--parseInternal</code> ก็ยัง<strong>ไม่มีผล</strong>อยู่ดี
+        ทั้งสองโปรเจกต์ · แปลว่าผลของ <code>--parseDependency</code> ขึ้นกับโครงโปรเจกต์
+        ส่วน <code>--parseInternal</code> ไม่ขึ้นกับอะไรเลยเพราะมันไม่ได้แตะเส้นทางนี้ตั้งแต่ต้น
+      </p>
+    </div>
+    <p><strong>แล้วมันทำอะไรจริง ๆ?</strong> ไปดูซอร์สของ <code>swaggo/swag</code> v1.16.6 ตรง ๆ:</p>
+    <pre style="margin:0.6rem 0"><code>$ grep -rn "ParseInternal" . --include "*.go" | grep -v _test.go
+golist.go:51:	ignoreInternal := <strong>pkg.Goroot</strong> &amp;&amp; !parser.ParseInternal
+parser.go:134:	// ParseInternal whether swag should parse internal packages
+parser.go:135:	ParseInternal bool
+parser.go:1868:	ignoreInternal := <strong>pkg.Internal</strong> &amp;&amp; !parser.ParseInternal
+cmd/swag/main.go:259:		ParseInternal:       ctx.Bool(parseInternalFlag),
+gen/gen.go:114:	// ParseInternal whether swag should parse internal packages
+gen/gen.go:115:	ParseInternal bool
+gen/gen.go:220:	p.ParseInternal = config.ParseInternal</code></pre>
+    <p>
+      ได้มา 8 บรรทัด แต่ 6 บรรทัดเป็นแค่<strong>การประกาศ field และการส่งค่าต่อกันไปมา</strong>
+      (<code>main.go</code> อ่านจาก flag → <code>gen.go</code> ส่งเข้า parser) ·
+      ที่เหลืออีก 2 บรรทัด<em>ที่ไฮไลต์ไว้</em> คือที่เดียวที่เอาค่านี้ไปตัดสินใจอะไรจริง ๆ:
+    </p>
+    <p>
+      จุดที่ถูก<em>ใช้จริง</em> มีแค่สองที่ และทั้งคู่อยู่ในฟังก์ชันตระกูล
+      <code>getAllGoFileInfoFromDeps*</code> — คือ<strong>เส้นทางอ่าน dependency</strong> เท่านั้น
+      (<code>pkg.Goroot</code> = แพ็กเกจของ Go เอง · <code>pkg.Internal</code> = internal ของไลบรารีที่เราพึ่งพา)
+      <br>แปลว่า flag นี้พูดถึง <code>internal/</code> <strong>ของคนอื่น</strong> ไม่ใช่ของโปรเจกต์เรา
+      และต้องใช้คู่กับ <code>--parseDependency</code> ถึงจะมีความหมาย
+    </p>
+    <p>ส่วนตัวที่เดินไฟล์ในโปรเจกต์เราจริง ๆ ข้ามอะไรบ้าง — อยู่ในฟังก์ชัน <code>walkWith</code>:</p>
+    <pre style="margin:0.6rem 0"><code><span class="k">if</span> !parseVendor &amp;&amp; f.<span class="f">Name</span>() == <span class="s">"vendor"</span> ||   <span class="c">// ignore "vendor"</span>
+    f.<span class="f">Name</span>() == <span class="s">"docs"</span> ||                       <span class="c">// exclude docs</span>
+    <span class="f">len</span>(f.<span class="f">Name</span>()) &gt; <span class="n">1</span> &amp;&amp; f.<span class="f">Name</span>()[<span class="n">0</span>] == <span class="s">'.'</span> &amp;&amp; f.<span class="f">Name</span>() != <span class="s">".."</span> {
+    <span class="k">return</span> filepath.SkipDir
+}</code></pre>
+    <p>
+      ข้ามแค่ <code>vendor</code> · <code>docs</code> · โฟลเดอร์ที่ขึ้นต้นด้วยจุด ·
+      และรายการใน <code>--exclude</code> — <strong>ไม่มีคำว่า <code>internal</code> อยู่ในเงื่อนไขเลย</strong>
+      นี่คือหลักฐานตรง ๆ ว่า <code>./internal</code> ไม่เคยถูกข้าม
+    </p>
+    <p><strong>แล้วอะไรทำให้ <code>internal/</code> หายไปจากเอกสารได้จริง?</strong> คือ <code>--exclude</code> ต่างหาก:</p>
+    <pre style="margin:0.6rem 0"><code>$ swag init -g main.go -d ./ <strong>--exclude ./internal</strong>
+$ jq -c '.paths' docs/swagger.json
+<strong>{}</strong>
+$ jq -c '.definitions' docs/swagger.json
+<strong>null</strong></code></pre>
+    <p style="margin-bottom:0">
+      <strong>สรุปข้อ 6:</strong> คำตอบที่ถูกคือ <em>“ไม่ต้องใส่ flag อะไรเลย — <code>swag</code>
+      สแกน <code>internal/</code> ของโปรเจกต์เราให้อยู่แล้ว”</em> ·
+      ถ้าจะจับคู่กับ flag จริง ๆ ตัวที่คุมเรื่องนี้คือ <code>-d</code> (ไดเรกทอรีที่ให้สแกน)
+      และ <code>--exclude</code> ไม่ใช่ <code>--parseInternal</code>
+      <br>และสาเหตุที่คนเข้าใจผิดกันหมดก็ไม่ใช่ความผิดของใคร — <strong>ข้อความใน
+      <code>--help</code> ของ <code>swag</code> เองกำกวม</strong> มันไม่ได้บอกว่าหมายถึง
+      internal ของ dependency
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ข้อ 4 ถูก แต่ตอบครึ่งเดียว — และอีกครึ่งที่ขาดทำให้ปุ่ม Authorize หาย</span>
+  <p style="margin-bottom:0">
+    <code>@Security BearerAuth</code> แค่ <strong>“ผูก” endpoint เข้ากับ scheme ชื่อ <code>BearerAuth</code></strong>
+    เท่านั้น · ตัว scheme จริงมาจากคนละ annotation ที่ <code>main.go</code>:
+    <code>@securityDefinitions.apikey BearerAuth</code> + <code>@in header</code> + <code>@name Authorization</code>
+    <br>ผมลองลบสามบรรทัดนั้นทิ้งแล้ว gen ใหม่ — <strong><code>swag</code> ไม่ error เลย ผ่านปกติ</strong>:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ swag init -g main.go -d ./ -q &amp;&amp; jq -c '{securityDefinitions:.securityDefinitions, opSecurity:.paths."/users/{id}".get.security}' docs/swagger.json
+{"securityDefinitions":<strong>null</strong>,"opSecurity":[{"BearerAuth":[]}]}</code></pre>
+  <p style="margin-bottom:0">
+    ได้เอกสารที่ endpoint <strong>อ้าง scheme ที่ไม่มีอยู่จริง</strong> →
+    ปุ่ม <em>Authorize</em> ใน Swagger UI หายไป ใส่ token ไม่ได้ ทดลองยิงจริงไม่ได้
+    <br>เป็นกับดักตระกูลเดียวกับ <a href="./0041-swagger-swaggo.html">บทเรียน 41</a> หัวข้อ 10
+    ทั้งหมด: <strong>เอกสารผิดแบบไม่มีใครเตือน</strong> เพราะ <code>swag</code>
+    ไม่เคยเช็คว่าสิ่งที่เราเขียนตรงกับความจริงหรือเปล่า
+    <br>เช่นเดียวกับ <code>@Router</code> ที่<strong>ไม่ถูกตรวจกับ route จริงของ Gin เลย</strong> —
+    เขียน path หรือ method ผิด เอกสารก็ผิดเงียบ ๆ ไม่มี warning สักบรรทัด
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ทีมส่ง <code>POST /createUser?name=Alice&amp;password=123456</code> ขึ้น production · ไม่มี error ไม่มีใครแฮ็ก แล้วรหัสผ่านหลุดได้ยังไง?</p>
+  <div class="opts">
+    <button class="opt">หลุดตอนวิ่งบนเน็ต เพราะ query string ไม่ได้ถูกเข้ารหัสเหมือน body</button>
+    <button class="opt">ไม่หลุด เพราะถ้าใช้ HTTPS แล้ว ทุกส่วนของ request ถูกเข้ารหัสหมด</button>
+    <button class="opt">หลุดลง access log ของเราเอง เพราะ <code>gin.Logger()</code> พิมพ์ path พร้อม query ทั้งก้อน</button>
+    <button class="opt">หลุดเพราะ Gin เก็บค่า query ทุกตัวไว้ใน <code>*gin.Context</code> ข้ามไปยัง request ถัดไป</button>
+  </div>
+  <div class="explain">
+    <p>ผมยิงจริงแล้ว <code>grep</code> หารหัสผ่านในไฟล์ log ได้บรรทัดนี้:
+    <code>[GIN] … | 200 | … | POST "/createUser?name=Alice&amp;password=123456"</code>
+    <br>ส่วน <code>POST /users</code> ที่ส่งรหัสผ่านตัวเดียวกันทาง body ได้ log แค่
+    <code>POST "/users"</code> เปล่า ๆ · <code>grep -c '123456'</code> ทั้งไฟล์ได้ <strong>1</strong> ครั้ง
+    คือบรรทัดของ <code>/createUser</code> เท่านั้น
+    <br>ตัวเลือกที่ 1 กับ 2 เป็นความเข้าใจผิดคู่แฝดกัน: <strong>HTTPS เข้ารหัสทั้ง query และ body
+    เหมือนกันหมดตอนวิ่งบนเน็ต</strong> — ปัญหาไม่ได้อยู่ระหว่างทาง แต่อยู่ที่<strong>ปลายทางที่ตั้งใจจด URL เอาไว้</strong>
+    ทั้ง access log ของ server, log ของ proxy/load balancer, ประวัติ browser และ header <code>Referer</code>
+    <br>ตัวเลือกที่ 4 ผิดเพราะ <code>*gin.Context</code> เกิดใหม่ต่อหนึ่ง request ไม่ข้ามกัน
+    <br>และจำไว้ว่าแค่เปลี่ยนชื่อเส้นเป็น <code>POST /users?password=…</code> ก็ยังลง log อยู่ดี — <strong>ต้องย้ายช่อง ไม่ใช่แค่เปลี่ยนชื่อ</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. ยิง <code>DELETE /users/123</code> ซ้ำ 3 ครั้ง เทียบกับ <code>POST /deleteUser?id=123</code> ซ้ำ 3 ครั้ง — status code ที่ได้ต่างกันไหม?</p>
+  <div class="opts">
+    <button class="opt">ต่างกัน: <code>DELETE</code> ได้ <code>204</code> ทั้งสามครั้ง ส่วน <code>POST</code> ได้ <code>200/404/404</code></button>
+    <button class="opt">เหมือนกันเป๊ะ ได้ <code>200/404/404</code> ทั้งคู่ — idempotency เป็นสัญญาระดับ HTTP spec ไม่ใช่ตัวเลขที่ server ตอบ</button>
+    <button class="opt">ต่างกัน: <code>DELETE</code> ครั้งที่ 2 ขึ้นไปได้ <code>409 Conflict</code> เพราะของถูกลบไปแล้ว</button>
+    <button class="opt">เหมือนกัน แต่ได้ <code>200</code> ทั้งหกครั้ง เพราะ idempotent แปลว่ายิงกี่ครั้งก็สำเร็จ</button>
+  </div>
+  <div class="explain">
+    <p>ผมยิงจริงทั้งสองแบบ ๆ ละ 3 ครั้ง ได้ <code>200 → 404 → 404</code> <strong>เหมือนกันทุกตัวอักษร</strong>
+    ทั้ง body และ state ปลายทางก็เหมือนกัน
+    <br>ความต่างของ <code>DELETE</code> กับ <code>POST</code> อยู่ที่ <strong>สัญญาที่ผูกกับตัว method
+    ตาม HTTP spec (RFC 9110)</strong> ซึ่ง client · proxy · ชั้น retry เอาไปใช้ตัดสินใจว่า
+    “ถ้าเน็ตกระตุกแล้วไม่รู้ว่าถึงหรือเปล่า จะยิงซ้ำได้ไหม”
+    <br>ตัวเลือกที่ 1 กับ 3 เดาว่า server ต้องตอบต่างกัน — <strong>ไม่จริง ผมรันแล้ว</strong> ·
+    ตัวเลือกที่ 4 เข้าใจคำว่า idempotent ผิด: มันแปลว่า “<em>ผลลัพธ์ปลายทาง</em>เท่าเดิม”
+    ไม่ได้แปลว่า “status code เท่าเดิม”
+    <br>เสริมอีกจุด: <code>204</code> ในตัวเลือกที่ 1 ไม่ใช่คำตอบผิดในเชิงออกแบบเลย —
+    หลาย API เลือกให้ <code>DELETE</code> ตอบ 204 ทุกครั้ง (<a href="./0036-rest-naming-idempotency.html">บทเรียน 36</a> หัวข้อ 7)
+    แต่นั่นเป็นสิ่งที่<strong>เราต้องเขียนโค้ดให้เป็นเอง</strong> ไม่ใช่สิ่งที่ได้มาฟรีจากการเปลี่ยน method</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. เปลี่ยนจาก <code>GET /getPaidOrders</code> มาเป็น <code>GET /orders?status=paid</code> เรียบร้อย แล้ว frontend ลืมแนบ <code>?status</code> ไปหนึ่งครั้ง — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">Gin ตอบ <code>400 Bad Request</code> ให้เอง เพราะ query ที่ handler ประกาศไว้ไม่ครบ</button>
+    <button class="opt">Gin ตอบ <code>404</code> เพราะ route <code>/orders</code> เฉย ๆ ไม่ได้ถูกลงทะเบียนไว้</button>
+    <button class="opt"><code>c.Query("status")</code> คืน <code>nil</code> แล้วโปรแกรม panic ตอน compare กับ string</button>
+    <button class="opt">ได้ <code>200</code> พร้อม order <strong>ทั้งหมด</strong> รวมที่ยกเลิกแล้ว เพราะ <code>c.Query</code> คืน empty string เงียบ ๆ</button>
+  </div>
+  <div class="explain">
+    <p>ผมยิง <code>GET /orders</code> โดยไม่ใส่ query จริง ๆ ได้
+    <code>{"filter_status":"", "orders":[o1 paid, o2 pending, o3 paid, o4 cancelled]} | HTTP 200</code>
+    — ครบทั้ง 4 รายการรวม <code>cancelled</code>
+    <br><code>c.Query</code> ไม่เคยบ่นเรื่อง param ที่ไม่ได้ส่งมา มันคืน <strong>empty string</strong> แล้วเดินต่อ
+    <br>ตัวเลือกที่ 1 ผิดเพราะ Gin ไม่รู้จัก “query ที่จำเป็น” เลย เว้นแต่เราจะ bind เป็น struct
+    พร้อม <code>binding:"required"</code> เอง (<a href="./0039-gin-binding-middleware.html">บทเรียน 39</a>) ·
+    ตัวเลือกที่ 2 ผิดเพราะ query ไม่ได้เป็นส่วนหนึ่งของการ match route — <code>/orders</code>
+    กับ <code>/orders?status=paid</code> เข้า handler ตัวเดียวกัน ·
+    ตัวเลือกที่ 3 ผิดเพราะ <code>c.Query</code> คืน <code>string</code> ไม่ใช่ pointer จึงไม่มี <code>nil</code>
+    <br>อาการนี้อันตรายตรงที่ <strong>status ยังเป็น 200</strong> — ไม่มีอะไรฟ้อง มีแต่ผู้ใช้ที่เห็นข้อมูลผิด</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. โปรเจกต์วาง <code>handler</code> กับ <code>httputil</code> ไว้ใน <code>internal/</code> · ถ้ารัน <code>swag init -g main.go -d ./</code> โดยไม่ใส่ <code>--parseInternal</code> จะได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้เอกสารครบทุก endpoint — <code>swag</code> สแกน <code>internal/</code> ของโปรเจกต์เราให้อยู่แล้วโดยดีฟอลต์</button>
+    <button class="opt">ได้ <code>paths</code> ว่างเปล่า เพราะ <code>swag</code> ข้ามโฟลเดอร์ชื่อ <code>internal</code> ทุกครั้งถ้าไม่สั่ง</button>
+    <button class="opt">ได้ endpoint ครบ แต่ <code>definitions</code> เป็น <code>null</code> เพราะ struct อยู่ใน <code>internal/</code></button>
+    <button class="opt"><code>swag</code> ขึ้น error ว่าหาแพ็กเกจไม่เจอ และไม่สร้างไฟล์ <code>docs/</code> ให้เลย</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันเทียบไบต์ต่อไบต์: <code>md5</code> ของ <code>swagger.json</code> ที่มีและไม่มี <code>--parseInternal</code>
+    <strong>ออกมาเป็นค่าเดียวกันทุกไบต์</strong> — ทั้งแบบเดี่ยวและแบบคู่กับ <code>--parseDependency</code>
+    <br>และ log ของ <code>swag</code> ตอนไม่ใส่ flag ก็ขึ้น <code>Generating handler.User</code>
+    กับ <code>Generating httputil.ErrorResponse</code> ครบทั้งคู่ ทั้งที่สองตัวนั้นอยู่ใน <code>internal/</code>
+    <br>ดูจากซอร์สของ swag v1.16.6 ยิ่งชัด: <code>ParseInternal</code> ถูกอ่านแค่สองจุด
+    (<code>pkg.Goroot</code> และ <code>pkg.Internal</code>) ซึ่งอยู่ใน<strong>เส้นทางอ่าน dependency</strong>
+    ทั้งคู่ — มันหมายถึง <code>internal</code> ของ<em>ไลบรารีที่เราพึ่งพา</em> ไม่ใช่ของเรา
+    <br>ส่วนตัวเดินไฟล์ในโปรเจกต์เรา (<code>walkWith</code>) ข้ามแค่ <code>vendor</code>, <code>docs</code>,
+    โฟลเดอร์ที่ขึ้นต้นด้วยจุด และ <code>--exclude</code> · <strong>ไม่มีเงื่อนไขคำว่า <code>internal</code> อยู่เลย</strong>
+    <br>ตัวเลือกที่ 2 คือผลของ <code>--exclude ./internal</code> ต่างหาก (ผมรันแล้วได้ <code>paths</code> = <code>{}</code>
+    และ <code>definitions</code> = <code>null</code>) · ตัวเลือกที่ 3 กับ 4 ไม่เกิดขึ้นเลยจากการรันจริง
+    <br><strong>บทเรียนที่ใหญ่กว่าคำตอบ:</strong> ข้อความใน <code>--help</code> ก็กำกวมได้
+    วิธีเดียวที่เชื่อถือได้คือ<strong>รันสองรอบแล้ว <code>diff</code></strong></p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — สร้าง “คู่เทียบ” ของตัวเองแล้วพิสูจน์ด้วยมือ</span>
+  <p>
+    บทนี้ทั้งบทคือการอ่านผลที่ผมรันไว้ให้ · ภารกิจนี้คือการ<strong>รันเอง</strong>
+    เพราะสิ่งที่ทำให้คุณเถียงกับ code review ของคนอื่นได้ ไม่ใช่การจำกฎ 7 ข้อ
+    แต่คือ<strong>หลักฐานที่คุณผลิตเองได้</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งโปรเจกต์:</strong> โฟลเดอร์ใหม่ · <code>go mod init apidet</code> ·
+        <code>go get github.com/gin-gonic/gin</code> · <code>main.go</code> ที่มี
+        <code>r := gin.Default()</code> แล้ว <code>r.Run(":18080")</code>
+        (<a href="./0038-gin-routing.html">บทเรียน 38</a>)</li>
+    <li><strong>ลงทะเบียนทั้งแปดเส้นในตัวเดียวกัน</strong> — สี่เส้นแบบแย่จากสไลด์
+        และสี่เส้นที่รีวิวแล้ว · เก็บข้อมูลไว้ใน <code>map</code> หรือ <code>slice</code> ในหน่วยความจำพอ
+        ไม่ต้องมี database
+        <br>เพิ่ม <code>GET /__routes</code> ที่คืน <code>r.Routes()</code> ออกมาเป็น JSON —
+        จะได้ยืนยันด้วยตาว่าลงครบจริง ไม่ใช่คิดไปเอง</li>
+    <li><strong>พิสูจน์เรื่องรหัสผ่าน (ข้อสำคัญที่สุด):</strong> เปลี่ยน <code>gin.Default()</code>
+        ให้เขียน log ลงไฟล์ <code>gin-access.log</code> · ยิงสองแบบ:
+        <code>POST /createUser?password=123456</code> กับ <code>POST /users</code> ที่ส่งรหัสผ่านใน body
+        <br>แล้วสั่ง <code>grep -c '123456' gin-access.log</code>
+        <br><strong>ต้องได้ <code>1</code></strong> — ถ้าได้ <code>2</code> แปลว่าเผลอ log body เอง
+        ให้ไปหาว่าโค้ดตรงไหนทำ</li>
+    <li><strong>พิสูจน์เรื่อง idempotency ให้ตัวเองเห็นว่า “พิสูจน์ไม่ได้”:</strong>
+        ยิง <code>DELETE /users/123</code> สามครั้ง และ <code>POST /deleteUser?id=123</code> สามครั้ง
+        เก็บ status code ทุกครั้ง
+        <br><strong>ต้องได้เหมือนกันทั้งสองชุด</strong> — แล้วเขียนสองสามบรรทัดตอบตัวเองว่า
+        ถ้าตัวเลขเท่ากัน แล้วเราเปลี่ยนมาใช้ <code>DELETE</code> ไปเพื่ออะไร</li>
+    <li><strong>ลองของแถม:</strong> ยิง <code>POST /users/123</code> (ผิด method) แล้วดู status
+        <br>จากนั้นตั้ง <code>r.HandleMethodNotAllowed = true</code> แล้วยิงซ้ำ
+        <br><strong>ตอบให้ได้ว่าเลขเปลี่ยนจากอะไรเป็นอะไร และทำไมค่า default ถึงเป็นแบบแรก</strong></li>
+    <li><strong>ฝั่ง Swagger:</strong> ย้าย handler ของคุณเข้า <code>internal/</code> แล้วรัน
+        <code>swag init</code> สองรอบ — รอบหนึ่งใส่ <code>--parseInternal</code> อีกรอบไม่ใส่ —
+        แล้ว <code>diff</code> ไฟล์ <code>swagger.json</code> ทั้งสอง
+        <br>จากนั้นลบ <code>@securityDefinitions</code> ที่ <code>main.go</code> ทิ้ง แล้ว gen ใหม่ ·
+        เปิด Swagger UI ดูว่า<strong>ปุ่ม Authorize ยังอยู่ไหม</strong>
+        (<a href="./0041-swagger-swaggo.html">บทเรียน 41</a>)</li>
+    <li><strong>ท้าทาย:</strong> เขียนเทสที่<strong>จับการถอยหลังได้</strong> —
+        เทสที่ fail ทันทีถ้ามีคนเผลอเพิ่ม route ชื่อ <code>/getSomething</code> กลับเข้ามา
+        <br>ใบ้: <code>r.Routes()</code> คืน slice ที่วนอ่านได้ · เขียน assert ว่า
+        ทุก <code>path</code> ต้องไม่มีตัวพิมพ์ใหญ่และต้องไม่ขึ้นต้นด้วยคำกริยาในลิสต์ที่คุณกำหนด
+        <br>(ต่อยอดจาก <a href="../../day-5/lessons/0016-table-driven-test.html">บทเรียน 16</a>)</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 4 — ถ้าตัวเลขเท่ากัน แล้วเปลี่ยน method ไปทำไม</button>
+  <div class="answer">
+    <p>
+      เพราะการเลือก method <strong>ไม่ได้เปลี่ยนสิ่งที่ server ของคุณทำ</strong> —
+      มันเปลี่ยน<strong>สิ่งที่คนอื่นกล้าทำกับ server ของคุณ</strong>
+    </p>
+    <p>
+      ลองนึกภาพ: มือถือของผู้ใช้ยิง request ลบไป แล้วเน็ตหลุดตอนกำลังรอคำตอบ
+      <br>ตอนนี้ client ไม่รู้เลยว่า request ถึง server หรือยัง — จะยิงซ้ำดีไหม?
+      <br>ถ้าเป็น <strong><code>DELETE</code></strong> คำตอบคือ <em>ยิงซ้ำได้เลย</em>
+      เพราะ HTTP spec รับประกันว่าผลลัพธ์ปลายทางเท่าเดิม
+      <br>ถ้าเป็น <strong><code>POST</code></strong> คำตอบคือ <em>ห้ามยิงซ้ำ</em>
+      เพราะ POST ไม่มีสัญญานี้ · ชั้น retry ทุกตัวที่เขียนถูกต้องจะยอมแพ้แล้วโยน error ให้ผู้ใช้แทน
+    </p>
+    <p style="margin-bottom:0">
+      พูดให้สั้นที่สุด: <strong>ตัวเลข status code เป็นเรื่องของ request ครั้งนี้ ·
+      ตัว method เป็นเรื่องของ request ครั้งหน้าที่คุณยังไม่รู้ว่าจะมี</strong>
+      <br>เครื่องมือที่อ่านสัญญานี้ก็ไม่ใช่คนด้วยซ้ำ — เป็น proxy, load balancer,
+      HTTP client library และชั้น retry ที่อยู่ระหว่างทาง ซึ่งไม่มีทางเปิดเอกสารของคุณอ่านได้
+      อ่านได้แค่ method เท่านั้น
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อที่ผมอยากให้จำจากทั้งสามส่วน</strong> —
+    ส่วนที่ 1 สอนว่า “ข้อมูลชิ้นนี้ควรไปช่องไหน” · ส่วนที่ 2 สอนว่า
+    “มันทำงานได้ ไม่ได้แปลว่ามันถูก” · ส่วนที่ 3 สอนว่า
+    <strong>“เฉลยที่พิมพ์อยู่บนสไลด์ก็ผิดได้ ถ้ายังไม่มีใครรันมันดู”</strong>
+    <br>ข้อ 6 ของส่วนที่ 3 ไม่ได้ผิดเพราะใครสะเพร่า — มันผิดเพราะ
+    <code>swag init --help</code> เขียนกำกวมจริง ๆ · ทางเดียวที่แยกออกคือรันสองรอบแล้ว <code>diff</code>
+    <br>ถ้าคุณรันแล้วได้ผลไม่ตรงกับในหน้านี้ <strong>ส่งผลมาได้เลย</strong> —
+    ทุกบรรทัดในหน้านี้วัดบน Go 1.26.5 darwin/arm64 · gin v1.12.0 · swag CLI v1.16.4 +
+    swaggo/swag v1.16.6 เท่านั้น เวอร์ชันอื่นผมไม่รับประกัน
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0042-wongnok-api-spec.html">← บทเรียน 42</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0044-env-config.html">บทเรียน 44 → env &amp; config</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-method-definitions">RFC 9110 — HTTP Semantics: Method Definitions</a> — <strong>อ่านตาราง Method ที่บอกว่าตัวไหน safe / idempotent</strong> ต้นทางของข้อสรุปว่า <code>DELETE</code> idempotent ส่วน <code>POST</code> ไม่</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-201-created">RFC 9110 — 201 Created</a> — นิยามของรหัสที่ควรตอบเมื่อสร้าง resource สำเร็จ (คำตอบข้อ 6 ของส่วนที่ 1)</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status">MDN — HTTP response status codes</a> — รายการ status ทั้งหมดพร้อมคำอธิบายภาษาคน</li>
+  <li><a href="https://pkg.go.dev/github.com/gin-gonic/gin#Context.Query">pkg.go.dev — <code>gin.Context.Query</code></a> · <a href="https://pkg.go.dev/github.com/gin-gonic/gin#Context.Param">Param</a> — เอกสารที่ระบุตรง ๆ ว่า <code>Query</code> คืนสตริงว่างเมื่อไม่มีค่า</li>
+  <li><a href="https://pkg.go.dev/github.com/gin-gonic/gin#Engine">pkg.go.dev — <code>gin.Engine</code></a> — <strong>ดูฟิลด์ <code>HandleMethodNotAllowed</code></strong> ที่เป็น <code>false</code> โดยดีฟอลต์ ต้นเหตุของ 404 แทน 405</li>
+  <li><a href="https://github.com/gin-gonic/gin/blob/v1.12.0/logger.go">Gin v1.12.0 — <code>logger.go</code></a> —
+      <strong>หลักฐานว่า access log พิมพ์ query string ด้วย</strong>: บรรทัด 279 เก็บ <code>raw := c.Request.URL.RawQuery</code>
+      แล้วบรรทัด 307 ต่อกลับเข้าไปเป็น <code>path = path + "?" + raw</code></li>
+  <li><a href="https://gin-gonic.com/en/docs/logging/custom-log-format/">Gin — Custom log format</a> — วิธีเปลี่ยนรูปแบบ access log เอง (เช่น ตัด query ออกจาก log)</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc6750.html#section-5.3">RFC 6750 §5.3 — Bearer Token: Threat Mitigation</a> — เหตุผลอย่างเป็นทางการว่าทำไมความลับไม่ควรอยู่ใน URL</li>
+  <li><a href="https://github.com/swaggo/swag#declarative-comments-format">swaggo/swag — Declarative Comments Format</a> — รายการ annotation ทั้งหมด (<code>@title</code>, <code>@Param</code>, <code>@Failure</code>, <code>@Security</code>, <code>@Router</code>)</li>
+  <li><a href="https://github.com/swaggo/swag/blob/master/parser.go">swaggo/swag — <code>parser.go</code></a> — <strong>ค้นคำว่า <code>ParseInternal</code> และ <code>walkWith</code></strong> เพื่อยืนยันด้วยตาเองว่า flag นี้แตะแค่เส้นทาง dependency</li>
+  <li><a href="../reference/cheatsheet.html">Cheat sheet Day 8</a> — กฎ 7 ข้อ · ตาราง status code · annotation ที่ใช้บ่อย รวมทั้งวัน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

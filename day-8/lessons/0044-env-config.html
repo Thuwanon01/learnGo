@@ -1,0 +1,891 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 44 — Configuration &amp; Environment Variables</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 44 · Day 8 · Config</p>
+  <h1>Configuration &amp; Environment Variables</h1>
+  <p class="meta">~15 นาที · ต้องมี: <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> (project layout, <code>cmd/api/main.go</code>)</p>
+  <p class="standfirst">
+    บทนี้มาจาก<strong>สไลด์ชุด "Day 8 (Post)" ที่อาจารย์เพิ่มมาให้หลังเรียนจบ</strong> (หน้า 85–90)
+    ไม่ได้สอนสดในห้อง
+    <br>เนื้อหาเริ่มจาก <code>main.go</code> ที่มีรหัสผ่านฐานข้อมูลอยู่ในโค้ดตรง ๆ
+    แล้วไล่ไปจนถึงคำถามว่า <strong>ทำไม <code>os.Getenv()</code> อย่างเดียวถึงไม่พอ</strong>
+    <br>ผมจะพิสูจน์ให้ดูสามเรื่องที่<strong>ไม่มีอะไรเตือนคุณเลย</strong>:
+    พิมพ์ชื่อ env ผิดแล้ว <code>go build</code> กับ <code>go vet</code> เงียบสนิท ·
+    ค่าว่างกับ "ไม่ได้ตั้ง" ที่ <code>os.Getenv</code> แยกไม่ออก ·
+    และการแปลง string เป็น int/bool/duration ที่พังแล้วคืนค่าที่<em>ดูเหมือนค่าปกติ</em>
+    <br><strong>สไลด์ชุดนี้หยุดแค่ตรงปัญหา ยังไม่เฉลยว่าใช้ library อะไรแก้</strong> — เดี๋ยวท้ายบทผมบอกว่าปลายทางคืออะไร
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ทุก output ในบทนี้มาจากการรันจริงบน</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+github.com/lib/pq v1.10.9   <span class="c"># ใช้เฉพาะหัวข้อ 6 ตอนพิสูจน์เรื่อง DSN</span></code></pre>
+  <p style="margin-bottom:0">
+    ถ้าจะพิมพ์ตาม: สร้างโฟลเดอร์เปล่าใหม่ · <code>cd</code> เข้าไป · <code>go mod init envcheck</code>
+    <br>เกือบทุกหัวข้อใช้แค่ <strong>standard library</strong> (<code>os</code>, <code>strconv</code>, <code>time</code>)
+    ไม่ต้อง <code>go get</code> อะไรเลย
+    <br><br>
+    <strong>ในบทนี้มีโปรแกรมเล็ก ๆ สองตัว</strong> เพราะมันพิมพ์คนละอย่าง —
+    อย่าสับสนว่าเป็นตัวเดียวกัน:
+    <br>· <code>./api</code> (หัวข้อ 2) พิมพ์ <code>APP_PORT</code> · <code>LOG_LEVEL</code> · <code>PID</code>
+    ใช้ดูว่า env ส่งต่อถึง process ลูกไหม
+    <br>· <code>./envtest</code> (หัวข้อ 4) พิมพ์ผลของ <code>os.Getenv</code> เทียบกับ <code>os.LookupEnv</code>
+    <br>ทั้งคู่ build ด้วย <code>go build -o api .</code> / <code>go build -o envtest .</code> คนละโฟลเดอร์
+  </p>
+</div>
+
+<h2>1 · โค้ดนี้ผิดตรงไหน</h2>
+
+<p>
+  นี่คือ <code>cmd/api/main.go</code> แบบที่เขียนกันตอนเริ่มโปรเจกต์ — เปิดฐานข้อมูล
+  แล้วเปิดเซิร์ฟเวอร์ จบ (โครง <code>cmd/</code> มาจาก
+  <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a>):
+</p>
+
+<pre><code>db, _ := gorm.<span class="f">Open</span>(postgres.<span class="f">Open</span>(
+    <span class="s">"host=localhost user=postgres password=P@ssw0rd123 dbname=wongnok"</span>))
+
+recipeRepo := repository.<span class="f">NewRecipeRepo</span>(db)   <span class="c">// db ถูกใช้ต่อตรงนี้</span>
+
+r := gin.<span class="f">Default</span>()
+r.<span class="f">Run</span>(<span class="s">":8080"</span>)</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    บรรทัด <code>recipeRepo := …</code> ใส่ไว้เพื่อให้ตัวอย่าง<strong>คอมไพล์ผ่านจริง</strong> —
+    ถ้าประกาศ <code>db</code> แล้วไม่ได้ใช้ต่อ Go จะไม่ยอมให้ผ่านตั้งแต่ตอน build
+    (<code>declared and not used: db</code>) ซึ่งเป็นเรื่องที่ไม่เกี่ยวกับหัวข้อวันนี้เลย
+  </p>
+</div>
+
+<p>
+  โค้ดนี้ <strong>compile ผ่าน รันได้ ทำงานถูกต้อง</strong> บนเครื่องคุณ
+  <br>และมันมีปัญหาสามข้อที่จะโผล่คนละเวลากัน:
+</p>
+
+<h3>ปัญหา 1 — รหัสผ่านอยู่ในโค้ด</h3>
+
+<p>
+  <code>P@ssw0rd123</code> ไม่ได้อยู่แค่ในไฟล์ พอคุณ <code>git commit</code> แล้ว <code>git push</code>
+  มันจะกลายเป็นส่วนหนึ่งของ<strong>ประวัติ repo ถาวร</strong>
+  <br>จุดที่คนพลาดกันมากที่สุด: <strong>ลบทิ้งทีหลังไม่ช่วย</strong> — commit เก่ายังอยู่
+  ใครก็ตามที่ clone repo ไปแล้วสั่ง <code>git log -p</code> ก็ยังอ่านเจอ
+  ถ้า repo เคยเป็น public แม้แค่ชั่วโมงเดียว ต้องถือว่า<strong>รหัสผ่านนั้นหลุดแล้ว</strong>
+  และวิธีแก้ที่ถูกต้องคือไปเปลี่ยนรหัสผ่านที่ฐานข้อมูล ไม่ใช่แก้ไฟล์
+</p>
+
+<h3>ปัญหา 2 — เปลี่ยนค่า = แก้โค้ด</h3>
+
+<p>
+  แอปตัวเดียวกันต้องรันอย่างน้อยสามที่: เครื่องคุณ (dev) · เครื่องทดสอบ (staging) · ของจริง (production)
+  ทั้งสามที่ต่อคนละฐานข้อมูล
+  <br>โค้ดข้างบนมี host เดียวฝังไว้ แปลว่าจะขึ้น staging ต้อง<strong>แก้ไฟล์ → commit → build ใหม่</strong>
+  <br>ผลคือ binary ที่คุณเทสบน staging กับที่ปล่อยขึ้น production
+  <strong>ไม่ใช่ก้อนเดียวกัน</strong> — เทสผ่านบนก้อนหนึ่ง แล้วปล่อยอีกก้อนหนึ่ง
+</p>
+
+<h3>ปัญหา 3 — ทีมใช้ค่าเดียวกันไม่ได้</h3>
+
+<p>
+  เพื่อนในทีมสามคน คนหนึ่งลง Postgres ไว้ที่ <code>localhost</code> อีกคนรันใน Docker
+  อีกคนใช้พอร์ตอื่นเพราะพอร์ต 5432 ชนกับของเดิม
+  <br>โค้ดมี host เดียว ใครแก้ให้ตรงเครื่องตัวเองก็ต้องระวังไม่ให้ commit ติดไป —
+  และสุดท้ายก็มีคน commit ติดไปจนได้ แล้วเครื่องคนอื่นพังหมด
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>สามข้อนี้มีต้นเหตุเดียวกัน</strong> — เราเอา<em>ค่าที่เปลี่ยนตามที่ที่รัน</em>
+    ไปปนกับ<em>ตรรกะที่ไม่เคยเปลี่ยน</em>
+    <br>ทางแก้จึงมีทางเดียว: <strong>ย้ายค่าออกไปอยู่นอกโค้ด แล้วส่งเข้ามาตอนรัน</strong>
+  </p>
+</div>
+
+<h2>2 · Environment Variables คืออะไรกันแน่</h2>
+
+<p>
+  Environment variable คือ <strong>ตัวแปรที่อยู่นอกโปรแกรม</strong> —
+  ระบบปฏิบัติการเก็บไว้ให้ทุก process แล้วส่งต่อให้โปรแกรมของเรา<strong>ตอนรัน</strong> ไม่ใช่ตอน build
+  <br>คุณสมบัติที่ต้องจำมีสี่ข้อ:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คุณสมบัติ</th><th>แปลว่าอะไรในทางปฏิบัติ</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>เป็น key-value ที่ค่าเป็น <strong>string เสมอ</strong></td>
+      <td>ไม่มี int ไม่มี bool ไม่มี list — <code>PORT=8080</code> ที่โปรแกรมได้คือตัวอักษรสี่ตัว ไม่ใช่ตัวเลข</td>
+    </tr>
+    <tr>
+      <td>โปรแกรม<strong>อ่านได้</strong> แต่ไม่ควรแก้</td>
+      <td>แก้ได้ (<code>os.Setenv</code>) แต่แก้แล้วมีผลแค่ในตัวเองกับลูกที่เกิดทีหลัง — ไม่ย้อนกลับไปหาคนที่เรียกเรา</td>
+    </tr>
+    <tr>
+      <td>ส่งต่อจาก <strong>parent → child process</strong></td>
+      <td>shell ส่งให้โปรแกรม · <code>go run</code> ส่งต่อให้ binary ที่มันสร้าง · Docker ส่งให้ container</td>
+    </tr>
+    <tr>
+      <td>อยู่<strong>นอก source code</strong></td>
+      <td>เปลี่ยนค่าแล้วรันใหม่ได้เลย ไม่ต้อง compile ใหม่ — binary ก้อนเดิมขึ้นได้ทุก environment</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ข้อ "ส่งต่อจาก parent ไป child" ฟังดูนามธรรม ผมพิสูจน์ให้ดูด้วย PID จริง —
+  โปรแกรมทดสอบพิมพ์ <code>os.Getpid()</code> กับ <code>os.Getppid()</code> ออกมา
+  แล้วผมพิมพ์ PID ของ shell (<code>$$</code>) เทียบ:
+</p>
+
+<pre><code>$ echo "this shell PID = $$"; APP_PORT=6262 go run .
+this shell PID = <strong>34148</strong>
+APP_PORT = 6262
+my PID = <strong>34157</strong>  parent PID = <strong>34151</strong></code></pre>
+
+<p>
+  สาม PID ต่างกันหมด: shell (34148) → <code>go run</code> (34151) → binary จริงที่ถูก compile แล้วรัน (34157)
+  <br>ค่า <code>APP_PORT=6262</code> วิ่งข้ามไปครบ<strong>สองทอด</strong> โดยเราไม่ได้ทำอะไรเพิ่มเลย
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ กับดักอันดับหนึ่งของคนที่เพิ่งเริ่มใช้ env: ลืมคำว่า <code>export</code></span>
+  <p>
+    ใน shell การเขียน <code>APP_PORT=5555</code> เฉย ๆ กับ <code>export APP_PORT=5555</code>
+    <strong>ไม่เหมือนกัน</strong> — แบบแรกเป็นตัวแปรของ shell เท่านั้น ไม่ได้เข้าไปอยู่ใน environment
+    ที่จะส่งต่อให้ลูก ผมรันเทียบให้ดู:
+  </p>
+  <pre style="margin:0.6rem 0"><code><span class="c"># ก้อนที่ 1 — ไม่มี export</span>
+$ APP_PORT=5555; echo <span class="s">"shell sees: $APP_PORT"</span>; ./api
+shell sees: 5555          <span class="c"># shell เห็นค่า</span>
+<strong>APP_PORT  =</strong>               <span class="c"># แต่โปรแกรมได้ค่าว่าง</span>
+LOG_LEVEL =
+PID       = 39661
+
+<span class="c"># ก้อนที่ 2 — มี export</span>
+$ export APP_PORT=5555; echo <span class="s">"shell sees: $APP_PORT"</span>; ./api
+shell sees: 5555
+<strong>APP_PORT  = 5555</strong>          <span class="c"># คราวนี้โปรแกรมเห็น</span>
+LOG_LEVEL =
+PID       = 39663</code></pre>
+  <p style="margin-bottom:0">
+    <code>echo</code> เห็น 5555 แต่โปรแกรมได้ค่าว่าง — นี่คือสาเหตุอันดับต้น ๆ ที่คนบ่นว่า
+    <strong>"ตั้ง env แล้วนะ แต่โปรแกรมอ่านไม่เจอ"</strong>
+  </p>
+</div>
+
+<p>
+  มีอีกท่าหนึ่งที่ใช้บ่อยกว่า <code>export</code> เวลาทดสอบ คือ<strong>เขียนนำหน้าคำสั่ง</strong>
+  ซึ่งมีผลเฉพาะคำสั่งนั้น ไม่ค้างใน shell:
+</p>
+
+<pre><code>$ export APP_PORT=8080; APP_PORT=9090 ./api; echo <span class="s">"shell still: $APP_PORT"</span>
+<strong>APP_PORT  = 9090</strong>             <span class="c"># โปรแกรมเห็น 9090</span>
+LOG_LEVEL =
+PID       = 39699
+<strong>shell still: 8080</strong>            <span class="c"># shell ยังเป็น 8080 เหมือนเดิม</span></code></pre>
+
+<p>
+  จำสองเรื่องจากผลนี้: <strong>เขียนนำหน้าคำสั่งชนะ <code>export</code></strong> สำหรับ process นั้น ·
+  และ<strong>ค่าไม่ค้าง</strong> พอคำสั่งจบ shell กลับไปเป็นค่าเดิม
+</p>
+
+<h2>3 · ไม่ใช่เรื่องเฉพาะ Go</h2>
+
+<p>
+  ตรงนี้สำคัญกว่าที่คิด: env ไม่ใช่ feature ของ Go แต่เป็น<strong>กติกาของระบบปฏิบัติการ</strong>
+  ที่ทุกภาษาและทุกเครื่องมือ deploy เห็นตรงกัน
+  <br>แปลว่าเมื่อคุณเรียนวิธีนี้ครั้งเดียว คุณใช้ได้กับทุกที่ที่โค้ดของคุณจะไปอยู่:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ที่ที่รันจริง</th><th>ตั้ง env ยังไง</th></tr></thead>
+  <tbody>
+    <tr><td>Shell (เครื่องคุณ)</td><td><code>export POSTGRES_DSN=...</code></td></tr>
+    <tr><td>Docker</td><td><code>-e LOG_LEVEL=INFO</code> หรือช่อง <code>environment:</code> ใน compose</td></tr>
+    <tr><td>Kubernetes</td><td><code>env:</code> ใน manifest · <code>ConfigMap</code> (ค่าธรรมดา) · <code>Secret</code> (ค่าลับ)</td></tr>
+    <tr><td>CI/CD</td><td>GitLab CI Variables · GitHub Actions secrets</td></tr>
+    <tr><td>Cloud</td><td>ECS Task Definition · Cloud Run · Lambda</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>และฝั่งภาษาโปรแกรม ทุกภาษาก็มีวิธีอ่านของตัวเอง หน้าตาต่างกันแต่เป็นของสิ่งเดียวกัน:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ภาษา</th><th>อ่าน env ยังไง</th></tr></thead>
+  <tbody>
+    <tr><td>Go</td><td><code>os.Getenv("POSTGRES_DSN")</code></td></tr>
+    <tr><td>Python</td><td><code>os.environ["POSTGRES_DSN"]</code></td></tr>
+    <tr><td>Node.js</td><td><code>process.env.POSTGRES_DSN</code></td></tr>
+    <tr><td>Java</td><td><code>System.getenv("POSTGRES_DSN")</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แนวคิดนี้มีชื่อเรียกและมีที่มา — มาจากเอกสารชื่อ <strong>12-Factor App</strong>
+  ซึ่งเป็นชุดหลักการ 12 ข้อสำหรับเขียนแอปที่ deploy ง่าย
+  <br>ข้อที่เกี่ยวกับเราคือ <strong>Factor III: Config</strong> ที่บอกว่า
+  <em>config ต้องแยกออกจาก code และเก็บใน environment</em>
+  <br>เกณฑ์ทดสอบง่าย ๆ ที่เอกสารนั้นให้ไว้คือ:
+  <strong>ถ้าตอนนี้เปิด repo ให้เป็น public ทันที มีอะไรหลุดไหม</strong> — ถ้ามี แปลว่า config ยังไม่แยก
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ Docker <em>ไม่</em> สืบทอด env จาก shell ให้อัตโนมัติ</span>
+  <p>
+    หัวข้อที่แล้วบอกว่า env ไหลจาก parent ไป child — จริงสำหรับ <code>go run</code>
+    แต่<strong>ไม่จริงสำหรับ container</strong> เพราะ container เป็นพื้นที่แยกของมันเอง ผมรันพิสูจน์:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ export LOG_LEVEL=FROM_HOST; docker run --rm alpine printenv LOG_LEVEL
+host LOG_LEVEL = FROM_HOST
+<strong>exit=1</strong>                          <span class="c"># container ไม่เห็นเลย ไม่พิมพ์อะไรออกมา</span>
+
+$ docker run --rm <strong>-e LOG_LEVEL</strong> alpine printenv LOG_LEVEL
+<strong>FROM_HOST</strong>                      <span class="c"># เขียน -e ชื่อเปล่า ๆ = หยิบค่าจาก shell ส่งเข้าไป</span></code></pre>
+  <p style="margin-bottom:0">
+    ท่า <code>-e LOG_LEVEL</code> แบบไม่ใส่ <code>=</code> มีประโยชน์มาก:
+    ส่งค่าเข้า container ได้โดย<strong>ค่าลับไม่โผล่ในบรรทัดคำสั่ง</strong> (ซึ่ง shell history เก็บไว้)
+    <br>อีกเรื่องที่ควรรู้: <code>--env-file app.env</code> ใช้ได้ และถ้าตั้งชื่อเดียวกันทั้งสองทาง
+    <strong><code>-e</code> ชนะ <code>--env-file</code></strong> — ผมรันเทียบแล้วได้ <code>FROM_FLAG</code>
+    ทับ <code>FROM_FILE</code>
+  </p>
+</div>
+
+<h2>4 · เรียกใช้ env ใน Go แบบพื้นฐาน</h2>
+
+<p>
+  Go มีสองฟังก์ชันสำหรับอ่าน env และความต่างของมันคือหัวใจของหัวข้อนี้:
+</p>
+
+<pre><code><span class="c">// แบบที่ 1 — ได้ค่ามาอย่างเดียว ไม่มี error</span>
+level := os.<span class="f">Getenv</span>(<span class="s">"LOG_LEVEL"</span>)
+
+<span class="c">// แบบที่ 2 — ได้ค่า + บอกด้วยว่า "ตัวแปรนี้มีอยู่จริงไหม"</span>
+level, ok := os.<span class="f">LookupEnv</span>(<span class="s">"LOG_LEVEL"</span>)</code></pre>
+
+<p>
+  <code>os.Getenv</code> ถ้าไม่เจอจะคืน <code>""</code> เฉย ๆ · <strong>ไม่มี error ไม่มี panic</strong>
+  <br>ส่วน <code>os.LookupEnv</code> คืนค่าที่สองเป็น <code>bool</code> ซึ่งตอบคำถามคนละข้อ:
+  ไม่ใช่ "ค่าว่างไหม" แต่คือ <strong>"ตัวแปรนี้ถูกตั้งไว้หรือเปล่า"</strong>
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — โปรแกรมทดสอบมีแค่สองบรรทัดนี้ (พิมพ์ด้วย <code>%q</code> จึงมีเครื่องหมายคำพูดครอบค่าที่ได้)</p>
+  <pre><code>fmt.<span class="f">Printf</span>(<span class="s">"Getenv    = %q\n"</span>, os.<span class="f">Getenv</span>(<span class="s">"LOG_LEVEL"</span>))
+v, ok := os.<span class="f">LookupEnv</span>(<span class="s">"LOG_LEVEL"</span>)
+fmt.<span class="f">Printf</span>(<span class="s">"LookupEnv = %q, ok=%v\n"</span>, v, ok)</code></pre>
+  <p class="ask">
+    รันสามแบบ — <strong>ทายว่าแต่ละแบบได้อะไร</strong>
+    <br>1. <code>env LOG_LEVEL=DEBUG ./envtest</code> (ตั้งค่าปกติ)
+    <br>2. <code>env LOG_LEVEL= ./envtest</code> (<strong>ตั้งเป็นค่าว่าง</strong> — ไม่มีอะไรหลัง <code>=</code>)
+    <br>3. <code>env -u LOG_LEVEL ./envtest</code> (<strong>ไม่ได้ตั้งเลย</strong>)
+    <br>คำถามจริง ๆ ที่ผมอยากให้ตอบคือ: <strong>แบบ 2 กับแบบ 3 ต่างกันไหม ในสายตาของแต่ละฟังก์ชัน?</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ env LOG_LEVEL=DEBUG ./envtest
+Getenv    = "DEBUG"
+LookupEnv = "DEBUG", ok=true
+
+$ env LOG_LEVEL= ./envtest
+Getenv    = ""
+LookupEnv = "", <strong>ok=true</strong>
+
+$ env -u LOG_LEVEL ./envtest
+Getenv    = ""
+LookupEnv = "", <strong>ok=false</strong></code></pre>
+    <p>
+      <strong><code>os.Getenv</code> ให้ผลเหมือนกันเป๊ะในแบบ 2 กับแบบ 3</strong> — ได้ <code>""</code> ทั้งคู่ แยกไม่ออก
+      <br>มีแต่ <code>os.LookupEnv</code> ที่แยกได้ด้วยค่า <code>ok</code>
+    </p>
+    <p style="margin-bottom:0">
+      และมันไม่ใช่เรื่องในหัวของ Go อย่างเดียว — ผมเช็คในฝั่ง shell ด้วย <code>printenv</code> ยืนยันว่า
+      <strong>สองสถานะนี้มีอยู่จริงในระบบปฏิบัติการ</strong>:
+    </p>
+    <pre style="margin:0.6rem 0"><code>$ export LOG_LEVEL=""; ./envtest; printenv | grep -c '^LOG_LEVEL'
+LookupEnv = "", ok=true
+--- printenv | grep -c LOG_LEVEL ---
+<strong>1</strong>        <span class="c"># ตัวแปรมีอยู่จริง แค่ค่าว่าง</span>
+
+$ unset LOG_LEVEL; ./envtest; printenv | grep -c '^LOG_LEVEL'
+LookupEnv = "", ok=false
+--- printenv | grep -c LOG_LEVEL ---
+<strong>0</strong>        <span class="c"># ไม่มีตัวแปรนี้แล้วจริง ๆ</span></code></pre>
+  </div>
+</div>
+
+<p>สรุปเป็นตารางสามกรณี ทุกช่องมาจากผลรันในกล่องเฉลยข้างบน:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สถานะของ <code>LOG_LEVEL</code></th><th><code>os.Getenv</code></th><th><code>os.LookupEnv</code></th><th>แยกออกไหม</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>ตั้งเป็น <code>DEBUG</code></td>
+      <td><code>"DEBUG"</code></td>
+      <td><code>"DEBUG"</code>, <code>ok=true</code></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td>ตั้งเป็น<strong>ค่าว่าง</strong> (<code>export LOG_LEVEL=""</code>)</td>
+      <td><code>""</code></td>
+      <td><code>""</code>, <strong><code>ok=true</code></strong></td>
+      <td rowspan="2"><strong><code>Getenv</code> แยกไม่ออก<br><code>LookupEnv</code> แยกออก</strong></td>
+    </tr>
+    <tr>
+      <td><strong>ไม่ได้ตั้งเลย</strong> (<code>unset LOG_LEVEL</code>)</td>
+      <td><code>""</code></td>
+      <td><code>""</code>, <strong><code>ok=false</code></strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>แล้วความต่างนี้สำคัญตอนไหน</strong> —
+    ตอนที่คุณจะเขียน "ถ้าไม่ได้ตั้งมา ให้ใช้ค่า default"
+    <br>ถ้าใช้ <code>Getenv</code> คุณจะเดา default ให้คนที่<strong>ตั้งใจ</strong>ตั้งเป็นค่าว่างด้วย —
+    เช่นคนที่ตั้ง <code>HTTP_PROXY=""</code> เพื่อบอกว่า "ไม่ต้องใช้ proxy"
+    แล้วโปรแกรมคุณกลับไปหยิบ proxy ตัว default มาใช้แทน
+    <br>ระวังตอนเช็คใน shell ด้วย: <code>echo $LOG_LEVEL</code> หรือ <code>[ -z "$LOG_LEVEL" ]</code>
+    <strong>แยกสองสถานะนี้ไม่ออกเหมือนกัน</strong> — ต้องใช้ <code>printenv | grep '^LOG_LEVEL'</code>
+    ถึงจะเห็นความจริง
+  </p>
+</div>
+
+<h2>5 · กับดักแรก — ทุกอย่างเป็น string</h2>
+
+<p>
+  <code>PORT=8080</code> ที่โปรแกรมได้รับคือสตริง <code>"8080"</code> ไม่ใช่เลข 8080
+  <br>อยากได้ <code>int</code> ต้องแปลงเอง และ<strong>ทุกฟังก์ชันแปลงคืน error มาด้วยเสมอ</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>อยากได้</th><th>ใช้ฟังก์ชัน</th><th>ตัวอย่างที่ผ่าน (ผลรันจริง)</th></tr></thead>
+  <tbody>
+    <tr><td><code>int</code></td><td><code>strconv.Atoi</code></td><td><code>Atoi("8080") -&gt; v=8080, err=&lt;nil&gt;</code></td></tr>
+    <tr><td><code>time.Duration</code></td><td><code>time.ParseDuration</code></td><td><code>ParseDuration("30s") -&gt; v=30s, err=&lt;nil&gt;</code></td></tr>
+    <tr><td><code>bool</code></td><td><code>strconv.ParseBool</code></td><td><code>ParseBool("true") -&gt; v=true, err=&lt;nil&gt;</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — สามบรรทัดนี้ ค่าที่ป้อนเข้าไปคือค่าที่คนเขียนไฟล์ config พิมพ์มาจริง ๆ</p>
+  <pre><code>strconv.<span class="f">Atoi</span>(<span class="s">""</span>)                  <span class="c">// PORT ไม่ได้ตั้งค่า → Getenv คืน ""</span>
+time.<span class="f">ParseDuration</span>(<span class="s">"30"</span>)        <span class="c">// คนเขียน TIMEOUT=30 แล้วคิดว่า "30 วินาที"</span>
+strconv.<span class="f">ParseBool</span>(<span class="s">"yes"</span>)          <span class="c">// คนที่มาจาก YAML เคยชินกับ yes/no</span></code></pre>
+  <p class="ask">
+    ทั้งสามอันได้ error หมด — <strong>แต่ค่าที่คืนมาคู่กับ error คืออะไร?</strong>
+    <br>และถ้าโค้ดเผลอเขียน <code>v, _ := strconv.<span class="f">ParseBool</span>(...)</code> (ทิ้ง error) จะเกิดอะไรขึ้นกับแอป?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>strconv.Atoi("") -&gt; <strong>v=0</strong>, err=<strong>strconv.Atoi: parsing "": invalid syntax</strong>
+    err type: *strconv.NumError
+    NumError{Func:"Atoi", Num:"", Err:invalid syntax}
+
+time.ParseDuration("30") -&gt; <strong>v=0s</strong>, err=<strong>time: missing unit in duration "30"</strong>
+    err type: *time.parseDurationError
+
+strconv.ParseBool("yes") -&gt; <strong>v=false</strong>, err=<strong>strconv.ParseBool: parsing "yes": invalid syntax</strong>
+    err type: *strconv.NumError</code></pre>
+    <p>
+      <strong>สังเกตค่าที่คืนมาให้ดี ๆ: <code>0</code> · <code>0s</code> · <code>false</code></strong>
+      <br>ทั้งสามค่านี้<strong>ไม่หน้าตาเหมือน error เลย</strong> — มันดูเหมือนค่าที่ตั้งใจตั้งมา:
+      <br><code>0</code> ดูเหมือน "พอร์ต 0" · <code>0s</code> ดูเหมือน "timeout ทันที" ·
+      <code>false</code> ดูเหมือน "ตั้งใจปิดฟีเจอร์ไว้"
+    </p>
+    <p style="margin-bottom:0">
+      นี่คือเหตุผลที่การเขียน <code>_</code> ทิ้ง error ตอนแปลง config <strong>ไม่ทำให้แอป crash</strong>
+      แต่ทำให้แอป<strong>ทำงานผิดแบบเงียบสนิท</strong> — ซึ่งหาสาเหตุยากกว่า crash หลายเท่า
+    </p>
+  </div>
+</div>
+
+<p>
+  เคสข้างบนยังพอเดาได้ ทีนี้ผมรันเคสที่<strong>เดาไม่ได้</strong> ให้ดู เริ่มจาก <code>Atoi</code>:
+</p>
+
+<pre><code>strconv.Atoi("8080 ")   -&gt; n=0, err=strconv.Atoi: parsing "8080 ": invalid syntax   <span class="c"># ช่องว่างท้ายตัวเดียว</span>
+strconv.Atoi(" 8080")   -&gt; n=0, err=strconv.Atoi: parsing " 8080": invalid syntax
+strconv.Atoi("8080\n")  -&gt; n=0, err=strconv.Atoi: parsing "8080\n": invalid syntax
+strconv.Atoi("8080.0")  -&gt; n=0, err=strconv.Atoi: parsing "8080.0": invalid syntax
+strconv.Atoi("+8080")   -&gt; n=8080, err=&lt;nil&gt;                                        <span class="c"># ผ่าน</span>
+strconv.Atoi("08080")   -&gt; n=8080, err=&lt;nil&gt;                                        <span class="c"># ผ่าน</span>
+strconv.Atoi("8_080")   -&gt; n=0, err=strconv.Atoi: parsing "8_080": invalid syntax
+strconv.Atoi("99999999999999999999")
+    -&gt; <strong>n=9223372036854775807</strong>, err=strconv.Atoi: parsing "99999999999999999999": <strong>value out of range</strong></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ อ่านบรรทัดสุดท้ายอีกรอบ — "error แล้วได้ 0 เสมอ" เป็นความเชื่อที่ผิด</span>
+  <p style="margin-bottom:0">
+    เลขที่ใหญ่เกิน <code>int64</code> ทำให้ <code>Atoi</code> คืน <strong><code>9223372036854775807</code></strong>
+    (ค่าสูงสุดของ <code>int64</code>) <strong>พร้อม error</strong> ไม่ใช่คืน 0
+    <br>ถ้าโค้ดเขียน <code>n, _ := strconv.Atoi(os.Getenv("MAX_ITEMS"))</code> แล้วมีคนพิมพ์เลขยาวเกินไป
+    คุณจะได้ลิมิตเก้าล้านล้าน แทนที่จะเป็นศูนย์ — <strong>ค่าที่หลุดออกมาดูเหมือนตัวเลขจริง</strong>
+    <br>และ error กรณีนี้เป็นคนละตัวกับเคสอื่น: <code>value out of range</code> ไม่ใช่ <code>invalid syntax</code>
+    <br>ส่วนช่องว่างท้ายบรรทัด: <code>Atoi</code> <strong>ไม่ trim ให้เลย</strong> —
+    ซึ่งเจอบ่อยมากเวลาก๊อปค่าจากไฟล์ <code>.env</code> ที่มีช่องว่างติดมา
+  </p>
+</div>
+
+<p><code>time.ParseDuration</code> แปลกกว่านั้นอีก เพราะมัน<strong>มีข้อความ error ถึงสามแบบ</strong>:</p>
+
+<pre><code>time.ParseDuration("1h30m") -&gt; d=1h30m0s, err=&lt;nil&gt;      <span class="c"># ต่อหน่วยกันได้</span>
+time.ParseDuration("-5s")   -&gt; d=-5s, err=&lt;nil&gt;
+time.ParseDuration("30ms")  -&gt; d=30ms, err=&lt;nil&gt;
+time.ParseDuration("0")     -&gt; d=0s, err=&lt;nil&gt;            <span class="c"># ข้อยกเว้นเดียวที่ไม่ต้องมีหน่วย</span>
+
+time.ParseDuration("")      -&gt; d=0s, err=<strong>time: invalid duration ""</strong>
+time.ParseDuration("abc")   -&gt; d=0s, err=<strong>time: invalid duration "abc"</strong>
+time.ParseDuration("30")    -&gt; d=0s, err=<strong>time: missing unit in duration "30"</strong>
+time.ParseDuration(" 30s")  -&gt; d=0s, err=<strong>time: invalid duration " 30s"</strong>
+time.ParseDuration("30s ")  -&gt; d=0s, err=<strong>time: unknown unit "s " in duration "30s "</strong>
+time.ParseDuration("30S")   -&gt; d=0s, err=<strong>time: unknown unit "S" in duration "30S"</strong></code></pre>
+
+<p>
+  สองบรรทัดล่างสุดคือของแปลก: <code>"30s "</code> ที่มีช่องว่างท้าย<strong>ไม่ได้</strong>ขึ้นว่า invalid
+  แต่ขึ้นว่า <code>unknown unit "s "</code> — ซึ่งอ่านแล้วงงมากว่าหน่วย <code>s</code> ไม่รู้จักได้ยังไง
+  (คำตอบ: หน่วยที่มันเห็นคือ <code>"s "</code> พร้อมช่องว่าง ไม่ใช่ <code>"s"</code>)
+  <br>และ <code>"30S"</code> ตัว S ใหญ่ก็ไม่ผ่าน เพราะ<strong>หน่วยเป็น case-sensitive</strong>
+</p>
+
+<p>
+  <code>strconv.ParseBool</code> เป็นตัวที่คนเดาผิดบ่อยที่สุด เพราะมันรับ<strong>เฉพาะ 12 ค่านี้</strong>
+  ไม่มีอย่างอื่นเลย ผมยืนยันสองทาง — brute force ทดสอบ 24 ค่า (ทุกค่าที่โชว์ข้างล่างนี้) และเปิดซอร์สจริงของ Go 1.26.5 อ่าน:
+</p>
+
+<pre><code><span class="c">// จาก src/internal/strconv/atob.go ของ Go 1.26.5 — เป็น switch ตรง ๆ ไม่มี trim ไม่มี lowercase</span>
+<span class="k">func</span> <span class="f">ParseBool</span>(str <span class="k">string</span>) (<span class="k">bool</span>, <span class="k">error</span>) {
+	<span class="k">switch</span> str {
+	<span class="k">case</span> <span class="s">"1"</span>, <span class="s">"t"</span>, <span class="s">"T"</span>, <span class="s">"true"</span>, <span class="s">"TRUE"</span>, <span class="s">"True"</span>:
+		<span class="k">return</span> <span class="k">true</span>, <span class="k">nil</span>
+	<span class="k">case</span> <span class="s">"0"</span>, <span class="s">"f"</span>, <span class="s">"F"</span>, <span class="s">"false"</span>, <span class="s">"FALSE"</span>, <span class="s">"False"</span>:
+		<span class="k">return</span> <span class="k">false</span>, <span class="k">nil</span>
+	}
+	<span class="k">return</span> <span class="k">false</span>, ErrSyntax
+}</code></pre>
+
+<pre><code>  "1" "t" "T" "TRUE" "true" "True"      OK  -&gt; true
+  "0" "f" "F" "FALSE" "false" "False"   OK  -&gt; false
+
+  <strong>"tRue"</strong>   ERROR  strconv.ParseBool: parsing "tRue": invalid syntax   <span class="c"># พิมพ์ผสมไม่ได้</span>
+  <strong>"yes"</strong>    ERROR  strconv.ParseBool: parsing "yes": invalid syntax
+  <strong>"no"</strong>     ERROR  strconv.ParseBool: parsing "no": invalid syntax
+  <strong>"on"</strong>     ERROR  strconv.ParseBool: parsing "on": invalid syntax
+  <strong>"off"</strong>    ERROR  strconv.ParseBool: parsing "off": invalid syntax
+  "y" "n" "Y" "N" "2" "-1"              ERROR  ... invalid syntax
+  <strong>" true"</strong>  ERROR  strconv.ParseBool: parsing " true": invalid syntax   <span class="c"># ช่องว่างก็ไม่ได้</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>ที่ต้องระวังคือ case-sensitive แบบเลือกข้าง</strong> —
+    <code>"true"</code> <code>"TRUE"</code> <code>"True"</code> ผ่านหมด แต่ <code>"tRue"</code> ไม่ผ่าน
+    เพราะซอร์สข้างบนเทียบ string ตรง ๆ ทีละค่า ไม่ได้ทำ lowercase ก่อน
+    <br>และ <code>yes</code>/<code>no</code>/<code>on</code>/<code>off</code> ที่ใช้กันเกลื่อนในไฟล์ YAML ของ stack อื่น
+    <strong>ใช้กับ Go ไม่ได้เลย</strong> — ใครย้ายมาจาก Python หรือ Rails จะเจอกับดักนี้แน่นอน
+  </p>
+</div>
+
+<h2>6 · ปัญหาของการใช้ <code>os.Getenv()</code> เยอะ ๆ</h2>
+
+<p>
+  มาถึงตรงนี้เรามีเครื่องมือครบแล้ว — อ่าน env ได้ แปลง type ได้ เช็ค error ได้
+  <br>แล้วปัญหาอยู่ตรงไหน? ปัญหาคือพอโปรเจกต์โต แล้วเรียก <code>os.Getenv</code> กระจายไปทั่วโค้ด
+  มันจะพังห้าแบบที่<strong>ไม่มีอะไรจับได้เลย</strong>
+</p>
+
+<h3>1 · พิมพ์ผิดไม่มีใครเตือน</h3>
+
+<p>
+  ชื่อ env เป็น<strong>สตริงธรรมดา</strong> — compiler ไม่รู้จักมัน ไม่มีรายชื่อให้เทียบ
+  <br>ผมทดสอบด้วยการเขียน <code>os.Getenv("POSTGRES_DNS")</code> (สลับ <code>SN</code> เป็น <code>NS</code>)
+  ทั้งที่ตอนรันตั้ง <code>POSTGRES_DSN</code> ไว้จริง:
+</p>
+
+<pre><code>$ go build ./... ; echo "exit=$?"
+<strong>exit=0</strong>
+(ไม่มี output ใด ๆ เลย)
+
+$ go vet ./... ; echo "exit=$?"
+<strong>exit=0</strong>
+(ไม่มี output ใด ๆ เลย)</code></pre>
+
+<p>เครื่องมือทั้งสองตัวเงียบสนิท แล้วตอนรันได้แบบนี้:</p>
+
+<pre><code>$ POSTGRES_DSN="postgres://user:pass@localhost:5432/mydb?sslmode=disable" go run .
+dsn = ""
+len(dsn) = 0
+LookupEnv(POSTGRES_DSN) = "postgres://user:pass@localhost:5432/mydb?sslmode=disable", <strong>ok=true</strong>
+LookupEnv(POSTGRES_DNS) = "", <strong>ok=false</strong>
+-&gt; โปรแกรมเดินต่อได้ ไม่ panic ไม่ error
+exit=0</code></pre>
+
+<p>
+  ค่าจริงอยู่ครบในตัวแปรที่สะกดถูก แต่โค้ดหยิบตัวที่สะกดผิดแล้วได้ <code>""</code>
+  แล้ว<strong>เดินต่อเหมือนไม่มีอะไรเกิดขึ้น</strong>
+  <br>สังเกตว่า <code>LookupEnv</code> ตอบ <code>ok=false</code> ให้แล้ว — <em>ข้อมูลมีอยู่</em>
+  แต่ถ้าโค้ดใช้ <code>Getenv</code> ก็ไม่มีใครเอาไปใช้
+</p>
+
+<h3>2 · แปลง type เองทุกที่</h3>
+
+<p>
+  ทุกจุดที่ต้องการตัวเลขต้องเขียนสามบรรทัดเดิมซ้ำ: อ่าน → แปลง → จัดการ error
+  <br>สิบ config = สามสิบบรรทัดที่หน้าตาเหมือนกันหมด และ<strong>บรรทัดจัดการ error คือบรรทัดที่คนขี้เกียจเขียนที่สุด</strong>
+  พอมี <code>_</code> โผล่มาสักตัวเดียว คุณก็ได้ผลตามหัวข้อ 5 ทันที
+</p>
+
+<h3>3 · default กระจัดกระจาย</h3>
+
+<pre><code>port := os.<span class="f">Getenv</span>(<span class="s">"PORT"</span>)
+<span class="k">if</span> port == <span class="s">""</span> { port = <span class="s">"8080"</span> }        <span class="c">// ← อยู่ใน main.go</span>
+
+<span class="c">// อีกไฟล์หนึ่ง คนละคนเขียน</span>
+p := os.<span class="f">Getenv</span>(<span class="s">"PORT"</span>)
+<span class="k">if</span> p == <span class="s">""</span> { p = <span class="s">"3000"</span> }             <span class="c">// ← default ไม่ตรงกัน แต่ไม่มีใครเห็น</span></code></pre>
+
+<p>
+  ก้อน <code>if x == "" { x = ... }</code> กระจายอยู่ทั่วโปรเจกต์ · เวลาจะเปลี่ยน default
+  ต้องไล่หาให้ครบทุกจุด และ<strong>พลาดหนึ่งจุดก็ไม่มีอะไรฟ้อง</strong>
+</p>
+
+<h3>4 · ไม่มีที่ไหนบอกว่าแอปต้องการ config อะไรบ้าง</h3>
+
+<p>
+  คำถามที่คนใหม่เข้าทีมถามวันแรกเสมอ: <em>"ต้องตั้ง env อะไรบ้างถึงจะรันได้"</em>
+  <br>คำตอบที่ตรงที่สุดในโค้ดแบบนี้คือ <code>grep -r "os.Getenv" .</code>
+  — ซึ่งบอกได้แค่<strong>ชื่อ</strong> ไม่บอกว่าตัวไหนบังคับ ตัวไหนมี default ตัวไหนต้องเป็นตัวเลข
+  <br>เอกสารก็เชื่อไม่ได้ เพราะมันไม่ได้ผูกกับโค้ด — คนเพิ่ม env ใหม่แล้วลืมอัปเดต README เป็นเรื่องปกติ
+</p>
+
+<h3>5 · ระเบิดกลางทาง ไม่ใช่ตอน start</h3>
+
+<p>
+  ข้อนี้แสบที่สุด ผมรันพิสูจน์กับ <code>database/sql</code> จริง — ลืมตั้ง DSN แล้วส่งค่าว่างเข้าไป:
+</p>
+
+<pre><code>=== A. DSN ว่าง (ลืมตั้ง env) | driver="postgres" dsn=""
+  <strong>sql.Open err  = &lt;nil&gt;</strong>                    <span class="c"># เปิดผ่าน ไม่มี error</span>
+  Ping err      = dial tcp [::1]:5432: connect: connection refused
+  Query err     = dial tcp [::1]:5432: connect: connection refused</code></pre>
+
+<p>
+  <code>sql.Open</code> คืน <code>&lt;nil&gt;</code> — <strong>แอป start ผ่าน</strong> log ขึ้นสวยงามว่าเซิร์ฟเวอร์พร้อมแล้ว
+  <br>สาเหตุคือ <code>database/sql</code> เป็นแบบ lazy: <code>sql.Open</code> แค่เช็คว่า
+  <em>รู้จักชื่อ driver ตัวนี้ไหม</em> แล้วสร้าง connection pool เปล่า ๆ ไว้ <strong>ยังไม่ต่อจริง</strong>
+  <br>ผมทดสอบเคสอื่นเทียบด้วย ยืนยันว่ามันไม่ตรวจ DSN เลยแม้แต่รูปแบบ:
+</p>
+
+<pre><code>=== B. DSN ขยะ | dsn="this-is-not-a-dsn"
+  <strong>sql.Open err  = &lt;nil&gt;</strong>                    <span class="c"># ขยะชัด ๆ ก็ยังผ่าน</span>
+  Ping err      = missing "=" after "this-is-not-a-dsn" in connection info string"
+
+=== D. driver ที่ไม่ได้ register | driver="mysqlx"
+  <strong>sql.Open err  = sql: unknown driver "mysqlx" (forgotten import?)</strong>   <span class="c"># เคสเดียวที่ error</span></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ error ที่ได้ ไม่ได้ชี้ไปที่ต้นเหตุเลย</span>
+  <p>
+    ดูข้อความในเคส A อีกรอบ: <code>dial tcp [::1]:5432: connect: connection refused</code>
+    <br><strong>ไม่มีคำว่า DSN ไม่มีคำว่า env ไม่มีคำว่า config อยู่ในข้อความเลยสักตัว</strong>
+    <br>เพราะ driver ของ Postgres เจอ DSN ว่าง มันไม่บ่น แต่ไป<em>เดา</em>ค่า default ให้ (localhost:5432) แล้วต่อไม่ติด
+    <br>ผมลองเทียบกับเคสที่ DSN ถูกต้องทุกอย่างแต่ชี้ไปพอร์ตที่ไม่มีใครฟัง:
+  </p>
+  <pre style="margin:0.6rem 0"><code>A. dsn=""                     -&gt; Ping err = dial tcp [::1]:5432: connect: connection refused
+C. dsn="postgres://u:p@127.0.0.1:59999/db?..."
+                              -&gt; Ping err = dial tcp 127.0.0.1:59999: connect: connection refused</code></pre>
+  <p style="margin-bottom:0">
+    <strong>error สองอันนี้หน้าตาเหมือนกันทุกประการ</strong> ทั้งที่ต้นเหตุคนละเรื่องสุดขั้ว —
+    อันหนึ่งลืมตั้ง env อีกอันตั้งครบแต่ DB ล่ม
+    <br>คุณจะเสียเวลาไปไล่ดู Docker ไล่ดู firewall ไล่ดูว่า Postgres รันอยู่ไหม
+    ทั้งที่ปัญหาอยู่ที่บรรทัด <code>export</code> ที่ลืมพิมพ์
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔍 <strong>ข้อควรระวังเรื่องถ้อยคำ</strong> — จะพูดว่า "พังตอน query" ไม่แม่นทีเดียว
+    ผลรันจริงคือ error โผล่ตั้งแต่ <code>Ping</code> ซึ่งคือ<strong>จังหวะที่แตะ connection ครั้งแรก</strong>
+    <br>ถ้าโค้ดคุณมี <code>db.Ping()</code> ตอน startup อยู่แล้ว คุณจะเจอตั้งแต่ตอน start (ซึ่งดีกว่ามาก) ·
+    ถ้าไม่มี มันจะไปโผล่ตอน request แรกของผู้ใช้จริง
+    <br>เกร็ด: เครื่องที่ผมทดสอบไม่มี Postgres รันที่พอร์ต 5432 — ถ้าเครื่องคุณมี
+    เคส DSN ว่างอาจ<em>ต่อติด</em>แล้วไปเจอ error เรื่อง auth หรือชื่อ database แทน ซึ่งยิ่งหลอกกว่าเดิม
+  </p>
+</div>
+
+<h2>7 · สิ่งที่อยากได้ — และจุดที่สไลด์หยุด</h2>
+
+<p>
+  ห้าปัญหาข้างบนมีต้นเหตุร่วมข้อเดียว: <strong>เรากระจายความรู้เรื่อง config ไว้ทั่วโปรเจกต์</strong>
+  ทั้งชื่อ ทั้ง type ทั้ง default ทั้งกฎว่าอันไหนบังคับ
+  <br>สิ่งที่อยากได้จริง ๆ คือ<strong>ประกาศครั้งเดียวว่าแอปนี้ต้องการอะไรบ้าง แล้วให้เครื่องมือจัดการที่เหลือ</strong> —
+  อ่านให้ · แปลง type ให้ · เติม default ให้ · และ<strong>ถ้าขาดตัวไหนก็หยุดตั้งแต่ตอน start</strong>
+  ไม่ใช่ไปพังตอนผู้ใช้ยิงเข้ามา
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ปัญหาจากหัวข้อ 6</th><th>อาการที่เจอ (ผลรันจริง)</th><th>สิ่งที่อยากให้เป็น</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>พิมพ์ชื่อผิด</td>
+      <td><code>go build</code> / <code>go vet</code> ได้ <code>exit=0</code> ทั้งคู่ ไม่มี output</td>
+      <td>ชื่อ env เขียนที่เดียว ที่อื่นอ้างผ่าน field ของ struct</td>
+    </tr>
+    <tr>
+      <td>แปลง type เอง</td>
+      <td><code>Atoi("") -&gt; 0</code> · <code>ParseBool("yes") -&gt; false</code> · ทั้งคู่คู่กับ error ที่มักโดนทิ้ง</td>
+      <td>บอกชนิดไว้ที่ struct แล้วให้แปลงให้อัตโนมัติ</td>
+    </tr>
+    <tr>
+      <td>default กระจาย</td>
+      <td><code>if x == "" { x = ... }</code> คนละค่าคนละไฟล์</td>
+      <td>เขียน default ติดไว้กับ field นั้นเลย</td>
+    </tr>
+    <tr>
+      <td>ไม่รู้ว่าต้องการอะไร</td>
+      <td>ตอบได้แค่ด้วย <code>grep os.Getenv</code></td>
+      <td>เปิด struct เดียวแล้วเห็นครบทุกตัว</td>
+    </tr>
+    <tr>
+      <td>ระเบิดกลางทาง</td>
+      <td><code>sql.Open err = &lt;nil&gt;</code> แล้วพังตอน <code>Ping</code> ด้วยข้อความที่ไม่ชี้ต้นเหตุ</td>
+      <td>ขาด config ตัวไหน ให้แอปตายทันทีตอน start พร้อมบอกชื่อตัวที่ขาด</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>📌 สไลด์ชุดนี้จบตรงนี้ — ที่ "สิ่งที่อยากได้" ยังไม่เฉลยว่าใช้อะไรทำ</strong>
+    <br>แต่หน้าปกของสไลด์เขียนปลายทางไว้ให้แล้วสามชื่อ ซึ่งแบ่งงานกันคนละส่วนพอดี:
+    <br>· <strong>godotenv</strong> — อ่านไฟล์ <code>.env</code> เข้ามาเป็น env ตอน dev
+    (แก้ปัญหา "ทีมใช้ค่าเดียวกันไม่ได้" จากหัวข้อ 1)
+    <br>· <strong>caarlos0/env</strong> — ประกาศ config เป็น struct แล้วให้มันอ่าน+แปลง type+เติม default ให้
+    (แก้ปัญหา 1–4)
+    <br>· <strong>go-playground/validator</strong> — ตรวจว่าค่าที่ได้ใช้ได้จริงไหม ตั้งแต่ตอน start
+    (แก้ปัญหา 5) — ตัวเดียวกับที่อ่าน tag <code>binding</code> ให้ Gin ใน
+    <a href="./0039-gin-binding-middleware.html">บทเรียน 39</a>
+    <br>น่าจะได้เรียนกันวันถัดไป · <strong>บทนี้จึงจบแค่ "เข้าใจปัญหาให้ชัด"</strong>
+    ซึ่งเป็นเงื่อนไขที่ต้องมีก่อน ไม่งั้นเวลาใช้ library คุณจะใช้เพราะเขาบอกให้ใช้ ไม่ใช่เพราะรู้ว่ามันแก้อะไร
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="0">
+  <p class="q">1. shell สั่ง <code>export LOG_LEVEL=""</code> แล้วโปรแกรม Go เรียกทั้ง <code>os.Getenv("LOG_LEVEL")</code> และ <code>os.LookupEnv("LOG_LEVEL")</code> — ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>Getenv</code> ได้ <code>""</code> · <code>LookupEnv</code> ได้ <code>""</code> กับ <code>ok=true</code> เพราะตัวแปรมีอยู่จริง แค่ค่าว่าง</button>
+    <button class="opt"><code>Getenv</code> ได้ <code>""</code> · <code>LookupEnv</code> ได้ <code>ok=false</code> เหมือนกรณีที่ไม่ได้ตั้งตัวแปรเลย</button>
+    <button class="opt">ทั้งคู่ error เพราะ Go ไม่ยอมให้ตั้ง environment variable เป็นค่าว่าง</button>
+    <button class="opt"><code>Getenv</code> ได้ <code>""</code> · <code>LookupEnv</code> panic เพราะไม่มีค่าให้คืน</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงคือ <code>Getenv = ""</code> และ <code>LookupEnv = "", ok=true</code>
+    <br>ผมยืนยันอีกทางด้วย <code>printenv | grep -c '^LOG_LEVEL'</code> ซึ่งนับได้ <strong>1</strong>
+    แปลว่าตัวแปรอยู่ใน environment จริง ๆ แค่ค่าเป็นสตริงว่าง
+    <br>ตัวเลือกที่ 2 คือผลของ <code>unset LOG_LEVEL</code> ต่างหาก — เคสนั้น <code>printenv</code> นับได้ <strong>0</strong>
+    และ <code>LookupEnv</code> ได้ <code>ok=false</code>
+    <br>ตัวเลือกที่ 3 กับ 4 ผิดทั้งคู่: การอ่าน env ไม่มี error ไม่มี panic —
+    นั่นแหละคือปัญหา เพราะมันเงียบเกินไป
+    <br><strong>จุดที่ต้องจำ:</strong> "ค่าว่าง" กับ "ไม่ได้ตั้ง" เป็นคนละสถานะจริง ๆ ในระบบปฏิบัติการ
+    แต่ <code>os.Getenv</code> กลืนความต่างนี้ทิ้ง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. มีคนตั้ง <code>MAX_ITEMS=99999999999999999999</code> (ยาวเกิน int64) แล้วโค้ดเรียก <code>strconv.Atoi</code> — ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">คืน <code>n=0</code> พร้อม error <code>invalid syntax</code> เหมือนเคสสตริงพัง ๆ อื่น ๆ</button>
+    <button class="opt">คืน <code>n=9223372036854775807</code> พร้อม error <code>value out of range</code></button>
+    <button class="opt">คืน <code>n=99999999999999999999</code> กับ <code>err=&lt;nil&gt;</code> เพราะ Go ขยาย int ให้อัตโนมัติ</button>
+    <button class="opt">panic ทันทีที่เรียก เพราะเลขล้นชนิดข้อมูล</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>strconv.Atoi("99999999999999999999") -&gt; n=9223372036854775807,
+    err=strconv.Atoi: parsing "99999999999999999999": value out of range</code>
+    <br>ค่า <code>9223372036854775807</code> คือค่าสูงสุดของ <code>int64</code> —
+    <strong>ไม่ใช่ 0</strong> ตามที่หลายคนเข้าใจว่า "error แล้วได้ zero value เสมอ"
+    <br>ตัวเลือกที่ 1 ผิดสองชั้น: ทั้งค่าที่คืนและชนิดของ error —
+    เคสนี้เป็น <code>value out of range</code> ไม่ใช่ <code>invalid syntax</code> ที่เจอตอน
+    <code>Atoi("")</code> หรือ <code>Atoi("8080 ")</code>
+    <br>ตัวเลือกที่ 3 ผิดเพราะ Go ไม่มีการขยายชนิดอัตโนมัติ · ตัวเลือกที่ 4 ผิดเพราะ <code>Atoi</code> ไม่เคย panic
+    <br><strong>อันตรายจริงอยู่ที่:</strong> ถ้าเขียน <code>n, _ := strconv.Atoi(...)</code>
+    คุณจะได้ลิมิตเก้าล้านล้านที่<em>ดูเหมือนตัวเลขจริง</em> แทนที่จะได้ศูนย์ที่ยังพอสังเกตได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. ไฟล์ config เขียน <code>TIMEOUT=30</code> โดยตั้งใจว่า "30 วินาที" แล้วโค้ดเรียก <code>time.ParseDuration("30")</code> — ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้ <code>30s</code> เพราะ Go ถือว่าตัวเลขเปล่า ๆ มีหน่วยเป็นวินาทีโดยปริยาย</button>
+    <button class="opt">ได้ <code>30ns</code> เพราะหน่วยฐานของ <code>time.Duration</code> คือนาโนวินาที</button>
+    <button class="opt">ได้ <code>0s</code> พร้อม error <code>time: missing unit in duration "30"</code></button>
+    <button class="opt">ได้ <code>0s</code> พร้อม error <code>time: invalid duration "30"</code></button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>time.ParseDuration("30") -&gt; v=0s, err=time: missing unit in duration "30"</code>
+    <br>ต้องมีหน่วยเสมอ — <code>"30s"</code> ผ่านได้ <code>30s</code> · <code>"1h30m"</code> ผ่านได้ <code>1h30m0s</code>
+    <br>ตัวเลือกที่ 4 น่าสนใจเพราะ <strong>ข้อความนั้นมีอยู่จริง แต่ใช้กับเคสอื่น</strong>:
+    <code>ParseDuration("")</code> และ <code>ParseDuration("abc")</code> ต่างหากที่ได้
+    <code>time: invalid duration</code>
+    <br>ที่จริง <code>ParseDuration</code> มี error ถึงสามแบบ อีกแบบคือ
+    <code>time: unknown unit "s " in duration "30s "</code> ที่เกิดจากช่องว่างท้ายบรรทัด
+    <br>ข้อยกเว้นเดียวของกฎ "ต้องมีหน่วย" คือ <code>"0"</code> ซึ่งผ่านได้ <code>0s</code>
+    <br><strong>จุดที่ต้องจำ:</strong> ค่าที่คืนมาคือ <code>0s</code> ซึ่งแปลว่า
+    <em>timeout ทันที</em> — ถ้าทิ้ง error ทุก request จะ timeout หมด โดยไม่มีอะไรบอกว่าเพราะอะไร</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. โค้ดเขียน <code>os.Getenv("POSTGRES_DNS")</code> (สะกดผิด ที่ถูกคือ <code>POSTGRES_DSN</code>) แล้ว build กับรัน — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt"><code>go build</code> ไม่ผ่าน เพราะ compiler ตรวจชื่อ environment variable ให้</button>
+    <button class="opt">build ผ่าน แต่ <code>go vet</code> เตือนว่าชื่อนี้ไม่มีใครตั้งไว้</button>
+    <button class="opt">รันแล้ว panic ทันทีที่บรรทัด <code>os.Getenv</code> เพราะหาตัวแปรไม่เจอ</button>
+    <button class="opt">ทั้ง build และ vet ได้ <code>exit=0</code> เงียบสนิท · โปรแกรมได้ <code>""</code> แล้วเดินต่อ · ไปพังตอนแตะฐานข้อมูลครั้งแรก</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันครบสามขั้น: <code>go build ./...</code> ได้ <code>exit=0</code> ไม่มี output ·
+    <code>go vet ./...</code> ได้ <code>exit=0</code> ไม่มี output ·
+    ตอนรันได้ <code>dsn = ""</code> กับ <code>len(dsn) = 0</code> แล้วโปรแกรมเดินต่อ <code>exit=0</code>
+    <br>เหตุผล: ชื่อ env เป็น<strong>สตริงธรรมดา</strong> ไม่มีรายชื่อให้ compiler เทียบ
+    และ <code>go vet</code> ก็ไม่มี analyzer ที่รู้จักชื่อ env
+    <br>ตัวเลือกที่ 3 ผิดเพราะ <code>os.Getenv</code> ไม่เคย panic — มันคืน <code>""</code> ให้เสมอ
+    <br>ที่หลอกที่สุดคือ<strong>ตอนที่มันไปพัง</strong>: <code>sql.Open</code> ยังคืน <code>&lt;nil&gt;</code> (แอป start ผ่าน)
+    แล้วไปโผล่ตอน <code>Ping</code> ด้วยข้อความ
+    <code>dial tcp [::1]:5432: connect: connection refused</code> ซึ่ง<strong>ไม่มีคำว่า DSN หรือ env เลย</strong>
+    <br>ถ้าใช้ <code>os.LookupEnv</code> อย่างน้อยคุณจะได้ <code>ok=false</code> มาให้เช็ค — ซึ่งดีกว่าไม่มีอะไรเลย</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำให้แอปตายตั้งแต่ตอน start แทนที่จะพังตอนผู้ใช้ยิงเข้ามา</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำให้อ่าน env ได้" — เป้าหมายคือ
+    <strong>ทำให้คุณเห็นด้วยตาตัวเองว่ามันพังเงียบยังไง แล้วค่อยแก้</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งโปรเจกต์:</strong> สร้างโฟลเดอร์ใหม่ · <code>cd</code> เข้าไป · <code>go mod init envcheck</code>
+        <br>เขียน <code>main.go</code> ที่พิมพ์ผล <code>os.Getenv("LOG_LEVEL")</code> กับ
+        <code>os.LookupEnv("LOG_LEVEL")</code> ด้วย <code>%q</code> และ <code>%v</code></li>
+    <li><strong>รันสามแบบให้เห็นสามผล:</strong>
+        <code>LOG_LEVEL=DEBUG go run .</code> ·
+        <code>env LOG_LEVEL= go run .</code> ·
+        <code>env -u LOG_LEVEL go run .</code>
+        <br><strong>ต้องได้ <code>ok=true</code> สองครั้ง และ <code>ok=false</code> ครั้งเดียว</strong> —
+        ถ้าได้ไม่ตรงนี้ แปลว่าคำสั่งที่พิมพ์ยังไม่ตรงกับที่ตั้งใจ</li>
+    <li><strong>พิสูจน์เรื่อง <code>export</code>:</strong> ลอง <code>APP_PORT=5555</code> เฉย ๆ
+        (ไม่มี <code>export</code>) แล้ว <code>echo $APP_PORT</code> ตามด้วย <code>go run .</code>
+        <br><strong>ตอบให้ได้ว่าทำไม echo เห็นค่า แต่โปรแกรมไม่เห็น</strong></li>
+    <li><strong>สร้างกับดัก type:</strong> เพิ่ม <code>PORT</code> เข้าโปรแกรม แล้วแปลงด้วย
+        <code>strconv.Atoi</code> โดย<strong>ทิ้ง error ด้วย <code>_</code> ไปก่อน</strong>
+        <br>รันสี่แบบ: ไม่ตั้งเลย · <code>PORT=8080</code> · <code>PORT="8080 "</code> (มีช่องว่างท้าย) ·
+        <code>PORT=99999999999999999999</code>
+        <br><strong>จดค่าที่ได้ทั้งสี่ครั้ง แล้วตอบว่าครั้งไหนอันตรายที่สุดและทำไม</strong></li>
+    <li><strong>รับ error กลับมา:</strong> เปลี่ยน <code>_</code> เป็นตัวแปร error จริง แล้ว
+        <code>log.Fatalf</code> พร้อม<strong>บอกชื่อ env ที่มีปัญหา</strong>
+        <br>รันซ้ำทั้งสี่แบบ — สังเกตว่าตอนนี้แอปตายทันทีพร้อมข้อความที่ชี้ต้นเหตุได้</li>
+    <li><strong>ทำกับดักชื่อพิมพ์ผิด:</strong> ตั้งใจเขียน <code>os.Getenv("POSTGRES_DNS")</code>
+        แล้วสั่ง <code>go build ./...</code> และ <code>go vet ./...</code>
+        <br><strong>ยืนยันด้วยตาว่าทั้งคู่ได้ <code>exit=0</code> และไม่มี output</strong>
+        (ดู exit code ด้วย <code>echo "exit=$?"</code>)</li>
+    <li><strong>ทำ <code>MustEnv</code> ของตัวเอง:</strong> เขียนฟังก์ชัน
+        <code>func MustEnv(key string) string</code> ที่ใช้ <code>os.LookupEnv</code> ข้างใน
+        และ <code>log.Fatalf("missing required env: %s", key)</code> ถ้า <code>ok</code> เป็น <code>false</code>
+        <br>เปลี่ยนทุกที่ในโปรแกรมมาใช้ตัวนี้ แล้วลองรันโดยไม่ตั้ง env ดู</li>
+    <li><strong>ท้าทาย:</strong> เขียน <code>MustEnvInt</code> กับ <code>MustEnvBool</code> เพิ่ม
+        แล้วนับดูว่าโค้ดสามฟังก์ชันนี้<strong>ซ้ำกันกี่บรรทัด</strong>
+        <br>จากนั้นตอบว่า: ถ้าโปรเจกต์มี config 15 ตัว วิธีนี้ยังไหวไหม
+        และ<strong>อะไรคือสิ่งที่คุณอยากให้เครื่องมือทำแทน</strong> — นี่คือคำถามที่ library
+        ในหัวข้อ 7 เกิดมาเพื่อตอบพอดี</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 4 — ครั้งไหนอันตรายที่สุด</button>
+  <div class="answer">
+    <p>ผลรันจริงของทั้งสี่เคส:</p>
+    <pre style="margin:0.6rem 0"><code>ไม่ตั้ง PORT      -&gt; Atoi("")      = <strong>0</strong>,    err=strconv.Atoi: parsing "": invalid syntax
+PORT=8080         -&gt; Atoi("8080")  = <strong>8080</strong>, err=&lt;nil&gt;
+PORT="8080 "      -&gt; Atoi("8080 ") = <strong>0</strong>,    err=strconv.Atoi: parsing "8080 ": invalid syntax
+PORT=999...999    -&gt; Atoi(...)     = <strong>9223372036854775807</strong>, err=...: value out of range</code></pre>
+    <p>
+      <strong>เคสที่ 4 อันตรายที่สุด</strong> — เพราะอีกสามเคสได้ <code>0</code>
+      ซึ่งถ้าเอาไปเปิดเซิร์ฟเวอร์ที่ <code>:0</code> ระบบจะแจกพอร์ตสุ่มให้ ซึ่งผิดปกติชัดพอที่จะสังเกตได้
+      <br>ส่วนเคสที่ 4 ได้เลขเก้าล้านล้านที่<strong>ดูเหมือนค่าที่ตั้งใจตั้งมา</strong> —
+      ถ้ามันเป็นลิมิตจำนวนแถวที่ query ได้ หรือขนาดไฟล์อัปโหลดสูงสุด
+      คุณจะไม่มีทางรู้จนกว่าเซิร์ฟเวอร์จะหน่วงหรือหน่วยความจำหมด
+    </p>
+    <p style="margin-bottom:0">
+      เคสที่ 3 ก็ควรจำไว้: <strong>ช่องว่างท้ายบรรทัดตัวเดียว</strong>ทำให้พังได้
+      และมันมองไม่เห็นด้วยตาเวลาเปิดไฟล์ <code>.env</code> ดู
+      <br>ข้อสรุปเดียวกันทั้งสี่เคส: <strong>ตัวแปรที่รับค่าที่แปลงไม่สำเร็จ ไม่ได้ถือ "ค่าว่าง"
+      มันถือค่าที่ดูปกติแต่ผิด</strong> — และนั่นคือเหตุผลที่ห้ามทิ้ง error ตอนอ่าน config
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 8 คือข้อที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong> —
+    เพราะความอึดอัดตอนเขียน <code>MustEnvInt</code> ตัวที่สามซ้ำกับตัวแรกเกือบทั้งก้อน
+    คือความรู้สึกที่จะทำให้คุณ<em>เข้าใจ</em> library ในวันถัดไป แทนที่จะแค่ก๊อป config มาวาง
+    <br>ถ้ารันแล้ว output ไม่ตรงกับในบทนี้ <strong>ส่งมาได้เลย</strong> —
+    ทุกบรรทัดในหน้านี้วัดบน <strong>Go 1.26.5 darwin/arm64</strong>
+    และซอร์สของ <code>ParseBool</code> ที่ผมยกมาก็เป็นของเวอร์ชันนั้น
+    (ใน Go 1.26 โค้ดจริงย้ายไปอยู่ที่ <code>src/internal/strconv/atob.go</code> แล้ว
+    ไม่ใช่ <code>src/strconv/atob.go</code> แบบเวอร์ชันเก่า)
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0043-api-detective-workshop.html">← บทเรียน 43</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <!-- บทสุดท้ายของวัน ไม่มีถัดไป -->
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/os#Getenv">pkg.go.dev — <code>os.Getenv</code></a> · <a href="https://pkg.go.dev/os#LookupEnv">os.LookupEnv</a> — <strong>อ่านย่อหน้าเดียวของ <code>LookupEnv</code></strong>: มันอธิบายตรง ๆ ว่าทำไมถึงต้องมีตัวที่คืน <code>bool</code> เพิ่ม</li>
+  <li><a href="https://pkg.go.dev/strconv#Atoi">pkg.go.dev — <code>strconv.Atoi</code></a> · <a href="https://pkg.go.dev/strconv#ParseBool">ParseBool</a> · <a href="https://pkg.go.dev/strconv#NumError">NumError</a> — ที่มาของ <code>ErrSyntax</code> / <code>ErrRange</code> และรายชื่อ 12 ค่าที่ <code>ParseBool</code> รับ</li>
+  <li><a href="https://pkg.go.dev/time#ParseDuration">pkg.go.dev — <code>time.ParseDuration</code></a> — <strong>อ่านรายการหน่วยที่รองรับ</strong> (<code>ns</code>, <code>us</code> — เขียน <code>µs</code> หรือ <code>μs</code> ก็ได้ ·
+      <code>ms</code>, <code>s</code>, <code>m</code>, <code>h</code>) และสังเกตว่า<strong>ไม่มี <code>d</code> สำหรับวัน</strong> —
+      อยากได้ 1 วันต้องเขียน <code>24h</code></li>
+  <li><a href="https://12factor.net/config">The Twelve-Factor App — III. Config</a> — ต้นทางของแนวคิดทั้งบท พร้อมเกณฑ์ทดสอบ "เปิด repo เป็น public ตอนนี้ได้ไหม"</li>
+  <li><a href="https://pkg.go.dev/database/sql#Open">pkg.go.dev — <code>sql.Open</code></a> — <strong>อ่านประโยคที่บอกว่ามันไม่เปิด connection จริง</strong> ซึ่งอธิบายผลรันในหัวข้อ 6 ทั้งหมด</li>
+  <li><a href="https://docs.docker.com/reference/cli/docker/container/run/#env">Docker — <code>-e</code> / <code>--env-file</code></a> — ท่า <code>-e NAME</code> แบบไม่ใส่ค่า และลำดับความแรงเมื่อชื่อชนกัน</li>
+  <li><a href="https://github.com/joho/godotenv">joho/godotenv</a> · <a href="https://github.com/caarlos0/env">caarlos0/env</a> · <a href="https://github.com/go-playground/validator">go-playground/validator</a> — สามตัวที่หน้าปกสไลด์ระบุเป็นปลายทาง (บทนี้ยังไม่ได้ใช้)</li>
+  <li><a href="../reference/cheatsheet.html">Cheat sheet Day 8</a> — ตารางกับดักรวมทั้งวัน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>
