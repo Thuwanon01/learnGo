@@ -139,8 +139,15 @@ ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
     sharedcontainer_test.go:41: D total=1.747666ms
 --- PASS: TestSharedD (0.00s)
 PASS
-[TestMain] shared boot = 1.03324475s
+[TestMain] shared container boot time = 1.03324475s
 ok  	tcdemo/test/sharedcontainer	<strong>1.727s</strong></code></pre>
+
+<p class="meta" style="margin:0.5rem 0 0">
+  หมายเหตุ: เทสทั้งสี่เรียก helper ตัวเดียวกัน (สังเกตว่า <code>total=</code> ชี้ที่
+  <code>:41</code> เหมือนกันหมด) ดังนั้นบรรทัด <code>shared dsn=</code> ที่ <code>:36</code>
+  จริง ๆ พิมพ์ออกมาครบทั้ง A B C D — ในบล็อกนี้<strong>ตัดของ A, C, D ออก</strong>
+  เพราะซ้ำกับของ B ทุกตัวอักษร (dsn เดียวกัน port เดียวกัน)
+</p>
 
 <div class="win">
   <span class="label">📊 หลักฐานว่าเป็น container ตัวเดียวจริง</span>
@@ -254,18 +261,42 @@ main.main()
 	_testmain.go:48 +0x88
 FAIL	tcdemo/test/eager	0.304s</code></pre>
     <p>
-      <strong>flag ของ <code>testing</code> ถูก parse ตอน <code>m.Run()</code> ไม่ใช่ก่อนหน้านั้น</strong>
+      <strong>flag ของ <code>testing</code> ถูก <em>parse</em> ตอน <code>m.Run()</code> ไม่ใช่ก่อนหน้านั้น</strong>
       <br><code>testing.Short()</code> จึงยังอ่านค่าไม่ได้ และทีมงาน Go
       <em>ตั้งใจให้ panic</em> แทนที่จะคืนค่าผิด ๆ ให้คุณเข้าใจผิดเงียบ ๆ
     </p>
+    <p>
+      ทางแก้ตรงไปตรงมาคือเรียก <code>flag.Parse()</code> เองก่อน แล้วค่อยเรียก
+      <code>testing.Short()</code> — และมัน<strong>ใช้ได้จริง</strong>
+    </p>
+    <pre><code><span class="k">func</span> <span class="f">TestMain</span>(m *testing.M) {
+    flag.<span class="f">Parse</span>()
+    fmt.<span class="f">Printf</span>(<span class="s">"ใน TestMain หลัง flag.Parse(): testing.Short() = %v\n"</span>, testing.<span class="f">Short</span>())
+    os.<span class="f">Exit</span>(m.<span class="f">Run</span>())
+}</code></pre>
+    <pre><code>$ go test -v
+ใน TestMain หลัง flag.Parse(): testing.Short() = <strong>false</strong>
+
+$ go test -short -v
+ใน TestMain หลัง flag.Parse(): testing.Short() = <strong>true</strong></code></pre>
+    <p>
+      เหตุผลที่มันได้ผล: flag ตระกูล <code>-test.*</code> (รวม <code>-test.short</code>)
+      <strong>ถูกลงทะเบียนตั้งแต่ก่อน <code>TestMain</code> จะเริ่มทำงาน</strong> —
+      ไฟล์ <code>_testmain.go</code> ที่ <code>go test</code> สร้างให้ เรียก
+      <code>testing.MainStart(…)</code> ก่อน แล้ว <code>MainStart</code> เรียก
+      <code>testing.Init()</code> ซึ่งเป็นตัวที่ลงทะเบียน flag ทั้งหมด
+      (ดูได้เองที่ <code>$(go env GOROOT)/src/testing/testing.go</code> บรรทัด 2321)
+      <br>สิ่งที่ยังไม่เกิดขึ้นตอน <code>TestMain</code> เริ่มคือ<strong>การ parse</strong> ไม่ใช่การลงทะเบียน —
+      <code>m.Run()</code> ต่างหากที่เรียก <code>flag.Parse()</code> ให้ถ้ายังไม่มีใครเรียก
+    </p>
     <p style="margin-bottom:0">
-      มีคนแก้ด้วยการเรียก <code>flag.Parse()</code> เองก่อน <code>m.Run()</code> — <strong>อย่าทำ</strong>
-      เพราะ flag ตระกูล <code>-test.*</code> (รวม <code>-test.short</code>) ถูกลงทะเบียนโดย package
-      <code>testing</code> ตอน <code>m.Run()</code> การ parse ก่อนหน้านั้นคือการ parse ตอนที่ยังไม่มีใครรู้จัก flag พวกนี้
-      แล้วจะพังคนละแบบแทน
-      <br>ทางที่ถูกกว่าคืออย่าตัดสินใจใน <code>TestMain</code> เลย
-      ให้ boot แบบ lazy ใน <code>sync.Once</code> แล้วเช็ค <code>testing.Short()</code>
-      ในตัวเทส ซึ่งตอนนั้น flag ถูก parse แน่นอนแล้ว (หัวข้อถัดไป)
+      <strong>แล้วทำไมบทนี้ยังไม่แนะนำให้ใช้ท่านี้?</strong> ไม่ใช่เพราะมันพัง —
+      แต่เพราะ <code>-short</code> เป็นสวิตช์เดียวที่หยาบเกินไป
+      โครงแบบ <code>TestMain</code> ยัง boot container <strong>ทุกครั้งที่รัน package นี้แบบไม่ใส่ <code>-short</code></strong>
+      แม้คุณจะสั่ง <code>go test -run TestOneUnitTest</code> ที่ไม่แตะ DB เลยก็ตาม
+      <br>ทางที่ดีกว่าคือ boot แบบ lazy ใน <code>sync.Once</code> —
+      container จะเกิดเมื่อมีเทสตัวใดตัวหนึ่ง<em>ขอใช้จริง</em>เท่านั้น
+      ไม่ต้องพึ่ง flag ใด ๆ เลย (หัวข้อถัดไป)
     </p>
   </div>
 </div>
@@ -462,6 +493,7 @@ ok  	tcdemo/test/integration	<strong>0.353s</strong></code></pre>
     user_suite_test.go:85: VERBATIM duplicate-key error: ERROR: duplicate key value violates unique constraint "idx_users_email" (SQLSTATE 23505)
 === RUN   TestUserRepoSuite/TestUpdate
 --- PASS: TestUserRepoSuite (0.02s)
+<span class="c">    (ตัดบรรทัด --- PASS: TestUserRepoSuite/&lt;ชื่อ&gt; ของ sub-test ทั้ง 6 ตัวออก)</span>
 PASS
 [TestMain] shared container boot time = 1.203335125s
 ok  	tcdemo/test/integration	<strong>1.757s</strong></code></pre>
@@ -487,13 +519,13 @@ ok  	tcdemo/test/integration	<strong>1.757s</strong></code></pre>
   <strong>คุณอยากรู้ว่าเทสตัวไหนเรียก ไม่ใช่ว่ามันฟ้องที่บรรทัดไหนในตัวเอง</strong>
 </p>
 
-<pre><code> 6	<span class="k">func</span> <span class="f">mustEqualWithHelper</span>(t *testing.T, got, want <span class="k">string</span>) {
- 7		t.<span class="f">Helper</span>()
- 8		<span class="k">if</span> got != want {
- 9			t.<span class="f">Errorf</span>(<span class="s">"got %q want %q"</span>, got, want)
-10		}
-11	}
-12
+<pre><code> 7	<span class="k">func</span> <span class="f">mustEqualWithHelper</span>(t *testing.T, got, want <span class="k">string</span>) {
+ 8		t.<span class="f">Helper</span>()
+ 9		<span class="k">if</span> got != want {
+10			t.<span class="f">Errorf</span>(<span class="s">"got %q want %q"</span>, got, want)
+11		}
+12	}
+13
 14	<span class="k">func</span> <span class="f">mustEqualNoHelper</span>(t *testing.T, got, want <span class="k">string</span>) {
 15		<span class="k">if</span> got != want {
 16			t.<span class="f">Errorf</span>(<span class="s">"got %q want %q"</span>, got, want)
@@ -590,6 +622,7 @@ e43f38657fa3	postgres:16-alpine	thirsty_curie	<strong>Up 28 seconds</strong></co
 </p>
 
 <pre><code>    waittimeout_test.go:28: VERBATIM wait-timeout error: run postgres: generic container: start container: started hook: wait until ready: "this log line will never appear" matched 0 times, expected 1
+        <strong>context deadline exceeded</strong>
     waittimeout_test.go:29: returned container is nil? <strong>false</strong>
     waittimeout_test.go:31: container id = 6116d6c24184482b076d1c70a39046ad846920da81381698a84b52b9070ccca9
     waittimeout_test.go:37: TerminateContainer: &lt;nil&gt; (cleaned up)</code></pre>
@@ -780,6 +813,10 @@ e43f38657fa3	postgres:16-alpine	thirsty_curie	<strong>Up 28 seconds</strong></co
     <pre style="margin:0.6rem 0"><code>--- SKIP: TestSearchByCity_CaughtByRealPostgres (0.00s)
 --- SKIP: TestTypoInColumn (0.00s)
 --- SKIP: TestWrongTable (0.00s)
+--- SKIP: TestNilSliceMatrix (0.00s)
+--- SKIP: TestSharedA (0.00s)
+--- SKIP: TestSharedB (0.00s)
+--- SKIP: TestSharedC (0.00s)
 --- SKIP: TestUserRepoSuite (0.00s)
 PASS
 [TestMain] shared container boot time = <strong>0s</strong>
