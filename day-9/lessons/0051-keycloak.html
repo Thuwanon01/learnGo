@@ -1,0 +1,1541 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 51 — Keycloak: Authorization Server ที่รันเอง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 51 · Day 9 · Authentication</p>
+  <h1>Keycloak — Authorization Server ที่รันเอง</h1>
+  <p class="meta">~20 นาที · ต้องผ่าน: บทเรียน 50 (OAuth2 / OIDC — ใครคือ Authorization Server) และเคยใช้ <code>docker compose</code> มาแล้ว (<a href="../../day-7/lessons/0030-testcontainers-suite.html">บทเรียน 30</a>)</p>
+  <p class="standfirst">
+    บทที่แล้วจบที่<strong>ภาพวงจร OAuth2</strong> — มีกล่องชื่อ "Authorization Server"
+    ยืนอยู่กลางแผนภาพ แล้วออก token ให้แอปของเรา
+    <br>บทนี้คือการ<strong>เอากล่องนั้นมารันจริงบนเครื่องตัวเอง</strong> ด้วย Keycloak
+    จากสไลด์ Day 9 หน้า 38–42
+    <br>ผมรันของจริงตามสไลด์ทุกบรรทัด แล้วเจอสามอย่างที่ต้องบอกคุณก่อนที่คุณจะไปเสียเวลากับมัน:
+    <strong>มีบรรทัดหนึ่งใน compose ที่ไม่มีผลอะไรเลย</strong> ·
+    <strong>มี flag หนึ่งที่ไม่ได้ทำงานแต่ก็ไม่ error</strong> ·
+    และ <strong>claim ที่ทุกคนคิดว่าจะมี กลับไม่มี</strong>
+    <br>ส่วนข้ออ้างใหญ่ที่สุดในสไลด์ — "ทุก service ใช้ public key เดียวกัน verify ได้ ไม่ต้องแชร์ secret" —
+    ผมเขียนโปรแกรม Go ตรวจลายเซ็นจริงมาให้ดูว่า<strong>มันจริง แต่จริงแค่ครึ่งเดียว</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ — ทุก output ในหน้านี้มาจากการรันจริงบน</strong></p>
+  <pre style="margin:0.5rem 0"><code>quay.io/keycloak/keycloak:26.7      <span class="c"># tag ลอย · ตอนที่ผมรันมันชี้ไป 26.7.2</span>
+Keycloak 26.7.2 on JVM (powered by Quarkus 3.33.3.1)
+Docker  client 29.6.2 · server 29.5.2   <span class="c"># รันผ่าน colima ไม่ใช่ Docker Desktop</span>
+docker-compose v5.3.1                   <span class="c"># เรียกด้วยขีดกลาง (เหตุผลอยู่ในกล่องเตือนหัวข้อ 4)</span>
+go version go1.26.5 darwin/arm64        <span class="c"># ใช้ตอนพิสูจน์ verify ลายเซ็นในหัวข้อ 7</span></code></pre>
+  <p style="margin-bottom:0">
+    บทนี้<strong>ไม่ต้องเขียนโค้ด Go เลยจนถึงหัวข้อ 7</strong> — ใช้แค่ <code>docker-compose</code> กับ <code>curl</code>
+    <br>ถ้าจะทำตาม: สร้างโฟลเดอร์เปล่า ๆ หนึ่งอัน ใส่ <code>compose.yml</code> ที่จะเห็นในหัวข้อ 3
+    แล้วรันในนั้น
+  </p>
+</div>
+
+<h2>1 · Keycloak คืออะไร</h2>
+
+<p>
+  หน้าปกของสไลด์เขียนไว้สี่บรรทัด ผมยกมาทั้งหมดเพราะทุกคำมีความหมาย:
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>Open Source</strong>
+    <br><strong>Identity and Access Management</strong>
+    <br>"Add authentication to applications and secure services with minimum effort."
+    <br>"No need to deal with storing users or authenticating users."
+  </p>
+</div>
+
+<p>
+  ก่อนไปต่อ ต้องแยกสองคำนี้ให้ขาดก่อน เพราะทั้งบทนี้วางอยู่บนมัน:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำ</th><th>แปลว่า</th><th>คำถามที่มันตอบ</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Authentication</strong> (authn)</td>
+      <td>การพิสูจน์ว่า<strong>คุณเป็นใคร</strong></td>
+      <td>"คนที่ยิง request เข้ามาคนนี้ คือ chef1 จริงไหม"</td>
+    </tr>
+    <tr>
+      <td><strong>Authorization</strong> (authz)</td>
+      <td>การตัดสินว่า<strong>คุณทำอะไรได้บ้าง</strong></td>
+      <td>"chef1 มีสิทธิ์ลบสูตรของคนอื่นไหม"</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>Identity and Access Management (IAM)</strong> คือระบบที่ดูแล<em>ทั้งสองเรื่อง</em>รวมกัน —
+  เก็บบัญชีผู้ใช้ · ตรวจรหัสผ่าน · เก็บว่าใครมีสิทธิ์อะไร · แล้วออกใบรับรอง (token) ให้แอปเอาไปใช้ต่อ
+  <br>Keycloak เป็น IAM แบบ <strong>open source</strong> ที่คุณ<strong>รันเองบนเครื่องตัวเองได้</strong>
+  ไม่ต้องสมัครบริการใคร ไม่ต้องจ่ายรายเดือน
+  <br>ในภาษาของบทที่แล้ว Keycloak ก็คือกล่อง <strong>Authorization Server</strong> ในแผนภาพ OAuth2 นั่นเอง
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ ประโยคที่สองของสไลด์คือประโยคที่คนอ่านข้าม แต่มันคือหัวใจ</span>
+  <p style="margin-bottom:0">
+    <em>"No need to deal with storing users or authenticating users."</em>
+    <br>แปลตรง ๆ คือ: <strong>ฐานข้อมูลของคุณจะไม่มีตาราง <code>users</code> ที่เก็บ password อีกต่อไป</strong>
+    <br>password ของผู้ใช้จะไม่เคยวิ่งผ่านแอปของคุณเลยสักครั้ง — ผู้ใช้กรอกที่หน้า login ของ Keycloak
+    แล้ว Keycloak ส่ง token กลับมาให้แอปคุณ
+    <br>นี่คือเหตุผลที่บริษัทเลือกใช้ของแบบนี้: <strong>ความเสี่ยงเรื่อง password ย้ายออกไปจากโค้ดของคุณทั้งก้อน</strong>
+    — คุณทำ password หลุดไม่ได้ ในเมื่อคุณไม่เคยมีมัน
+  </p>
+</div>
+
+<h2>2 · ทำเองทั้งหมด vs ให้ Keycloak ทำ</h2>
+
+<p>
+  สไลด์หน้า 39 เป็นตารางเทียบสองคอลัมน์ ผมยกมาครบทั้งหกแถว —
+  ซ้ายคือ<strong>งานที่คุณต้องเขียนเองถ้าไม่ใช้ IAM</strong> ขวาคือสิ่งที่ Keycloak มีมาให้:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>งานที่ต้องทำเอง (DIY)</th><th>Keycloak ทำให้</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>เขียนหน้า login, register, ลืมรหัสผ่าน</td>
+      <td>มีให้พร้อมใช้ ปรับแต่งได้</td>
+    </tr>
+    <tr>
+      <td>จัดการ token signing, rotation, refresh</td>
+      <td>จัดการให้อัตโนมัติ</td>
+    </tr>
+    <tr>
+      <td>ระบบ role/permission (RBAC)</td>
+      <td>มี UI จัดการ role ให้เลย ไม่ต้องเขียนเอง</td>
+    </tr>
+    <tr>
+      <td>Login ผ่าน Google/GitHub</td>
+      <td>เปิดใช้ social login ได้ด้วยการตั้งค่า ไม่ต้องเขียนโค้ดเชื่อมเอง</td>
+    </tr>
+    <tr>
+      <td>Multi-factor authentication</td>
+      <td>เปิด/ปิดได้จาก config</td>
+    </tr>
+    <tr>
+      <td><strong>หลาย service ต้อง verify token</strong></td>
+      <td><strong>ทุก service ใช้ public key เดียวกันจาก Keycloak verify ได้เลย ไม่ต้องแชร์ secret</strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  คำใหม่ในตารางนี้มีสองคำ นิยามไว้ก่อน:
+</p>
+
+<ul>
+  <li>
+    <strong>RBAC</strong> (Role-Based Access Control) = ระบบสิทธิ์ที่<strong>ผูกสิทธิ์ไว้กับ "บทบาท" ไม่ใช่กับตัวคน</strong>
+    <br>แทนที่จะเขียนว่า "สมชายลบสูตรได้" คุณเขียนว่า "role <code>admin</code> ลบสูตรได้" แล้วค่อยแปะ role
+    <code>admin</code> ให้สมชาย — วันที่สมชายลาออก คุณถอด role ออกที่เดียวจบ
+  </li>
+  <li>
+    <strong>Token signing / rotation</strong> = การ<strong>เซ็นลายเซ็นดิจิทัล</strong>ลงบน token
+    เพื่อให้ผู้รับตรวจได้ว่าไม่มีใครแก้ระหว่างทาง · ส่วน rotation คือการ<strong>เปลี่ยนกุญแจที่ใช้เซ็นเป็นระยะ</strong>
+    ซึ่งถ้าทำเองต้องคิดเรื่อง "แล้ว token ใบเก่าที่เซ็นด้วยกุญแจเก่าจะยังใช้ได้ไหม" ให้ครบ
+  </li>
+</ul>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>📌 แถวสุดท้ายคือแถวเดียวที่พิสูจน์ได้ด้วยการรัน — และเราจะพิสูจน์มันจริงในหัวข้อ 7</strong>
+    <br>ห้าแถวแรกเป็นเรื่อง "มีฟีเจอร์ให้ไหม" ซึ่งเปิด UI ดูก็จบ
+    <br>แต่แถวสุดท้ายเป็น<strong>ข้ออ้างทางเทคนิคที่ผิดได้</strong> — ผมจะดึง public key จาก Keycloak
+    แล้วเขียน Go ตรวจลายเซ็น token โดย<strong>ไม่ใช้ <code>client_secret</code> เลย</strong>
+    <br>ผลลัพธ์: <strong>จริง</strong> — แต่มีเงื่อนไขหนึ่งข้อที่สไลด์ไม่ได้บอก และมันทำให้คนพลาดกันบ่อยมาก
+  </p>
+</div>
+
+<h2>3 · <code>compose.yml</code> ของสไลด์ ทีละบรรทัด</h2>
+
+<p>
+  สไลด์หน้า 40 ให้ compose มาทั้งไฟล์ (ส่วน <code>postgres</code> กับ <code>redis</code> เขาย่อเป็น <code>...</code>
+  เพราะสอนไปแล้วใน <a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32</a>):
+</p>
+
+<pre><code><span class="k">services</span>:
+  <span class="k">postgres</span>:
+    ...
+
+  <span class="k">redis</span>:
+    ...
+
+  <span class="k">keycloak</span>:
+    <span class="k">image</span>: quay.io/keycloak/keycloak:26.7
+    <span class="k">container_name</span>: wongnok-keycloak
+    <span class="k">restart</span>: always
+    <span class="k">command</span>: [<span class="s">"start-dev"</span>, <span class="s">"--import-realm"</span>]
+    <span class="k">environment</span>:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_STRICT: <span class="s">"false"</span>
+      KC_HTTP_ENABLED: <span class="s">"true"</span>
+    <span class="k">ports</span>:
+      - <span class="s">"8081:8080"</span>
+    <span class="k">volumes</span>:
+      <span class="c"># เก็บข้อมูลของ embedded database (dev-file) ไว้</span>
+      - wongnok-keycloak-data:/opt/keycloak/data
+
+<span class="k">volumes</span>:
+  wongnok-pgdata:
+  wongnok-keycloak-data:</code></pre>
+
+<p>ทีนี้มาไล่ทีละบรรทัดว่ามันทำอะไร — และบรรทัดไหน<em>ไม่</em>ทำอะไร:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัด</th><th>ทำอะไร</th><th>สถานะที่ผมตรวจแล้ว</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>image: quay.io/keycloak/keycloak:26.7</code></td>
+      <td>ดึง image ทางการของ Keycloak จาก quay.io (ไม่ใช่ Docker Hub)</td>
+      <td>✅ tag มีจริง · มีทั้ง <code>amd64</code> และ <code>arm64</code> (Mac M-series ใช้ได้)</td>
+    </tr>
+    <tr>
+      <td><code>command: ["start-dev", ...]</code></td>
+      <td>สั่งให้ Keycloak รันใน<strong>โหมด development</strong></td>
+      <td>⚠️ ใช้ได้ตอนเรียน · <strong>ห้ามใช้บน production</strong> (เหตุผลอยู่ในกล่องข้างล่าง)</td>
+    </tr>
+    <tr>
+      <td><code>--import-realm</code></td>
+      <td>ตั้งใจให้อ่านไฟล์ realm จาก <code>/opt/keycloak/data/import</code> ตอน start</td>
+      <td>❌ <strong>ไม่ทำงานเลย</strong>ในไฟล์นี้ และ<strong>ไม่ error ด้วย</strong> — พิสูจน์ในหัวข้อ 4</td>
+    </tr>
+    <tr>
+      <td><code>KC_BOOTSTRAP_ADMIN_USERNAME</code><br><code>KC_BOOTSTRAP_ADMIN_PASSWORD</code></td>
+      <td>สร้าง<strong>บัญชีแอดมินชั่วคราว</strong>ให้ตอนบูตครั้งแรก เพื่อให้มีคนล็อกอินเข้า UI ได้</td>
+      <td>✅ ทำงานจริง · ล็อกพิมพ์ยืนยันว่าสร้างให้แล้ว</td>
+    </tr>
+    <tr>
+      <td><code>KC_HOSTNAME: localhost</code></td>
+      <td>บอก Keycloak ว่า "ชื่อที่คนภายนอกใช้เรียกฉันคืออะไร" — ค่านี้ถูกเอาไปประกอบเป็น URL ทุกอันที่ Keycloak ประกาศออกไป</td>
+      <td>✅ มีผลจริง และ<strong>มีผลมากกว่าที่คิด</strong> — ดูหัวข้อ 5</td>
+    </tr>
+    <tr>
+      <td><code>KC_HOSTNAME_STRICT: "false"</code></td>
+      <td>ตั้งใจให้ผ่อนกฎเรื่องการตรวจ hostname</td>
+      <td>❌ <strong>ไม่มีผล (no-op)</strong> เมื่อตั้ง <code>KC_HOSTNAME</code> ไว้แล้ว — Keycloak พิมพ์บอกเองในล็อก</td>
+    </tr>
+    <tr>
+      <td><code>KC_HTTP_ENABLED: "true"</code></td>
+      <td>อนุญาตให้รับ request แบบ <code>http://</code> ธรรมดา (ไม่ต้องมีใบรับรอง TLS)</td>
+      <td>⚠️ จำเป็นตอน dev · <strong>ห้ามใช้บน production</strong></td>
+    </tr>
+    <tr>
+      <td><code>ports: "8081:8080"</code></td>
+      <td>ข้างใน container Keycloak ฟังที่ <strong>8080</strong> · เราเปิดออกมาข้างนอกที่ <strong>8081</strong></td>
+      <td>✅ ต่อได้ที่ <code>http://localhost:8081</code></td>
+    </tr>
+    <tr>
+      <td><code>volumes: wongnok-keycloak-data:/opt/keycloak/data</code></td>
+      <td>เก็บฐานข้อมูลฝังในตัวของ Keycloak ไว้นอก container</td>
+      <td>✅ realm/user/group/role รอด <code>docker restart</code> จริง — พิสูจน์ในหัวข้อ 8</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>ทำไมต้อง <code>8081:8080</code> ไม่ใช่ <code>8080:8080</code></h3>
+
+<p>
+  รูปแบบของ <code>ports</code> คือ <code><strong>ข้างนอก</strong>:<strong>ข้างใน</strong></code> —
+  ตัวหน้าคือพอร์ตบนเครื่องคุณ ตัวหลังคือพอร์ตข้างใน container
+  <br>Keycloak ข้างใน container <strong>ฟังที่ 8080 เสมอ</strong> (ล็อกตอน start พิมพ์ยืนยัน:
+  <code>Listening on: http://0.0.0.0:8080</code>) เราแก้ตัวหลังไม่ได้ถ้าไม่ตั้งค่าเพิ่ม
+  <br>แต่ <strong>8080 บนเครื่องคุณถูกจองไว้ให้ API ของเราแล้ว</strong> —
+  ตั้งแต่ <a href="../../day-8/lessons/0037-net-http-server.html">บทเรียน 37</a> เป็นต้นมา
+  ทุกตัวอย่างรัน <code>r.Run(":8080")</code>
+  <br>ถ้าแมปเป็น <code>8080:8080</code> คุณจะรัน Keycloak กับ API พร้อมกันไม่ได้ —
+  ตัวที่ขึ้นทีหลังจะจองพอร์ตไม่ได้
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>จำเลขให้แม่น เพราะเดี๋ยวจะสับสน</strong> —
+    <code>8080</code> คือ <strong>API ของเรา</strong> · <code>8081</code> คือ <strong>Keycloak</strong>
+    <br>เดี๋ยวในหัวข้อ 6 จะเห็น claim ชื่อ <code>allowed-origins</code> ใน token มีค่า
+    <code>http://localhost:8080</code> — นั่นคือ<strong>ที่อยู่ของแอปเรา</strong> ไม่ใช่ของ Keycloak
+    อย่าอ่านสลับกัน
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ สองบรรทัดนี้ห้ามหลุดขึ้น production เด็ดขาด</span>
+  <p>
+    <strong>1. <code>start-dev</code></strong> — Keycloak เตือนเองในล็อกทุกครั้งที่บูต:
+  </p>
+  <pre style="margin:0.6rem 0"><code>Running the server in development mode. DO NOT use this configuration in production.</code></pre>
+  <p>
+    โหมดนี้ใช้ฐานข้อมูล <strong>H2 แบบไฟล์เดียว</strong> ฝังอยู่ใน container
+    (เดี๋ยวหัวข้อ 8 จะเปิดให้ดูว่ามันคือไฟล์อะไร) · ไม่มี clustering · ปิดการตรวจความปลอดภัยหลายอย่างเพื่อให้เริ่มง่าย
+    <br>ของจริงต้องใช้ <code>start</code> เฉย ๆ พร้อมชี้ไป PostgreSQL แยกต่างหาก
+  </p>
+  <p style="margin-bottom:0">
+    <strong>2. <code>KC_HTTP_ENABLED: "true"</code></strong> — แปลว่า "ยอมรับ HTTP ที่ไม่ได้เข้ารหัส"
+    <br>ลองคิดดูว่ามันเลวร้ายแค่ไหน: <strong>ทุก request ที่ผู้ใช้กรอก password
+    และทุก response ที่ Keycloak ส่ง token กลับมา จะวิ่งเป็นตัวอักษรเปล่า ๆ บนสาย</strong>
+    ใครดักกลางทางได้ก็อ่านได้หมด
+    <br>ที่เปิดได้ตอน dev เพราะทุกอย่างอยู่บนเครื่องเดียวกัน ไม่ได้ออกเน็ตจริง
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>เรื่อง <code>volumes:</code> ก้อนล่างสุด</strong> —
+    ชื่อ volume ที่เขียนในส่วน <code>services</code> (เช่น <code>wongnok-keycloak-data</code>)
+    <strong>ต้องไปประกาศไว้ในบล็อก <code>volumes:</code> ระดับบนสุด</strong>ของไฟล์ด้วย
+    ไม่งั้น compose ไม่รู้จักชื่อนั้น
+    <br>สไลด์หน้า 40 <strong>มีบล็อกนั้นครบแล้ว</strong> (บรรทัด 25–27) — ตรงนี้สไลด์ไม่ผิด
+    <br>ที่ต้องระวังคือ<strong>ตอนคุณลอก</strong>: ถ้าจับเฉพาะก้อน <code>keycloak:</code> ไปวางในไฟล์อื่น
+    แล้วลืมยกบล็อกล่างสุดไปด้วย มันจะไม่ยอมขึ้นตั้งแต่แรก
+  </p>
+</div>
+
+<h2>4 · รันขึ้นจริง — และสามบรรทัดในล็อกที่ต้องอ่าน</h2>
+
+<p>
+  สั่งขึ้น — compose พิมพ์เป็น<strong>คู่</strong>ทุกอย่าง (<code>Creating</code> แล้วค่อย <code>Created</code>)
+  ก้อนนี้คือ output เต็ม ๆ ไม่ได้ตัดบรรทัดไหนทิ้ง:
+</p>
+
+<pre><code>$ docker-compose up -d
+ Network kc_default Creating
+ Network kc_default Created
+ Volume kc_wongnok-keycloak-data Creating
+ Volume kc_wongnok-keycloak-data Created
+ Container wongnok-keycloak Creating
+ Container wongnok-keycloak Created
+ Container wongnok-keycloak Starting
+ Container wongnok-keycloak Started</code></pre>
+
+<p>
+  ถ้าเครื่องคุณ<strong>ยังไม่มี image</strong> จะมีบรรทัด <code>Image quay.io/keycloak/keycloak:26.7 Pulled</code>
+  โผล่เพิ่มมาข้างบนสุด และรอบแรกจะช้ากว่านี้มาก (เวลาหมดไปกับการ pull ไม่ใช่การ start)
+</p>
+
+<p>
+  แล้ววนถามจนกว่ามันจะตอบ ด้วยการยิงไปที่ discovery endpoint (จะอธิบายว่ามันคืออะไรในหัวข้อ 5)
+  และดูแค่ HTTP status code
+  <br>ใน URL มีคำว่า <strong><code>realms/master</code></strong> — ตอนนี้รู้แค่ว่า
+  <em>realm = พื้นที่ผู้ใช้/สิทธิ์แยกอิสระหนึ่งชุด</em> ก็พอ ส่วน <code>master</code> คือชุดตั้งต้นที่ Keycloak
+  แถมมาให้ (รายละเอียดเต็มอยู่ในตารางหัวข้อ 6):
+</p>
+
+<pre><code>$ for i in $(seq 1 60); do
+    code=$(curl -s -o /dev/null -w <span class="s">'%{http_code}'</span> \
+      http://localhost:8081/realms/master/.well-known/openid-configuration)
+    [ <span class="s">"$code"</span> = <span class="s">"200"</span> ] &amp;&amp; { <span class="f">echo</span> <span class="s">"READY (HTTP $code)"</span>; <span class="k">break</span>; }
+    <span class="f">sleep</span> 1
+  done
+<strong>READY (HTTP 200)</strong>   <span class="c"># ของผมได้ 200 ที่รอบที่ 5 (~5 วินาที)</span></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ <code>sleep 1</code> ในลูปไม่ใช่ของประดับ</span>
+  <p style="margin-bottom:0">
+    ผมลองตัด <code>sleep</code> ออกแล้ววน 90 รอบหลัง <code>docker restart</code> —
+    <strong>วนครบ 90 รอบโดยไม่เคยได้ 200 เลยสักครั้ง</strong> เพราะลูปเปล่า ๆ วิ่งจบในเสี้ยววินาที
+    ตอนที่ Keycloak ยังบูตไม่เสร็จ
+    <br>ถ้าลูปไม่มี <code>break</code> ด้วย มันก็จะยิงต่อไปอีก 55 รอบทั้งที่พร้อมแล้ว
+  </p>
+</div>
+
+<p>ทีนี้เปิดล็อกดู — สามบรรทัดนี้คือทั้งหมดที่ต้องอ่าน:</p>
+
+<pre><code>$ docker logs wongnok-keycloak | tail
+2026-08-22 03:13:34,745 INFO  [org.keycloak.services] (main)
+    KC-SERVICES0077: <strong>Created temporary admin user with username admin</strong>
+2026-08-22 03:13:34,883 INFO  [io.quarkus] (main)
+    <strong>Keycloak 26.7.2 on JVM</strong> (powered by Quarkus 3.33.3.1) started in <strong>5.582s</strong>.
+    Listening on: <strong>http://0.0.0.0:8080</strong>
+2026-08-22 03:13:34,883 INFO  [io.quarkus] (main) Profile <strong>dev</strong> activated.</code></pre>
+
+<p>
+  อ่านได้สี่เรื่อง:
+  <br>· <strong>tag <code>26.7</code> ให้เวอร์ชันจริง <code>26.7.2</code></strong> — เพราะ <code>26.7</code>
+  เป็น <em>floating tag</em> คือ tag ที่ชี้ไปเวอร์ชันย่อยล่าสุดของสาย 26.7 เรื่อย ๆ
+  <br>· <strong>บัญชีแอดมินชั่วคราวถูกสร้างแล้ว</strong> ตามที่ <code>KC_BOOTSTRAP_ADMIN_*</code> สั่ง
+  (เข้า UI ที่ <code>http://localhost:8081</code> ด้วย <code>admin</code>/<code>admin</code> ได้เลย —
+  หน้าตาแบบสไลด์หน้า 41)
+  <br>· <strong><code>Listening on: http://0.0.0.0:8080</code></strong> ยืนยันว่าข้างใน container คือ 8080 จริง
+  <br>· <strong><code>Profile dev activated</code></strong> — คือผลของ <code>start-dev</code>
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ จุดที่สไลด์ผิดข้อที่ 1 — <code>KC_HOSTNAME_STRICT: "false"</code> ไม่ได้ทำอะไรเลย</span>
+  <p>
+    Keycloak 26.7 พิมพ์บอกเองตั้งแต่บรรทัดต้น ๆ ของล็อก:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ docker logs wongnok-keycloak | head -20
+2026-08-22 03:13:30,102 INFO  [org.keycloak.url.HostnameV2ProviderFactory] (main)
+    <strong>If hostname is specified, hostname-strict is effectively ignored</strong></code></pre>
+  <p style="margin-bottom:0">
+    แปลว่า: พอคุณตั้ง <code>KC_HOSTNAME: localhost</code> ไปแล้ว
+    บรรทัด <code>KC_HOSTNAME_STRICT</code> จะถูก<strong>เมินทิ้ง</strong>
+    <br><strong>มันไม่ทำให้พัง แค่ไม่มีผล</strong> — แต่ที่อันตรายคือมันสร้างความเข้าใจผิดว่า
+    "ที่รันขึ้นเพราะใส่บรรทัดนี้" แล้ววันหนึ่งคุณจะไปแก้ปัญหาผิดจุด
+    <br>จะลบทิ้งก็ได้ ผลเหมือนเดิมทุกประการ
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ จุดที่สไลด์ผิดข้อที่ 2 — <code>--import-realm</code> เงียบสนิท ไม่ import อะไรเลย</span>
+  <p>
+    ผมไล่หาคำว่า import ในล็อกทั้งก้อน ได้แค่บรรทัดเดียว และมันไม่ใช่บรรทัด import:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ docker logs wongnok-keycloak 2&gt;&amp;1 | grep -i -E <span class="s">"import|realm"</span>
+2026-08-22 03:13:34,071 INFO  [org.keycloak.services] (main)
+    KC-SERVICES0050: <strong>Initializing master realm</strong></code></pre>
+  <p style="margin-bottom:0">
+    <code>Initializing master realm</code> คือการสร้าง realm ตั้งต้นที่ Keycloak ทำให้ทุกครั้งอยู่แล้ว
+    <strong>ไม่เกี่ยวกับ <code>--import-realm</code></strong>
+    <br>เหตุผล: flag นี้อ่านไฟล์จาก <strong><code>/opt/keycloak/data/import</code></strong>
+    แต่ compose เรา mount แค่ volume เปล่า ๆ เข้าไปที่ <code>/opt/keycloak/data</code>
+    <strong>ในนั้นไม่มีไฟล์ realm JSON สักไฟล์</strong>
+    <br>ที่แสบคือ <strong>มันไม่ error</strong> — ไม่มีคำเตือน ไม่มี exit code ผิด
+    คนอ่านสไลด์จะนึกว่า "มันคง import อะไรให้แล้วล่ะมั้ง" ทั้งที่ไม่มีอะไรเกิดขึ้นเลย
+    <br>ถ้าอยากให้มันทำงานจริง ต้อง mount ไฟล์เข้าไป เช่น
+    <code>- ./realm-export.json:/opt/keycloak/data/import/realm-export.json</code>
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔧 <strong>สองเรื่องที่เกิดกับเครื่องผม ไม่ใช่ความผิดของสไลด์ แต่คุณอาจเจอ</strong>
+    <br>· <code>docker compose</code> (แบบเว้นวรรค) ใช้ไม่ได้ ขึ้นว่า
+    <code>docker: unknown command: docker compose</code> เพราะ
+    <code>~/.docker/cli-plugins/docker-compose</code> เป็น symlink ค้างไปที่ Docker Desktop ที่ถูกลบไปแล้ว
+    ซึ่งไปบัง plugin ตัวจริง · <strong>แก้ด้วยการเรียก <code>docker-compose</code> (มีขีดกลาง) แทน</strong>
+    <br>· ตอน pull ครั้งแรกพังด้วย
+    <code>error getting credentials - err: exec: "docker-credential-osxkeychain": executable file not found in $PATH</code>
+    ซึ่งเป็นซากการตั้งค่าจาก Docker Desktop เดิม
+    <br>ทั้งสองอาการเกิดกับ<strong>เครื่องที่เคยลง Docker Desktop แล้วถอดออกไปใช้ colima</strong> —
+    ถ้าเครื่องคุณลง Docker Desktop อยู่ตามปกติ จะไม่เจอ
+  </p>
+</div>
+
+<h2>5 · OIDC discovery — ที่อยู่ของทุก endpoint มาจากไฟล์เดียว</h2>
+
+<p>
+  ก่อนอื่นนิยามศัพท์: <strong>OIDC (OpenID Connect)</strong> คือมาตรฐานที่<strong>ต่อยอดจาก OAuth2</strong>
+  โดยเพิ่มเรื่อง "แล้วผู้ใช้คนนี้เป็นใคร" เข้าไป (OAuth2 เพียว ๆ ตอบแค่ "แอปนี้มีสิทธิ์ทำอะไร")
+  <br>ของที่ OIDC เพิ่มเข้ามาและเราจะได้เห็นเดี๋ยวนี้คือ <strong><code>id_token</code></strong>
+  กับ <strong>discovery endpoint</strong>
+</p>
+
+<p>
+  <strong>Discovery endpoint</strong> คือ URL มาตรฐานหนึ่งอันที่ทุก OIDC server ต้องมี — ตำแหน่งคือ
+  <code>/.well-known/openid-configuration</code> ต่อท้าย realm
+  <br>ยิงเข้าไปแล้วมันจะคืน JSON ที่<strong>บอกที่อยู่ของทุก endpoint ที่เหลือ</strong>
+  แปลว่าคุณ<strong>ไม่ต้องจำ URL อะไรเลยนอกจากอันนี้อันเดียว</strong>:
+</p>
+
+<pre><code>$ curl -s http://localhost:8081/realms/master/.well-known/openid-configuration
+
+issuer                 = <span class="s">"http://localhost:8081/realms/master"</span>
+authorization_endpoint = <span class="s">"http://localhost:8081/realms/master/protocol/openid-connect/auth"</span>
+token_endpoint         = <span class="s">"http://localhost:8081/realms/master/protocol/openid-connect/token"</span>
+jwks_uri               = <span class="s">"http://localhost:8081/realms/master/protocol/openid-connect/certs"</span>
+end_session_endpoint   = <span class="s">"http://localhost:8081/realms/master/protocol/openid-connect/logout"</span>
+userinfo_endpoint      = <span class="s">"http://localhost:8081/realms/master/protocol/openid-connect/userinfo"</span>
+introspection_endpoint = <span class="s">"http://localhost:8081/realms/master/protocol/openid-connect/token/introspect"</span></code></pre>
+
+<p>จับคู่กับแผนภาพ OAuth2 ในบทที่แล้วได้ตรง ๆ:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>field</th><th>ใครเรียก</th><th>เรียกไปทำอะไร</th></tr></thead>
+  <tbody>
+    <tr><td><code>authorization_endpoint</code></td><td><strong>เบราว์เซอร์ของผู้ใช้</strong></td><td>ที่ที่เรา redirect ผู้ใช้ไปกรอก username/password — คือ "ขั้นที่ 2" ในแผนภาพ</td></tr>
+    <tr><td><code>token_endpoint</code></td><td><strong>backend ของเรา</strong></td><td>เอา code ที่ได้กลับมา แลกเป็น <code>access_token</code> — "ขั้นที่ 5"</td></tr>
+    <tr><td><code>jwks_uri</code></td><td><strong>ทุก service ที่ต้อง verify</strong></td><td>ดึง <strong>public key</strong> มาตรวจลายเซ็น token — พระเอกของหัวข้อ 7</td></tr>
+    <tr><td><code>userinfo_endpoint</code></td><td>backend</td><td>ถามข้อมูลผู้ใช้เพิ่มโดยยื่น access_token ให้ดู</td></tr>
+    <tr><td><code>introspection_endpoint</code></td><td>backend</td><td>ถาม Keycloak ตรง ๆ ว่า "token ใบนี้ยังใช้ได้อยู่ไหม"</td></tr>
+    <tr><td><code>end_session_endpoint</code></td><td>backend / เบราว์เซอร์</td><td>logout — ยกเลิก session ฝั่ง Keycloak</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ในไฟล์เดียวกันยังบอกด้วยว่ารองรับวิธีขอ token แบบไหนบ้าง (<code>grant_types_supported</code>) —
+  ผมยกมาเฉพาะที่จะใช้ในบทนี้:
+</p>
+
+<pre><code>grant_types_supported = [<span class="s">"authorization_code"</span>, <span class="s">"client_credentials"</span>, <span class="s">"implicit"</span>,
+                         <span class="s">"password"</span>, <span class="s">"refresh_token"</span>,
+                         <span class="s">"urn:ietf:params:oauth:grant-type:device_code"</span>,
+                         <span class="s">"urn:ietf:params:oauth:grant-type:jwt-bearer"</span>,
+                         <span class="s">"urn:ietf:params:oauth:grant-type:token-exchange"</span>,
+                         <span class="s">"urn:ietf:params:oauth:grant-type:uma-ticket"</span>,
+                         <span class="s">"urn:openid:params:grant-type:ciba"</span>]
+
+response_types_supported = [<span class="s">"code"</span>, <span class="s">"none"</span>, <span class="s">"id_token"</span>, <span class="s">"token"</span>, <span class="s">"id_token token"</span>,
+                            <span class="s">"code id_token"</span>, <span class="s">"code token"</span>, <span class="s">"code id_token token"</span>]</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ กับดักของ <code>issuer</code> — มันมีเลขพอร์ตติดมาด้วย</span>
+  <p style="margin-bottom:0">
+    ดู <code>issuer</code> อีกรอบ: <code>http://localhost<strong>:8081</strong>/realms/master</code>
+    <br>ทั้งที่ <code>KC_HOSTNAME</code> เราตั้งไว้แค่ <code>localhost</code> เฉย ๆ —
+    <strong>Keycloak เติมพอร์ตให้เองจาก request ที่วิ่งเข้ามา</strong>
+    <br>ทำไมสำคัญ: เวลา verify token เราต้องเช็คว่า claim <code>iss</code> ใน token
+    <strong>ตรงกับ issuer ที่เราคาดไว้แบบเป๊ะทุกตัวอักษร</strong>
+    <br>ถ้าโค้ดคุณเขียนค่าที่คาดไว้เป็น <code>http://localhost/realms/wongnok</code> (ลืมพอร์ต)
+    หรือ <code>http://localhost:8080/...</code> (ใส่พอร์ตของ API ตัวเอง)
+    <strong>token ทุกใบจะ verify ไม่ผ่าน</strong> ทั้งที่ token ถูกต้องทุกอย่าง
+    <br>วิธีกันพลาด: <strong>อย่าพิมพ์เอง</strong> — ให้ library ดึงจาก discovery endpoint มาใช้
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ป้ายผังห้างตรงทางเข้า</span>
+  <p>
+    เข้าห้างที่ไม่คุ้น เราไม่ได้ท่องจำว่าร้านไหนอยู่ชั้นไหน
+    <br>เราจำอยู่อย่างเดียวว่า <strong>"ป้ายผังอยู่ตรงทางเข้า"</strong> แล้วเดินไปอ่านทุกครั้ง
+    <br>วันไหนห้างย้ายร้าน ป้ายก็เปลี่ยนตาม เราไม่ต้องมาแก้ความจำของตัวเอง
+  </p>
+  <p>
+    OIDC คิดแบบเดียวกันเป๊ะ:
+    <br>· <code>/.well-known/openid-configuration</code> = <strong>ตำแหน่งของป้ายผัง</strong> ที่อยู่ที่เดิมเสมอ
+    <br>· <code>token_endpoint</code> · <code>jwks_uri</code> · <code>end_session_endpoint</code>
+    = <strong>ตำแหน่งร้านที่ป้ายบอก</strong> — จำเองไม่ไหว และไม่ต้องจำ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> อ่านป้ายผังห้างพลาดนิดหน่อย เดินวนสักหน่อยก็เจอร้าน
+    แต่ค่า <code>issuer</code> ที่ผิดแค่<strong>เลขพอร์ตตัวเดียว</strong>
+    ทำให้ token <strong>ทุกใบ</strong> verify ไม่ผ่านทันที อย่างที่กล่องเตือนข้างบนเพิ่งบอก
+    <br>ดังนั้น "อ่านจากป้าย" ในโลก OIDC ไม่ใช่แค่เรื่องสะดวก
+    แต่มันคือวิธี<strong>กันพิมพ์ผิด</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>endpoint</dt>
+    <dd>URL หนึ่งเส้นที่มีหน้าที่เฉพาะของมัน · พูดว่า "ยิงไปที่ token endpoint"
+        สื่อกว่า "ยิงไปที่ URL ขอ token" ·
+        <strong>ถาม senior ได้ว่า “ระบบนี้ endpoint ไหนบ้างที่ต้องเรียกจาก backend เรา”</strong></dd>
+    <dt>discovery document / <code>.well-known</code></dt>
+    <dd>"ป้ายผัง" ของ OIDC — JSON ไฟล์เดียวที่บอกที่อยู่ของ endpoint ทุกอัน ·
+        <strong>พิมพ์ถาม AI ได้ว่า “load OIDC endpoints from the discovery document in Go instead of hardcoding them”</strong></dd>
+    <dt>issuer (claim <code>iss</code>)</dt>
+    <dd>"ใครเป็นคนออก token ใบนี้" — เขียนเป็น URL เต็ม รวมเลขพอร์ตด้วย ·
+        ตอน verify ต้องเทียบเป๊ะทุกตัวอักษร ·
+        <strong>เวลา debug ให้ถามตรง ๆ ว่า “issuer ที่ Keycloak ออกมา กับค่าที่โค้ดเราคาดไว้ ตรงกันทุกตัวไหม”</strong></dd>
+    <dt>jwks_uri</dt>
+    <dd>ช่องใน discovery ที่บอกว่า <strong>ไปโหลด public key ได้ที่ไหน</strong> ·
+        เดี๋ยวหัวข้อ 7 จะใช้ของจริง</dd>
+    <dt>OIDC (OpenID Connect)</dt>
+    <dd>ชั้นบาง ๆ ที่ต่อยอดจาก OAuth2 เพื่อตอบว่า "ผู้ใช้คนนี้เป็นใคร" ·
+        <strong>พูดให้ถูกว่า “เราใช้ OIDC บน Keycloak” ไม่ใช่ “ใช้ login ของ Keycloak”</strong></dd>
+  </dl>
+</div>
+
+<h2>6 · Keycloak components — ห้ากล่องที่ต้องแยกให้ออก</h2>
+
+<p>
+  สไลด์หน้า 42 วาดกล่องซ้อนกันไว้ ผมวาดใหม่ให้เห็นทิศทางความสัมพันธ์ชัดขึ้น:
+</p>
+
+<div class="diagram">
+<pre>┌── Realm: wongnok ─────────────────────────────────────────┐
+│                                                           │   ← Realm = พื้นที่แยกอิสระ 1 ชุด
+│   ┌── Clients ──────────────┐   ┌── Users ─────────────┐  │      ของใน realm หนึ่ง
+│   │ client_id  wongnok-api  │   │ chef1                │  │      มองไม่เห็นอีก realm เลย
+│   │ client_secret  ******   │   │ chef1@wongnok.dev    │  │
+│   │ client scope = claims   │   │ + password           │  │   ← Clients = "แอปไหนขอ token"
+│   └─────────────────────────┘   └──────────┬───────────┘  │      Users   = "คนไหนล็อกอิน"
+│                                            │              │
+│                          user เป็นสมาชิกของ │              │
+│                                            ▼              │
+│   ┌── Roles ────────────────┐   ┌── Groups ────────────┐  │
+│   │ recipe:write            │◄──┤ chefs                │  │   ← ผูก role ไว้ที่ "group"
+│   │ recipe:read             │   │ admins               │  │      ไม่ใช่ผูกทีละ user
+│   └────────────┬────────────┘   └──────────────────────┘  │
+│                │                                          │
+└────────────────┼──────────────────────────────────────────┘
+                 │
+                 ▼
+   access_token → realm_access.roles = ["recipe:write", ...]
+                  ↑ role โผล่ที่นี่ ไม่ใช่ที่ resource_access</pre>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กล่อง</th><th>คืออะไร</th><th>ตัวอย่างในโปรเจกต์ wongnok</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Realm</strong></td>
+      <td><strong>พื้นที่แยกอิสระของแต่ละโปรเจกต์</strong> — มี user, client, role เป็นของตัวเองครบชุด
+          และ<strong>ข้ามไปใช้ของ realm อื่นไม่ได้</strong></td>
+      <td><code>wongnok</code> · (Keycloak มี realm ชื่อ <code>master</code> ติดมาให้ตั้งแต่แรก
+          ซึ่งเป็น realm สำหรับดูแลตัว Keycloak เอง <strong>ไม่ควรเอาแอปไปใส่ในนั้น</strong>)</td>
+    </tr>
+    <tr>
+      <td><strong>Clients</strong></td>
+      <td>แอปที่<strong>ลงทะเบียนไว้ว่าจะมาขอ token</strong> · มี <code>client_id</code> (ชื่อเปิดเผยได้)
+          และ <code>client_secret</code> (ความลับ เก็บฝั่ง server เท่านั้น)</td>
+      <td><code>wongnok-api</code></td>
+    </tr>
+    <tr>
+      <td><strong>Client scope</strong></td>
+      <td>ตัวกำหนดว่า <strong>token ที่ออกให้ client นี้จะมี claim อะไรแปะไปด้วย</strong>
+          — <em>claim</em> คือ "ข้อมูลหนึ่งชิ้นที่เขียนไว้ใน token" เช่น อีเมล ชื่อ role</td>
+      <td>scope <code>profile</code> พา <code>name</code>/<code>preferred_username</code> มา ·
+          scope <code>email</code> พา <code>email</code> มา</td>
+    </tr>
+    <tr>
+      <td><strong>Users</strong></td>
+      <td>บัญชีผู้ใช้ · login ด้วย username หรือ email + password
+          <strong>ที่เก็บอยู่ฝั่ง Keycloak</strong> ไม่ใช่ฐานข้อมูลเรา</td>
+      <td><code>chef1</code></td>
+    </tr>
+    <tr>
+      <td><strong>Groups</strong></td>
+      <td>รวม user เป็นกลุ่ม เพื่อ<strong>จัดสิทธิ์เป็นชุดได้ที่เดียว</strong></td>
+      <td><code>chefs</code>, <code>admins</code></td>
+    </tr>
+    <tr>
+      <td><strong>Roles</strong></td>
+      <td>ตัวสิทธิ์เอง · <strong>ผูกกับ Group แทนการผูกกับ User ทีละคน</strong></td>
+      <td><code>recipe:write</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ตึกออฟฟิศให้เช่า กับ ฝ่ายอาคารที่ออกคีย์การ์ด</span>
+  <p>
+    คำในตารางข้างบนจำแยกกันยาก เพราะมันไม่ใช่ของหลายอย่างที่วางเรียงกัน แต่มันซ้อนกันอยู่
+    <br>ลองย้ายทั้งชุดไปไว้ในตึกออฟฟิศให้เช่าที่มี<strong>ฝ่ายอาคาร</strong>คอยออกคีย์การ์ด
+    (ฝ่ายอาคาร = Keycloak):
+  </p>
+  <p>
+    · <strong>Realm</strong> = <strong>ตึกหนึ่งตึก</strong> — ฝ่ายอาคารเจ้าเดียวดูแลได้หลายตึก
+    แต่<strong>ทะเบียนคนละเล่ม</strong> การ์ดของตึก A เอาไปแตะประตูตึก B ไม่ติด
+    <br>· <strong>Users</strong> = <strong>คนที่มีชื่อในทะเบียนของตึกนั้น</strong> — <code>chef1</code>
+    <br>· <strong>Groups</strong> = <strong>แผนก</strong> — ย้ายคนเข้าแผนกครั้งเดียว ไม่ต้องตามไปแก้สิทธิ์ทีละใบ
+    <br>· <strong>Roles</strong> = <strong>สิทธิ์ที่การ์ดเปิดได้</strong> เช่น "เข้าห้องเก็บของ"
+    — เขียนไว้ที่แผนก ไม่ใช่ไล่แปะทีละคน (นี่คือลูกศรที่หัวข้อถัดไปจะพิสูจน์)
+    <br>· <strong>Clients</strong> = <strong>บริษัทผู้เช่าที่ทำเรื่องลงทะเบียนไว้ก่อน</strong>
+    ว่าจะเป็นคนเดินไปขอการ์ดแทนพนักงาน · มีเลขที่สัญญาที่บอกใครก็ได้ (<code>client_id</code>)
+    กับรหัสที่เก็บในเซฟ ห้ามหลุด (<code>client_secret</code>)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน — สองข้อ และทั้งสองข้อสำคัญ:</strong>
+    <br>1. คีย์การ์ดตึกจริงใช้ได้เรื่อย ๆ จนกว่าจะไปแจ้งยกเลิก แต่ <code>access_token</code>
+    ที่ Keycloak ออกให้ในบทนี้<strong>หมดอายุเองใน 5 นาที</strong>
+    (เดี๋ยวจะเห็นว่า <code>exp - iat = 300</code> วินาทีพอดี) — ออกแบบมาให้หมดอายุไว ๆ ตั้งแต่ต้น
+    <br>2. เครื่องอ่านการ์ดต้องต่อสายกลับไปถามฐานข้อมูลกลางทุกครั้งที่แตะ
+    แต่ service ที่รับ <code>access_token</code> <strong>ตรวจเองได้ที่หน้างาน ไม่ต้องยิงถาม Keycloak เลย</strong>
+    — เหตุผลอยู่ในหัวข้อ 7
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>realm</dt>
+    <dd>"ตึกหนึ่งตึก" = พื้นที่แยกอิสระหนึ่งชุด · <code>master</code> คือตึกของฝ่ายอาคารเอง อย่าเอาแอปไปใส่ ·
+        <strong>ถาม senior ว่า “โปรเจกต์นี้ใช้ realm ชื่ออะไร ไม่ใช่ master ใช่ไหม”</strong></dd>
+    <dt>client / <code>client_id</code> / <code>client_secret</code></dt>
+    <dd>"แอปที่ลงทะเบียนไว้ว่าจะมาขอ token" · id เปิดเผยได้ · secret อยู่ฝั่ง server เท่านั้น ·
+        <strong>ประโยคที่ใช้ได้จริง: “ขอ client_id กับ client_secret ของ realm นี้หน่อย เอาไปใส่ env ฝั่ง backend”</strong></dd>
+    <dt>claim</dt>
+    <dd>ข้อมูลหนึ่งชิ้นที่เขียนอยู่ใน token เช่น <code>email</code>, <code>preferred_username</code> ·
+        <strong>พูดว่า “claim ไหนบอก username” ชัดกว่า “ฟิลด์ไหนบอก username”</strong></dd>
+    <dt>client scope</dt>
+    <dd>ตัวคุมว่า token ที่ออกให้ client นี้จะพา claim อะไรติดไปด้วย ·
+        <strong>พิมพ์ถาม AI ได้ว่า “which Keycloak client scope adds the email claim to the access token”</strong></dd>
+    <dt>realm role กับ client role</dt>
+    <dd>role คนละชนิดกัน และ<strong>ไปโผล่คนละ claim</strong> — realm role อยู่ที่
+        <code>realm_access.roles</code> · client role อยู่ที่ <code>resource_access</code> ·
+        <strong>เวลา middleware อ่าน role ไม่เจอ ให้ถามก่อนเลยว่า “อันนี้เป็น realm role หรือ client role”</strong></dd>
+  </dl>
+</div>
+
+<h3>ก่อนพิสูจน์ — ขอ token จริงมาดูก่อน</h3>
+
+<div class="note">
+  <p>
+    🛑 <strong>ถึงตรงนี้บทกระโดดข้ามขั้น — อ่านก่อน</strong> ·
+    หัวข้อ 4 กับ 5 เราเล่นแต่ realm <code>master</code> แต่ตั้งแต่บรรทัดล่างนี้จะยิงไปที่ realm
+    <code>wongnok</code> ด้วย client <code>wongnok-api</code> และ user <code>chef1</code> —
+    <strong>ของสามอย่างนี้ยังไม่มีในเครื่องคุณ ต้องสร้างก่อน</strong>
+    <br>ทำได้สองทาง: กดสร้างใน UI ตาม<strong>ภารกิจข้อ 6–7 ท้ายบท</strong> (แนะนำสำหรับรอบแรก
+    เพราะจะได้เห็นหน้าตาของ Keycloak) หรือยิง admin REST API ตามก้อนล่างนี้ —
+    ผมรันก้อนนี้จริงและ status code ที่ได้คือเลขที่พิมพ์กำกับไว้:
+  </p>
+  <pre style="margin:0.6rem 0"><code><span class="c"># 1) ขอ token ของแอดมินไว้ใช้สั่งงาน admin API</span>
+KC=http://localhost:8081
+AT=$(curl -s -X POST $KC/realms/master/protocol/openid-connect/token \
+      -d client_id=admin-cli -d username=admin -d password=admin \
+      -d grant_type=password | python3 -c <span class="s">'import sys,json;print(json.load(sys.stdin)["access_token"])'</span>)
+H=<span class="s">"Authorization: Bearer $AT"</span>
+
+<span class="c"># 2) realm                                                        -&gt; 201</span>
+curl -s -X POST $KC/admin/realms -H <span class="s">"$H"</span> -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'{"realm":"wongnok","enabled":true}'</span>
+
+<span class="c"># 3) client — publicClient + directAccessGrants ต้องเปิดทั้งคู่    -&gt; 201</span>
+curl -s -X POST $KC/admin/realms/wongnok/clients -H <span class="s">"$H"</span> -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'{"clientId":"wongnok-api","enabled":true,"publicClient":true,
+       "directAccessGrantsEnabled":true,"standardFlowEnabled":true,
+       "webOrigins":["http://localhost:8080"],"redirectUris":["http://localhost:8080/*"]}'</span>
+
+<span class="c"># 4) user chef1 พร้อม password                                    -&gt; 201</span>
+curl -s -X POST $KC/admin/realms/wongnok/users -H <span class="s">"$H"</span> -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'{"username":"chef1","enabled":true,"emailVerified":true,
+       "firstName":"Chef","lastName":"One","email":"chef1@wongnok.dev",
+       "credentials":[{"type":"password","value":"chef1234","temporary":false}]}'</span>
+
+<span class="c"># 5) realm role + group (เอาไปผูกกันในหัวข้อถัดไป)                 -&gt; 201, 201</span>
+curl -s -X POST $KC/admin/realms/wongnok/roles  -H <span class="s">"$H"</span> -H <span class="s">'Content-Type: application/json'</span> -d <span class="s">'{"name":"recipe:write"}'</span>
+curl -s -X POST $KC/admin/realms/wongnok/groups -H <span class="s">"$H"</span> -H <span class="s">'Content-Type: application/json'</span> -d <span class="s">'{"name":"chefs"}'</span></code></pre>
+  <p style="margin-bottom:0">
+    ⚠️ <strong><code>"publicClient": true</code> ห้ามลืม</strong> — <code>curl</code> ข้างล่างไม่ได้ส่ง
+    <code>client_secret</code> ไปเลย ถ้า client เป็นแบบ confidential
+    (<code>publicClient: false</code> ซึ่งเป็นค่า default ของ Keycloak) คุณจะได้แบบนี้แทน
+    ผมลองแล้วจริง:
+  </p>
+  <pre style="margin:0.6rem 0"><code>{"error":"unauthorized_client","error_description":"Invalid client or Invalid client credentials"}</code></pre>
+</div>
+
+<p>
+  พอมีของครบแล้วก็ขอ token ด้วย
+  <strong>password grant</strong> — คือการส่ง username/password ไปที่ <code>token_endpoint</code> ตรง ๆ
+  <em>ไม่ผ่านหน้าเว็บ</em> ซึ่งใช้ได้เฉพาะตอนทดสอบ
+  (ท่านี้<strong>ถูกถอดออกจาก OAuth 2.1 แล้ว</strong> และ <strong>RFC 9700</strong> ซึ่งเป็น
+  Best Current Practice แนะนำว่าไม่ควรใช้ — ที่ใช้ตรงนี้เพราะมันเป็นวิธีเดียวที่ขอ token
+  ได้จาก command line โดยไม่ต้องเปิดเบราว์เซอร์ · ของจริงใช้ authorization code flow
+  ซึ่งอยู่ในบทเรียน 52):
+</p>
+
+<pre><code>$ curl -s -X POST http://localhost:8081/realms/wongnok/protocol/openid-connect/token \
+    -d client_id=wongnok-api -d username=chef1 -d password=chef1234 \
+    -d grant_type=password -d scope=openid
+
+access_token       = eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJ3eXZLU2Zx...  [len 1346]
+<strong>expires_in         = 300</strong>
+<strong>refresh_expires_in = 1800</strong>
+refresh_token      = eyJhbGciOiJIUzUxMiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJiMmZmZGIz...  [len 694]
+token_type         = Bearer
+id_token           = eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJ3eXZLU2Zx...  [len 1037]
+not-before-policy  = 0
+session_state      = grEBoqUUX084tjH4AEFbI5aJ
+scope              = openid profile email</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    ⏱️ <strong>อายุ token ที่ได้จริงบน Keycloak 26.7 — จำเลขนี้ไว้</strong>
+    <br><code>expires_in = 300</code> แปลว่า <code>access_token</code> อยู่ได้ <strong>5 นาที</strong>
+    <br><code>refresh_expires_in = 1800</code> แปลว่า <code>refresh_token</code> อยู่ได้ <strong>30 นาที</strong>
+    <br>ไม่ใช่ 1 ชั่วโมงตามที่หลายคนจำต่อ ๆ กันมา
+    <br>ผลตามมาที่ต้องคิดตั้งแต่ออกแบบ: <strong>ผู้ใช้ที่เปิดหน้าเว็บทิ้งไว้เกิน 5 นาทีแล้วกดปุ่ม
+    จะเจอ 401</strong> ถ้าคุณไม่ได้ทำ refresh flow ไว้
+    <br>(อีกอย่าง: client ต้องเปิด <code>directAccessGrantsEnabled: true</code> ก่อน
+    ถึงจะใช้ password grant แบบนี้ได้)
+  </p>
+</div>
+
+<p>
+  <strong>เก็บ token สองใบลงไฟล์ไว้ก่อน</strong> — เดี๋ยวหัวข้อ 7 จะหยิบไปใช้ทั้งคู่
+  (<code>at.txt</code> เอาไป verify ลายเซ็น · <code>rt.txt</code> เอาไปแลก token ใบใหม่):
+</p>
+
+<pre><code>$ curl -s -X POST http://localhost:8081/realms/wongnok/protocol/openid-connect/token \
+    -d client_id=wongnok-api -d username=chef1 -d password=chef1234 \
+    -d grant_type=password -d scope=openid &gt; tok.json
+
+$ python3 -c <span class="s">"import json;d=json.load(open('tok.json'));open('at.txt','w').write(d['access_token']);open('rt.txt','w').write(d['refresh_token'])"</span>
+
+$ wc -c at.txt rt.txt
+    1346 at.txt
+     694 rt.txt
+    2040 total</code></pre>
+
+<div class="predict">
+  <p><strong>ทายก่อนดู</strong> — เราขอ token ในนามของ client ที่ชื่อ <code>wongnok-api</code></p>
+  <p>
+    ใน JWT มี claim ชื่อ <strong><code>aud</code></strong> (ย่อจาก <em>audience</em>)
+    ซึ่งแปลว่า "token ใบนี้ตั้งใจให้<em>ใคร</em>เอาไปใช้"
+    <br>โค้ด verify ที่เห็นกันเกลื่อนอินเทอร์เน็ตเขียนแบบนี้:
+  </p>
+  <pre><code><span class="k">if</span> claims.Audience != <span class="s">"wongnok-api"</span> {
+    <span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"wrong audience"</span>)
+}</code></pre>
+  <p class="ask">
+    <strong>ทายว่า <code>aud</code> ที่ Keycloak ใส่มาจริง ๆ คืออะไร</strong>
+    <br>และถ้าไม่ใช่ <code>"wongnok-api"</code> — แล้วจะรู้ได้ยังไงว่า token ใบนี้ออกให้ client ตัวไหน?
+  </p>
+  <button class="reveal">ดูเฉลย — payload จริงทั้งก้อน</button>
+  <div class="answer">
+    <p>ถอด payload ของ <code>access_token</code> ออกมาได้แบบนี้ (ตัด base64 ออก เหลือ JSON ล้วน):</p>
+    <pre style="margin:0.6rem 0"><code>{
+  <strong>"exp": 1787368745,</strong>
+  <strong>"iat": 1787368445,</strong>
+  "jti": "onrtro:f1adacbf-bd71-072f-c8c8-b8a6d666cc03",
+  "iss": "http://localhost:8081/realms/wongnok",
+  <strong>"aud": "account",</strong>
+  "sub": "5da7f595-196f-44a6-8dfd-64306ce734d6",
+  "typ": "Bearer",
+  <strong>"azp": "wongnok-api",</strong>
+  "sid": "grEBoqUUX084tjH4AEFbI5aJ",
+  "acr": "1",
+  "allowed-origins": ["http://localhost:8080"],
+  "realm_access": { "roles": ["default-roles-wongnok", "offline_access", "uma_authorization"] },
+  "resource_access": { "account": { "roles": ["manage-account", "manage-account-links", "view-profile"] } },
+  "scope": "openid profile email",
+  "email_verified": true,
+  "name": "Chef One",
+  "preferred_username": "chef1",
+  "given_name": "Chef",
+  "family_name": "One",
+  "email": "chef1@wongnok.dev"
+}</code></pre>
+    <p>
+      สองบรรทัดบนสุดคือ <strong>epoch วินาที (จำนวนเต็มล้วน ไม่มีนิพจน์คำนวณ)</strong> —
+      <code>exp - iat = 300</code> พอดี ตรงกับ <code>expires_in = 300</code> ที่ได้มาในผลลัพธ์ข้างบน
+      <br>(ถ้าอยากเช็คเอง: <code>python3 -c 'print(1787368745-1787368445)'</code>)
+    </p>
+    <p>
+      <strong><code>aud</code> คือ <code>"account"</code> ไม่ใช่ <code>"wongnok-api"</code></strong>
+      <br>ถ้าเขียนโค้ดตรวจ <code>aud == client_id</code> ตามที่เห็นในตัวอย่างทั่วไป
+      <strong>token ทุกใบจะไม่ผ่านหมด</strong> — และ error ที่ได้จะบอกแค่ "invalid audience"
+      ซึ่งไม่ช่วยให้เดาถูกเลยว่าต้นเหตุอยู่ตรงไหน
+    </p>
+    <p>
+      ตัวที่บอกว่า token ออกให้ client ไหนคือ <strong><code>azp</code></strong>
+      (Authorized Party) ซึ่งเป็น <code>"wongnok-api"</code> ตรงตามที่เราขอ
+      <br>ถ้าอยากให้ <code>aud</code> เป็น client id จริง ๆ ต้องไปเพิ่ม
+      <strong>audience mapper</strong> ใน Keycloak เอง — ไม่ได้มาให้เองโดยอัตโนมัติ
+    </p>
+    <p style="margin-bottom:0">
+      อีกจุดที่ควรสังเกต: <code>email</code>, <code>preferred_username</code>, <code>name</code>
+      <strong>โผล่มาเพราะเราขอ scope <code>profile</code> กับ <code>email</code></strong>
+      (สังเกต field <code>scope</code> ในผลลัพธ์) — ซึ่ง Keycloak ให้มาเป็น default client scope อยู่แล้ว
+      <br>แต่ถ้าวันหนึ่งมีคนไปปิด scope พวกนี้ทิ้ง <strong>โค้ดที่อ่าน <code>preferred_username</code>
+      จะได้ค่าว่างทันที</strong> โดยที่ token ยัง verify ผ่านทุกอย่าง
+    </p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป — สาม claim ใน token ที่คนสับสนกันมากที่สุด</span>
+  <p>
+    สาม claim แรกข้างล่างนี้ตอบคำถามคนละข้อกันคนละเรื่อง แต่ชื่อสั้น ๆ สามตัวอักษรเหมือนกันหมด
+    เลยจำสลับกันบ่อย · ตัวสุดท้ายเป็นชื่อการตั้งค่าที่เกี่ยวข้อง ใส่ไว้ให้ครบชุด:
+  </p>
+  <dl>
+    <dt><code>sub</code> (subject)</dt>
+    <dd><strong>"token ใบนี้พูดถึงคนไหน"</strong> — เป็นรหัสประจำตัวของ user ที่ Keycloak ตั้งให้
+        (ในผลข้างบนคือสตริงยาว ๆ ขึ้นต้นด้วย <code>5da7f595</code>) และมัน<strong>ไม่เปลี่ยนแม้ user
+        จะเปลี่ยนชื่อหรืออีเมล</strong> ·
+        <strong>ประโยคที่ใช้ได้จริง: “ฝั่งเราควรเก็บ sub เป็น key ของ user ไม่ใช่เก็บ email”</strong></dd>
+    <dt><code>azp</code> (authorized party)</dt>
+    <dd><strong>"แอปไหนเป็นคนไปขอ token ใบนี้มา"</strong> — ค่านี้แหละที่เท่ากับ <code>client_id</code> ของเรา ·
+        <strong>ถาม senior ว่า “ถ้าจะเช็คว่า token มาจาก client ตัวไหน ต้องอ่าน azp ใช่ไหม”</strong></dd>
+    <dt><code>aud</code> (audience)</dt>
+    <dd><strong>"token ใบนี้จ่าหน้าถึงใคร"</strong> — คือปลายทางที่ตั้งใจให้เอาไปใช้ ·
+        ของ Keycloak default ได้ <code>"account"</code> ไม่ใช่ชื่อ client ·
+        <strong>พิมพ์ถาม AI ได้ว่า “how to add an audience mapper in Keycloak so aud contains my API client id”</strong></dd>
+    <dt>audience mapper</dt>
+    <dd>ตัวตั้งค่าใน Keycloak ที่<strong>ยัดค่าที่เราต้องการลงใน <code>aud</code></strong> ·
+        ถ้าไม่ตั้ง ก็อย่าเขียนโค้ดเช็ค <code>aud == client_id</code> เพราะจะไม่ผ่านทุกใบ</dd>
+  </dl>
+</div>
+
+<h3>พิสูจน์ลูกศร "user ใน group ได้ role อัตโนมัติ"</h3>
+
+<p>
+  นี่คือข้ออ้างที่วาดเป็นลูกศรไว้ในสไลด์หน้า 42 และมันเป็นข้ออ้างที่<strong>ตรวจได้ตรง ๆ</strong>
+  <br>ผมทำสามขั้น: สร้าง role <code>recipe:write</code> · สร้าง group <code>chefs</code> ·
+  แล้ว<strong>ผูก role เข้า group</strong> (ไม่ใช่เข้า user) จากนั้นเอา <code>chef1</code> ใส่ group
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — คำสั่งที่ผมยิงมีแค่สองอันนี้ ทั้งคู่ตอบ <code>HTTP 204</code> (สำเร็จ ไม่มีเนื้อหาตอบกลับ)</p>
+  <pre><code><span class="c"># 1. เอา role recipe:write ไปแปะที่ "group" ชื่อ chefs</span>
+POST /admin/realms/wongnok/groups/$GRP/role-mappings/realm
+
+<span class="c"># 2. เอา user chef1 ใส่เข้า group ชื่อ chefs</span>
+PUT  /admin/realms/wongnok/users/$USR/groups/$GRP</code></pre>
+  <p class="ask">
+    สังเกตว่า<strong>ไม่มีคำสั่งไหนเลยที่ผูก <code>recipe:write</code> เข้ากับ <code>chef1</code> โดยตรง</strong>
+    <br>ทายสองข้อ:
+    <br>1. ถ้าถาม Keycloak ว่า "role ที่ผูกกับ chef1 <em>โดยตรง</em> มีอะไรบ้าง" จะเห็น <code>recipe:write</code> ไหม
+    <br>2. แล้วถ้าขอ <code>access_token</code> ใบใหม่ <strong><code>recipe:write</code> จะโผล่ใน token ไหม
+    และโผล่ที่ claim ไหน</strong>
+  </p>
+  <button class="reveal">ดูเฉลย — ผลรันจริงทั้งสามคำถาม</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>== 3. map role recipe:write -&gt; group chefs ==
+HTTP 204
+== 4. put user chef1 into group chefs ==
+HTTP 204
+
+== 5a. <strong>DIRECT</strong> realm roles of chef1 ==
+['default-roles-wongnok']
+
+== 5b. <strong>COMPOSITE/effective</strong> realm roles of chef1 ==
+['default-roles-wongnok', 'offline_access', <strong>'recipe:write'</strong>, 'uma_authorization']
+
+== 5c. groups of chef1 ==
+['/chefs']
+
+== access_token payload AFTER group-&gt;role ==
+  "azp": "wongnok-api",
+  "preferred_username": "chef1",
+  "realm_access": { "roles": ["default-roles-wongnok", <strong>"recipe:write"</strong>,
+                              "offline_access", "uma_authorization"] }</code></pre>
+    <p>
+      <strong>ข้ออ้างในสไลด์ถูกต้อง และนี่คือหลักฐาน:</strong>
+      <br>· <strong>5a</strong> — role ที่ผูกกับ <code>chef1</code> โดยตรงมีแค่ <code>default-roles-wongnok</code>
+      เท่านั้น <em>ไม่เคยมี <code>recipe:write</code> เลย</em>
+      <br>· <strong>5b</strong> — แต่พอถาม "role ที่มีผลจริง" (effective / composite)
+      <code>recipe:write</code> โผล่มา เพราะได้มาผ่าน group
+      <br>· <strong>ท้ายสุด</strong> — <code>recipe:write</code> อยู่ใน <code>access_token</code> ของจริง
+    </p>
+    <p style="margin-bottom:0">
+      🧭 <strong>จุดที่สไลด์ไม่ได้บอก และทำให้คนหาไม่เจอ</strong>:
+      role มาอยู่ที่ <strong><code>realm_access.roles</code></strong> (เพราะเราสร้างเป็น <em>realm role</em>)
+      <br><strong>ไม่ใช่</strong> <code>resource_access</code> — ช่องนั้นเก็บ <em>client role</em>
+      ซึ่งเป็น role คนละชนิด (ในผลข้างบน <code>resource_access</code> มีแต่ role ของ client
+      ชื่อ <code>account</code> ที่ Keycloak แถมมาให้)
+      <br>ถ้า middleware ของคุณไปอ่านผิดช่อง มันจะเห็น role ว่างเปล่าแล้วปฏิเสธทุก request
+      โดยที่ token ถูกต้องทุกอย่าง
+    </p>
+  </div>
+</div>
+
+<h2>7 · พิสูจน์แถวสุดท้าย — public key ใบเดียว verify ได้จริงไหม</h2>
+
+<p>
+  กลับมาที่ข้ออ้างในตารางหัวข้อ 2:
+  <em>"ทุก service ใช้ public key เดียวกันจาก Keycloak verify ได้เลย ไม่ต้องแชร์ secret"</em>
+  <br>ทำไมข้อนี้ถึงเป็นเรื่องใหญ่: ถ้าจริง แปลว่า service ที่ 2, 3, 4 ในระบบคุณ
+  <strong>ตรวจ token ได้เองโดยไม่ต้องถือความลับอะไรเลย และไม่ต้องยิงถาม Keycloak ทุก request</strong>
+</p>
+
+<p>
+  ที่อยู่ของ public key อยู่ในไฟล์ discovery แล้ว — คือ field <code>jwks_uri</code>
+  <br><strong>JWKS</strong> ย่อจาก <em>JSON Web Key Set</em> = ชุดกุญแจในรูปแบบ JSON
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — ยิงไปที่ <code>jwks_uri</code> ของ realm <code>wongnok</code></p>
+  <pre><code>$ curl -s http://localhost:8081/realms/wongnok/protocol/openid-connect/certs</code></pre>
+  <p class="ask">
+    <strong>จะได้กุญแจกี่ใบ?</strong>
+    <br>และถ้าโค้ดตัวอย่างที่คุณลอกมาเขียนว่า <code>key := jwks.Keys[0]</code> —
+    <strong>มันปลอดภัยไหม</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code><strong>number of keys = 2</strong>
+
+{'kid': 'wyvKSfqZdLBxEgiFH8uLjDWqHbA_HNNaoo7eusbO...', 'kty': 'RSA',
+ <strong>'alg': 'RS256', 'use': 'sig'</strong>,  'x5t': 'or42Mu3VYD2f5W9Av5ynyyZmCFs',
+ 'n': 'vJgLqZ6CjF23xnuZ3V8bOc9FP7iJqzE_QxTfQcjd...', 'e': 'AQAB'}
+
+{'kid': 'Mf4wHVuGfb9hhl_aZu4jyayOm94BXmiUsDX413Re...', 'kty': 'RSA',
+ <strong>'alg': 'RSA-OAEP', 'use': 'enc'</strong>, 'x5t': 'roKarAk6jTub0Z7KvbZJ0f9eQWI',
+ 'n': 'rRa7SOuWAVLgWZmNK0qfzRuSK93hfN-ICNvDl8Kg...', 'e': 'AQAB'}</code></pre>
+    <p>
+      <strong>ได้สองใบ ไม่ใช่ใบเดียว</strong> — และมันคนละหน้าที่กัน:
+      <br>· <code>use: "sig"</code> + <code>alg: "RS256"</code> = ใบสำหรับ<strong>ตรวจลายเซ็น</strong> ← อันที่เราต้องใช้
+      <br>· <code>use: "enc"</code> + <code>alg: "RSA-OAEP"</code> = ใบสำหรับ<strong>เข้ารหัส</strong> คนละงานกันเลย
+    </p>
+    <p style="margin-bottom:0">
+      ดังนั้น <code>Keys[0]</code> <strong>อันตราย</strong> — ลำดับในอาร์เรย์ไม่มีอะไรรับประกัน
+      และมันจะเปลี่ยนได้เมื่อ Keycloak หมุนกุญแจ (rotation)
+      <br>วิธีที่ถูกคือ: <strong>อ่าน <code>kid</code> จาก header ของ JWT ที่ได้มา
+      แล้วไปหาใบที่ <code>kid</code> ตรงกันใน JWKS</strong> — <code>kid</code> ย่อจาก <em>key id</em>
+      คือหมายเลขกำกับกุญแจที่ผู้เซ็นแปะมาให้เราหาถูกใบพอดี
+    </p>
+  </div>
+</div>
+
+<p>
+  ทีนี้พิสูจน์ของจริง — ผมเขียนโปรแกรม Go ด้วย <strong>standard library ล้วน ๆ</strong>
+  (ไม่ใช้ library JWT ตัวไหนเลย เพื่อให้เห็นว่าไม่มีอะไรซ่อนอยู่):
+  ดึง JWKS → หาใบที่ <code>kid</code> ตรง → ประกอบเป็น <code>rsa.PublicKey</code> จากค่า <code>n</code> กับ <code>e</code>
+  → เรียก <code>rsa.VerifyPKCS1v15</code>
+</p>
+
+<p>
+  นี่คือ<strong>ทั้งไฟล์</strong> ไม่ได้ตัดอะไรออก — สร้างโฟลเดอร์ใหม่ <code>verify/</code>
+  ข้าง ๆ <code>at.txt</code> แล้ว <code>go mod init kcverify</code> ก่อน จากนั้นวางเป็น
+  <code>verify/main.go</code>:
+</p>
+
+<pre><code><span class="c">// verify/main.go — ตรวจลายเซ็น JWT ด้วย stdlib ล้วน ไม่มี dependency</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+	<span class="s">"crypto"</span>
+	<span class="s">"crypto/rsa"</span>
+	<span class="s">"crypto/sha256"</span>
+	<span class="s">"encoding/base64"</span>
+	<span class="s">"encoding/json"</span>
+	<span class="s">"fmt"</span>
+	<span class="s">"math/big"</span>
+	<span class="s">"net/http"</span>
+	<span class="s">"os"</span>
+	<span class="s">"strings"</span>
+)
+
+<span class="k">type</span> jwk <span class="k">struct</span> {
+	Kid <span class="k">string</span> <span class="s">`json:"kid"`</span>
+	Alg <span class="k">string</span> <span class="s">`json:"alg"`</span>
+	Use <span class="k">string</span> <span class="s">`json:"use"`</span>
+	N   <span class="k">string</span> <span class="s">`json:"n"`</span>
+	E   <span class="k">string</span> <span class="s">`json:"e"`</span>
+}
+
+<span class="c">// JWT ใช้ base64url แบบไม่มี padding</span>
+<span class="k">func</span> <span class="f">b64</span>(s <span class="k">string</span>) []<span class="k">byte</span> {
+	b, err := base64.RawURLEncoding.<span class="f">DecodeString</span>(s)
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="f">panic</span>(err)
+	}
+	<span class="k">return</span> b
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+	<span class="c">// arg 1 = ไฟล์ที่เก็บ access_token · arg 2 = jwks_uri</span>
+	raw, err := os.<span class="f">ReadFile</span>(os.Args[<span class="n">1</span>])
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="f">panic</span>(err)
+	}
+	parts := strings.<span class="f">Split</span>(strings.<span class="f">TrimSpace</span>(<span class="k">string</span>(raw)), <span class="s">"."</span>)
+
+	<span class="k">var</span> hdr <span class="k">struct</span>{ Kid, Alg <span class="k">string</span> }
+	json.<span class="f">Unmarshal</span>(<span class="f">b64</span>(parts[<span class="n">0</span>]), &amp;hdr)
+	fmt.<span class="f">Printf</span>(<span class="s">"token header kid = %s  alg = %s\n"</span>, hdr.Kid, hdr.Alg)
+
+	resp, err := http.<span class="f">Get</span>(os.Args[<span class="n">2</span>])
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="f">panic</span>(err)
+	}
+	<span class="k">defer</span> resp.Body.<span class="f">Close</span>()
+	<span class="k">var</span> set <span class="k">struct</span>{ Keys []jwk }
+	json.<span class="f">NewDecoder</span>(resp.Body).<span class="f">Decode</span>(&amp;set)
+
+	<span class="c">// หาใบที่ kid ตรง — ห้ามใช้ Keys[0]</span>
+	<span class="k">var</span> key *jwk
+	<span class="k">for</span> i := <span class="k">range</span> set.Keys {
+		<span class="k">if</span> set.Keys[i].Kid == hdr.Kid {
+			key = &amp;set.Keys[i]
+		}
+	}
+	<span class="k">if</span> key == <span class="k">nil</span> {
+		fmt.<span class="f">Println</span>(<span class="s">"no matching kid in JWKS"</span>)
+		os.<span class="f">Exit</span>(<span class="n">1</span>)
+	}
+	fmt.<span class="f">Printf</span>(<span class="s">"matched JWKS key: kid = %s use = %s alg = %s\n"</span>, key.Kid, key.Use, key.Alg)
+
+	<span class="c">// ประกอบ rsa.PublicKey จาก n (modulus) กับ e (exponent) ที่เป็น base64url</span>
+	e := <span class="n">0</span>
+	<span class="k">for</span> _, c := <span class="k">range</span> <span class="f">b64</span>(key.E) {
+		e = e&lt;&lt;<span class="n">8</span> | <span class="k">int</span>(c)
+	}
+	pub := &amp;rsa.PublicKey{N: <span class="f">new</span>(big.Int).<span class="f">SetBytes</span>(<span class="f">b64</span>(key.N)), E: e}
+	fmt.<span class="f">Printf</span>(<span class="s">"public key modulus bits = %d  exponent = %d\n"</span>, pub.N.<span class="f">BitLen</span>(), pub.E)
+
+	<span class="c">// ลายเซ็นเซ็นทับสตริง "header.payload" ตรง ๆ</span>
+	signed := parts[<span class="n">0</span>] + <span class="s">"."</span> + parts[<span class="n">1</span>]
+	sum := sha256.<span class="f">Sum256</span>([]<span class="k">byte</span>(signed))
+	<span class="k">if</span> err := rsa.<span class="f">VerifyPKCS1v15</span>(pub, crypto.SHA256, sum[:], <span class="f">b64</span>(parts[<span class="n">2</span>])); err != <span class="k">nil</span> {
+		fmt.<span class="f">Println</span>(<span class="s">"VERIFY FAILED:"</span>, err)
+		os.<span class="f">Exit</span>(<span class="n">1</span>)
+	}
+	fmt.<span class="f">Println</span>(<span class="s">"VERIFY OK  -&gt; signature valid using ONLY the public key from jwks_uri (no client_secret used)"</span>)
+
+	<span class="c">// แก้ token หนึ่งบิตแล้วตรวจซ้ำ — ต้องไม่ผ่าน</span>
+	bad := []<span class="k">byte</span>(signed)
+	bad[<span class="f">len</span>(bad)-<span class="n">1</span>] ^= <span class="n">0x01</span>
+	badSum := sha256.<span class="f">Sum256</span>(bad)
+	err = rsa.<span class="f">VerifyPKCS1v15</span>(pub, crypto.SHA256, badSum[:], <span class="f">b64</span>(parts[<span class="n">2</span>]))
+	fmt.<span class="f">Println</span>(<span class="s">"tampered token correctly REJECTED:"</span>, err)
+}</code></pre>
+
+<p>รันจากในโฟลเดอร์ <code>verify/</code> โดยชี้ไปที่ <code>at.txt</code> ที่เก็บไว้ตอนหัวข้อ 6:</p>
+
+<pre><code>$ go run . ../at.txt http://localhost:8081/realms/wongnok/protocol/openid-connect/certs
+
+token header kid = wyvKSfqZdLBxEgiFH8uLjDWqHbA_HNNaoo7eusbOGF4  alg = RS256
+matched JWKS key: kid = wyvKSfqZdLBxEgiFH8uLjDWqHbA_HNNaoo7eusbOGF4 use = sig alg = RS256
+public key modulus bits = 2048  exponent = 65537
+<strong>VERIFY OK  -&gt; signature valid using ONLY the public key from jwks_uri (no client_secret used)</strong>
+tampered token correctly REJECTED: crypto/rsa: verification error</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ ข้ออ้างในสไลด์ถูก — และแข็งแรงกว่าที่เขียนไว้ด้วยซ้ำ</strong>
+    <br>· ตรวจผ่านโดย<strong>ไม่ได้ใช้ <code>client_secret</code> เลยแม้แต่ครั้งเดียว</strong>
+    <br>· ลองแก้ token แล้วยิงซ้ำ — <strong>ถูกปฏิเสธ</strong> ด้วย
+    <code>crypto/rsa: verification error</code>
+    <br>นี่คือเหตุผลที่ระบบหลาย service ใช้วิธีนี้: <strong>ความลับมีอยู่ที่เดียวคือใน Keycloak</strong>
+    ส่วน service อื่น ๆ ถือแค่ public key ซึ่ง<strong>หลุดไปก็ไม่เป็นไร</strong>
+    เพราะเอาไปปลอม token ไม่ได้ (มันตรวจได้อย่างเดียว เซ็นไม่ได้)
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ข้อสรุปที่คนเหมาเอาเอง แล้วผิด — "token ทุกใบ verify ด้วย public key ได้"</span>
+  <p>
+    ผมถอด header ของ token ทั้งสองใบที่ได้มาจากคำขอเดียวกันมาเทียบ:
+  </p>
+  <pre style="margin:0.6rem 0"><code>== JWT header of <strong>access_token</strong> ==
+{ "alg": <strong>"RS256"</strong>, "typ": "JWT", "kid": "wyvKSfqZdLBxEgiFH8uLjDWqHbA_HNNaoo7eusbOGF4" }
+
+== <strong>refresh_token</strong> header ==
+{ "alg": <strong>"HS512"</strong>, "typ": "JWT", "kid": "b2ffdb37-5e0e-4ae7-b420-370b9638d5b1" }</code></pre>
+  <p style="margin-bottom:0">
+    <strong>คนละอัลกอริทึมกันคนละโลก:</strong>
+    <br>· <code>RS256</code> เป็นแบบ <strong>asymmetric</strong> — เซ็นด้วย private key ตรวจด้วย public key
+    (จึงแจก public key ให้ใครก็ได้)
+    <br>· <code>HS512</code> เป็นแบบ <strong>symmetric</strong> — <strong>เซ็นและตรวจด้วยความลับตัวเดียวกัน</strong>
+    ซึ่งความลับนั้น<strong>อยู่ที่ Keycloak เท่านั้น ไม่มีการแจกออกมา</strong>
+    <br>ดังนั้น <code>refresh_token</code> <strong>เอา public key ไปตรวจไม่ได้ และไม่ควรพยายาม</strong> —
+    มันไม่ได้ถูกออกแบบมาให้ service อื่นอ่าน ต้อง<strong>ส่งกลับไปแลกที่ <code>token_endpoint</code>
+    ของ Keycloak เท่านั้น</strong>
+    <br>สรุปให้ชัด: ข้ออ้าง "verify ด้วย public key ไม่ต้องแชร์ secret" ใช้ได้กับ
+    <strong><code>access_token</code> และ <code>id_token</code></strong> — <strong>ไม่รวม <code>refresh_token</code></strong>
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ตัวอย่างลายเซ็นที่ธนาคาร กับ รหัสตู้เซฟ</span>
+  <p>
+    ตรงนี้มีของสองแบบที่ทำงานคนละหลักการ แต่เรียกรวม ๆ ว่า "เซ็น" เหมือนกัน เลยพากันงง
+  </p>
+  <p>
+    <strong>แบบที่ 1 — ตัวอย่างลายเซ็น (นี่คือ <code>RS256</code>)</strong>
+    <br>ตอนเปิดบัญชี เราเซ็นชื่อไว้เป็น "ตัวอย่างลายเซ็น" แล้วธนาคาร<strong>ส่งสำเนาไปให้ทุกสาขาเก็บไว้</strong>
+    <br>ปากกาที่เซ็นได้จริงมีที่เดียวคือมือเรา แต่<strong>สำเนาตัวอย่างแจกได้ทั่วประเทศ</strong>
+    เพราะคนถือทำได้อย่างเดียวคือ "เอามาเทียบ" — เซ็นแทนเราไม่ได้
+    <br>· ปากกาของเรา = <strong>private key</strong> · อยู่ใน Keycloak ที่เดียว ไม่เคยออกมา
+    <br>· สำเนาที่แจกทุกสาขา = <strong>public key</strong> · คือสิ่งที่ทุก service โหลดจาก <code>jwks_uri</code>
+    <br>· ธนาคารเก็บตัวอย่างลายเซ็นไว้<strong>หลายแผ่น</strong> (คนละคน · คนละหน้าที่ · ของเก่าที่ยังไม่ทิ้ง)
+    จึงต้องมี<strong>เลขกำกับแผ่น</strong> = <code>kid</code> ที่บอกว่าใบนี้ต้องเอาไปเทียบกับแผ่นไหน
+    — เหมือนที่เพิ่งเห็นว่า JWKS ของ realm นี้มีสองใบ และมีใบเดียวที่เป็น <code>use: "sig"</code>
+  </p>
+  <p>
+    <strong>แบบที่ 2 — รหัสตู้เซฟ (นี่คือ <code>HS512</code>)</strong>
+    <br>รหัสตู้เซฟใช้<strong>เลขชุดเดียวกันทั้งล็อกและปลด</strong> จะเอาไปแจกสาขาอื่นไม่ได้เลย
+    เพราะแจกเมื่อไหร่ก็เท่ากับยกตู้ให้เขาไปด้วย
+    <br>นี่คือเหตุผลที่ <code>refresh_token</code> ซึ่งเซ็นด้วย <code>HS512</code>
+    <strong>ตรวจเองที่ service เราไม่ได้</strong> — ต้องส่งกลับไปให้ Keycloak ตรวจให้เท่านั้น
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ลายเซ็นบนกระดาษเซ็นทับแค่ท้ายเอกสาร
+    ใครแอบแก้ตัวเลขกลางหน้าก็ยังดูไม่ออกจากลายเซ็น
+    <br>แต่ลายเซ็นแบบ <code>RS256</code> <strong>คำนวณทับข้อความทั้งฉบับ</strong> —
+    แก้ไปแค่บิตเดียวก็ตรวจไม่ผ่านทันที ซึ่งคือสิ่งที่บรรทัด
+    <code>tampered token correctly REJECTED</code> ข้างบนเพิ่งพิสูจน์ให้ดูกับตา
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>asymmetric / public-key cryptography</dt>
+    <dd>กุญแจมาเป็นคู่และคนละหน้าที่ — เซ็นด้วยใบลับ ตรวจด้วยใบเปิด · <code>RS256</code> เป็นแบบนี้ ·
+        <strong>ประโยคที่ใช้ได้จริง: “access_token เป็น RS256 ใช่ไหม เราจะได้ verify เองที่ service ไม่ต้องยิงถาม Keycloak”</strong></dd>
+    <dt>symmetric / shared secret</dt>
+    <dd>ความลับตัวเดียวใช้ทั้งเซ็นและตรวจ · <code>HS512</code> เป็นแบบนี้ · แจกไม่ได้โดยธรรมชาติ ·
+        <strong>ถ้ามีคนเสนอให้เอา secret ไปแจกทุก service ให้ถามกลับว่า “แล้ววันที่มัน leak เราจะรู้ได้ยังไงว่ารั่วจากตัวไหน”</strong></dd>
+    <dt>JWKS (JSON Web Key Set)</dt>
+    <dd>ชุด public key ในรูป JSON ที่ Keycloak ประกาศไว้ที่ <code>jwks_uri</code> ·
+        <strong>พิมพ์ถาม AI ได้ว่า “fetch JWKS and pick the key by kid in Go, not Keys[0]”</strong></dd>
+    <dt><code>kid</code> (key id)</dt>
+    <dd>เลขกำกับกุญแจที่ผู้เซ็นแปะมาใน header ของ JWT เพื่อให้เราหยิบถูกใบ ·
+        <strong>เวลา verify พังให้ถามข้อแรกเลยว่า “kid ใน token หาเจอใน JWKS ไหม”</strong></dd>
+    <dt>key rotation</dt>
+    <dd>การเปลี่ยนกุญแจที่ใช้เซ็นเป็นระยะ · เป็นเหตุผลว่าทำไม <strong>ห้าม hardcode key
+        และห้ามใช้ <code>Keys[0]</code></strong> — วันที่หมุนกุญแจ ลำดับในอาร์เรย์เปลี่ยนได้ ·
+        <strong>ถาม senior ว่า “ฝั่งเรา cache JWKS ไว้นานแค่ไหน แล้วตอน rotate จะโหลดใหม่เองไหม”</strong></dd>
+  </dl>
+</div>
+
+<p>ส่วนวิธีใช้ <code>refresh_token</code> ที่ถูกต้องคือแบบนี้ — ยิงกลับไปที่ Keycloak:</p>
+
+<pre><code>$ curl -s -X POST http://localhost:8081/realms/wongnok/protocol/openid-connect/token \
+    -d client_id=wongnok-api -d grant_type=refresh_token \
+    --data-urlencode refresh_token=$(cat rt.txt) \
+  | python3 -c <span class="s">"import sys,json;d=json.load(sys.stdin);print('keys:',list(d.keys()));print('new access_token len:',len(d['access_token']))"</span>
+
+keys: ['access_token', 'expires_in', 'refresh_expires_in', 'refresh_token',
+       'token_type', <strong>'id_token'</strong>, 'not-before-policy', 'session_state', 'scope']
+new access_token len: 1366</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔎 <strong><code>id_token</code> ติดมาด้วยเพราะตอนขอใบแรกเราใส่ <code>scope=openid</code></strong> —
+    ลองเทียบเอง: ขอ token <em>โดยไม่ใส่</em> <code>scope=openid</code> แล้ว refresh
+    จะได้ลิสต์ที่<strong>ไม่มี <code>id_token</code></strong> และ
+    <code>new access_token len: 1357</code> แทน (สั้นลง 9 ตัวอักษร)
+    <br>เป็นจุดที่หลอกคนได้ง่ายมาก: โค้ดที่อ่าน <code>id_token</code> จาก response ของ refresh
+    จะพังทันทีถ้าใครไปลบ <code>scope=openid</code> ออกจากคำขอแรก
+  </p>
+</div>
+
+<h2>8 · ข้อมูลรอด restart ไหม + เก็บกวาด</h2>
+
+<p>
+  บรรทัด <code>volumes:</code> ใน compose มีไว้เพื่ออะไร — พิสูจน์ง่ายมาก
+  <br>ก่อนอื่นเปิดดูว่าข้างในเก็บอะไรไว้จริง:
+</p>
+
+<pre><code>$ docker exec wongnok-keycloak ls -la /opt/keycloak/data/h2
+total 1720
+drwxr-xr-x 2 keycloak root    4096 Aug 22 04:41 .
+drwxrwxr-x 4 keycloak root    4096 Aug 22 04:41 ..
+-rw-r--r-- 1 keycloak root 1683456 Aug 22 04:42 <strong>keycloakdb.mv.db</strong>
+-rw-r--r-- 1 keycloak root   69091 Aug 22 04:41 keycloakdb.trace.db</code></pre>
+
+<p class="ask" style="margin-top:-0.4rem">
+  ตัวเลขขนาดไฟล์ของคุณจะไม่ตรงกับของผม — มันโตตามจำนวน realm/user/role ที่สร้างไว้
+  ที่ต้องตรงคือ<strong>ชื่อไฟล์สองไฟล์นี้</strong>
+</p>
+
+<p>
+  นี่คือฐานข้อมูล <strong>H2</strong> — ฐานข้อมูลที่ฝังมากับตัว Keycloak ในโหมด <code>start-dev</code>
+  ทั้ง realm ทั้ง user ทั้ง role อยู่ในไฟล์ <code>keycloakdb.mv.db</code> ไฟล์เดียวนี้
+  <br>ทีนี้ restart แล้วขอ token ใหม่:
+</p>
+
+<pre><code>$ docker restart wongnok-keycloak &amp;&amp; curl -s -o /dev/null \
+    --retry 30 --retry-delay 2 --retry-all-errors --retry-connrefused \
+    -w <span class="s">'ready again (HTTP %{http_code})\n'</span> \
+    http://localhost:8081/realms/wongnok/.well-known/openid-configuration
+ready again (HTTP 200)
+
+$ curl -s -X POST http://localhost:8081/realms/wongnok/protocol/openid-connect/token \
+    -d client_id=wongnok-api -d username=chef1 -d password=chef1234 \
+    -d grant_type=password -d scope=openid \
+  | python3 -c <span class="s">"import sys,json,base64; d=json.load(sys.stdin); p=json.loads(base64.urlsafe_b64decode(d['access_token'].split('.')[1]+'==')); print('preferred_username =',p['preferred_username']); print('realm_access.roles =',p['realm_access']['roles'])"</span>
+preferred_username = chef1
+realm_access.roles = ['default-roles-wongnok', <strong>'recipe:write'</strong>, 'offline_access', 'uma_authorization']</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ ทำไมต้องมี <code>--retry-all-errors</code> ไม่ใช่แค่ <code>--retry-connrefused</code></span>
+  <p style="margin-bottom:0">
+    <code>docker restart</code> <strong>คืนค่าทันทีที่ container ถูกสตาร์ท</strong> ไม่ได้รอให้ Keycloak
+    บูตเสร็จ (ล็อกบอกเองว่า <code>started in 5.582s</code>) — ถ้ายิง <code>curl</code> ต่อท้ายด้วย
+    <code>&amp;&amp;</code> เฉย ๆ จะโดนปฏิเสธแน่นอน
+    <br>และระหว่าง restart <strong>พอร์ต 8081 ยังเปิดอยู่</strong> (docker ถือพอร์ตไว้) การเชื่อมต่อจึง
+    <em>ไม่ใช่</em> connection refused แต่เป็นการโดนตัดกลางคัน — ผมลองใส่แค่
+    <code>--retry-connrefused</code> อย่างเดียวได้ <code>ready again (HTTP 000)</code>
+    คือ curl ไม่ยอม retry ให้
+    <br><code>--retry-all-errors</code> คือตัวที่ทำให้มัน retry ทุกความผิดพลาด แล้วถึงได้ <code>HTTP 200</code>
+  </p>
+</div>
+
+<p>
+  realm · user · group · role · การผูก role ผ่าน group — <strong>รอดครบทุกอย่าง</strong>
+  <br>ถ้าไม่ mount volume ไว้ ทุกอย่างที่คุณคลิกสร้างใน UI จะหายหมดทุกครั้งที่ container ถูกสร้างใหม่
+</p>
+
+<p>เสร็จแล้วเก็บกวาด — <code>-v</code> คือสั่งให้ลบ volume ไปด้วย:</p>
+
+<pre><code>$ docker-compose down -v
+ Container wongnok-keycloak Stopping
+ Container wongnok-keycloak Stopped
+ Container wongnok-keycloak Removing
+ Container wongnok-keycloak Removed
+ Network kc_default Removing
+ Volume kc_wongnok-keycloak-data Removing
+ Volume kc_wongnok-keycloak-data Removed
+ Network kc_default Removed
+
+$ docker ps -a
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+(ว่างเปล่า ไม่มีแถวเลย)</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧹 <strong>สิ่งที่ <code>down -v</code> ไม่ได้ลบ คือ image</strong> —
+    <code>quay.io/keycloak/keycloak:26.7</code> ยังคาอยู่ในเครื่อง ถามดูได้เลย:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ docker images quay.io/keycloak/keycloak
+IMAGE                            ID             DISK USAGE   CONTENT SIZE   EXTRA
+quay.io/keycloak/keycloak:26.7   831330513f55        <strong>756MB</strong>          <strong>266MB</strong>   U</code></pre>
+  <p style="margin-bottom:0">
+    สองตัวเลขนี้คนละความหมาย: <strong><code>CONTENT SIZE</code> 266MB</strong> คือขนาด layer ที่ดึงมา
+    ส่วน <strong><code>DISK USAGE</code> 756MB</strong> คือที่มันกินบนดิสก์จริงหลังแตกไฟล์ออกมา —
+    เวลาคนพูดว่า "image ใหญ่แค่ไหน" มักหมายถึงเลขหลัง
+    <br>ถ้าอยากลบด้วย: <code>docker rmi quay.io/keycloak/keycloak:26.7</code>
+    <br>แต่ปกติ<strong>ควรเก็บไว้</strong> เพราะครั้งหน้าจะได้ไม่ต้อง pull ใหม่ —
+    รอบแรกใช้เวลาไปกับการ pull ส่วนตัว Keycloak เอง start แค่ <strong>5.582 วินาที</strong>
+  </p>
+</div>
+
+<h2>สรุปสิ่งที่สไลด์บอกครบ และสิ่งที่ต้องเติมเอง</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สิ่งที่สไลด์บอก</th><th>ผลตรวจจริง</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>image: quay.io/keycloak/keycloak:26.7</code></td>
+      <td>✅ ถูก · tag มีจริง มี arm64 · ได้เวอร์ชันจริง <strong>26.7.2</strong></td>
+    </tr>
+    <tr>
+      <td>ตาราง 5 แถวแรก (login page, signing, RBAC, social, MFA)</td>
+      <td>✅ เป็นฟีเจอร์ที่มีจริงใน Keycloak</td>
+    </tr>
+    <tr>
+      <td>"ทุก service ใช้ public key เดียวกัน verify ได้ ไม่ต้องแชร์ secret"</td>
+      <td>✅ ถูก · พิสูจน์ด้วย Go แล้ว <strong>แต่ใช้กับ <code>refresh_token</code> ไม่ได้ (HS512)</strong></td>
+    </tr>
+    <tr>
+      <td>"user ใน group ได้ role อัตโนมัติ" (หน้า 42)</td>
+      <td>✅ ถูก · เติมให้: role โผล่ที่ <code>realm_access.roles</code> ไม่ใช่ <code>resource_access</code></td>
+    </tr>
+    <tr>
+      <td>บล็อก <code>volumes:</code> ล่างสุดของ compose</td>
+      <td>✅ สไลด์มีครบ (บรรทัด 25–27) · ระวังตอนลอกไปแค่บางส่วน</td>
+    </tr>
+    <tr>
+      <td><code>KC_HOSTNAME_STRICT: "false"</code></td>
+      <td>❌ <strong>no-op</strong> เมื่อมี <code>KC_HOSTNAME</code> — Keycloak พิมพ์บอกเองในล็อก</td>
+    </tr>
+    <tr>
+      <td><code>--import-realm</code></td>
+      <td>❌ <strong>ไม่ทำงาน</strong> เพราะไม่มีไฟล์ใน <code>/opt/keycloak/data/import</code> · และไม่ error ด้วย</td>
+    </tr>
+    <tr>
+      <td>สไลด์ไม่ได้บอกว่านี่คือค่าสำหรับ dev เท่านั้น</td>
+      <td>⚠️ ต้องเติม: <code>start-dev</code> + <code>KC_HTTP_ENABLED=true</code> <strong>ห้ามขึ้น production</strong></td>
+    </tr>
+    <tr>
+      <td>สไลด์ไม่ได้พูดถึง <code>aud</code></td>
+      <td>⚠️ ต้องรู้ไว้: <code>aud = "account"</code> · ตัวที่บอก client คือ <code>azp</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ขอ <code>access_token</code> จาก Keycloak โดยระบุ <code>client_id=wongnok-api</code> แล้วถอด payload ออกมาดู — claim <code>aud</code> เป็นอะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>"wongnok-api"</code> — Keycloak ใส่ <code>client_id</code> ลงใน <code>aud</code> ให้เสมอ</button>
+    <button class="opt"><code>"wongnok"</code> — เป็นชื่อ realm เพราะ token ออกในนามของ realm</button>
+    <button class="opt"><code>"account"</code> — ถ้าอยากได้ <code>client_id</code> ต้องไปเพิ่ม audience mapper เอง · ตัวที่บอก client คือ <code>azp</code></button>
+    <button class="opt">ไม่มี claim <code>aud</code> เลยใน token ของ Keycloak</button>
+  </div>
+  <div class="explain">
+    <p>payload จริงที่ถอดมาได้มีทั้ง <code>"aud": "account"</code> และ <code>"azp": "wongnok-api"</code> อยู่พร้อมกัน
+    <br>ตัวเลือกที่ 1 เป็นความเชื่อที่พบบ่อยที่สุดและเป็นตัวที่ทำให้คนเสียเวลามากที่สุด —
+    ถ้าเขียน middleware ตรวจ <code>aud == "wongnok-api"</code> จะได้ <strong>401 ทุกใบ</strong>
+    ทั้งที่ token ถูกต้องสมบูรณ์ แล้วคุณจะไปไล่หาที่ผิดใน Keycloak โดยที่ไม่มีอะไรผิดเลย
+    <br>ตัวเลือกที่ 4 ผิดชัด เพราะ <code>aud</code> อยู่ใน payload จริง
+    <br><strong>จุดที่ต้องจำ:</strong> <code>azp</code> (Authorized Party) คือช่องที่ตอบว่า
+    "token ใบนี้ออกให้ client ตัวไหน" · ส่วน <code>aud</code> ตอบว่า "ตั้งใจให้ใครเอาไปใช้"
+    ซึ่ง Keycloak ตั้ง default ไว้เป็น <code>account</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. compose ตั้งทั้ง <code>KC_HOSTNAME: localhost</code> และ <code>KC_HOSTNAME_STRICT: "false"</code> — บรรทัดที่สองมีผลอะไร?</p>
+  <div class="opts">
+    <button class="opt">ไม่มีผลเลย · ล็อกพิมพ์เองว่า <code>If hostname is specified, hostname-strict is effectively ignored</code></button>
+    <button class="opt">ทำให้ Keycloak ยอมรับ request ที่มาจาก hostname อื่นได้ ซึ่งจำเป็นตอนรันใน Docker</button>
+    <button class="opt">ทำให้ container ไม่ยอม start ถ้าไม่ได้ตั้ง <code>KC_HOSTNAME</code> คู่กัน</button>
+    <button class="opt">ทำให้ <code>issuer</code> ใน discovery ไม่มีเลขพอร์ตติดมา</button>
+  </div>
+  <div class="explain">
+    <p>Keycloak 26.7 พิมพ์บรรทัดนี้ออกมาเองตอนบูต จาก
+    <code>org.keycloak.url.HostnameV2ProviderFactory</code>:
+    <code>If hostname is specified, hostname-strict is effectively ignored</code>
+    <br>แปลว่าเมื่อ <code>KC_HOSTNAME</code> ถูกตั้งไว้แล้ว บรรทัด <code>KC_HOSTNAME_STRICT</code>
+    ถูกเมินทิ้ง — <strong>ลบออกก็ได้ ผลเหมือนเดิมทุกประการ</strong>
+    <br>ตัวเลือกที่ 4 หลอกดี แต่ผลรันจริงตรงข้าม: <code>issuer</code> ที่ได้คือ
+    <code>http://localhost:8081/realms/master</code> — <strong>มีพอร์ตติดมา</strong>
+    เพราะ Keycloak เติมให้เองจาก request ไม่เกี่ยวกับ strict เลย
+    <br><strong>จุดที่ต้องจำ:</strong> config ที่ "ไม่พังแต่ไม่มีผล" อันตรายกว่า config ที่พัง —
+    เพราะมันทำให้คุณเชื่อผิดว่าอะไรทำให้ระบบทำงานได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. ดึง JWKS จาก <code>jwks_uri</code> ของ realm มาแล้วจะเอาไป verify ลายเซ็น — ควรหยิบกุญแจใบไหน?</p>
+  <div class="opts">
+    <button class="opt">ใบแรกเสมอ (<code>Keys[0]</code>) เพราะ Keycloak เรียงใบที่ใช้เซ็นไว้บนสุด</button>
+    <button class="opt">ใบไหนก็ได้ เพราะทุกใบใน JWKS เป็นคู่ของกุญแจเดียวกัน แค่คนละรูปแบบ</button>
+    <button class="opt">ต้องยิงถาม <code>introspection_endpoint</code> ก่อนทุกครั้ง เพราะ JWKS ไม่มีข้อมูลพอ</button>
+    <button class="opt">ใบที่ <code>kid</code> ตรงกับ <code>kid</code> ใน header ของ JWT ที่ได้มา</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>number of keys = 2</code> — ใบหนึ่ง <code>use: "sig"</code> / <code>alg: "RS256"</code>
+    (สำหรับตรวจลายเซ็น) อีกใบ <code>use: "enc"</code> / <code>alg: "RSA-OAEP"</code> (สำหรับเข้ารหัส)
+    <strong>คนละหน้าที่กันสิ้นเชิง</strong>
+    <br>ตัวเลือกที่ 1 คือกับดักตัวจริง เพราะมัน<strong>ใช้ได้บ้างไม่ได้บ้าง</strong> —
+    ลำดับในอาร์เรย์ไม่มีอะไรรับประกัน และเปลี่ยนได้เมื่อ Keycloak หมุนกุญแจ
+    บั๊กแบบนี้จะโผล่ตอนที่คุณไม่ได้แตะโค้ดอะไรเลย
+    <br>ตัวเลือกที่ 2 ผิดเพราะสองใบนี้เป็น<strong>คนละคู่กุญแจ</strong> ไม่ใช่รูปแบบต่างของอันเดียวกัน
+    <br>ตัวเลือกที่ 3 ผิด — ผมพิสูจน์แล้วว่า verify ได้ด้วย JWKS ล้วน ๆ ไม่ต้องยิงถาม Keycloak เลย
+    <br><strong>จุดที่ต้องจำ:</strong> <code>kid</code> ใน header ของ JWT มีไว้เพื่อการนี้โดยเฉพาะ —
+    ผู้เซ็นบอกมาแล้วว่าใช้ใบไหน อย่าเดาเอง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. service ตัวที่สองในระบบถือ public key จาก <code>jwks_uri</code> ไว้ — มันตรวจ token ใบไหนได้บ้าง?</p>
+  <div class="opts">
+    <button class="opt">ได้ทุกใบที่ Keycloak ออกให้ เพราะ Keycloak เซ็นทุกอย่างด้วยกุญแจชุดเดียวกัน</button>
+    <button class="opt">ได้เฉพาะ <code>access_token</code> กับ <code>id_token</code> (RS256) · <code>refresh_token</code> เป็น HS512 ต้องส่งกลับไปแลกที่ Keycloak</button>
+    <button class="opt">ไม่ได้เลย ต้องมี <code>client_secret</code> ด้วยเสมอ ไม่งั้นตรวจลายเซ็นไม่ได้</button>
+    <button class="opt">ได้เฉพาะ <code>refresh_token</code> เพราะมันเป็นใบที่อายุยาวจึงต้องตรวจบ่อย</button>
+  </div>
+  <div class="explain">
+    <p>ถอด header ของ token สองใบจากคำขอเดียวกันมาเทียบได้ชัดเจน:
+    <code>access_token</code> ใช้ <code>"alg": "RS256"</code> ส่วน <code>refresh_token</code> ใช้
+    <code>"alg": "HS512"</code>
+    <br><strong>RS256 เป็น asymmetric</strong> — เซ็นด้วย private key ตรวจด้วย public key จึงแจก public key ได้
+    <br><strong>HS512 เป็น symmetric</strong> — เซ็นกับตรวจใช้ความลับตัวเดียวกัน ซึ่งอยู่ที่ Keycloak เท่านั้น
+    ไม่มีการแจกออกมาใน JWKS
+    <br>ตัวเลือกที่ 3 ผิด และผมพิสูจน์ตรงข้ามด้วยโปรแกรม Go ที่ขึ้นว่า
+    <code>VERIFY OK -&gt; signature valid using ONLY the public key from jwks_uri (no client_secret used)</code>
+    · แถมแก้ token แล้วยิงซ้ำก็ถูกปฏิเสธด้วย <code>crypto/rsa: verification error</code>
+    <br><strong>จุดที่ต้องจำ:</strong> <code>refresh_token</code> ไม่ได้ออกแบบมาให้ service อื่นอ่านหรือตรวจ —
+    หน้าที่เดียวของมันคือถูกส่งกลับไปที่ <code>token_endpoint</code> เพื่อแลกใบใหม่</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — รัน Authorization Server ของตัวเอง แล้วพิสูจน์ทุกข้ออ้างด้วยมือ</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำให้ Keycloak ขึ้น" — เป้าหมายคือ
+    <strong>ทำให้คุณตรวจสอบข้ออ้างในสไลด์ได้เองโดยไม่ต้องเชื่อใคร</strong>
+  </p>
+  <ol>
+    <li><strong>ขึ้นให้ได้ก่อน:</strong> สร้างโฟลเดอร์เปล่า ใส่ <code>compose.yml</code> ที่มีแค่ service
+        <code>keycloak</code> จากหัวข้อ 3 <strong>พร้อมบล็อก <code>volumes:</code> ล่างสุด</strong>
+        แล้วสั่ง <code>docker-compose up -d</code>
+        <br>รอจน <code>curl -s -o /dev/null -w '%{http_code}'
+        http://localhost:8081/realms/master/.well-known/openid-configuration</code> ตอบ <strong>200</strong></li>
+    <li><strong>อ่านล็อกให้ครบสามบรรทัด:</strong> <code>docker logs wongnok-keycloak | tail</code>
+        <br><strong>จดเวอร์ชันจริงที่ได้</strong> — ของผมคือ 26.7.2 · ของคุณอาจต่าง เพราะ <code>26.7</code> เป็น floating tag</li>
+    <li><strong>ยืนยัน no-op ด้วยตาตัวเอง:</strong> <code>docker logs wongnok-keycloak | head -20</code>
+        แล้วหาบรรทัด <code>HostnameV2ProviderFactory</code>
+        <br>จากนั้น<strong>ลบบรรทัด <code>KC_HOSTNAME_STRICT</code> ทิ้ง</strong> แล้ว
+        <code>docker-compose up -d --force-recreate</code> — ยืนยันว่ายังใช้งานได้เหมือนเดิมทุกอย่าง</li>
+    <li><strong>จับ <code>--import-realm</code> ให้ได้คาหนังคาเขา:</strong>
+        <code>docker logs wongnok-keycloak 2&gt;&amp;1 | grep -i import</code>
+        <br><strong>ต้องไม่เจอบรรทัดที่บอกว่ามัน import อะไร</strong> —
+        ถ้าเจอ แปลว่าคุณ mount ไฟล์ realm เข้าไปแล้วโดยไม่รู้ตัว</li>
+    <li><strong>อ่าน discovery ทั้งไฟล์:</strong>
+        <code>curl -s http://localhost:8081/realms/master/.well-known/openid-configuration</code>
+        <br>หา <code>token_endpoint</code> กับ <code>jwks_uri</code> ให้เจอ แล้ว
+        <strong>ตอบให้ได้ว่า <code>issuer</code> ที่ได้มี <code>:8081</code> ติดมาหรือไม่ และทำไม</strong></li>
+    <li><strong>สร้างของครบชุดผ่าน UI:</strong> เข้า <code>http://localhost:8081</code>
+        ด้วย <code>admin</code>/<code>admin</code> แล้วสร้าง
+        realm <code>wongnok</code> → client <code>wongnok-api</code>
+        (<strong>เปิด Direct access grants</strong>) → user <code>chef1</code> (ตั้ง password) →
+        realm role <code>recipe:write</code> → group <code>chefs</code></li>
+    <li><strong>ทำท่าสำคัญ:</strong> แปะ role <code>recipe:write</code> เข้ากับ <strong>group <code>chefs</code></strong>
+        แล้วเอา <code>chef1</code> ใส่ group นั้น
+        <br><strong>ห้ามแปะ role เข้ากับ <code>chef1</code> โดยตรงเด็ดขาด</strong> — ทั้งบทนี้อยู่ที่ข้อนี้</li>
+    <li><strong>ขอ token แล้วเปิดดู:</strong> ยิง <code>POST</code> ไปที่ <code>token_endpoint</code>
+        ด้วย <code>grant_type=password</code> · เอา <code>access_token</code> ที่ได้ไปแปะที่
+        <a href="https://jwt.io">jwt.io</a> หรือถอดเอง
+        <br><strong>ตอบสามคำถาม: <code>aud</code> เป็นอะไร · <code>azp</code> เป็นอะไร ·
+        <code>recipe:write</code> อยู่ที่ claim ไหน</strong></li>
+    <li><strong>ท้าทาย:</strong> <code>curl</code> ไปที่ <code>jwks_uri</code> แล้วนับจำนวนกุญแจ
+        · หา <code>kid</code> จาก header ของ token ที่คุณเพิ่งได้ · แล้วชี้ว่าใบไหนใน JWKS คือใบที่ตรงกัน
+        <br>จากนั้นตอบว่า <strong>ถ้าโค้ดเขียน <code>Keys[0]</code> วันนี้ผ่านไหม แล้วพรุ่งนี้ล่ะ</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 8 — ทั้งสามคำถาม</button>
+  <div class="answer">
+    <p>
+      · <strong><code>aud</code> = <code>"account"</code></strong> ไม่ใช่ <code>wongnok-api</code>
+      <br>· <strong><code>azp</code> = <code>"wongnok-api"</code></strong> — นี่คือช่องที่บอกว่า token ออกให้ client ไหน
+      <br>· <strong><code>recipe:write</code> อยู่ที่ <code>realm_access.roles</code></strong>
+      ไม่ใช่ <code>resource_access</code>
+    </p>
+    <pre style="margin:0.6rem 0"><code>  "azp": "wongnok-api",
+  "preferred_username": "chef1",
+  "realm_access": { "roles": ["default-roles-wongnok", <strong>"recipe:write"</strong>,
+                              "offline_access", "uma_authorization"] }</code></pre>
+    <p style="margin-bottom:0">
+      ถ้าอยากยืนยันซ้ำว่ามาจาก group จริง ไม่ใช่เผลอไปแปะที่ user
+      ให้ถาม Keycloak สองคำถามเทียบกัน — ผลของผมคือ
+      <br>role <strong>โดยตรง</strong> ของ chef1: <code>['default-roles-wongnok']</code>
+      <br>role <strong>ที่มีผลจริง</strong> (composite): <code>['default-roles-wongnok', 'offline_access', 'recipe:write', 'uma_authorization']</code>
+      <br>ถ้าคำถามแรกของคุณมี <code>recipe:write</code> โผล่มาด้วย แปลว่า<strong>คุณเผลอแปะเข้า user
+      ตรง ๆ</strong> — ให้ถอดออกแล้วทำข้อ 7 ใหม่ ไม่งั้นข้อนี้ไม่ได้พิสูจน์อะไรเลย
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 7 คือข้อที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong> —
+    เพราะ "ผูก role ที่ group แทนที่จะผูกที่คน" คือความต่างระหว่างระบบสิทธิ์ที่ดูแลไหว
+    กับระบบที่พอมีพนักงาน 200 คนแล้วไม่มีใครกล้าแตะ
+    <br>ถ้ารันแล้ว output ไม่ตรงกับในบทนี้ <strong>ส่งมาได้เลย</strong> —
+    ทุกบรรทัดในหน้านี้วัดบน <strong>Keycloak 26.7.2</strong> (มาจาก tag <code>26.7</code>)
+    กับ <strong>Go 1.26.5 darwin/arm64</strong>
+    <br>ที่ต่างได้บ่อยที่สุดคือ<strong>เวอร์ชัน</strong> เพราะ <code>26.7</code> เป็น floating tag —
+    ถ้าคุณ pull ทีหลัง อาจได้ 26.7.3 หรือใหม่กว่า แล้วค่า default บางตัว (เช่นอายุ token)
+    อาจไม่ตรงกับที่ผมจดไว้
+    <br>อีกอย่างที่ควรถามตัวเองก่อนส่งมา: <strong>คุณยิง <code>curl</code> ไปที่พอร์ต 8081 หรือ 8080</strong>
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0050-oauth2-authorization-code.html">← บทเรียน 50</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0052-auth-flow-endpoints.html">บทเรียน 52 → flow ของจริงใน wongnok</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://www.keycloak.org/getting-started/getting-started-docker">Keycloak — Getting started with Docker</a> — <strong>อ่านย่อหน้าที่อธิบาย <code>start-dev</code></strong> ซึ่งบอกตรง ๆ ว่าโหมดนี้มีไว้ทำอะไรและห้ามใช้ที่ไหน</li>
+  <li><a href="https://www.keycloak.org/server/all-config">Keycloak — Server configuration (ทุกตัวแปร)</a> — ที่มาของ <code>KC_HOSTNAME</code>, <code>KC_HOSTNAME_STRICT</code>, <code>KC_HTTP_ENABLED</code> · <strong>ค้นคำว่า hostname-strict แล้วอ่านหมายเหตุ</strong> จะเจอเหตุผลของบรรทัดที่เป็น no-op</li>
+  <li><a href="https://www.keycloak.org/server/importExport">Keycloak — Importing and exporting realms</a> — <strong>อ่านว่า <code>--import-realm</code> อ่านไฟล์จากโฟลเดอร์ไหน</strong> (<code>/opt/keycloak/data/import</code>) ซึ่งอธิบายว่าทำไม flag ในสไลด์ถึงเงียบ</li>
+  <li><a href="https://openid.net/specs/openid-connect-discovery-1_0.html">OpenID Connect Discovery 1.0</a> — ต้นทางของ <code>/.well-known/openid-configuration</code> และรายชื่อ field ทั้งหมดที่เห็นในหัวข้อ 5</li>
+  <li><a href="https://datatracker.ietf.org/doc/html/rfc7519#section-4.1">RFC 7519 — JWT Registered Claim Names</a> — นิยามทางการของ <code>iss</code>, <code>aud</code>, <code>exp</code>, <code>sub</code> · <strong>สังเกตว่า <code>azp</code> ไม่ได้อยู่ในนี้</strong> เพราะมันมาจากฝั่ง OIDC ไม่ใช่ JWT พื้นฐาน</li>
+  <li><a href="https://datatracker.ietf.org/doc/html/rfc7517">RFC 7517 — JSON Web Key (JWK)</a> — ที่มาของ field <code>kid</code>, <code>use</code>, <code>alg</code>, <code>n</code>, <code>e</code> ที่เห็นในหัวข้อ 7</li>
+  <li><a href="https://quay.io/repository/keycloak/keycloak?tab=tags">quay.io — รายการ tag ทั้งหมดของ Keycloak</a> — ใช้เช็คว่า tag ที่จะเขียนใน compose มีจริงไหม และตอนนี้ชี้ไปเวอร์ชันไหน</li>
+  <li><a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44 — Configuration &amp; Environment Variables</a> — ค่าใน <code>environment:</code> ของ compose ก็คือ env ตัวเดียวกับที่บทนั้นสอน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,1346 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 52 — flow จริงของ Wongnok: /login /callback /exchange /logout</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 52 · Day 9 · OAuth2 ของจริง</p>
+  <h1>flow จริงของ Wongnok: <code>/login</code> <code>/callback</code> <code>/exchange</code> <code>/logout</code></h1>
+  <p class="meta">~25 นาที · ต้องมี: <a href="./0050-oauth2-authorization-code.html">บทเรียน 50</a> (Authorization Code flow) · <a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32</a> (Redis กับ TTL) · <a href="../../day-8/lessons/0035-query-body-header.html">บทเรียน 35</a> (query / body / header)</p>
+  <p class="standfirst">
+    บทนี้มาจาก<strong>สไลด์ Day 9 หน้า 44–47</strong> ซึ่งเป็น sequence diagram รูปเดียวกันสี่หน้า
+    แค่ไฮไลต์คนละช่วง
+    <br>สิ่งที่บทนี้ตอบให้ขาดคือคำถามเดียว ที่มือใหม่ทุกคนถามตอนเห็น diagram นี้ครั้งแรก:
+    <strong>ทำไมต้องมีขั้น <code>/exchange</code> เพิ่มมาอีกขั้น
+    ในเมื่อตอน redirect กลับมาก็แนบ <code>access_token</code> มาใน URL ให้จบเลยก็ได้?</strong>
+    <br>คำตอบไม่ใช่ "เพราะมันปลอดภัยกว่า" ลอย ๆ — ผม<strong>รันจริงให้ดูว่า
+    อะไรที่อยู่ใน URL มันไปโผล่ที่ไหนบ้าง</strong> แล้วเทียบกับของที่อยู่ใน body ของ POST
+    <br>ทุก output ในหน้านี้มาจาก Redis จริง · Keycloak จริง · เบราว์เซอร์จริง ไม่มีตัวไหนพิมพ์เอง
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ (เวอร์ชันที่รันจริง)</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+github.com/redis/go-redis/v9 v9.22.0
+
+redis:8-alpine                    <span class="c"># redis_version:8.10.1  os:Linux 6.8.0-117-generic aarch64</span>
+quay.io/keycloak/keycloak:26.7    <span class="c"># Keycloak 26.7.2 on JVM (powered by Quarkus 3.33.3.1)</span>
+
+Docker client 29.6.2 / server 29.5.2 (colima ไม่ใช่ Docker Desktop)
+Google Chrome 151.0.7922.170      <span class="c"># ใช้ตอนวัดเรื่อง Referer ในหัวข้อ 5</span></code></pre>
+  <p style="margin-bottom:0">
+    <strong>คำเตือนเรื่องพอร์ต:</strong> ในหน้านี้ผมรัน Keycloak ไว้ที่ <code>localhost:18081</code>
+    และ Redis ที่ <code>127.0.0.1:16379</code> เพราะเครื่องผมมีของอื่นจองพอร์ตปกติไว้อยู่
+    ถ้าคุณรันตามสไลด์จะเป็น <code>8081</code> กับ <code>6379</code> — <strong>ตัวเลขพอร์ตในผลรันจึงต่างจากของคุณได้
+    แต่พฤติกรรมเหมือนกันหมด</strong>
+  </p>
+</div>
+
+<h2>1 · ตัวละครห้าตัวใน diagram นี้</h2>
+
+<p>
+  ก่อนดูเส้น ต้องรู้ก่อนว่าใครเป็นใคร เพราะ diagram นี้มีจุดที่คนอ่านสลับกันบ่อยมาก
+  คือ <strong>Browser</strong> กับ <strong>Frontend JS</strong> ซึ่งอยู่ในหน้าจอเดียวกันแต่<em>ไม่ใช่ตัวเดียวกัน</em>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ตัวละคร</th><th>คืออะไร</th><th>ในบทนี้ทำหน้าที่อะไร</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Browser</strong></td>
+      <td>ตัวโปรแกรมเบราว์เซอร์เอง — คนที่<strong>เดินตาม redirect</strong> เปลี่ยน URL บนแถบที่อยู่ และเก็บ history</td>
+      <td>เป็นคนวิ่งไปมาระหว่าง wongnok API กับ Keycloak ในขั้น 1–2 <strong>โดย JavaScript ไม่ได้สั่ง</strong></td>
+    </tr>
+    <tr>
+      <td><strong>Frontend JS</strong></td>
+      <td>โค้ด JavaScript ในหน้าเว็บ (React/Vue) ที่เรียก API ด้วย <code>axios</code> / <code>fetch</code></td>
+      <td>โผล่มาตอนขั้น 3–4 เท่านั้น — ขั้น 1–2 มันยังไม่ได้ทำงานเลยด้วยซ้ำ</td>
+    </tr>
+    <tr>
+      <td><strong>wongnok API</strong></td>
+      <td>backend Go ของเรา (Gin) ที่ถือ <code>client_secret</code> ไว้</td>
+      <td>เป็นตัวกลางระหว่างผู้ใช้กับ Keycloak · เป็นที่เดียวที่รู้ <code>client_secret</code></td>
+    </tr>
+    <tr>
+      <td><strong>Redis</strong></td>
+      <td>ที่เก็บ key-value ในหน่วยความจำ ที่<strong>ตั้งวันหมดอายุ (TTL) ให้แต่ละ key ได้</strong> (<a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32</a>)</td>
+      <td>เก็บของสองอย่างที่<strong>อายุสั้นมาก</strong>: <code>oauth_state:xxx</code> กับ <code>auth_ticket:yyy</code></td>
+    </tr>
+    <tr>
+      <td><strong>Keycloak</strong></td>
+      <td>Identity Provider — เจ้าของหน้า login และเจ้าของ token</td>
+      <td>ตรวจรหัสผ่าน · ออก <code>access_token</code> / <code>refresh_token</code> · ปิด session ตอน logout</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ จุดที่คนอ่าน diagram นี้พลาดมากที่สุด</span>
+  <p style="margin-bottom:0">
+    เส้นในขั้น 1 กับ 2 <strong>ออกจาก Browser ไม่ใช่ออกจาก Frontend JS</strong>
+    <br>แปลว่าตอนนั้น <code>axios</code> ไม่ได้ยิงอะไรเลย — เป็นเบราว์เซอร์ที่เปลี่ยนหน้าไปเรื่อย ๆ ตาม
+    <code>Location:</code> ที่แต่ละฝั่งตอบกลับมา
+    <br>พอมาถึงขั้น 3 เส้นถึงย้ายมาออกจาก Frontend JS — และนั่นคือจุดที่โค้ด JavaScript
+    ของเราเพิ่งได้ทำงานครั้งแรกของทั้ง flow
+  </p>
+</div>
+
+<h2>2 · ภาพรวมทั้งเส้น</h2>
+
+<p>
+  นี่คือ diagram เดียวกับสไลด์หน้า 44–47 ทั้งสี่หน้ารวมกัน วาดใหม่เป็นตัวอักษรให้อ่านทีละบรรทัดได้
+  <br>ลูกศร <code>─▶</code> คือ request ที่วิ่งออกไป · <code>◀─</code> คือ response ที่ตอบกลับมา
+</p>
+
+<div class="diagram">
+<pre>  Browser        Frontend JS        wongnok API         Redis         Keycloak
+     │                │                  │                │               │
+     │                │                  │                │               │
+ ═══ STEP 1  /login      window.location  (NOT ajax) ════════════════════════════════════════
+     │                │                  │                │               │
+     │  GET /api/v1/auth/login           │                │               │
+     │───────────────────────────────────▶                │               │
+     │                │                  │                │               │
+     │                │                  │  SET oauth_state:xxx  EX 300   │
+     │                │                  │────────────────▶               │
+     │                │                  │                │               │
+     │  302  Location: KEYCLOAK/auth?...&amp;state=xxx        │               │
+     ◀───────────────────────────────────│                │               │
+     │                │                  │                │               │
+     │  GET /auth?client_id&amp;redirect_uri&amp;state=xxx        │               │
+     │────────────────────────────────────────────────────────────────────▶
+     │                │                  │                │               │
+     │  200  Keycloak login page         │                │               │
+     ◀────────────────────────────────────────────────────────────────────│
+     │                │                  │                │               │
+     │  POST username + password         │                │               │
+     │────────────────────────────────────────────────────────────────────▶
+     │                │                  │                │               │
+     │                │                  │                │               │
+ ═══ STEP 2  /callback   browser is still following redirects ═══════════════════════════════
+     │                │                  │                │               │
+     │  302  Location: /api/v1/auth/callback?code&amp;state   │               │
+     ◀────────────────────────────────────────────────────────────────────│
+     │                │                  │                │               │
+     │  GET /api/v1/auth/callback?code=...&amp;state=xxx      │               │
+     │───────────────────────────────────▶                │               │
+     │                │                  │                │               │
+     │                │                  │  GETDEL oauth_state:xxx   (check + delete)
+     │                │                  │────────────────▶               │
+     │                │                  │                │               │
+     │                │                  │  POST /token   code + client_secret
+     │                │                  │────────────────────────────────▶
+     │                │                  │                │               │
+     │                │                  │  200 {access_token, refresh_token, ...}
+     │                │                  ◀────────────────────────────────│
+     │                │                  │                │               │
+     │                │                  │  SET auth_ticket:yyy  EX 30  = credential
+     │                │                  │────────────────▶               │
+     │                │                  │                │               │
+     │  302  Location: FRONTEND_URL/auth/success?ticket=yyy               │
+     ◀───────────────────────────────────│                │               │
+     │                │                  │                │               │
+     │                │                  │                │               │
+ ═══ STEP 3  /exchange   axios  (ajax) ══════════════════════════════════════════════════════
+     │                │                  │                │               │
+     │  page loads -&gt; JS reads ticket from URL            │               │
+     │────────────────▶                  │                │               │
+     │                │                  │                │               │
+     │                │  POST /api/v1/auth/exchange   body {ticket: yyy}  │
+     │                │──────────────────▶                │               │
+     │                │                  │                │               │
+     │                │                  │  GETDEL auth_ticket:yyy        │
+     │                │                  │────────────────▶               │
+     │                │                  │                │               │
+     │                │  200 {accessToken, refreshToken, bearerType, expiresAt}
+     │                ◀──────────────────│                │               │
+     │                │                  │                │               │
+     │                │                  │                │               │
+ ═══ STEP 4  /logout     axios  (ajax) ══════════════════════════════════════════════════════
+     │                │                  │                │               │
+     │                │  POST /api/v1/auth/logout   body {refreshToken}   │
+     │                │──────────────────▶                │               │
+     │                │                  │                │               │
+     │                │                  │  POST /logout  refresh_token + client_secret
+     │                │                  │────────────────────────────────▶
+     │                │                  │                │               │
+     │                │                  │  204 No Content                │
+     │                │                  ◀────────────────────────────────│
+     │                │                  │                │               │
+     │                │  204 No Content  │                │               │
+     │                ◀──────────────────│                │               │
+     │                │                  │                │               │
+  Browser        Frontend JS        wongnok API         Redis         Keycloak</pre>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>วิธีอ่าน diagram นี้ให้เร็ว</strong> — ดูที่<strong>เส้นแนวตั้งซ้ายสุด (Browser)</strong> ก่อน
+    <br>ตราบใดที่ยังมีลูกศรออกจากเส้นนั้น แปลว่า<strong>ยังอยู่ในโลกของ redirect</strong> —
+    ผู้ใช้ยังเห็นหน้าจอกระพริบ URL เปลี่ยนไปเรื่อย ๆ
+    <br>พอลูกศรย้ายไปออกจากเส้น Frontend JS แปลว่า<strong>เข้าโลกของ AJAX แล้ว</strong> —
+    URL บนแถบที่อยู่หยุดนิ่ง ทุกอย่างเกิดเบื้องหลัง
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🏢 เทียบให้เห็นภาพ — เดินไปอีกตึกเอง กับ ให้เจ้าหน้าที่วิ่งไปให้</span>
+  <p>
+    ไปติดต่อราชการ มีสองแบบที่ต่างกันคนละเรื่อง:
+    <br>· <strong>แบบเดินไปเอง</strong> — เจ้าหน้าที่บอกว่า “เรื่องนี้ต้องไปเซ็นที่ตึก B”
+        คุณต้อง<strong>ลุกเดินไปยืนที่ตึก B จริง ๆ</strong> เห็นป้ายชื่อตึกด้วยตาตัวเอง แล้วเซ็นตรงนั้น
+    <br>· <strong>แบบนั่งรอ</strong> — คุณยื่นเรื่องแล้วนั่งอยู่ที่เดิม เจ้าหน้าที่เดินไปคุยกับตึก B ให้
+        คุณไม่ได้ขยับไปไหนเลย
+  </p>
+  <p>
+    ขั้น 1–2 (<code>/login</code> · <code>/callback</code>) คือ<strong>แบบเดินไปเอง</strong> —
+    เบราว์เซอร์ย้ายทั้งหน้าไปที่ Keycloak จริง URL บนแถบที่อยู่เปลี่ยน
+    เพราะผู้ใช้กำลังจะพิมพ์รหัสผ่าน เขา<em>ต้อง</em>เห็นชื่อโดเมนของเจ้าของหน้า login ด้วยตาตัวเอง
+    <br>ขั้น 3–4 (<code>/exchange</code> · <code>/logout</code>) คือ<strong>แบบนั่งรอ</strong> —
+    <code>axios</code> วิ่งไปคุยให้ ผู้ใช้ยังอยู่หน้าเดิม
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ที่ราชการคุณเลือกได้ว่าจะเดินไปหรือไม่เดิน
+    แต่บนเว็บ<strong>ไม่มีใครถามคุณ</strong> — พอเซิร์ฟเวอร์ตอบ <code>302</code> พร้อม <code>Location:</code>
+    เบราว์เซอร์ก็เดินตามให้ทันทีโดยที่ผู้ใช้ไม่ได้กดอะไรเลย
+    <br>และในขั้น 1–2 <strong>โค้ด JavaScript ของเรายังไม่ได้ทำงานแม้แต่บรรทัดเดียว</strong> —
+    มันเพิ่งได้ทำงานครั้งแรกตอนขั้น 3
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>redirect</dt>
+    <dd>การที่เซิร์ฟเวอร์ตอบว่า “ไม่ใช่ที่นี่ ไปที่นี่แทน” แล้วเบราว์เซอร์ย้ายหน้าตามให้เอง ·
+    พูดกับ senior ว่า <em>“endpoint นี้ตอบ 302 redirect ใช่ไหมครับ ผมเลยเรียกด้วย axios ไม่ได้”</em></dd>
+    <dt>Location header</dt>
+    <dd>บรรทัดใน response ที่บอกว่าให้ไปต่อที่ URL ไหน · เป็นตัวที่ทำให้ redirect เกิดขึ้นจริง ·
+    ถาม AI ว่า <em>“ช่วยดู response header ให้หน่อย ทำไม Location ชี้ผิด path”</em></dd>
+    <dt>AJAX</dt>
+    <dd>การที่ JavaScript ยิง request เองเบื้องหลังโดยหน้าจอไม่เปลี่ยน (<code>axios</code> / <code>fetch</code> ทำงานแบบนี้) ·
+    ประโยคที่ใช้ได้จริงตอนอ่าน diagram: <em>“ขั้นนี้เป็น AJAX หรือเป็น full page redirect ครับ”</em></dd>
+    <dt>user agent</dt>
+    <dd>ศัพท์ทางการที่มาตรฐานใช้เรียก “ตัวเบราว์เซอร์” · เจอคำนี้ในเอกสารเมื่อไหร่
+    ให้อ่านว่า <strong>เบราว์เซอร์ของผู้ใช้</strong> — เดี๋ยวเจออีกทีตอนท้ายบท ตอนที่ RFC 6749 พูดถึง <code>state</code></dd>
+  </dl>
+</div>
+
+<h2>3 · ขั้นที่ 1 — <code>/login</code> (สไลด์หน้า 44)</h2>
+
+<div class="diagram">
+<pre>  Browser        Frontend JS        wongnok API         Redis         Keycloak
+     │                │                  │                │               │
+     │  GET /api/v1/auth/login        &lt;- window.location, NOT ajax        │
+     │───────────────────────────────────▶                │               │
+     │                │                  │                │               │
+     │                │                  │  SET oauth_state:xxx  EX 300   │
+     │                │                  │────────────────▶               │
+     │                │                  │                │               │
+     │  302  Location: KEYCLOAK/auth?...&amp;state=xxx        │               │
+     ◀───────────────────────────────────│                │               │
+     │                │                  │                │               │
+     │  GET /auth?client_id&amp;redirect_uri&amp;state=xxx        │               │
+     │────────────────────────────────────────────────────────────────────▶
+     │                │                  │                │               │
+     │  200  Keycloak login page         │                │               │
+     ◀────────────────────────────────────────────────────────────────────│
+     │                │                  │                │               │
+     │  POST username + password         │                │               │
+     │────────────────────────────────────────────────────────────────────▶
+     │                │                  │                │               │
+  Browser        Frontend JS        wongnok API         Redis         Keycloak</pre>
+</div>
+
+<h3>ต้องใช้ <code>window.location</code> เท่านั้น ห้ามใช้ AJAX</h3>
+
+<p>
+  จุดนี้สไลด์เขียนไว้ตัวเล็ก ๆ ว่า "window.location เท่านั้น" แต่มันเป็นเรื่องคอขาดบาดตาย
+  <br>ก่อนอื่นนิยามสองคำ:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำ</th><th>หมายความว่า</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>window.location = "..."</code></td>
+      <td><strong>สั่งเบราว์เซอร์ให้ย้ายทั้งหน้าไปที่ URL นั้น</strong> — หน้าปัจจุบันถูกทิ้ง แถบที่อยู่เปลี่ยน และ redirect ต่อ ๆ ไปเบราว์เซอร์เดินตามให้เอง</td>
+    </tr>
+    <tr>
+      <td>AJAX (<code>axios.get(...)</code>)</td>
+      <td><strong>ยิง request เบื้องหลังโดยไม่เปลี่ยนหน้า</strong> — JavaScript ได้ response กลับมาเป็นข้อมูลก้อนหนึ่ง หน้าจอไม่ขยับ</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทีนี้ดูว่า <code>/api/v1/auth/login</code> ตอบอะไรกลับมา: มันตอบ <strong>302</strong> พร้อม header
+  <code>Location:</code> ที่ชี้ไปหน้า login ของ Keycloak
+  <br>ถ้าใช้ AJAX จะพังสองชั้นซ้อน:
+</p>
+
+<ul>
+  <li><strong>ชั้นที่ 1 — หน้าจอไม่ไปไหน</strong> ต่อให้ <code>axios</code> เดินตาม redirect จนได้ HTML
+      หน้า login ของ Keycloak มา มันก็ได้มาเป็น<em>สตริง</em>อยู่ในตัวแปร JavaScript
+      ผู้ใช้ไม่เห็นอะไรเลย ยังนั่งดูหน้าเดิม</li>
+  <li><strong>ชั้นที่ 2 — ผู้ใช้ต้องได้อยู่บนโดเมนของ Keycloak จริง ๆ</strong> เพราะเขากำลังจะพิมพ์รหัสผ่าน
+      เขาต้องมองเห็นชื่อโดเมนบนแถบที่อยู่ว่าเป็นของผู้ให้บริการ login ไม่ใช่ของเว็บเรา
+      <br>ถ้าเว็บเราเอา HTML ของหน้า login มาแปะเองได้ นั่นคือหน้าตาของการ<strong>ฟิชชิง</strong>พอดี —
+      และนั่นคือเหตุผลที่ Keycloak ไม่ยอมให้ทำอยู่แล้ว</li>
+</ul>
+
+<p>
+  Keycloak ตอบหน้า login เป็น HTML จริง ๆ — ผม <code>curl</code> ไปที่ <code>authorization_endpoint</code>
+  แล้วนับขนาดที่ได้:
+</p>
+
+<pre><code>$ curl -s -c cookies.txt "$KC/realms/wongnok/protocol/openid-connect/auth?client_id=wongnok-api&amp;response_type=code&amp;scope=openid&amp;redirect_uri=$RU&amp;state=$STATE" | wc -c
+<strong>6882</strong>          <span class="c"># หน้า HTML ล้วน ๆ ไม่ใช่ JSON — เอาไปให้ axios ก็ทำอะไรต่อไม่ได้</span></code></pre>
+
+<h3><code>state</code> เกิดตรงนี้ แล้วถูกฝากไว้ที่ Redis</h3>
+
+<p>
+  ก่อนจะ 302 ออกไป wongnok API สุ่มค่าขึ้นมาหนึ่งค่า เรียกว่า <strong><code>state</code></strong>
+  แล้วทำสองอย่างพร้อมกัน: <strong>เก็บลง Redis</strong> และ <strong>แนบไปกับ URL ของ Keycloak</strong>
+  <br>ผมรัน Redis จริงให้ดูว่าคำสั่งนั้นเกิดอะไรขึ้น (<code>EX 300</code> คือ 300 วินาที = 5 นาที ตามสไลด์):
+</p>
+
+<pre><code>SET oauth_state:9f2b7c1e "1" EX 300 -&gt; <strong>OK</strong>
+TTL oauth_state:9f2b7c1e            -&gt; <strong>300</strong>
+EXISTS oauth_state:9f2b7c1e         -&gt; <strong>1</strong></code></pre>
+
+<p>
+  เหตุผลที่ต้องเก็บฝั่งเรา: เดี๋ยวตอนขั้น 2 Keycloak จะส่ง <code>state</code> ค่านี้กลับมาให้เรา
+  และเราต้องพิสูจน์ให้ได้ว่า<strong>มันเป็นค่าที่เราเป็นคนออกให้เอง</strong> ไม่ใช่ค่าที่ใครก็ไม่รู้แต่งมา
+  — รายละเอียดว่ามันกันอะไรได้ อยู่ในหัวข้อ 9
+</p>
+
+<h2>4 · ขั้นที่ 2 — <code>/callback</code> (สไลด์หน้า 45)</h2>
+
+<div class="diagram">
+<pre>  Browser        Frontend JS        wongnok API         Redis         Keycloak
+     │                │                  │                │               │
+     │  302  Location: /api/v1/auth/callback?code&amp;state   │               │
+     ◀────────────────────────────────────────────────────────────────────│
+     │                │                  │                │               │
+     │  GET /api/v1/auth/callback?code=...&amp;state=xxx      │               │
+     │───────────────────────────────────▶                │               │
+     │                │                  │                │               │
+     │                │                  │  GETDEL oauth_state:xxx   (check + delete)
+     │                │                  │────────────────▶               │
+     │                │                  │                │               │
+     │                │                  │  POST /token   code + client_secret
+     │                │                  │────────────────────────────────▶
+     │                │                  │                │               │
+     │                │                  │  200 {access_token, refresh_token, ...}
+     │                │                  ◀────────────────────────────────│
+     │                │                  │                │               │
+     │                │                  │  SET auth_ticket:yyy  EX 30  = credential
+     │                │                  │────────────────▶               │
+     │                │                  │                │               │
+     │  302  Location: FRONTEND_URL/auth/success?ticket=yyy               │
+     ◀───────────────────────────────────│                │               │
+     │                │                  │                │               │
+  Browser        Frontend JS        wongnok API         Redis         Keycloak</pre>
+</div>
+
+<p>
+  ขั้นนี้เริ่มตอนผู้ใช้กด "เข้าสู่ระบบ" ที่หน้า Keycloak แล้ว Keycloak ตอบ <strong>302</strong>
+  เด้งเบราว์เซอร์กลับมาที่ <code>redirect_uri</code> ที่เราลงทะเบียนไว้
+  <br>ผมรันของจริง: สร้าง realm <code>wongnok</code> + client <code>wongnok-api</code> แบบ confidential
+  (มี <code>client_secret</code>) + user <code>chef1</code> แล้วเดินฟอร์ม login ด้วย <code>curl</code>
+  นี่คือ header ที่ Keycloak ตอบกลับมาจริง ๆ:
+</p>
+
+<pre><code>HTTP/1.1 <strong>302 Found</strong>
+Location: http://localhost:8080/api/v1/auth/callback?state=9f2b7c1e-state-from-redis&amp;session_state=afOr4xGE8XiarnPyxNrzqiyn&amp;iss=http%3A%2F%2Flocalhost%3A18081%2Frealms%2Fwongnok&amp;code=10f0f184-2410-7b36-ab64-b85d03545adf.afOr4xGE8XiarnPyxNrzqiyn.5a65a5e5-7360-4b21-ae33-8b765128d89f</code></pre>
+
+<p>แกะ query string ออกมาทีละตัว:</p>
+
+<pre><code>path  = /api/v1/auth/callback
+state           = 9f2b7c1e-state-from-redis  (ยาว 25)
+session_state   = afOr4xGE8XiarnPyxNrzqiyn  (ยาว 24)
+iss             = http://localhost:18081/realms/wongnok  (ยาว 37)
+code            = 10f0f184-2410-7b36-ab64-b85d03545adf.afOr4xGE8XiarnPyxNrzqiy...  (ยาว 98)</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    สังเกต <code>state</code> ที่กลับมา: <strong><code>9f2b7c1e-state-from-redis</code></strong> —
+    เป็นค่าเดียวกับที่เราส่งไปเป๊ะ ๆ
+    <br>Keycloak ไม่ได้ทำอะไรกับมันเลย มันแค่<strong>คืนกลับมาให้เหมือนเดิม</strong>
+    ซึ่งเป็นทั้งหมดที่ระบบ <code>state</code> ต้องการ
+  </p>
+</div>
+
+<h3>เช็ค state แล้ว<em>ลบ</em>ทิ้งในคำสั่งเดียว</h3>
+
+<p>
+  สไลด์เขียนว่า "เช็ค + ลบ <code>oauth_state:xxx</code>" — คำสั่ง Redis ที่ทำสองอย่างนี้พร้อมกันชื่อ
+  <strong><code>GETDEL</code></strong> (อ่านค่าคืนมา แล้วลบ key นั้นทิ้ง เป็นคำสั่งเดียวกัน)
+  <br>ผมรันจริง รวมถึงเคสที่คนพยายามใช้ <code>state</code> เดิมซ้ำ และเคสที่แต่ง <code>state</code> ขึ้นมาเอง:
+</p>
+
+<pre><code>GETDEL oauth_state:9f2b7c1e         -&gt; <strong>1</strong>   <span class="c"># เลข 1 ตรงนี้คือ "ค่าที่เก็บไว้" เพราะเรา SET เป็นสตริง "1" ไม่ใช่รหัสว่าสำเร็จ</span>
+<span class="c">-- ยิงซ้ำด้วย state เดิม (replay) --</span>
+GETDEL oauth_state:9f2b7c1e         -&gt; <strong>(ว่าง)</strong>
+EXISTS oauth_state:9f2b7c1e         -&gt; <strong>0</strong>   <span class="c"># ส่วนเลข 0/1 ของ EXISTS คือ "ไม่มี/มี" คนละความหมายกับบรรทัดบน</span>
+
+<span class="c">-- state ที่ผู้โจมตีแต่งขึ้นเอง ไม่เคยมีใน Redis --</span>
+GETDEL oauth_state:attacker-made-it -&gt; <strong>(ว่าง)</strong></code></pre>
+
+<p>
+  <strong>สองเคสล่างให้ผลเหมือนกันเป๊ะ</strong> — ทั้งการยิงซ้ำและการแต่งค่าเอง ได้ค่าว่างเหมือนกัน
+  แปลว่าโค้ดฝั่งเราเขียนเงื่อนไขเดียวจบ: <em>ถ้า <code>GETDEL</code> ไม่คืนค่า ให้ปฏิเสธ</em>
+</p>
+
+<h3>แลก <code>code</code> เป็น token ที่ฝั่งเซิร์ฟเวอร์</h3>
+
+<p>
+  ตอนนี้ wongnok API ถือ <code>code</code> อยู่ในมือ มันจะ <code>POST</code> ไปที่ <code>token_endpoint</code>
+  ของ Keycloak พร้อม <code>client_secret</code>
+  <br>ขั้นนี้<strong>เกิดที่เซิร์ฟเวอร์ ไม่ผ่านเบราว์เซอร์เลย</strong> — <code>client_secret</code> จึงไม่เคยออกจากเครื่องเรา
+  ผลรันจริง:
+</p>
+
+<pre><code>$ curl -s -X POST $KC/realms/wongnok/protocol/openid-connect/token \
+    -d client_id=wongnok-api -d client_secret=super-secret-123 \
+    -d grant_type=authorization_code -d redirect_uri=$RU \
+    --data-urlencode code@code.txt
+
+<strong>HTTP 200</strong>
+access_token        = eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkI... (ยาว 1378)
+expires_in          = <strong>300</strong>
+refresh_expires_in  = <strong>1800</strong>
+refresh_token       = eyJhbGciOiJIUzUxMiIsInR5cCIgOiAiSldUIiwia2lkI... (ยาว 697)
+token_type          = Bearer
+id_token            = eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkI... (ยาว 1069)
+not-before-policy   = 0
+session_state       = afOr4xGE8XiarnPyxNrzqiyn
+scope               = openid profile email</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>สองตัวเลขนี้จำไว้ เพราะเป็นค่า default จริงของ Keycloak 26.7</strong>:
+    <code>expires_in = 300</code> (access token อยู่ได้ <strong>5 นาที</strong>) ·
+    <code>refresh_expires_in = 1800</code> (refresh token <strong>30 นาที</strong>)
+    <br>หลายคนจำว่าเป็น 1 ชั่วโมง — ไม่ใช่
+    <br><strong>ส่วนตัวเลข "ยาว xxx" อย่าเอาไปเทียบว่าตรงกันเป๊ะ</strong> — ความยาวของ <code>access_token</code>
+    ขึ้นกับว่า realm ของคุณใส่ role กับ client scope อะไรให้ user บ้าง
+    ผมลองรันซ้ำบน realm เปล่า ๆ ที่มีแค่ client กับ user หนึ่งคนได้ <code>access_token</code> ยาว 1083 กับ
+    <code>refresh_token</code> ยาว 673 ขณะที่ <code>id_token</code> ยังยาว 1069 เท่าเดิม
+    <br>สิ่งที่ต้องตรงคือ <strong>ชื่อ field กับตัวเลขวินาที</strong> ไม่ใช่จำนวนตัวอักษร
+  </p>
+</div>
+
+<p>
+  แล้ว <code>code</code> ใช้ซ้ำได้ไหม? ผมเอาตัวเดิมไปแลกอีกรอบทันที:
+</p>
+
+<pre><code>{"error":"invalid_grant","error_description":"<strong>Code not valid</strong>"}
+HTTP <strong>400</strong></code></pre>
+
+<p>
+  <strong><code>code</code> เป็นของใช้ครั้งเดียว</strong> เหมือนกัน — และนี่เป็นแบบที่ Keycloak บังคับให้เอง
+  เราไม่ต้องเขียนอะไรเพิ่ม
+</p>
+
+<h3>เก็บ credential ไว้ใต้ <code>ticket</code> อายุ 30 วินาที</h3>
+
+<p>
+  ตอนนี้ wongnok API ถือ token ครบแล้ว แต่<strong>ส่งกลับหาผู้ใช้ตรง ๆ ไม่ได้</strong>
+  เพราะช่องทางที่เหลืออยู่ตอนนี้คือ 302 ซึ่งส่งได้แค่ URL
+  <br>วิธีแก้คือเก็บ credential ไว้ใน Redis ใต้ key ที่สุ่มขึ้นมาใหม่ชื่อ <code>auth_ticket:yyy</code>
+  แล้วส่งกลับไปแค่<em>ชื่อ key</em> ผลรันจริงผ่าน go-redis:
+</p>
+
+<pre><code>PING -&gt; PONG
+Set(auth_ticket, 30s) err = &lt;nil&gt;
+TTL -&gt; <strong>30s</strong></code></pre>
+
+<p>
+  แล้วเบราว์เซอร์ก็โดนเด้งไปหน้า frontend พร้อม ticket ติดไปใน URL:
+  <code>302 Location: FRONTEND_URL/auth/success?ticket=yyy</code>
+</p>
+
+<h2>5 · ขั้นที่ 3 — <code>/exchange</code> และหัวใจของทั้งบท (สไลด์หน้า 46)</h2>
+
+<div class="diagram">
+<pre>  Browser        Frontend JS        wongnok API         Redis         Keycloak
+     │                │                  │                │               │
+     │  page loads -&gt; JS reads ticket from URL            │               │
+     │────────────────▶                  │                │               │
+     │                │                  │                │               │
+     │                │  POST /api/v1/auth/exchange   body {ticket: yyy}   &lt;- axios
+     │                │──────────────────▶                │               │
+     │                │                  │                │               │
+     │                │                  │  GETDEL auth_ticket:yyy        │
+     │                │                  │────────────────▶               │
+     │                │                  │                │               │
+     │                │  200 {accessToken, refreshToken, bearerType, expiresAt}
+     │                ◀──────────────────│                │               │
+     │                │                  │                │               │
+  Browser        Frontend JS        wongnok API         Redis         Keycloak</pre>
+</div>
+
+<p>
+  มาถึงคำถามที่บทนี้เกิดมาเพื่อตอบ:
+</p>
+
+<div class="warn">
+  <span class="label">❓ ในเมื่อจะแนบอะไรไปกับ URL ก็ได้ ทำไมไม่แนบ <code>access_token</code> ไปเลย จะได้ไม่ต้องมีขั้น <code>/exchange</code></span>
+  <p style="margin-bottom:0">
+    เขียนเป็น <code>302 Location: FRONTEND_URL/auth/success?access_token=eyJhbGci...</code> ก็จบแล้วไม่ใช่เหรอ
+    <br>คำตอบคือ <strong>อะไรก็ตามที่อยู่ใน URL จะถูกบันทึกไว้หลายที่โดยที่เราไม่ได้สั่ง</strong> —
+    และนั่นคือความต่างระหว่าง query string กับ body ที่
+    <a href="../../day-8/lessons/0035-query-body-header.html">บทเรียน 35</a> ปูไว้
+    <br>หัวข้อนี้ผมรันวัดให้ดูทีละที่
+  </p>
+</div>
+
+<h3>ที่ที่ 1 — access log ของเซิร์ฟเวอร์</h3>
+
+<p>
+  <strong>access log</strong> คือบันทึกที่เว็บเซิร์ฟเวอร์เขียนไว้ทุกครั้งที่มี request เข้ามา
+  บรรทัดหนึ่งต่อหนึ่ง request โดยปกติจะบันทึก method กับ URL
+  <br>ทั้ง <code>gin.Logger()</code>, nginx, และ load balancer ของ cloud ทุกเจ้าทำแบบนี้เป็น default
+  <br>ผมเขียน middleware Go ที่พิมพ์แบบเดียวกัน แล้วยิงสองแบบเทียบ — แบบแรกส่ง ticket ไปใน query string
+  แบบที่สองส่งไปใน body ของ POST:
+</p>
+
+<pre><code>=== แบบที่ 1 — ส่ง ticket ไปกับ query string (GET) ===
+[access log] GET /api/v1/auth/success-bad<strong>?ticket=T-9f2b7c1e</strong>
+
+=== แบบที่ 2 — ส่ง ticket ไปกับ body ของ POST ===
+[access log] POST /api/v1/auth/exchange
+   (handler เห็น body = {"ticket":"T-9f2b7c1e"})
+   (client ได้ status=200 body={"accessToken":"eyJhbGciOiJSUzI1NiJ9...","refreshToken":"eyJhbGciOiJIUzUxMiJ9...","bearerType":"Bearer","expiresAt":1787368745})</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>บรรทัด access log ของแบบที่สองไม่มี ticket อยู่เลย</strong> —
+    ทั้งที่ handler เห็น body เต็ม ๆ และตอบ token กลับไปครบ
+    <br>เหตุผลง่ายมาก: <strong>body ไม่ได้เป็นส่วนหนึ่งของ request line</strong> ที่ log เขียน —
+    ต้องตั้งใจเขียนโค้ดให้ log body ถึงจะโผล่ (ซึ่งไม่มีใครทำ เพราะมันหนักและมีของลับ)
+  </p>
+</div>
+
+<h3>ที่ที่ 2 — history ของเบราว์เซอร์</h3>
+
+<p>
+  URL ที่ถูกโหลดจะไปอยู่ในประวัติการเข้าเว็บของเครื่องนั้น พร้อม query string ครบ ๆ
+  <br>ผมเปิดหน้าจริงในเบราว์เซอร์แล้วถามมันว่าตอนนี้ URL คืออะไร:
+</p>
+
+<pre><code>&gt; location.href
+"http://127.0.0.1:19080/auth/success<strong>?ticket=SECRET-TICKET-abc123</strong>"</code></pre>
+
+<p>
+  ค่านี้คือสิ่งเดียวกับที่เข้าไปอยู่ใน history — และมันอยู่ในเครื่องผู้ใช้ต่อไป
+  แม้ปิดแท็บไปแล้ว ค้นเจอได้จากช่องค้นหาของเบราว์เซอร์
+</p>
+
+<h3>ที่ที่ 3 — header <code>Referer</code></h3>
+
+<p>
+  <strong><code>Referer</code></strong> (สะกดผิดมาตั้งแต่ปี 1996 และไม่มีใครแก้) คือ header
+  ที่เบราว์เซอร์แนบไปบอกปลายทางว่า "ฉันมาจากหน้าไหน"
+  <br>มันถูกแนบไปกับ<strong>ทุกไฟล์ย่อยที่หน้านั้นโหลด</strong> — รูป, ไฟล์ CSS, สคริปต์ analytics
+  <br>ผมทำหน้าทดสอบที่โหลดรูปสองรูป: รูปหนึ่งจากเซิร์ฟเวอร์เดียวกัน อีกรูปจากเซิร์ฟเวอร์ภายนอก (คนละพอร์ต = คนละ origin)
+  แล้วให้ทั้งสองฝั่งพิมพ์ <code>Referer</code> ที่ได้รับ นี่คือผลจริงจาก Google Chrome 151:
+</p>
+
+<pre><code>[frontend  :19080] GET /auth/success?ticket=SECRET-TICKET-abc123  Referer=""
+[frontend  :19080] GET /logo.gif       Referer=<strong>"http://127.0.0.1:19080/auth/success?ticket=SECRET-TICKET-abc123"</strong>
+[third-party :19081] GET /tracker.gif  Referer=<strong>"http://127.0.0.1:19080/"</strong>
+[frontend  :19080] GET /favicon.ico    Referer=<strong>"http://127.0.0.1:19080/auth/success?ticket=SECRET-TICKET-abc123"</strong></code></pre>
+
+<div class="note">
+  <p><strong>ผลนี้ละเอียดกว่าที่สไลด์บอก และต้องอ่านให้ครบทั้งสามข้อ:</strong></p>
+  <ul>
+    <li><strong>ไฟล์จาก origin เดียวกัน (<code>/logo.gif</code>) ได้ URL เต็ม พร้อม <code>?ticket=</code></strong> —
+        แปลว่าสคริปต์ทุกตัวที่โหลดจากเว็บเราเอง เห็น ticket หมด</li>
+    <li><strong>ไฟล์จากภายนอก (<code>/tracker.gif</code>) ได้แค่ <code>http://127.0.0.1:19080/</code></strong> —
+        เบราว์เซอร์ยุคนี้ตัด path กับ query ทิ้งก่อนส่งข้ามเว็บให้เอง</li>
+    <li><strong>แม้แต่ <code>/favicon.ico</code> ที่หน้าเว็บไม่ได้สั่งโหลดเองก็ได้ URL เต็มพร้อม <code>?ticket=</code></strong> —
+        เบราว์เซอร์เป็นคนขอไอคอนนี้เองเพื่อเอาไปแปะบนแท็บ แต่มันก็ยังแนบ <code>Referer</code> ของหน้าที่กำลังเปิดอยู่ไปด้วย
+        <br>แปลว่า <strong>คุณไม่ต้องเขียนโค้ดอะไรผิดเลย ticket ก็เข้า log ไปแล้วหนึ่งรอบ</strong></li>
+  </ul>
+  <p style="margin-bottom:0">
+    เหตุผลของข้อที่สองคือค่าปริยายของ <code>Referrer-Policy</code> ในเบราว์เซอร์สมัยใหม่คือ
+    <code>strict-origin-when-cross-origin</code> ซึ่งแปลว่า "ข้ามเว็บเมื่อไหร่ ส่งแค่ชื่อโดเมน"
+    <br><strong>ดังนั้นถ้าใครบอกว่า "token ใน URL จะรั่วไปให้เว็บภายนอกทาง <code>Referer</code>" — ทุกวันนี้ไม่จริงแล้ว</strong>
+    แต่มันยัง<strong>รั่วเข้า access log ของทุกตัวที่ request วิ่งผ่าน</strong> (proxy, load balancer, CDN)
+    และยัง<strong>รั่วให้สคริปต์ทุกตัวใน origin เดียวกัน</strong> ซึ่งพอแล้วที่จะไม่ทำ
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ข้อยกเว้นที่คนเข้าใจผิดบ่อยที่สุด — Google Analytics ยังเห็น ticket อยู่</span>
+  <p>
+    <code>Referrer-Policy</code> คุมได้แค่ <code>Referer</code> ซึ่งเป็น header ที่<strong>เบราว์เซอร์</strong>เป็นคนใส่ให้
+    <br>แต่สคริปต์ analytics ไม่ได้พึ่ง header ตัวนั้นเลย — มันอ่าน <code>document.location</code> เองด้วย JavaScript
+    แล้วส่ง URL เต็มไปกับ request ของตัวเอง (ใน GA4 คือ field <code>page_location</code>)
+    <br>ผมจำลองให้ดูด้วยสคริปต์ที่ทำแบบเดียวกับ gtag เป๊ะ ๆ คือโหลดจากโดเมนภายนอก (<code>:19081</code>) แล้วยิงกลับไปที่โดเมนตัวเอง:
+  </p>
+  <pre style="margin:0.6rem 0"><code>[analytics :19081] GET /gtag.js   Referer="http://127.0.0.1:19080/"
+[analytics :19081] GET /collect?page_location=http%3A%2F%2F127.0.0.1%3A19080%2Fauth%2Fsuccess<strong>%3Fticket%3DSECRET-TICKET-abc123</strong>   Referer="http://127.0.0.1:19080/"</code></pre>
+  <p style="margin-bottom:0">
+    <strong>สังเกตสองบรรทัดนี้ให้ดี:</strong> <code>Referer</code> ของทั้งคู่ถูกตัดเหลือแค่โดเมนตามที่หัวข้อนี้บอกไว้จริง
+    แต่ <code>ticket</code> เดินทางไปถึงเซิร์ฟเวอร์ภายนอกจนได้ — ผ่าน query string ที่<em>สคริปต์เป็นคนสร้างเอง</em>
+    <br>นี่คือเหตุผลที่ทางแก้ต้องเป็น "ทำให้ของใน URL ไร้ค่า" ไม่ใช่ "ตั้ง <code>Referrer-Policy</code> ให้แน่นขึ้น"
+  </p>
+</div>
+
+<h3>เพราะฉะนั้น ticket จึงต้องเป็นของที่<em>หลุดแล้วไม่มีค่า</em></h3>
+
+<p>
+  ทางแก้ที่ Wongnok เลือกไม่ใช่ "ทำให้ URL ไม่รั่ว" (ทำไม่ได้) แต่คือ
+  <strong>ยอมให้ของใน URL รั่ว แล้วทำให้ของชิ้นนั้นไร้ค่าตั้งแต่แรก</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เทียบสองสิ่ง</th><th><code>ticket</code> (อยู่ใน URL)</th><th><code>accessToken</code> (อยู่ใน body ของ POST)</th></tr></thead>
+  <tbody>
+    <tr><td>เดินทางยังไง</td><td>query string ของ 302 → แถบที่อยู่</td><td>response body ของ <code>POST /exchange</code></td></tr>
+    <tr><td>เข้า access log ไหม</td><td><strong>เข้า</strong></td><td><strong>ไม่เข้า</strong></td></tr>
+    <tr><td>เข้า browser history ไหม</td><td><strong>เข้า</strong></td><td>ไม่เข้า</td></tr>
+    <tr><td>โผล่ใน <code>Referer</code> ไหม</td><td><strong>โผล่</strong> (สำหรับ origin เดียวกัน)</td><td>ไม่โผล่</td></tr>
+    <tr><td>อายุ</td><td><strong>30 วินาที</strong></td><td>300 วินาที (5 นาที) ตามค่า Keycloak</td></tr>
+    <tr><td>ใช้ได้กี่ครั้ง</td><td><strong>ครั้งเดียว</strong> — ถูก <code>GETDEL</code> ทันทีที่แลก</td><td>ใช้ซ้ำได้จนหมดอายุ</td></tr>
+    <tr><td>ถ้าหลุดแล้วเกิดอะไร</td><td>ผู้เก็บได้ต้องชิงใช้ให้ทันภายใน 30 วินาที <strong>และต้องชิงก่อนเจ้าของด้วย</strong> — ซึ่งเจ้าของแลกไปแล้วตั้งแต่วินาทีแรก</td><td>เข้าถึง API ในนามผู้ใช้ได้จนกว่าจะหมดอายุ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">🧺 เทียบให้เห็นภาพ — ใบรับของที่ร้านซักรีด</span>
+  <p>
+    เอาผ้าไปซัก ร้านไม่ได้ยัดผ้ากลับใส่มือคุณตอนนั้น เขาให้<strong>ใบรับของ</strong>มาแผ่นเดียว
+    <br>ใบนั้น<strong>ไม่ใช่ผ้า</strong> — ทำหล่นกลางถนน คนเก็บได้ก็ยังไม่มีผ้าอยู่ในมือ
+    ต้องเดินไปที่ร้านแล้วยื่นให้พนักงานถึงจะได้ผ้า
+  </p>
+  <p>
+    <code>ticket</code> ที่ติดมาใน URL คือ<strong>ใบรับของ</strong> ·
+    <code>accessToken</code> ที่ได้จาก <code>POST /exchange</code> คือ<strong>ผ้า</strong>
+    <br>เว็บ<em>ยอม</em>ให้ใบรับของไปนอนอยู่ทั้งสามที่ที่ผมวัดมาข้างบน (access log · history ·
+    <code>Referer</code>) เพราะของที่รั่วออกไปนั้น<strong>เอาไปทำอะไรเองไม่ได้</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ใบรับของจริงมักใช้ได้เรื่อย ๆ จนกว่าจะมีคนมารับผ้า
+    ใครหยิบไปก่อนก็ได้ผ้าไป
+    <br>แต่ <code>ticket</code> ถูกบีบสองชั้นจนแทบไม่เหลือค่า: <strong>อยู่ได้ 30 วินาที</strong>
+    และ <strong>ใช้ได้ครั้งเดียว</strong> — เจ้าของตัวจริงแลกไปตั้งแต่วินาทีแรกที่หน้าเว็บโหลดเสร็จ
+    คนที่เก็บใบได้ทีหลังจึงเจอแค่ใบเปล่า
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>bearer token</dt>
+    <dd>token ประเภท “ใครถือก็ใช้ได้” ไม่ถามว่าเป็นใคร — <code>accessToken</code> ในบทนี้เป็นแบบนี้
+    จึงห้ามให้มันไปโผล่ในที่ที่ถูกบันทึกไว้ ·
+    <em>“ตัวนี้เป็น bearer token ถ้าหลุดคือใช้ได้เลย เราไม่ควรส่งผ่าน query string นะครับ”</em></dd>
+    <dt>one-time token / single-use</dt>
+    <dd>ของที่ออกแบบให้แลกได้ครั้งเดียวแล้วตาย · <code>ticket</code> · <code>state</code> ·
+    <code>code</code> เป็นแบบนี้ทั้งหมด ·
+    ถาม AI ได้ว่า <em>“ช่วยรีวิวหน่อยว่า flow นี้ทำให้ ticket เป็น one-time token จริงไหม”</em></dd>
+    <dt>access log</dt>
+    <dd>บันทึกที่เซิร์ฟเวอร์เขียนให้ทุก request โดยอัตโนมัติ (method + URL) ·
+    ประโยคที่ใช้บ่อยตอนรีวิวโค้ด: <em>“อย่าใส่ค่านี้ใน query string เดี๋ยวมันเข้า access log”</em></dd>
+    <dt>credential</dt>
+    <dd>คำรวมของ “ของที่ใช้ยืนยันตัวตน” — ในบทนี้คือก้อน
+    <code>{accessToken, refreshToken, bearerType, expiresAt}</code> ที่เราเก็บไว้ใน Redis ·
+    เจอตัวแปรชื่อ <code>cred</code> ในโค้ดคนอื่นเมื่อไหร่ ให้เดาไว้ก่อนว่าเป็นของชิ้นนี้</dd>
+  </dl>
+</div>
+
+<h3><code>GETDEL</code> ทำให้ ticket ใช้ได้ครั้งเดียวจริงไหม</h3>
+
+<p>รันจริงผ่าน go-redis v9.22.0:</p>
+
+<pre><code>GetDel #1 -&gt; v={"accessToken":"eyJhbGciOiJSUzI1NiJ9...","refreshToken":"eyJhbGciOiJIUzUxMiJ9...","bearerType":"Bearer","expiresAt":1787368745} err=&lt;nil&gt;
+GetDel #2 -&gt; v=<strong>""</strong> err=<strong>redis: nil</strong>
+errors.Is(err2, redis.Nil) = <strong>true</strong></code></pre>
+
+<p>
+  ก่อนดู handler ต้องมี struct ที่ใช้แกะ JSON ก้อนนั้นก่อน — <strong>นี่คือที่มาของชื่อ field ใน response ข้างบน</strong>
+  (ถ้าข้ามบล็อกนี้ไป ตอนคอมไพล์จะเจอ <code>undefined: Credential</code> ทันที)
+  <br>สองบล็อกถัดจากนี้เป็น<strong>สองไฟล์จริงใน <code>package auth</code> เดียวกัน</strong> —
+  ก๊อปไปวางทั้งคู่แล้ว <code>go build ./...</code> ผ่าน ไม่ต้องเติมอะไรเอง
+  (ทดสอบบน Go 1.26.5 · <code>gin v1.12.0</code> · <code>go-redis v9.22.0</code>):
+</p>
+
+<pre><code><span class="c">// internal/auth/credential.go</span>
+<span class="k">package</span> auth
+
+<span class="c">// ก้อนที่เราเก็บลง Redis ตอนขั้น 2 และคายกลับให้เบราว์เซอร์ตอนขั้น 3</span>
+<span class="k">type</span> Credential <span class="k">struct</span> {
+    AccessToken  <span class="k">string</span> <span class="s">`json:"accessToken"`</span>
+    RefreshToken <span class="k">string</span> <span class="s">`json:"refreshToken"`</span>
+    BearerType   <span class="k">string</span> <span class="s">`json:"bearerType"`</span>
+    ExpiresAt    <span class="k">int64</span>  <span class="s">`json:"expiresAt"`</span>
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong><code>bearerType</code> เป็นชื่อที่ API ของเราตั้งเอง ไม่ใช่ชื่อมาตรฐานของ OAuth</strong> —
+    Keycloak ตอบกลับมาว่า <code>token_type = Bearer</code> (ดูผลรัน token endpoint ข้างบน)
+    แล้วเราเปลี่ยนเป็น camelCase ให้เข้าชุดกับ field อื่นใน response ของเรา
+    <br>ถ้าไปหาคำว่า <code>bearerType</code> ใน RFC 6749 จะไม่เจอ เพราะมันไม่ได้อยู่ในนั้น
+  </p>
+</div>
+
+<p>
+  หน้าตาของ handler <code>/exchange</code> ที่ถูกต้องจึงสั้นมาก — และ<strong>บรรทัดที่สำคัญที่สุดคือบรรทัดเดียว</strong>
+  ที่ใช้ <code>GetDel</code> แทน <code>Get</code>:
+</p>
+
+<pre><code><span class="c">// internal/auth/exchange.go — อยู่ package เดียวกับ credential.go จึงเห็น Credential</span>
+<span class="k">package</span> auth
+
+<span class="k">import</span> (
+    <span class="s">"encoding/json"</span>
+    <span class="s">"errors"</span>
+    <span class="s">"net/http"</span>
+
+    <span class="s">"github.com/gin-gonic/gin"</span>
+    <span class="s">"github.com/redis/go-redis/v9"</span>
+)
+
+<span class="k">func</span> <span class="f">exchangeHandler</span>(rdb *redis.Client) gin.HandlerFunc {
+    <span class="k">return</span> <span class="k">func</span>(c *gin.Context) {
+        <span class="k">var</span> req <span class="k">struct</span>{ Ticket <span class="k">string</span> <span class="s">`json:"ticket" binding:"required"`</span> }
+        <span class="k">if</span> err := c.<span class="f">ShouldBindJSON</span>(&amp;req); err != <span class="k">nil</span> {
+            c.<span class="f">JSON</span>(http.StatusBadRequest, gin.H{<span class="s">"error"</span>: <span class="s">"invalid body"</span>})
+            <span class="k">return</span>
+        }
+
+        <span class="c">// GetDel = อ่านแล้วลบในคำสั่งเดียว -> ticket ใช้ได้ครั้งเดียวเท่านั้น</span>
+        raw, err := rdb.<span class="f">GetDel</span>(c, <span class="s">"auth_ticket:"</span>+req.Ticket).<span class="f">Result</span>()
+
+        <span class="k">switch</span> {
+        <span class="k">case</span> errors.<span class="f">Is</span>(err, redis.Nil):        <span class="c">// ไม่มี ticket นี้: หมดอายุ / ใช้ไปแล้ว / แต่งมาเอง</span>
+            c.<span class="f">JSON</span>(http.StatusUnauthorized, gin.H{<span class="s">"error"</span>: <span class="s">"invalid ticket"</span>})
+            <span class="k">return</span>
+        <span class="k">case</span> err != <span class="k">nil</span>:                       <span class="c">// Redis มีปัญหาจริง ๆ คนละเรื่องกัน</span>
+            c.<span class="f">JSON</span>(http.StatusInternalServerError, gin.H{<span class="s">"error"</span>: <span class="s">"storage error"</span>})
+            <span class="k">return</span>
+        }
+
+        <span class="k">var</span> cred Credential
+        <span class="k">if</span> err := json.<span class="f">Unmarshal</span>([]<span class="k">byte</span>(raw), &amp;cred); err != <span class="k">nil</span> {
+            c.<span class="f">JSON</span>(http.StatusInternalServerError, gin.H{<span class="s">"error"</span>: <span class="s">"corrupt ticket"</span>})
+            <span class="k">return</span>
+        }
+        c.<span class="f">JSON</span>(http.StatusOK, cred)   <span class="c">// token เดินทางใน response body ของ POST เท่านั้น</span>
+    }
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>สังเกตว่า <code>switch</code> แยกสอง error ออกจากกันคนละเคส</strong> —
+    <code>redis.Nil</code> ตอบ <code>401 Unauthorized</code> (ผู้ใช้ผิด) ส่วน error ตัวอื่นตอบ
+    <code>500</code> (เราผิด)
+    <br>ถ้าเขียนรวมเป็น <code>if err != nil { 401 }</code> ก้อนเดียว เวลาที่ Redis ล่มจริง ๆ
+    ผู้ใช้ทุกคนจะเห็นข้อความว่า "ticket ไม่ถูกต้อง" แล้วคุณจะไล่หาสาเหตุผิดทางทั้งวัน
+  </p>
+</div>
+
+<p>
+  ครั้งที่สองได้ <code>redis: nil</code> ซึ่งเป็น sentinel error ตัวเดียวกับที่เจอใน
+  <a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32</a> —
+  แปลว่า "ไม่มี key นี้" ไม่ใช่ "Redis พัง" · <strong>สอง error นี้ต้องแยกให้ออกในโค้ด</strong>
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — สมมติมีคนเขียน <code>/exchange</code> ด้วย <code>GET</code> เฉย ๆ แล้วลืมบรรทัดที่ลบ ticket ทิ้ง:</p>
+  <pre><code><span class="c">// เศษโค้ดสองบรรทัด (ไม่ใช่ไฟล์เต็ม) — เวอร์ชันที่มีบั๊ก: อ่านอย่างเดียว ไม่ลบ</span>
+raw, err := rdb.<span class="f">Get</span>(ctx, <span class="s">"auth_ticket:"</span>+ticket).<span class="f">Result</span>()</code></pre>
+  <p class="ask">
+    <strong>ทายว่าถ้าเอา ticket ตัวเดิมมายิงซ้ำสามครั้ง จะได้อะไรบ้าง</strong>
+    <br>และคำถามที่สำคัญกว่า: <strong>ผู้ใช้คนนั้นจะสังเกตเห็นอะไรผิดปกติไหม?</strong>
+    <br>ลองคิดต่อด้วยว่า ticket ตัวนั้นไปนอนอยู่ที่ไหนบ้างแล้ว (ย้อนดูหัวข้อ 5 สามที่ที่ผมวัดมา)
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ผลรันจริงจาก Redis 8.10.1 — ตั้ง TTL 30 วินาทีเหมือนเดิมทุกอย่าง ต่างแค่ใช้ <code>GET</code> แทน <code>GETDEL</code>:</p>
+    <pre style="margin:0.6rem 0"><code>GET auth_ticket:bug999 ครั้งที่ 1 -&gt; {"accessToken":"eyJ...","refreshToken":"eyJ..."}
+GET auth_ticket:bug999 ครั้งที่ 2 -&gt; {"accessToken":"eyJ...","refreshToken":"eyJ..."}
+GET auth_ticket:bug999 ครั้งที่ 3 -&gt; {"accessToken":"eyJ...","refreshToken":"eyJ..."}
+EXISTS auth_ticket:bug999         -&gt; <strong>1</strong></code></pre>
+    <p>
+      <strong>คืนค่าเดิมทุกครั้ง และ key ยังอยู่</strong> — เทียบกับเวอร์ชันที่ถูก ที่ครั้งที่สองได้ <code>redis: nil</code> ไปแล้ว
+    </p>
+    <p>
+      <strong>คำตอบของคำถามที่สอง: ผู้ใช้จะไม่เห็นอะไรผิดปกติเลย</strong> —
+      เขาล็อกอินสำเร็จ ใช้งานเว็บได้ตามปกติทุกอย่าง เพราะครั้งแรกที่<em>เขา</em>แลก ก็ได้ token ถูกต้อง
+      <br>ช่องโหว่อยู่ที่ <strong>ticket ตัวเดิมยังใช้ได้อีก 30 วินาที</strong> และตอนนี้มันไปนอนอยู่ใน
+      access log ของเซิร์ฟเวอร์ · history ของเบราว์เซอร์ · และ <code>Referer</code> ที่ส่งให้ทุกไฟล์ใน origin เดียวกัน
+      <br>ใครก็ตามที่อ่าน log ได้ — คนในทีมที่เปิด dashboard ดู, ระบบรวม log, หรือคนที่เจาะเข้าเครื่อง log —
+      หยิบไปยิงซ้ำได้ token ชุดเดียวกับผู้ใช้จริง
+    </p>
+    <p style="margin-bottom:0">
+      <strong>และเรื่องที่แสบที่สุดคือมันตรวจไม่เจอ</strong>: ไม่มี error ไม่มี log เตือน ผู้ใช้ไม่ร้องเรียน
+      เทสก็ผ่าน เพราะเทสส่วนใหญ่แลก ticket แค่ครั้งเดียวแล้วเช็คว่าได้ token
+      <br>เทสที่จับบั๊กนี้ได้ต้องเป็นเทสที่<strong>ยิงสองครั้งแล้ว assert ว่าครั้งที่สองต้องล้มเหลว</strong> —
+      ซึ่งเป็นเทสที่คนไม่ค่อยเขียน เพราะมันเช็ค "สิ่งที่ต้องไม่เกิด"
+    </p>
+  </div>
+</div>
+
+<h2>6 · ขั้นที่ 4 — <code>/logout</code> (สไลด์หน้า 47)</h2>
+
+<div class="diagram">
+<pre>  Browser        Frontend JS        wongnok API         Redis         Keycloak
+     │                │                  │                │               │
+     │                │  POST /api/v1/auth/logout   body {refreshToken}   &lt;- axios
+     │                │──────────────────▶                │               │
+     │                │                  │                │               │
+     │                │                  │  POST /logout  refresh_token + client_secret
+     │                │                  │────────────────────────────────▶
+     │                │                  │                │               │
+     │                │                  │  204 No Content                │
+     │                │                  ◀────────────────────────────────│
+     │                │                  │                │               │
+     │                │  204 No Content  │                │               │
+     │                ◀──────────────────│                │               │
+     │                │                  │                │               │
+  Browser        Frontend JS        wongnok API         Redis         Keycloak</pre>
+</div>
+
+<p>
+  ขั้นนี้สั้นที่สุด และเป็น AJAX ล้วน ๆ ไม่มี redirect เลย
+  <br>สิ่งที่ต้องเข้าใจคือ <strong>การลบ token ทิ้งจากฝั่ง frontend ไม่ใช่การ logout</strong> —
+  token ที่ผู้ใช้เคยได้ไปยังใช้ได้อยู่จนหมดอายุ ถ้ามีใครก๊อปไว้ก่อน
+  <br>การ logout จริงคือ<strong>บอก Keycloak ให้ปิด session นั้นทิ้ง</strong> ซึ่งต้องส่ง <code>refresh_token</code>
+  ไปพร้อม <code>client_secret</code>
+</p>
+
+<p>ผมยิงของจริงไปที่ <code>end_session_endpoint</code> ของ Keycloak 26.7.2 สามรอบ:</p>
+
+<pre><code><span class="c">=== 1) logout ครั้งแรก ===</span>
+$ curl -X POST $KC/realms/wongnok/protocol/openid-connect/logout \
+    -d client_id=wongnok-api -d client_secret=super-secret-123 \
+    --data-urlencode refresh_token@rt.txt
+HTTP <strong>204</strong>
+response body ยาว <strong>0</strong>
+
+<span class="c">=== 2) ยิง logout ซ้ำด้วย refresh_token ตัวเดิม ===</span>
+HTTP <strong>204</strong>
+(body ว่าง)
+
+<span class="c">=== 3) หลัง logout แล้วเอา refresh_token เดิมไปขอ token ใหม่ ===</span>
+{"error":"invalid_grant","error_description":"<strong>Session not active</strong>"}
+HTTP <strong>400</strong></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>อ่านผลนี้ให้ครบสามชั้น</strong>
+    <br>· <code>204 No Content</code> คือสถานะ "สำเร็จ แต่ไม่มีอะไรจะตอบ" — ไม่มี body เลยจริง ๆ
+    (ยาว 0 ไบต์) ตรงกับที่ <a href="../../day-8/lessons/0034-http-status-code.html">บทเรียน 34</a> ปูไว้
+    <br>· <strong>ยิงซ้ำก็ยังได้ 204</strong> ไม่ใช่ 400 — เพราะ logout เป็น idempotent
+    (สั่งซ้ำกี่ครั้งผลลัพธ์เท่าเดิม) ดังนั้น<strong>อย่าเขียนโค้ดที่แปล 204 ครั้งที่สองว่า "logout ไม่สำเร็จ"</strong>
+    <br>· ชั้นที่พิสูจน์ว่ามันทำงานจริงคือชั้นที่สาม: <code>refresh_token</code> ตัวนั้น<strong>ตายแล้ว</strong>
+    ได้ <code>Session not active</code> กลับมา
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ 204 ไม่ได้แปลว่า access_token ที่แจกไปแล้วตายด้วย</span>
+  <p style="margin-bottom:0">
+    Keycloak ปิด session และฆ่า <code>refresh_token</code> ให้ — แต่ <code>access_token</code>
+    ที่ผู้ใช้ถืออยู่เป็น JWT ที่ตรวจได้ด้วยลายเซ็นอย่างเดียว ไม่ได้ถาม Keycloak ทุกครั้ง
+    <br>แปลว่ามันยัง<strong>ใช้ได้ต่อจนกว่าจะครบ <code>expires_in</code></strong> ซึ่งค่า default คือ
+    <strong>300 วินาที</strong>
+    <br>นี่คือราคาที่ต้องจ่ายของการใช้ JWT แบบไม่เช็คทุก request — และเป็นเหตุผลที่ Keycloak
+    ตั้ง access token ไว้แค่ 5 นาที
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🪪 เทียบให้เห็นภาพ — บัตรพนักงานที่ยามดูแค่วันหมดอายุบนบัตร</span>
+  <p>
+    ตึกออฟฟิศหลายที่ ยามหน้าประตูไม่ได้โทรเช็คทะเบียนพนักงานทุกครั้งที่มีคนเดินเข้า —
+    เขาแค่<strong>ดูว่าบัตรเป็นของจริงไหม และวันหมดอายุที่พิมพ์อยู่บนบัตรยังไม่ถึงหรือเปล่า</strong>
+    <br>วันที่ HR ลบชื่อคุณออกจากระบบ ทะเบียนกลางเปลี่ยนทันที
+    แต่บัตรที่ยังอยู่ในกระเป๋าคุณ<strong>หน้าตาถูกต้องทุกอย่าง</strong> ยามจึงยังปล่อยผ่าน
+    จนกว่าจะถึงวันที่พิมพ์ไว้บนบัตร
+  </p>
+  <p>
+    <code>access_token</code> แบบ JWT คือบัตรใบนั้น — API ตรวจแค่<strong>ลายเซ็น</strong>
+    กับ<strong>เวลาหมดอายุที่ติดมาในตัว token เอง</strong> ไม่ได้ถาม Keycloak ทุก request
+    <br><code>POST /logout</code> จึงทำได้แค่ปิดทะเบียนกลาง (session ตาย · <code>refresh_token</code> ใช้ไม่ได้แล้ว)
+    ส่วนบัตรที่แจกออกไปแล้วยังใช้ได้จนครบ <code>expires_in = 300</code> วินาที ตามที่รันให้ดูข้างบน
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> บัตรพนักงานยังยึดคืนได้ถ้าคุณเดินมาส่ง
+    แต่ <code>access_token</code> ถูกก๊อปเก็บไว้กี่ชุดก็ได้และเรียกคืนไม่ได้เลย —
+    นี่คือเหตุผลที่ทางแก้ไม่ใช่ “ทำให้ยึดคืนได้” แต่คือ<strong>ตั้งอายุให้สั้นจนขโมยไปแล้วไม่คุ้ม</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>JWT (JSON Web Token)</dt>
+    <dd>token ที่<strong>พกข้อมูลกับลายเซ็นไว้ในตัวเอง</strong> ผู้รับตรวจได้เองโดยไม่ต้องถามใคร ·
+    <em>“access token เราเป็น JWT ใช่ไหมครับ แปลว่าสั่งให้ตายกลางคันไม่ได้ใช่หรือเปล่า”</em></dd>
+    <dt>revoke</dt>
+    <dd>“ยกเลิกของที่แจกไปแล้ว” · <code>refresh_token</code> revoke ได้เพราะต้องกลับไปถาม Keycloak ทุกครั้ง
+    ส่วน JWT ที่ตรวจด้วยลายเซ็นอย่างเดียว revoke ไม่ได้ ·
+    ถาม AI ว่า <em>“ถ้าต้อง revoke access token ให้ตายทันที มีทางเลือกอะไรบ้าง แลกกับอะไร”</em></dd>
+    <dt>idempotent</dt>
+    <dd>“สั่งซ้ำกี่ครั้งผลลัพธ์ก็เท่าเดิม” — <code>/logout</code> เป็นแบบนี้ ยิงสองครั้งได้ <code>204</code> ทั้งคู่ ·
+    <em>“endpoint นี้ idempotent ไหมครับ ถ้า client retry แล้วจะพังไหม”</em></dd>
+    <dt>session</dt>
+    <dd>“รอบการใช้งานหนึ่งรอบของผู้ใช้” ที่ฝั่ง Keycloak จำไว้ · logout คือการปิด session นั้นทิ้ง ·
+    ระวังอย่าสับสนกับ session ของเว็บเราเอง — flow ในบทนี้ฝั่งเราไม่มี session เลย มีแต่ Redis ที่เก็บของอายุสั้น</dd>
+  </dl>
+</div>
+
+<h2>7 · ตารางสรุปทั้งสี่ endpoint</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>endpoint</th><th>ใครเป็นคนเรียก</th><th>เรียกยังไง</th><th>แตะ Redis ยังไง</th><th>ตอบอะไรกลับ</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>GET /api/v1/auth/login</code></td>
+      <td><strong>Browser</strong></td>
+      <td><code>window.location</code><br><em>ห้าม AJAX</em></td>
+      <td><code>SET oauth_state:xxx</code><br>TTL 300 วินาที</td>
+      <td><code>302</code> + <code>Location:</code> ไปหน้า login ของ Keycloak</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/v1/auth/callback</code></td>
+      <td><strong>Browser</strong><br>(เดินตาม 302 ของ Keycloak)</td>
+      <td>ไม่มีใครสั่ง — เบราว์เซอร์เดินเองตาม redirect</td>
+      <td><code>GETDEL oauth_state:xxx</code> แล้ว<br><code>SET auth_ticket:yyy</code> TTL 30 วินาที</td>
+      <td><code>302</code> + <code>Location:</code> ไป <code>FRONTEND_URL/auth/success?ticket=yyy</code></td>
+    </tr>
+    <tr>
+      <td><code>POST /api/v1/auth/exchange</code></td>
+      <td><strong>Frontend JS</strong></td>
+      <td><code>axios.post</code> (AJAX)<br>body <code>{ticket}</code></td>
+      <td><code>GETDEL auth_ticket:yyy</code></td>
+      <td><code>200</code> + body <code>{accessToken, refreshToken, bearerType, expiresAt}</code></td>
+    </tr>
+    <tr>
+      <td><code>POST /api/v1/auth/logout</code></td>
+      <td><strong>Frontend JS</strong></td>
+      <td><code>axios.post</code> (AJAX)<br>body <code>{refreshToken}</code></td>
+      <td><strong>ไม่แตะเลย</strong></td>
+      <td><code>204 No Content</code> (body ว่าง)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>อ่านตารางนี้ตามแนวตั้งของคอลัมน์ "เรียกยังไง" แล้วจะเห็นเส้นแบ่งชัด ๆ</strong>
+    <br>สองแถวบน = <strong>โลกของ redirect</strong> — เบราว์เซอร์เป็นคนเดิน · ส่งข้อมูลได้แค่ทาง URL · ทุกอย่างถูก log
+    <br>สองแถวล่าง = <strong>โลกของ AJAX</strong> — JavaScript เป็นคนเรียก · ส่งข้อมูลทาง body ได้ · ไม่ถูก log
+    <br>ทั้ง flow นี้ออกแบบมาเพื่อ<strong>ข้ามจากโลกบนไปโลกล่างให้เร็วที่สุด</strong> โดยมี ticket เป็นสะพาน
+  </p>
+</div>
+
+<h2>8 · Redis อยู่ตรงนี้ทำไม</h2>
+
+<p>
+  คำถามที่ควรถามคือ <em>ทำไมไม่เก็บใส่ตัวแปรใน Go ไปเลย?</em> — คำตอบมีสามข้อ และข้อสุดท้ายสำคัญที่สุด
+</p>
+
+<h3>ข้อ 1 — ของสองชิ้นนี้ต้อง "หายเอง"</h3>
+
+<p>
+  ทั้ง <code>oauth_state</code> และ <code>auth_ticket</code> เป็นของที่<strong>ถ้าไม่มีใครมาเอา ต้องหายไปเอง</strong>
+  <br>ผู้ใช้กด login แล้วปิดแท็บทิ้ง = ไม่มีใครมาแลก state นั้นตลอดกาล ·
+  ผู้ใช้เจอเน็ตหลุดตอนหน้า success = ไม่มีใครมาแลก ticket
+  <br>ถ้าเก็บใน <code>map</code> ของ Go ของพวกนี้จะค้างอยู่จนกว่าจะ restart — <strong>หน่วยความจำรั่ว</strong>
+  และต้องเขียนโค้ดกวาดขยะเอง
+  <br>Redis ตั้ง TTL แล้วลืมได้เลย ผมรันให้ดูด้วย TTL 3 วินาที (ย่อจาก 30 เพื่อให้ดูทัน):
+</p>
+
+<pre><code>t=0s  TTL -&gt; <strong>3</strong>
+t=2s  TTL -&gt; <strong>1</strong>
+t=4s  TTL -&gt; <strong>-2</strong>
+t=4s  GET -&gt; <strong>(ว่าง)</strong>
+t=4s  EXISTS -&gt; <strong>0</strong></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong><code>TTL</code> คืนเลขติดลบสองค่าที่ความหมายต่างกัน อย่าจำสลับ</strong>
+    <br>ผมรันเทียบให้ดู:
+  </p>
+  <pre style="margin:0.6rem 0"><code>TTL forgot_ttl (ตั้ง SET โดยไม่ใส่ EX) -&gt; <strong>-1</strong>   <span class="c"># key มีอยู่ แต่ไม่มีวันหมดอายุ = อยู่ตลอดไป</span>
+TTL ของคีย์ที่ไม่มีอยู่จริง             -&gt; <strong>-2</strong>   <span class="c"># ไม่มี key นี้แล้ว</span></code></pre>
+  <p style="margin-bottom:0">
+    <code>-1</code> คือสัญญาณอันตรายในบทนี้: ถ้าลืมใส่ <code>EX</code> ตอน <code>SET auth_ticket</code>
+    ticket ตัวนั้นจะ<strong>อยู่ตลอดไป</strong> ไม่ใช่ 30 วินาที
+  </p>
+</div>
+
+<h3>ข้อ 2 — ต้องอ่านแล้วลบให้ได้ในจังหวะเดียว</h3>
+
+<p>
+  ทั้งสองจุดใช้ <code>GETDEL</code> ซึ่ง Redis รับประกันว่าเป็น<strong>คำสั่งเดียว</strong> —
+  ไม่มีช่องว่างระหว่าง "อ่าน" กับ "ลบ" ให้ใครแทรก
+  <br>ถ้าเขียนเองเป็น <code>Get()</code> แล้วค่อย <code>Del()</code> สองบรรทัด
+  จะมีช่วงเสี้ยววินาทีที่ request สองอันอ่านค่าเดียวกันได้พร้อมกัน — ซึ่งพังทั้ง<em>ความเป็นของใช้ครั้งเดียว</em>
+</p>
+
+<div class="analogy">
+  <span class="label">🚇 เทียบให้เห็นภาพ — ประตูขาออกของรถไฟฟ้า</span>
+  <p>
+    ซื้อตั๋วเที่ยวเดียวไว้ พอถึงปลายทางคุณยื่นมันเข้าประตูขาออก —
+    <strong>ประตูอ่านค่าแล้วกลืนตั๋วไปเลยในจังหวะเดียวกัน</strong> ไม่มีคืน
+    <br>ลองนึกภาพประตูอีกแบบ: อ่านค่าแล้ว<em>คืนตั๋วให้คุณ</em> โดยบอกว่า “เดี๋ยวมีคนมาเก็บทีหลัง” —
+    ระหว่างนั้นใครหยิบตั๋วใบนั้นไปยื่นซ้ำก็ออกได้ฟรี
+  </p>
+  <p>
+    <code>GETDEL</code> คือประตูแบบแรก · เขียน <code>Get</code> แล้วค่อย <code>Del</code> คนละบรรทัด
+    คือประตูแบบหลัง
+    <br>ช่องว่างระหว่างสองบรรทัดนั้นสั้นมากจนตอนเทสในเครื่องตัวเองไม่มีทางเห็น
+    แต่บนของจริงที่มี request วิ่งเข้ามาพร้อมกันหลายอัน มันกว้างพอให้สองคนอ่านค่าเดียวกันได้
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ประตูรถไฟฟ้ากลืนตั๋วตอนคุณ<em>ออก</em> คือจบการเดินทางพอดี
+    แต่ <code>GETDEL</code> เกิดตอน<em>เริ่ม</em>ใช้งาน — พอ <code>ticket</code> ตายไปแล้ว
+    สิ่งที่คุณเพิ่งได้มาคือ <code>access_token</code> ที่ยังใช้ต่อได้จนครบอายุ 300 วินาทีของมัน
+  </p>
+</div>
+
+<h3>ข้อ 3 — แอปของจริงรันหลายก้อนพร้อมกัน</h3>
+
+<p>
+  ตอน deploy จริงเราไม่ได้รัน wongnok API ตัวเดียว แต่รันสำเนาหลายตัวหลัง load balancer
+  <br>ทีนี้ดูเส้นทางในหัวข้อ 4 อีกรอบ: <strong><code>/login</code> กับ <code>/callback</code> เป็นคนละ request</strong>
+  — ไม่มีอะไรรับประกันว่าสองอันจะวิ่งเข้าเครื่องเดียวกัน
+  <br>ถ้า <code>state</code> ถูกเก็บไว้ใน RAM ของเครื่องที่รับ <code>/login</code>
+  แล้ว <code>/callback</code> ดันวิ่งเข้าอีกเครื่อง ผู้ใช้จะ login ไม่ผ่าน<strong>แบบสุ่ม</strong> —
+  บั๊กที่หาสาเหตุยากที่สุดประเภทหนึ่ง เพราะบนเครื่อง dev ที่รันก้อนเดียวมันไม่เคยเกิด
+  <br>Redis เป็น<strong>ของกลาง</strong>ที่ทุกก้อนเห็นชุดเดียวกัน — เหตุผลเดียวกับที่
+  <a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32</a> อธิบายเรื่อง cache ไว้
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>atomic</dt>
+    <dd>“ทำทั้งชุดจบในจังหวะเดียว ไม่มีใครแทรกกลางได้” — <code>GETDEL</code> เป็นคำสั่ง atomic ·
+    ประโยคที่ใช้ได้จริงตอนรีวิวโค้ด: <em>“ตรงนี้ต้อง atomic นะ ไม่งั้นสอง request อ่านค่าเดียวกันได้”</em></dd>
+    <dt>race condition</dt>
+    <dd>บั๊กที่เกิดเพราะสองงานวิ่งชนกันในจังหวะที่พอดีเป๊ะ · เจอยากมากตอนเทส เพราะต้องบังเอิญชนกันพอดี ·
+    ถาม AI ว่า <em>“โค้ดนี้มี race condition ตรงไหนไหม ถ้ามี request เข้ามาพร้อมกันสองอัน”</em></dd>
+    <dt>TTL (time to live)</dt>
+    <dd>อายุที่ตั้งให้ key ใน Redis · เลขบวก = เหลืออีกกี่วินาที · <code>-1</code> = ไม่มีวันหมดอายุ ·
+    <code>-2</code> = ไม่มี key นี้แล้ว ·
+    <em>“key นี้ TTL เท่าไหร่ครับ เผลอลืมใส่ EX ตอน SET รึเปล่า”</em></dd>
+    <dt>stateless</dt>
+    <dd>“ตัวแอปไม่จำอะไรไว้ในตัวเอง” — เหตุผลที่ <code>state</code> กับ <code>ticket</code>
+    ต้องไปอยู่ใน Redis ไม่ใช่ตัวแปรใน Go เพราะของจริงรันหลายก้อนหลัง load balancer ·
+    <em>“service เราเป็น stateless ใช่ไหม ถ้าใช่ ของแบบนี้ต้องไปอยู่ Redis”</em></dd>
+  </dl>
+</div>
+
+<h2>9 · <code>state</code> กัน CSRF ยังไง และทำไมต้องลบทิ้ง</h2>
+
+<p>
+  <strong>CSRF</strong> ย่อจาก Cross-Site Request Forgery — การที่เว็บของคนอื่น
+  หลอกให้เบราว์เซอร์ของคุณยิง request ไปที่เว็บเรา โดยคุณไม่รู้ตัว
+  <br>ในบริบท OAuth มันมีหน้าตาเฉพาะตัว ที่เรียกว่า <strong>login CSRF</strong> — ไล่ทีละขั้น:
+</p>
+
+<div class="diagram">
+<pre>ถ้า /callback ไม่เช็ค state:
+
+  1. ผู้โจมตี login เข้า Wongnok ด้วย "บัญชีของตัวเอง" ตามปกติ
+  2. แต่พอ Keycloak เด้ง 302 กลับมาที่ /callback?code=AAA  เขา "ไม่กดต่อ"
+     -> เขาคัดลอก URL นั้นเก็บไว้ ตอนนี้ code=AAA ยังไม่ถูกใช้
+  3. เขาหลอกให้เหยื่อคลิก URL นั้น (ส่งทางแชท / ฝังเป็นรูปในหน้าเว็บ)
+  4. เบราว์เซอร์ของเหยื่อยิง GET /api/v1/auth/callback?code=AAA
+  5. wongnok API แลก code=AAA -> ได้ token ของ "บัญชีผู้โจมตี"
+     -> เหยื่อถูกล็อกอินเข้าบัญชีของผู้โจมตี โดยคิดว่าเป็นบัญชีตัวเอง
+  6. เหยื่อกดบันทึกสูตรอาหาร / ผูกบัตร / อัปโหลดรูป
+     -> ทุกอย่างไปอยู่ในบัญชีที่ผู้โจมตีเข้าถึงได้</pre>
+</div>
+
+<p>
+  <code>state</code> เข้ามาตัดวงจรนี้ที่<strong>ขั้น 4</strong> — จุดที่ request วิ่งเข้ามาถึงเรา
+  <br>เพราะเรา<strong>ไม่รับ <code>/callback</code> ที่ไม่มี <code>state</code> ซึ่งเราเป็นคนออกให้</strong>
+  URL ที่ผู้โจมตีจะใช้ได้จึงต้องเป็น URL ที่มี <code>state</code> จริง ไม่ใช่ค่าที่เขาแต่งขึ้นมาเอง
+  <br>ผลรันในหัวข้อ 4 แสดงให้เห็นแล้วว่าค่าที่แต่งเองได้อะไรกลับมา:
+</p>
+
+<pre><code>GETDEL oauth_state:attacker-made-it -&gt; <strong>(ว่าง)</strong>   <span class="c"># ไม่มีใน Redis = ปฏิเสธ</span></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ ทำไม "เช็คว่ามี" อย่างเดียวไม่พอ ต้อง "ลบ" ด้วย</span>
+  <p>
+    สมมติเราเขียนแค่ <code>EXISTS oauth_state:xxx</code> แล้วปล่อย key ไว้ 5 นาทีตาม TTL
+    <br>ผู้โจมตีจะได้ช่องว่างยาว 5 นาทีในการยิง URL เดิมซ้ำกี่ครั้งก็ได้ —
+    และถ้าโค้ดฝั่งเรามีจุดไหนที่ทำงานไม่สำเร็จแล้วให้ลองใหม่ได้ เขาก็ยิงรัวได้ฟรี ๆ
+    <br>พอเปลี่ยนเป็น <code>GETDEL</code> ช่องว่างนั้นหดเหลือ<strong>ครั้งเดียว</strong>
+    ผมรันพิสูจน์ไว้แล้วในหัวข้อ 4:
+  </p>
+  <pre style="margin:0.6rem 0"><code>GETDEL oauth_state:9f2b7c1e -&gt; 1          <span class="c"># ครั้งแรก ผ่าน</span>
+GETDEL oauth_state:9f2b7c1e -&gt; (ว่าง)     <span class="c"># ครั้งที่สอง ไม่มีแล้ว</span>
+EXISTS oauth_state:9f2b7c1e -&gt; 0</code></pre>
+  <p style="margin-bottom:0">
+    ผลข้างเคียงที่ดีอีกอย่าง: <strong>เคส "ยิงซ้ำ" กับเคส "แต่ง state เอง" ให้ผลเหมือนกันเป๊ะ</strong>
+    (ค่าว่างทั้งคู่) — โค้ดจึงเขียนเงื่อนไขเดียวจบ ไม่ต้องแยกสองกรณี และไม่บอกใบ้ผู้โจมตีว่า
+    <code>state</code> ที่เขาเดามาถูกหรือผิด
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ครึ่งที่หายไป — <code>state</code> ต้องผูกกับ<em>เบราว์เซอร์คนนั้น</em> ไม่ใช่แค่ "เราเคยออกให้"</span>
+  <p>
+    ตรงนี้เป็นจุดที่ diagram ในสไลด์บอกไม่ครบ และเป็นเรื่องที่ควรรู้ก่อนเอาไปเขียนของจริง
+    <br>ลองไล่การโจมตีข้างบนอีกรอบ แต่คราวนี้ผู้โจมตี<strong>ไม่แต่ง <code>state</code> เอง</strong> —
+    เขาไปกด <code>/login</code> ที่เว็บเราตามปกติ เพื่อให้ระบบออก <code>state</code> ให้เขาจริง ๆ
+    แล้วค่อยเอา URL <code>/callback?code&amp;state</code> ของเขาไปหลอกเหยื่อ
+    <br>ตอนเหยื่อคลิก เราจะ <code>GETDEL</code> เจอ เพราะ key นั้น<strong>มีอยู่จริง</strong> — ด่านนี้ผ่านฉลุย
+  </p>
+  <p>
+    สาเหตุคือการเก็บแค่ <code>oauth_state:xxx = "1"</code> ตอบได้แค่คำถามว่า
+    <em>"ค่านี้เราเคยออกให้ใครสักคนไหม"</em>
+    <br>แต่คำถามที่ต้องตอบจริง ๆ คือ <em>"ค่านี้เราออกให้<strong>เบราว์เซอร์ตัวที่กำลังยิงเข้ามาอยู่นี้</strong>หรือเปล่า"</em>
+  </p>
+  <p style="margin-bottom:0">
+    ทางแก้คือ<strong>ผูก <code>state</code> เข้ากับเบราว์เซอร์</strong>: ตอน <code>/login</code>
+    ให้ตั้ง cookie ที่สุ่มขึ้นมาคู่กันไปด้วย (<code>HttpOnly</code> · <code>SameSite=Lax</code>) แล้วเก็บลง Redis เป็น
+    <code>oauth_state:xxx = &lt;ค่าใน cookie&gt;</code> แทนที่จะเก็บเป็น <code>"1"</code>
+    <br>ตอน <code>/callback</code> ก็เทียบค่าที่ <code>GETDEL</code> ได้ กับ cookie ที่ติดมากับ request
+    — <strong>ไม่ตรงกันเมื่อไหร่คือคนละเบราว์เซอร์ ให้ปฏิเสธ</strong>
+    <br>นี่คือสิ่งที่ <a href="https://datatracker.ietf.org/doc/html/rfc6749#section-10.12">RFC 6749 §10.12</a>
+    หมายถึงตอนที่มันเขียนว่า <code>state</code> ต้องผูกกับ session ของ user agent
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>สรุปกฎเดียวที่ครอบทั้งบท</strong> —
+    ของทุกชิ้นในบทนี้ที่ <em>เดินทางผ่าน URL</em> ถูกออกแบบให้เป็น<strong>ของใช้ครั้งเดียว อายุสั้น</strong>:
+    <br>· <code>state</code> — TTL 5 นาที · <code>GETDEL</code> ทิ้งเมื่อใช้ (และควรผูกกับ cookie ตามกล่องข้างบน)
+    <br>· <code>code</code> — Keycloak บังคับเอง (ยิงซ้ำได้ <code>Code not valid</code> HTTP 400)
+    <br>· <code>ticket</code> — TTL 30 วินาที · <code>GETDEL</code> ทิ้งเมื่อแลก
+    <br>ส่วนของที่<em>มีค่าจริง</em> (<code>access_token</code>, <code>refresh_token</code>, <code>client_secret</code>)
+    <strong>ไม่เคยผ่าน URL แม้แต่ครั้งเดียวตลอดทั้ง flow</strong>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ทำไม <code>/api/v1/auth/login</code> ต้องเรียกด้วย <code>window.location</code> เรียกด้วย <code>axios.get()</code> ไม่ได้?</p>
+  <div class="opts">
+    <button class="opt">เพราะ <code>axios</code> ส่ง header <code>Authorization</code> ไปด้วยเสมอ ซึ่ง Keycloak จะปฏิเสธ</button>
+    <button class="opt">เพราะ endpoint นี้ตอบ JSON ที่ <code>axios</code> แปลงไม่ได้ ต้องให้เบราว์เซอร์แปลงเอง</button>
+    <button class="opt">เพราะ endpoint นี้ตอบ <code>302</code> ที่พาไปหน้า login ของ Keycloak — ต้องให้เบราว์เซอร์ย้ายทั้งหน้าจริง ๆ ผู้ใช้จึงจะได้พิมพ์รหัสผ่านบนโดเมนของ Keycloak</button>
+    <button class="opt">เพราะ <code>axios</code> เดินตาม redirect ไม่ได้ มันจะ error ทันทีที่เจอ status 302</button>
+  </div>
+  <div class="explain">
+    <p>ปัญหาไม่ได้อยู่ที่ <code>axios</code> ตามไม่ได้ — <strong>มันตามได้</strong> แต่ผลที่ได้กลับมาเป็น
+    <em>สตริง HTML ในตัวแปร JavaScript</em> หน้าจอผู้ใช้ไม่ขยับ
+    <br>ผม <code>curl</code> ไปที่ <code>authorization_endpoint</code> จริง ได้ HTML กลับมา <strong>6882 ไบต์</strong>
+    — เอาไปให้ <code>axios</code> ก็ทำอะไรต่อไม่ได้
+    <br>และเหตุผลที่หนักกว่านั้นคือเรื่อง<strong>ความไว้ใจ</strong>: ผู้ใช้กำลังจะพิมพ์รหัสผ่าน
+    เขาต้องเห็นชื่อโดเมนของ Keycloak บนแถบที่อยู่ ถ้าเว็บเราแสดงหน้า login แทนได้ นั่นคือหน้าตาของฟิชชิง
+    <br>ตัวเลือกที่ 2 ผิดเพราะ endpoint นี้ไม่ได้ตอบ JSON เลย · ตัวเลือกที่ 1 ผิดเพราะไม่เกี่ยวกับ header
+    <br>ตัวเลือกที่ 4 หลอกดีเพราะฟังดูสมเหตุสมผล แต่ <code>axios</code> ในเบราว์เซอร์เดินตาม redirect ให้อัตโนมัติอยู่แล้ว</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. ผมยิง ticket ไปสองแบบแล้วดู access log แบบเดียวกับ <code>gin.Logger()</code> — ผลจริงเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">แบบ query string log บันทึก <code>GET /api/v1/auth/success-bad?ticket=T-9f2b7c1e</code> ครบ ๆ · แบบ POST log บันทึกแค่ <code>POST /api/v1/auth/exchange</code> ไม่มี ticket</button>
+    <button class="opt">ทั้งสองแบบไม่มี ticket ใน log เพราะเว็บเซิร์ฟเวอร์กรองค่าที่ดูเหมือนความลับออกให้เอง</button>
+    <button class="opt">ทั้งสองแบบมี ticket ใน log เพราะ log บันทึกทั้ง request line และ body</button>
+    <button class="opt">แบบ POST มี ticket ใน log ส่วนแบบ query string ไม่มี เพราะ query string ถูกเข้ารหัสระหว่างทาง</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงสองบรรทัดนี้คือหัวใจของทั้งบท:</p>
+    <p><code>[access log] GET /api/v1/auth/success-bad?ticket=T-9f2b7c1e</code>
+    <br><code>[access log] POST /api/v1/auth/exchange</code></p>
+    <p>ทั้งที่ handler ของแบบ POST เห็น body เต็ม ๆ (<code>{"ticket":"T-9f2b7c1e"}</code>) และตอบ token กลับไปครบ
+    <br>เหตุผล: log เขียนจาก <strong>request line</strong> ซึ่งประกอบด้วย method กับ URI เท่านั้น —
+    <strong>body ไม่ได้อยู่ในนั้น</strong> ต้องตั้งใจเขียนโค้ด log body ถึงจะโผล่
+    <br>ตัวเลือกที่ 2 ผิดชัด: ไม่มีเซิร์ฟเวอร์ตัวไหนเดาได้ว่าพารามิเตอร์ไหนเป็นความลับ
+    <br>ตัวเลือกที่ 4 ผิดกลับด้าน และ "query string ถูกเข้ารหัส" ก็ไม่จริง — HTTPS เข้ารหัสระหว่างทาง
+    แต่เซิร์ฟเวอร์ปลายทางถอดออกมาเขียน log อยู่ดี</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. โค้ด <code>/exchange</code> ใช้ <code>Get()</code> แทน <code>GetDel()</code> คือลืมลบ ticket ทิ้ง — จะเกิดอะไร และใครจะสังเกตเห็น?</p>
+  <div class="opts">
+    <button class="opt">ผู้ใช้จะ login ไม่ผ่าน เพราะ Redis กัน key ซ้ำไม่ให้ถูกอ่านสองครั้ง</button>
+    <button class="opt">Redis จะคืน <code>redis: nil</code> ตั้งแต่ครั้งแรก เพราะ <code>Get()</code> ใช้กับ key ที่มี TTL ไม่ได้</button>
+    <button class="opt">ไม่มีผลอะไรเลย เพราะ TTL 30 วินาทีสั้นพอที่จะกันได้อยู่แล้ว</button>
+    <button class="opt">ticket ตัวเดิมยังแลก token ได้ซ้ำอีก 30 วินาที · ผู้ใช้ใช้งานได้ปกติทุกอย่างจึงไม่มีใครสังเกตเห็น · แต่ ticket ตัวนั้นนอนอยู่ใน access log กับ history แล้ว</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงกับ Redis 8.10.1 — <code>GET</code> คีย์เดิมสามครั้งได้ค่าเดิมทั้งสามครั้ง และ <code>EXISTS</code>
+    ยังคืน <strong>1</strong> · เทียบกับ <code>GETDEL</code> ที่ครั้งที่สองได้ <code>redis: nil</code> ไปแล้ว
+    <br>ตัวเลือกที่ 3 คือคำตอบที่คนเลือกเยอะที่สุดและผิดที่สุด: <strong>TTL ไม่ได้ทำให้ใช้ครั้งเดียว
+    มันแค่ทำให้หมดอายุ</strong> — ระหว่าง 30 วินาทีนั้นใช้ได้ไม่จำกัดครั้ง
+    <br>และ 30 วินาทีนั้นเริ่มนับตั้งแต่ <code>/callback</code> เขียน key ลง Redis
+    ซึ่งเป็นวินาทีเดียวกับที่ ticket โผล่ใน access log แล้ว — ผู้อ่าน log มีเวลาเหลือเฟือ
+    <br>ตัวเลือกที่ 1 กับ 2 ผิดเรื่องพฤติกรรมของ Redis: <code>GET</code> อ่านซ้ำได้ไม่จำกัด และใช้กับ key ที่มี TTL ได้ปกติ
+    <br><strong>สิ่งที่ทำให้บั๊กนี้อันตราย</strong>คือมันไม่มีอาการ: ไม่ error ไม่มี log เตือน ผู้ใช้ไม่ร้องเรียน
+    เทสที่จะจับได้ต้องยิงสองครั้งแล้ว assert ว่าครั้งที่สอง<em>ต้องล้มเหลว</em></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. ยิง <code>POST /logout</code> ไป Keycloak สำเร็จแล้วได้ <code>204</code> — ตอนนี้อะไรตายแล้ว อะไรยังไม่ตาย?</p>
+  <div class="opts">
+    <button class="opt">ตายหมดทุกอย่างทันที ทั้ง <code>refresh_token</code> และ <code>access_token</code> ที่แจกไปแล้ว</button>
+    <button class="opt"><code>refresh_token</code> ตายแล้ว (เอาไปขอ token ใหม่ได้ <code>invalid_grant: Session not active</code> HTTP 400) แต่ <code>access_token</code> ที่ถืออยู่ยังใช้ได้จนครบ 300 วินาที</button>
+    <button class="opt">ยังไม่มีอะไรตาย <code>204</code> แปลว่าคำสั่งถูกรับไว้ในคิว เดี๋ยว Keycloak ค่อยประมวลผลทีหลัง</button>
+    <button class="opt"><code>access_token</code> ตายทันที แต่ <code>refresh_token</code> ยังใช้ขอ token ใหม่ได้จนครบ 1800 วินาที</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันครบสามรอบ: logout ครั้งแรกได้ <code>HTTP 204</code> body ยาว <strong>0</strong> ไบต์ ·
+    ยิงซ้ำได้ <code>204</code> อีกครั้ง (idempotent) ·
+    แล้วเอา <code>refresh_token</code> เดิมไปขอ token ใหม่ได้
+    <code>{"error":"invalid_grant","error_description":"Session not active"}</code> พร้อม <code>HTTP 400</code>
+    <br>ส่วน <code>access_token</code> ยังไม่ตาย เพราะมันเป็น JWT ที่ตรวจด้วยลายเซ็น —
+    API ที่รับมันไม่ได้ถาม Keycloak ทุกครั้งว่า session ยังอยู่ไหม
+    <br>ตัวเลือกที่ 4 กลับด้าน · ตัวเลือกที่ 3 เข้าใจ <code>204</code> ผิด: <code>204 No Content</code> แปลว่า
+    <strong>สำเร็จแล้ว แต่ไม่มีอะไรจะตอบ</strong> ไม่ใช่ "รับเข้าคิว" (นั่นคือ <code>202 Accepted</code>)
+    <br><strong>ผลในทางปฏิบัติ:</strong> ช่วง 300 วินาทีนั้นคือหน้าต่างที่ token ที่ถูกขโมยไปก่อนหน้ายังใช้ได้อยู่
+    — เป็นราคาที่ต้องจ่ายของการใช้ JWT แบบไม่เช็คทุก request และเป็นเหตุผลที่ Keycloak ตั้งอายุไว้แค่ 5 นาที</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — เดินทั้งสี่ขั้นด้วยมือ แล้วดูว่า ticket โผล่ที่ไหนบ้าง</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำให้ login ผ่าน" — เป้าหมายคือ<strong>ให้คุณเห็นด้วยตาตัวเองว่า
+    อะไรที่อยู่ใน URL มันไปโผล่ที่ไหน</strong> แล้วค่อยเข้าใจว่าทำไมต้องมี <code>/exchange</code>
+  </p>
+  <ol>
+    <li><strong>ตั้ง Redis ขึ้นมาก่อน:</strong> <code>docker run -d --rm --name lab-redis -p 6379:6379 redis:8-alpine</code>
+        <br>เช็คว่ารันแล้วด้วย <code>docker exec lab-redis redis-cli PING</code> ต้องได้ <code>PONG</code></li>
+    <li><strong>เล่นกับ TTL ให้เข้าใจสามสถานะ:</strong> ใช้ <code>redis-cli</code> ตรง ๆ
+        <br><code>SET k1 v EX 3</code> แล้วสั่ง <code>TTL k1</code> รัว ๆ จนได้ <code>-2</code> ·
+        <code>SET k2 v</code> (ไม่ใส่ <code>EX</code>) แล้ว <code>TTL k2</code>
+        <br><strong>ตอบให้ได้ว่า <code>-1</code> กับ <code>-2</code> ต่างกันยังไง</strong> และข้อไหนคือบั๊กถ้าเจอกับ <code>auth_ticket:</code></li>
+    <li><strong>พิสูจน์ <code>GETDEL</code>:</strong> <code>SET t1 "credential" EX 30</code> แล้วสั่ง
+        <code>GETDEL t1</code> สองครั้ง · จากนั้นทำซ้ำด้วย <code>GET</code> สามครั้ง
+        <br><strong>จดผลทั้งสองแบบมาเทียบ</strong> — นี่คือความต่างระหว่างโค้ดที่ถูกกับโค้ดที่มีบั๊ก</li>
+    <li><strong>ทำ access log ของตัวเอง:</strong> เขียน Go server เล็ก ๆ ที่มี middleware พิมพ์
+        <code>r.Method</code> กับ <code>r.URL.RequestURI()</code> ทุก request
+        <br>ยิงเข้าไปสองแบบ: <code>curl "localhost:PORT/a?ticket=SECRET"</code> และ
+        <code>curl -X POST localhost:PORT/b -d '{"ticket":"SECRET"}'</code>
+        <br><strong>ดูว่าบรรทัดไหนมีคำว่า SECRET</strong></li>
+    <li><strong>วัด <code>Referer</code> ด้วยตัวเอง:</strong> ให้ server เดิมเสิร์ฟหน้า HTML ที่
+        <code>/page?ticket=SECRET</code> ซึ่งข้างในมี <code>&lt;img src="/pixel.gif"&gt;</code>
+        แล้วเพิ่ม <code>r.Header.Get("Referer")</code> เข้าไปใน log
+        <br>เปิดหน้านั้นด้วยเบราว์เซอร์จริง <strong>แล้วดูว่า Referer ของ <code>/pixel.gif</code> มี ticket ติดมาไหม</strong></li>
+    <li><strong>ท้าทาย — วัดฝั่งข้ามเว็บ:</strong> เปิด server ตัวที่สองคนละพอร์ต แล้วให้หน้าเดิมโหลดรูปจากพอร์ตนั้นด้วย
+        <br><strong>เทียบ <code>Referer</code> ที่สองฝั่งได้รับ แล้วอธิบายว่าทำไมไม่เหมือนกัน</strong>
+        (คำใบ้: ค้นคำว่า <code>strict-origin-when-cross-origin</code>)</li>
+    <li><strong>ตั้ง Keycloak แล้วเดิน flow จริง:</strong> ตามสไลด์หน้า 39 · สร้าง realm + client แบบ confidential
+        + user · แล้วเปิด <code>authorization_endpoint</code> ในเบราว์เซอร์พร้อม <code>state</code> ที่คุณตั้งเอง
+        <br><strong>ดู URL ที่มันเด้งกลับมา แล้วนับว่ามีพารามิเตอร์กี่ตัว อะไรบ้าง</strong></li>
+    <li><strong>ยืนยันว่า <code>code</code> ใช้ครั้งเดียว:</strong> เอา <code>code</code> จากข้อที่แล้วไปแลกที่
+        <code>token_endpoint</code> ด้วย <code>curl</code> สองครั้งติดกัน
+        <br><strong>จดข้อความ error ของครั้งที่สองมาให้ตรงตัวอักษร</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 2 กับ 3 — ค่าที่ควรได้</button>
+  <div class="answer">
+    <p><strong>ข้อ 2 — สามสถานะของ <code>TTL</code></strong> (ผลรันจริงบน Redis 8.10.1):</p>
+    <pre style="margin:0.6rem 0"><code>t=0s  TTL -&gt; 3        <span class="c"># เลขบวก = เหลืออีกกี่วินาที</span>
+t=2s  TTL -&gt; 1
+t=4s  TTL -&gt; <strong>-2</strong>       <span class="c"># ไม่มี key นี้แล้ว (หมดอายุไปแล้ว หรือไม่เคยมี)</span>
+t=4s  EXISTS -&gt; 0
+
+TTL forgot_ttl (SET โดยไม่ใส่ EX) -&gt; <strong>-1</strong>   <span class="c"># key อยู่ แต่ไม่มีวันหมดอายุ</span></code></pre>
+    <p>
+      <strong><code>-1</code> คือข้อที่เป็นบั๊ก</strong> ถ้าเจอกับ <code>auth_ticket:</code> —
+      แปลว่าลืมใส่ <code>EX</code> ตอน <code>SET</code> และ ticket ตัวนั้นจะอยู่ตลอดไป
+      ทั้งที่มันควรตายใน 30 วินาที
+    </p>
+    <p><strong>ข้อ 3 — <code>GETDEL</code> เทียบกับ <code>GET</code></strong>:</p>
+    <pre style="margin:0.6rem 0"><code><span class="c">-- แบบที่ถูก --</span>
+GETDEL auth_ticket:a1b2c3 -&gt; {"accessToken":"eyJ...","refreshToken":"eyJ..."}
+GETDEL auth_ticket:a1b2c3 -&gt; <strong>(ว่าง)</strong>
+EXISTS auth_ticket:a1b2c3 -&gt; <strong>0</strong>
+
+<span class="c">-- แบบที่มีบั๊ก --</span>
+GET auth_ticket:bug999 ครั้งที่ 1 -&gt; {"accessToken":"eyJ...","refreshToken":"eyJ..."}
+GET auth_ticket:bug999 ครั้งที่ 2 -&gt; {"accessToken":"eyJ...","refreshToken":"eyJ..."}
+GET auth_ticket:bug999 ครั้งที่ 3 -&gt; {"accessToken":"eyJ...","refreshToken":"eyJ..."}
+EXISTS auth_ticket:bug999         -&gt; <strong>1</strong></code></pre>
+    <p style="margin-bottom:0">
+      ถ้าเขียนใน Go ด้วย go-redis ความต่างจะโผล่ที่ error: <code>GetDel</code> ครั้งที่สองได้
+      <code>redis: nil</code> ซึ่ง <code>errors.Is(err, redis.Nil)</code> เป็น <code>true</code>
+      <br>อย่าลืมว่า <code>redis.Nil</code> แปลว่า "ไม่มี key" ไม่ใช่ "Redis พัง" —
+      สอง error นี้ต้องแยกกันเสมอ ตามที่ <a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32</a> ย้ำไว้
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 5 กับ 6 คือข้อที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong> —
+    เพราะการเห็น <code>Referer="http://.../page?ticket=SECRET"</code> โผล่ในเทอร์มินัลของตัวเอง
+    มันคนละเรื่องกับการอ่านว่า "อย่าใส่ token ใน URL"
+    <br>และถ้าคุณทำข้อ 6 จนเห็นว่าฝั่งข้ามเว็บได้แค่ชื่อโดเมน คุณจะเถียงเก่งขึ้นด้วย —
+    เพราะรู้ว่าคำเตือนแบบเหมารวมข้อไหน<strong>ล้าสมัยไปแล้ว</strong> และข้อไหนยังจริงอยู่
+    <br>ผลรันทุกบรรทัดในหน้านี้วัดบน <strong>Redis 8.10.1 · Keycloak 26.7.2 · Go 1.26.5 darwin/arm64 ·
+    Google Chrome 151.0.7922.170</strong> ถ้าของคุณออกมาไม่ตรง ส่งมาได้เลย
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0051-keycloak.html">← บทเรียน 51 · Keycloak</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0053-keycloak-in-go.html">บทเรียน 53 → middleware ตรวจ token</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://datatracker.ietf.org/doc/html/rfc6749#section-10.12">RFC 6749 §10.12 — Cross-Site Request Forgery</a> — ต้นทางของ <code>state</code> <strong>อ่านประโยคที่บอกว่ามันต้องผูกกับ session ของผู้ใช้</strong> ซึ่งคือเหตุผลที่เราเก็บลง Redis</li>
+  <li><a href="https://datatracker.ietf.org/doc/html/rfc9700">RFC 9700 — OAuth 2.0 Security Best Current Practice</a> — เอกสารที่บอกตรง ๆ ว่าห้ามส่ง token ผ่าน query string และ <code>code</code> ต้องใช้ครั้งเดียว</li>
+  <li><a href="https://redis.io/docs/latest/commands/getdel/">Redis — <code>GETDEL</code></a> · <a href="https://redis.io/docs/latest/commands/ttl/">TTL</a> · <a href="https://redis.io/docs/latest/commands/set/">SET</a> — <strong>อ่านตรงที่ <code>TTL</code> อธิบาย <code>-1</code> กับ <code>-2</code></strong> ซึ่งเป็นสองค่าที่จำสลับกันบ่อยที่สุด</li>
+  <li><a href="https://pkg.go.dev/github.com/redis/go-redis/v9#Client.GetDel">go-redis v9 — <code>GetDel</code></a> · <a href="https://pkg.go.dev/github.com/redis/go-redis/v9#pkg-variables">redis.Nil</a> — sentinel error ที่ต้องแยกจาก error จริง</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referer">MDN — <code>Referer</code></a> · <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referrer-Policy">Referrer-Policy</a> — <strong>อ่านว่า <code>strict-origin-when-cross-origin</code> ทำอะไร</strong> เพื่ออธิบายผลรันในหัวข้อ 5 ให้ครบ</li>
+  <li><a href="https://www.keycloak.org/securing-apps/oidc-layers">Keycloak — OIDC endpoints</a> — ที่มาของ <code>token_endpoint</code> และ <code>end_session_endpoint</code> ที่ใช้ในบทนี้</li>
+  <li><a href="../../day-8/lessons/0035-query-body-header.html">บทเรียน 35 — query / body / header</a> · <a href="../../day-8/lessons/0034-http-status-code.html">บทเรียน 34 — status code</a> · <a href="../../day-7/lessons/0032-redis-cache.html">บทเรียน 32 — Redis กับ TTL</a> — สามบทที่บทนี้ยืนอยู่บน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -72,7 +72,7 @@ ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
 <div class="note">
   <p style="margin-bottom:0">
     สังเกต port: <code>32778 / 32779 / 32780 / 32781</code> ไม่ซ้ำกันเลยสักตัว —
-    นี่คือ dynamic port ที่คุณเจอในบทที่แล้ว โผล่มาให้เห็นอีกรอบ
+    นี่คือ dynamic port (เลข port ที่ Docker สุ่มให้ใหม่ทุกครั้งที่เปิด container) ที่คุณเจอในบทที่แล้ว โผล่มาให้เห็นอีกรอบ
     <br>ตลอดการตรวจครั้งนี้ผมเจอ port ที่ถูกสุ่มมา 32769 ถึง 32812 <strong>ไม่เคยซ้ำ</strong>
   </p>
 </div>
@@ -86,6 +86,24 @@ ok  	tcdemo/test/percontainer	<strong>4.264s</strong></code></pre>
   <strong>โค้ดใน <code>Do(f)</code> จะรันแค่ครั้งเดียวตลอดอายุของ process</strong>
   ต่อให้ถูกเรียกพร้อมกันจากหลาย goroutine ก็ตาม — คนที่มาทีหลังจะ<em>รอ</em>จนตัวแรกทำเสร็จ
 </p>
+
+<div class="analogy">
+  <span class="label">🫖 เทียบให้เห็นภาพ — กาต้มน้ำร้อนกลางออฟฟิศ</span>
+  <p>
+    ออฟฟิศมีกาต้มน้ำร้อนตั้งไว้ตัวเดียว คนแรกที่อยากชงกาแฟตอนเช้าคือคนที่กดต้ม
+    <br>คนที่สอง สาม สี่ ที่เดินมาทีหลัง<strong>ไม่ต้องต้มใหม่</strong> กดน้ำใส่แก้วแล้วเดินกลับโต๊ะได้เลย
+    <br>ถ้าบังเอิญเดินมาถึงพร้อมกันตอนน้ำยังไม่เดือด ก็แค่<em>ยืนรอ</em>ข้าง ๆ ไม่มีใครไปกดต้มซ้ำอีกกา
+  </p>
+  <p>
+    container ในเทสก็คือกาน้ำใบนี้ · เทสตัวแรกที่ขอใช้ DB เป็นคนจ่ายค่าต้ม (~1 วินาที)
+    ส่วนเทสตัวที่ 2 เป็นต้นไปมารับของที่ร้อนอยู่แล้ว (~2 มิลลิวินาที)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ถ้ากาน้ำเสีย คนที่สองเดินไปกดต้มเองใหม่ได้
+    แต่ <code>sync.Once</code> <strong>ไม่ยอมรันซ้ำให้เด็ดขาด</strong> ต่อให้ครั้งแรกพัง
+    — ตรงกับย่อหน้าใต้โค้ดข้างล่างที่บอกว่าต้องเก็บ <code>sharedErr</code> ไว้เอง
+  </p>
+</div>
 
 <pre><code><span class="k">var</span> (
     sharedOnce sync.Once
@@ -178,6 +196,33 @@ sync.Once ตัวเดียว   : 1.727s   (boot 1.033 ครั้งเ�
   </p>
 </div>
 
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>คำพวกนี้คือคำที่วงการใช้เรียกสิ่งที่คุณเพิ่งเข้าใจไป — ใช้ให้ตรงคำ แล้วคำตอบที่ได้จาก senior หรือจาก AI จะตรงขึ้นมาก</p>
+  <dl>
+    <dt>sync.Once</dt>
+    <dd>“กาน้ำใบเดียวของออฟฟิศ” — โค้ดใน <code>Do</code> ของ <code>Once</code> <strong>ตัวนั้น ๆ</strong> รันครั้งเดียวจบ ·
+    ขอบเขตคือ<strong>ต่อหนึ่งตัวแปร</strong> ไม่ใช่ต่อทั้ง process — ประกาศ <code>sync.Once</code> สองตัว
+    ก็รันได้สองครั้งใน process เดียว (คนละตัวแปร = คนละโควตา) ·
+    เวลาถามให้พูดว่า <em>“ห่อ boot ไว้ใน sync.Once แล้ว แต่มันยัง boot ซ้ำอยู่”</em>
+    จะสื่อกว่าถามว่า “ทำไม container เปิดหลายตัว”</dd>
+    <dt>process</dt>
+    <dd>“โปรแกรม 1 ตัวที่กำลังรันอยู่” · สั่ง <code>go test ./test/integration</code> หนึ่งครั้ง = 1 process ·
+    พอ process ตาย ตัวแปรที่ <code>sync.Once</code> เก็บไว้ก็หายไปทั้งหมด รอบหน้าเริ่มนับหนึ่งใหม่
+    <br>ระวัง — <code>go test ./...</code> คือ <strong>1 process ต่อ 1 package</strong>
+    ดังนั้น container ที่ share ด้วย <code>sync.Once</code> จะแยกกันคนละใบต่อ package ไม่ใช่ใบเดียวทั้ง repo</dd>
+    <dt>lazy / eager</dt>
+    <dd>lazy = “ขี้เกียจ” สร้างของตอนมีคนขอใช้จริง · eager = “ใจร้อน” สร้างทิ้งไว้ก่อนเผื่อมีคนใช้ ·
+    ประโยคที่เอาไปใช้ได้เลย: <em>“ตรงนี้ boot แบบ eager หรือ lazy”</em> (หัวข้อ 4 จะใช้สองคำนี้เต็ม ๆ)</dd>
+    <dt>shared fixture</dt>
+    <dd>“ของกลางที่เทสหลายตัวใช้ร่วมกัน” เช่น container ตัวนี้ ·
+    ถามว่า <em>“fixture ตัวนี้ share กันทั้ง package หรือแยกต่อเทส”</em> senior จะเข้าใจทันทีว่าคุณถามอะไร</dd>
+    <dt>overhead</dt>
+    <dd>“ค่าโสหุ้ย” — เวลาที่หมดไปกับการเตรียมของ ไม่ใช่เนื้องานจริง ·
+    760 มิลลิวินาทีต่อเทสในหัวข้อ 1 คือ overhead ล้วน ๆ</dd>
+  </dl>
+</div>
+
 <h2>3 · <code>TestMain</code> — ประตูเข้าออกของทั้ง package</h2>
 
 <p>
@@ -186,6 +231,25 @@ sync.Once ตัวเดียว   : 1.727s   (boot 1.033 ครั้งเ�
   เพราะเทสตัวอื่นยังใช้ container นั้นอยู่
   <br>Go มีฟังก์ชันพิเศษชื่อ <code>TestMain</code> ให้ครอบการรันเทสทั้ง package:
 </p>
+
+<div class="analogy">
+  <span class="label">🔑 เทียบให้เห็นภาพ — ยามที่ถือกุญแจตึก</span>
+  <p>
+    ตึกออฟฟิศมีคนถือกุญแจอยู่คนเดียว เช้ามาเปิดประตู เย็นรอจนคนสุดท้ายเดินออกแล้วค่อยล็อก
+    <br>ระหว่างวันพนักงานเข้าออกกี่คนก็ได้ แต่<strong>ไม่มีใครมีสิทธิ์ล็อกประตูตอนบ่ายสอง</strong>
+    เพราะยังมีคนอื่นทำงานอยู่ข้างใน
+  </p>
+  <p>
+    <code>TestMain</code> คือยามคนนั้น · <code>m.Run()</code> คือ “ทั้งวันทำงาน” ที่เทสทุกตัวรันอยู่ข้างใน
+    <br>นี่คือเหตุผลที่ <code>Terminate</code> ไปแปะไว้ในเทสตัวใดตัวหนึ่งไม่ได้ —
+    เท่ากับให้พนักงานคนหนึ่งล็อกประตูทิ้งเพื่อนที่เหลือไว้ข้างใน
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ยามเดินไล่ปิดไฟทีละห้องก่อนกลับบ้านได้
+    แต่ <code>os.Exit</code> คือการ<strong>สับเบรกเกอร์ลงทันที</strong> —
+    งานที่ฝากไว้ด้วย <code>defer</code> จะไม่ได้ทำเลยสักอย่าง ตามที่กล่องเตือนข้างล่างจะบอก
+  </p>
+</div>
 
 <pre><code><span class="k">func</span> <span class="f">TestMain</span>(m *testing.M) {
     code := m.<span class="f">Run</span>()          <span class="c">// ← เทสทุกตัวใน package รันตรงบรรทัดนี้</span>
@@ -199,7 +263,7 @@ sync.Once ตัวเดียว   : 1.727s   (boot 1.033 ครั้งเ�
   <tr><th>บรรทัด</th><th>เกิดอะไรขึ้น</th></tr>
   <tr><td><code>m.Run()</code></td><td>รันเทสทุกตัวใน package นี้จนจบ แล้ว<strong>คืนค่า exit code</strong> (0 = ผ่านหมด)</td></tr>
   <tr><td>cleanup</td><td>ต้องอยู่<strong>หลัง</strong> <code>m.Run()</code> เพราะก่อนหน้านั้นยังมีเทสใช้ของอยู่</td></tr>
-  <tr><td><code>os.Exit(code)</code></td><td>ทำให้ <code>go test</code> และ CI รู้ว่าผ่านหรือไม่ผ่าน</td></tr>
+  <tr><td><code>os.Exit(code)</code></td><td>ทำให้ <code>go test</code> และ CI (เครื่องกลางที่ build + รันเทสให้อัตโนมัติเมื่อโค้ดเข้า repo) รู้ว่าผ่านหรือไม่ผ่าน</td></tr>
 </table>
 </div>
 
@@ -212,6 +276,27 @@ sync.Once ตัวเดียว   : 1.727s   (boot 1.033 ครั้งเ�
     <code>os.Exit(code)</code> → <strong>ฟังก์ชัน cleanup จะไม่ถูกเรียกเลย</strong>
     <br>นี่คือที่เดียวใน Go ที่ "เขียน <code>defer</code> ไว้ก่อนเพื่อความปลอดภัย" กลายเป็นคำแนะนำที่ผิด
   </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>TestMain</dt>
+    <dd>“ยามถือกุญแจ” ของ test package หนึ่ง ๆ · มีได้แค่ตัวเดียวต่อ package ·
+    พูดสั้น ๆ ว่า <em>“ย้าย cleanup ไปไว้ใน TestMain”</em> ได้เลย ไม่ต้องอธิบายยาว</dd>
+    <dt>setup / teardown</dt>
+    <dd>“เตรียมของก่อนเริ่ม” กับ “เก็บของหลังเลิก” · เป็นคู่คำมาตรฐานที่ใช้กันทุกภาษา ไม่ใช่แค่ Go ·
+    ถามได้ว่า <em>“teardown ของเทสชุดนี้อยู่ตรงไหน”</em></dd>
+    <dt>exit code</dt>
+    <dd>ตัวเลขที่โปรแกรมทิ้งไว้ตอนจบ บอกว่าสำเร็จหรือพัง (<code>0</code> = ผ่าน) ·
+    เป็นสัญญาณหลักที่ CI ใช้ตัดสินว่าจะขึ้นไฟเขียวหรือไฟแดง
+    (ยังมีเกณฑ์อื่นซ้อนได้อีก เช่น coverage ไม่ถึงเกณฑ์ หรือขั้นตอนอื่นใน pipeline พัง —
+    CI แดงทั้งที่ exit code เป็น <code>0</code> จึงเกิดขึ้นได้)</dd>
+    <dt>CI (Continuous Integration)</dt>
+    <dd>ธรรมเนียมที่ให้เครื่องกลางช่วย build + รันเทสอัตโนมัติเมื่อโค้ดเข้า repo
+    (ตั้งค่าได้ว่าให้รันตอน push หรือตอนเปิด PR) · ตัวเครื่องที่รันจริงเรียกว่า runner เช่น GitHub Actions ·
+    ประโยคที่จะได้ยินบ่อยคือ <em>“CI แดง”</em> = เทสไม่ผ่านบนเครื่องกลาง แม้จะผ่านบนเครื่องเราก็ตาม</dd>
+  </dl>
 </div>
 
 <h2>4 · <code>-short</code> ที่ได้ผลจริง ๆ กับที่ได้ผลแค่ในสไลด์</h2>
@@ -414,6 +499,27 @@ ok  	tcdemo/test/integration	<strong>0.353s</strong></code></pre>
     suite.<span class="f">Run</span>(t, <span class="f">new</span>(UserRepoSuite))
 }</code></pre>
 
+<div class="analogy">
+  <span class="label">🍲 เทียบให้เห็นภาพ — ร้านชาบู: งานก่อนเปิดร้าน กับ งานระหว่างเปลี่ยนโต๊ะ</span>
+  <p>
+    ร้านชาบูมีงาน 2 จังหวะที่ไม่เหมือนกันเลย
+    <br>· <strong>ก่อนเปิดร้านตอนเช้า</strong> — ติดตั้งเตา ต่อแก๊ส เปิดตู้แช่ ต้มน้ำซุปหม้อใหญ่
+    ทำ<strong>ครั้งเดียวจบ</strong> ทั้งวันไม่ต้องทำซ้ำ
+    <br>· <strong>ตอนลูกค้าโต๊ะหนึ่งลุก ก่อนโต๊ะถัดไปนั่ง</strong> — เก็บจาน เช็ดโต๊ะ เปลี่ยนน้ำจิ้ม
+    ทำ<strong>ทุกโต๊ะ</strong> และต้องทำ ไม่งั้นลูกค้าใหม่เจอคราบของคนเก่า
+  </p>
+  <p>
+    <code>SetupSuite</code> = งานก่อนเปิดร้าน (ขอ container, <code>gorm.Open</code>) ·
+    <code>SetupTest</code> = งานเช็ดโต๊ะระหว่างลูกค้า (<code>TRUNCATE</code>)
+    <br>สลับที่กันเมื่อไหร่พังทันที: ต้มซุปใหม่ทุกโต๊ะ = ช้ามาก · เช็ดโต๊ะแค่ตอนเช้า = โต๊ะที่สองเจอของเก่าค้าง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ลูกค้าร้านชาบูเข้ามาตามคิวที่จองไว้
+    แต่ testify <strong>เรียงเทสตามตัวอักษรของชื่อ method</strong> ไม่ใช่ตามลำดับที่คุณเขียนในไฟล์
+    (กล่องทายผลถัดไปจะพิสูจน์ให้ดู) — จึงห้ามเขียนเทสที่พึ่งพา “โต๊ะก่อนหน้า” เด็ดขาด
+  </p>
+</div>
+
 <div class="table-wrap">
 <table>
   <tr><th></th><th><code>SetupSuite</code> (ครั้งเดียว)</th><th><code>SetupTest</code> (ทุกเทส)</th></tr>
@@ -475,6 +581,27 @@ ok  	tcdemo/test/integration	<strong>0.353s</strong></code></pre>
       <br>ทุกเทสต้องเตรียมข้อมูลของตัวเองใน <code>SetupTest</code> เสมอ
     </p>
   </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>test suite</dt>
+    <dd>“ชุดเทสที่อยู่ก้อนเดียวกันและใช้ของกลางร่วมกัน” — ในที่นี้คือ struct <code>UserRepoSuite</code> ·
+    พูดว่า <em>“ย้ายเทสพวกนี้ไปรวมเป็น suite”</em> ได้เลย</dd>
+    <dt>hook</dt>
+    <dd>“ตะขอแขวนงาน” — จุดที่ตัว framework เปิดช่องไว้ให้เราแทรกโค้ดของตัวเองเข้าไป เช่น
+    <code>SetupTest</code> · ถามว่า <em>“ของนี้ควรอยู่ hook ไหน SetupSuite หรือ SetupTest”</em></dd>
+    <dt>embedding (การฝัง struct)</dt>
+    <dd>การเขียนชื่อ type ลอย ๆ ไม่มีชื่อ field อย่างบรรทัด <code>suite.Suite</code> ·
+    ผลคือได้ method ของตัวที่ฝังติดมาใช้ฟรี · ประโยคที่ใช้จริง: <em>“embed suite.Suite เข้ามาใน struct”</em></dd>
+    <dt>test isolation</dt>
+    <dd>“เทสแต่ละตัวต้องไม่ยุ่งกัน” — ทุกตัวเริ่มจากสถานะสะอาดเท่ากัน ·
+    <code>TRUNCATE</code> ใน <code>SetupTest</code> คือสิ่งที่ซื้อ isolation ให้คุณ</dd>
+    <dt>reflection</dt>
+    <dd>ความสามารถของโปรแกรมในการ “ส่องดูตัวเอง” ตอนรันว่ามี method ชื่ออะไรบ้าง ·
+    testify ใช้ท่านี้หา method ที่ขึ้นต้นด้วย <code>Test</code> — และเป็นสาเหตุที่ลำดับกลายเป็นเรียงตามตัวอักษร</dd>
+  </dl>
 </div>
 
 <p>พอประกอบครบ นี่คือหน้าตาของการรัน integration suite เต็ม ๆ:</p>
@@ -587,15 +714,37 @@ e43f38657fa3	postgres:16-alpine	thirsty_curie	<strong>Up 28 seconds</strong></co
 <p>
   Ryuk คือ container ตัวเล็ก ๆ ที่ testcontainers เปิดให้อัตโนมัติ
   <strong>หนึ่งตัวต่อหนึ่ง test process</strong> (ไม่ใช่ต่อหนึ่ง container)
-  มันถือ TCP connection กับ test process ไว้ พอ process ตายก็เริ่มนับถอยหลัง
-  <strong>ประมาณ 10 วินาที</strong> แล้วลบทุก container ที่มี label ของ session นั้น รวมถึงลบตัวเองด้วย
+  มันถือ TCP connection (สายที่ต่อค้างไว้ระหว่างสองโปรแกรม พอฝั่งหนึ่งตาย อีกฝั่งรู้ทันที)
+  กับ test process ไว้ พอ process ตายก็เริ่มนับถอยหลัง
+  <strong>ประมาณ 10 วินาที</strong> แล้วลบทุก container ที่มี label (ป้ายชื่อที่แปะไว้บน container)
+  ของการรันครั้งนั้น รวมถึงลบตัวเองด้วย
 </p>
+
+<div class="analogy">
+  <span class="label">🧹 เทียบให้เห็นภาพ — แม่บ้านที่มานั่งรอในร้านตั้งแต่เปิดร้าน</span>
+  <p>
+    ร้านนี้แม่บ้านเข้ามา<strong>พร้อมพนักงานคนแรกตอนเช้า</strong> แล้วนั่งรออยู่มุมร้านทั้งวัน ยังไม่ทำอะไร
+    <br>พอเห็นไฟหน้าร้านดับ (พนักงานกลับกันหมดแล้ว) ก็รออีก<em>สิบวินาที</em> แล้วค่อยลุกไปเก็บของที่ลืมทิ้งไว้
+    <br>ระหว่างสิบวินาทีนั้นของยังกองอยู่เต็มร้าน · และถ้าวันไหนแม่บ้านลาหยุด ของก็กองข้ามคืน
+  </p>
+  <p>
+    Ryuk คือแม่บ้านคนนั้น · “เข้ามาตอนเช้า” คือมันถูกเปิดขึ้น<strong>พร้อม container ตัวแรก</strong>
+    (ไม่ใช่โผล่มาทีหลังตอน process ตาย) · “นั่งรอทั้งวัน” คือถือ TCP connection ค้างไว้เฉย ๆ ·
+    “ไฟหน้าร้านดับ” คือสายนั้นขาดเพราะ test process ตาย แล้วมันเริ่มนับถอยหลัง <strong>~10 วินาที</strong> ·
+    “ลาหยุด” คือมีคนไปตั้ง <code>TESTCONTAINERS_RYUK_DISABLED=true</code>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> แม่บ้านเก็บทุกอย่างที่เห็นในร้าน
+    แต่ Ryuk ลบเฉพาะ container ที่<strong>มีป้ายชื่อของการรันครั้งนั้นติดอยู่</strong>เท่านั้น —
+    container ที่คุณเปิดเองด้วยมือจาก <code>docker run</code> มันไม่แตะ
+  </p>
+</div>
 
 <div class="table-wrap">
 <table>
   <tr><th>คำถาม</th><th>ผลที่วัดได้</th></tr>
   <tr><td>container ถูกลบจริง หรือแค่ stop?</td><td><strong>ลบจริง</strong> — <code>docker ps -a</code> ก็ได้ <code>all_pg=0</code></td></tr>
-  <tr><td>anonymous volume ของ postgres ค้างไหม</td><td><strong>ไม่ค้าง</strong> — วัด dangling volume ก่อน/หลัง ได้ delta 0 ทั้งกรณี <code>Terminate</code> ปกติ และกรณี Ryuk เก็บ</td></tr>
+  <tr><td>anonymous volume (volume ที่ Docker สร้างให้เองโดยเราไม่ได้ตั้งชื่อ — มันจะได้ชื่อเป็นรหัสสุ่มยาว ๆ แทน) ของ postgres ค้างไหม</td><td><strong>ไม่ค้าง</strong> — วัด dangling volume (volume ที่ไม่มี container ไหนใช้แล้ว) ก่อน/หลัง ได้ delta 0 ทั้งกรณี <code>Terminate</code> ปกติ และกรณี Ryuk เก็บ</td></tr>
   <tr><td>ปิด Ryuk แล้วลืม <code>Terminate</code></td><td><strong>ค้างถาวร</strong> — วัดถึง 28 วินาทีก็ยัง <code>Up</code></td></tr>
 </table>
 </div>
@@ -612,13 +761,37 @@ e43f38657fa3	postgres:16-alpine	thirsty_curie	<strong>Up 28 seconds</strong></co
   </p>
 </div>
 
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>resource leak</dt>
+    <dd>“ของที่เปิดไว้แล้วลืมปิด” — container, ไฟล์, connection ก็นับหมด ·
+    พูดว่า <em>“เทสนี้ leak container ตอน wait timeout”</em> ตรงกว่าบอกว่า “มีอะไรค้างอยู่ไม่รู้”</dd>
+    <dt>resource reaper (Ryuk)</dt>
+    <dd>ชื่อที่ testcontainers ใช้เรียกตัวตามเก็บ container ที่ไม่มีใครใช้แล้ว ·
+    ใน Go SDK เป็น type ชื่อ <code>Reaper</code> และ container ที่มันเปิดชื่อว่า <code>reaper_&lt;session id&gt;</code>
+    ส่วน env var ทั้งชุดใช้คำว่า ryuk เช่น <code>TESTCONTAINERS_RYUK_DISABLED</code> ·
+    บางคนเรียกลอย ๆ ว่า “GC ของ testcontainers” แต่คำที่ค้นเจอในเอกสารคือ reaper —
+    และมันคนละตัวกับ GC ที่เก็บหน่วยความจำในภาษา Go แม้แนวคิดจะคล้ายกัน</dd>
+    <dt>safety net</dt>
+    <dd>“ตาข่ายรองรับ” — ของสำรองที่ช่วยไว้ตอนพลาด <strong>ไม่ใช่</strong>แผนหลัก ·
+    ประโยคที่ senior ชอบพูด: <em>“อย่าออกแบบโดยพึ่ง safety net”</em></dd>
+    <dt>label</dt>
+    <dd>“ป้ายชื่อ” ที่ Docker ให้แปะไว้บน container · Ryuk ใช้ป้ายนี้แยกว่าตัวไหนเป็นของการรันครั้งนี้
+    ตัวไหนไม่ใช่ธุระของมัน
+    <br>ป้ายที่ใช้แยกคือ <code>org.testcontainers.sessionId</code> —
+    เปิด container แล้วลอง <code>docker inspect -f '{{json .Config.Labels}}' &lt;id&gt;</code> ดูของจริงได้เลย</dd>
+  </dl>
+</div>
+
 <h2>8 · กับดักที่เหลือ</h2>
 
 <h3 style="margin-top:1.4rem">8.1 <code>Run</code> คืน error <em>พร้อมกับ</em> container ที่ไม่ใช่ nil</h3>
 
 <p>
   บทที่แล้วสอนรูปแบบ cleanup ที่ถูกไปแล้ว ตรงนี้คือหลักฐานว่าทำไมมันสำคัญ —
-  เมื่อ wait strategy timeout, <code>Run</code> <strong>คืนทั้ง error และ container ที่ start ไปแล้วจริง ๆ</strong>:
+  เมื่อ wait strategy (กติกาที่บอกว่าจะถือว่า container พร้อมใช้เมื่อไหร่ เช่น รอจนเห็น log บรรทัดหนึ่ง)
+  รอจนหมดเวลา <code>Run</code> <strong>คืนทั้ง error และ container ที่ start ไปแล้วจริง ๆ</strong>:
 </p>
 
 <pre><code>    waittimeout_test.go:28: VERBATIM wait-timeout error: run postgres: generic container: start container: started hook: wait until ready: "this log line will never appear" matched 0 times, expected 1
@@ -671,7 +844,7 @@ e43f38657fa3	postgres:16-alpine	thirsty_curie	<strong>Up 28 seconds</strong></co
   <br>เพราะ postgres ที่กำลัง initdb อยู่<strong>ไม่ตอบ SIGTERM</strong>
   Docker จึงรอครบ stop timeout (10 วินาที) แล้วค่อย SIGKILL
   <br><strong>นี่คือเหตุผลที่สองว่าทำไมต้องใส่ <code>BasicWaitStrategies()</code></strong> —
-  ไม่ใช่แค่กันเทส flaky แต่กัน teardown ช้าด้วย
+  ไม่ใช่แค่กันเทส flaky (เดี๋ยวผ่านเดี๋ยวไม่ผ่านทั้งที่โค้ดไม่ได้เปลี่ยน) แต่กัน teardown ช้าด้วย
 </p>
 
 <h3 style="margin-top:1.4rem">8.3 <code>sync.Once</code> กับ <code>t.Parallel()</code> — เตือนไว้ก่อน</h3>
@@ -683,7 +856,8 @@ e43f38657fa3	postgres:16-alpine	thirsty_curie	<strong>Up 28 seconds</strong></co
     ถ้าเทสสองตัวรันขนานกันบน DB เดียวกัน ตัวหนึ่งจะล้างตารางกลางคันของอีกตัว
     <br><strong>ข้อจำกัดข้อนี้ผมยังไม่ได้พิสูจน์ด้วยการรันจริง</strong> จึงไม่มี output มาให้ดู
     — เอาไว้เป็นข้อควรระวังว่าถ้าจะใช้ <code>t.Parallel()</code>
-    ต้องแยก schema หรือแยกตารางต่อเทส ไม่ใช่ใช้ <code>TRUNCATE</code> ร่วมกัน
+    ต้องแยก schema (ชุดตารางที่แยกกันอยู่คนละกลุ่มใน DB เดียวกัน) หรือแยกตารางต่อเทส
+    ไม่ใช่ใช้ <code>TRUNCATE</code> ร่วมกัน
   </p>
 </div>
 

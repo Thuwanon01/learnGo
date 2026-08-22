@@ -1,0 +1,988 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 54 — ให้ AI agent เขียนโค้ดแทน: Self Coding, Pure Agent และ Agent Skills</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 54 · Day 9 · วิธีทำงานกับ AI agent</p>
+  <h1>ให้ AI agent เขียนโค้ดแทน: Self Coding, Pure Agent และ Agent Skills</h1>
+  <p class="meta">~20 นาที · ไม่มีโค้ด Go ให้รันในบทนี้ · ควรผ่าน <a href="../../day-8/lessons/0035-query-body-header.html">บทเรียน 35</a> (query · body · header) มาก่อน เพราะสไลด์ใช้ resource ชุด <code>recipes</code> เป็นโจทย์
+    — และถ้าอยากเห็นโครง endpoint ของ <code>recipes</code> เต็มชุด ให้ย้อนดูบทเรียน 42 (Wongnok: ออกแบบ API spec จากโจทย์จริง)</p>
+  <p class="standfirst">
+    บทนี้มาจากสไลด์ Day 9 <strong>หน้า 55–68</strong> (พร้อมตัวอย่าง prompt จากหน้า 54)
+    และมัน<strong>ไม่ใช่บท Go</strong>
+    <br>ชื่อคอร์สคือ <em>"Enterprise Go Engineering with <strong>AI Integration</strong>"</em> —
+    ครึ่งหลังของชื่อคือหัวข้อของบทนี้พอดี
+    <br>สไลด์ทำสิ่งที่ตรงไปตรงมามาก: เอา resource ชุดเดียว (<code>recipes</code>) มาทำทีละ endpoint
+    แล้ว<strong>เปลี่ยนโหมดการทำงานไปเรื่อย ๆ</strong> — เขียนเองสองอัน · ให้ agent ทำล้วน ๆ หนึ่งอัน ·
+    แล้วที่เหลือให้ agent ทำแล้วเรารีวิว
+    <br>ระหว่างทางมีของแทรกเข้ามาชุดหนึ่งคือ <strong>agent skills</strong> —
+    ซึ่งเป็นคำตอบว่า "จะทำให้ agent มีวินัยได้ยังไง"
+    <br>ผมจะทำสามอย่างในบทนี้: อธิบายว่า<strong>โหมดไหนเหมาะกับงานแบบไหนและเสี่ยงอะไร</strong> ·
+    <strong>วัด progressive disclosure ออกมาเป็นตัวเลขจริง</strong> จาก skill ที่ติดตั้งอยู่บนเครื่องผม ·
+    และเล่า<strong>ความผิดพลาดของ agent ที่เจอกับตัวเอง</strong>ตอนทำเว็บบทเรียนชุดนี้
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ (ตรวจวันที่ 22 สิงหาคม 2026)</strong></p>
+  <pre style="margin:0.5rem 0"><code>github.com/mattpocock/skills   <span class="c"># อ่าน README ของจริงเพื่อยืนยันคำสั่งติดตั้ง</span>
+skills ที่ติดตั้งไว้บนเครื่องผม  <span class="c"># 32 โฟลเดอร์ ใน ~/.agents/skills/</span>
+                                <span class="c"># ลงด้วยเส้นทาง npx (symlink) ไม่ใช่เส้นทาง plugin</span></code></pre>
+  <p style="margin-bottom:0">
+    <strong>บทนี้ไม่มีโค้ด Go</strong> — ตัวเลขทุกตัวที่โผล่มาเป็นการวัดไฟล์ skill จริงด้วย
+    <code>wc -c</code> ซึ่งคุณรันตามได้ถ้าติดตั้ง skill ชุดเดียวกัน
+    <br><strong>สิ่งที่ผมยืนยันไม่ได้ในเซสชันนี้:</strong> คำสั่ง <code>claude plugins install</code>
+    ผมรันไม่ได้เพราะ <code>claude</code> ไม่ได้อยู่ใน <code>PATH</code> ของ shell ที่ผมใช้ตรวจ —
+    ผมจึงยืนยันคำสั่งนั้น<strong>จากการอ่าน README ของ repo เท่านั้น</strong> ไม่ได้รันเอง
+    <br>ส่วนชื่อ skill ทั้งสี่ตัว ผม<strong>เปิดไฟล์จริงบนเครื่องอ่าน</strong> — ไม่ได้เชื่อสไลด์อย่างเดียว
+  </p>
+</div>
+
+<h2>1 · ทำไมบทที่ไม่มี Go ถึงอยู่ในคอร์ส Go</h2>
+
+<p>
+  ตลอด 53 บทที่ผ่านมา เราถามว่า <em>"เขียนยังไงให้ถูก"</em>
+  <br>บทนี้ถามคนละคำถาม: <strong>"ใครเขียน แล้วใครตรวจ"</strong>
+</p>
+
+<p>
+  เหตุผลที่คำถามนี้สำคัญพอจะกินเวลา 14 หน้าสไลด์ คือ<strong>ความเร็ว</strong>
+  <br>agent เขียน CRUD หนึ่งชุดเสร็จในเวลาที่คุณยังอ่าน spec ไม่จบ —
+  ซึ่งฟังดูดี จนกระทั่งคุณนึกออกว่า<strong>ของที่โตเร็วขึ้นไม่ได้มีแค่ฟีเจอร์</strong>
+  หนี้ทางเทคนิคก็โตเร็วขึ้นด้วยอัตราเดียวกัน
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ ประโยคที่ต้องจำจากทั้งบท</span>
+  <p style="margin-bottom:0">
+    เครื่องมือที่ทำให้คุณ<strong>ผลิตโค้ดเร็วขึ้น 10 เท่า</strong>
+    ก็ทำให้คุณ<strong>ผลิตโค้ดที่ผิดเร็วขึ้น 10 เท่า</strong>เหมือนกัน
+    <br>สิ่งที่ไม่ได้เร็วขึ้นตามอัตโนมัติคือ<strong>ความสามารถในการตรวจ</strong> —
+    และนั่นคือช่องว่างที่ทั้งบทนี้พยายามปิด
+  </p>
+</div>
+
+<h2>2 · สามโหมดที่สไลด์แบ่งไว้</h2>
+
+<p>
+  สไลด์ไม่ได้อธิบายทฤษฎีอะไร มันแค่<strong>ทำงานให้ดูทีละ endpoint แล้วติดป้ายโหมดไว้มุมบนขวา</strong>
+  <br>ผมไล่ทั้ง 14 หน้าออกมาเป็นตารางให้เห็นภาพรวมทีเดียว:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้าสไลด์</th><th>ป้ายโหมด</th><th>งานที่ทำ</th></tr></thead>
+  <tbody>
+    <tr><td>55</td><td><strong>Self Coding</strong></td><td>Implement · Create recipes</td></tr>
+    <tr><td>56</td><td><strong>Self Coding</strong></td><td>Implement · Get recipes</td></tr>
+    <tr><td>57</td><td><strong>Pure Agent</strong></td><td>Generate · Get recipe by id</td></tr>
+    <tr><td>58–63</td><td colspan="2"><em>แทรกเรื่อง agent skills กับวิธีติดตั้ง (หัวข้อ 4–7 ของบทนี้)</em></td></tr>
+    <tr><td>64</td><td><strong>Pure Agent &amp; Review</strong></td><td>Generate · Get recipe by id <strong>(ซ้ำกับหน้า 57)</strong></td></tr>
+    <tr><td>65</td><td><strong>Pure Agent &amp; Review</strong></td><td>Generate · Update recipe by id</td></tr>
+    <tr><td>66</td><td><strong>Pure Agent &amp; Review</strong></td><td>Generate · Delete recipe by id</td></tr>
+    <tr><td>67</td><td><strong>Pure Agent &amp; Review</strong></td><td>Generate · Get my profile</td></tr>
+    <tr><td>68</td><td><strong>Pure Agent &amp; Review</strong></td><td>Generate · Update my profile</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>สังเกตแถวที่ผมเน้นไว้</strong> — <em>Get recipe by id</em> โผล่<strong>สองครั้ง</strong>
+    ครั้งแรกในโหมด Pure Agent (หน้า 57) ครั้งที่สองในโหมด Pure Agent &amp; Review (หน้า 64)
+    <br>นี่ไม่ใช่สไลด์พิมพ์ซ้ำ แต่คือ<strong>งานเดียวกันทำสองรอบด้วยสองโหมด</strong> —
+    ซึ่งเป็นวิธีเทียบที่ตรงที่สุด เพราะตัวแปรที่ต่างมีตัวเดียวคือ "มีรีวิวหรือไม่มี"
+    <br>ถ้าคุณอยากได้อะไรกลับบ้านจากบทนี้จริง ๆ ให้ทำแบบนี้: <strong>ทำงานเดิมสองรอบ แล้วเทียบ diff</strong>
+  </p>
+</div>
+
+<h3>คำว่า Implement กับ Generate ต่างกันตรงไหน</h3>
+
+<p>
+  สังเกตอีกจุดในตาราง: สองหน้าแรกใช้คำว่า <strong>Implement</strong> ส่วนหน้าที่เหลือใช้ <strong>Generate</strong>
+  <br>ไม่ใช่คำสวย ๆ — มันบอกว่า<strong>ใครเป็นคนพิมพ์</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำ</th><th>ใครลงมือ</th><th>หน่วยของงานที่คุณจับต้อง</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Implement</strong></td>
+      <td>คุณ</td>
+      <td><strong>บรรทัดโค้ด</strong> — คุณตัดสินใจทีละบรรทัด และรู้ว่าทำไมมันถึงเป็นแบบนั้น</td>
+    </tr>
+    <tr>
+      <td><strong>Generate</strong></td>
+      <td>agent</td>
+      <td><strong>prompt กับ diff</strong> — คุณตัดสินใจแค่สองจุด: สั่งว่าอะไร และรับ/ไม่รับผลที่ได้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ตรงนี้คือจุดที่คนใหม่พลาดบ่อยที่สุด: พอย้ายมาโหมด Generate แล้ว
+  <strong>งานของคุณไม่ได้หายไป มันย้ายที่</strong>
+  <br>จากเดิมที่ใช้เวลาไปกับ "พิมพ์ให้ถูก" กลายเป็นใช้เวลาไปกับ
+  <strong>"สั่งให้ชัด" และ "อ่าน diff ให้เป็น"</strong> — ซึ่งเป็นทักษะคนละตัวกัน และไม่ได้มาฟรี
+</p>
+
+<h2>3 · โหมดไหนเหมาะกับงานแบบไหน และเสี่ยงอะไร</h2>
+
+<p>
+  สไลด์ไม่ได้เขียนตารางนี้ไว้ให้ — มันแค่<em>ทำให้ดู</em>
+  <br>ผมสรุปเป็นตารางเพื่อให้ตัดสินใจได้เองในโปรเจกต์จริง โดยอ่านจากลำดับที่สไลด์เลือกใช้:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>โหมด</th>
+      <th>เหมาะกับงานแบบไหน</th>
+      <th>ความเสี่ยงหลัก</th>
+      <th>อะไรลดความเสี่ยงลงได้</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Self Coding</strong><br>เขียนเองทุกบรรทัด</td>
+      <td><strong>งานชิ้นแรกของ resource</strong> ที่ยังไม่มีแบบในโปรเจกต์ให้ลอก ·
+          งานที่คุณ<em>ยังไม่เข้าใจ</em>และต้องเข้าใจ ·
+          จุดที่ตัดสินใจเรื่องโครงสร้าง (จะแบ่ง layer ยังไง error จะห่อแบบไหน)</td>
+      <td><strong>ช้า</strong> — และถ้าคุณวางโครงผิดตั้งแต่ชิ้นแรก
+          โครงที่ผิดนั้นจะกลายเป็น<strong>แบบที่ agent ลอกต่อไปทั้ง resource</strong></td>
+      <td>ทำชิ้นแรกให้ถูกจริง ๆ ก่อน แล้วค่อยส่งต่อ ·
+          ถือว่าโค้ดชิ้นแรกคือ<strong>เอกสารที่ agent จะอ่าน</strong> ไม่ใช่แค่โค้ด</td>
+    </tr>
+    <tr>
+      <td><strong>Pure Agent</strong><br>สั่งแล้วรับผลไปเลย</td>
+      <td>งานที่<strong>"เหมือนของเดิม"</strong> ชัด ๆ — มีแบบอยู่แล้วในโปรเจกต์ ·
+          โค้ดที่ทิ้งได้ (prototype, script ใช้ครั้งเดียว, ไฟล์ทดลอง)</td>
+      <td>โค้ดที่<strong>อ่านผ่านตาแล้วดูถูก แต่ผิด spec</strong> ·
+          complexity โตขึ้นเงียบ ๆ ทีละนิดจนกลายเป็น ball of mud ·
+          และ<strong>คุณไม่รู้ว่าตัวเองไม่รู้อะไร</strong> เพราะไม่ได้อ่าน</td>
+      <td><strong>จำกัดขอบเขตใน prompt</strong> —
+          สไลด์หน้า 54 มีตัวอย่างท่านี้ตรง ๆ (ดูกล่องข้างล่าง)</td>
+    </tr>
+    <tr>
+      <td><strong>Pure Agent &amp; Review</strong><br>agent ทำ แล้วอ่าน diff ก่อน commit</td>
+      <td><strong>ทุกอย่างที่จะขึ้น production</strong> ·
+          และทุกครั้งที่งานนั้นมี "ของเดิม" ให้กระทบ</td>
+      <td><strong>รีวิวแบบผ่าน ๆ</strong> — พอ diff ยาว 400 บรรทัด
+          คนกด approve เร็วกว่าอ่าน · รีวิวที่ไม่ได้อ่านจริงแย่กว่าไม่รีวิว
+          เพราะมันสร้างความมั่นใจปลอม</td>
+      <td>ให้ <strong>skill รีวิวรอบแรกอย่างเป็นระบบ</strong>
+          แล้วคุณอ่านเฉพาะจุดที่มันชี้ — หัวข้อ 6 ว่าด้วยเรื่องนี้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p><strong>ตัวอย่าง prompt จำกัดขอบเขต จากสไลด์หน้า 54 (Migrate recipes)</strong> — อ่านให้ดีว่าครึ่งหลังทำอะไร:</p>
+  <pre style="margin:0.6rem 0"><code><span class="c"># Prompt</span>
+
+สร้างไฟล์ migrations ตาม docs/ARCHITECTURE.md
+<strong>โดยให้ทำเพียงสร้างไฟล์อย่างเดียวเท่านั้นเพื่อนำไปรีวิวก่อน
+ไม่ต้องตรวจสอบและ migrate จริง</strong></code></pre>
+  <p style="margin-bottom:0">
+    ประโยคแรกบอก<strong>งาน</strong> ประโยคที่สองบอก<strong>เพดาน</strong> —
+    "สร้างไฟล์อย่างเดียว ห้ามรันจริง"
+    <br>ทำไมถึงสำคัญ: <code>migrate</code> คือคำสั่งที่<strong>ย้อนกลับยาก</strong>
+    ถ้า agent เดาผิดแล้วรันไปแล้ว คุณไม่ได้แค่ลบไฟล์ทิ้ง — คุณต้องแก้ฐานข้อมูล
+    <br><strong>กฎที่ใช้ได้จริง:</strong> ทุก prompt ที่งานมีผลข้างเคียงถาวร
+    (แก้ DB · ลบไฟล์ · ยิง API จริง · <code>git push</code>) ให้เขียนเพดานไว้เสมอ
+    ว่า<strong>ให้หยุดตรงไหนเพื่อรอรีวิว</strong>
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🍱 เทียบให้เห็นภาพ — สั่งข้าวกล่องมาเลี้ยงทั้งทีม</span>
+  <p>
+    สมมติคุณรับหน้าที่หาข้าวเที่ยงให้เพื่อนร่วมทีม 10 คน มีสามท่าให้เลือก:
+    <br>· <strong>ทำเองที่บ้าน</strong> — ช้าที่สุด แต่คุณรู้ทุกอย่างที่ใส่ลงไป → <em>Self Coding</em>
+    <br>· <strong>สั่งเดลิเวอรี่แล้ววางบนโต๊ะเลย</strong> — เร็วที่สุด
+        แต่ถ้าร้านใส่กุ้งมาในกล่องของคนแพ้กุ้ง คุณจะรู้ตอนเขากินไปแล้ว → <em>Pure Agent</em>
+    <br>· <strong>สั่งเดลิเวอรี่ แล้วเปิดฝาดูทุกกล่องก่อนวาง</strong> —
+        ช้ากว่าท่าที่สองนิดเดียว แต่จับของผิดได้ก่อนถึงปาก → <em>Pure Agent &amp; Review</em>
+  </p>
+  <p>
+    สังเกตว่าท่าที่สาม<strong>ไม่ได้แปลว่า "ไม่ไว้ใจร้าน"</strong> —
+    มันแปลว่า<strong>ของที่กินแล้วย้อนไม่ได้ ต้องดูก่อน</strong>
+    ซึ่งเป็นเหตุผลเดียวกับที่ prompt ในกล่องข้างบนสั่งว่า
+    "สร้างไฟล์อย่างเดียว ไม่ต้อง migrate จริง"
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> เปิดฝากล่องข้าวใช้เวลา 3 วินาที
+    และของผิดมองเห็นด้วยตา — แต่ diff ยาว 400 บรรทัด<strong>ใช้เวลาอ่านจริง</strong>
+    และโค้ดที่ผิด spec <strong>หน้าตาเหมือนโค้ดที่ถูกทุกประการ</strong>
+    <br>นี่คือเหตุผลที่ตารางข้างบนเขียนว่า <strong>"รีวิวแบบผ่าน ๆ แย่กว่าไม่รีวิว"</strong> —
+    กล่องข้าวไม่มีปัญหานี้ แต่ diff มี
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>diff</dt>
+    <dd>"ส่วนที่ต่าง" ระหว่างโค้ดก่อนแก้กับหลังแก้ — ไม่ใช่โค้ดทั้งไฟล์ ·
+        <strong>พิมพ์สั่ง AI ได้เลยว่า <em>"ขอดู diff ก่อน ยังไม่ต้อง commit"</em></strong>
+        หรือกับรุ่นพี่ว่า <em>"ช่วยอ่าน diff ให้หน่อย ดูไม่ออกว่ามันเพิ่มอะไร"</em></dd>
+    <dt>scope</dt>
+    <dd>ขอบเขตของงาน — เส้นที่บอกว่างานนี้<strong>ครอบคลุมถึงไหน และหยุดตรงไหน</strong> ·
+        <strong>พิมพ์ต่อท้าย prompt ได้เลยว่า <em>"ทำแค่สร้างไฟล์อย่างเดียว ห้ามรันคำสั่งใด ๆ"</em></strong> ·
+        เวลา senior พูดว่า <em>"อันนี้ out of scope นะ"</em> แปลว่า "เกินจากที่ตกลงกันไว้"</dd>
+    <dt>side effect</dt>
+    <dd>ผลข้างเคียงที่คำสั่งทิ้งไว้กับโลกภายนอก และมัก<strong>ย้อนกลับยาก</strong> —
+        แก้ฐานข้อมูล · ลบไฟล์ · ยิง API จริง · <code>git push</code> ·
+        <strong>ถามก่อนลงมือได้ว่า <em>"คำสั่งนี้มี side effect อะไรบ้าง ถ้ารันผิดย้อนได้ไหม"</em></strong></dd>
+    <dt>ball of mud</dt>
+    <dd>codebase ที่ทุกส่วนพันกันจนแยกไม่ออก แก้ที่หนึ่งพังอีกที่ ·
+        เป็นคำที่ dev ใช้จริงตอนรีวิว:
+        <strong><em>"ถ้าปล่อยแบบนี้ไปอีกสามเดือน มันจะกลายเป็น ball of mud"</em></strong></dd>
+  </dl>
+</div>
+
+<h2>4 · Agent skill คืออะไร</h2>
+
+<p>
+  ก่อนอ่านเหตุผล ต้องรู้ก่อนว่าหน้าตามันเป็นยังไง เพราะมันเรียบง่ายกว่าที่ชื่อทำให้คิด
+</p>
+
+<p>
+  <strong>Skill คือโฟลเดอร์หนึ่งโฟลเดอร์ ที่มีไฟล์ชื่อ <code>SKILL.md</code> อยู่ข้างใน</strong> จบแค่นั้น
+  <br>ข้างในไฟล์แบ่งเป็นสองส่วน — <strong>ส่วนหัวที่คั่นด้วย <code>---</code></strong>
+  (เรียกว่า <em>front matter</em>) กับ<strong>เนื้อความ</strong>ที่เป็น Markdown ธรรมดา
+  <br>นี่คือ 4 บรรทัดแรกของ skill ชื่อ <code>tdd</code> ที่ติดตั้งอยู่บนเครื่องผมจริง ๆ:
+</p>
+
+<pre><code>$ head -4 ~/.agents/skills/tdd/SKILL.md
+---
+name: tdd
+description: Test-driven development. Use when the user wants to build features or fix bugs test-first, mentions "red-green-refactor", or wants integration tests.
+---</code></pre>
+
+<p>
+  สองบรรทัดใน front matter ทำหน้าที่ต่างกันคนละขั้ว และ<strong>นี่คือหัวใจของทั้งเรื่อง</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัด</th><th>ใครอ่าน และอ่านตอนไหน</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>name</code></td>
+      <td>ชื่อที่ใช้เรียก skill — เช่นพิมพ์ <code>/tdd</code></td>
+    </tr>
+    <tr>
+      <td><code>description</code></td>
+      <td><strong>agent เห็นบรรทัดนี้ตลอดเวลา</strong> ของทุก skill —
+          มันคือป้ายที่บอกว่า "งานแบบไหนถึงควรหยิบฉันมาใช้" (ในวงการเรียกว่า <em>trigger</em>)</td>
+    </tr>
+    <tr>
+      <td>เนื้อความข้างล่าง <code>---</code></td>
+      <td><strong>agent อ่านเฉพาะตอนที่ตัดสินใจหยิบ skill นี้มาใช้แล้วเท่านั้น</strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>4 เหตุผลที่สไลด์ยกมา (หน้า 58)</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เหตุผล</th><th>แปลว่าอะไร</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Progressive disclosure</strong><br><em>(ทยอยเปิดเผย)</em></td>
+      <td>agent <strong>ไม่ต้องโหลดทุก instruction เข้า context ตลอดเวลา</strong>
+          แต่จะ "ดึง" skill ที่เกี่ยวข้องมาใช้<strong>เฉพาะตอนที่งานตรงกับ trigger</strong> เท่านั้น
+          — <strong>ประหยัด token</strong>
+          <br>(<em>context</em> = ข้อความทั้งหมดที่ agent มองเห็นในรอบนั้น ซึ่งมีเพดานจำกัด ·
+          <em>token</em> = หน่วยที่ใช้นับปริมาณข้อความ)</td>
+    </tr>
+    <tr>
+      <td><strong>ความสม่ำเสมอ</strong><br><em>(consistency)</em></td>
+      <td>ไม่ว่าจะรันกี่ session หรือใครเป็นคนสั่ง agent ก็ทำตาม <strong>process เดิมทุกครั้ง</strong>
+          — ไม่ต้องพิมพ์อธิบายซ้ำทุกรอบ
+          <br>(<em>session</em> = การคุยกับ agent หนึ่งรอบ ซึ่งจบแล้วมันจำอะไรไม่ได้)</td>
+    </tr>
+    <tr>
+      <td><strong>แก้ failure mode เฉพาะจุด</strong></td>
+      <td>เช่น agent เขียนโค้ดมั่ว · debug มั่ว · ไม่ตรง spec · code สกปรกขึ้นเรื่อย ๆ
+          <br>skill คือ <strong>"วินัย"</strong> ที่บังคับ flow ให้ agent เดินตามขั้นตอนที่
+          <strong>พิสูจน์แล้วว่าได้ผลดีกว่า</strong>
+          <br>(<em>failure mode</em> = ท่าพังประจำ ไม่ใช่ bug ตัวเดียว แต่เป็น<em>แบบ</em>ของการพังที่เกิดซ้ำ ๆ)</td>
+    </tr>
+    <tr>
+      <td><strong>Reusable &amp; portable</strong></td>
+      <td>เขียนครั้งเดียว ใช้ได้<strong>ทุกโปรเจกต์ ทุก session</strong>
+          และถ้าเขียนแบบ <em>agent-agnostic</em> (ไม่ผูกกับ agent ยี่ห้อใดยี่ห้อหนึ่ง)
+          ก็<strong>ใช้ได้กับหลาย coding agent ไม่ใช่แค่ Claude</strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>5 · Progressive disclosure วัดออกมาเป็นตัวเลขได้</h2>
+
+<p>
+  ข้อแรกในสี่ข้อนั้นเป็นข้อเดียวที่<strong>วัดได้ตรง ๆ</strong> — ไม่ต้องเชื่อ ไม่ต้องเถียง
+  <br>วิธีวัด: เทียบ<strong>ขนาดของบรรทัด <code>description</code></strong> (ของที่ agent แบกไว้ตลอดเวลา)
+  กับ<strong>ขนาดของเนื้อหาทั้งโฟลเดอร์</strong> (ของที่มันดึงมาเฉพาะตอนใช้)
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — ผมวัด skill ทั้งสี่ตัวที่คอร์สนี้จะใช้ ด้วยคำสั่งนี้ (นับเป็น <strong>ไบต์</strong> ไม่ใช่ token)</p>
+  <pre><code>$ <span class="k">cd</span> ~/.agents/skills
+$ <span class="k">for</span> s <span class="k">in</span> tdd diagnosing-bugs codebase-design code-review; <span class="k">do</span>
+    <span class="f">printf</span> <span class="s">'%-16s desc=%4s  SKILL.md=%5s  ทั้งโฟลเดอร์=%6s\n'</span> <span class="s">"$s"</span> \
+      <span class="s">"$(grep -m1 '^description:' $s/SKILL.md | wc -c | tr -d ' ')"</span> \
+      <span class="s">"$(wc -c &lt; $s/SKILL.md | tr -d ' ')"</span> \
+      <span class="s">"$(cat $(find -L $s -type f) | wc -c | tr -d ' ')"</span>
+  <span class="k">done</span></code></pre>
+  <p class="ask">
+    <strong>ทายว่าบรรทัด <code>description</code> ทั้งสี่ตัวรวมกัน คิดเป็นกี่เปอร์เซ็นต์ของเนื้อหาทั้งหมด</strong>
+    <br>เลือกจากช่วงนี้: ราว ๆ 30% · ราว ๆ 10% · ราว ๆ 3% · ต่ำกว่า 1%
+    <br>และคำถามที่สำคัญกว่า: <strong>ถ้าเปอร์เซ็นต์นี้ต่ำมาก มันแปลว่าอะไรกับคนที่เขียน skill?</strong>
+  </p>
+  <button class="reveal">ดูผลรันจริง</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>tdd              desc= 163  SKILL.md= 3568  ทั้งโฟลเดอร์=  7350
+diagnosing-bugs  desc= 170  SKILL.md= 8536  ทั้งโฟลเดอร์=  9803
+codebase-design  desc= 279  SKILL.md= 6488  ทั้งโฟลเดอร์= 11861
+code-review      desc= 434  SKILL.md= 6731  ทั้งโฟลเดอร์=  6831</code></pre>
+    <p>
+      รวม <code>description</code> ทั้งสี่ = <strong>1,046 ไบต์</strong> ·
+      รวมเนื้อหาทั้งหมด = <strong>35,845 ไบต์</strong> → <strong>ประมาณ 2.9%</strong>
+      <br>ผมวัดซ้ำกับ<strong>ทั้ง 32 skill</strong>ที่ติดตั้งอยู่บนเครื่องด้วยวิธีเดียวกัน ได้
+      <strong>5,386 ไบต์ จาก 250,847 ไบต์ = ประมาณ 2.1%</strong>
+      <br>(32 ตัวนี้<strong>ไม่ได้มาจาก repo เดียว</strong> — ผมเช็ค tree ของ
+      <code>mattpocock/skills</code> วันนี้แล้วมี 7 ตัวบนเครื่องผมที่ไม่ได้อยู่ในนั้น
+      คือ <code>caveman</code> · <code>diagnose</code> · <code>to-issues</code> · <code>to-prd</code> ·
+      <code>write-a-skill</code> · <code>writing-great-skills</code> · <code>zoom-out</code> ·
+      ส่วนหัวข้อ <em>Reference</em> ใน README ของ repo นับได้ 25 ตัวพอดี)
+    </p>
+    <p>
+      แปลตรง ๆ: agent แบกไว้ตลอดเวลาแค่ราว <strong>2%</strong> ของเนื้อหาทั้งหมด
+      อีก 98% ถูกดึงมาเฉพาะตอนที่งานตรงกับ trigger
+      <br>ถ้าไม่มีกลไกนี้ เนื้อหา 250 กิโลไบต์จะต้องอยู่ใน context ทุกรอบ
+      <strong>ทั้งรอบที่คุณแค่ถามว่าไฟล์นี้ทำอะไร</strong>
+    </p>
+    <div class="warn">
+      <span class="label">⚠️ ระวังการอ่านตัวเลขนี้เกินจริง</span>
+      <p style="margin-bottom:0">
+        ผมวัดเป็น<strong>ไบต์</strong> ไม่ใช่ <strong>token</strong> — สองอย่างนี้ไม่เท่ากัน
+        และอัตราแปลงก็ไม่คงที่ (ภาษาอังกฤษกับภาษาไทยแปลงได้คนละอัตรา)
+        <br>ตัวเลข 2% จึงใช้บอก<strong>ลำดับความใหญ่</strong>ได้ แต่<strong>อย่าเอาไปคำนวณค่าใช้จ่ายตรง ๆ</strong>
+        <br>อีกจุดที่ต้องซื่อสัตย์: <code>grep | wc -c</code> นับทั้งบรรทัดรวมคำว่า
+        <code>description:</code> และตัวขึ้นบรรทัดใหม่ด้วย — ตัวเลขจึงสูงกว่าตัว description เปล่า ๆ นิดหน่อย
+      </p>
+    </div>
+    <p style="margin-bottom:0">
+      <strong>แล้วมันแปลว่าอะไรกับคนเขียน skill?</strong> แปลว่า <code>description</code>
+      คือบรรทัดที่<strong>สำคัญที่สุดในไฟล์</strong> —
+      ถ้ามันเขียนไม่ชัดว่างานแบบไหนควรหยิบ skill นี้ agent จะไม่มีวันเปิดอ่านอีก 98% ที่เหลือเลย
+      <br>เนื้อหาดีแค่ไหนก็ไม่มีความหมาย ถ้าป้ายหน้าประตูเขียนไม่ชัด
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🍜 เทียบให้เห็นภาพ — ป้ายเมนูหน้าร้าน กับสูตรที่อยู่ในครัว</span>
+  <p>
+    ร้านตามสั่งหน้าปากซอยติดป้ายเมนูไว้ 40 อย่าง ป้ายทั้งป้ายกวาดตาทีเดียวก็อ่านจบ
+    <br>แต่ <strong>"วิธีทำ" ของทั้ง 40 เมนูนั้นไม่ได้อยู่บนป้าย</strong> — มันอยู่ในหัวแม่ครัว
+    และถูกดึงออกมาใช้<strong>เฉพาะเมนูที่มีคนสั่งเท่านั้น</strong>
+  </p>
+  <p>
+    · <strong>ป้ายเมนู</strong> = บรรทัด <code>description</code> ของทุก skill — agent แบกไว้ตลอดเวลา
+    <br>· <strong>สูตรในครัว</strong> = เนื้อความใต้ <code>---</code> กับไฟล์ลูก — เปิดอ่านเฉพาะตอนงานตรงกับ trigger
+    <br>ตัวเลขที่วัดได้ข้างบนก็คือสัดส่วนนี้พอดี: ป้ายกินที่ราว <strong>2%</strong> ที่เหลืออีก 98% อยู่ในครัว
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ลูกค้าที่อ่านป้ายแล้วงง
+    <strong>เดินเข้าไปถามแม่ครัวได้</strong> — แต่ agent ไม่ถาม
+    ถ้า <code>description</code> เขียนไม่ตรงกับงานที่คุณสั่ง
+    มันจะ<strong>ไม่เปิดไฟล์นั้นเลย และไม่บอกคุณด้วยว่ามันไม่ได้เปิด</strong>
+    <br>ความเงียบตรงนี้จึงอันตรายกว่าป้ายเมนูที่เขียนงง ๆ มาก
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>progressive disclosure</dt>
+    <dd>"ทยอยเปิดเผย" — ให้เห็นแค่ป้ายก่อน แล้วค่อยดึงของเต็มมาเมื่อจำเป็น ·
+        <strong>พิมพ์สั่ง AI ได้เลยว่า <em>"ช่วยเขียน SKILL.md แบบ progressive disclosure —
+        description สั้นแต่ตรง แล้วแยกรายละเอียดไปไฟล์ลูก"</em></strong></dd>
+    <dt>context</dt>
+    <dd>ข้อความทั้งหมดที่ agent มองเห็นในรอบนั้น และมี<strong>เพดานจำกัด</strong> ·
+        ประโยคที่จะได้ยินบ่อย: <em>"อันนี้มันกิน context เยอะไป"</em>
+        = ใส่ของเข้าไปมากจนเบียดที่ของสำคัญอย่างอื่น</dd>
+    <dt>token</dt>
+    <dd>หน่วยที่โมเดลใช้นับปริมาณข้อความ — <strong>ไม่ใช่ตัวอักษร และไม่ใช่คำ</strong> ·
+        ตัวเลขในหัวข้อนี้วัดเป็น<strong>ไบต์</strong> ไม่ใช่ token
+        จึงใช้เทียบขนาดกันได้ แต่คิดค่าใช้จ่ายตรง ๆ ไม่ได้</dd>
+    <dt>trigger</dt>
+    <dd>เงื่อนไขที่ทำให้ skill ถูกหยิบมาใช้ ซึ่งก็คือสิ่งที่เขียนอยู่ในบรรทัด <code>description</code> ·
+        <strong>ถามรุ่นพี่ได้ว่า <em>"skill ตัวนี้ trigger ตอนไหน"</em></strong> = "งานแบบไหนมันถึงจะทำงาน"</dd>
+    <dt>front matter</dt>
+    <dd>ส่วนหัวของไฟล์ Markdown ที่คั่นด้วย <code>---</code> บนล่าง
+        ใช้เก็บข้อมูลกำกับไฟล์ (ที่นี่คือ <code>name</code> กับ <code>description</code>)
+        — ไม่ใช่เนื้อหาที่คนอ่าน · เจอชื่อนี้ในไฟล์ไหนก็หมายถึงสองขีดนี้เสมอ</dd>
+  </dl>
+</div>
+
+<h2>6 · สี่ skill ที่คอร์สจะใช้ — และข้างในมันมีอะไรจริง ๆ</h2>
+
+<p>
+  สไลด์หน้า 61 เลือกไว้สี่ตัว จาก repo <a href="https://github.com/mattpocock/skills">github.com/mattpocock/skills</a>
+  <br><strong>ผมเข้าไปตรวจ repo จริงแล้ว: ทั้งสี่ชื่อมีอยู่จริงทั้งหมด</strong>
+  อยู่ที่ <code>skills/engineering/&lt;ชื่อ&gt;/SKILL.md</code>
+  และผมยังเปิดไฟล์บนเครื่องอ่านเนื้อในซ้ำอีกชั้น
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>skill</th><th>เหตุผลที่สไลด์ให้</th><th>ข้างในบังคับอะไรจริง ๆ (จากไฟล์ที่ผมเปิดอ่าน)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>tdd</code></td>
+      <td>บังคับให้ agent มี <strong>feedback ที่วัดผลได้ทุกก้าว</strong>
+          ไม่ปล่อยให้เขียนกองใหญ่แล้วค่อยเทส</td>
+      <td>กฎที่เขียนไว้ตรง ๆ คือ <strong>red before green</strong> (เขียนเทสที่ fail ก่อน
+          แล้วเขียนโค้ดแค่พอให้ผ่าน) และ <strong>one slice at a time</strong> —
+          หนึ่งเทส หนึ่ง implementation ต่อรอบ
+          <br>มันตั้งชื่อท่าพังที่เราจะเผลอทำว่า <strong>horizontal slicing</strong>:
+          เขียนเทสทั้งกองก่อน แล้วค่อยเขียนโค้ดทั้งกอง — ซึ่งได้เทสที่ตรวจ<em>สิ่งที่จินตนาการไว้</em>
+          ไม่ใช่พฤติกรรมจริง</td>
+    </tr>
+    <tr>
+      <td><code>diagnosing-bugs</code></td>
+      <td>ป้องกัน agent <strong>แก้ปัญหาแบบยิงมั่วจนโค้ดยิ่งพัง</strong></td>
+      <td>แบ่งเป็น 6 เฟส และ<strong>เฟสแรกคือทั้งหมดของเรื่อง</strong>:
+          สร้าง <em>feedback loop</em> ที่ "แดง" กับบั๊กตัวนี้ก่อน — คือคำสั่งที่รันแล้ว
+          <strong>บอกผ่าน/ไม่ผ่านได้ทันที</strong>
+          <br>ไฟล์ถึงขั้นไล่วิธีสร้าง loop ให้ 10 แบบเรียงตามลำดับที่ควรลอง
+          ตั้งแต่เขียนเทสที่ fail · ยิง curl · ไปจนถึงเขียน harness ทิ้ง ๆ ขึ้นมาใหม่
+          <br>เหตุผลคือถ้าไม่มี loop <strong>การนั่งจ้องโค้ดไม่ช่วยอะไรเลย</strong></td>
+    </tr>
+    <tr>
+      <td><code>codebase-design</code></td>
+      <td>สำคัญเพราะ <strong>agent coding เร็วมาก</strong> ถ้าไม่มีวินัยเรื่อง design
+          จะได้ codebase ที่ complexity โตเร็วกว่าปกติ (<strong>ball of mud</strong>) เร็วมาก
+          <br>(<em>ball of mud</em> = โค้ดที่ทุกอย่างพันกันจนแยกส่วนไม่ออก แก้ตรงหนึ่งพังอีกที่)</td>
+      <td>เป็น <strong>คำศัพท์กลาง</strong> มากกว่าเป็นขั้นตอน — บังคับให้ทุกคน (คนกับ agent)
+          เรียกของชิ้นเดียวกันด้วยคำเดียวกัน
+          <br>เป้าหมายที่มันตั้งไว้คือ <strong>deep module</strong>:
+          <em>พฤติกรรมเยอะ ๆ ซ่อนอยู่หลัง interface เล็ก ๆ</em>
+          ตรงข้ามกับ <em>shallow</em> ที่ interface ซับซ้อนพอ ๆ กับไส้ใน
+          <br>ถึงขั้นห้ามใช้คำกำกวมด้วย — เช่นให้พูดว่า <em>seam</em> แทนคำว่า boundary</td>
+    </tr>
+    <tr>
+      <td><code>code-review</code></td>
+      <td>รีวิว diff <strong>ตั้งแต่จุดที่กำหนด</strong> ด้วย <strong>2 แกนขนานกัน</strong>
+          (รันเป็น <em>sub-agent</em> แยกกัน) คือ <strong>Standards</strong> และ <strong>Spec</strong>
+          <br>(<em>sub-agent</em> = agent ลูกที่ตัวแม่แตกออกไปทำงานย่อย มี context เป็นของตัวเอง
+          แยกจากตัวแม่และแยกจากพี่น้อง — มันจึงไม่เห็นว่าอีกตัวคิดอะไร)
+          <br>สำคัญเพราะเป็น<strong>ด่านสุดท้ายก่อน commit</strong> ที่ agent เช็คตัวเองอย่างเป็นระบบ</td>
+      <td>ขั้นแรกคือ <strong>ปักหมุดจุดเทียบ</strong> (commit / branch / tag) แล้วเทียบด้วย
+          <code>git diff &lt;จุดที่ปัก&gt;...HEAD</code>
+          <br>แกน <strong>Standards</strong> ถามว่าโค้ดตรงกับมาตรฐานของ repo ไหม
+          บวกกับชุด <em>code smell</em> ของ Fowler 12 ข้อเป็นพื้นฐาน (เช่น Duplicated Code,
+          Primitive Obsession, Shotgun Surgery)
+          <br>แกน <strong>Spec</strong> ถามคนละคำถามคือ ทำตรงกับที่โจทย์สั่งไหม —
+          หาทั้ง<em>ของที่ขาด</em> และ<em>ของที่เกินมาโดยไม่มีใครสั่ง</em></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p><strong>ทำไม <code>code-review</code> ต้องแยกเป็นสองแกน แทนที่จะรีวิวทีเดียวจบ</strong></p>
+  <p style="margin-bottom:0">
+    เพราะงานชิ้นเดียวกัน<strong>ผ่านแกนหนึ่งแล้วตกอีกแกนได้</strong> — และสองเคสนี้หน้าตาไม่เหมือนกันเลย:
+    <br>· โค้ดสะอาด ตั้งชื่อดี ตรงมาตรฐานทุกข้อ แต่<strong>ทำผิดโจทย์</strong> → Standards ผ่าน · Spec ตก
+    <br>· ทำตรงตามโจทย์เป๊ะ แต่<strong>เขียนแบบที่ทีมนี้ไม่เขียนกัน</strong> → Spec ผ่าน · Standards ตก
+    <br>ถ้ารวมสองแกนเป็นรายงานเดียว <strong>ข้อที่ผ่านจะกลบข้อที่ตก</strong> —
+    ไฟล์ถึงสั่งไว้ชัดว่า<strong>ห้ามเอาสองรายงานมารวมหรือจัดอันดับใหม่</strong>
+    และห้ามสรุปว่า "โดยรวมผ่าน" ข้ามแกน
+    <br>เหตุผลที่ต้องรันเป็น sub-agent <em>แยก</em> กัน: กันไม่ให้ผลของแกนหนึ่ง
+    <strong>ไปมีอิทธิพลกับความคิดของอีกแกน</strong> — เหมือนให้กรรมการสองคนตัดสินโดยไม่คุยกันก่อน
+  </p>
+</div>
+
+<h2>7 · ติดตั้งยังไง — และที่สไลด์ยังไม่ได้บอก</h2>
+
+<p>
+  สไลด์หน้า 62 ให้คำสั่งมาแบบนี้:
+</p>
+
+<pre><code><span class="c"># Plugin</span>
+claude plugins install mattpocock-skills
+
+<span class="c"># Project-scope skills</span>
+npx skills@latest add mattpocock/skills
+
+<span class="c"># Optional: Install node if not exists</span>
+mise use -g node@lts
+mise reshim   <span class="c"># Reload session</span></code></pre>
+
+<p>
+  <strong>ผลการตรวจ:</strong> ผมเปิด README ของ repo จริงแล้ว —
+  <strong>ทั้งสองคำสั่งตรงกับที่ README เขียนไว้ทุกตัวอักษร</strong>
+  <br>README ยังบอกทางที่สามด้วย คือพิมพ์ <code>/plugin install mattpocock-skills</code>
+  จากในเซสชันที่เปิดอยู่แล้ว
+  <br>ส่วนสองบรรทัด <code>mise</code> ไม่ได้อยู่ใน README — เป็นของที่อาจารย์ใส่เพิ่ม
+  เพราะคำสั่ง <code>npx</code> ต้องมี Node.js ถึงจะรันได้
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ สามเรื่องที่ README บอก แต่สไลด์ไม่ได้บอก — และสองเรื่องแรกทำให้พังจริง</span>
+  <p style="margin-bottom:0">
+    <strong>1. เลือกทางเดียว อย่าลงทั้งสองทาง</strong> — README เขียนไว้ตรง ๆ ว่าถ้าลงทั้ง plugin
+    และ <code>npx</code> คุณจะได้ <strong>skill ทุกตัวซ้ำสองชุด</strong>
+    <br>ที่สไลด์เขียนสองคำสั่งไว้ติดกันจึงอ่านง่ายมากว่า "รันทั้งคู่" ซึ่ง<strong>ไม่ใช่</strong>
+    <br>สองทางนี้ต่างกันที่<strong>ปรัชญา</strong>: ทาง plugin ได้ของ<strong>อ่านอย่างเดียว</strong>
+    ที่อัปเดตให้อัตโนมัติ (คุณ "สมัครสมาชิก") · ทาง <code>npx</code> ได้<strong>ไฟล์ที่คุณเป็นเจ้าของ</strong>
+    แก้เองได้ แต่ต้องสั่ง <code>npx skills update</code> เองเมื่ออยากได้ของใหม่
+    <br><br>
+    <strong>2. ลงเสร็จแล้วยังไม่จบ ต้องรัน <code>/setup-matt-pocock-skills</code> หนึ่งครั้งต่อ repo</strong>
+    — มันจะถามว่าใช้ issue tracker อะไร ใช้ label อะไรตอน triage และอยากเก็บเอกสารไว้ที่ไหน
+    <br>ข้ามขั้นนี้แล้ว skill บางตัวจะทำงานไม่ครบ — <code>code-review</code> เองก็มีบรรทัดบอกว่า
+    ถ้าไม่มีไฟล์ <code>docs/agents/issue-tracker.md</code> ให้ไปรันคำสั่งนี้ก่อน
+    <br><br>
+    <strong>3. ตอนลงทาง <code>npx</code> มันจะถามสองคำถามที่คุณต้องตอบ</strong>
+    (เห็นได้จากภาพหน้าจอในสไลด์หน้า 63): <em>Installation scope</em> —
+    <strong>Project</strong> (ลงในโฟลเดอร์นี้ ติดไปกับ repo ตอน commit) หรือ <strong>Global</strong> ·
+    และ <em>Installation method</em> — <strong>Symlink</strong> (แนะนำ: มีต้นฉบับชุดเดียว อัปเดตง่าย)
+    หรือ <strong>Copy to all agents</strong>
+    <br>หน้าจอเดียวกันยังให้เลือกด้วยว่าจะติดตั้งลง agent ตัวไหนบ้าง — ไม่ได้มีแค่ Claude Code
+    <br><strong>และให้เลือกด้วยว่าจะเอา skill ตัวไหนบ้าง — ต้องติ๊ก <code>setup-matt-pocock-skills</code>
+    ติดมาด้วย</strong> ไม่งั้นจะรัน <code>/setup-matt-pocock-skills</code> ในข้อ 2 ข้างบนไม่ได้เลย
+    <br>README เขียนไว้ตัวหนาตรงนี้เอง: <em>"The installer lets you choose which skills to take,
+    so make sure <code>setup-matt-pocock-skills</code> is one of them."</em>
+  </p>
+</div>
+
+<p>
+  เครื่องที่ผมใช้ตรวจบทนี้ลงไว้ทาง <code>npx</code> แบบ <strong>symlink</strong>
+  (<em>symlink</em> = ทางลัดที่ชี้ไปโฟลเดอร์จริงอีกที่หนึ่ง ไม่ใช่สำเนา — แก้ที่ต้นทางที่เดียว
+  ทุกทางลัดเห็นของใหม่พร้อมกัน) — ตรวจดูได้ว่ามันวางไฟล์ไว้จริง:
+</p>
+
+<pre><code>$ ls ~/.agents/skills/tdd
+SKILL.md
+agents
+mocking.md
+tests.md</code></pre>
+
+<p>
+  <strong>ระวังจุดที่คนเข้าใจผิดบ่อย</strong> — <code>~/.agents/skills/tdd</code> ที่เพิ่ง
+  <code>ls</code> ไป<strong>เป็นโฟลเดอร์จริง ไม่ใช่ symlink</strong> · ตัว symlink อยู่คนละที่
+  คือฝั่งที่ agent มาหยิบ ซึ่งดูได้ด้วย <code>readlink</code>:
+</p>
+
+<pre><code>$ readlink ~/.claude/skills/tdd
+../../.agents/skills/tdd</code></pre>
+
+<p>
+  บรรทัดเดียวนี้คือหัวใจของคำว่า symlink: <code>~/.claude/skills/tdd</code>
+  <strong>ไม่ได้เก็บไฟล์เอง</strong> มันแค่ชี้กลับไปที่ <code>~/.agents/skills/tdd</code>
+  <br>ถ้าตอนติดตั้งคุณเลือก scope เป็น <strong>Project</strong> ไม่ใช่ Global
+  ไฟล์จะไม่ได้อยู่ที่ <code>~/.agents/skills/</code> — ให้ไปดูที่ <code>.agents/skills/</code>
+  ในโฟลเดอร์โปรเจกต์แทน
+</p>
+
+<p>
+  สังเกตว่า skill ตัวเดียวมีได้<strong>หลายไฟล์</strong> — <code>SKILL.md</code> เป็นประตูหน้า
+  ส่วน <code>tests.md</code> กับ <code>mocking.md</code> เป็นเอกสารที่ <code>SKILL.md</code> ลิงก์ไปหา
+  <br>ส่วน <code>agents/</code> เก็บไฟล์ปรับให้เข้ากับ agent แต่ละยี่ห้อ — บนเครื่องผมข้างในมีไฟล์เดียวคือ
+  <code>agents/openai.yaml</code> ซึ่งเป็น<strong>รูปธรรมของคำว่า <em>agent-agnostic</em></strong>
+  ในตารางหัวข้อ 4: เนื้อหาหลักใช้ร่วมกัน ส่วนที่ผูกกับยี่ห้อถูกแยกออกมาไว้โฟลเดอร์นี้
+  <br>นี่คือ progressive disclosure<strong>อีกชั้นหนึ่ง</strong>: แม้แต่ตอนที่ agent เปิด
+  <code>SKILL.md</code> แล้ว มันก็<strong>ยังไม่อ่านไฟล์ลูกทั้งหมด</strong> —
+  จะเปิดต่อเมื่องานตรงนั้นต้องใช้จริง ๆ
+</p>
+
+<h2>8 · agent ผิดได้สองทาง — บทเรียนจากเว็บที่คุณกำลังอ่านอยู่</h2>
+
+<p>
+  ตรงนี้ไม่มีในสไลด์ แต่ผมคิดว่าเป็นส่วนที่ใช้จริงที่สุดของบท
+</p>
+
+<p>
+  <strong>บทเรียนทั้ง 54 บทในเว็บนี้เขียนด้วยวิธีเดียวกับที่บทนี้สอน</strong> —
+  แตก agent หลายตัวขนานกัน ให้ชุดหนึ่งรันโค้ดตรวจข้อเท็จจริง ชุดหนึ่งเขียน อีกชุดตรวจงาน
+  <br>ทำมาหลายวัน แล้วได้ข้อสรุปที่สำคัญกว่าเรื่องความเร็ว:
+  <strong>ผลที่ agent ส่งกลับมา เชื่อทันทีไม่ได้ และมันผิดได้สองทาง ไม่ใช่ทางเดียว</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ทางที่ผิด</th><th>เคสจริงที่เจอ</th><th>ทำไมมันอันตราย</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>ทางที่ 1 — false positive</strong><br>
+          บอกว่า "ผิด" ทั้งที่ของนั้น<strong>ถูกอยู่แล้ว</strong></td>
+      <td>agent ตัดสินว่าบทเรียนเรื่อง <strong>Redis eviction</strong> เขียนผิด —
+          มันรัน 5 ครั้งแล้วได้ <code>รอบ 1: 0</code> ทุกครั้ง ไม่ใช่ <code>รอบ 1: 1</code> อย่างที่บทเขียน
+          <br>ผมรันตามบทเป๊ะ ๆ เอง (<code>maxmemory 3mb</code> · <code>allkeys-lru</code> ·
+          3 รอบ รอบละ 50,000) แล้วได้ตรงกับบททุกบรรทัด
+          <br>ต้นเหตุ: LRU ของ Redis เป็นแบบ <em>approximate</em> (สุ่ม sample ไม่ได้ไล่จริง)
+          agent เปลี่ยน<strong>ขนาด payload</strong> ไปทดลองเอง เลยได้คนละผล → <strong>บทถูก ไม่ต้องแก้</strong></td>
+      <td>ถ้าเชื่อ คุณจะ<strong>แก้ของที่ถูกให้กลายเป็นผิด</strong>
+          <br>และนี่คือทางที่คนระวังน้อยที่สุด เพราะรายงานว่า "เจอปัญหา"
+          ฟังดูเหมือน agent ทำงานดี</td>
+    </tr>
+    <tr>
+      <td><strong>ทางที่ 2 — false negative</strong><br>
+          บอกว่า "ผ่าน" ทั้งที่มี<strong>ของผิดปนมา</strong></td>
+      <td>agent เขียนบทเรียนโดย copy ผลของคำสั่ง <code>diff</code> มาว่า
+          <code>[ok] Files are identical</code>
+          <br>ซึ่ง <strong><code>diff</code> ตัวจริงไม่พิมพ์แบบนั้น</strong> —
+          เวลาไฟล์เหมือนกัน <code>diff</code> <strong>ไม่พิมพ์อะไรเลย</strong></td>
+      <td>ผลรันเป็น "ของจริง" — แค่เป็นของจริง<strong>บนเครื่องที่มี wrapper ครอบ shell อยู่</strong>
+          <br>ผู้เรียนที่รันตามจะไม่เห็นข้อความนี้ แล้วนึกว่าตัวเองทำผิด</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ กับดักที่ไม่มีใครเตือน: output ที่ agent copy มา อาจมาจากเครื่องที่ไม่เหมือนของคุณ</span>
+  <p>
+    <em>wrapper</em> ในที่นี้คือโปรแกรมที่<strong>ครอบคำสั่ง shell ไว้อีกชั้น</strong>
+    แล้วจัดรูปแบบ output ใหม่ก่อนส่งให้เห็น (มีคนติดตั้งไว้เพื่อประหยัด token บ้าง เพื่อความสวยงามบ้าง)
+    <br>ผลคือ agent เห็นข้อความหนึ่ง แต่<strong>คำสั่งตัวจริงพิมพ์อีกอย่าง</strong> —
+    และ agent ไม่มีทางรู้ เพราะมันไม่เคยเห็นของที่ไม่ถูกครอบ
+    <br>ผมเจอกับตัวอีกครั้งตอนเขียนบทนี้: <code>wc -c</code> หลายไฟล์พร้อมกัน
+    ปกติบรรทัดสรุปจะเขียนว่า <code>total</code> แต่บนเครื่องนี้กลับได้เครื่องหมาย <code>Σ</code> แทน
+    ผมเลย<strong>ตัดบรรทัดสรุปทิ้ง</strong> แล้วเปลี่ยนไปวัดทีละไฟล์แทน
+    ตัวเลขทุกตัวในหัวข้อ 5 จึงไม่มีบรรทัดที่ wrapper ยุ่งด้วยเลย
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ท่าแก้ที่ใช้จริง:</strong> เวลาจะโชว์ว่า "ไฟล์สองไฟล์เหมือนกัน"
+    ให้ใช้คำสั่งที่<strong>พิมพ์ค่าออกมาให้เห็น</strong> เช่น <code>md5</code>
+    แทนคำสั่งที่ "เงียบเมื่อผ่าน" อย่าง <code>diff</code>
+    <br>เพราะ <strong>"เงียบ" กับ "คำสั่งไม่ได้รัน" หน้าตาเหมือนกันเป๊ะ</strong> —
+    แต่ค่า hash สองค่าที่ตรงกัน ปลอมไม่ได้
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🔔 เทียบให้เห็นภาพ — เครื่องตรวจจับควันในห้องเช่า</span>
+  <p>
+    เครื่องตรวจจับควันบนเพดาน<strong>ผิดได้สองทาง และสองทางนี้คนละเรื่องกัน</strong>:
+    <br>· <strong>ร้องตอนคุณทอดปลา</strong> — ไม่มีไฟไหม้ แต่มันร้อง ·
+        วิธีที่คนส่วนใหญ่แก้คือ<strong>ถอดถ่านออก</strong>
+        ซึ่งคือการเอาของที่ทำงานถูกไปทำให้พัง
+    <br>· <strong>ถ่านหมดอยู่ก่อน แล้วเกิดไฟไหม้จริง</strong> — มันเงียบสนิท
+        และ<strong>"เงียบเพราะปลอดภัย" กับ "เงียบเพราะเครื่องตาย" มองจากพื้นห้องเหมือนกันเป๊ะ</strong>
+  </p>
+  <p>
+    ทางแรกคือ <strong>false positive</strong> — ตรงกับเคสที่ agent ตัดสินว่าบท Redis eviction ผิด ทั้งที่บทถูก
+    <br>ทางที่สองคือ <strong>false negative</strong> — ตรงกับเคสที่ agent ผ่านงานไป
+    ทั้งที่ copy ข้อความของ wrapper มาใส่โดยไม่รู้ตัว
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> เครื่องตรวจควันร้องเสียงเดียวทุกครั้ง
+    คุณจึงรู้ทันทีว่ามันกำลังเตือน — แต่ agent
+    <strong>รายงานด้วยน้ำเสียงมั่นใจเท่ากันทั้งตอนถูกและตอนผิด</strong>
+    <br>แปลว่าคุณ<strong>แยกไม่ออกจากตัวรายงาน</strong> ·
+    สิ่งเดียวที่แยกออกคือ<strong>รันเองแล้วดูผล</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>false positive</dt>
+    <dd>"เตือนผิด" — บอกว่าเจอปัญหา ทั้งที่ไม่มีปัญหา ·
+        <strong>ประโยคที่ใช้ได้จริงตอนรีวิว: <em>"ข้อนี้น่าจะเป็น false positive นะ
+        ผมรันเองแล้วมันผ่าน"</em></strong></dd>
+    <dt>false negative</dt>
+    <dd>"ปล่อยผ่าน" — บอกว่าไม่มีปัญหา ทั้งที่มี ·
+        อันตรายกว่าเพราะ<strong>ไม่มีอะไรมาสะกิดให้คุณไปดู</strong> ·
+        <strong>พูดได้ว่า <em>"เทสชุดนี้อาจมี false negative อยู่ เพราะมันไม่ได้เช็คเคสนี้เลย"</em></strong></dd>
+    <dt>reproduce</dt>
+    <dd>ทำให้ผลเดิมเกิดขึ้นอีกครั้งบนเครื่องเรา ด้วยขั้นตอนเดียวกันเป๊ะ ·
+        <strong>เป็นคำแรกที่ senior จะถาม: <em>"reproduce ได้ไหม"</em></strong>
+        = "รันแล้วเจอเหมือนกันหรือเปล่า" · ถ้ายัง reproduce ไม่ได้
+        ยัง<strong>ไม่ควรแก้อะไรทั้งนั้น</strong></dd>
+    <dt>wrapper</dt>
+    <dd>โปรแกรมที่ครอบคำสั่งจริงไว้อีกชั้น แล้วจัดรูป output ใหม่ก่อนส่งให้เห็น ·
+        เวลาผลบนเครื่องคุณกับของเพื่อนไม่ตรงกัน
+        <strong>ถามก่อนเลยว่า <em>"เครื่องคุณมี wrapper หรือ alias ครอบคำสั่งนี้อยู่หรือเปล่า"</em></strong></dd>
+  </dl>
+</div>
+
+<h3>ประโยคเดียวที่กันเรื่องนี้ได้จริง</h3>
+
+<p>
+  ทุก brief ที่ส่งให้ agent ในโปรเจกต์นี้มีประโยคนี้ต่อท้ายเสมอ:
+</p>
+
+<pre><code><strong>ถ้าผลจริงต่างจากที่โจทย์บอก ให้รายงานตามจริง อย่าดัดให้ตรงโจทย์</strong></code></pre>
+
+<p>
+  ฟังดูเหมือนคำพูดลอย ๆ แต่มัน<strong>จับโจทย์ที่คนเขียนผิดเองได้มาแล้วสองครั้งติด</strong> —
+  ครั้งหนึ่งเรื่อง<strong>ลำดับ route ใน Gin</strong> — ผมเขียนใน brief ของบท 38 ว่า
+  <code>/users/:id</code> ที่ลงทะเบียนก่อน <code>/users/me</code> จะทำให้ Gin panic
+  แต่ agent รันจริงแล้วได้ <code>OK (no panic)</code> ทั้งสองลำดับ — และผมรันซ้ำเองตอนเขียนบทนี้
+  (Gin v1.12.0 · Go 1.26.5) ก็ได้ <code>OK (no panic)</code> เหมือนกัน โดย <code>/users/me</code>
+  วิ่งเข้า handler ของ <code>static</code> ไม่ว่าจะลงทะเบียนก่อนหรือหลัง
+  <br>อีกครั้งเรื่อง idempotency
+  ที่โจทย์สั่งให้ "ยิงซ้ำ 3 ครั้งแล้วดู status code ที่ต่างกัน"
+  แต่ agent รันจริงแล้วรายงานกลับว่า<strong>มันไม่ต่างกันเลย</strong> — ซึ่งถูกของ agent
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>ทำไมประโยคนี้ถึงจำเป็น</strong> — เพราะโดยธรรมชาติ agent มีแรงกดดันจะ<strong>ทำให้คำตอบตรงกับที่คุณสั่ง</strong>
+    ถ้าคุณเขียนโจทย์ว่า "พิสูจน์ว่า X" มันจะพยายามหาทางพิสูจน์ X แม้ X จะไม่จริง
+    <br>ประโยคนี้ทำสิ่งเดียว: <strong>เปลี่ยนเป้าหมายจาก "ทำให้ตรงโจทย์" เป็น "รายงานความจริง"</strong>
+    <br>และมันได้ผลกับคนด้วย — <strong>brief ที่คุณเขียนเองก็ต้องผ่านการตรวจเหมือนกัน</strong>
+    ไม่ได้ถูกโดยอัตโนมัติเพราะคุณเป็นคนเขียน
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. "Progressive disclosure" ของ agent skill หมายถึงอะไร?</p>
+  <div class="opts">
+    <button class="opt">agent ค่อย ๆ เปิดเผยโค้ดที่เขียนให้ผู้ใช้ดูทีละส่วน แทนที่จะโชว์ diff ทั้งก้อนทีเดียว</button>
+    <button class="opt">skill จะถูกโหลดเข้า context ทั้งหมดทุก session เพื่อให้ agent เลือกใช้ได้เร็วที่สุด</button>
+    <button class="opt">agent เห็นแค่บรรทัด <code>description</code> ของทุก skill ตลอดเวลา แล้วดึงเนื้อหาเต็มมาอ่านเฉพาะตอนงานตรงกับ trigger</button>
+    <button class="opt">เป็นการบีบอัดไฟล์ <code>SKILL.md</code> ให้เล็กลงก่อนส่งเข้า context เพื่อประหยัด token</button>
+  </div>
+  <div class="explain">
+    <p>ผมวัดจากไฟล์จริงบนเครื่อง: บรรทัด <code>description</code> ของ skill ทั้งสี่ตัวรวมกัน
+    <strong>1,046 ไบต์</strong> ขณะที่เนื้อหาทั้งหมด <strong>35,845 ไบต์</strong> —
+    ราว <strong>2.9%</strong> · วัดกับทั้ง 32 skill ได้ <strong>5,386 จาก 250,847 ไบต์ ≈ 2.1%</strong>
+    <br>ส่วนที่ agent แบกตลอดเวลาคือ 2% นั้น อีก 98% ดึงมาเฉพาะตอนใช้
+    <br>ตัวเลือกที่ 2 ผิดเพราะเป็น<strong>สิ่งตรงข้าม</strong>กับ progressive disclosure —
+    โหลดทุกอย่างตลอดเวลาคือปัญหาที่กลไกนี้เกิดมาแก้
+    <br>ตัวเลือกที่ 1 พูดถึงเรื่องการโชว์ diff ซึ่งคนละเรื่องกัน
+    <br>ตัวเลือกที่ 4 ผิดเพราะไม่มีการบีบอัดอะไรทั้งนั้น — ไฟล์ยังเป็น Markdown เต็ม ๆ
+    แค่<strong>ไม่ถูกเปิดอ่าน</strong>จนกว่าจะจำเป็น
+    <br>ผลพลอยได้ที่ควรจำ: <code>description</code> คือบรรทัดสำคัญที่สุดของไฟล์ —
+    เขียนไม่ชัด agent ก็ไม่มีวันเปิดอ่านส่วนที่เหลือ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. คุณจะเพิ่ม endpoint <code>DELETE /api/v1/recipes/:id</code> ในโปรเจกต์ที่มี <code>GET</code> กับ <code>POST</code> เขียนไว้เรียบร้อยแล้ว และของนี้จะขึ้น production — ควรใช้โหมดไหน?</p>
+  <div class="opts">
+    <button class="opt">Pure Agent &amp; Review — มีแบบให้ลอกแล้ว agent ทำได้เร็ว แต่ของขึ้น production ต้องอ่าน diff ทุกบรรทัดก่อน commit</button>
+    <button class="opt">Self Coding — งานที่ขึ้น production ห้ามให้ agent แตะเด็ดขาด ต้องเขียนเองทุกบรรทัดเสมอ</button>
+    <button class="opt">Pure Agent — เพราะมีโค้ดเดิมให้ลอกอยู่แล้ว รับผลไปใช้ได้เลยโดยไม่ต้องอ่าน</button>
+    <button class="opt">ไม่มีโหมดไหนใช้ได้ ต้องรอจนกว่าจะติดตั้ง skill ครบทั้งสี่ตัวก่อน</button>
+  </div>
+  <div class="explain">
+    <p>โจทย์มีสองสัญญาณ และมันชี้ไปคนละทาง — ต้องชั่งทั้งคู่
+    <br>· <strong>"มีแบบให้ลอกแล้ว"</strong> → เข้าเงื่อนไขของ Pure Agent (งานที่เหมือนของเดิม)
+    <br>· <strong>"ขึ้น production"</strong> → บังคับให้ต้องมีรีวิว
+    <br>รวมกันได้ <strong>Pure Agent &amp; Review</strong> ซึ่งตรงกับที่สไลด์หน้า 64–68 ใช้กับ
+    <code>Update</code> / <code>Delete</code> / <code>profile</code> พอดี
+    <br>ตัวเลือกที่ 3 ทิ้งสัญญาณที่สองไป — และ <code>DELETE</code> เป็น endpoint ที่ผลข้างเคียงย้อนกลับยากที่สุดในชุด
+    <br>ตัวเลือกที่ 2 แข็งเกินไป: สไลด์เองยังใช้ agent กับงานที่ขึ้น production —
+    <strong>สิ่งที่ห้ามคือ "ไม่รีวิว" ไม่ใช่ "ใช้ agent"</strong>
+    <br>ตัวเลือกที่ 4 ผิดเพราะ skill ช่วยให้รีวิว<strong>เป็นระบบขึ้น</strong> ไม่ใช่เงื่อนไขที่ขาดไม่ได้ —
+    คุณอ่าน diff เองได้ตั้งแต่วันนี้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. <code>code-review</code> แยกรีวิวเป็น Standards กับ Spec แล้วรันเป็น sub-agent คนละตัว ทำไมถึงห้ามเอาสองรายงานมารวมเป็นอันเดียว?</p>
+  <div class="opts">
+    <button class="opt">เพราะรวมแล้วรายงานจะยาวเกินเพดาน context ของ agent</button>
+    <button class="opt">เพราะ Standards ต้องรันก่อนเสมอ ถ้ารวมกันจะสลับลำดับจนผลเพี้ยน</button>
+    <button class="opt">เพราะ Spec ใช้ <code>git diff</code> แต่ Standards ต้องอ่านไฟล์เต็ม จึงเอามาเทียบกันไม่ได้</button>
+    <button class="opt">เพราะงานชิ้นเดียวผ่านแกนหนึ่งแต่ตกอีกแกนได้ ถ้ารวมกันข้อที่ผ่านจะกลบข้อที่ตก</button>
+  </div>
+  <div class="explain">
+    <p>ไฟล์ <code>SKILL.md</code> ของ <code>code-review</code> ยกเคสไว้ตรง ๆ สองเคส:
+    <br>· โค้ดที่ตามมาตรฐานครบทุกข้อ แต่<strong>ทำผิดโจทย์</strong> → Standards ผ่าน · Spec ตก
+    <br>· โค้ดที่ทำตรงโจทย์เป๊ะ แต่<strong>ผิดธรรมเนียมของ repo</strong> → Spec ผ่าน · Standards ตก
+    <br>รายงานแยกกันจึงมีไว้เพื่อกัน<strong>แกนหนึ่งบังอีกแกน</strong> —
+    และไฟล์ยังห้ามจัดอันดับข้ามแกนด้วย
+    <br>ส่วนเหตุผลที่ต้องรัน<strong>แยก sub-agent</strong> เป็นคนละเรื่องกับเรื่องรายงาน:
+    เพื่อไม่ให้ผลของแกนหนึ่งไป<strong>มีอิทธิพลกับความคิดของอีกแกน</strong>
+    เหมือนกรรมการสองคนที่ตัดสินโดยไม่คุยกันก่อน
+    <br>ตัวเลือกที่ 1 ไม่ใช่เหตุผลที่ไฟล์ให้ไว้ (และรายงานถูกจำกัดไว้แกนละไม่เกิน 400 คำอยู่แล้ว)
+    <br>ตัวเลือกที่ 2 ผิด — สองแกนรัน<strong>ขนานกัน</strong> ไม่มีลำดับก่อนหลัง
+    <br>ตัวเลือกที่ 3 ผิด — ทั้งสองแกนดู diff จากจุดที่ปักหมุดชุดเดียวกัน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. agent รายงานกลับมาว่า "ตรวจแล้วบทเรียนหัวข้อนี้เขียนผิด ต้องแก้" — ควรทำอะไรต่อ?</p>
+  <div class="opts">
+    <button class="opt">แก้ตามทันที เพราะ agent อ่านไฟล์ครบทั้งหมดและไม่มีอคติเหมือนคนที่เขียนเอง</button>
+    <button class="opt">ยังไม่แก้ — รันยืนยันเองก่อนว่าของเดิมผิดจริง เพราะ agent เคยตัดสินว่าของถูกเป็นผิดมาแล้ว</button>
+    <button class="opt">ไม่ต้องสนใจ เพราะ agent ตรวจงานเขียนไม่เป็นอยู่แล้ว ให้เชื่อของเดิมไว้ก่อน</button>
+    <button class="opt">ส่งให้ agent ตัวที่สองตรวจซ้ำ ถ้าตอบตรงกันสองตัวแปลว่าถูกแน่นอน แก้ได้เลย</button>
+  </div>
+  <div class="explain">
+    <p>ในโปรเจกต์นี้เจอมาแล้วทั้งสองทาง — และทางที่ตัวเลือกนี้พูดถึงคือ
+    <strong>false positive</strong>: agent ตัดสินว่าบทเรื่อง Redis eviction ผิด ทั้งที่บทถูก —
+    มันไปเปลี่ยนขนาด payload เอง เลยได้คนละผล แล้วรายงานว่าบทผิด
+    <br>ทางกลับกันก็เจอ (false negative): agent เขียนบทโดย copy <code>[ok] Files are identical</code>
+    ซึ่งมาจาก wrapper ไม่ใช่จาก <code>diff</code> ตัวจริง
+    <br>ข้อสรุปจึงไม่ใช่ "เชื่อ" หรือ "ไม่เชื่อ" แต่คือ <strong>ทุกอย่างที่จะขึ้นเว็บต้องรันยืนยันเองก่อน</strong>
+    <br>ตัวเลือกที่ 1 ผิดตรงคำว่า "ไม่มีอคติ" — agent มีแรงกดดันจะทำให้คำตอบตรงกับโจทย์ที่ได้รับ
+    ซึ่งเป็นอคติคนละแบบแต่ก็เป็นอคติ
+    <br>ตัวเลือกที่ 3 เหวี่ยงไปอีกทาง — agent ก็จับ<strong>โจทย์ที่คนเขียนผิดเอง</strong>ได้มาแล้วสองครั้ง
+    <br>ตัวเลือกที่ 4 คือกับดักที่แนบเนียนที่สุด: agent สองตัวที่อ่าน<strong>ข้อมูลชุดเดียวกัน</strong>
+    ผิดพร้อมกันได้ง่ายมาก — <strong>ความเห็นตรงกันไม่ใช่หลักฐาน ผลรันต่างหากที่เป็น</strong></p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ลอง skill จริงกับโค้ด Go ของตัวเอง แล้วเทียบกับที่เขียนเอง</span>
+  <p>
+    บทนี้ไม่มีโค้ดให้พิมพ์ตาม เพราะของที่ต้องวัดคือ<strong>วิธีทำงาน</strong> ไม่ใช่ syntax
+    <br>ภารกิจนี้ให้ทำกับโปรเจกต์ <code>wongnok</code> ของคุณเอง และหัวใจอยู่ที่
+    <strong>ทำงานเดียวกันสองรอบ แล้วเทียบ</strong> — เหมือนที่สไลด์ทำกับ <em>Get recipe by id</em>
+  </p>
+  <ol>
+    <li><strong>ติดตั้ง skill:</strong> เลือก<strong>ทางเดียว</strong> ไม่ใช่ทั้งสอง —
+        <code>claude plugins install mattpocock-skills</code>
+        <strong>หรือ</strong> <code>npx skills@latest add mattpocock/skills</code>
+        <br>ถ้าเลือกทาง <code>npx</code> แล้วเครื่องยังไม่มี Node ให้ลง
+        <code>mise use -g node@lts</code> แล้ว <code>mise reshim</code> ก่อน
+        <br>ถ้าเลือกทาง <code>npx</code> ตอนมันถามว่าจะเอา skill ตัวไหน
+        <strong>ต้องติ๊ก <code>setup-matt-pocock-skills</code> ติดมาด้วย</strong>
+        <br>เสร็จแล้ว<strong>รัน <code>/setup-matt-pocock-skills</code> หนึ่งครั้ง</strong> ในโฟลเดอร์โปรเจกต์</li>
+    <li><strong>ยืนยันว่ามีของจริง ไม่ใช่แค่คำสั่งผ่าน:</strong> หาโฟลเดอร์ skill ให้เจอ
+        แล้วสั่ง <code>head -4</code> ใส่ <code>SKILL.md</code> ของ <code>tdd</code>
+        <br><strong>ต้องเห็นบรรทัด <code>name:</code> กับ <code>description:</code> อยู่ระหว่างขีดสามขีด</strong>
+        ถ้าไม่เห็น แปลว่าติดตั้งยังไม่สำเร็จจริง</li>
+    <li><strong>รอบที่ 1 — Self Coding:</strong> เขียน <code>GET /api/v1/recipes/:id</code> เองทั้งอัน
+        ห้ามให้ agent แตะ · <strong>จับเวลาไว้</strong> แล้ว commit</li>
+    <li><strong>รอบที่ 2 — Pure Agent:</strong> สร้าง branch ใหม่จาก commit <em>ก่อน</em> ข้อ 3 ด้วย
+        <code>git switch -c agent-round HEAD~1</code>
+        (<code>HEAD~1</code> = commit ก่อนหน้าหนึ่งขั้น — ก็คือจุดก่อนที่คุณจะ commit งานในข้อ 3)
+        <br>แล้วสั่ง agent ให้ทำงานเดียวกัน โดย<strong>ยังไม่เปิด skill ใด ๆ</strong> · จับเวลาเหมือนกัน</li>
+    <li><strong>เทียบสองรอบ:</strong> <code>git diff &lt;branch-ของคุณ&gt;...&lt;branch-ของ-agent&gt;</code>
+        <br><strong>สามจุดไม่ใช่สองจุด</strong> — สามจุดคือเทียบจาก<strong>จุดที่สอง branch แยกจากกัน</strong>
+        (merge-base) ไม่ใช่เทียบปลายต่อปลาย · ผมลองในโปรเจกต์เปล่าแล้วเห็นชัด:
+        branch ที่แยกจากจุดเดียวกันแล้วต่างคนต่างแก้ไฟล์เดียวกัน
+        สองจุดรายงาน <code>1 insertion(+), 1 deletion(-)</code> (เห็นบรรทัดของอีกฝั่งโผล่มาเป็นของที่ถูกลบ)
+        แต่สามจุดรายงาน <code>1 insertion(+)</code> — เห็นแค่<strong>สิ่งที่ branch นี้ทำเพิ่ม</strong>
+        ซึ่งเป็นสิ่งที่คุณอยากรีวิว
+        <br>ตอบสามข้อ: <strong>ต่างกันตรงไหนบ้าง</strong> ·
+        <strong>มีจุดไหนที่ agent ทำดีกว่าคุณ</strong> ·
+        <strong>มีจุดไหนที่คุณ "อ่านผ่าน" เพราะมันดูเหมือนโค้ดปกติ</strong>
+        <br>ข้อสุดท้ายคือข้อที่ต้องซื่อสัตย์ที่สุด</li>
+    <li><strong>รอบที่ 3 — เปิด skill:</strong> บน branch ของ agent สั่ง
+        <code>/code-review</code> โดย<strong>ปักหมุดที่ commit ก่อนหน้า</strong>
+        <br>อ่านรายงานทั้งสองแกนแยกกัน แล้วตอบว่า <strong>มันชี้จุดที่ข้อ 5 คุณมองข้ามไปไหม</strong></li>
+    <li><strong>ลอง <code>tdd</code> กับงานถัดไป:</strong> เอา endpoint ที่ยังไม่ได้ทำ
+        (เช่น <code>DELETE /api/v1/recipes/:id</code>) มาสั่ง <code>/tdd</code>
+        <br>สังเกตว่ามัน<strong>ขอให้คุณตกลง seam ก่อนเขียนเทส</strong> ไหม —
+        (<em>seam</em> = จุดที่เป็น interface สาธารณะ ซึ่งเป็นที่ที่เทสควรอยู่)
+        <br>เทียบกับตอนที่คุณสั่ง "เขียนเทสให้หน่อย" เฉย ๆ ว่าได้ผลต่างกันยังไง</li>
+    <li><strong>ท้าทาย — ทำให้ agent ผิดให้ดู:</strong> สั่ง agent ว่า
+        <em>"พิสูจน์ว่า endpoint นี้คืน 404 เมื่อ id ไม่มีในฐานข้อมูล"</em>
+        โดย<strong>เลือก endpoint ที่คุณรู้ว่ามันคืน 500</strong>
+        <br>ดูว่ามันดัดผลให้ตรงโจทย์ไหม · จากนั้น<strong>สั่งใหม่โดยเติมประโยคกันพลาด</strong>
+        ("ถ้าผลจริงต่างจากที่โจทย์บอก ให้รายงานตามจริง อย่าดัดให้ตรงโจทย์")
+        แล้วเทียบคำตอบสองครั้ง</li>
+  </ol>
+  <button class="reveal">สิ่งที่ควรได้จากข้อ 5 และ 6</button>
+  <div class="answer">
+    <p>
+      <strong>ไม่มี "เฉลย" ของภารกิจนี้</strong> เพราะโค้ดของแต่ละคนไม่เหมือนกัน —
+      แต่มีสิ่งที่<strong>ควรสังเกตให้เจอ</strong> และถ้าไม่เจอแปลว่ายังทำไม่ครบ:
+    </p>
+    <p>
+      <strong>ข้อ 5</strong> — สิ่งที่คนส่วนใหญ่เจอไม่ใช่ "agent เขียนผิด"
+      แต่เป็น<strong>agent เขียนถูกในแบบที่ไม่เหมือนของเดิม</strong>: ห่อ error คนละแบบ ·
+      ตั้งชื่อตัวแปรคนละสไตล์ · แยกฟังก์ชันคนละจุด
+      <br>ทีละอันไม่เป็นไร แต่<strong>ทำแบบนี้ครบ 8 endpoint แล้ว repo จะมี 8 สไตล์</strong> —
+      นี่คือ ball of mud ที่ <code>codebase-design</code> พูดถึง
+      และมันโตทีละนิดจนมองไม่เห็นตอนดู diff ทีละอัน
+    </p>
+    <p style="margin-bottom:0">
+      <strong>ข้อ 6</strong> — จุดที่ควรสังเกตคือรายงานสองแกน<strong>ชี้คนละเรื่องกัน</strong>
+      <br>แกน Standards จะพูดเรื่องความสม่ำเสมอกับ code smell ·
+      แกน Spec จะพูดเรื่อง<strong>ของที่ขาดกับของที่เกินมาโดยไม่มีใครสั่ง</strong>
+      <br>ถ้ารายงานทั้งสองแกนพูดเรื่องเดียวกันหมด ให้สงสัยไว้ก่อนว่า
+      <strong>คุณยังไม่ได้บอกมันว่า spec อยู่ที่ไหน</strong> — แกน Spec เลยไม่มีอะไรให้เทียบ
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 8 คือข้อที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong> —
+    เพราะการเห็นกับตาว่า agent "ดัดผลให้ตรงโจทย์" ได้ยังไง
+    มีค่ากว่าอ่านคำเตือนสิบรอบ
+    <br>และถ้าคุณติดตั้ง skill แล้ว<strong>ได้ตัวเลขไม่ตรงกับหัวข้อ 5</strong> ก็ไม่แปลก —
+    ผมวัดจาก skill ที่ลงไว้บนเครื่องผมวันที่ 22 สิงหาคม 2026 ซึ่ง<strong>repo อัปเดตได้ตลอด</strong>
+    <br>สิ่งที่ควรตรงกันคือ<strong>ลำดับความใหญ่</strong> (description เล็กกว่าเนื้อหาหลายสิบเท่า)
+    ไม่ใช่ตัวเลขเป๊ะ ๆ · ถ้าลำดับความใหญ่ต่างจากนี้มาก ส่งมาได้เลย
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0053-keycloak-in-go.html">← บทเรียน 53 · ย้ายผู้ใช้เข้า Keycloak</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../../docs.html?f=learning-records/0010-day8-post-added.md">บันทึกการเรียนรู้ 0010 → ที่มาของหัวข้อ 8</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://github.com/mattpocock/skills">github.com/mattpocock/skills</a> — ต้นทางของ skill ทั้งสี่ตัว ·
+      <strong>อ่านหัวข้อ Installation ให้จบก่อนพิมพ์คำสั่ง</strong> เพราะประโยคที่บอกว่า
+      "ลงทั้งสองทางแล้วจะได้ skill ซ้ำสองชุด" อยู่ในย่อหน้าเปิด ไม่ได้อยู่ในกล่องโค้ด</li>
+  <li><a href="https://github.com/mattpocock/skills/blob/main/skills/engineering/code-review/SKILL.md"><code>code-review/SKILL.md</code></a> —
+      <strong>อ่านหัวข้อ <em>Why two axes</em> ท้ายไฟล์</strong> ยาวไม่ถึง 10 บรรทัด
+      และเป็นคำอธิบายที่ดีที่สุดว่าทำไมรีวิวรวมแกนเดียวถึงไม่พอ</li>
+  <li><a href="https://github.com/mattpocock/skills/blob/main/skills/engineering/tdd/SKILL.md"><code>tdd/SKILL.md</code></a> —
+      <strong>อ่านหัวข้อ Anti-patterns</strong> โดยเฉพาะ <em>horizontal slicing</em>
+      ซึ่งเป็นท่าที่เกือบทุกคนเผลอสั่ง agent ทำ ("เขียนเทสให้ครบก่อน แล้วค่อยเขียนโค้ด")</li>
+  <li><a href="https://github.com/mattpocock/skills/blob/main/skills/engineering/diagnosing-bugs/SKILL.md"><code>diagnosing-bugs/SKILL.md</code></a> —
+      <strong>อ่านแค่ Phase 1</strong> ก็พอ มันบอกเองว่า <em>"This is the skill"</em>
+      ส่วนอีกห้าเฟสเป็นงานกลไก</li>
+  <li><a href="https://github.com/mattpocock/skills/blob/main/skills/engineering/codebase-design/SKILL.md"><code>codebase-design/SKILL.md</code></a> —
+      <strong>อ่าน Glossary</strong> เพื่อเก็บคำว่า <em>module · interface · depth · seam · adapter</em>
+      ไปใช้ตอนคุยกับ agent ให้ตรงกัน</li>
+  <li><a href="../../docs.html?f=learning-records/0010-day8-post-added.md">บันทึกการเรียนรู้ 0010</a> —
+      ที่มาของหัวข้อ 8 <strong>ส่วนใหญ่</strong>: เคส <code>[ok] Files are identical</code> ที่ agent copy มาจาก wrapper ·
+      เคสที่ brief เขียนผิดแล้ว agent จับได้ · และเหตุผลที่เปลี่ยนจาก <code>diff</code> มาใช้ <code>md5</code>
+      <br><strong>ยกเว้นเคส Redis eviction</strong> — เคสนั้นอยู่ใน <strong>บันทึกการเรียนรู้ 0008</strong>
+      (<code>learning-records/0008-day7-added.md</code>) หัวข้อ <em>"agent ตัดสินผิดหนึ่งจุด"</em> ไม่ได้อยู่ใน 0010</li>
+  <li><a href="https://code.claude.com/docs/en/plugins">Claude Code — Plugins</a> —
+      เอกสารทางการของกลไก plugin ที่คำสั่ง <code>claude plugins install</code> ใช้</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

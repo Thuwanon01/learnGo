@@ -1,0 +1,1502 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 50 — OAuth 2.0 กับ Authorization Code Grant</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 50 · Day 9 · OAuth 2.0</p>
+  <h1>OAuth 2.0 กับ Authorization Code Grant</h1>
+  <p class="meta">
+    ~30 นาที · ต้องมี:
+    <a href="../../day-8/lessons/0043-api-detective-workshop.html">บทเรียน 43</a>
+    (ค่าที่อยู่ใน query string โผล่ใน access log) ·
+    <a href="./0049-basic-auth-jwt.html">บทเรียน 49</a> (จาก Basic Auth ถึง JWT)
+  </p>
+  <p class="standfirst">
+    <strong>บอกกันตรง ๆ ก่อน: สไลด์เรื่องนี้มีแค่สองหน้า</strong>
+    <br>หน้า 35 เขียนไว้ประโยคเดียวว่า OAuth 2.0 คือ
+    <em>"framework สำหรับมอบสิทธิ์แบบจำกัดขอบเขต (delegated authorization)"</em>
+    · หน้า 36 เป็นรูปมือถือสองเครื่อง เครื่องซ้ายคือเว็บเราที่มีปุ่ม "Sign in with Google"
+    มีลูกศรชี้ไปเครื่องขวาที่เป็นหน้าของ Google พร้อมหัวข้อว่า <strong>Authorization Code Grant</strong>
+    <br><strong>เท่านั้นจริง ๆ</strong> — ไม่มีขั้นตอน ไม่มีคำว่า <code>code</code> ไม่มีคำว่า <code>state</code>
+    ไม่มีคำว่า <code>scope</code> อยู่ในสไลด์เลย
+    <br>ส่วนที่เหลือของบทนี้ <strong>ผมขยายเพิ่มเองทั้งหมด</strong> และ<strong>รันของจริง</strong>ให้ดูทุกขั้น —
+    ยก Keycloak ขึ้นมาเป็น Authorization Server แล้วเดิน Authorization Code Grant ครบรอบด้วย
+    <code>curl</code> ตั้งแต่หน้า login จนได้ <code>access_token</code>
+    <br>คำถามที่บทนี้อยากให้คุณตอบได้จริง ๆ มีข้อเดียว:
+    <strong>ทำไมต้องมี "code" มาคั่นตรงกลาง ทำไมไม่ส่ง <code>access_token</code> กลับมาทาง URL เลยให้จบ ๆ ไป</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ — ทุก output ในหน้านี้มาจากการรันจริงบน</strong></p>
+  <pre style="margin:0.5rem 0"><code>Keycloak 26.7.2      <span class="c"># image quay.io/keycloak/keycloak:26.7 (tag นี้ตอนนี้ชี้ไป 26.7.2)</span>
+Docker client 29.6.2 / server 29.5.2   <span class="c"># ผ่าน colima ไม่ใช่ Docker Desktop</span>
+docker-compose 5.3.1 <span class="c"># เครื่องนี้ใช้ `docker-compose` (มีขีด) ไม่ใช่ `docker compose`</span>
+curl 8.13.0
+go1.26.5 darwin/arm64 + github.com/gin-gonic/gin v1.12.0   <span class="c"># ใช้เฉพาะหัวข้อ 6 ตอนทำ callback server</span></code></pre>
+  <p style="margin-bottom:0">
+    Keycloak ในบทนี้รันด้วย <code>start-dev</code> ที่พอร์ต <strong>8081</strong>
+    realm ชื่อ <code>wongnok</code> · client ชื่อ <code>wongnok-web</code> · user ชื่อ <code>chef1</code>
+    <br><strong>บทนี้ยังไม่สอนวิธีตั้ง Keycloak</strong> — เรื่องนั้นอยู่บทถัดไป
+    บทนี้ใช้มันเป็นแค่ "ของจริงที่เอาไว้ยิง" เพื่อให้เห็นว่า OAuth ทำงานยังไงจริง ๆ
+    <br>ทุกอย่างถูกลบทิ้งหมดแล้วหลังรันเสร็จ (<code>docker-compose down -v</code>)
+  </p>
+</div>
+
+<h2>1 · ปัญหาที่ OAuth เกิดมาเพื่อแก้</h2>
+
+<p>
+  สมมติ Wongnok อยากมีฟีเจอร์ "ดึงรูปโปรไฟล์กับอีเมลจากบัญชี Google ของคุณมาใช้ตอนสมัคร"
+  <br>ถ้า<strong>ไม่มี</strong> OAuth วิธีเดียวที่ทำได้คือ ทำช่องสองช่องบนเว็บเรา แล้วขอ<strong>อีเมลกับรหัสผ่านของ Google</strong>
+  จากผู้ใช้ตรง ๆ แล้วเราเอาไปล็อกอินแทนเขา
+  <br>วิธีนี้มีชื่อเรียกในวงการว่า <strong>password anti-pattern</strong> และมันแย่ทุกทางพร้อมกันสี่ทาง
+</p>
+
+<h3>แย่ข้อ 1 — เราเห็นรหัสผ่านของเขา</h3>
+
+<p>
+  ไม่ใช่ "อาจจะเห็น" แต่คือ<strong>เห็นแน่นอน</strong> เพราะค่ามันวิ่งผ่านเซิร์ฟเวอร์เรา
+  <br>ใน <a href="./0049-basic-auth-jwt.html">บทเรียน 49</a> เราพิสูจน์ไปแล้วกับ Basic Auth ว่ารหัสผ่านที่ส่งมาแบบนั้น
+  <strong>ไม่ได้เข้ารหัส แค่ base64</strong> ใครดัก header ได้ก็อ่านได้ทันทีโดยไม่ต้องมีกุญแจอะไรเลย:
+</p>
+
+<pre><code>Authorization: Basic c29tY2hhaTpwQHNzdzByZA==
+
+<span class="c"># decode กลับได้ทันทีโดยไม่ต้องมี key:</span>
+somchai:p@ssw0rd</code></pre>
+
+<p>
+  พอเราเห็นรหัสผ่าน เราก็กลายเป็น<strong>ที่เก็บรหัสผ่านของ Google เพิ่มขึ้นอีกที่หนึ่ง</strong>
+  ทั้งที่เราไม่ได้อยากรับผิดชอบเรื่องนี้เลย · แล้ววันที่ฐานข้อมูลเราหลุด รหัสผ่าน Google ของผู้ใช้ก็หลุดตามไปด้วย
+</p>
+
+<h3>แย่ข้อ 2 — จำกัดขอบเขตไม่ได้</h3>
+
+<p>
+  เราอยากได้แค่ "ชื่อกับอีเมล" แต่รหัสผ่านที่ได้มา<strong>เปิดได้ทุกอย่าง</strong> —
+  Gmail ทั้งกล่อง · Google Drive ทั้งไดรฟ์ · ปฏิทิน · YouTube · การตั้งค่าบัญชี
+  <br>รหัสผ่านไม่มีช่องให้เขียนว่า "ใช้ได้แค่เรื่องนี้" มันเป็นสวิตช์เปิด-ปิดตัวเดียวที่คุมทุกอย่าง
+</p>
+
+<h3>แย่ข้อ 3 — ถอนสิทธิ์ทีหลังไม่ได้</h3>
+
+<p>
+  วันหนึ่งผู้ใช้เลิกใช้ Wongnok แล้วอยากตัดสิทธิ์เรา — เขาทำยังไง?
+  <br>ทางเดียวคือ<strong>ไปเปลี่ยนรหัสผ่าน Google</strong> ซึ่งแปลว่า...
+</p>
+
+<h3>แย่ข้อ 4 — เปลี่ยนรหัสผ่านทีเดียว พังหมดทุกที่</h3>
+
+<p>
+  ...ทุกเว็บที่เขาเคยให้รหัสผ่านไว้<strong>พังพร้อมกันหมด</strong> ไม่ใช่แค่ Wongnok
+  <br>และในทางกลับกัน ถ้าเราอยาก "จำ" ให้เขา เราต้องเก็บรหัสผ่านไว้ในรูปที่<strong>เอากลับมาใช้ได้</strong>
+  แปลว่าเราเก็บแบบ hash ไม่ได้ ต้องเก็บแบบถอดกลับได้ ซึ่งแย่ยิ่งกว่าเดิม
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>OAuth 2.0 คือคำตอบของทั้งสี่ข้อนี้</strong> —
+    แทนที่จะให้ผู้ใช้ส่ง<em>รหัสผ่าน</em>มาให้เรา
+    เราให้เขาไป<strong>กรอกรหัสผ่านที่บ้านของเจ้าของบัญชีเอง</strong> (google.com / Keycloak ของเรา)
+    แล้วเจ้าของบัญชีออก<strong>บัตรผ่านใบเล็ก ๆ</strong> (access token) กลับมาให้เราแทน
+    <br>บัตรใบนั้น <strong>บอกได้ว่าใช้ทำอะไรได้บ้าง</strong> (scope) ·
+    <strong>มีวันหมดอายุ</strong> (บทนี้รันได้ 300 วินาที) · และ<strong>ยกเลิกใบเดียวได้</strong>โดยไม่แตะรหัสผ่าน
+    <br>คำว่า <strong>delegated authorization</strong> ที่สไลด์หน้า 35 เขียนไว้ ก็แปลว่าเท่านี้เอง:
+    <em>"มอบสิทธิ์ให้คนอื่นทำแทน โดยไม่ต้องมอบกุญแจบ้าน"</em>
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🔑 เทียบให้เห็นภาพ — ช่างแอร์กับบัตรผู้มาติดต่อของคอนโด</span>
+  <p>
+    ช่างแอร์โทรมาบอกว่าพรุ่งนี้จะเข้าไปล้างแอร์ห้องคุณ คุณมีสองทางเลือก
+  </p>
+  <p>
+    <strong>ทางที่ 1 — ยกกุญแจทั้งพวงให้เขาไปเลย</strong>
+    <br>เขาเปิดได้ทุกห้อง เข้าได้ทุกวัน ไม่มีวันหมดอายุ
+    และวันที่คุณอยากตัดสิทธิ์เขา ทางเดียวคือ<strong>เปลี่ยนลูกบิดใหม่ทั้งบ้าน</strong> —
+    ซึ่งแปลว่ากุญแจของแม่บ้าน ของแฟน ของแม่ ที่เคยให้ไว้ <strong>ใช้ไม่ได้พร้อมกันหมด</strong>
+  </p>
+  <p>
+    <strong>ทางที่ 2 — โทรบอกเคาน์เตอร์นิติบุคคลว่า "พรุ่งนี้มีช่างมา ให้ขึ้นชั้น 12 ห้อง 1204"</strong>
+    <br>ช่างไปแลก<strong>บัตรผู้มาติดต่อ</strong>ที่เคาน์เตอร์เอง ได้บัตรที่ขึ้นได้เฉพาะชั้นนั้น เฉพาะวันนั้น
+    ถ้าคุณเปลี่ยนใจก็โทรบอกให้<strong>ยกเลิกบัตรใบนั้นใบเดียว</strong> กุญแจของคนอื่นไม่ถูกแตะเลยสักดอก
+  </p>
+  <p>
+    ทางที่ 1 คือ <strong>password anti-pattern</strong> ที่เพิ่งเล่าไปทั้งสี่ข้อ ·
+    ทางที่ 2 คือ <strong>OAuth 2.0</strong>
+    <br>เคาน์เตอร์นิติบุคคล = Keycloak ที่ <code>localhost:8081</code> ·
+    บัตรผู้มาติดต่อ = <code>access_token</code> ·
+    "ขึ้นได้เฉพาะชั้น 12" = <code>scope</code> ·
+    "เฉพาะวันนั้น" = อายุของบัตร ซึ่งบทนี้วัดได้จริงที่ <code>expires_in = 300</code> วินาที
+    <br>และจุดที่สำคัญที่สุด: <strong>ช่างไม่เคยได้จับกุญแจของคุณเลย</strong>
+    เหมือนที่เว็บ Wongnok ไม่เคยเห็นรหัสผ่าน <code>chef1234</code> ของ <code>chef1</code> สักครั้ง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สองข้อ —
+    <br>(1) ในคอนโด คนออกบัตรกับคนตรวจบัตรตอนขึ้นลิฟต์มักเป็น รปภ. ทีมเดียวกัน
+    แต่ใน OAuth มัน<strong>แยกเป็นคนละตัวชัดเจน</strong> คือ Keycloak เป็นคนออก
+    ส่วน Wongnok API เป็นคนตรวจ (หัวข้อ 2 จะแยกให้ดูทีละตัว)
+    <br>(2) บัตรผู้มาติดต่อต้อง<em>คืน</em>ที่เคาน์เตอร์ตอนกลับ แต่ <code>access_token</code>
+    <strong>ไม่มีใครมาเก็บคืน</strong> — มันหมดอายุของมันเอง
+    นี่คือเหตุผลที่อายุของมันต้องสั้น และเป็นที่มาของ <code>refresh_token</code> ในหัวข้อ 8
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป — นิยามให้ชัดก่อนเดินต่อ</span>
+  <p>สี่คำนี้คือชื่อทางการของสิ่งที่อุปมาข้างบนเล่าไป — ใช้คำให้ตรง จะได้คำตอบที่ตรง</p>
+  <dl>
+    <dt>authentication (authn)</dt>
+    <dd>ตอบคำถาม <strong>"คุณคือใคร"</strong> — เช่นกรอก username/password แล้วระบบรู้ว่าคุณคือ chef1</dd>
+    <dt>authorization (authz)</dt>
+    <dd>ตอบคำถาม <strong>"คุณทำอะไรได้บ้าง"</strong> — เช่น chef1 แก้สูตรของตัวเองได้ แต่ลบของคนอื่นไม่ได้ ·
+        <strong>ประโยคที่เอาไปใช้ได้เลย:</strong>
+        <em>"อันนี้เป็นปัญหา authn หรือ authz"</em> — ถามแบบนี้ senior จะรู้ทันทีว่าควรไปดูตรงไหน</dd>
+    <dt>delegated authorization</dt>
+    <dd>เจ้าของสิทธิ์<strong>มอบบางส่วน</strong>ของสิทธิ์ตัวเองให้แอปอื่นทำแทนได้ ในขอบเขตที่กำหนด และถอนคืนได้
+        — <strong>นี่คือสิ่งที่ OAuth 2.0 เป็น</strong> (คือ "บัตรผู้มาติดต่อ" ในอุปมาข้างบน)</dd>
+    <dt>access token</dt>
+    <dd>"บัตรผ่าน" ที่แอปเอาไปยื่นให้ API เพื่อขอเข้าถึงข้อมูล · มีอายุสั้น · มีขอบเขตติดมาด้วย ·
+        <strong>พิมพ์ถาม AI ได้เลยว่า:</strong>
+        <em>"access token ใบนี้ควรเก็บไว้ที่ไหนฝั่ง server ไม่ให้หลุด"</em></dd>
+  </dl>
+  <p style="margin-bottom:0">
+    ⚠️ ระวังคำ: ชื่อเต็มของ OAuth 2.0 คือ <em>The OAuth 2.0 <strong>Authorization</strong> Framework</em> —
+    มันเป็นเรื่อง <strong>authz ไม่ใช่ authn</strong>
+    <br>ปุ่ม "Sign in with Google" ที่เห็นในสไลด์หน้า 36 นั้น จริง ๆ ใช้ <strong>OpenID Connect</strong>
+    ซึ่งเป็นชั้นบาง ๆ ที่ต่อยอดจาก OAuth 2.0 อีกที (ตัวที่เพิ่ม <code>id_token</code> เข้ามา)
+    — เดี๋ยวหัวข้อ 5 จะเห็น <code>id_token</code> โผล่มาจริง ๆ
+  </p>
+</div>
+
+<h2>2 · ตัวละครสี่ตัว</h2>
+
+<p>
+  ก่อนอ่าน flow ต้องรู้จักตัวละครก่อน ไม่งั้นจะงงว่าใครส่งอะไรให้ใคร
+  <br>OAuth 2.0 กำหนดบทบาทไว้ <strong>สี่บทบาท</strong> (RFC 6749 §1.1) และเกือบทุกคนที่งง OAuth
+  งงเพราะแยกสี่ตัวนี้ไม่ออก:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บทบาท</th><th>แปลว่าอะไร</th><th>ในบทนี้คือใคร</th><th>ในกรณี "Sign in with Google"</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Resource Owner</strong></td>
+      <td>เจ้าของข้อมูล = <strong>คน</strong>ที่มีสิทธิ์อนุญาต</td>
+      <td>user <code>chef1</code></td>
+      <td>คุณ (เจ้าของบัญชี Google)</td>
+    </tr>
+    <tr>
+      <td><strong>Client</strong></td>
+      <td>แอปที่<strong>อยากได้สิทธิ์</strong>ไปทำอะไรบางอย่างแทนเจ้าของ</td>
+      <td>เว็บ Wongnok = client <code>wongnok-web</code></td>
+      <td>เว็บของเรา (เว็บที่มีปุ่มนั้น)</td>
+    </tr>
+    <tr>
+      <td><strong>Authorization Server</strong></td>
+      <td>ตัวที่<strong>ถามผู้ใช้ว่าอนุญาตไหม</strong> แล้ว<strong>ออก token</strong></td>
+      <td>Keycloak ที่ <code>localhost:8081</code></td>
+      <td>accounts.google.com</td>
+    </tr>
+    <tr>
+      <td><strong>Resource Server</strong></td>
+      <td><strong>API ที่ถือข้อมูลจริง</strong> และรับ token มาตรวจก่อนให้ของ</td>
+      <td>Wongnok API (บทเรียน 33–42)</td>
+      <td>Google People API / Gmail API</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>จุดที่คนสับสนมากที่สุดสองจุด</strong>
+    <br>1. <strong>Client ไม่ใช่ browser</strong> — คำว่า client ในภาษา OAuth หมายถึง<em>แอปของเรา</em>
+    (ทั้งฝั่ง frontend และ backend รวมกันเป็นตัวเดียว) ไม่ได้แปลว่า "ฝั่งลูกค้า" แบบที่ใช้ในคำว่า client-side
+    <br>2. <strong>Authorization Server กับ Resource Server เป็นคนละตัว</strong> —
+    ตัวหนึ่งออกบัตร อีกตัวตรวจบัตร · ในโปรเจกต์เล็ก ๆ อาจรันอยู่ในเครื่องเดียวกันได้ แต่<em>หน้าที่</em>คนละอย่าง
+    และในบทนี้เป็นคนละตัวจริง ๆ (Keycloak ออก token · Wongnok API ตรวจ token)
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔤 <strong>ศัพท์ที่จะใช้ทั้งบท: client มีสองพันธุ์</strong>
+    <br>· <strong>confidential client</strong> = client ที่มี backend เป็นของตัวเอง จึง<strong>เก็บ
+    <code>client_secret</code> ไว้ได้จริง</strong> โดยผู้ใช้มองไม่เห็น · <code>wongnok-web</code> ในบทนี้เป็นแบบนี้
+    <br>· <strong>public client</strong> = SPA กับ mobile app ที่โค้ดทั้งก้อนอยู่ในมือผู้ใช้ —
+    ฝัง secret ลงไปเมื่อไหร่ก็โดนแกะเมื่อนั้น จึง<strong>ไม่มี secret เลย</strong>
+    <br>ตรงนี้สำคัญมาก เพราะเหตุผลหลักของบทนี้ที่ว่า "code เปล่า ๆ ใช้ไม่ได้เพราะยังต้องมี
+    <code>client_secret</code> มาแลก" <strong>ใช้กับ public client ไม่ได้</strong> —
+    ด่านที่หายไปนั้นถูกแทนด้วย <strong>PKCE</strong> (หัวข้อ 4) นั่นเอง
+  </p>
+</div>
+
+<h2>3 · Authorization Code Grant ทีละขั้น</h2>
+
+<p>
+  ชื่อยาว ๆ นี้แปลได้ว่า "<strong>วิธีขอสิทธิ์แบบเอารหัสชั่วคราวมาแลก</strong>" —
+  <strong>grant</strong> แปลว่า "วิธีที่ client ใช้ขอ token" · <strong>authorization code</strong>
+  คือรหัสชั่วคราวที่ Authorization Server ส่งกลับมาแทน token (ย้ำว่า<em>ไม่ใช่</em>รหัสผ่าน
+  และไม่ใช่ token — เป็นแค่ตั๋วไว้ไปแลก)
+  <br>นี่คือภาพรวมทั้งรอบ ตัวเลขในวงเล็บคือ<strong>ค่าจริงที่ผมรันได้</strong> (ย่อบางส่วนให้พอดีจอ):
+</p>
+
+<div class="diagram">[1] ผู้ใช้กดปุ่ม "Sign in with Google"  ───►  เว็บเรา (Client)
+                                                │  สุ่ม state = xyz-997d202f5a9a1f92
+                                                │  จำไว้ใน session ของตัวเอง
+                                                ▼
+    ╔══════════════ FRONT CHANNEL — เดินผ่าน browser ของผู้ใช้ ══════════════╗
+[2] ║ GET http://localhost:8081/realms/wongnok/protocol/openid-connect/auth ║
+    ║       ?response_type=code                                             ║
+    ║       &amp;client_id=wongnok-web                                          ║
+    ║       &amp;redirect_uri=http://localhost:3000/callback                     ║
+    ║       &amp;scope=openid profile email                                      ║
+    ║       &amp;state=xyz-997d202f5a9a1f92                                      ║
+    ╚═══════════════════════════════════════════════════════════════════════╝
+                                                ▼
+[3] Keycloak ส่งหน้า login กลับมา  (HTTP 200 · 6837 byte)
+                                     └─► รหัสผ่านถูกกรอกที่นี่ ที่บ้านของ Keycloak
+                                         เว็บเราไม่เคยเห็นมันเลยแม้แต่ครั้งเดียว
+[4] ผู้ใช้กรอก chef1 / chef1234  แล้วกด Sign In
+[5] (ถ้าเปิด consent) Keycloak ถาม "Do you grant these access privileges?" → Yes / No
+                                                ▼
+    ╔══════════════ FRONT CHANNEL — เดินผ่าน browser อีกรอบ ═══════════════╗
+[6] ║ HTTP/1.1 302 Found                                                    ║
+    ║ Location: http://localhost:3000/callback                              ║
+    ║             ?state=xyz-997d202f5a9a1f92                               ║
+    ║             &amp;code=9016d08d-….y92Kwwzl….dc8e45a5-…                     ║
+    ║                    ▲                                                  ║
+    ║                    └─ ได้แค่ "code" เท่านั้น ไม่มี access_token ตรงนี้  ║
+    ╚═══════════════════════════════════════════════════════════════════════╝
+                                                ▼
+[7] เว็บเรา (ฝั่ง server) ตรวจก่อน: state ที่กลับมา == state ที่สุ่มไว้ตอน [1] ไหม?
+    ถ้าไม่ตรง → ทิ้งทันที ห้ามเดินต่อ
+                                                ▼
+    ╔══════════════ BACK CHANNEL — server คุยกับ server ตรง ๆ ══════════════╗
+[8] ║ POST http://localhost:8081/realms/wongnok/protocol/openid-connect/token║
+    ║   grant_type=authorization_code                                       ║
+    ║   code=9016d08d-….                                                    ║
+    ║   client_id=wongnok-web                                               ║
+    ║   client_secret=web-secret-123   ◄── ค่านี้ไม่เคยผ่าน browser เลย        ║
+    ║   redirect_uri=http://localhost:3000/callback                         ║
+    ╚═══════════════════════════════════════════════════════════════════════╝
+                                                ▼
+[9] HTTP 200  { "access_token": "eyJ…" (1377 byte),  "expires_in": 300,
+                "refresh_token": "eyJ…",  "id_token": "eyJ…",
+                "token_type": "Bearer",  "scope": "openid email profile" }
+                                                ▼
+[10] เว็บเรายิง API:   GET /recipes
+                       Authorization: Bearer eyJhbGciOiJSUzI1NiI…</div>
+
+<div class="analogy">
+  <span class="label">🛵 เทียบให้เห็นภาพ — ใบปะหน้าถุงอาหาร กับ เงินที่ร้านเคลียร์กับแอปเอง</span>
+  <p>
+    สั่งข้าวผ่านแอปหนึ่งครั้ง มีของสองอย่างเดินทางคนละทางพร้อมกัน
+    <br>· <strong>ใบปะหน้าถุงอาหาร</strong> — เขียนชื่อคุณ เบอร์ห้อง เลขออร์เดอร์
+    แล้ว<strong>ฝากไรเดอร์ถือมา</strong> ระหว่างทางไรเดอร์อ่านได้ ยามหน้าตึกอ่านได้
+    คนที่เห็นถุงวางอยู่หน้าห้องก็อ่านได้
+    <br>· <strong>เงินค่าอาหาร</strong> — ร้านกับแอป<strong>เคลียร์กันเองทีหลัง</strong>
+    ไม่มีใครยัดเงินใส่ซองฝากไรเดอร์มา และไม่มีใครระหว่างทางเห็นตัวเลขนั้นเลย
+  </p>
+  <p>
+    ใบปะหน้า = <strong>front channel</strong> — คือ URL ในขั้น [2] และ [6]
+    ที่มี <code>client_id</code> · <code>redirect_uri</code> · <code>state</code> · <code>code</code>
+    <br>ร้านเคลียร์กับแอปเอง = <strong>back channel</strong> — คือขั้น [8]
+    ที่ POST <code>client_secret</code> ไปแลก <code>access_token</code>
+    <br>แล้วทำไมถึงกล้าเขียนเลขออร์เดอร์บนใบปะหน้า? เพราะ<strong>เลขออร์เดอร์เปล่า ๆ
+    สั่งอาหารเพิ่มไม่ได้</strong> — เหมือน <code>code</code> ที่หลุดออกไปแล้วยังแลกอะไรไม่ได้
+    ถ้าไม่มี <code>client_secret</code> มาด้วย (หัวข้อ 4 มีผลรันจริงทั้งสี่ด่าน)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ไรเดอร์เป็นคนนอกที่เราไม่รู้จัก
+    แต่ browser เป็น<strong>ของผู้ใช้เอง</strong> — เราไม่ได้กลัวว่าผู้ใช้จะแอบอ่าน token ของตัวเอง
+    <br>สิ่งที่กลัวจริง ๆ คือ URL ที่ผ่าน front channel <strong>ถูกจดเก็บไว้อัตโนมัติหลายที่</strong>
+    (access log ของเว็บเราเอง · ประวัติ browser ของผู้ใช้ · header <code>Referer</code>)
+    แล้วคนอื่นมาเปิดอ่านทีหลัง — หัวข้อ 4 มีบรรทัดจริงจาก <code>gin-access.log</code> ให้ดูกับตา
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป — สองคำที่ต้องแยกให้ออก</span>
+  <p>ไม่งั้นหัวข้อ 4 จะไม่เข้าใจ · และสองคำนี้ใช้ได้กับทุกระบบ ไม่ใช่แค่ OAuth</p>
+  <dl>
+    <dt>front channel</dt>
+    <dd>ข้อมูลเดินทาง<strong>ผ่าน browser ของผู้ใช้</strong> — คือ URL, redirect, query string, fragment
+        · ใครนั่งอยู่หน้าเครื่องก็เห็น · เครื่องมือทุกตัวที่อยู่ระหว่างทางก็จดได้
+        (คือ "ใบปะหน้าถุงอาหาร" ในอุปมาข้างบน) ·
+        <strong>ประโยคที่เอาไปใช้ได้เลย:</strong>
+        <em>"ค่านี้เดินทาง front channel รึเปล่า ถ้าใช่มันจะไปโผล่ใน log"</em></dd>
+    <dt>back channel</dt>
+    <dd>เซิร์ฟเวอร์ของเรา<strong>ยิงตรงไปหา</strong>เซิร์ฟเวอร์ปลายทาง — browser ไม่เกี่ยวเลย
+        ไม่มีอะไรโผล่บนจอผู้ใช้ และค่าลับอย่าง <code>client_secret</code> อยู่ในนี้ได้ ·
+        <strong>พิมพ์ถาม AI ได้เลยว่า:</strong>
+        <em>"ขั้นตอนนี้ควรทำที่ back channel หรือทำที่ browser ได้"</em></dd>
+  </dl>
+  <p style="margin-bottom:0">
+    <strong>ทั้งเรื่องของ Authorization Code Grant ก็คือประโยคเดียวนี้:</strong>
+    ของที่ไม่ลับ (<code>code</code>) เดินทาง front channel ·
+    ของที่ลับ (<code>access_token</code>, <code>client_secret</code>) เดินทาง back channel เท่านั้น
+  </p>
+</div>
+
+<h2>4 · คำถามใหญ่ของบทนี้ — ทำไมต้องมี <code>code</code> คั่นกลาง</h2>
+
+<p>
+  มาถึงจุดที่ผมอยากให้คิดจริง ๆ ก่อนอ่านต่อ
+  <br>ดู flow ข้างบนแล้วมันดูอ้อมมาก: ขั้นที่ [6] Keycloak รู้แล้วว่าผู้ใช้เป็นใครและอนุญาตแล้ว
+  มันจะส่ง <code>access_token</code> กลับมาใน URL เลยก็ได้ จบใน 6 ขั้น ไม่ต้องมีขั้น [8] ให้เมื่อยเลย
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนอ่านเฉลย</strong> — สมมติ Keycloak ส่ง token กลับมาทาง URL ตรง ๆ แบบนี้แทน:</p>
+  <pre><code>HTTP/1.1 302 Found
+Location: http://localhost:3000/callback?<span class="s">access_token=eyJhbGciOiJSUzI1NiI…</span></code></pre>
+  <p class="ask">
+    ผู้ใช้ก็ล็อกอินสำเร็จเหมือนกัน เว็บเราก็ได้ token เหมือนกัน สั้นกว่าด้วย
+    <br><strong>แล้วมันเสียหายตรงไหน?</strong> ลองนึกถึงสามที่นี้: <strong>ไฟล์ log ของเว็บเราเอง</strong> ·
+    <strong>ประวัติ browser ของผู้ใช้</strong> · <strong>header <code>Referer</code></strong>
+    <br>และคำถามที่สอง: ถ้าเปลี่ยนเป็นส่ง <code>code</code> แทน แล้ว <code>code</code> ที่โผล่ใน log เหมือนกันเป๊ะ
+    <strong>ทำไมถึงไม่เสียหายเท่ากัน?</strong>
+  </p>
+  <button class="reveal">ดูเฉลย — พร้อมผลรันจริง</button>
+  <div class="answer">
+    <p>
+      <strong>ข้อแรก: ค่าที่อยู่ใน URL ไม่ได้หายไปไหน มันถูกจดไว้</strong>
+      <br>ผมยกเว็บ callback จริงขึ้นมาด้วย Gin (<code>gin.Default()</code> ซึ่งมี <code>gin.Logger()</code> ติดมาให้)
+      ที่ <code>127.0.0.1:3000</code> แล้วเดิน flow จริงจน Keycloak redirect กลับมา
+      นี่คือบรรทัดที่โผล่ในไฟล์ log ของ<strong>เว็บเราเอง</strong>:
+    </p>
+    <pre style="margin:0.6rem 0"><code>$ cat gin-access.log
+[GIN] 2026/08/22 - 11:38:44 | 200 |  2.458µs |       127.0.0.1 | GET      "/callback
+  ?state=st-3c715c27cc5d
+  &amp;session_state=lG20JnTV9jXGYuYSn9cTF4hw
+  &amp;iss=http%3A%2F%2Flocalhost%3A8081%2Frealms%2Fwongnok
+  <strong>&amp;code=76a08add-6f8c-79b1-af2a-39097022f3d5.lG20JnTV9jXGYuYSn9cTF4hw.dc8e45a5-…"</strong></code></pre>
+    <p style="opacity:.85;font-size:.95em;margin:-0.2rem 0 0.6rem">
+      (ของจริง gin พิมพ์เป็น<strong>บรรทัดเดียวยาว ๆ</strong> ตรงนี้ผมตัดขึ้นบรรทัดใหม่ให้พออ่านบนจอ ·
+      ช่องว่างเยอะ ๆ หน้า <code>127.0.0.1</code> กับหลัง <code>GET</code> ไม่ใช่พิมพ์ผิด —
+      gin จัดคอลัมน์ clientIP กว้าง 15 และ method กว้าง 7 ให้เอง)
+    </p>
+    <p>
+      <strong>query string ทั้งก้อนถูกเขียนลงไฟล์แบบอ่านได้ตรง ๆ</strong> —
+      นี่คือเรื่องเดียวกับที่เราพิสูจน์ไปแล้วใน
+      <a href="../../day-8/lessons/0043-api-detective-workshop.html">บทเรียน 43</a>
+      ตอนที่ <code>POST /createUser?name=Alice&amp;password=123456</code> ทำให้รหัสผ่านไปนอนอยู่ใน access log
+      <br>ถ้าตรงนั้นเป็น <code>access_token</code> แทนที่จะเป็น <code>code</code> ก็คือ
+      <strong>token ของผู้ใช้ถูกเขียนลง log ทุกครั้งที่มีคนล็อกอิน</strong>
+      · แล้ว log ก็ถูกส่งต่อไปที่ระบบเก็บ log กลาง ถูกสำรอง ถูกเปิดดูตอน debug — กระจายไปเรื่อย ๆ
+    </p>
+    <p>
+      และ log ของเราเป็นแค่ที่แรก · RFC 9700 (Best Current Practice for OAuth 2.0 Security, มกราคม 2025)
+      §4.3.2 ชื่อหัวข้อว่า <strong>"Access Token in Browser History"</strong> เขียนไว้ตรง ๆ ว่า
+      URL แบบ <code>client.example/redirection_endpoint#access_token=abcdef</code>
+      <em>"may also end up in the browser history"</em> และสรุปเป็นข้อบังคับว่า
+      <strong><em>"Clients MUST NOT pass access tokens in a URI query parameter in the way
+      described in Section 2.3 of [RFC6750]."</em></strong>
+    </p>
+    <p>
+      <strong>และที่สาม: header <code>Referer</code></strong>
+      <br><code>Referer</code> คือ header ที่ browser แนบ <strong>URL ของหน้าที่กำลังอยู่</strong>
+      ไปกับ request ถัดไปให้เว็บปลายทางเห็น (สะกดตกตัว r มาตั้งแต่ปี 1996 แล้วไม่มีใครกล้าแก้)
+      <br>แปลว่าถ้าหน้า <code>/callback</code> ของเรามี token ติดอยู่ใน URL แล้วหน้านั้นโหลดรูป
+      โหลดสคริปต์ หรือมีลิงก์ให้ผู้ใช้กดไปโดเมนอื่น <strong>URL ที่มี token ก็เดินทางไปกับ
+      <code>Referer</code> ให้โดเมนนั้นอ่านด้วย</strong> — เจ้าของเว็บปลายทางไม่ต้องแฮ็กอะไรเลย
+      แค่เปิด access log ของตัวเองก็เห็น
+    </p>
+    <p>
+      <strong>ข้อสอง: ทำไม <code>code</code> โผล่ใน log แล้วไม่เจ็บเท่ากัน</strong>
+      <br>เพราะ <code>code</code> เปล่า ๆ <strong>ทำอะไรไม่ได้เลย</strong> มันต้องผ่านด่านสี่ด่านพร้อมกันถึงจะแลกเป็น token ได้
+      และผมทดสอบทั้งสี่ด่านมาแล้ว (ผลจริงอยู่ในหัวข้อ 5):
+    </p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>ด่าน</th><th>ถ้าไม่ผ่าน ได้อะไร (ผลรันจริง)</th></tr></thead>
+      <tbody>
+        <tr><td>ต้องมี <code>client_secret</code> ที่อยู่ฝั่ง server เท่านั้น</td>
+            <td><code>HTTP 401 unauthorized_client</code></td></tr>
+        <tr><td>ใช้ได้<strong>ครั้งเดียว</strong></td>
+            <td>ครั้งที่สอง <code>HTTP 400 invalid_grant · "Code not valid"</code></td></tr>
+        <tr><td>อายุ <strong>60 วินาที</strong> (ค่า default ของ Keycloak realm นี้)</td>
+            <td>รอ 65 วิแล้วยิง <code>HTTP 400 invalid_grant · "Code not valid"</code></td></tr>
+        <tr><td><code>redirect_uri</code> ต้องตรงกับตอนขอเป๊ะ ๆ</td>
+            <td><code>HTTP 400 invalid_grant · "Incorrect redirect_uri"</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="margin-bottom:0">
+      สรุปเป็นประโยคเดียว: <strong><code>access_token</code> คือ "กุญแจ" ที่ใครถือก็ใช้ได้เลย
+      แต่ <code>code</code> คือ "ใบรับของ" ที่ต้องเอาไปยื่นพร้อมบัตรพนักงาน ภายในหนึ่งนาที และยื่นได้ครั้งเดียว</strong>
+      <br>ของสองอย่างนี้จึงเดินทางคนละช่องทางกันอย่างถูกต้องแล้ว
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ข้อควรระวัง — "code หลุดแล้วไม่เป็นไร" ก็พูดเกินไปเหมือนกัน</span>
+  <p style="margin-bottom:0">
+    RFC 9700 §4.3.1 ชื่อหัวข้อ "Authorization Code in Browser History" เตือนว่า attacker
+    ที่เข้าถึงเครื่องได้อาจ<strong>หยิบ code ไป replay</strong> ได้ ถ้ายังไม่มีใครใช้มัน
+    <br>เพราะฉะนั้นข้อสรุปที่ถูกคือ: code <strong>ปลอดภัยกว่ามาก</strong> ไม่ใช่ <strong>ปลอดภัยสมบูรณ์</strong>
+    <br>ส่วนที่เหลือถูกอุดด้วย <strong>PKCE</strong> (อ่านว่า "พิกซี่") ซึ่งบังคับให้คนที่จะแลก code
+    ต้องพิสูจน์ว่าเป็นคนเดียวกับที่ขอ code ตอนแรก — <strong>OAuth 2.1 บังคับใช้ PKCE เป็นค่าเริ่มต้น
+    กับ authorization code grant ทุกชนิดของ client</strong> ไม่ใช่แค่ mobile app
+    <br>(<code>draft-ietf-oauth-v2-1-15</code> §4.1.1 เขียนว่า <em>"Clients MUST use code_challenge and
+    code_verifier and authorization servers MUST enforce their use except under the conditions described
+    in Section 7.5.1"</em> · ข้อยกเว้นเดียวใน §7.5.1.1 คือ client ที่เป็น confidential
+    <em>และ</em> AS มั่นใจว่า client ใช้ OIDC <code>nonce</code> ถูกต้อง — และถึงตรงนั้นสเปกก็ยังเขียนว่า
+    <em>"still RECOMMENDED"</em> ให้ใช้ PKCE อยู่ดี)
+    <br>ในการรันของบทนี้ผม<strong>ไม่ได้</strong>ส่ง PKCE ไปด้วย และ Keycloak 26.7.2 ก็ยอมออก token ให้ —
+    แปลว่ามันไม่ได้บังคับให้ตาม default · ถ้าจะใช้จริงต้องไปเปิดเอง (เรื่องนี้อยู่นอกขอบเขตบทนี้)
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🚧 เทียบให้เห็นภาพ — สมุดบันทึกรถเข้าออกที่ป้อมยาม</span>
+  <p>
+    ขับรถเข้าหมู่บ้านทีไร ยามก็จดลงสมุดทุกครั้ง — ทะเบียนรถ เวลา เข้าไปบ้านเลขที่เท่าไหร่
+    <br>สมุดเล่มนั้น<strong>ไม่ได้หายไปไหน</strong> มันวางอยู่ที่ป้อม เปลี่ยนกะแล้วยามคนใหม่ก็เปิดอ่านได้
+    นิติบุคคลขอไปถ่ายเอกสารก็ได้ เวลามีเรื่องก็ถูกหยิบมาเปิดย้อนหลังเป็นเดือน
+    <br>ทีนี้ลองนึกว่าคุณเขียน<strong>รหัสตู้เซฟที่บ้าน</strong>ลงในช่อง "หมายเหตุ" ให้ยามจดทุกครั้งที่เข้า —
+    คุณไม่ได้ถูกใครแฮ็กเลย คุณ<em>เขียนให้เขาจดเอง</em>
+  </p>
+  <p>
+    <strong>URL ที่วิ่งผ่าน front channel ก็คือช่องหมายเหตุนั้น</strong>
+    <br>· ใส่ <code>access_token</code> ลงไป = เขียนรหัสตู้เซฟให้ยามจด — ใครเปิดสมุดก็เอาไปใช้ได้ทันที
+    <br>· ใส่ <code>code</code> ลงไป = เขียนแค่ "เลขที่นัดหมาย" ที่ต้องเอาไปยืนยันตัวที่เคาน์เตอร์อีกด่าน
+    ภายในหนึ่งนาที และยื่นได้ครั้งเดียว ถึงจะได้ของ
+    <br>สมุดเล่มนั้นของจริงอยู่ในเฉลยข้างบนแล้ว — บรรทัดใน <code>gin-access.log</code>
+    ที่มี <code>?state=…&amp;code=…</code> ติดมาครบทั้งก้อน
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สองข้อ —
+    <br>(1) ยามจดสมุด<em>เล่มเดียว</em>ที่ป้อม แต่ URL ถูกจด<strong>หลายที่พร้อมกันโดยที่เราคุมไม่ได้</strong>:
+    access log ฝั่งเรา · ประวัติ browser ที่อยู่ในเครื่องผู้ใช้ · และ header <code>Referer</code>
+    ที่ browser <em>ส่งต่อให้โดเมนอื่นเอง</em> โดยไม่มีใครต้องไปขอ
+    <br>(2) อย่าอ่านอุปมานี้ว่า "เลขที่นัดหมายหลุดแล้วไม่เป็นไรเลย" —
+    กล่องเตือนข้างบนอ้าง RFC 9700 §4.3.1 ไว้แล้วว่า <code>code</code> ที่ยัง<em>ไม่มีใครใช้</em>
+    ถูกหยิบไป replay ได้อยู่ดี · ที่ถูกคือ <strong>เจ็บน้อยกว่ามาก ไม่ใช่ไม่เจ็บเลย</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>สี่คำนี้จะโผล่ทุกครั้งที่คุยเรื่อง OAuth กับ senior หรือพิมพ์ถาม AI — ใช้คำให้ตรง จะได้คำตอบที่ตรง</p>
+  <dl>
+    <dt>authorization code</dt>
+    <dd>"ใบรับของ" ที่ Authorization Server ส่งกลับมาแทน token · ใช้ได้ครั้งเดียว อายุสั้น
+        (realm ในบทนี้ตั้งไว้ 60 วินาที) และต้องมี <code>client_secret</code> มาแลก ·
+        <strong>ประโยคที่เอาไปใช้ได้เลย:</strong>
+        <em>"ตอนนี้เราแลก code เป็น token ที่ฝั่ง server หรือยิงจาก frontend"</em>
+        — สื่อกว่าถามว่า "ตรงนี้ทำถูกไหม"</dd>
+    <dt>replay</dt>
+    <dd>การเอาค่าที่ดักได้<strong>มายิงซ้ำ</strong>เพื่อสวมรอย · เหตุผลที่ <code>code</code>
+        ถูกออกแบบให้ใช้ได้ครั้งเดียวก็เพื่อกันเรื่องนี้ ·
+        <strong>พิมพ์ถาม AI ได้เลยว่า:</strong>
+        <em>"authorization code replay ป้องกันยังไงถ้ายังไม่ได้เปิด PKCE"</em></dd>
+    <dt>PKCE (อ่านว่า "พิกซี่")</dt>
+    <dd>ด่านเพิ่มที่บังคับให้<strong>คนที่มาแลก code ต้องพิสูจน์ว่าเป็นคนเดียวกับที่ขอ code ตอนแรก</strong> ·
+        มีไว้แทนด่าน <code>client_secret</code> ในแอปที่เก็บ secret ไม่ได้ (SPA / mobile) ·
+        <strong>ประโยคที่เอาไปใช้ได้เลย:</strong> <em>"client ตัวนี้เปิด PKCE ไว้รึยัง"</em></dd>
+    <dt>BCP กับ Internet-Draft</dt>
+    <dd>ป้ายบอก<strong>สถานะของเอกสาร</strong>ที่เราเอามาอ้าง ·
+        <em>BCP</em> (เช่น RFC 9700 = BCP 240) คือ "แนวปฏิบัติที่ดีที่สุด ณ ตอนนี้" ที่ประกาศเป็นทางการแล้ว ·
+        <em>Internet-Draft</em> (เช่น <code>draft-ietf-oauth-v2-1-15</code>) คือฉบับร่างที่เลขฉบับยังขยับได้ ·
+        <strong>ประโยคที่เอาไปใช้ได้เลย:</strong> <em>"อันนี้อ้างจาก BCP หรือยังเป็น draft อยู่"</em></dd>
+  </dl>
+</div>
+
+<h2>5 · เดินของจริงทีละคำสั่ง</h2>
+
+<p>
+  ตรงนี้คือของจริงทั้งหมด — ผมใช้ <code>curl</code> แสดงบทเป็น browser
+  (เก็บ cookie ไว้ในไฟล์ แล้ว POST ฟอร์ม login เอง) เพื่อให้เห็น HTTP ทุกบรรทัดที่ปกติ browser ซ่อนไว้
+</p>
+
+<h3>ขั้น [2] — พา browser ไปหา Authorization Server</h3>
+
+<pre><code>$ curl -s -c cookies.txt -o login.html -w <span class="s">"HTTP %{http_code}  content-type=%{content_type}  bytes=%{size_download}\n"</span> \
+  <span class="s">"http://localhost:8081/realms/wongnok/protocol/openid-connect/auth\
+?response_type=code\
+&amp;client_id=wongnok-web\
+&amp;redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fcallback\
+&amp;scope=openid%20profile%20email\
+&amp;state=xyz-997d202f5a9a1f92"</span>
+
+HTTP 200  content-type=text/html;charset=utf-8  bytes=6837</code></pre>
+
+<p>
+  ได้ <strong>หน้า HTML ของ Keycloak</strong> กลับมา 6837 byte — คือหน้า login นั่นเอง
+  <br>สังเกตพารามิเตอร์ห้าตัวที่ส่งไป มันคือ "ใบคำขอ" ที่บอกครบว่า <em>ใครขอ · ขออะไร · ให้ส่งกลับที่ไหน</em>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>พารามิเตอร์</th><th>ค่าที่ส่งจริง</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>response_type</code></td><td><code>code</code></td>
+        <td>"ขอ <strong>code</strong> นะ ไม่ใช่ token" — ค่านี้แหละที่เลือก grant type</td></tr>
+    <tr><td><code>client_id</code></td><td><code>wongnok-web</code></td>
+        <td>เว็บไหนเป็นคนขอ · <strong>ไม่ใช่ความลับ</strong> โผล่ใน URL ได้</td></tr>
+    <tr><td><code>redirect_uri</code></td><td><code>http://localhost:3000/callback</code></td>
+        <td>ให้ส่ง <code>code</code> กลับมาที่ไหน · ต้อง<strong>ลงทะเบียนไว้ก่อน</strong>ที่ Authorization Server</td></tr>
+    <tr><td><code>scope</code></td><td><code>openid profile email</code></td>
+        <td>ขอสิทธิ์<strong>แค่ไหน</strong> — หัวข้อ 7 ว่าด้วยเรื่องนี้</td></tr>
+    <tr><td><code>state</code></td><td><code>xyz-997d202f5a9a1f92</code></td>
+        <td>ค่าสุ่มที่ client สร้างเอง — หัวข้อ 6 ว่าด้วยเรื่องนี้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>ขั้น [4] — ผู้ใช้กรอกรหัสผ่านที่บ้านของ Keycloak</h3>
+
+<p>
+  ในหน้า HTML ที่ได้มามี <code>&lt;form id="kc-form-login" action="…"&gt;</code> อยู่ ผมดึง action ออกมาแล้ว POST ไปตรง ๆ
+  เหมือนที่ browser ทำเวลาผู้ใช้กดปุ่ม Sign In:
+</p>
+
+<pre><code><span class="c"># ดึง action ของฟอร์มออกมาก่อน (นี่คือสิ่งที่ browser ทำให้เราตอนกดปุ่ม)</span>
+$ ACTION=$(grep -o <span class="s">'id="kc-form-login"[^&gt;]*action="[^"]*"'</span> login.html \
+    | sed -n <span class="s">'s/.*action="\([^"]*\)".*/\1/p'</span> | sed <span class="s">'s/&amp;amp;/\&amp;/g'</span>)
+
+$ curl -s -b cookies.txt -c cookies.txt -o /dev/null -D headers.txt -X POST <span class="s">"$ACTION"</span> \
+    --data-urlencode <span class="s">"username=chef1"</span> \
+    --data-urlencode <span class="s">"password=chef1234"</span>
+
+$ grep -i <span class="s">'^HTTP/\|^location:'</span> headers.txt
+HTTP/1.1 302 Found
+Location: http://localhost:3000/callback
+    ?state=xyz-997d202f5a9a1f92
+    &amp;session_state=y92Kwwzlv0CgQdv64G400Txv
+    &amp;iss=http%3A%2F%2Flocalhost%3A8081%2Frealms%2Fwongnok
+    &amp;<strong>code=9016d08d-9cd2-a75a-7e34-58bbba3815d6.y92Kwwzlv0CgQdv64G400Txv.dc8e45a5-9139-48de-bbdf-a0398af573bb</strong></code></pre>
+
+<p>
+  <strong>รหัสผ่าน <code>chef1234</code> ถูกส่งไปที่ <code>localhost:8081</code> ซึ่งคือ Keycloak</strong> —
+  ไม่ได้ผ่านเว็บเราที่ <code>localhost:3000</code> เลยแม้แต่นิดเดียว นี่คือหัวใจของ delegated authorization
+  <br>และสิ่งที่กลับมาคือ <code>code</code> ยาว <strong>98 ตัวอักษร</strong> ไม่มีคำว่า <code>access_token</code> อยู่ในบรรทัดนี้เลย
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>เกร็ดจากผลจริง</strong> — Keycloak แถม <code>iss=…</code> กลับมาด้วย
+    ทั้งที่เราไม่ได้ขอ นี่คือพารามิเตอร์ตาม <strong>RFC 9207</strong> ที่บอกว่า
+    "คำตอบนี้ออกโดย Authorization Server ตัวไหน" ไว้กัน<strong>mix-up attack</strong>
+    (เคสที่ client คุยกับ Authorization Server หลายเจ้า แล้วโดนหลอกให้เอา code ของเจ้าหนึ่ง
+    ไปยื่นให้อีกเจ้าหนึ่ง) · ส่วน <code>session_state</code> เป็นของ OpenID Connect ไม่ใช่ OAuth แกน
+  </p>
+</div>
+
+<h3>ขั้น [8] — เอา <code>code</code> ไปแลก token ทาง back channel</h3>
+
+<pre><code><span class="c"># ดึง code ออกจากบรรทัด Location ที่เพิ่งได้มา</span>
+$ CODE=$(grep -i <span class="s">'^location:'</span> headers.txt \
+    | sed -n <span class="s">'s/.*[?&amp;]code=\([^&amp;]*\).*/\1/p'</span> | tr -d <span class="s">'\r'</span>)
+
+$ curl -s -X POST <span class="s">"http://localhost:8081/realms/wongnok/protocol/openid-connect/token"</span> \
+    -d grant_type=authorization_code \
+    -d client_id=wongnok-web \
+    -d client_secret=web-secret-123 \
+    -d redirect_uri=http://localhost:3000/callback \
+    --data-urlencode <span class="s">"code=$CODE"</span>
+
+HTTP 200
+access_token       = eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwi... [len 1377]
+expires_in         = 300
+refresh_expires_in = 1800
+refresh_token      = eyJhbGciOiJIUzUxMiIsInR5cCIgOiAiSldUIiwi... [len 694]
+token_type         = Bearer
+id_token           = eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwi... [len 1067]
+not-before-policy  = 0
+session_state      = y92Kwwzlv0CgQdv64G400Txv
+scope              = openid email profile</code></pre>
+
+<p>
+  สังเกตสามอย่าง:
+  <br>· <strong>เป็น <code>POST</code> และค่าทุกตัวอยู่ใน body ไม่ใช่ query string</strong> —
+  <code>code</code> กับ <code>client_secret</code> จึงไม่ไปโผล่ใน access log ของใครทั้งนั้น
+  <br>· <code>expires_in = 300</code> คือ access token อยู่ได้ <strong>5 นาที</strong>
+  (ค่า default ของ Keycloak 26.7 · ไม่ใช่ 1 ชั่วโมงตามที่หลายคนจำ)
+  <br>· ได้ <code>id_token</code> แถมมาด้วยเพราะเราขอ <code>scope=openid</code> —
+  ตัวนี้เป็นของ OpenID Connect ไม่ใช่ OAuth แกน
+</p>
+
+<p>นี่คือ payload ของ <code>access_token</code> ที่ได้จริง (แกะ base64 ส่วนกลางออกมา):</p>
+
+<pre><code>{
+  <span class="n">"iss"</span>: <span class="s">"http://localhost:8081/realms/wongnok"</span>,
+  <span class="n">"aud"</span>: <span class="s">"account"</span>,
+  <span class="n">"sub"</span>: <span class="s">"7d93f608-bcc4-4d06-b082-8b0553a4777a"</span>,
+  <span class="n">"typ"</span>: <span class="s">"Bearer"</span>,
+  <span class="n">"azp"</span>: <span class="s">"wongnok-web"</span>,
+  <span class="n">"scope"</span>: <span class="s">"openid email profile"</span>,
+  <span class="n">"preferred_username"</span>: <span class="s">"chef1"</span>,
+  <span class="n">"email"</span>: <span class="s">"chef1@wongnok.dev"</span>
+}
+<span class="c">// header alg = RS256 · exp - iat = 300 วินาที</span></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ <code>aud</code> ไม่ใช่ <code>client_id</code> — จุดนี้พลาดกันเยอะ</span>
+  <p style="margin-bottom:0">
+    <code>"aud": "account"</code> ไม่ใช่ <code>"wongnok-web"</code>
+    <br>ถ้า API ฝั่งเราเขียนตรวจว่า <code>aud == "wongnok-web"</code> จะ<strong>ไม่ผ่านทุกใบ</strong>
+    <br>ตัวที่บอกว่า token ใบนี้ออกให้ client ไหนคือ <strong><code>azp</code></strong> (authorized party) ต่างหาก
+    <br>ถ้าอยากให้ <code>aud</code> เป็นชื่อ client จริง ๆ ต้องไปเพิ่ม <em>audience mapper</em> ที่ Keycloak เอง
+  </p>
+</div>
+
+<h3>สี่ด่านที่ทำให้ <code>code</code> ที่หลุดไปไร้ประโยชน์</h3>
+
+<p>ทั้งสี่เคสนี้ผมยิงจริงทีละเคส ใช้ <code>code</code> ที่เพิ่งได้มาสด ๆ ทุกครั้ง:</p>
+
+<pre><code><span class="c"># A) ไม่ส่ง client_secret เลย (เหมือน attacker ที่ขโมย code จาก log ไป)</span>
+{<span class="n">"error"</span>:<span class="s">"unauthorized_client"</span>,<span class="n">"error_description"</span>:<span class="s">"Invalid client or Invalid client credentials"</span>}
+HTTP 401
+
+<span class="c"># B) ส่ง client_secret ที่เดามั่ว</span>
+{<span class="n">"error"</span>:<span class="s">"unauthorized_client"</span>,<span class="n">"error_description"</span>:<span class="s">"Invalid client or Invalid client credentials"</span>}
+HTTP 401
+
+<span class="c"># C) redirect_uri ไม่ตรงกับตอนขอ (ขอไว้ /callback แต่มาแลกด้วย /evil)</span>
+{<span class="n">"error"</span>:<span class="s">"invalid_grant"</span>,<span class="n">"error_description"</span>:<span class="s">"Incorrect redirect_uri"</span>}
+HTTP 400
+
+<span class="c"># D) เอา code เดิมมาแลกซ้ำเป็นครั้งที่สอง</span>
+{<span class="n">"error"</span>:<span class="s">"invalid_grant"</span>,<span class="n">"error_description"</span>:<span class="s">"Code not valid"</span>}
+HTTP 400</code></pre>
+
+<p>ฝั่ง Keycloak ก็จดเหตุผลไว้ในล็อกของมันด้วย บรรทัดนี้ของเคส C อธิบายชัดที่สุด:</p>
+
+<pre><code>type=<span class="s">"CODE_TO_TOKEN_ERROR"</span> realmName=<span class="s">"wongnok"</span> clientId=<span class="s">"wongnok-web"</span>
+  error=<span class="s">"invalid_redirect_uri"</span>
+  reason=<span class="s">"Parameter 'redirect_uri' did not match originally saved redirect URI
+          used in initial OIDC request. Saved redirectUri: http://localhost:3000/callback,
+          redirectUri parameter: http://localhost:3000/evil"</span>
+  grant_type=<span class="s">"authorization_code"</span> client_auth_method=<span class="s">"client-secret"</span></code></pre>
+
+<p>
+  แล้วเรื่อง "หมดอายุใน 60 วินาที" ผมก็วัดจริง — ค่าที่ตั้งอยู่ใน realm อ่านได้จาก admin API:
+</p>
+
+<pre><code>accessCodeLifespan  = 60   วินาที   <span class="c"># อายุของ authorization code</span>
+accessTokenLifespan = 300  วินาที   <span class="c"># อายุของ access token</span>
+
+<span class="c"># ขอ code มาแล้วนั่งรอ 65 วินาที ค่อยเอาไปแลก:</span>
+{<span class="n">"error"</span>:<span class="s">"invalid_grant"</span>,<span class="n">"error_description"</span>:<span class="s">"Code not valid"</span>}
+HTTP 400</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔍 <strong>สังเกตข้อความ error ให้ดี</strong> — เคส "ใช้ซ้ำ" กับเคส "หมดอายุ"
+    ได้ข้อความ<strong>เหมือนกันเป๊ะ</strong>คือ <code>Code not valid</code>
+    <br>เวลา debug จริงคุณจะแยกสองเคสนี้จาก error ไม่ออก ต้องไปดูล็อกฝั่ง Keycloak เอา
+    <br>อีกอย่างที่ควรจำ: RFC 6749 §4.1.2 แนะนำอายุ code ไว้ที่ <strong>ไม่เกิน 10 นาที</strong>
+    และเขียนว่า <em>"The client MUST NOT use the authorization code more than once"</em>
+    — Keycloak ตั้ง 60 วินาทีให้ ซึ่งเข้มกว่าที่ RFC แนะนำ
+  </p>
+</div>
+
+<h3>บทพิสูจน์ว่า token ไม่เคยผ่าน browser จริง ๆ</h3>
+
+<p>
+  หลังรันครบทุกเคส ผม <code>grep</code> หาคำว่า <code>access_token</code> ในทุกอย่างที่ browser มองเห็น:
+</p>
+
+<pre><code>Location header ทั้งหมดที่ Keycloak ส่งกลับมา = 3 อัน
+  บรรทัดที่มีคำว่า access_token = <strong>0</strong>
+
+access log ของเว็บเราเอง (gin-access.log)
+  บรรทัดที่มีคำว่า access_token = <strong>0</strong>
+  บรรทัดที่มีคำว่า code=        = <strong>2</strong></code></pre>
+
+<p>
+  <strong>ศูนย์</strong> — ไม่ใช่ "น้อย" แต่คือไม่มีเลย
+  <br>ทุกใบของ <code>access_token</code> เกิดขึ้นในขั้น [8] ซึ่งเป็น server-to-server ล้วน ๆ
+</p>
+
+<h2>6 · <code>state</code> — พารามิเตอร์ที่ดูไร้สาระที่สุด แต่ตัดออกไม่ได้</h2>
+
+<p>
+  <code>state</code> คือ<strong>ค่าสุ่มที่ client สร้างเอง</strong> ส่งไปกับใบคำขอในขั้น [2]
+  แล้ว Authorization Server จะส่งกลับมาเหมือนเดิมเป๊ะ ๆ ในขั้น [6]
+  <br>ฟังดูเหมือนของไร้ประโยชน์ — ส่งไปแล้วได้กลับมาเท่าเดิม จะมีไว้ทำไม
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนอ่านเฉลย</strong> — ผมยิงสองการทดลองนี้กับ Keycloak ของจริง</p>
+  <pre><code><span class="c"># การทดลอง 1: ส่ง state ที่ไม่ได้สุ่มเลย เดาง่ายสุด ๆ</span>
+&amp;state=AAAA-not-random-1234
+
+<span class="c"># การทดลอง 2: ไม่ส่ง state เข้าไปเลยสักตัว</span>
+(ตัดพารามิเตอร์ state ออกจาก URL ทั้งอัน)</code></pre>
+  <p class="ask">
+    <strong>ทายว่า Keycloak จะทำยังไงกับสองเคสนี้</strong>
+    <br>· เคส 1 มันจะปฏิเสธไหมว่า "state นี้เดาง่ายเกินไป"?
+    <br>· เคส 2 มันจะบอกไหมว่า "คุณลืม state"?
+    <br>และคำถามที่สำคัญที่สุด: <strong>ถ้ามันไม่ว่าอะไรเลยทั้งสองเคส แล้วใครกันแน่ที่มีหน้าที่ตรวจ <code>state</code>?</strong>
+  </p>
+  <button class="reveal">ดูเฉลย — พร้อมผลรันจริง</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code><span class="c"># การทดลอง 1 — ส่ง state ที่เดาง่ายมาก</span>
+Location = http://localhost:3000/callback?<strong>state=AAAA-not-random-1234</strong>&amp;session_state=…
+ได้ code มาด้วยไหม = <strong>True</strong>
+
+<span class="c"># การทดลอง 2 — ไม่ส่ง state เลย</span>
+HTTP/1.1 302 Found
+Location: http://localhost:3000/callback
+    ?session_state=8yUy2W06g5Hh6A2FeXqObSrQ
+    &amp;iss=http%3A%2F%2Flocalhost%3A8081%2Frealms%2Fwongnok
+    &amp;<strong>code=0d9e8ae3-2129-e1be-9fcb-f5f70dad4ca7.…</strong>     <span class="c">← ได้ code ปกติ ไม่มีคำเตือนอะไรเลย</span></code></pre>
+    <p>
+      <strong>Authorization Server ไม่ตรวจอะไรเลยทั้งสองเคส</strong> —
+      เคส 1 มันคืนค่าที่เราส่งไปกลับมาเหมือนกระจกสะท้อน · เคส 2 มันก็ออก code ให้เฉย ๆ
+      <br>แปลว่า <strong><code>state</code> เป็นหน้าที่ของ client ล้วน ๆ</strong>
+      ทั้งการ<em>สุ่ม</em> ทั้งการ<em>เก็บ</em> และทั้งการ<em>เอามาเทียบ</em> — ไม่มีใครทำแทนให้
+      และไม่มีใครฟ้องถ้าคุณลืม
+    </p>
+    <p style="margin-bottom:0">
+      นี่คือกับดักที่แสบมาก เพราะ<strong>โค้ดที่ลืม <code>state</code> ทำงานได้ปกติทุกอย่าง</strong>
+      ล็อกอินผ่าน ได้ token ทดสอบผ่าน ขึ้น production ได้ —
+      มันเป็นช่องโหว่ที่ไม่มีอาการเลยจนกว่าจะโดนโจมตี
+    </p>
+  </div>
+</div>
+
+<h3>แล้ว <code>state</code> กันอะไร</h3>
+
+<p>
+  กัน <strong>CSRF</strong> (Cross-Site Request Forgery) — การโจมตีที่ attacker
+  หลอกให้ browser ของเหยื่อยิง request ที่ attacker เป็นคนแต่งขึ้น
+  <br>ในบริบทของ OAuth มันมีหน้าตาแบบนี้ ซึ่งกลับหัวจากที่คนส่วนใหญ่คิด:
+</p>
+
+<div class="diagram">1. attacker ล็อกอิน Wongnok ผ่าน Keycloak <span class="c">ด้วยบัญชีของ attacker เอง</span>
+   → ได้ code ของ<strong>ตัวเอง</strong>มาหนึ่งใบ  แล้ว<strong>ไม่ใช้มัน</strong> เก็บไว้เฉย ๆ
+
+2. attacker ทำลิงก์ขึ้นมาหนึ่งอัน:
+      http://wongnok.example/callback?code=&lt;code ของ attacker&gt;
+   แล้วส่งให้เหยื่อ (แปะในเว็บบอร์ด · ฝังเป็นรูป · ส่งไลน์)
+
+3. เหยื่อกดลิงก์ → browser ของเหยื่อยิงเข้า callback ของเรา
+   เว็บเราเห็น code → เอาไปแลก token ตามปกติ → ได้ token ของ <strong>attacker</strong>
+   → ผูก token ของ attacker เข้ากับ session ของ<strong>เหยื่อ</strong>
+
+4. ตอนนี้เหยื่อกำลังใช้ Wongnok อยู่ แต่<strong>ผูกกับบัญชี Google ของ attacker</strong>
+   เหยื่ออัปโหลดสูตรอาหาร / บันทึกที่อยู่ / ผูกบัตร → <strong>ทุกอย่างไปเข้าบัญชีของ attacker หมด</strong></div>
+
+<p>
+  RFC 6749 §10.12 อธิบายเรื่องนี้ไว้ตรง ๆ ว่า CSRF ที่ redirection URI ทำให้ attacker
+  <em>"inject its own authorization code or access token"</em> ได้ และสรุปเป็นข้อบังคับว่า
+  <strong><em>"The client MUST implement CSRF protection for its redirection URI"</em></strong>
+  โดยแนะนำให้ทำผ่านพารามิเตอร์ <code>state</code>
+</p>
+
+<div class="analogy">
+  <span class="label">📦 เทียบให้เห็นภาพ — พัสดุที่มาถึงหน้าบ้านทั้งที่เราไม่ได้สั่ง</span>
+  <p>
+    มีคนกดกริ่งบอกว่า "พัสดุมาส่งครับ เซ็นรับด้วย"
+    <br>ถ้าคุณ<strong>ไม่ได้สั่งอะไรไว้เลย</strong> การเซ็นรับมั่ว ๆ คือเรื่องที่ไม่ควรทำ —
+    แต่ปัญหาคือพอของกองอยู่ตรงหน้า คนส่วนใหญ่ก็เซ็นไปก่อน
+    <br>วิธีกันที่ง่ายที่สุดคือ ทุกครั้งที่สั่งของ ให้<strong>จดเลขออร์เดอร์ไว้ในสมุดของตัวเอง</strong>
+    พอของมาถึงก็ดูเลขที่หน้ากล่อง แล้ว<strong>เปิดสมุดเทียบ</strong> — ไม่ตรงก็ไม่เซ็น จบ
+  </p>
+  <p>
+    <code>state</code> คือเลขในสมุดเล่มนั้น และงานของมันมีสามจังหวะพอดีกับตารางข้างล่าง:
+    <strong>จดเลขตอนสั่ง</strong> (สุ่มค่า) · <strong>เก็บสมุดไว้กับตัว</strong> (เก็บใน session) ·
+    <strong>เปิดเทียบตอนของมาถึง</strong> (เทียบตอน callback)
+    <br>ขาดจังหวะไหนไปจังหวะเดียว ก็เท่ากับไม่ได้ทำอะไรเลย — ที่คนลืมบ่อยที่สุดคือจังหวะสุดท้าย
+    เพราะสองจังหวะแรกเขียนแล้วเห็นผลทันที ส่วนจังหวะสุดท้ายไม่เขียนก็ไม่มีอะไรพัง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ของจริงบริษัทขนส่งยังมีระบบตรวจของมันเองอยู่บ้าง
+    แต่ <strong>Authorization Server ไม่ตรวจ <code>state</code> ให้เลยแม้แต่นิดเดียว</strong> —
+    ผลรันข้างบนคือส่ง <code>state=AAAA-not-random-1234</code> ไปก็ยังได้ <code>code</code>
+    และไม่ส่ง <code>state</code> เลยก็ยังได้ <code>code</code>
+    <br>ทั้งสามจังหวะเป็นงานของ client ฝ่ายเดียว และ<strong>ไม่มีใครฟ้องถ้าคุณลืม</strong>
+  </p>
+</div>
+
+<p><strong>วิธีที่ถูกต้องมีสามบรรทัด</strong> และต้องครบทั้งสาม:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>จังหวะ</th><th>ต้องทำอะไร</th><th>พลาดตรงนี้แล้วเป็นยังไง</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>ก่อนพา browser ไป (ขั้น [1])</td>
+      <td><strong>สุ่ม</strong>ค่าที่เดาไม่ได้ เช่น 32 byte จาก <code>crypto/rand</code></td>
+      <td>ถ้าใช้ค่าคงที่หรือค่าที่เดาได้ attacker ก็ใส่ค่านั้นในลิงก์ปลอมได้ → ป้องกันไม่ได้เลย</td>
+    </tr>
+    <tr>
+      <td>ตอนเดียวกัน</td>
+      <td><strong>เก็บ</strong>ค่านั้นไว้ใน session ของผู้ใช้คนนี้ (ฝั่ง server หรือ cookie ที่ปลอดภัย)</td>
+      <td>ถ้าไม่เก็บ ก็ไม่มีอะไรให้เทียบตอนกลับมา</td>
+    </tr>
+    <tr>
+      <td>ตอน callback (ขั้น [7])</td>
+      <td><strong>เทียบ</strong> <code>state</code> ที่กลับมากับที่เก็บไว้ · ไม่ตรง = ทิ้ง ห้ามแลก code</td>
+      <td>ลืมข้อนี้ = ทั้งหมดข้างบนเสียเปล่า · นี่คือข้อที่คนลืมบ่อยที่สุด</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>หน้าตาในโค้ด Go</h3>
+
+<p>
+  สามบรรทัดข้างบนแปลเป็น Go ได้สั้นมาก — ที่สำคัญคือใช้ <code>crypto/rand</code>
+  ไม่ใช่ <code>math/rand</code> เพราะ <code>math/rand</code> เดาลำดับถัดไปได้ถ้ารู้ค่าก่อนหน้า
+  <br>ข้างล่างนี้เป็น<strong>ไฟล์เต็ม ๆ ไม่ใช่เศษโค้ด</strong> — ก๊อปทั้งก้อนไปวางเป็น
+  <code>main.go</code> แล้ว <code>go run main.go</code> ได้เลย (ใช้แต่ของใน standard library
+  จึงไม่ต้องมี <code>go.mod</code> และไม่ต้อง <code>go get</code> อะไรเลย):
+</p>
+
+<pre><code><span class="c">// state/main.go</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+	<span class="s">"crypto/rand"</span>
+	<span class="s">"crypto/subtle"</span>
+	<span class="s">"encoding/base64"</span>
+	<span class="s">"fmt"</span>
+)
+
+<span class="c">// [1] สุ่ม — เรียกก่อนพา browser ไปหา Authorization Server</span>
+<span class="k">func</span> <span class="f">newState</span>() <span class="k">string</span> {
+	b := <span class="f">make</span>([]<span class="k">byte</span>, <span class="n">32</span>)
+	rand.<span class="f">Read</span>(b) <span class="c">// doc ของ crypto/rand.Read เขียนว่า "It never returns an error"</span>
+	<span class="k">return</span> base64.RawURLEncoding.<span class="f">EncodeToString</span>(b)
+}
+
+<span class="c">// [3] เทียบ — เรียกตอน callback ก่อนเอา code ไปแลก</span>
+<span class="k">func</span> <span class="f">sameState</span>(a, b <span class="k">string</span>) <span class="k">bool</span> {
+	<span class="k">return</span> subtle.<span class="f">ConstantTimeCompare</span>([]<span class="k">byte</span>(a), []<span class="k">byte</span>(b)) == <span class="n">1</span>
+}
+
+<span class="c">// main() มีไว้ให้เห็นผลเท่านั้น — ของจริงเรียกสองฟังก์ชันข้างบนจาก handler</span>
+<span class="k">func</span> <span class="f">main</span>() {
+	saved := <span class="f">newState</span>() <span class="c">// ขั้น [1] สุ่มแล้วเก็บลง session ของผู้ใช้คนนี้</span>
+	fmt.<span class="f">Println</span>(<span class="s">"state ที่สุ่มได้ ="</span>, saved)
+	fmt.<span class="f">Println</span>(<span class="s">"ความยาว ="</span>, <span class="f">len</span>(saved), <span class="s">"ตัวอักษร"</span>)
+	fmt.<span class="f">Println</span>(<span class="s">"สุ่มอีกรอบ ="</span>, <span class="f">newState</span>())
+	fmt.<span class="f">Println</span>()
+	fmt.<span class="f">Println</span>(<span class="s">"callback ส่งค่าเดิมกลับมา   -&gt; sameState ="</span>, <span class="f">sameState</span>(saved, saved))
+	fmt.<span class="f">Println</span>(<span class="s">"callback ส่งค่าอื่นกลับมา   -&gt; sameState ="</span>, <span class="f">sameState</span>(saved, <span class="f">newState</span>()))
+	fmt.<span class="f">Println</span>(<span class="s">"callback ไม่ส่ง state กลับมา -&gt; sameState ="</span>, <span class="f">sameState</span>(saved, <span class="s">""</span>))
+}</code></pre>
+
+<p>ผมก๊อปไฟล์นี้ไปวางในโฟลเดอร์เปล่า ๆ แล้วรันจริง ได้แบบนี้:</p>
+
+<pre><code>$ go run main.go
+state ที่สุ่มได้ = 6YGcX2cU5S2uyIM7BF3tqImtqK3CLJY978uKvaQlOUA
+ความยาว = 43 ตัวอักษร
+สุ่มอีกรอบ = i596gzZwOl6c3gROb9tJPrlcsTj5tYPMhGAYVbkYLdQ
+
+callback ส่งค่าเดิมกลับมา   -&gt; sameState = <strong>true</strong>
+callback ส่งค่าอื่นกลับมา   -&gt; sameState = <strong>false</strong>
+callback ไม่ส่ง state กลับมา -&gt; sameState = <strong>false</strong>
+
+<span class="c"># ค่าสุ่มของคุณจะไม่ตรงกับของผมแน่นอน — ที่ต้องตรงคือ 43 กับ true/false สามบรรทัดล่าง</span></code></pre>
+
+<p>
+  สังเกตบรรทัดสุดท้าย: ถ้า callback <strong>ไม่มี <code>state</code> ติดมาเลย</strong>
+  (ซึ่งคือสิ่งที่ลิงก์ปลอมของ attacker เป็น) <code>sameState</code> ก็คืน <code>false</code> ให้เอง —
+  ตราบใดที่โค้ดคุณ<em>เรียกมัน</em> จริง ๆ
+  <br>ส่วน <code>subtle.ConstantTimeCompare</code> ใช้แทน <code>a == b</code> เพราะการเทียบ string ปกติ
+  จะหยุดทันทีที่เจอตัวอักษรต่างกัน ทำให้<strong>เวลาที่ใช้บอกใบ้ได้ว่าเดาถูกไปกี่ตัวแล้ว</strong>
+  — เป็นนิสัยที่ควรติดไว้กับทุกค่าลับ ไม่ใช่แค่ <code>state</code>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    💡 <strong>ตัวช่วยจำ</strong>: <code>state</code> ตอบคำถามว่า
+    <em>"การเดินทางรอบนี้ เป็นรอบที่<strong>ฉันเอง</strong>เป็นคนเริ่มหรือเปล่า"</em>
+    <br>ถ้า client ไม่เคยเริ่มการเดินทางที่มี state ค่านี้ ก็แปลว่า code ที่ถืออยู่<strong>ไม่ใช่ของผู้ใช้คนนี้</strong>
+    <br>และเพราะ Authorization Server ทำหน้าที่นี้แทนไม่ได้ (มันไม่รู้จัก session ของเว็บเรา)
+    งานนี้จึงตกเป็นของ client เสมอ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>สามคำนี้คือชื่อที่ dev ใช้เรียกสิ่งที่คุณเพิ่งเข้าใจไปทั้งหัวข้อ</p>
+  <dl>
+    <dt>CSRF (Cross-Site Request Forgery)</dt>
+    <dd>การหลอกให้ browser ของเหยื่อยิง request ที่ attacker เป็นคนแต่งขึ้น โดยเหยื่อไม่รู้ตัว ·
+        <strong>ประโยคที่เอาไปใช้ได้เลย:</strong>
+        <em>"callback ตัวนี้กัน CSRF ยังไง เทียบ state ตรงบรรทัดไหน"</em>
+        — สื่อกว่าถาม senior ว่า "ตรงนี้ปลอดภัยไหม" เยอะ</dd>
+    <dt>constant-time comparison</dt>
+    <dd>การเทียบค่าลับที่<strong>ใช้เวลาเท่ากันเสมอ</strong> ไม่ว่าจะต่างกันตั้งแต่ตัวแรกหรือตัวสุดท้าย
+        เพื่อไม่ให้เวลาที่ใช้บอกใบ้ว่าเดาถูกไปกี่ตัวแล้ว · ใน Go คือ
+        <code>subtle.ConstantTimeCompare</code> ที่เพิ่งเห็นในโค้ดข้างบน ·
+        <strong>ประโยคที่เอาไปใช้ได้เลย:</strong>
+        <em>"ตรงนี้เทียบ secret ด้วย == อยู่ ควรเปลี่ยนเป็น constant-time compare ไหม"</em></dd>
+    <dt>CSPRNG (<code>crypto/rand</code> ไม่ใช่ <code>math/rand</code>)</dt>
+    <dd>ตัวสุ่มที่ออกแบบมาให้<strong>เดาค่าถัดไปไม่ได้</strong>แม้จะรู้ค่าก่อนหน้าทั้งหมด —
+        ต่างจากตัวสุ่มธรรมดาที่เร็วกว่าแต่เดาลำดับได้ ·
+        <strong>พิมพ์ถาม AI ได้เลยว่า:</strong>
+        <em>"ค่านี้เป็นค่าที่ใช้ด้านความปลอดภัย ควรสุ่มด้วย crypto/rand หรือ math/rand"</em></dd>
+  </dl>
+  <p style="margin-bottom:0">
+    ⚠️ ระวังคำ: <code>state</code> ในภาษา OAuth <strong>ไม่เกี่ยวกับ "สถานะของหน้าจอ"</strong>
+    แบบที่ใช้ในคำว่า state management ของ React เลยแม้แต่นิดเดียว —
+    มันคือค่าสุ่มที่มีไว้กัน CSRF อย่างเดียว ชื่อพ้องกันเฉย ๆ
+  </p>
+</div>
+
+<h2>7 · <code>scope</code> กับหน้า consent</h2>
+
+<p>
+  <strong><code>scope</code> คือรายการสิทธิ์ที่ client ขอ</strong> เขียนเป็นคำ ๆ คั่นด้วยช่องว่าง
+  <br>นี่คือส่วนที่ทำให้คำว่า "จำกัดขอบเขต" ในสไลด์หน้า 35 มีความหมายจริง —
+  รหัสผ่านเปิดได้ทุกอย่าง แต่ token เปิดได้แค่ที่เขียนไว้ใน scope
+</p>
+
+<p>
+  พอ client ขอ scope มา Authorization Server ก็เอาไปแปลงเป็นภาษาคนแล้วถามเจ้าของบัญชี
+  นี่คือ<strong>ข้อความจริงบนหน้า consent ของ Keycloak</strong> ที่ผมเปิดใช้แล้วรันจนเห็น:
+</p>
+
+<pre><code>Grant Access to Wongnok Web
+Do you grant these access privileges?
+  · Email address        <span class="c">← มาจาก scope "email"</span>
+  · User roles           <span class="c">← มาจาก scope "roles"</span>
+  · User profile         <span class="c">← มาจาก scope "profile"</span>
+[ Yes ]   [ No ]</code></pre>
+
+<p>และถ้าผู้ใช้กด <strong>No</strong> — ผมกดจริงแล้วได้แบบนี้:</p>
+
+<pre><code>HTTP/1.1 302 Found
+Location: http://localhost:3000/callback?<strong>error=access_denied</strong>&amp;state=consent-demo&amp;iss=…</code></pre>
+
+<p>
+  <strong>ไม่มี <code>code</code> กลับมา มีแต่ <code>error=access_denied</code></strong> —
+  นี่คือเคสที่โค้ดฝั่ง callback ของเราต้องรองรับด้วย ไม่ใช่สมมติว่าจะได้ <code>code</code> เสมอ
+</p>
+
+<h3>กับดักที่ต้องรู้: scope ที่ขอ ≠ scope ที่ได้</h3>
+
+<p>
+  ผมลองขอแค่ <code>scope=openid</code> อย่างเดียว แล้วดูว่า token ที่ได้มีอะไรบ้าง:
+</p>
+
+<pre><code><span class="c"># ขอไป:</span>      scope=openid
+<span class="c"># ได้กลับมา:</span>  scope = openid email profile     <span class="c">← ได้เกินที่ขอ!</span>
+claim เกี่ยวกับ<span class="c">ตัวตน</span>ที่ติดมาใน id_token ทั้งที่ขอแค่ openid =
+    sub, preferred_username, name, given_name, family_name, email, email_verified
+<span class="c"># (id_token ก้อนนี้มี claim ทั้งหมด 18 ตัว ที่เหลือเป็นของระบบ เช่น iss, aud, exp, iat, jti, sid, typ, azp, acr, at_hash, auth_time)</span></code></pre>
+
+<p>สาเหตุอยู่ที่ Keycloak แบ่ง scope เป็นสองกอง และกองแรก<strong>ใส่ให้เองทุกครั้งไม่ว่าจะขอหรือไม่</strong>:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ประเภท</th><th>รายชื่อจริงของ client <code>wongnok-web</code></th><th>พฤติกรรม</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>default client scopes</strong></td>
+      <td><code>acr</code>, <code>basic</code>, <code>email</code>, <code>profile</code>, <code>roles</code>, <code>web-origins</code></td>
+      <td>ติดมากับ token <strong>ทุกใบ</strong> แม้ไม่ได้ขอ</td>
+    </tr>
+    <tr>
+      <td><strong>optional client scopes</strong></td>
+      <td><code>address</code>, <code>microprofile-jwt</code>, <code>offline_access</code>, <code>organization</code>, <code>phone</code></td>
+      <td>ต้อง<strong>ขอเอง</strong>ใน <code>scope=</code> ถึงจะได้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>และถ้าขอ scope ที่ไม่มีอยู่จริง มันจะไม่เงียบ:</p>
+
+<pre><code><span class="c"># ขอ scope=openid banana</span>
+Location: http://localhost:3000/callback
+    ?<strong>error=invalid_scope</strong>&amp;error_description=Invalid+scopes%3A+openid+banana&amp;state=sc-bad&amp;iss=…</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ อย่าเชื่อว่า "ขอน้อย = ได้น้อย" โดยไม่ตรวจ</span>
+  <p style="margin-bottom:0">
+    ถ้าคุณออกแบบ API โดยคิดว่า "เว็บนี้ขอแค่ <code>openid</code> เลยไม่มีทางเห็นอีเมล"
+    ผลรันข้างบนบอกว่า<strong>คิดผิด</strong> — อีเมลติดมาใน token อยู่ดี
+    <br>ที่ถูกคือ ไปดูรายการ default client scopes ที่ Authorization Server แล้ว<strong>ตัดตัวที่ไม่ควรให้ออก</strong>
+    ไม่ใช่หวังว่า client จะไม่ขอ
+    <br>อีกเรื่อง: <strong>consent ถูกจำไว้</strong> — ผมรัน flow เดิมซ้ำอีกรอบ Keycloak ไม่ถามอีกแล้ว
+    ข้ามไปที่ callback เลย · ผู้ใช้จึงเห็นหน้าจอนั้น<em>ครั้งเดียว</em> ต้องไปถอนเองทีหลังถ้าเปลี่ยนใจ
+  </p>
+</div>
+
+<h2>8 · กลับไปดูข้อ "ถอนสิทธิ์ไม่ได้" อีกที</h2>
+
+<p>
+  หัวข้อ 1 บอกว่าปัญหาข้อ 3 ของ password anti-pattern คือถอนสิทธิ์ไม่ได้
+  ผมทดสอบว่า OAuth แก้ได้จริงไหม — เดิน flow จนได้ <code>refresh_token</code> มา
+  แล้วยิงไปที่ <strong>revocation endpoint</strong> ของ Keycloak (นี่คือปุ่ม "ถอนสิทธิ์" ในรูปแบบ HTTP):
+</p>
+
+<pre><code>1) มี refresh_token อยู่ในมือ (len=694)
+
+2) ลอง refresh ครั้งแรก:
+   HTTP 200  keys = ['access_token', 'expires_in', 'refresh_expires_in', 'refresh_token',
+                     'token_type', 'id_token', 'not-before-policy', 'session_state', 'scope']
+
+3) ผู้ใช้กด "ถอนสิทธิ์" → POST /realms/wongnok/protocol/openid-connect/revoke
+   HTTP 200
+
+4) ลอง refresh อีกครั้งหลังถอนสิทธิ์:
+   {<span class="n">"error"</span>:<span class="s">"invalid_grant"</span>,<span class="n">"error_description"</span>:<span class="s">"Session not active"</span>}
+   HTTP 400
+
+5) รหัสผ่านของ chef1 ยังใช้ล็อกอินได้เหมือนเดิมไหม:
+   ล็อกอินใหม่แล้วได้ code ยาว 98 ตัวอักษร → <strong>ยังล็อกอินได้ปกติ ไม่ต้องเปลี่ยนรหัสผ่าน</strong></code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>นี่คือความต่างทั้งหมดในสี่บรรทัด</strong>
+    <br>· แบบเก่า: ถอนสิทธิ์ = เปลี่ยนรหัสผ่าน = <strong>พังทุกเว็บพร้อมกัน</strong>
+    <br>· แบบ OAuth: ถอนสิทธิ์ = ยกเลิก token ใบเดียว = <strong>เว็บอื่นไม่รู้เรื่องด้วยเลย</strong>
+    และรหัสผ่านของผู้ใช้ไม่ถูกแตะต้อง
+  </p>
+</div>
+
+<h2>9 · แล้ว grant แบบอื่นล่ะ ทำไมต้องเป็น Authorization Code</h2>
+
+<p>
+  OAuth 2.0 (RFC 6749, ปี 2012) นิยาม grant ไว้หลายแบบ และ<strong>สองแบบในนั้นถูกเลิกแนะนำไปแล้ว</strong>
+  — ตรงนี้สำคัญเพราะ tutorial เก่า ๆ ในอินเทอร์เน็ตยังสอนสองตัวนั้นอยู่เยอะมาก
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Grant type</th><th>ทำงานยังไง</th><th>สถานะตอนนี้</th><th>เพราะอะไร</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Authorization Code</strong></td>
+      <td>ได้ <code>code</code> ทาง browser → เอาไปแลก token ทาง back channel</td>
+      <td>✅ <strong>ตัวหลัก</strong> ใช้กับเว็บ · mobile · SPA (คู่กับ PKCE)</td>
+      <td>token ไม่เคยผ่าน browser · code ใช้ครั้งเดียว อายุสั้น ต้องมี secret มาแลก</td>
+    </tr>
+    <tr>
+      <td><strong>Implicit</strong><br>(<code>response_type=token</code>)</td>
+      <td>Authorization Server ส่ง <code>access_token</code> กลับมาใน URL fragment เลย ไม่มี code</td>
+      <td>❌ <strong>ถูกตัดออกจาก OAuth 2.1</strong></td>
+      <td>token ไปนอนใน browser history · ถูก inject ได้ · sender-constrain ไม่ได้</td>
+    </tr>
+    <tr>
+      <td><strong>Resource Owner Password Credentials</strong><br>(password grant)</td>
+      <td>client รับ username/password ของผู้ใช้มาตรง ๆ แล้วส่งไปแลก token</td>
+      <td>❌ <strong>ถูกตัดออกจาก OAuth 2.1</strong> · RFC 9700 เขียนว่า <strong>MUST NOT be used</strong></td>
+      <td>คือ password anti-pattern ในหัวข้อ 1 นั่นเอง · ใช้กับ 2FA ไม่ได้</td>
+    </tr>
+    <tr>
+      <td><strong>Client Credentials</strong></td>
+      <td>ไม่มีผู้ใช้เลย · service คุยกับ service ด้วย <code>client_id</code>+<code>client_secret</code></td>
+      <td>✅ ยังใช้ได้ แต่<strong>คนละงาน</strong></td>
+      <td>ใช้ตอน cron job หรือ service ยิงหากันเอง ไม่ได้ทำงานแทนผู้ใช้คนไหน</td>
+    </tr>
+    <tr>
+      <td><strong>Refresh Token</strong></td>
+      <td>เอา <code>refresh_token</code> ไปขอ <code>access_token</code> ใบใหม่</td>
+      <td>✅ ยังใช้ได้</td>
+      <td>ทำให้ access token อายุสั้นได้ (5 นาที) โดยผู้ใช้ไม่ต้องล็อกอินใหม่ทุก 5 นาที</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>อ้างอิงตรงตัวสำหรับข้ออ้างเรื่อง OAuth 2.1</h3>
+
+<p>
+  ข้ออ้างว่า "OAuth 2.1 ตัด Implicit กับ Password grant ออก" ไม่ควรเชื่อเพราะมีคนพูดต่อ ๆ กันมา
+  <br>เอกสารตัวจริงคือ <strong><code>draft-ietf-oauth-v2-1-15</code></strong>
+  (The OAuth 2.1 Authorization Framework · Hardt, Parecki, Lodderstedt · 2 มีนาคม 2026)
+  <br>ในหัวข้อ 10 มีบรรทัดพวกนี้อยู่<strong>ตรงตัว</strong>:
+</p>
+
+<pre><code>*  The Implicit grant (response_type=token) is omitted from this
+   specification as per Section 2.1.2 of [RFC9700]
+
+*  The Resource Owner Password Credentials grant is omitted from this
+   specification as per Section 2.4 of [RFC9700]
+
+<span class="c">   [... ตัด bullet อีก 4 ข้อออก — bearer token ใน query string, refresh token
+    ของ public client, redirect_uri ที่ token endpoint, client credentials ใน request body ...]</span>
+
+10.1.  Removal of the OAuth 2.0 Implicit grant
+
+   The OAuth 2.0 Implicit grant is omitted from OAuth 2.1 as it was
+   deprecated in [RFC9700].
+
+   The intent of removing the Implicit grant is to no longer issue
+   access tokens in the authorization response, as such tokens are
+   vulnerable to leakage and injection, and are unable to be sender-
+   constrained to a client.</code></pre>
+
+<p>
+  และ <strong>RFC 9700</strong> (Best Current Practice for OAuth 2.0 Security · BCP 240 · มกราคม 2025)
+  ที่ถูกอ้างถึงนั้น §2.4 เขียนไว้แรงกว่านั้นอีก:
+</p>
+
+<pre><code>2.4.  Resource Owner Password Credentials Grant
+
+   The resource owner password credentials grant [RFC6749] MUST NOT be
+   used.  This grant type insecurely exposes the credentials of the
+   resource owner to the client.</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>ทำไมถึงต้องระวังเรื่องนี้เป็นพิเศษ</strong> — Authorization Server ส่วนใหญ่
+    <em>ยังเปิด</em> grant ที่ถูกเลิกแนะนำไว้อยู่ เพื่อความเข้ากันได้กับของเก่า
+    <br>Keycloak 26.7.2 ที่ผมรัน ประกาศใน discovery endpoint ว่ารองรับทั้ง
+    <code>implicit</code> และ <code>password</code> — <strong>รองรับ ไม่ได้แปลว่าควรใช้</strong>
+    <br>เวลาเห็นตัวอย่างในเน็ตที่ยิง <code>grant_type=password</code> ไปที่ Keycloak ตรง ๆ
+    (มันง่ายกว่าเยอะ ใช้ <code>curl</code> บรรทัดเดียวจบ) ให้รู้ไว้ว่า
+    <strong>นั่นคือของที่ RFC 9700 เขียนว่า MUST NOT</strong> — ใช้ทดสอบในเครื่องตัวเองพอไหว แต่อย่าเอาขึ้นของจริง
+  </p>
+</div>
+
+<h3>ผมลองขอแบบ Implicit ดูจริง ๆ</h3>
+
+<p>
+  ตอนสร้าง client <code>wongnok-web</code> ผมตั้ง <code>implicitFlowEnabled: false</code> ไว้ตั้งแต่แรก
+  พอลองขอ <code>response_type=token</code> ได้ผลแบบนี้:
+</p>
+
+<pre><code>HTTP/1.1 302 Found
+Location: http://localhost:3000/callback<strong>#</strong>error=unauthorized_client
+    &amp;error_description=Client+is+not+allowed+to+initiate+browser+login+with+given
+      +response_type.+<strong>Implicit+flow+is+disabled+for+the+client.</strong>
+    &amp;state=s5&amp;iss=…</code></pre>
+
+<p>
+  สังเกตตัวอักษรตัวเดียวที่สำคัญมาก: <strong><code>#</code></strong> ไม่ใช่ <code>?</code>
+  <br>Implicit flow ตอบกลับทาง <strong>URL fragment</strong> (ส่วนหลัง <code>#</code>) ไม่ใช่ query string
+  และ<strong>fragment ไม่ถูกส่งไปหาเซิร์ฟเวอร์</strong> — browser ตัดทิ้งก่อนยิง request
+  <br>แปลว่าถ้าเป็น Implicit จริง ๆ token จะ<em>ไม่</em>โผล่ใน access log ของเรา (ต่างจาก <code>code</code> ที่โผล่)
+  แต่มันจะไปโผล่ใน<strong>ประวัติ browser</strong> และ<strong>โค้ด JavaScript ทุกตัวบนหน้านั้นอ่านได้</strong>
+  ซึ่งคือสิ่งที่ RFC 9700 §4.3.2 พูดถึงพอดี
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ อย่าเข้าใจผิดว่า "fragment ปลอดภัยกว่าเพราะไม่ลง log"</span>
+  <p style="margin-bottom:0">
+    เหตุผลจริงที่ Implicit ถูกตัด ไม่ใช่เรื่อง access log อย่างเดียว
+    แต่คือประโยคใน OAuth 2.1 §10.1 ที่ยกมาข้างบน: token ที่ออกมาทาง authorization response นั้น
+    <em>"vulnerable to leakage and injection, and are unable to be sender-constrained to a client"</em>
+    <br>คำว่า <strong>injection</strong> คือหัวใจ — attacker เอา token ที่ขโมยมาจากที่อื่น
+    ยัดใส่ callback ของเว็บเราได้ และเว็บเรา<strong>แยกไม่ออก</strong>ว่า token ใบนี้ออกมาให้ใคร
+    เพราะไม่มีขั้นตอน back channel ที่จะไปถามยืนยัน
+    <br>ส่วน Authorization Code ไม่มีปัญหานี้ เพราะเว็บเราเป็นคนไปแลก token เองกับ Authorization Server
+    <strong>เราจึงรู้แน่นอนว่า token ใบนี้เพิ่งออกให้เราเมื่อกี้นี้เอง</strong>
+  </p>
+</div>
+
+<h2>10 · สรุปทั้งบทเป็นตารางเดียว</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำถาม</th><th>คำตอบสั้น</th><th>หลักฐานในบทนี้</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>OAuth 2.0 แก้ปัญหาอะไร</td>
+      <td>ให้แอปทำงานแทนผู้ใช้ได้ โดยแอปไม่ต้องเห็นรหัสผ่าน</td>
+      <td>รหัสผ่าน <code>chef1234</code> ถูก POST ไปที่ <code>:8081</code> ไม่ใช่ <code>:3000</code></td>
+    </tr>
+    <tr>
+      <td>ทำไมต้องมี <code>code</code> คั่นกลาง</td>
+      <td>เพราะ URL ถูกจดไว้หลายที่ · code เปล่า ๆ ใช้ไม่ได้ แต่ token ใช้ได้ทันที</td>
+      <td>access log มี <code>code=</code> 2 บรรทัด · มี <code>access_token</code> 0 บรรทัด</td>
+    </tr>
+    <tr>
+      <td><code>code</code> ที่หลุดไป ทำอะไรได้</td>
+      <td>ไม่ได้อะไร ถ้าไม่มี <code>client_secret</code> · และใช้ได้ครั้งเดียวใน 60 วินาที</td>
+      <td><code>401 unauthorized_client</code> · <code>400 Code not valid</code></td>
+    </tr>
+    <tr>
+      <td><code>state</code> มีไว้ทำไม</td>
+      <td>กัน CSRF — ยืนยันว่า callback นี้เกิดจากการเดินทางที่เราเริ่มเอง</td>
+      <td>Keycloak echo ค่าอะไรก็ได้กลับมา และไม่บ่นเลยตอนไม่ส่ง state</td>
+    </tr>
+    <tr>
+      <td><code>scope</code> มีไว้ทำไม</td>
+      <td>จำกัดว่า token ใบนี้ใช้ทำอะไรได้ · เป็นที่มาของข้อความบนหน้า consent</td>
+      <td>หน้า consent แสดง Email address / User profile / User roles</td>
+    </tr>
+    <tr>
+      <td>ทำไมไม่ใช้ Implicit หรือ Password grant</td>
+      <td>ถูกตัดออกจาก OAuth 2.1 ทั้งคู่ · Password grant ถูกเขียนว่า MUST NOT be used</td>
+      <td>ข้อความตรงตัวจาก draft-ietf-oauth-v2-1-15 §10 และ RFC 9700 §2.4</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. Authorization Server รู้แล้วว่าผู้ใช้เป็นใครและอนุญาตแล้ว ทำไมไม่ส่ง <code>access_token</code> กลับมาทาง URL เลยให้จบในขั้นตอนเดียว?</p>
+  <div class="opts">
+    <button class="opt">เพราะ <code>access_token</code> ยาว 1377 byte ซึ่งเกินความยาวสูงสุดที่ URL รับได้</button>
+    <button class="opt">เพราะ browser เข้ารหัส query string ไม่ได้ ต้องใช้ <code>code</code> ที่สั้นกว่าแทน</button>
+    <button class="opt">เพราะค่าที่อยู่ใน URL ไปโผล่ใน access log · ประวัติ browser · header <code>Referer</code> — ส่วน <code>code</code> เปล่า ๆ ใช้ไม่ได้ ต้องมี <code>client_secret</code> ที่อยู่ฝั่ง server มาแลก ใช้ครั้งเดียว และหมดอายุใน 60 วินาที</button>
+    <button class="opt">เพราะ Authorization Server ยังไม่รู้ว่าจะออก token ให้ scope ไหน ต้องรอ client บอกอีกรอบตอนแลก <code>code</code></button>
+  </div>
+  <div class="explain">
+    <p>ผมยกเว็บ callback จริงด้วย Gin แล้วเดิน flow จนจบ · บรรทัดที่โผล่ใน <code>gin-access.log</code> คือ
+    <code>GET "/callback?state=…&amp;code=76a08add-…"</code> — <strong>query string ทั้งก้อนถูกเขียนลงไฟล์</strong>
+    เหมือนที่ <a href="../../day-8/lessons/0043-api-detective-workshop.html">บทเรียน 43</a> พิสูจน์เรื่องรหัสผ่านใน query string
+    <br>ถ้าตรงนั้นเป็น token ก็คือ token ของผู้ใช้ทุกคนถูกเขียนลง log ทุกครั้งที่ล็อกอิน
+    <br>RFC 9700 §4.3.2 เขียนไว้ว่า <em>"Clients MUST NOT pass access tokens in a URI query parameter"</em>
+    <br>ส่วนตัวเลือกที่ 1 ผิด: URL รับได้ยาวกว่านั้นเยอะ และไม่ใช่ประเด็นด้านความปลอดภัย ·
+    ตัวเลือกที่ 2 ผิด: ทั้ง query string และ fragment ไม่ได้ถูกเข้ารหัสหรือไม่เข้ารหัสต่างกัน ทั้งคู่วิ่งใน TLS เหมือนกัน ·
+    ตัวเลือกที่ 4 ผิด: <code>scope</code> ถูกบอกไปตั้งแต่ขั้นแรกแล้ว และ token ที่ได้ก็คืน <code>scope</code> กลับมาด้วย
+    <br><strong>จุดที่ต้องจำ:</strong> ของที่ไม่ลับเดินทาง front channel · ของที่ลับเดินทาง back channel เท่านั้น</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. attacker เปิดไฟล์ access log ของเว็บเราเจอ แล้วเห็น <code>code=9016d08d-…</code> อยู่เต็มไปหมด — เขาเอาไปทำอะไรได้?</p>
+  <div class="opts">
+    <button class="opt">แทบไม่ได้อะไร — ผลรันจริงคือแลก token โดยไม่มี <code>client_secret</code> ได้ <code>HTTP 401 unauthorized_client</code> · และถ้าเว็บเราแลกไปแล้ว code นั้นก็ตายแล้ว (<code>Code not valid</code>) · อีกทั้งอายุแค่ 60 วินาที</button>
+    <button class="opt">เอาไปแลก token ได้ทันที เพราะ <code>code</code> คือ <code>access_token</code> ในรูปแบบย่อ</button>
+    <button class="opt">เอาไปใส่ header <code>Authorization: Bearer &lt;code&gt;</code> แล้วยิง API ได้เลย</button>
+    <button class="opt">เอาไป decode base64 แล้วจะได้ username กับ password ของผู้ใช้ออกมา</button>
+  </div>
+  <div class="explain">
+    <p>ผมทดสอบครบทั้งสี่ด่านด้วย <code>code</code> ที่ได้มาสด ๆ ทุกครั้ง:
+    <br>· ไม่ส่ง <code>client_secret</code> → <code>HTTP 401 {"error":"unauthorized_client"}</code>
+    <br>· ส่ง secret ผิด → <code>HTTP 401</code> เหมือนกัน
+    <br>· <code>redirect_uri</code> ไม่ตรง → <code>HTTP 400 {"error":"invalid_grant","error_description":"Incorrect redirect_uri"}</code>
+    <br>· ใช้ซ้ำครั้งที่สอง → <code>HTTP 400 {"error":"invalid_grant","error_description":"Code not valid"}</code>
+    <br>· รอ 65 วินาทีแล้วค่อยใช้ (realm ตั้ง <code>accessCodeLifespan = 60</code>) → <code>Code not valid</code> เหมือนกัน
+    <br>ตัวเลือกที่ 2 กับ 3 ผิดเพราะ <code>code</code> ไม่ใช่ token — มันใช้ยิง API ไม่ได้เลย มีที่ใช้ที่เดียวคือ token endpoint ·
+    ตัวเลือกที่ 4 ผิดเพราะ <code>code</code> ของ Keycloak เป็น UUID สามก้อนต่อกัน ไม่มีข้อมูลผู้ใช้อยู่ข้างใน
+    <br><strong>แต่อย่าสรุปเกิน:</strong> RFC 9700 §4.3.1 ยังเตือนว่า code ที่ยัง<em>ไม่มีใครใช้</em>ถูก replay ได้
+    คำตอบที่ถูกจึงเป็น "แทบไม่ได้อะไร" ไม่ใช่ "ปลอดภัย 100%" — ส่วนที่เหลืออุดด้วย PKCE</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. ข้อไหนอธิบาย <code>state</code> ได้ถูกต้อง?</p>
+  <div class="opts">
+    <button class="opt"><code>state</code> คือชื่อผู้ใช้ที่กำลังล็อกอินอยู่ Authorization Server ใช้จำว่า session นี้เป็นของใคร</button>
+    <button class="opt">Authorization Server เป็นคนตรวจ <code>state</code> ให้ ถ้าค่ามันเดาง่ายเกินไปหรือไม่ตรง มันจะไม่ออก <code>code</code></button>
+    <button class="opt"><code>state</code> เป็นค่าที่ Authorization Server สุ่มให้ แล้ว client มีหน้าที่แค่เก็บไว้เฉย ๆ</button>
+    <button class="opt"><code>state</code> เป็นค่าสุ่มที่ <strong>client สร้างเอง เก็บเอง และเทียบเอง</strong> ตอน callback เพื่อกัน CSRF — Authorization Server แค่ส่งกลับมาเหมือนเดิม ไม่ได้ตรวจอะไรให้</button>
+  </div>
+  <div class="explain">
+    <p>ผมทดสอบสองเคสกับ Keycloak ของจริง:
+    <br>· ส่ง <code>state=AAAA-not-random-1234</code> (เดาง่ายสุด ๆ) → มันส่งกลับมาเหมือนเดิมเป๊ะ และ<strong>ออก code ให้ปกติ</strong>
+    <br>· ไม่ส่ง <code>state</code> เลย → ก็ยังได้ <code>code</code> กลับมาปกติ ไม่มีคำเตือนอะไรทั้งสิ้น
+    <br>สองผลนี้ปิดตัวเลือกที่ 2 ไปเลย — Authorization Server ไม่ได้ตรวจอะไรให้
+    <br>ตัวเลือกที่ 1 ผิด: <code>state</code> ไม่ควรมีข้อมูลผู้ใช้อยู่ข้างใน มันควรเป็นค่าสุ่มล้วน ๆ ·
+    ตัวเลือกที่ 3 ผิดเรื่องทิศทาง: client เป็นคนสุ่มและส่งไป ไม่ใช่รับมา
+    <br>RFC 6749 §10.12 เขียนว่า <em>"The client MUST implement CSRF protection for its redirection URI"</em>
+    — คำว่า <strong>client</strong> ในประโยคนั้นคือคำตอบทั้งหมด
+    <br><strong>จุดที่อันตราย:</strong> โค้ดที่ลืมเทียบ <code>state</code> ทำงานได้ปกติทุกอย่าง ล็อกอินผ่าน เทสผ่าน
+    ขึ้น production ได้ — เป็นช่องโหว่ที่ไม่มีอาการจนกว่าจะโดนโจมตี</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. เพื่อนส่งโค้ดตัวอย่างมาให้ ใช้ <code>grant_type=password</code> ยิง username/password ของผู้ใช้ไปที่ Keycloak ตรง ๆ แล้วบอกว่า "สั้นกว่าเยอะ ใช้แบบนี้เถอะ" — ควรตอบว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">ใช้ได้เลย เพราะ Keycloak ประกาศใน discovery endpoint ว่ารองรับ <code>password</code> อยู่แล้ว</button>
+    <button class="opt">ไม่ควร — OAuth 2.1 (<code>draft-ietf-oauth-v2-1-15</code> §10) ตัด Resource Owner Password Credentials ออกจาก spec แล้ว และ RFC 9700 §2.4 เขียนตรงตัวว่า <em>"MUST NOT be used"</em> เพราะมันเอารหัสผ่านของผู้ใช้มาให้ client เห็น</button>
+    <button class="opt">ไม่ควร เพราะ password grant ช้ากว่า Authorization Code Grant หลายเท่าเนื่องจากต้องยิงหลายรอบ</button>
+    <button class="opt">ใช้ได้ ถ้าเปลี่ยนไปใช้ Implicit grant แทน เพราะ OAuth 2.1 แนะนำ Implicit เป็นตัวหลัก</button>
+  </div>
+  <div class="explain">
+    <p>เอกสารตัวจริงเขียนไว้ตรงตัวสองที่:
+    <br>· <code>draft-ietf-oauth-v2-1-15</code> §10: <em>"The Resource Owner Password Credentials grant is omitted
+    from this specification as per Section 2.4 of [RFC9700]"</em>
+    <br>· RFC 9700 §2.4: <em>"The resource owner password credentials grant [RFC6749] MUST NOT be used.
+    This grant type insecurely exposes the credentials of the resource owner to the client."</em>
+    <br>ตัวเลือกที่ 1 คือกับดักที่เจอบ่อยที่สุด — Keycloak 26.7.2 <strong>รองรับจริง</strong>
+    (มันขึ้นอยู่ใน <code>grant_types_supported</code>) แต่ <em>รองรับ</em> กับ <em>ควรใช้</em> เป็นคนละเรื่อง
+    Authorization Server เปิดไว้เพื่อความเข้ากันได้กับระบบเก่า
+    <br>ตัวเลือกที่ 3 ผิดเพราะเหตุผลที่ยกมาไม่ใช่เรื่องความเร็ว (ที่จริง password grant ยิงรอบเดียวจบ เร็วกว่าด้วยซ้ำ) ·
+    ตัวเลือกที่ 4 ผิดสองชั้น: OAuth 2.1 §10.1 ตัด Implicit ออกเช่นกัน ไม่ได้แนะนำเลย
+    <br><strong>เหตุผลที่แท้จริงกลับไปที่หัวข้อ 1:</strong> password grant คือ password anti-pattern
+    ที่ใส่ชื่อทางการให้ — client ยังเห็นรหัสผ่านอยู่ดี · จำกัดขอบเขตไม่ได้ · และใช้กับ 2FA ไม่ได้</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — เดิน Authorization Code Grant ด้วยมือตัวเอง</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำให้ล็อกอินได้" — เป้าหมายคือ
+    <strong>เห็นด้วยตาตัวเองว่า token ไม่เคยผ่าน browser และ code เปล่า ๆ ใช้อะไรไม่ได้</strong>
+    <br>ทำได้โดยไม่ต้องเขียน Go สักบรรทัด ใช้แค่ <code>docker-compose</code> กับ <code>curl</code>
+  </p>
+  <ol>
+    <li><strong>ยก Authorization Server ขึ้นมา:</strong> เขียน <code>docker-compose.yml</code> ที่ใช้
+        <code>quay.io/keycloak/keycloak:26.7</code> · <code>command: ["start-dev"]</code> ·
+        map พอร์ต <code>8081:8080</code> · ตั้ง <code>KC_BOOTSTRAP_ADMIN_USERNAME</code> กับ
+        <code>KC_BOOTSTRAP_ADMIN_PASSWORD</code> เป็น <code>admin</code>
+        <br>รอจน <code>curl http://localhost:8081/realms/master/.well-known/openid-configuration</code>
+        ตอบ <strong>HTTP 200</strong> (ของผมใช้เวลา 7 วินาที)</li>
+    <li><strong>ตั้งของให้ครบสามอย่างผ่านหน้าเว็บ</strong> <code>http://localhost:8081</code>
+        (ล็อกอิน admin/admin):
+        <br>· realm ชื่อ <code>wongnok</code>
+        <br>· client ชื่อ <code>wongnok-web</code> · ที่หัวข้อ <strong>Capability config</strong> →
+        <strong>เปิด</strong> <code>Client authentication</code> (เปิด = confidential · จะมี secret ให้ไปก๊อปที่แท็บ
+        <code>Credentials</code> → ช่อง <code>Client Secret</code>) · เปิด <code>Standard flow</code> ·
+        <strong>ปิด</strong> <code>Implicit flow</code> · ตั้ง <code>Valid redirect URIs</code> เป็น
+        <code>http://localhost:3000/callback</code>
+        <br><span style="opacity:.8">(หมายเหตุ: Keycloak รุ่นเก่ามีสวิตช์ชื่อ <code>Public client</code> ให้ปิด —
+        console ของ 26.7.2 ไม่มีชื่อนั้นแล้ว เหลือแต่ <code>Client authentication</code> ที่ทำหน้าที่กลับด้านกัน)</span>
+        <br>· user ชื่อ <code>chef1</code> พร้อมตั้งรหัสผ่านแบบไม่ temporary</li>
+    <li><strong>อ่านแผนที่ก่อนเดิน:</strong> เปิด
+        <code>http://localhost:8081/realms/wongnok/.well-known/openid-configuration</code>
+        แล้วหาสองบรรทัดนี้ให้เจอ: <code>authorization_endpoint</code> กับ <code>token_endpoint</code>
+        <br><strong>ตอบให้ได้ว่าอันไหนคือ front channel อันไหนคือ back channel</strong></li>
+    <li><strong>เดินขั้น [2] ด้วย browser จริง:</strong> ประกอบ URL ของ
+        <code>authorization_endpoint</code> ให้ครบห้าพารามิเตอร์ (<code>response_type</code>,
+        <code>client_id</code>, <code>redirect_uri</code>, <code>scope</code>, <code>state</code>)
+        แล้ววางในช่อง address
+        <br>ล็อกอินด้วย <code>chef1</code> → browser จะเด้งไป <code>localhost:3000</code> แล้วขึ้นว่าต่อไม่ติด
+        (เพราะยังไม่มีเว็บที่นั่น) <strong>ไม่เป็นไร — สิ่งที่ต้องการอยู่ในช่อง address แล้ว</strong>
+        <br><strong>ก๊อป URL ทั้งเส้นออกมา แล้วตอบว่าเห็นคำว่า <code>access_token</code> ไหม</strong></li>
+    <li><strong>แลก code ด้วย <code>curl</code>:</strong> POST ไปที่ <code>token_endpoint</code>
+        ด้วย <code>grant_type=authorization_code</code> + <code>code</code> + <code>client_id</code> +
+        <code>client_secret</code> + <code>redirect_uri</code>
+        <br><strong>ต้องได้ <code>HTTP 200</code> พร้อม <code>access_token</code></strong> ·
+        จด <code>expires_in</code> ที่ได้ไว้ด้วย</li>
+    <li><strong>ยิงซ้ำด้วย code เดิมทันที</strong> — จดข้อความ error ที่ได้แบบตัวต่อตัว</li>
+    <li><strong>ทำสามเคสพังให้ครบ</strong> (ขอ code ใหม่ทุกครั้ง เพราะข้อ 6 เผาไปแล้วหนึ่งใบ):
+        <br>ก. ตัด <code>client_secret</code> ออก · ข. ใส่ <code>client_secret</code> มั่ว ·
+        ค. เปลี่ยน <code>redirect_uri</code> ตอนแลกให้ต่างจากตอนขอ
+        <br><strong>จด HTTP status กับข้อความ error ของทั้งสามเคส แล้วตอบว่าเคสไหนได้
+        <code>invalid_grant</code> เคสไหนได้ <code>unauthorized_client</code> และทำไมถึงต่างกัน</strong></li>
+    <li><strong>วัดอายุ code:</strong> ขอ code ใหม่ นั่งรอ 65 วินาที แล้วค่อยยิง
+        <br><strong>ตอบว่าข้อความ error ต่างจากข้อ 6 ไหม</strong></li>
+    <li><strong>ลอง Implicit:</strong> เปลี่ยน <code>response_type=code</code> เป็น
+        <code>response_type=token</code> แล้ววาง URL ในช่อง address อีกครั้ง
+        <br><strong>ดู URL ที่ browser เด้งไป แล้วตอบว่าเครื่องหมายก่อน <code>error=</code>
+        เป็น <code>?</code> หรือ <code>#</code> และมันต่างกันยังไง</strong></li>
+    <li><strong>ท้าทาย:</strong> เปิด <em>Consent required</em> ที่ client แล้วเดิน flow ใหม่ ·
+        กด <strong>No</strong> ที่หน้า consent
+        <br>แล้วตอบสองข้อ: <strong>URL ที่เด้งกลับมามี <code>code</code> ไหม</strong> และ
+        <strong>ถ้าโค้ด callback ของคุณเขียนแค่ <code>code := c.Query("code")</code> แล้วเอาไปแลกเลย
+        จะเกิดอะไรขึ้นในเคสนี้</strong></li>
+    <li><strong>เก็บกวาด:</strong> <code>docker-compose down -v</code> แล้วเช็คด้วย
+        <code>docker ps -a</code> กับ <code>docker volume ls</code> ว่าไม่มีของค้าง</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 7 — ทำไมสองเคสได้ error คนละชื่อ</button>
+  <div class="answer">
+    <p>ผลรันจริงของทั้งสามเคส:</p>
+    <pre style="margin:0.6rem 0"><code>ก. ไม่มี client_secret  -&gt; HTTP <strong>401</strong>  {"error":"<strong>unauthorized_client</strong>",
+                              "error_description":"Invalid client or Invalid client credentials"}
+ข. client_secret มั่ว    -&gt; HTTP <strong>401</strong>  {"error":"<strong>unauthorized_client</strong>", …ข้อความเดียวกันเป๊ะ}
+ค. redirect_uri ไม่ตรง   -&gt; HTTP <strong>400</strong>  {"error":"<strong>invalid_grant</strong>",
+                              "error_description":"Incorrect redirect_uri"}</code></pre>
+    <p>
+      ความต่างอยู่ที่ <strong>คำถามคนละข้อถูกถามคนละจังหวะ</strong>:
+      <br>· <code>unauthorized_client</code> + <code>401</code> ตอบคำถามว่า
+      <strong>"แกเป็น client ตัวนี้จริงหรือเปล่า"</strong> — ด่านนี้อยู่<em>ก่อน</em>
+      Keycloak จะสนใจ <code>code</code> ด้วยซ้ำ · ตอบไม่ได้ = ยังไม่ได้เข้าประตูเลย จึงเป็น 401 (Unauthorized)
+      <br>· <code>invalid_grant</code> + <code>400</code> ตอบคำถามว่า
+      <strong>"ใบรับของที่แกยื่นมาใช้ได้ไหม"</strong> — ผ่านด่านแรกแล้ว Keycloak รู้แล้วว่าแกคือ
+      <code>wongnok-web</code> จริง แต่<em>ของที่ยื่นมา</em>ไม่ถูกต้อง จึงเป็น 400 (Bad Request)
+    </p>
+    <p>
+      สังเกตว่าเคส ก. กับ ข. ได้ข้อความ<strong>เหมือนกันทุกตัวอักษร</strong> —
+      ตั้งใจให้เหมือนกัน เพราะถ้าตอบต่างกันก็เท่ากับบอก attacker ว่า
+      "client ตัวนี้มี secret อยู่นะ แค่เดาผิด" ซึ่งเป็นการรั่วข้อมูลโดยไม่จำเป็น
+    </p>
+    <p style="margin-bottom:0">
+      และเคส ค. คือด่านที่หลายคนมองข้าม: <code>redirect_uri</code> ต้องส่งไป<strong>ทั้งตอนขอ code
+      และตอนแลก token</strong> และต้องตรงกันเป๊ะ ๆ · Keycloak จดเหตุผลไว้ในล็อกว่า
+      <code>Saved redirectUri: http://localhost:3000/callback, redirectUri parameter: http://localhost:3000/evil</code>
+      <br>ด่านนี้มีไว้ผูก <code>code</code> ติดกับปลายทางเดิม เพื่อไม่ให้ใครเอา code ไปแลกแล้วสั่งให้ส่งผลไปที่อื่น
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อที่ผมอยากให้ทำจริง ๆ คือข้อ 4 กับข้อ 9</strong> —
+    เพราะสองข้อนี้ทำให้คุณ<em>เห็นกับตา</em>ว่าอะไรอยู่ในช่อง address ของ browser ตัวเอง
+    ซึ่งเป็นสิ่งเดียวที่ทำให้คำว่า front channel / back channel เลิกเป็นศัพท์ท่องจำ
+    <br>ถ้ารันแล้ว output ไม่ตรงกับในบทนี้ <strong>ส่งมาได้เลย</strong> —
+    ทุกบรรทัดในหน้านี้วัดบน <strong>Keycloak 26.7.2</strong> (จาก tag <code>26.7</code>)
+    กับ <strong>Docker server 29.5.2 ผ่าน colima</strong>
+    <br>ที่ต่างกันได้แน่ ๆ คือ <code>code</code> · <code>state</code> · <code>session_state</code> · <code>sub</code>
+    เพราะเป็นค่าสุ่มใหม่ทุกครั้ง — ให้ดู<strong>รูปร่าง</strong>กับ<strong>ข้อความ error</strong> ว่าตรงกันไหม ไม่ใช่ดูค่า
+  </p>
+</div>
+
+<h2>11 · บทถัดไป</h2>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>📌 บทนี้ใช้ Keycloak เป็นกล่องดำมาตลอด — บทหน้าเราจะเปิดกล่องนั้น</strong>
+    <br>ตลอดหน้านี้ผมพูดว่า "Authorization Server" แล้วชี้ไปที่ <code>localhost:8081</code>
+    โดยยังไม่ได้อธิบายเลยว่ามันคืออะไร ตั้งยังไง หรือทำไมต้องรันเอง
+    <br><strong>บทเรียน 51 คือเรื่องนั้น</strong> — <strong>Keycloak</strong> คือ Authorization Server แบบ open source
+    ที่เรารันเองได้ด้วย <code>docker-compose</code> ก้อนเดียว
+    แทนที่จะต้องไปสมัคร Google Cloud Console เพื่อขอ <code>client_id</code>
+    <br>สิ่งที่จะได้เห็นในบทหน้า: <em>realm</em> คืออะไร · <em>client</em> ต่างกับ user ยังไง ·
+    <em>role</em> กับ <em>group</em> ทำงานร่วมกันแบบไหน ·
+    และวิธีที่ API ฝั่งเรา<strong>ตรวจ token ด้วย public key จาก <code>jwks_uri</code></strong>
+    โดยไม่ต้องแชร์ความลับใด ๆ กับ Keycloak
+    <br>คำศัพท์ทุกคำในบทนี้ (<code>authorization_endpoint</code>, <code>token_endpoint</code>,
+    <code>scope</code>, <code>client_secret</code>) จะกลายเป็นช่องกรอกจริง ๆ บนหน้าจอ Keycloak
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0049-basic-auth-jwt.html">← บทเรียน 49</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0051-keycloak.html">บทเรียน 51 → Keycloak</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://www.rfc-editor.org/rfc/rfc6749">RFC 6749 — The OAuth 2.0 Authorization Framework</a> —
+      ต้นฉบับของทุกอย่างในบทนี้ · <strong>อ่านสามหัวข้อนี้พอ</strong>: §1.1 (บทบาททั้งสี่) ·
+      §4.1 (Authorization Code Grant ทีละขั้น) · §10.12 (CSRF กับ <code>state</code>)
+      <br>ประโยคที่ควรจำจาก §4.1.2: <em>"The client MUST NOT use the authorization code more than once"</em>
+      และ <em>"A maximum authorization code lifetime of 10 minutes is RECOMMENDED"</em></li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9700">RFC 9700 — Best Current Practice for OAuth 2.0 Security</a>
+      (BCP 240 · มกราคม 2025) — <strong>เอกสารที่บอกว่าอะไรเลิกใช้แล้วและเพราะอะไร</strong>
+      <br>§2.1.2 Implicit Grant · §2.4 Resource Owner Password Credentials Grant (ที่เขียนว่า <em>MUST NOT be used</em>) ·
+      §4.3.1 Authorization Code in Browser History · §4.3.2 Access Token in Browser History</li>
+  <li><a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/">draft-ietf-oauth-v2-1 — The OAuth 2.1 Authorization Framework</a>
+      — ฉบับที่ผมอ้างในบทนี้คือ <code>-15</code> (2 มีนาคม 2026) · <strong>อ่าน §1.8 กับ §10</strong>
+      ซึ่งเป็นที่มาของประโยคว่า Implicit และ Password grant ถูก <em>omitted</em> ออกไป
+      <br>⚠️ ยังเป็น Internet-Draft ไม่ใช่ RFC — เลขฉบับเปลี่ยนได้ ให้เข้าหน้านี้แล้วกดฉบับล่าสุดเสมอ</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc6750">RFC 6750 — Bearer Token Usage</a> —
+      ที่มาของ header <code>Authorization: Bearer &lt;token&gt;</code> ในขั้น [10]</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9207">RFC 9207 — OAuth 2.0 Authorization Server Issuer Identification</a>
+      — ที่มาของพารามิเตอร์ <code>iss</code> ที่ Keycloak แถมกลับมาใน callback</li>
+  <li><a href="https://www.keycloak.org/securing-apps/oidc-layers">Keycloak — OpenID Connect endpoints</a> —
+      รายชื่อ endpoint ทั้งหมดที่บทนี้ยิง (<code>auth</code>, <code>token</code>, <code>revoke</code>)</li>
+  <li><a href="../../day-8/lessons/0043-api-detective-workshop.html">บทเรียน 43 — API Detective Workshop</a> —
+      <strong>หลักฐานว่า query string ลง access log</strong> ที่หัวข้อ 4 อ้างถึง
+      (เคส <code>POST /createUser?name=Alice&amp;password=123456</code>)</li>
+  <li><a href="./0049-basic-auth-jwt.html">บทเรียน 49 — จาก Basic Auth ถึง JWT</a> —
+      ที่มาของหลักฐานว่า <code>Basic c29tY2hhaTpwQHNzdzByZA==</code> decode กลับได้โดยไม่ต้องมีกุญแจ</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

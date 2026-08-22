@@ -1,0 +1,2297 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cheat Sheet — Go Day 9</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+</head>
+<body>
+
+<header>
+  <p class="kicker">Cheat sheet · Day 9</p>
+  <h1>Config · .env · Validate · JWT · OAuth · Keycloak — แผ่นเดียวจบ</h1>
+  <p class="meta">คู่กับ <a href="../lessons/0045-caarlos0-env.html">บทเรียน 45–53</a> ·
+    ทุกผลลัพธ์ในหน้านี้มาจากการรันจริงบน Go 1.26.5 darwin/arm64</p>
+  <p class="standfirst">
+    หน้านี้ไม่ได้เขียนไว้ให้อ่านรวดเดียว — เขียนไว้ให้<strong>เปิดตอนมือติดคีย์บอร์ด</strong><br>
+    ถ้ากำลังรีบ: หัวข้อ <strong>3</strong> (กับดักของ <code>caarlos0/env</code>) ·
+    หัวข้อ <strong>14</strong> (ตารางกับดักรวมทั้งวัน) และหัวข้อ <strong>15</strong>
+    (ตารางแปล error) คือสามอันที่จะได้ใช้บ่อยที่สุด<br>
+    หัวข้อ <strong>7</strong> กับ <strong>9</strong> เป็นโค้ดที่ตรวจแล้วว่า
+    <strong>เติม <code>import</code> ให้ครบแล้วคอมไพล์ผ่าน</strong> —
+    สไลด์ตัดบล็อก <code>import</code> ออกให้อ่านง่าย ตอนก็อปไปใช้ต้องเติมเอง
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในหน้านี้ — ทุก output ข้างล่างมาจากการรันจริงบน</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+
+github.com/caarlos0/env/v11             v11.4.1
+github.com/joho/godotenv                v1.5.1
+github.com/go-playground/validator/v10  v10.30.3
+github.com/golang-jwt/jwt/v5            v5.3.1
+golang.org/x/oauth2                     v0.36.0
+github.com/coreos/go-oidc/v3            v3.20.0
+gorm.io/gorm                            v1.31.2
+gorm.io/driver/postgres                 v1.6.2
+goose                                   v3.27.3
+quay.io/keycloak/keycloak:26.7          <span class="c"># tag นี้ชี้ไปที่ 26.7.2</span>
+postgres:16-alpine                      <span class="c"># PostgreSQL 16.15 บน colima</span></code></pre>
+  <p style="margin-bottom:0">ที่ต้องรู้ก่อนอ่านต่อ: ผมรัน Postgres ที่พอร์ต <strong>55432</strong>
+  และ Keycloak ที่ <strong>8081</strong> เพราะพอร์ตมาตรฐานบนเครื่องผมมีของอื่นจองอยู่ —
+  เห็นเลขพอร์ตแปลก ๆ ใน DSN ตัวอย่างก็คือสาเหตุนี้ ไม่ใช่กฎอะไร</p>
+</div>
+
+<h2>สารบัญ</h2>
+<ol class="toc" style="columns:2; font-size:0.92rem; padding-left:1.2rem">
+  <li><a href="#v">เวอร์ชันที่ทุกอย่างในหน้านี้รันผ่าน</a></li>
+  <li><a href="#tag">caarlos0/env — struct tag · option · type ที่รองรับ</a></li>
+  <li><a href="#envtrap">caarlos0/env — กับดัก</a></li>
+  <li><a href="#godotenv">godotenv — autoload vs Load vs Overload</a></li>
+  <li><a href="#dotenv">.env — รูปแบบไฟล์ + .gitignore</a></li>
+  <li><a href="#validator">validator/v10 — tag · error จริง · errors.Join · Humanize</a></li>
+  <li><a href="#config">โครง internal/config ที่ก็อปไปใช้ได้</a></li>
+  <li><a href="#pipeline">ท่อลำเลียงค่าทั้งเส้น</a></li>
+  <li><a href="#jwt">JWT — โครงสร้าง · golang-jwt/v5 · error ทุกเคส</a></li>
+  <li><a href="#oauth">OAuth 2.0 — ตัวละคร 4 ตัว + Authorization Code Grant</a></li>
+  <li><a href="#keycloak">Keycloak — compose · endpoint · components</a></li>
+  <li><a href="#flow">flow /login /callback /exchange /logout</a></li>
+  <li><a href="#goose">goose + ตาราง users</a></li>
+  <li><a href="#traps">ตารางกับดักรวมทั้งวัน</a></li>
+  <li><a href="#errors">ตารางแปล error / panic ที่เจอบ่อย</a></li>
+</ol>
+
+<h2 id="v">1 · เวอร์ชันที่ทุกอย่างในหน้านี้รันผ่าน</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ของ</th><th>เวอร์ชัน</th><th>ติดตั้งยังไง</th></tr></thead>
+  <tbody>
+    <tr><td>Go</td><td>1.26.5 darwin/arm64</td><td>—</td></tr>
+    <tr><td><code>github.com/caarlos0/env/v11</code></td><td>v11.4.1</td><td><code>go get github.com/caarlos0/env/v11</code></td></tr>
+    <tr><td><code>github.com/joho/godotenv</code></td><td>v1.5.1</td><td><code>go get github.com/joho/godotenv</code></td></tr>
+    <tr><td><code>github.com/go-playground/validator/v10</code></td><td>v10.30.3</td><td><code>go get github.com/go-playground/validator/v10</code></td></tr>
+    <tr><td><code>github.com/golang-jwt/jwt/v5</code></td><td>v5.3.1</td><td><code>go get github.com/golang-jwt/jwt/v5</code></td></tr>
+    <tr><td><code>golang.org/x/oauth2</code></td><td>v0.36.0</td><td><code>go get golang.org/x/oauth2</code></td></tr>
+    <tr><td><code>github.com/coreos/go-oidc/v3</code></td><td>v3.20.0</td><td><code>go get github.com/coreos/go-oidc/v3</code></td></tr>
+    <tr><td><code>gorm.io/gorm</code> · <code>gorm.io/driver/postgres</code></td><td>v1.31.2 · v1.6.2</td><td>ของเดิมจาก Day 7</td></tr>
+    <tr><td><code>goose</code> (CLI)</td><td>v3.27.3</td><td>ของเดิมจาก Day 7</td></tr>
+    <tr><td>Keycloak</td><td>image tag <code>26.7</code> → เวอร์ชันจริง <strong>26.7.2</strong></td><td><code>quay.io/keycloak/keycloak:26.7</code></td></tr>
+    <tr><td>PostgreSQL</td><td>16.15 (<code>aarch64-unknown-linux-musl</code>)</td><td><code>postgres:16-alpine</code></td></tr>
+    <tr><td>Docker</td><td>client <strong>29.6.2</strong> · server <strong>29.5.2</strong></td><td>ผ่าน colima ไม่ใช่ Docker Desktop</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">zero dependency จริงยิ่งกว่าที่โฆษณา</span>
+<pre><code>$ cat $(go env GOMODCACHE)/github.com/caarlos0/env/v11@v11.4.1/go.mod
+module github.com/caarlos0/env/v11
+<span class="c">// (มีแต่ retract 3 บรรทัด กับ go 1.18 — ไม่มี require เลยสักบรรทัด)</span>
+go 1.18
+
+$ ls -l .../env/v11@v11.4.1/go.sum
+--- go.sum: 0B (ไฟล์ว่างเปล่า) ---</code></pre>
+  <p style="margin-bottom:0">แม้แต่ <code>env_test.go</code> ก็ใช้แค่ stdlib —
+  <code>encoding/base64, encoding/json, errors, fmt, net/http, net/url, os, path/filepath,
+  reflect, runtime, strconv, strings, testing, time</code> — ไม่มี testify ·
+  เกร็ด: <code>go.mod</code> ประกาศ <code>retract</code> ไว้สามเวอร์ชัน (v11.0.1 / v11.2.0 / v11.3.0)</p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ เครื่องที่ล้าง Docker Desktop ทิ้งแล้วใช้ colima</span>
+  <p style="margin-bottom:0">อาการที่เจอจริงบนเครื่องทดสอบ สองอย่าง:<br>
+  ① <code>docker compose</code> (แบบ subcommand) ใช้ไม่ได้ ขึ้น
+  <code>docker: unknown command: docker compose</code> เพราะ
+  <code>~/.docker/cli-plugins/docker-compose</code> เป็น symlink ค้างไปที่ <code>/Applications/Docker.app</code>
+  ที่ถูกลบไปแล้ว → ใช้ <code>docker-compose</code> (มีขีด) แทน<br>
+  ② <code>docker pull</code> พังด้วย
+  <code>error getting credentials - err: exec: "docker-credential-osxkeychain": executable file not found in $PATH</code>
+  ซึ่งเป็นซาก <code>credsStore</code> ใน <code>~/.docker/config.json</code></p>
+</div>
+
+<h2 id="tag">2 · caarlos0/env — struct tag · option · type ที่รองรับ</h2>
+
+<h3>โครงพื้นฐาน</h3>
+
+<pre><code><span class="k">import</span> <span class="s">"github.com/caarlos0/env/v11"</span>
+
+<span class="k">type</span> <span class="n">Config</span> <span class="k">struct</span> {
+	AppPort         <span class="k">int</span>           `env:"APP_PORT" envDefault:"8080"`
+	ShutdownTimeout time.Duration `env:"APP_SHUTDOWN_TIMEOUT" envDefault:"10s"`
+	LogLevel        <span class="k">string</span>        `env:"LOG_LEVEL" envDefault:"DEBUG"`
+	PostgresDSN     <span class="k">string</span>        `env:"POSTGRES_DSN"`
+}
+
+cfg, err := env.<span class="f">ParseAs</span>[Config]()</code></pre>
+
+<pre><code>--- run 1: no env set (defaults) ---
+cfg=main.Config{AppPort:8080, ShutdownTimeout:10000000000, LogLevel:"DEBUG", PostgresDSN:""}
+err=&lt;nil&gt;
+AppPort type=int value=8080
+ShutdownTimeout type=time.Duration value=10s ms=10000
+--- run 2: env set ---
+cfg=main.Config{AppPort:9999, ShutdownTimeout:90000000000, LogLevel:"INFO", PostgresDSN:"postgres://u:p@localhost:5432/db"}
+err=&lt;nil&gt;
+AppPort type=int value=9999
+ShutdownTimeout type=time.Duration value=1m30s ms=90000</code></pre>
+
+<p><code>PostgresDSN</code> ไม่มี <code>envDefault</code> และไม่ได้ตั้ง env → ได้ <code>""</code>
+<strong>เงียบ ๆ ไม่ error</strong> เพราะไม่ได้ใส่ <code>,required</code></p>
+
+<h3>struct tag ทั้ง 4 ตัว</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>tag</th><th>ทำอะไร</th><th>เขียนยังไง</th><th>ไม่ใส่แล้วเป็นยังไง</th></tr></thead>
+  <tbody>
+    <tr><td><code>env</code></td><td>บอกว่า field นี้อ่านจาก env ชื่ออะไร</td><td><code>`env:"APP_PORT"`</code></td><td>field นั้นไม่ถูกอ่านเลย</td></tr>
+    <tr><td><code>envDefault</code></td><td>ค่าที่ใช้เมื่อไม่มี env ตัวนั้น</td><td><code>`env:"APP_PORT" envDefault:"8080"`</code></td><td>ได้ zero value ของ type นั้น</td></tr>
+    <tr><td><code>envSeparator</code></td><td>ตัวคั่นของ slice</td><td><code>`env:"ORIGINS" envSeparator:";"`</code></td><td>ใช้ <code>,</code> เป็นค่าเริ่มต้น</td></tr>
+    <tr><td><code>envPrefix</code></td><td>เติมหน้า key ของ <strong>struct ซ้อน</strong></td><td><code>Primary DB `envPrefix:"DB_"`</code></td><td>struct ซ้อนอ่าน key เปล่า ๆ (เช่น <code>HOST</code>)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>$ HOSTS=<span class="s">"a.com,b.com,c.com"</span> ORIGINS=<span class="s">"x.io;y.io"</span> PORTS=<span class="s">"1|2|3"</span> go run .
+[Sep] main.Sep{DefaultSep:[]string{"a.com", "b.com", "c.com"}, CustomSep:[]string{"x.io", "y.io"},
+      IntsSep:[]int{1, 2, 3}, SepDefault:[]string{"a", "b", "c"}} err=&lt;nil&gt;</code></pre>
+
+<p><code>envSeparator</code> ใช้ได้กับ slice ของ type อื่นด้วย ไม่ใช่แค่ <code>[]string</code>
+(ทดสอบ <code>[]int</code> ผ่าน) · และ <code>envDefault</code> ก็ถูก split ด้วย separator เดียวกัน
+(<code>SepDefault</code> มาจาก <code>envDefault:"a,b,c"</code> ทั้งที่ไม่ได้ตั้ง env <code>TAGS</code> เลย)</p>
+
+<pre><code>$ DB_HOST=<span class="s">"pg.local"</span> DB_PORT=6543 REDIS_HOST=<span class="s">"redis.local"</span> HOST=<span class="s">"bare.local"</span> go run .
+[Nested] main.Nested{Primary:main.DB{Host:"pg.local", Port:6543},
+         Cache:main.Redis{Host:"redis.local"}, NoPfx:main.DB{Host:"bare.local", Port:5432}} err=&lt;nil&gt;</code></pre>
+
+<p><code>NoPfx</code> เป็น struct ซ้อนที่<strong>ไม่ได้ใส่</strong> <code>envPrefix</code> — มันอ่าน
+<code>HOST</code> เปล่า ๆ · มีหลาย struct ซ้อนแล้วลืมใส่ prefix เมื่อไหร่ ทั้งคู่จะไปแย่ง key เดียวกัน</p>
+
+<h3>option ท้าย tag — เขียนต่อหลังชื่อ key คั่นด้วย <code>,</code></h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>option</th><th>เช็คอะไร</th><th>error จริงเมื่อไม่ผ่าน</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>,required</code></td>
+      <td><strong>มี env ตัวนี้อยู่ไหม</strong> — ไม่ได้เช็คว่าว่างหรือเปล่า</td>
+      <td><code>env: required environment variable "MYVAR2" is not set</code></td>
+    </tr>
+    <tr>
+      <td><code>,notEmpty</code></td>
+      <td>ต้องมี <strong>และห้ามเป็นค่าว่าง</strong></td>
+      <td><code>env: environment variable "NE_VAR" should not be empty</code></td>
+    </tr>
+    <tr>
+      <td><code>,file</code></td>
+      <td>เอาค่า env เป็น <strong>path</strong> แล้วอ่านเนื้อไฟล์มาใส่แทน</td>
+      <td><code>env: could not load content of file "/definitely/not/here.txt" from variable F_VAR: open /definitely/not/here.txt: no such file or directory</code></td>
+    </tr>
+    <tr>
+      <td><code>,unset</code></td>
+      <td>parse เสร็จแล้ว <strong>ลบ env ตัวนั้นทิ้ง</strong></td>
+      <td>ไม่มี error — เป็นการกระทำ ไม่ใช่การตรวจ</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code><span class="c">// ,unset — ค่าเข้า struct ครบ แต่หลังจากนั้น env หายไปจริง</span>
+[unset] parsed="temp-value" err=&lt;nil&gt; ; after parse LookupEnv -&gt; value="" exists=false</code></pre>
+
+<p><code>,unset</code> เหมาะกับ secret ที่ไม่อยากให้ process ลูกเห็นต่อ —
+โปรแกรมเราอ่านไปแล้ว ใครที่ fork ต่อจากเราจะไม่เห็นอีก</p>
+
+<div class="warn">
+  <span class="label">⚠ <code>,file</code> ไม่ trim ขึ้นบรรทัดใหม่</span>
+<pre><code>$ <span class="c"># ไฟล์มีเนื้อว่า "s3cr3t-from-file\n"</span>
+[file ok] value="s3cr3t-from-file\n" err=&lt;nil&gt;</code></pre>
+  <p style="margin-bottom:0">ได้ <code>\n</code> ติดมาด้วย · ถ้าเอาไปใช้กับ Docker secret
+  (<code>/run/secrets/db_password</code>) รหัสผ่านจะผิดแบบ<strong>หาสาเหตุไม่เจอ</strong>
+  เพราะ log จะพิมพ์ออกมาดูเหมือนถูกทุกตัวอักษร — ต้อง <code>strings.TrimSpace</code> เองเสมอ</p>
+</div>
+
+<h3>type ที่รองรับ — รันครบทุกตัวแล้ว</h3>
+
+<pre><code>$ I8=-12 I64=9223372036854775807 U16=65535 U64=18446744073709551615 F32=3.14 F64=2.718281828 \
+  B=true S=hello D=1h30m LOC=Asia/Bangkok U=<span class="s">"https://api.example.com:8443/v1/users?q=1"</span> \
+  UP=<span class="s">"postgres://user@db:5432/app"</span> PI=42 PS=ptrval SL=<span class="s">"a,b,c"</span> SLD=<span class="s">"1s,2m,3h"</span> \
+  M=<span class="s">"a:1,b:2"</span> MS=<span class="s">"k1:v1,k2:v2"</span> LVL=info LVLP=warn T=<span class="s">"2026-08-22T10:30:00Z"</span> go run .
+
+I8=-12 I64=9223372036854775807 U16=65535 U64=18446744073709551615
+F32=3.14 F64=2.718281828 B=true S="hello"
+D=1h30m0s (time.Duration)
+LOC=Asia/Bangkok (*time.Location)
+U=url.URL{Scheme:"https", Opaque:"", User:(*url.Userinfo)(nil), Host:"api.example.com:8443",
+  Path:"/v1/users", Fragment:"", RawQuery:"q=1", RawPath:"", RawFragment:"",
+  ForceQuery:false, OmitHost:false}
+UP=postgres://user@db:5432/app (*url.URL)
+PI=0x5de58d7140d0 deref=42
+PS deref="ptrval"
+SL=[]string{"a", "b", "c"}
+SLD=[]time.Duration{1000000000, 120000000000, 10800000000000}
+M=map[string]int{"a":1, "b":2}
+MS=map[string]string{"k1":"v1", "k2":"v2"}
+Lvl=main.LogLevel{v:"INFO"} LvlP=&amp;{WARN}
+T=2026-08-22 10:30:00 +0000 UTC (time.Time)</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กลุ่ม</th><th>type</th><th>รูปแบบค่าใน env</th></tr></thead>
+  <tbody>
+    <tr><td>จำนวนเต็ม</td><td><code>int int8 int16 int32 int64</code> · <code>uint …uint64</code></td><td><code>-12</code> · <code>65535</code></td></tr>
+    <tr><td>ทศนิยม / bool / string</td><td><code>float32 float64 bool string</code></td><td><code>3.14</code> · <code>true</code> · <code>hello</code></td></tr>
+    <tr><td>เวลา</td><td><code>time.Duration</code></td><td><code>1h30m</code> — <strong>ต้องมีหน่วยเสมอ</strong></td></tr>
+    <tr><td>เวลา</td><td><code>time.Time</code></td><td><code>2026-08-22T10:30:00Z</code> (RFC3339)</td></tr>
+    <tr><td>โซนเวลา</td><td><code>*time.Location</code></td><td><code>Asia/Bangkok</code></td></tr>
+    <tr><td>URL</td><td><code>url.URL</code> · <code>*url.URL</code></td><td><code>https://api.example.com:8443/v1/users?q=1</code></td></tr>
+    <tr><td>slice</td><td><code>[]string</code> · <code>[]int</code> · <code>[]time.Duration</code></td><td><code>a,b,c</code> (เปลี่ยนตัวคั่นด้วย <code>envSeparator</code>)</td></tr>
+    <tr><td>map</td><td><code>map[string]int</code> · <code>map[string]string</code></td><td><code>a:1,b:2</code> — <code>:</code> คั่น key/value · <code>,</code> คั่นคู่</td></tr>
+    <tr><td>pointer</td><td><code>*int</code> · <code>*string</code> · …</td><td>เหมือน type ที่มันชี้</td></tr>
+    <tr><td>ของเราเอง</td><td>อะไรก็ได้ที่เขียน <code>encoding.TextUnmarshaler</code></td><td>ตามที่เราเขียนเอง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>time.Time</code> ใช้ได้ทั้งที่ README ไม่ได้ list ไว้ — เพราะมันเป็น
+<code>encoding.TextUnmarshaler</code> อยู่แล้ว · นี่คือเหตุผลว่าทำไม
+<strong>TextUnmarshaler สำคัญ</strong>: เขียนเมธอดเดียวแล้ว type ของเราใช้กับ <code>env</code> ได้ทันที</p>
+
+<pre><code><span class="c">// custom type ที่คืน error → env ห่อให้เป็น parse error</span>
+$ LVL=verbose go run .
+ERR: env: parse error on field "Lvl" of type "main.LogLevel": unknown log level "VERBOSE"</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ ไม่ตั้ง env เลย = pointer / slice / map เป็น nil</span>
+<pre><code>D=0s (time.Duration)
+LOC=UTC (*time.Location)          <span class="c">← ไม่ใช่ nil!</span>
+UP=&lt;nil&gt; (*url.URL)
+PI=nil
+PS=nil
+SL=[]string(nil)
+M=map[string]int(nil)             <span class="c">← nil map: เขียนลงไปจะ panic</span>
+T=0001-01-01 00:00:00 +0000 UTC (time.Time)</code></pre>
+  <p style="margin-bottom:0"><code>*time.Location</code> เป็นข้อยกเว้นตัวเดียว — ไม่ตั้ง env แล้วได้
+  <code>UTC</code> ไม่ใช่ <code>nil</code> ต่างจาก pointer ตัวอื่นทั้งหมด · อย่าเขียนโค้ดที่เช็ค
+  <code>== nil</code> เหมือนกันหมด</p>
+</div>
+
+<h2 id="envtrap">3 · caarlos0/env — กับดัก</h2>
+
+<h3>① <code>,required</code> คู่กับ <code>envDefault</code> = <code>required</code> ไม่มีผลเลย</h3>
+
+<pre><code><span class="k">type</span> A <span class="k">struct</span> { Both        <span class="k">string</span> `env:"MYVAR,required" envDefault:"fallback"` }
+<span class="k">type</span> B <span class="k">struct</span> { OnlyRequired <span class="k">string</span> `env:"MYVAR2,required"` }</code></pre>
+
+<pre><code>=== ไม่ตั้ง env เลย ===
+[A required+envDefault] value="fallback" err=&lt;nil&gt;
+[B required only]       value=""         err=env: required environment variable "MYVAR2" is not set</code></pre>
+
+<p>A มี <code>required</code> แต่ได้ default ไปเงียบ ๆ <code>err=&lt;nil&gt;</code> ·
+B ที่มี <code>required</code> เปล่า ๆ error ตามคาด · เหตุผลอยู่ในซอร์ส
+<code>env.go</code> ฟังก์ชัน <code>getOr</code> (<code>env.go:648-660</code> ของ v11.4.1):</p>
+
+<pre><code><span class="k">func</span> <span class="f">getOr</span>(key, defaultValue <span class="k">string</span>, defExists <span class="k">bool</span>, envs <span class="k">map</span>[<span class="k">string</span>]<span class="k">string</span>) (val <span class="k">string</span>, exists, isDefault <span class="k">bool</span>) {
+	value, exists := envs[key]
+	<span class="k">switch</span> {
+	<span class="k">case</span> (!exists || key == <span class="s">""</span>) &amp;&amp; defExists:
+		<span class="k">return</span> defaultValue, <span class="k">true</span>, <span class="k">true</span>   <span class="c">// ← บรรทัด 651-652 · คืน exists=true</span>
+	<span class="k">case</span> exists &amp;&amp; value == <span class="s">""</span> &amp;&amp; defExists:
+		<span class="k">return</span> defaultValue, <span class="k">true</span>, <span class="k">true</span>   <span class="c">// ← ตั้งเป็นค่าว่างก็ยังได้ default</span></code></pre>
+
+<p>พอ <code>exists</code> เป็น <code>true</code> เสมอเมื่อมี <code>envDefault</code> เงื่อนไขที่
+<code>env.go:613</code></p>
+
+<pre><code><span class="k">if</span> fieldParams.Required &amp;&amp; !exists &amp;&amp; fieldParams.OwnKey != <span class="s">""</span> {</code></pre>
+
+<p>ก็<strong>ไม่มีวันเป็นจริง</strong></p>
+
+<h3>② <code>,notEmpty</code> คู่กับ <code>envDefault</code> ก็โดนกลบเหมือนกันเป๊ะ</h3>
+
+<pre><code><span class="k">type</span> C <span class="k">struct</span> { BothNotEmpty <span class="k">string</span> `env:"MYVAR3,notEmpty" envDefault:"fallback3"` }</code></pre>
+
+<pre><code>=== ไม่ตั้ง env เลย ===
+[C notEmpty+envDefault] value="fallback3" err=&lt;nil&gt;
+=== ตั้ง MYVAR3 ว่าง (MYVAR3=) ===
+[C notEmpty+envDefault] value="fallback3" err=&lt;nil&gt;</code></pre>
+
+<p>ตั้งเป็นค่าว่างก็ยังได้ default (มี case <code>exists &amp;&amp; value == "" &amp;&amp; defExists</code> ใน
+<code>getOr</code> อีกอัน) · <strong>กฎที่จำง่ายที่สุด: ใส่ <code>envDefault</code> เมื่อไหร่
+<code>required</code> และ <code>notEmpty</code> ตายทันที</strong></p>
+
+<div class="warn">
+  <span class="label">⚠ กับดักที่อันตรายกว่าข้อ ① อีก — <code>,required</code> ไม่กันค่าว่าง</span>
+<pre><code>$ MYVAR2= go run .            <span class="c"># ตั้งเป็นสตริงว่าง</span>
+[B required only]       value="" err=&lt;nil&gt;</code></pre>
+  <p style="margin-bottom:0"><code>,required</code> เช็คแค่ <strong>“มี env ตัวนี้อยู่ไหม”</strong>
+  (ซอร์ส <code>env.go:613</code> ดูแค่ <code>exists</code> ไม่ได้ดูค่า) · ใน <code>docker-compose.yml</code> การเขียน
+  <code>POSTGRES_DSN=</code> ทิ้งไว้แบบไม่ใส่ค่าเกิดขึ้นง่ายมาก และมันจะ<strong>ผ่านฉลุย</strong><br>
+  อยากกันค่าว่างจริง ต้องใช้ <code>,notEmpty</code> <strong>และต้องไม่มี <code>envDefault</code></strong></p>
+</div>
+
+<h3>③ แปลง type ไม่ได้ — struct ไม่ได้ว่างทั้งก้อน</h3>
+
+<pre><code>$ APP_PORT=abc go run t1.go
+cfg=main.Config{AppPort:0, ShutdownTimeout:10000000000, LogLevel:"DEBUG", PostgresDSN:""}
+err=env: parse error on field "AppPort" of type "int": strconv.ParseInt: parsing "abc": invalid syntax
+AppPort type=int value=0
+ShutdownTimeout type=time.Duration value=10s ms=10000</code></pre>
+
+<p>สังเกตให้ดี: <strong>field ที่พังได้ zero value ส่วน field อื่นถูกเติมครบตามปกติ</strong>
+(<code>ShutdownTimeout=10s</code>, <code>LogLevel=DEBUG</code>) · ใครลืมเช็ค <code>err</code>
+จะได้ <code>AppPort=0</code> ไปใช้ต่อ แล้ว server จะ bind พอร์ตสุ่ม</p>
+
+<h3>④ <code>time.Duration</code> ที่ลืมใส่หน่วย</h3>
+
+<pre><code>$ APP_SHUTDOWN_TIMEOUT=10 go run t1.go
+cfg=main.Config{AppPort:8080, ShutdownTimeout:0, LogLevel:"DEBUG", PostgresDSN:""}
+err=env: parse error on field "ShutdownTimeout" of type "time.Duration": unable to parse duration: time: missing unit in duration "10"</code></pre>
+
+<p>เขียน <code>10</code> คิดว่าเป็นวินาที — ต้องเขียน <code>10s</code> · มือใหม่พลาดตรงนี้บ่อยที่สุดในบทนี้</p>
+
+<h3>⑤ error หลายจุดพร้อมกัน — <code>env.AggregateError</code> ไม่ fail fast</h3>
+
+<pre><code>$ M_C=notanint go run .     <span class="c"># struct มี M_A,required · M_B,required · M_C int</span>
+[multi errors] err=env: required environment variable "M_A" is not set; required environment variable "M_B" is not set; parse error on field "C" of type "int": strconv.ParseInt: parsing "notanint": invalid syntax
+    type=env.AggregateError
+    inner[0] env.VarIsNotSetError: required environment variable "M_A" is not set
+    inner[1] env.VarIsNotSetError: required environment variable "M_B" is not set
+    inner[2] env.ParseError: parse error on field "C" of type "int": strconv.ParseInt: parsing "notanint": invalid syntax</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">ข่าวดี: มันบอก<strong>ทุกปัญหาพร้อมกัน</strong>คั่นด้วย <code>"; "</code>
+  ไม่ใช่หยุดที่ตัวแรก — แปลว่าแก้ env ทีเดียวจบ ไม่ต้องรัน–แก้–รันทีละตัว<br>
+  เจาะทีละตัวได้ด้วย <code>errors.As</code> กับ <code>env.VarIsNotSetError</code> ·
+  <code>env.EmptyVarError</code> · <code>env.ParseError</code> · <code>env.LoadFileContentError</code>
+  หรือ type assert เป็น <code>env.AggregateError</code> แล้ววน <code>.Errors</code></p>
+</div>
+
+<h2 id="godotenv">4 · godotenv — autoload vs Load vs Overload</h2>
+
+<h3>วิธีที่ 1 — <code>autoload</code> (สั้นที่สุด)</h3>
+
+<pre><code><span class="k">import</span> _ <span class="s">"github.com/joho/godotenv/autoload"</span>
+<span class="c">// จบ — ไม่ต้องเรียกอะไรอีกเลย os.Getenv ได้ค่าจาก .env ทันที</span></code></pre>
+
+<pre><code>--- run 1: autoload, no shell env ---
+APP_NAME="from-dotenv"
+PORT="9999"</code></pre>
+
+<p>ทั้ง package <code>autoload</code> มีแค่ 15 บรรทัด และส่วนที่ทำงานจริงคือ:</p>
+
+<pre><code><span class="k">import</span> <span class="s">"github.com/joho/godotenv"</span>
+
+<span class="k">func</span> <span class="f">init</span>() {
+	godotenv.<span class="f">Load</span>()
+}</code></pre>
+
+<p>ไม่รับค่า error กลับมาเลย — <strong>ทิ้งทั้งดุ้น</strong> · จำบรรทัดนี้ไว้ เดี๋ยวจะได้เห็นราคาของมัน</p>
+
+<pre><code><span class="c">// พิสูจน์ว่าค่ามาถึงก่อน main จริง (ไม่ใช่แค่อ่านซอร์สเดา)</span>
+1) package-level var init: GOOD=set-by-dotenv
+2) main package init(): GOOD = set-by-dotenv
+3) main(): GOOD = set-by-dotenv</code></pre>
+
+<p>ค่ามาแล้วตั้งแต่ตอน <strong>package-level var init</strong> ซึ่งเกิดก่อนทุกอย่างของ <code>main</code></p>
+
+<h3>วิธีที่ 2 — เรียก <code>godotenv.Load()</code> เอง</h3>
+
+<pre><code><span class="k">func</span> <span class="f">main</span>() {
+	<span class="k">if</span> err := godotenv.<span class="f">Load</span>(); err != <span class="k">nil</span> {
+		slog.<span class="f">Debug</span>(<span class="s">"no .env file"</span>, <span class="s">"err"</span>, err)
+	}
+	cfg, err := env.<span class="f">ParseAs</span>[Config]()
+	<span class="c">// ...</span>
+}</code></pre>
+
+<pre><code>=== with .env ===
+after Load, raw os.Getenv PORT="8081"
+ParseAs err=&lt;nil&gt; cfg={AppName:svc-from-dotenv Port:8081}</code></pre>
+
+<h3><code>Load</code> vs <code>Overload</code></h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th><code>godotenv.Load()</code></th><th><code>godotenv.Overload()</code></th></tr></thead>
+  <tbody>
+    <tr><td>env ที่มีอยู่แล้ว</td><td><strong>ชนะ</strong> — ไม่ถูกทับ</td><td><strong>แพ้</strong> — ถูก .env ทับ</td></tr>
+    <tr><td>env ที่ยังไม่มี</td><td>เอาค่าจาก .env มาใส่</td><td>เอาค่าจาก .env มาใส่</td></tr>
+    <tr><td>ตัดสินเป็นราย</td><td colspan="2"><strong>key</strong> ไม่ใช่ทั้งไฟล์ — key ที่ shell ไม่มี ก็ยังได้จาก .env</td></tr>
+    <tr><td><code>autoload</code> ใช้ตัวไหน</td><td><strong>ใช้ตัวนี้</strong></td><td>—</td></tr>
+    <tr><td>เอาไว้ทำอะไร</td><td>ค่าจริงจาก shell/CI/k8s ต้องชนะเสมอ</td><td>อยากบังคับให้ .env ชนะจริง ๆ (ระวังมาก)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>$ APP_NAME=from-shell go run . load
+before: APP_NAME="from-shell"
+err=&lt;nil&gt;
+after(load): APP_NAME="from-shell"          <span class="c">← shell ชนะ</span>
+
+$ APP_NAME=from-shell go run . overload
+before: APP_NAME="from-shell"
+err=&lt;nil&gt;
+after(overload): APP_NAME="from-dotenv"     <span class="c">← .env ชนะ</span></code></pre>
+
+<p>ซอร์สเขียนไว้ตรง ๆ — <code>godotenv.go:50</code> ว่า
+“It's important to note that it WILL NOT OVERRIDE an env variable that already exists”
+ส่วน <code>godotenv.go:73</code> ว่า “this WILL OVERRIDE an env variable that already exists”</p>
+
+<h3>ไม่มีไฟล์ <code>.env</code> เลย</h3>
+
+<pre><code>$ <span class="c"># วิธีที่ 2 — จับ error ได้</span>
+err (%v)   = open .env: no such file or directory
+err type   = *fs.PathError
+os.ErrNotExist? = true
+program still running, did not panic
+exit code: 0</code></pre>
+
+<p>อยากแยก “ไม่มีไฟล์” (ปกติบน prod) ออกจาก “ไฟล์พัง” (ต้องดัง) ใช้
+<code>errors.Is(err, os.ErrNotExist)</code> ได้เลย ดีกว่า <code>slog.Debug</code> เฉย ๆ</p>
+
+<h3>ใครทำอะไร — godotenv vs caarlos0/env</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เรื่อง</th><th><code>godotenv</code></th><th><code>caarlos0/env</code></th></tr></thead>
+  <tbody>
+    <tr><td>หน้าที่ในหนึ่งประโยค</td><td>ยกค่าจาก<strong>ไฟล์ .env</strong> เข้าไปเป็น environment variable</td><td>อ่าน<strong>environment variable</strong> ใส่ struct</td></tr>
+    <tr><td>ทำงานตอนไหน</td><td><code>autoload</code> = <code>init()</code> ก่อน <code>main</code> · <code>Load()</code> = ตอนที่เราเรียกเอง</td><td>ตอนเรียก <code>env.ParseAs()</code> เท่านั้น</td></tr>
+    <tr><td>แปลง type ให้ไหม</td><td><strong>ไม่</strong> — ทุกอย่างเป็น string</td><td><strong>ให้</strong> — int / Duration / slice / map / URL / custom</td></tr>
+    <tr><td>ค่า default</td><td>ไม่มีแนวคิดนี้</td><td><code>envDefault</code></td></tr>
+    <tr><td>บังคับว่าต้องมีค่า</td><td>ไม่มี</td><td><code>,required</code> · <code>,notEmpty</code></td></tr>
+    <tr><td>บน production</td><td><strong>ไม่ได้ใช้</strong> — prod inject env ตรง ๆ</td><td>ใช้ทั้ง dev และ prod</td></tr>
+    <tr><td>ถ้าเอาออกจากโปรเจกต์</td><td>dev ต้อง <code>export</code> เองทุกตัว แต่แอปยังทำงาน</td><td>ต้องเขียน <code>os.Getenv</code> + <code>strconv</code> เองทุก field</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ ประโยค “godotenv ทำงานก่อนสุด — init()” จริงเฉพาะ autoload</span>
+  <p style="margin-bottom:0">วิธีที่ 2 วาง <code>godotenv.Load()</code> ไว้ใน <code>main()</code>
+  ซึ่ง<strong>ไม่ใช่</strong> <code>init()</code> · สองวิธีนี้ต่างกันจริงที่จุดนี้ อย่าจำรวมกัน<br>
+  ส่วนครึ่งหลังจริงเสมอ: <code>env.ParseAs()</code> อ่าน os env <strong>ณ วินาทีที่ถูกเรียก</strong>
+  — อะไรที่ยัดเข้า env หลังจากนั้นมันไม่รู้เรื่อง</p>
+</div>
+
+<h2 id="dotenv">5 · .env — รูปแบบไฟล์ที่รองรับ + สิ่งที่ต้องใส่ .gitignore</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียนใน .env</th><th>ค่าที่ได้จริง</th><th>หมายเหตุ</th></tr></thead>
+  <tbody>
+    <tr><td><code># this is a comment</code></td><td>—</td><td>ทั้งบรรทัดถูกข้าม ไม่กลายเป็น key</td></tr>
+    <tr><td><code>PLAIN=hello</code></td><td><code>"hello"</code></td><td>รูปพื้นฐาน</td></tr>
+    <tr><td><code>SPACED=hello world</code></td><td><code>"hello world"</code></td><td>ช่องว่างในค่าไม่ต้อง quote ก็ได้</td></tr>
+    <tr><td><code>SPACES_AROUND =  padded</code></td><td><code>"padded"</code></td><td>trim ช่องว่างรอบ <code>=</code> ให้</td></tr>
+    <tr><td><code>DQ="double quoted value"</code></td><td><code>"double quoted value"</code></td><td>quote คู่</td></tr>
+    <tr><td><code>SQ='single quoted value'</code></td><td><code>"single quoted value"</code></td><td>quote เดี่ยว</td></tr>
+    <tr><td><code>export EXPORTED2=yes-with-export</code></td><td><code>"yes-with-export"</code></td><td>มี <code>export</code> นำหน้าก็อ่านได้</td></tr>
+    <tr><td><code>MULTILINE="line1⏎line2⏎line3"</code></td><td>ขึ้นบรรทัดใหม่จริง</td><td>hex ที่ได้: <code>… 31 0a 6c …</code> — <code>0a</code> คือ newline จริง</td></tr>
+    <tr><td><code>TRAILING=value # trailing comment?</code></td><td><code>"value"</code></td><td>comment ท้ายบรรทัด<strong>ถูกตัดออก</strong></td></tr>
+    <tr><td><code>DOLLAR="literal $PLAIN"</code></td><td><code>"literal hello"</code></td><td>quote คู่ <strong>ขยาย $VAR ให้</strong></td></tr>
+    <tr><td><code>SQ_DOLLAR='literal $PLAIN'</code></td><td><code>"literal $PLAIN"</code></td><td>quote เดี่ยว <strong>ไม่ขยาย</strong></td></tr>
+    <tr><td><code>ESCAPED="tab\there"</code></td><td><code>"tabthere"</code></td><td><code>\t</code> <strong>ไม่กลายเป็น tab</strong> — ดูกล่องข้างล่าง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ สาม escape ที่ทำให้ secret เพี้ยนแบบเงียบ ๆ</span>
+  <p>① <strong><code>\t</code> ถูกกินหาย</strong> — hex ที่ได้จริงคือ
+  <code>74 61 62 74 68 65 72 65</code> = <code>t a b t h e r e</code> · ตัวที่สี่คือ
+  <code>0x74</code> (ตัวอักษร <code>t</code>) ไม่ใช่ <code>0x09</code> (tab) ·
+  parser รู้จักแค่ <code>\n</code> กับ <code>\r</code> ที่เหลือ backslash ถูกตัดทิ้งเฉย ๆ
+  (<code>parser.go:192-205</code>)</p>
+  <p>② <strong>รหัสผ่านที่มี <code>$</code> ใน quote คู่จะถูกแทนค่า</strong> —
+  แต่<strong>เฉพาะชื่อตัวพิมพ์ใหญ่</strong> · regex ของ parser คือ
+  <code>(\\)?(\$)(\()?\{?([A-Z0-9_]+)?\}?</code> (<code>parser.go:253</code>)
+  จึงจับได้แค่ <code>[A-Z0-9_]+</code> · secret ที่มี <code>$</code>
+  <strong>ต้องใส่ quote เดี่ยว</strong></p>
+<pre><code><span class="c"># d2.env</span>
+BCD=SURPRISE
+P1="a$BCD"        <span class="c">→ "aSURPRISE"   ถูกแทนค่า</span>
+P3="p@ss$W0RD"    <span class="c">→ "p@ss"       $W0RD ไม่มีค่า จึงถูกแทนด้วยค่าว่าง</span>
+P4="a${BCD}x"     <span class="c">→ "aSURPRISEx"</span>
+
+<span class="c"># dollar.env — ชื่อพิมพ์เล็ก ไม่โดนอะไรเลย</span>
+bcd=SURPRISE
+PASS="a$bcd"      <span class="c">→ "a$bcd"      รอด เพราะ bcd เป็นตัวพิมพ์เล็ก</span></code></pre>
+  <p style="margin-bottom:0">③ <strong><code>#</code> ที่มีช่องว่างนำหน้าเท่านั้นที่เป็น comment</strong> —
+  <code>TOKEN=ab #cd</code> ได้ <code>"ab"</code> แต่ <code>TOKEN=ab#cd</code> (ติดกัน)
+  ได้ <code>"ab#cd"</code> เต็ม ๆ · token แบบ <code>ghp_abc#123def</code> จึงรอด ·
+  ใส่ quote ครอบไว้ก็หมดเรื่อง</p>
+</div>
+
+<h3>ไฟล์ .env พัง — เกิดอะไรขึ้น</h3>
+
+<pre><code><span class="c"># bad1.env</span>
+GOOD=1
+this line has no equals sign
+AFTER=2</code></pre>
+
+<pre><code>  err  = unexpected character "\n" in variable name near "this line has no equals sign\nAFTER=2\n"
+  Load err = unexpected character "\n" in variable name near "this line has no equals sign\nAFTER=2\n"
+  GOOD after Load = ""
+  AFTER after Load = ""</code></pre>
+
+<pre><code><span class="c"># bad3.env — quote ไม่ปิด</span>
+GOOD=1
+UNCLOSED="oops
+AFTER=2</code></pre>
+
+<pre><code>  err  = unterminated quoted value "oops
+  Load err = unterminated quoted value "oops
+  GOOD after Load = ""
+  AFTER after Load = ""</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ all-or-nothing</span>
+  <p style="margin-bottom:0"><code>GOOD=1</code> อยู่บรรทัด<strong>ก่อน</strong>บรรทัดที่พัง
+  แต่ก็<strong>ไม่ถูก set เลย</strong> — ทั้งไฟล์ถูกทิ้งหมด ·
+  คนส่วนใหญ่เดาว่ามันจะอ่านได้ถึงบรรทัดที่พังแล้วค่อยหยุด ซึ่งไม่ใช่</p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ แต่บาง syntax ที่ดูพัง กลับไม่พัง</span>
+<pre><code>=== bad2.env ===        <span class="c"># มีบรรทัด 123INVALID=x</span>
+  err  = &lt;nil&gt;
+  123INVALID =&gt; "x"
+=== bad4.env ===        <span class="c"># มีบรรทัด =novalue (ไม่มีชื่อ key)</span>
+  err  = &lt;nil&gt;
+   =&gt; "novalue"
+  GOOD after Load = "1"</code></pre>
+  <p style="margin-bottom:0">godotenv <strong>ไม่ validate ชื่อ key เลย</strong> —
+  ชื่อขึ้นต้นด้วยตัวเลข ผ่าน · key ว่างเปล่า ผ่าน · <code>err=&lt;nil&gt;</code> ทั้งคู่ ·
+  พังเงียบกว่า syntax error จริง ๆ อีก เพราะไม่มีสัญญาณอะไรเลย</p>
+</div>
+
+<h3>ราคาของ <code>autoload</code> ที่ต้องรู้</h3>
+
+<pre><code>$ <span class="c"># .env พัง (บรรทัดไม่มี =) + import _ autoload อย่างเดียว</span>
+main package init() runs; GOOD =
+main(): GOOD="" AFTER=""
+no error was ever surfaced
+exit code: 0</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ พิมพ์ .env ผิดตัวเดียว = แอปรันต่อโดยไม่มี env จาก .env เลย</span>
+  <p style="margin-bottom:0">ไม่ panic · ไม่มี log · <code>exit 0</code> · เพราะ
+  <code>init()</code> ของ <code>autoload</code> ทิ้ง error ทั้งดุ้น (ดูหัวข้อ 4)<br>
+  นี่คือข้อแลกเปลี่ยนจริงของ “วิธีที่ 1 (แนะนำ)” — สั้นกว่า แต่<strong>ไม่มีทางรู้เลยว่าไฟล์พัง</strong> ·
+  วิธีที่ 2 อย่างน้อยยังจับ <code>err</code> ได้</p>
+</div>
+
+<h3><code>.env</code> ถูกหาจาก current working directory ไม่ใช่ที่ตั้งของ binary</h3>
+
+<pre><code>=== run binary from project root (where .env lives) ===
+cwd=/var/folders/.../p8       WHERE="root-dotenv"
+=== run same binary from sub/ (no .env there) ===
+cwd=/var/folders/.../p8/sub   WHERE=""</code></pre>
+
+<p><strong>binary ตัวเดียวกันเป๊ะ</strong> ผลต่างกันเพราะ cwd ต่างกัน · ยืนยันจากซอร์ส
+<code>godotenv.go:179</code> ที่ <code>return []string{".env"}</code> ซึ่งเป็น path สัมพัทธ์ ·
+จุดนี้กัดคนตอนขึ้น Docker / systemd บ่อยมาก</p>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong><code>.env</code> เป็นแค่ไฟล์ text ธรรมดา</strong> —
+  Go, ระบบปฏิบัติการ และ Docker <strong>ไม่รู้จักมันโดยกำเนิด</strong> ·
+  ที่มันทำงานได้เพราะมีไลบรารีตัวหนึ่ง <code>open(".env")</code> ให้เท่านั้น ·
+  หลักฐานคือผลข้างบน: ถ้าระบบรู้จักมันจริง binary ตัวเดิมย่อมหาไฟล์เจอไม่ว่ารันจากไหน</p>
+</div>
+
+<h3>สิ่งที่ต้องใส่ <code>.gitignore</code></h3>
+
+<pre><code><span class="c"># .gitignore</span>
+.env
+.env.*
+!.env.example</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ไฟล์</th><th>commit ได้ไหม</th><th>ข้างในมีอะไร</th></tr></thead>
+  <tbody>
+    <tr><td><code>.env</code></td><td><strong>ห้าม</strong></td><td>ค่าจริงของเครื่องเรา — DSN จริง รหัสจริง client_secret จริง</td></tr>
+    <tr><td><code>.env.local</code> · <code>.env.production</code></td><td><strong>ห้าม</strong></td><td>เหมือนกัน แค่คนละสภาพแวดล้อม</td></tr>
+    <tr><td><code>.env.example</code></td><td><strong>ต้อง commit</strong></td><td>รายชื่อ key ครบทุกตัว แต่<strong>ค่าเป็นของปลอม/ว่าง</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code><span class="c"># .env.example — ก็อปเป็น .env แล้วเติมค่าจริงเอง</span>
+APP_NAME=wongnok
+APP_ENV=development
+APP_PORT=8080
+APP_SHUTDOWN_TIMEOUT=10s
+LOG_LEVEL=info
+LOG_FORMAT=json
+POSTGRES_DSN=postgres://user:pass@localhost:5432/wongnok?sslmode=disable</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong>ทำไมไม่ commit <code>.env</code> ถึงปลอดภัยพอ</strong> —
+  สองผลรันข้างบนหนุนกันพอดี: ① <code>.env</code> ไม่ถูกอ่านถ้า cwd ไม่ตรง และ
+  ② <code>Load()</code> ให้ env จริงชนะ .env เสมอ ·
+  แปลว่า production ที่ inject env เข้ามาตรง ๆ จะ<strong>ไม่มีทางโดน .env แย่ง</strong>อยู่แล้ว
+  ไฟล์นี้จึงเป็นของ local dev ล้วน ๆ</p>
+</div>
+
+<h2 id="validator">6 · validator/v10 — tag · error จริง · errors.Join · Humanize</h2>
+
+<pre><code><span class="k">import</span> <span class="s">"github.com/go-playground/validator/v10"</span>
+
+<span class="c">// ตัวเดียวทั้ง package — validator แคชข้อมูล struct ไว้ข้างใน</span>
+<span class="k">var</span> validate = validator.<span class="f">New</span>(validator.<span class="f">WithRequiredStructEnabled</span>())
+
+err := validate.<span class="f">Struct</span>(cfg)</code></pre>
+
+<h3>tag ที่ใช้บ่อย</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>tag</th><th>แปลว่า</th><th>ตัวอย่าง</th><th>ที่ต้องระวัง</th></tr></thead>
+  <tbody>
+    <tr><td><code>required</code></td><td>ห้ามเป็น zero value ของ type นั้น</td><td><code>validate:"required"</code></td><td><code>0</code> · <code>""</code> · <code>0s</code> · <code>false</code> ตกหมด</td></tr>
+    <tr><td><code>min</code> / <code>max</code></td><td>ความยาว string / จำนวนสมาชิก slice</td><td><code>validate:"required,min=3"</code></td><td>comma = <strong>AND</strong> ต้องผ่านทุกข้อ</td></tr>
+    <tr><td><code>gte</code> / <code>lte</code></td><td>ช่วงตัวเลข (inclusive ทั้งคู่)</td><td><code>validate:"gte=1,lte=65535"</code></td><td>ใช้กับ <code>time.Duration</code> ได้ แต่ดูกล่องเตือน</td></tr>
+    <tr><td><code>gt</code> / <code>lt</code></td><td>ช่วงตัวเลขแบบไม่รวมขอบ</td><td><code>validate:"required,gt=0"</code></td><td>ตัวเดียวที่กันค่าติดลบได้</td></tr>
+    <tr><td><code>oneof</code></td><td>ต้องเป็นค่าใดค่าหนึ่งในรายการ</td><td><code>validate:"oneof=dev staging prod"</code></td><td><strong>คั่นด้วยเว้นวรรค ห้ามใช้ comma</strong></td></tr>
+    <tr><td><code>oneofci</code></td><td>เหมือน <code>oneof</code> แต่ไม่สนตัวพิมพ์</td><td><code>validate:"oneofci=debug info warn error"</code></td><td><code>DEV</code> · <code>PrOd</code> ผ่านหมด</td></tr>
+    <tr><td><code>hostname|ip</code></td><td><code>|</code> = <strong>OR</strong> — เป็นอย่างใดอย่างหนึ่งก็ผ่าน</td><td><code>validate:"hostname|ip"</code></td><td>underscore และ <code>host:port</code> ตก</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>ข้อความ error จริง — คืนครบทุก field พร้อมกัน</h3>
+
+<pre><code>=== err.Error() ===
+Key: 'App.Name' Error:Field validation for 'Name' failed on the 'required' tag
+Key: 'App.Port' Error:Field validation for 'Port' failed on the 'lte' tag
+Key: 'App.Env' Error:Field validation for 'Env' failed on the 'oneof' tag
+Key: 'App.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+Key: 'App.Timeout' Error:Field validation for 'Timeout' failed on the 'gte' tag
+=== count ===
+len: 5</code></pre>
+
+<p>รูปแบบเป๊ะทุกช่องว่าง — <strong>มีช่องว่างหลัง <code>Key:</code> แต่ไม่มีหลัง <code>Error:</code></strong>
+· ห้าบรรทัดนี้คั่นด้วย <code>\n</code> ที่ <code>ValidationErrors.Error()</code> ใส่ให้เอง
+ไม่ได้มาจาก <code>errors.Join</code></p>
+
+<h3><code>oneof</code> กับ <code>hostname|ip</code> — ผลจริงทีละค่า</h3>
+
+<pre><code>---- oneofci=Dev Staging PROD ----
+oneofci "dev"    -&gt; &lt;nil&gt;
+oneofci "DEV"    -&gt; &lt;nil&gt;
+oneofci "prod"   -&gt; &lt;nil&gt;
+oneofci "PrOd"   -&gt; &lt;nil&gt;
+oneofci "qa"     -&gt; Key: 'C.Env' Error:Field validation for 'Env' failed on the 'oneofci' tag
+
+hostname|ip "localhost"          -&gt; &lt;nil&gt;
+hostname|ip "api.example.com"    -&gt; &lt;nil&gt;
+hostname|ip "127.0.0.1"          -&gt; &lt;nil&gt;
+hostname|ip "::1"                -&gt; &lt;nil&gt;
+hostname|ip "192.168.1.300"      -&gt; Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+hostname|ip "not a host!"        -&gt; Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+hostname|ip ""                   -&gt; Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+hostname|ip "db_server"          -&gt; Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+hostname|ip "example.com:5432"   -&gt; Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ <code>hostname</code> ปฏิเสธ underscore และปฏิเสธ <code>host:port</code></span>
+  <p style="margin-bottom:0"><code>db_server</code> ตก และ <code>example.com:5432</code> ก็ตก ·
+  ถ้าใน <code>docker-compose.yml</code> ตั้งชื่อ service ว่า <code>db_server</code>
+  หรือใน <code>.env</code> เก็บ host พร้อม port ไว้ในตัวแปรเดียว จะ validate ไม่ผ่านทันที<br>
+  ชื่อ tag ใน error พิมพ์เป็น <code>'hostname|ip'</code> ทั้งก้อน ไม่ได้แยกว่าตกข้อไหน</p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ ใช้ comma ใน <code>oneof</code> = panic ตอน request แรก</span>
+<pre><code><span class="c">// Env string `validate:"oneof=dev,staging,prod"`   ← ผิด</span>
+before Struct()
+panic: Undefined validation function 'staging' on field 'Env'
+
+goroutine 1 [running]:
+github.com/go-playground/validator/v10.(*Validate).parseFieldTagsRecursive(...)
+	.../validator/v10@v10.30.3/cache.go:311 +0x9e4
+github.com/go-playground/validator/v10.(*Validate).extractStructCache(...)
+	.../cache.go:156 +0x454
+github.com/go-playground/validator/v10.(*Validate).Struct(...)
+	.../validator_instance.go:347
+exit status 2</code></pre>
+  <p style="margin-bottom:0">สองอย่างที่ต้องจำ:<br>
+  ① <strong>ไม่ได้ panic ตอน <code>validator.New()</code></strong> — panic ตอนเรียก
+  <code>validate.Struct()</code> <strong>ครั้งแรก</strong> (ตอนสร้าง struct cache) ·
+  โปรแกรม <code>go build</code> ผ่าน start ขึ้นได้ แล้วไปตายตอน request แรก<br>
+  ② ข้อความ<strong>ไม่มีคำว่า <code>oneof</code> เลย</strong> — เพราะ comma ถูกอ่านเป็นตัวคั่น tag
+  ทำให้ <code>staging</code> กลายเป็นชื่อ validator ที่ไม่มีอยู่ · หาไม่เจอว่าเกิดจากอะไรถ้าไม่รู้ล่วงหน้า</p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ <code>gte=1</code> เปล่า ๆ บน <code>time.Duration</code> = 1 นาโนวินาที</span>
+<pre><code>--- gte=1 (ไม่มีหน่วย) ---
+gte=1 with 1ns  -&gt; &lt;nil&gt;
+gte=1 with 0    -&gt; Key: 'A.T' Error:Field validation for 'T' failed on the 'gte' tag
+gte=1 with 500ms-&gt; &lt;nil&gt;          <span class="c">← ผ่านฉลุย</span>
+
+--- gte=1s,lte=30s (มีหน่วย) ---
+0s     -&gt; Key: 'B.T' Error:Field validation for 'T' failed on the 'gte' tag
+1s     -&gt; &lt;nil&gt;
+15s    -&gt; &lt;nil&gt;
+31s    -&gt; Key: 'B.T' Error:Field validation for 'T' failed on the 'lte' tag</code></pre>
+  <p style="margin-bottom:0">จะคุมเป็นวินาที <strong>ต้องเขียนหน่วยเสมอ</strong> —
+  <code>gte=1s</code> ไม่ใช่ <code>gte=1</code> · ทั้ง <code>gte</code> และ <code>lte</code>
+  เป็น inclusive (<code>1s</code> พอดีผ่าน · <code>31s</code> ตกเพราะเกิน <code>30s</code>)</p>
+</div>
+
+<h3><code>WithRequiredStructEnabled()</code> ต่างยังไง</h3>
+
+<pre><code>--- nested struct (ไม่ใช่ pointer) ---
+plain  / zero nested struct  -&gt; &lt;nil&gt;
+opt    / zero nested struct  -&gt; Key: 'Cfg.DB' Error:Field validation for 'DB' failed on the 'required' tag
+plain  / filled nested       -&gt; &lt;nil&gt;
+opt    / filled nested       -&gt; &lt;nil&gt;
+--- pointer nested, nil ---
+plain -&gt; Key: 'Cfg2.DB' Error:Field validation for 'DB' failed on the 'required' tag
+opt   -&gt; Key: 'Cfg2.DB' Error:Field validation for 'DB' failed on the 'required' tag</code></pre>
+
+<p>ต่างกัน<strong>จุดเดียวเป๊ะ</strong>: <code>required</code> บน nested struct
+ที่<strong>ไม่ใช่ pointer</strong> · ไม่ใส่ option = tag นั้นถูกเมิน · ใส่ option = zero struct ตก ·
+ส่วน <code>*DB</code> (pointer) <strong>ไม่เกี่ยว</strong> ตกทั้งสองแบบอยู่แล้ว ·
+doc comment ในซอร์สเขียนว่า “WithRequiredStructEnabled enables required tag on non-pointer
+structs to be applied instead of ignored.”</p>
+
+<h3>แกะ error ทีละ field</h3>
+
+<pre><code><span class="k">var</span> ve validator.ValidationErrors
+<span class="k">if</span> errors.<span class="f">As</span>(err, &amp;ve) {
+	<span class="k">for</span> _, fe := <span class="k">range</span> ve {
+		fmt.<span class="f">Println</span>(fe.<span class="f">Namespace</span>(), fe.<span class="f">Field</span>(), fe.<span class="f">Tag</span>(), fe.<span class="f">Param</span>(), fe.<span class="f">Value</span>())
+	}
+}</code></pre>
+
+<pre><code>errors.As -&gt; true len: 4
+Namespace="Cfg.Name"    Field="Name"    Tag="required" Param=""      Kind=string Type=string        Value=""
+Namespace="Cfg.Env"     Field="Env"     Tag="oneof"    Param="dev prod" Kind=string Type=string     Value="qa"
+Namespace="Cfg.Timeout" Field="Timeout" Tag="gte"      Param="1s"    Kind=int64  Type=time.Duration Value=100000000
+Namespace="Cfg.DB.Port" Field="Port"    Tag="lte"      Param="65535" Kind=int    Type=int           Value=99999</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เมธอด</th><th>คืนอะไร</th><th>เอาไปทำอะไร</th></tr></thead>
+  <tbody>
+    <tr><td><code>Namespace()</code></td><td><code>Cfg.DB.Port</code> — ทางเดินเต็มรวม struct ซ้อน</td><td>บอกผู้ใช้ว่าผิดที่ field ไหน</td></tr>
+    <tr><td><code>Field()</code></td><td><code>Port</code> — ชื่อ field เปล่า ๆ</td><td>ข้อความสั้น ๆ</td></tr>
+    <tr><td><code>Tag()</code></td><td><code>lte</code> — กฎที่ตก</td><td>map ไปเป็นข้อความภาษาไทย</td></tr>
+    <tr><td><code>Param()</code></td><td><code>65535</code> · <code>dev prod</code></td><td>บอกว่าค่าที่ยอมรับคืออะไร</td></tr>
+    <tr><td><code>Value()</code></td><td>ค่าที่ส่งมาจริง</td><td>โชว์ให้เห็นว่าพิมพ์อะไรผิด</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p>สองอย่างที่เห็นจากผลรัน: ① <code>Value()</code> ของ <code>time.Duration</code>
+  คืน <code>any</code> ที่มี dynamic type เป็น <strong><code>time.Duration</code></strong> —
+  <strong>พิมพ์ด้วย <code>%v</code> / <code>%s</code> / <code>fmt.Sprint</code> ได้ <code>100ms</code>
+  อ่านรู้เรื่องอยู่แล้ว</strong> · เลข <code>100000000</code> (int64 นาโนวินาที) โผล่ก็ต่อเมื่อใช้
+  <code>%d</code> หรือ <code>%#v</code> — ซึ่งเป็น verb ที่บล็อกข้างบนใช้อยู่พอดี ·
+  ② <code>Namespace</code> ของ nested field เป็น <code>Cfg.DB.Port</code> —
+  validator ไล่เข้า struct ซ้อนให้เอง<strong>โดยไม่ต้องใส่ tag อะไรที่ field <code>DB</code></strong></p>
+<pre><code><span class="c">// รันจริง — validator v10.30.3 + go1.26.5 · fe.Value() ของ field Timeout</span>
+dynamic type = time.Duration
+%v     -&gt; 100ms
+%s     -&gt; 100ms
+Sprint -&gt; 100ms
+%#v    -&gt; 100000000
+%d     -&gt; 100000000</code></pre>
+  <p style="margin-bottom:0">ที่ต้องระวังจริง ๆ คือตอน <strong>type assert</strong> —
+  <code>fe.Value().(int64)</code> <strong>panic</strong> (dynamic type เป็น <code>time.Duration</code>
+  ไม่ใช่ <code>int64</code>) · เขียน <code>fe.Value().(time.Duration)</code> แล้วพิมพ์ตรง ๆ ได้เลย</p>
+</div>
+
+<h3><code>errors.Join</code> — คั่นด้วยอะไรกันแน่</h3>
+
+<pre><code>Error() = "alpha\nbeta\ngamma"
+contains \n: 16
+errors.Is(j,b) -&gt; true
+Unwrap() []error len: 3
+errors.Join with nils: true true</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>พฤติกรรม</th><th>ผลจริง</th></tr></thead>
+  <tbody>
+    <tr><td>ตัวคั่นระหว่าง error</td><td><code>\n</code> เปล่า ๆ ไม่มีช่องว่าง</td></tr>
+    <tr><td>มี <code>\n</code> ปิดท้ายไหม</td><td><strong>ไม่มี</strong> — <code>"alpha\nbeta\ngamma"</code> ยาว 16 = 5+1+4+1+5</td></tr>
+    <tr><td><code>errors.Is</code> ทะลุถึงตัวใน</td><td>ได้</td></tr>
+    <tr><td><code>Unwrap() []error</code></td><td>มี — วนดูทีละตัวได้</td></tr>
+    <tr><td><code>errors.Join(nil, a, nil)</code></td><td>คืน error (ข้าม <code>nil</code> ให้)</td></tr>
+    <tr><td><code>errors.Join(nil, nil)</code></td><td>คืน <code>nil</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code><span class="c">// ยัด ValidationErrors เข้า Join แล้วยังดึงกลับมาได้</span>
+errors.As through Join -&gt; true 4
+jv.Error() = "config load failed\nKey: 'Cfg.Name' Error:Field validation for 'Name' failed on the 'required' tag\nKey: 'Cfg.Env' Error:...</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ อย่าเข้าใจผิดว่า errors.Join เป็นคนจัดบรรทัดให้ validator</span>
+  <p style="margin-bottom:0"><code>ValidationErrors.Error()</code> คั่นบรรทัดด้วย <code>\n</code>
+  ให้อยู่แล้วตั้งแต่ต้น · <code>errors.Join</code> ใส่ <code>\n</code> ให้แค่<strong>ระหว่าง error
+  คนละก้อน</strong> เท่านั้น (ในตัวอย่างข้างบนคือระหว่าง <code>"config load failed"</code>
+  กับก้อนของ validator)</p>
+</div>
+
+<h3><code>Humanize</code> — แปลง error ก้อนใหญ่ให้คนอ่านรู้เรื่อง</h3>
+
+<pre><code><span class="c">// internal/config/humanize.go</span>
+<span class="k">func</span> <span class="f">Humanize</span>(err <span class="k">error</span>) <span class="k">string</span> {
+	<span class="k">var</span> joined <span class="k">interface</span>{ <span class="f">Unwrap</span>() []<span class="k">error</span> }
+	errs := []<span class="k">error</span>{err}
+	<span class="k">if</span> errors.<span class="f">As</span>(err, &amp;joined) {
+		errs = joined.<span class="f">Unwrap</span>()
+	}
+
+	lines := []<span class="k">string</span>{<span class="s">"invalid configuration:"</span>}
+	<span class="k">for</span> _, e := <span class="k">range</span> errs {
+		<span class="k">var</span> ve validator.ValidationErrors
+		<span class="k">if</span> errors.<span class="f">As</span>(e, &amp;ve) {
+			<span class="k">for</span> _, fe := <span class="k">range</span> ve {
+				lines = <span class="f">append</span>(lines, fmt.<span class="f">Sprintf</span>(<span class="s">"  - %s: ผิดกฎ %q"</span>, fe.<span class="f">Namespace</span>(), fe.<span class="f">Tag</span>()))
+			}
+			<span class="k">continue</span>
+		}
+		lines = <span class="f">append</span>(lines, <span class="s">"  - "</span>+e.<span class="f">Error</span>())
+	}
+	<span class="k">return</span> strings.<span class="f">Join</span>(lines, <span class="s">"\n"</span>)
+}</code></pre>
+
+<pre><code>$ env APP_PORT=99999 LOG_LEVEL=BANANA POSTGRES_DSN= go run ./cmd/api
+FATAL load configuration:
+invalid configuration:
+  - App.Port: ผิดกฎ "lte"
+  - Logging.Level: ผิดกฎ "oneofci"
+  - Database.PostgresDSN: ผิดกฎ "required"
+exit status 1</code></pre>
+
+<p>ลำดับบรรทัดคาดเดาได้เสมอ — <code>errors.Join</code> เรียงตามลำดับที่เราใส่
+(App → Logging → Database) และในแต่ละ struct เรียงตามลำดับ field</p>
+
+<div class="warn">
+  <span class="label">⚠ สองเรื่องที่ต้องรู้เกี่ยวกับ output ก้อนบน</span>
+  <p>① <strong><code>exit status 1</code> ไม่ใช่ข้อความของโปรแกรม</strong> —
+  <code>go run</code> พิมพ์เองเมื่อ process ลูกจบด้วยโค้ดที่ไม่ใช่ 0 ·
+  build เป็น binary แล้วรันตรง ๆ จะ<strong>ไม่มีบรรทัดนี้</strong></p>
+  <p style="margin-bottom:0">② <strong><code>Humanize</code> มีรอยรั่ว</strong> —
+  ตอน <code>ParseAs</code> พังจริง (ไม่ใช่ validation) พาดหัวยังขึ้น
+  <code>invalid configuration:</code> และ prefix <code>parse environment: env:</code> หายไป
+  เพราะ <code>errors.As(err, &amp;joined)</code> วิ่งทะลุ <code>fmt.Errorf</code> ไปเจอ
+  <code>env.AggregateError</code> ที่บังเอิญมี <code>Unwrap() []error</code> เหมือนกัน:</p>
+<pre><code>$ env APP_PORT=abc ./api
+time=2026-08-22T10:15:12.112+07:00 level=ERROR msg="load configuration"
+invalid configuration:
+  - parse error on field "Port" of type "int": strconv.ParseInt: parsing "abc": invalid syntax</code></pre>
+</div>
+
+<div class="win">
+  <span class="label">ใช้ singleton — วัดจริงแล้วต่างกัน 72 เท่า</span>
+<pre><code>BenchmarkSingleton-10      	 8658763	       120.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNewEachTime-10    	  140612	      8638 ns/op	   16229 B/op	     224 allocs/op
+<span class="c">// Apple M4, go1.26.5</span></code></pre>
+  <p style="margin-bottom:0">doc ของไลบรารีเขียนไว้ว่า “Validator is designed to be thread-safe
+  and used as a singleton instance. It caches information about your struct and validations …
+  Using multiple instances neglects the benefit of caching.”<br>
+  เหตุผลไม่ใช่แค่แคช struct — <code>New()</code> ต้อง<strong>คัดลอกตาราง built-in validator
+  ทั้งชุดใหม่ทุกครั้ง</strong>ด้วย · ประกาศเป็น package-level <code>var</code> ครั้งเดียวจบ</p>
+</div>
+
+<h2 id="config">7 · โครง <code>internal/config</code> ที่ก็อปไปใช้ได้</h2>
+
+<div class="diagram">api/
+├── cmd/
+│   └── api/
+│       └── main.go            ← เรียก config.Load() ที่นี่ที่เดียว
+├── internal/
+│   └── config/
+│       ├── config.go          ← Load() · Validate() ที่รวมทุก section
+│       ├── app.go             ← APP_NAME · APP_ENV · APP_PORT · APP_SHUTDOWN_TIMEOUT
+│       ├── logging.go         ← LOG_LEVEL · LOG_FORMAT
+│       ├── database.go        ← POSTGRES_DSN · DB_*
+│       ├── humanize.go        ← แปลง error เป็นข้อความที่คนอ่านรู้เรื่อง
+│       └── config_test.go     ← เทสต์ของ config เอง
+├── .env                       ← ค่าจริงของเครื่องเรา — <strong>ห้าม commit</strong>
+└── .env.example               ← โครงเปล่า ๆ ไว้ให้เพื่อนก๊อป — <strong>commit ได้</strong></div>
+
+<h3><code>config.go</code></h3>
+
+<pre><code><span class="k">package</span> config
+
+<span class="k">import</span> (
+	<span class="s">"errors"</span>
+	<span class="s">"fmt"</span>
+
+	<span class="s">"github.com/caarlos0/env/v11"</span>
+	<span class="s">"github.com/go-playground/validator/v10"</span>
+)
+
+<span class="c">// ใช้ตัวเดียวทั้ง package — validator แคชข้อมูล struct ไว้ข้างใน</span>
+<span class="k">var</span> validate = validator.<span class="f">New</span>(validator.<span class="f">WithRequiredStructEnabled</span>())
+
+<span class="k">type</span> Config <span class="k">struct</span> {
+	App      App
+	Logging  Logging
+	Database Database
+}
+
+<span class="k">func</span> <span class="f">Load</span>() (Config, <span class="k">error</span>) {
+	cfg, err := env.<span class="f">ParseAs</span>[Config]()
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="k">return</span> Config{}, fmt.<span class="f">Errorf</span>(<span class="s">"parse environment: %w"</span>, err)
+	}
+
+	<span class="c">// ไม่ wrap ด้วย fmt.Errorf — errors.Join จัดบรรทัดไว้แล้ว</span>
+	<span class="k">if</span> err := cfg.<span class="f">Validate</span>(); err != <span class="k">nil</span> {
+		<span class="k">return</span> Config{}, err
+	}
+
+	<span class="k">return</span> cfg, <span class="k">nil</span>
+}
+
+<span class="c">// รวม error ของ "ทุก section" มาแสดงทีเดียว</span>
+<span class="c">// เพิ่ม Redis? สร้าง redis.go + เติม 1 บรรทัดตรงนี้</span>
+<span class="k">func</span> (cfg Config) <span class="f">Validate</span>() <span class="k">error</span> {
+	<span class="k">return</span> errors.<span class="f">Join</span>(
+		cfg.App.<span class="f">Validate</span>(),
+		cfg.Logging.<span class="f">Validate</span>(),
+		cfg.Database.<span class="f">Validate</span>(),
+	)
+}</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ สามไฟล์ข้างล่างตัด <code>package</code> + <code>import</code> ออกให้อ่านง่าย</span>
+  <p><code>app.go</code> · <code>logging.go</code> · <code>database.go</code> อยู่ใน
+  <code>package config</code> เดียวกับ <code>config.go</code> — ก็อปไปวางดิบ ๆ จะเจอตามลำดับนี้:</p>
+<pre><code>$ go build ./...
+internal/config/app.go:1:1: expected 'package', found 'type'
+
+<span class="c"># เติม package config แล้วยังไม่พอ</span>
+$ go build ./...
+internal/config/app.go:7:18: undefined: time
+internal/config/app.go:10:45: undefined: fmt</code></pre>
+  <p style="margin-bottom:0">ที่ต้องเติมเองคือ: <code>app.go</code> → <code>"fmt"</code> + <code>"time"</code> ·
+  <code>database.go</code> → <code>"time"</code> · <code>logging.go</code> → ไม่ต้องเติมอะไร ·
+  เติมครบแล้ว <code>go build ./...</code> ผ่านและ <code>sizeof(config.Config) = 120 bytes</code> ตามที่โชว์ข้างล่าง</p>
+</div>
+
+<h3><code>app.go</code></h3>
+
+<pre><code><span class="k">type</span> App <span class="k">struct</span> {
+	Name            <span class="k">string</span>        `env:"APP_NAME" envDefault:"wongnok" validate:"required"`
+	Env             <span class="k">string</span>        `env:"APP_ENV" envDefault:"development" validate:"required,oneof=development staging production"`
+	Port            <span class="k">int</span>           `env:"APP_PORT" envDefault:"8080" validate:"gte=1,lte=65535"`
+	ShutdownTimeout time.Duration `env:"APP_SHUTDOWN_TIMEOUT" envDefault:"10s" validate:"required"`
+}
+
+<span class="k">func</span> (app App) <span class="f">Addr</span>() <span class="k">string</span>       { <span class="k">return</span> fmt.<span class="f">Sprintf</span>(<span class="s">":%d"</span>, app.Port) }
+<span class="k">func</span> (app App) <span class="f">IsProduction</span>() <span class="k">bool</span> { <span class="k">return</span> app.Env == <span class="s">"production"</span> }
+
+<span class="k">func</span> (app App) <span class="f">Validate</span>() <span class="k">error</span> { <span class="k">return</span> validate.<span class="f">Struct</span>(app) }</code></pre>
+
+<h3><code>logging.go</code></h3>
+
+<pre><code><span class="k">type</span> Logging <span class="k">struct</span> {
+	Level  <span class="k">string</span> `env:"LOG_LEVEL" envDefault:"info" validate:"required,oneofci=debug info warn error"`
+	Format <span class="k">string</span> `env:"LOG_FORMAT" envDefault:"json" validate:"required,oneofci=json text"`
+}
+
+<span class="k">func</span> (logging Logging) <span class="f">Validate</span>() <span class="k">error</span> { <span class="k">return</span> validate.<span class="f">Struct</span>(logging) }</code></pre>
+
+<p class="meta"><code>Level</code> ต้องใช้ <code>oneofci</code> ไม่ใช่ <code>oneof</code> —
+ไม่งั้น tag ที่โผล่ใน error จะเป็น <code>'oneof'</code> แล้วข้อความจะไม่ตรงกับที่หัวข้อ 6 โชว์ไว้</p>
+
+<h3><code>database.go</code></h3>
+
+<pre><code><span class="k">type</span> Database <span class="k">struct</span> {
+	PostgresDSN     <span class="k">string</span>        `env:"POSTGRES_DSN" validate:"required"`
+	MaxOpenConns    <span class="k">int</span>           `env:"DB_MAX_OPEN_CONNS" envDefault:"25" validate:"gte=1,lte=500"`
+	MaxIdleConns    <span class="k">int</span>           `env:"DB_MAX_IDLE_CONNS" envDefault:"25" validate:"gte=1,lte=500"`
+	ConnMaxLifetime time.Duration `env:"DB_CONN_MAX_LIFETIME" envDefault:"5m" validate:"required,gt=0"`
+}
+
+<span class="k">func</span> (database Database) <span class="f">Validate</span>() <span class="k">error</span> { <span class="k">return</span> validate.<span class="f">Struct</span>(database) }</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ ทำไม <code>ConnMaxLifetime</code> ต้องมี <code>gt=0</code> ด้วย</span>
+  <p>เวอร์ชันแรกของไฟล์นี้เขียนเป็น <code>if</code> ยาว ๆ:</p>
+<pre><code><span class="k">if</span> database.ConnMaxLifetime &lt;= 0 {
+	<span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"DB_CONN_MAX_LIFETIME must be greater than 0"</span>)
+}</code></pre>
+  <p>พอ refactor เป็น <code>validate:"required"</code> เฉย ๆ <strong>ความสามารถหายไปจริง</strong>:</p>
+<pre><code>########## [ก่อน refactor] DB_CONN_MAX_LIFETIME=-5s
+Validate : FAILED -&gt;
+DB_CONN_MAX_LIFETIME must be greater than 0
+########## [หลัง refactor] DB_CONN_MAX_LIFETIME=-5s
+Validate : OK                              <span class="c">← ค่าติดลบผ่านฉลุย</span></code></pre>
+  <p style="margin-bottom:0"><code>required</code> บน <code>time.Duration</code> แปลว่า
+  <strong>“ห้ามเป็น zero”</strong> เท่านั้น ไม่ใช่ “ต้องมากกว่า 0” · ต้องเขียน
+  <code>required,gt=0</code> ถึงจะเทียบเท่าของเดิม<br>
+  เรื่องเดียวกันนี้ใช้กับ <code>App.ShutdownTimeout</code> ด้วย —
+  <code>APP_SHUTDOWN_TIMEOUT=-5s</code> หลุดทั้ง <code>ParseAs</code> และ validator</p>
+</div>
+
+<h3><code>config_test.go</code> — เทสต์ config โดยไม่ต้องมี <code>.env</code></h3>
+
+<pre><code><span class="k">func</span> <span class="f">TestLoad_Defaults</span>(t *testing.T) {
+	t.<span class="f">Setenv</span>(<span class="s">"POSTGRES_DSN"</span>, <span class="s">"postgres://u:p@localhost:5432/db"</span>)
+	<span class="c">// t.Setenv คืนค่า env เดิมให้อัตโนมัติเมื่อจบเทสต์</span>
+	cfg, err := config.<span class="f">Load</span>()
+	<span class="c">// ...</span>
+}</code></pre>
+
+<pre><code>$ go test ./internal/config/ -v
+=== RUN   TestLoad_Defaults
+--- PASS: TestLoad_Defaults (0.00s)
+=== RUN   TestLoad_ThreeErrorsAtOnce
+--- PASS: TestLoad_ThreeErrorsAtOnce (0.00s)
+=== RUN   TestLoad_ReturnsZeroValueOnError
+--- PASS: TestLoad_ReturnsZeroValueOnError (0.00s)
+PASS
+ok  	wongnok/api/internal/config	0.572s</code></pre>
+
+<h3>ทำไม <code>Load()</code> คืน <code>Config</code> ไม่ใช่ <code>*Config</code></h3>
+
+<pre><code>sizeof(config.Config) = 120 bytes
+sizeof(*config.Config) = 8 bytes
+[value ] err != nil? true | cfgVal.App.Port = 0 | cfgVal.App.Addr() = ":0"
+[ptr   ] err != nil? true | cfgPtr == nil? true
+[ptr   ] panic ตอนอ่าน cfgPtr.App.Port: runtime error: invalid memory address or nil pointer dereference</code></pre>
+
+<pre><code>ก่อนเรียก              : Port=8080 Addr=":8080"
+หลัง handlerA(value)   : Port=8080 Addr=":8080"
+หลัง handlerB(pointer) : Port=1 Addr=":1"  &lt;-- validate ผ่านไปแล้ว แต่ค่าเปลี่ยนได้</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>คืน <code>Config</code> (value)</th><th>คืน <code>*Config</code> (pointer)</th></tr></thead>
+  <tbody>
+    <tr><td>ตอน error</td><td>ได้ <code>Config{}</code> ที่ยังเรียกเมธอดได้ (<code>Addr()</code> = <code>":0"</code>)</td><td>ได้ <code>nil</code> — ลืมเช็ค <code>err</code> แล้ว <strong>panic ทันที</strong></td></tr>
+    <tr><td>ส่งต่อให้ handler</td><td>แต่ละคนได้<strong>สำเนา</strong> แก้แล้วไม่กระทบตัวจริง</td><td>ใครก็แก้ค่าที่ validate ผ่านแล้วได้</td></tr>
+    <tr><td>ราคาที่จ่าย</td><td>คัดลอก 120 bytes</td><td>คัดลอก 8 bytes</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>Load()</code> ถูกเรียกครั้งเดียวตอน start — 120 bytes ไม่ใช่เรื่อง ·
+เหตุผลที่หนักแน่นกว่าคือแถวกลาง: <strong>ค่าที่ผ่าน validate แล้วต้อง valid ตลอดอายุโปรแกรม</strong></p>
+
+<h2 id="pipeline">8 · ท่อลำเลียงค่าทั้งเส้น</h2>
+
+<div class="diagram">   .env                    ← ไฟล์ text ธรรมดา (local dev เท่านั้น)
+     │
+     │   godotenv           ← ยกค่าเข้าไปเป็น env · ของที่มีอยู่แล้วชนะ
+     ▼
+   Environment Variables   ← ทุกอย่างเป็น "string" ล้วน
+     │
+     │   caarlos0/env       ← env:"KEY" · envDefault · แปลง type · ,required
+     ▼
+   Config Struct           ← int / time.Duration / slice / map แล้ว แต่ยัง "ไม่รู้ว่าค่าสมเหตุผลไหม"
+     │
+     │   validator/v10      ← validate:"gte=1,lte=65535" · oneof · required
+     ▼
+   Valid Config            ← ผ่านด่านแล้ว เชื่อได้ทุก field
+     │
+     ▼
+   Application             ← gorm.Open · http.ListenAndServe</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ด่าน</th><th>จับอะไรได้</th><th>จับอะไร<strong>ไม่ได้</strong></th></tr></thead>
+  <tbody>
+    <tr><td><code>godotenv</code></td><td>ไฟล์ .env พัง syntax</td><td>ชื่อ key แปลก ๆ (<code>123INVALID</code> ผ่าน) · ค่าผิดความหมาย</td></tr>
+    <tr><td><code>caarlos0/env</code></td><td>แปลง type ไม่ได้ (<code>APP_PORT=abc</code>) · ไม่มี env ที่ <code>,required</code></td><td>ค่าที่ type ถูกแต่<strong>ไร้สาระ</strong> — <code>APP_PORT=99999</code> ผ่านสบาย</td></tr>
+    <tr><td><code>validator</code></td><td>ค่านอกช่วง · ค่าไม่อยู่ในรายการ · ค่าว่าง</td><td>ค่าติดลบ ถ้าใช้แค่ <code>required</code> (ต้องเติม <code>gt=0</code>)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>พิสูจน์ว่าด่าน 2 ปล่อยผ่านจริง แล้วด่าน 3 รับช่วง</h3>
+
+<pre><code>$ env POSTGRES_DSN=<span class="s">"postgres://u:p@localhost:5432/db"</span> APP_PORT=99999 go run ./cmd/probe
+ParseAs  : OK -&gt; App.Port=99999 App.Env="development" Log.Level="info" Shutdown=10s DSN="postgres://u:p@localhost:5432/db"
+Validate : FAILED -&gt;
+Key: 'App.Port' Error:Field validation for 'Port' failed on the 'lte' tag
+
+$ env POSTGRES_DSN= go run ./cmd/probe
+ParseAs  : OK -&gt; App.Port=8080 ... DSN=""
+Validate : FAILED -&gt;
+Key: 'Database.PostgresDSN' Error:Field validation for 'PostgresDSN' failed on the 'required' tag
+
+$ env POSTGRES_DSN=<span class="s">"..."</span> APP_ENV=prodction go run ./cmd/probe
+ParseAs  : OK -&gt; App.Env="prodction" ...
+Validate : FAILED -&gt;
+Key: 'App.Env' Error:Field validation for 'Env' failed on the 'oneof' tag
+
+$ env POSTGRES_DSN=<span class="s">"..."</span> LOG_LEVEL=BANANA go run ./cmd/probe
+ParseAs  : OK -&gt; Log.Level="BANANA" ...
+Validate : FAILED -&gt;
+Key: 'Logging.Level' Error:Field validation for 'Level' failed on the 'oneofci' tag
+
+$ env POSTGRES_DSN=<span class="s">"..."</span> APP_SHUTDOWN_TIMEOUT=0s go run ./cmd/probe
+ParseAs  : OK -&gt; Shutdown=0s ...
+Validate : FAILED -&gt;
+Key: 'App.ShutdownTimeout' Error:Field validation for 'ShutdownTimeout' failed on the 'required' tag</code></pre>
+
+<p>ห้าเคสนี้ <strong><code>ParseAs</code> ผ่านหมด</strong> — พิมพ์ <code>prodction</code> ตกตัว u
+ก็ยังเป็น string ที่ถูกต้องในสายตา <code>env</code> · ตัวที่จับได้คือ validator ล้วน ๆ</p>
+
+<h3>ตายตั้งแต่ start ไม่ใช่ตอน request แรก</h3>
+
+<pre><code>$ env APP_PORT=99999 LOG_LEVEL=BANANA POSTGRES_DSN= ./api &amp; sleep 2
+--- ps เช็คว่า process ยังอยู่ไหม ---
+process ตายไปแล้ว
+--- lsof :8080 ---
+(ไม่มี process ไหน listen :8080)
+--- curl /healthz ---
+http_code=000
+curl exit=7
+EXIT_CODE=1</code></pre>
+
+<p>พิสูจน์ครบสามชั้น: process ตาย · ไม่มีอะไร bind <code>:8080</code> · curl ต่อไม่ติด
+(<code>exit 7</code> = Failed to connect) · exit code จริงคือ <code>1</code></p>
+
+<pre><code>$ <span class="c"># config ถูกต้อง — เดินจนสุดสาย</span>
+--- curl /healthz ---
+ok
+http_code=200
+--- stderr ของ server ---
+{"time":"2026-08-22T10:13:43.048067+07:00","level":"INFO","msg":"configuration loaded","app":"wongnok","env":"development","addr":":8080"}
+{"time":"2026-08-22T10:13:43.084594+07:00","level":"INFO","msg":"database connected"}
+{"time":"2026-08-22T10:13:43.085393+07:00","level":"INFO","msg":"server starting","addr":":8080"}</code></pre>
+
+<p>ลำดับใน <code>run()</code> ที่ทำให้ได้ log แบบนี้: logger ชั่วคราว (<code>slog</code> TextHandler)
+→ <code>godotenv.Load()</code> → <code>config.Load()</code> → <strong>logger ตัวจริงที่สร้างจาก
+<code>cfg.Logging</code></strong> (เลยกลายเป็น JSON ตั้งแต่บรรทัดแรก) → <code>gorm.Open</code>
++ <code>SetMaxOpenConns</code>/<code>SetMaxIdleConns</code>/<code>SetConnMaxLifetime</code> + <code>Ping</code>
+→ <code>ListenAndServe</code></p>
+
+<h2 id="jwt">9 · JWT — โครงสร้าง · golang-jwt/v5 · error ทุกเคส</h2>
+
+<h3>สามส่วน คั่นด้วยจุด</h3>
+
+<div class="diagram">eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 . eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6... . KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30
+|________ header ________________|___|______ payload _________|___|__________ signature ____________________|
+                                  ^                            ^
+                              จุดคั่นที่ 1                    จุดคั่นที่ 2
+
+  header     = base64url(JSON)   บอกว่า token นี้เซ็นด้วยวิธีไหน
+  payload    = base64url(JSON)   ข้อมูลที่อยากพกไปกับ token — เรียกว่า claims
+  signature  = HMAC หรือ RSA ของ (header + "." + payload)  ตัวที่ทำให้แก้เนื้อในไม่ได้โดยไม่ถูกจับ</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ส่วน</th><th>decode ได้โดยไม่มี key ไหม</th><th>เนื้อจริงของ token ตัวอย่าง</th></tr></thead>
+  <tbody>
+    <tr><td>header</td><td><strong>ได้</strong></td><td><code>{"alg":"HS256","typ":"JWT"}</code></td></tr>
+    <tr><td>payload</td><td><strong>ได้</strong></td><td><code>{"sub":"1234567890","name":"John Doe","admin":true,"iat":1516239022}</code></td></tr>
+    <tr><td>signature</td><td>decode ได้ แต่<strong>ตรวจ</strong>ไม่ได้ถ้าไม่มี key</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>$ echo <span class="s">'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'</span> | tr <span class="s">'_-'</span> <span class="s">'/+'</span> | base64 -d
+{"alg":"HS256","typ":"JWT"}
+
+<span class="c"># payload — ไม่ต้องมี secret เลย</span>
+{"sub":"1234567890","name":"John Doe","admin":true,"iat":1516239022}
+
+<span class="c"># ทำซ้ำด้วย Go: jwt.NewParser().ParseUnverified (ไม่ส่ง secret เข้าไป)</span>
+err=&lt;nil&gt;
+alg=HS256 typ=JWT
+claims=map[admin:true iat:1.516239022e+09 name:John Doe sub:1234567890]
+จำนวนส่วนของ token=3</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ <code>base64 -d</code> ของ macOS ตัดท้ายทิ้งถ้าความยาวไม่หารด้วย 4 ลงตัว</span>
+  <p>คำสั่งข้างบนใช้ได้กับ <strong>header</strong> เพราะมันยาว 36 ตัวพอดี (หาร 4 ลงตัว) ·
+  พอเอาคำสั่งเดิมไป decode <strong>payload</strong> ซึ่งยาว 91 ตัว จะขาดท้าย:</p>
+<pre><code>$ echo <span class="s">'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0'</span> | tr <span class="s">'_-'</span> <span class="s">'/+'</span> | base64 -d
+{"sub":"1234567890","name":"John Doe","admin":true,"iat":151623902     <span class="c">← ขาด 2 ตัวท้าย ไม่มี error ด้วย</span></code></pre>
+  <p style="margin-bottom:0">ใช้คำสั่งนี้แทน — เติม padding ให้เอง แล้วได้ครบทุกครั้ง:</p>
+<pre><code>$ python3 -c <span class="s">"import base64,sys;print(base64.urlsafe_b64decode(sys.argv[1]+'='*(-len(sys.argv[1])%4)).decode())"</span> &lt;segment&gt;
+{"sub":"1234567890","name":"John Doe","admin":true,"iat":1516239022}</code></pre>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ ห้ามใส่ความลับใน payload — เด็ดขาด</span>
+  <p style="margin-bottom:0"><code>err=&lt;nil&gt;</code> ทั้งที่<strong>ไม่ได้ส่ง secret เข้าไปสักตัว</strong>
+  และเห็น <code>admin:true</code> ชัด ๆ · signature กัน<strong>การแก้ไข</strong> ไม่ได้กัน<strong>การอ่าน</strong><br>
+  (<code>iat 1516239022</code> = 2018-01-18 01:30:22 UTC)</p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ secret ของ token ตัวอย่างบน jwt.io เปลี่ยนไปแล้ว</span>
+<pre><code>your-256-bit-secret                      reGQzG3OKdoIMWLDKOZ4TICJit3EW69cQE72E2CfzRE  no
+secret                                   39jkN-bckg4fbZQEb0xHIxzYL9qI_g4c4WyzEYNHZok  no
+a-string-secret-at-least-256-bits-long   KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30  MATCH
+target:                                  KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30
+
+<span class="c"># ยืนยันซ้ำด้วย jwt/v5</span>
+secret="your-256-bit-secret"                    -&gt; FAIL: token signature is invalid: signature is invalid
+secret="a-string-secret-at-least-256-bits-long" -&gt; OK (signature ผ่าน)</code></pre>
+  <p style="margin-bottom:0">secret จริงคือ <code>a-string-secret-at-least-256-bits-long</code>
+  ไม่ใช่ <code>your-256-bit-secret</code> (ของเก่า) · ลองตามด้วยตัวเก่าจะขึ้น
+  <code>signature is invalid</code> แล้วงงว่าตัวเองพิมพ์ผิดตรงไหน</p>
+</div>
+
+<h3>โครงที่ก็อปไปใช้ได้</h3>
+
+<pre><code><span class="k">import</span> (
+	<span class="s">"time"</span>                              <span class="c">// ขาดไม่ได้ — โค้ดข้างล่างใช้ time.Now()</span>
+
+	<span class="s">"github.com/golang-jwt/jwt/v5"</span>      <span class="c">// v5.3.1</span>
+)
+
+secret := []<span class="k">byte</span>(<span class="s">"a-string-secret-at-least-256-bits-long"</span>)
+
+<span class="c">// ---------- สร้าง ----------</span>
+claims := jwt.MapClaims{
+	<span class="s">"sub"</span>:  <span class="s">"42"</span>,
+	<span class="s">"name"</span>: <span class="s">"somchai"</span>,
+	<span class="s">"role"</span>: <span class="s">"admin"</span>,
+	<span class="s">"iat"</span>:  time.<span class="f">Now</span>().<span class="f">Unix</span>(),
+	<span class="s">"exp"</span>:  time.<span class="f">Now</span>().<span class="f">Add</span>(time.Hour).<span class="f">Unix</span>(),   <span class="c">// ต้องใส่เอง! ดูกล่องเตือน</span>
+}
+token, err := jwt.<span class="f">NewWithClaims</span>(jwt.SigningMethodHS256, claims).<span class="f">SignedString</span>(secret)
+
+<span class="c">// ---------- ตรวจ ----------</span>
+tok, err := jwt.<span class="f">Parse</span>(token,
+	<span class="k">func</span>(t *jwt.Token) (<span class="k">any</span>, <span class="k">error</span>) { <span class="k">return</span> secret, <span class="k">nil</span> },
+	<span class="c">// algorithm confusion = attacker สลับ alg ใน header ให้เราหยิบ "คีย์ผิดประเภท" ไปตรวจ (ดูท้ายหัวข้อ)</span>
+	jwt.<span class="f">WithValidMethods</span>([]<span class="k">string</span>{<span class="s">"HS256"</span>}),   <span class="c">// กัน algorithm confusion</span>
+	jwt.<span class="f">WithExpirationRequired</span>(),                 <span class="c">// บังคับว่าต้องมี exp</span>
+)</code></pre>
+
+<pre><code>=== 3) สร้าง JWT เอง (HS256) ===
+token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODczNzE5MjUsImlhdCI6MTc4NzM2ODMyNSwibmFtZSI6InNvbWNoYWkiLCJyb2xlIjoiYWRtaW4iLCJzdWIiOiI0MiJ9.MTGaDfheYUXIvMe-j3oO8iTOvdgRPLaizc0cHV_ybEQ
+len   = 185 byte
+
+--- 3b) parse กลับ + verify ---
+OK  valid=true claims=map[exp:1.787371925e+09 iat:1.787368325e+09 name:somchai role:admin sub:42]</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ <code>MapClaims</code> decode ตัวเลขเป็น <code>float64</code> เสมอ</span>
+  <p style="margin-bottom:0">เห็น <code>exp:1.787371925e+09</code> ไหม — นั่นคือ <code>float64</code>
+  ไม่ใช่ <code>int</code> · เขียน <code>claims["sub"].(int)</code> หรือ <code>.(int64)</code>
+  จะ <strong>panic</strong> · ต้อง <code>.(float64)</code> แล้วค่อยแปลง หรือใช้ custom claims struct</p>
+</div>
+
+<h3>error จริงของทุกเคส</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เคส</th><th><code>err</code> ที่ได้จริง</th></tr></thead>
+  <tbody>
+    <tr><td>token หมดอายุ (<code>exp</code> ผ่านไปแล้ว)</td><td><code>token has invalid claims: token is expired</code></td></tr>
+    <tr><td>signature ผิด (แก้ตัวอักษรเดียว)</td><td><code>token signature is invalid: signature is invalid</code></td></tr>
+    <tr><td>alg ไม่ตรง (token=HS256 ยอมรับแค่ RS256)</td><td><code>token signature is invalid: signing method HS256 is invalid</code></td></tr>
+    <tr><td><code>alg=none</code> + <code>WithValidMethods([HS256])</code></td><td><code>token signature is invalid: signing method none is invalid</code></td></tr>
+    <tr><td><code>alg=none</code> + <strong>ไม่มี</strong> <code>WithValidMethods</code></td><td><code>token signature is invalid: token is unverifiable: 'none' signature type is not allowed</code></td></tr>
+    <tr><td>ไม่มี <code>exp</code> + <code>WithExpirationRequired()</code></td><td><code>token has invalid claims: token is missing required claim: exp claim is required</code></td></tr>
+    <tr><td>ไม่มี <code>exp</code> เฉย ๆ (default)</td><td><code>&lt;nil&gt;</code> — <strong>ผ่าน!</strong> ดูกล่องเตือน</td></tr>
+    <tr><td><code>nbf</code> อยู่ในอนาคต</td><td><code>token has invalid claims: token is not valid yet</code></td></tr>
+    <tr><td><code>aud</code> ไม่ตรง</td><td><code>token has invalid claims: token has invalid audience</code></td></tr>
+    <tr><td><code>WithIssuer()</code> แต่ token ไม่มี <code>iss</code></td><td><code>token has invalid claims: token is missing required claim: iss claim is required</code></td></tr>
+    <tr><td>token มี 2 ส่วน / เป็นข้อความมั่ว / ว่างเปล่า</td><td><code>token is malformed: token contains an invalid number of segments</code> (เหมือนกันทั้งสามเคส)</td></tr>
+    <tr><td>algorithm confusion RS256→HS256 (ไม่มี <code>WithValidMethods</code>)</td><td><code>token signature is invalid: key is of invalid type: HMAC verify expects []byte</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ token ที่ไม่มี <code>exp</code> = token ตลอดชีพ</span>
+<pre><code>token ไม่มี exp เลย (default)                        err = &lt;nil&gt;
+token ไม่มี exp + WithExpirationRequired()           err = token has invalid claims: token is missing required claim: exp claim is required</code></pre>
+  <p style="margin-bottom:0">คำพูดที่ว่า “JWT ดีกว่า Basic Auth เพราะมีวันหมดอายุ” จริง<strong>ก็ต่อเมื่อ</strong>
+  เราใส่ <code>exp</code> เองตอนเซ็น · <code>golang-jwt/v5</code> ไม่ได้ใส่ให้ และไม่บ่นถ้าไม่มี ·
+  ฝั่งตรวจควรใส่ <code>jwt.WithExpirationRequired()</code> เสมอ</p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong><code>WithLeeway</code> เป็นดาบสองคม</strong> —
+  default leeway = 0 · ใส่ <code>jwt.WithLeeway(60*time.Second)</code> แล้ว token ที่หมดอายุไป 20 วินาที
+  จะ<strong>ผ่าน</strong> (<code>err=&lt;nil&gt;</code>) · มีไว้เผื่อนาฬิกาสองเครื่องคลาดกัน
+  แต่ก็แปลว่าเราตั้งใจยอมรับ token ที่หมดอายุแล้ว</p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong><code>ErrSignatureInvalid</code> กับ
+  <code>ErrTokenSignatureInvalid</code> ไม่เหมือนกัน</strong> —<br>
+  เคส signature ผิด: <code>errors.Is</code> เป็น <code>true</code> ทั้งคู่<br>
+  เคส alg ไม่ตรง: <code>ErrSignatureInvalid</code> = <code>false</code> แต่
+  <code>ErrTokenSignatureInvalid</code> = <code>true</code><br>
+  จะเช็คด้วย <code>errors.Is</code> ให้ใช้ <code>jwt.ErrTokenSignatureInvalid</code> ตัวที่ครอบคลุมกว่า</p>
+</div>
+
+<h3><code>alg=none</code> ทะลุได้จริงไหม</h3>
+
+<pre><code>evil token = eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJyb2xlIjoiYWRtaW4iLCJzdWIiOiI0MiJ9.
+
+A) มี WithValidMethods([HS256]) -&gt; err = token signature is invalid: signing method none is invalid
+B) ไม่มี WithValidMethods       -&gt; err = token signature is invalid: token is unverifiable: 'none' signature type is not allowed
+C) keyfunc คืน UnsafeAllowNoneSignatureType -&gt; err = &lt;nil&gt;      <span class="c">← ทะลุ!</span>
+D) ยกระดับ user เป็น admin ผ่าน alg=none -&gt; err = token signature is invalid: token is unverifiable: 'none' signature type is not allowed  valid = false</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0"><code>golang-jwt/v5</code> <strong>บล็อก <code>alg=none</code>
+  ให้ตั้งแต่ค่าเริ่มต้น</strong>แม้ไม่ใส่ <code>WithValidMethods</code> (เคส B) ·
+  ทางเดียวที่ทะลุคือ dev เขียน keyfunc คืน <code>jwt.UnsafeAllowNoneSignatureType</code> เอง (เคส C)<br>
+  ดังนั้นเหตุผลจริงที่ต้องใส่ <code>WithValidMethods</code> คือ
+  <strong>กัน algorithm confusion + ให้ error ชัด</strong> ไม่ใช่ “กัน alg=none”</p>
+</div>
+
+<pre><code><span class="c">// algorithm confusion: attacker เอา RSA public key (ที่เปิดเผยอยู่แล้ว) มาเซ็นแบบ HS256</span>
+attacker เซ็น HS256 ด้วย public key: err=&lt;nil&gt;
+A) ไม่มี WithValidMethods    -&gt; err = token signature is invalid: key is of invalid type: HMAC verify expects []byte
+B) มี WithValidMethods([RS256]) -&gt; err = token signature is invalid: signing method HS256 is invalid</code></pre>
+
+<p>เคส A รอดเพราะ <strong>type ไม่ match โดยบังเอิญ</strong> ไม่ใช่เพราะมันเช็ค alg —
+ถ้า keyfunc คืน <code>[]byte</code> ตอนไหนก็ทะลุ · เคส B กันแบบ<strong>ตั้งใจ</strong> ·
+ใส่ <code>WithValidMethods</code> เสมอ</p>
+
+<h3>Basic Auth vs JWT — ทำไมถึงย้าย</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Basic Auth</th><th>JWT</th></tr></thead>
+  <tbody>
+    <tr><td>header ที่ส่ง</td><td><code>Authorization: Basic c29tY2hhaTpwQHNzdzByZA==</code></td><td><code>Authorization: Bearer eyJhbGci…</code></td></tr>
+    <tr><td>ข้างในมีอะไร</td><td><code>somchai:p@ssw0rd</code> — <strong>รหัสผ่านจริง</strong></td><td><code>{"sub":…,"exp":…,"role":…}</code> — ไม่มีรหัสผ่าน</td></tr>
+    <tr><td>ส่งบ่อยแค่ไหน</td><td><strong>ทุก request</strong> (header เดิมเป๊ะ)</td><td>ทุก request เหมือนกัน</td></tr>
+    <tr><td>decode ได้โดยไม่มี key</td><td>ได้ (base64 เฉย ๆ)</td><td>ได้ (base64url เฉย ๆ)</td></tr>
+    <tr><td>มีวันหมดอายุ</td><td><strong>ไม่มีที่ให้ใส่</strong></td><td>มี — <strong>ถ้าเราใส่ <code>exp</code> เอง</strong></td></tr>
+    <tr><td>มี role / claims</td><td>ไม่มี</td><td>มี</td></tr>
+    <tr><td>ต้องถาม DB ทุก request</td><td>ต้อง</td><td>ไม่ต้อง (signature บอกว่าเชื่อได้)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>$ <span class="c"># ยิง 3 ครั้ง — header ตัวเดิมเป๊ะทุกครั้ง</span>
+[server] GET /foods  Authorization: "Basic c29tY2hhaTpwQHNzdzByZA=="
+[server] r.BasicAuth() -&gt; user="somchai" pass="p@ssw0rd" ok=true
+
+$ <span class="c"># decode กลับได้ทันทีโดยไม่ต้องมี key</span>
+somchai:p@ssw0rd</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ <code>r.BasicAuth()</code> คืน <code>ok=true</code> ทั้งที่รหัสผิด</span>
+<pre><code>$ <span class="c"># ยิงด้วยรหัสผิด</span>
+[server] GET /foods  Authorization: "Basic c29tY2hhaTp3cm9uZw=="
+[server] r.BasicAuth() -&gt; user="somchai" pass="wrong" ok=true</code></pre>
+  <p style="margin-bottom:0"><code>ok</code> แปลว่า <strong>“แกะ header สำเร็จ”</strong>
+  ไม่ใช่ “รหัสถูก” · เขียน <code>if ok { ให้ผ่าน }</code> คือ<strong>ช่องโหว่เต็ม ๆ</strong>
+  ต้องเทียบ user/pass เองเสมอ (และควรใช้ <code>subtle.ConstantTimeCompare</code>)</p>
+</div>
+
+<h3>ราคาที่จ่าย — JWT ใหญ่กว่า session id มาก</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>แบบ</th><th>byte</th><th>เทียบ session hex</th></tr></thead>
+  <tbody>
+    <tr><td>JWT minimal (<code>sub</code>+<code>exp</code>)</td><td>120</td><td>3.8 เท่า</td></tr>
+    <tr><td>JWT typical (6 claims)</td><td>225</td><td><strong>7.0 เท่า</strong></td></tr>
+    <tr><td>JWT fat (roles + permissions + ชื่อไทย)</td><td>553</td><td><strong>17.3 เท่า</strong></td></tr>
+    <tr><td>session id 128-bit hex</td><td>32</td><td>—</td></tr>
+    <tr><td>session id 256-bit base64url</td><td>43</td><td>1.3 เท่า</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>header ที่ส่งจริง Authorization: Bearer &lt;typical&gt; = 247 byte
+header ที่ส่งจริง Cookie: sid=&lt;hex&gt;              = 44 byte
+
+ถ้ามี 1000 request: fat JWT กินแบนด์วิดท์ขาขึ้นเพิ่ม 521000 byte เทียบ session</code></pre>
+
+<p>fat JWT บวมเพราะ claims เยอะ แล้ว <strong>ชื่อไทยยิ่งแพงกว่าชื่ออังกฤษ ~4 เท่าต่อตัวอักษร</strong> —
+ภาษาไทยเป็น UTF-8 <strong>ตัวละ 3 byte</strong> แล้ว base64 ขยายอีก <code>×4/3</code>
+กลายเป็น<strong>ตัวละ 4 byte ใน token</strong> · อย่ายัด permission ทั้งชุดลง token</p>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong><code>encoding/json</code> ของ Go <em>ไม่</em> escape ภาษาไทยเป็น
+  <code>\uXXXX</code></strong> — ต่างจาก <code>json.dumps</code> ของ Python ที่ <code>ensure_ascii=True</code>
+  เป็นค่าเริ่มต้น · ตรวจแล้วกับ <code>golang-jwt/jwt/v5 v5.3.1</code>:</p>
+<pre><code>json.Marshal -&gt; {"name":"สมชาย ใจดี"}   len: 39 byte
+มี \u escape ไหม: false
+payload ที่ decode กลับจาก token: {"exp":…,"name":"สมชาย ใจดี","permissions":[…],…}
+"สมชาย ใจดี" = 10 rune · 28 byte (UTF-8) · base64url แล้ว 38 byte</code></pre>
+</div>
+
+<h3>Swagger — บอก Swagger UI ว่ามีช่องใส่ token</h3>
+
+<pre><code><span class="c">// @securityDefinitions.apikey	BearerAuth</span>
+<span class="c">// @in							header</span>
+<span class="c">// @name						Authorization</span>
+<span class="c">// @description				ใส่ค่าเป็น "Bearer {token}"</span></code></pre>
+
+<pre><code>=== securityDefinitions ที่ได้จริง (swag v1.16.4) ===
+{
+  "BearerAuth": {
+    "description": "ใส่ค่าเป็น \"Bearer {token}\"",
+    "type": "apiKey",
+    "name": "Authorization",
+    "in": "header"
+  }
+}
+--- security ระดับ endpoint ---
+[ { "BearerAuth": [] } ]
+--- swagger version --- 2.0</code></pre>
+
+<p><code>swag</code> v1 ออก Swagger <strong>2.0</strong> ซึ่ง<strong>ไม่มี</strong>
+<code>type: http</code> / <code>scheme: bearer</code> — จึงต้องใช้ <code>apiKey</code>
+และผู้ใช้ต้อง<strong>พิมพ์คำว่า <code>Bearer </code> นำหน้าเอง</strong>ในช่อง Authorize ·
+รายละเอียด annotation ครบชุดอยู่ที่ <a href="../../day-8/lessons/0041-swagger-swaggo.html">บทเรียน 41</a></p>
+
+<h2 id="oauth">10 · OAuth 2.0 — ตัวละคร 4 ตัว + Authorization Code Grant</h2>
+
+<p><strong>OAuth 2.0</strong> คือ framework สำหรับ <strong>มอบสิทธิ์แบบจำกัดขอบเขต</strong>
+(delegated authorization) — ให้แอปหนึ่งทำอะไรบางอย่างแทนเราได้
+<strong>โดยไม่ต้องบอกรหัสผ่านของเราให้มันรู้</strong></p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ตัวละคร</th><th>ศัพท์ทางการ</th><th>ในภาพของ Wongnok คือใคร</th><th>ถืออะไรไว้</th></tr></thead>
+  <tbody>
+    <tr><td>ผู้ใช้</td><td>Resource Owner</td><td>คนที่นั่งอยู่หน้าจอ</td><td>รหัสผ่านของตัวเอง</td></tr>
+    <tr><td>แอปของเรา</td><td>Client</td><td>wongnok API (Go/Gin)</td><td><code>client_id</code> + <code>client_secret</code></td></tr>
+    <tr><td>คนออก token</td><td>Authorization Server</td><td>Keycloak</td><td>ฐานผู้ใช้ · หน้า login · private key ที่ใช้เซ็น</td></tr>
+    <tr><td>คนถือของ</td><td>Resource Server</td><td>API ที่มีข้อมูลจริง (บางทีก็คือ wongnok API เอง)</td><td>ข้อมูล + public key ไว้ตรวจ token</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Authorization Code Grant — 8 ขั้น</h3>
+
+<div class="diagram">User  = ผู้ใช้ (Resource Owner)        AuthSrv = Keycloak (Authorization Server)
+App   = wongnok API (Client)          ResSrv  = API ที่มีข้อมูลจริง (Resource Server)
+
+User  --&gt;  App       1. กดปุ่ม Login
+User  &lt;--  App       2. 302 Redirect ไปหน้า Login ของ Auth Server
+User  --&gt;  AuthSrv   3. กรอก username / password ที่ Auth Server
+                     ***  password ไม่เคยผ่าน App ของเราเลย  ***
+App   &lt;--  AuthSrv   4. Redirect กลับพร้อม authorization code
+App   --&gt;  AuthSrv   5. ส่ง code + client_secret แลก token
+                     ***  ทำที่ backend แบบ server-to-server  ***
+App   &lt;--  AuthSrv   6. คืน access_token (+ refresh_token)
+App   --&gt;  ResSrv    7. เรียก API พร้อม Bearer token
+App   &lt;--  ResSrv    8. ตรวจสอบ token แล้วตอบข้อมูลกลับ</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ขั้น</th><th>เกิดอะไร</th><th>ทำไมต้องมีขั้นนี้</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>ผู้ใช้กดปุ่ม Login ในแอปเรา</td><td>จุดเริ่ม — แอปยังไม่รู้ว่าเขาเป็นใคร</td></tr>
+    <tr><td>2</td><td>แอปตอบ redirect ไปหน้า login ของ Auth Server</td><td>หน้ากรอกรหัสต้องเป็นของ Auth Server เท่านั้น</td></tr>
+    <tr><td>3</td><td>ผู้ใช้กรอก username/password <strong>ที่ Auth Server</strong></td><td><strong>รหัสผ่านไม่เคยผ่านแอปของเราเลย</strong> — หัวใจของ OAuth</td></tr>
+    <tr><td>4</td><td>Auth Server redirect กลับ พร้อม <code>authorization code</code></td><td>code เป็นแค่ “คูปอง” ใช้ครั้งเดียว อายุสั้น ไม่ใช่ token</td></tr>
+    <tr><td>5</td><td>แอปส่ง <code>code</code> + <code>client_secret</code> ไปแลก token</td><td>ทำที่ <strong>backend</strong> — เบราว์เซอร์ไม่มีทางเห็น <code>client_secret</code></td></tr>
+    <tr><td>6</td><td>Auth Server คืน <code>access_token</code> (+ <code>refresh_token</code>)</td><td>ของจริงมาถึงมือแอป โดย code ที่เคยโผล่ใน URL ใช้ไม่ได้อีกแล้ว</td></tr>
+    <tr><td>7</td><td>แอปเรียก API พร้อม <code>Authorization: Bearer …</code></td><td>ใช้ token แทนรหัสผ่าน</td></tr>
+    <tr><td>8</td><td>Resource Server ตรวจ token แล้วตอบข้อมูล</td><td>ตรวจด้วย public key ได้เลย ไม่ต้องถาม Auth Server</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong>ทำไมต้องแลกสองต่อ (code ก่อน แล้วค่อย token)</strong> —
+  ขั้น 4 ค่าเดินทางผ่าน<strong>แถบที่อยู่ของเบราว์เซอร์</strong> ซึ่งเข้า access log · เข้า history ·
+  โผล่ใน <code>Referer</code> · ถ้าส่ง token ตรง ๆ ตรงนั้น token จะติดไปทุกที่<br>
+  จึงส่งแค่ “คูปองใช้ครั้งเดียว อายุสั้น” ไปก่อน แล้วเอาไปแลกของจริงที่ backend
+  ซึ่ง<strong>ต้องมี <code>client_secret</code></strong>ถึงจะแลกได้</p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ ภาพ 8 ขั้นข้างบนคือ <strong>confidential client</strong> เท่านั้น</span>
+  <p>ขั้น 5 พึ่ง <code>client_secret</code> ที่เก็บไว้ที่ backend · ถ้า client เป็น
+  <strong>public</strong> (SPA / mobile ที่ไม่มีที่ซ่อน secret) จะไม่มี <code>client_secret</code>
+  ให้ใช้เลย — ต้องใช้ <strong>PKCE</strong> แทน:</p>
+<pre><code>ขั้น 2  App สุ่ม code_verifier แล้วส่ง code_challenge = BASE64URL(SHA256(code_verifier)) ไปกับ request
+ขั้น 5  App ส่ง code + code_verifier ตัวจริง (แทน client_secret) ไปแลก token
+        Auth Server แฮชแล้วเทียบกับ code_challenge ที่จำไว้ — ไม่ตรงก็ไม่ให้ token</code></pre>
+  <p style="margin-bottom:0">Keycloak รองรับอยู่แล้ว — discovery ของตัวที่รันจริง (Keycloak 26.7.2)
+  ประกาศไว้ว่า <code>code_challenge_methods_supported = ["plain", "S256"]</code> (ใช้ <code>S256</code>) ·
+  OAuth 2.1 <strong>บังคับ PKCE กับทุก client</strong> ไม่ใช่แค่ public แล้ว</p>
+</div>
+
+<h3>โค้ด OIDC ฝั่ง Go — compile และรันจริงแล้ว</h3>
+
+<pre><code><span class="k">import</span> (
+	<span class="s">"github.com/coreos/go-oidc/v3/oidc"</span>   <span class="c">// v3.20.0</span>
+	<span class="s">"golang.org/x/oauth2"</span>                 <span class="c">// v0.36.0</span>
+)
+
+provider, err := oidc.<span class="f">NewProvider</span>(ctx, issuerURL)   <span class="c">// อ่าน discovery ให้เอง</span>
+
+conf := &amp;oauth2.Config{
+	ClientID:     clientID,
+	ClientSecret: clientSecret,
+	Endpoint:     provider.<span class="f">Endpoint</span>(),                 <span class="c">// ไม่ต้อง hardcode URL</span>
+	RedirectURL:  <span class="s">"http://localhost:8080/auth/callback"</span>,
+	Scopes:       []<span class="k">string</span>{oidc.ScopeOpenID, <span class="s">"profile"</span>, <span class="s">"email"</span>},
+}
+
+<span class="c">// ขั้น 2</span>
+url := conf.<span class="f">AuthCodeURL</span>(state)
+
+<span class="c">// ขั้น 5-6</span>
+tok, err := conf.<span class="f">Exchange</span>(ctx, code)
+
+<span class="c">// id_token ไม่ได้อยู่ใน tok.AccessToken — ต้องดึงแยก</span>
+rawIDToken, ok := tok.<span class="f">Extra</span>(<span class="s">"id_token"</span>).(<span class="k">string</span>)
+
+verifier := provider.<span class="f">Verifier</span>(&amp;oidc.Config{ClientID: clientID})
+idToken, err := verifier.<span class="f">Verify</span>(ctx, rawIDToken)
+<span class="k">var</span> claims <span class="k">struct</span> {
+	Email             <span class="k">string</span> `json:"email"`
+	PreferredUsername <span class="k">string</span> `json:"preferred_username"`
+}
+err = idToken.<span class="f">Claims</span>(&amp;claims)</code></pre>
+
+<pre><code>$ go build ./... ; go vet ./...
+BUILD_EXIT=0
+VET_EXIT=0
+
+$ go run ./cmd/probe      <span class="c"># ยิง issuer จริง (Google) ไม่ใช่แค่ compile</span>
+AuthURL  = https://accounts.google.com/o/oauth2/v2/auth
+TokenURL = https://oauth2.googleapis.com/token
+AuthCodeURL = https://accounts.google.com/o/oauth2/v2/auth?client_id=my-client-id&amp;redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fauth%2Fcallback&amp;response_type=code&amp;scope=openid+profile+email&amp;state=state-abc123
+Verify(ขยะ) ERROR = oidc: malformed jwt: go-jose/go-jose: compact JWS format must have three parts</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ลากอะไรมาด้วยจริง (module เปล่า · go1.26.5)</th></tr></thead>
+  <tbody>
+    <tr><td><code>go get golang.org/x/oauth2@v0.36.0</code></td><td><code>go: added golang.org/x/oauth2 v0.36.0</code> — <strong>บรรทัดเดียว</strong></td></tr>
+    <tr><td><code>go get github.com/coreos/go-oidc/v3@v3.20.0</code></td><td><code>go: added github.com/coreos/go-oidc/v3 v3.20.0</code> — <strong>บรรทัดเดียว</strong> เหมือนกัน</td></tr>
+    <tr><td><code>go mod tidy</code> หลังเขียนโค้ดที่ <code>import</code> ทั้งสองตัวแล้ว</td><td>ถึงจะโผล่ <code>github.com/go-jose/go-jose/v4 v4.1.4 // indirect</code> เข้ามาใน <code>go.mod</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong><code>cloud.google.com/go/compute/metadata</code>
+  จะ<em>ไม่</em>โผล่ในโปรเจกต์เรา</strong> — มันอยู่ใน <code>go.mod</code> ของ <code>oauth2</code> เอง
+  แต่ถูกใช้แค่ในแพ็กเกจย่อย <code>golang.org/x/oauth2/google</code> ·
+  ตราบใดที่ไม่ได้ <code>import</code> แพ็กเกจนั้น <strong>module graph pruning</strong> จะตัดทิ้ง ·
+  ตรวจแล้วกับ module เปล่า: <code>grep cloud.google.com go.sum</code> ได้ <strong>0 บรรทัด</strong><br>
+  <strong>ข้อคิด:</strong> <code>go get</code> เฉย ๆ ไม่ได้บอกความจริงทั้งหมด — ดู <code>go.mod</code>
+  หลัง <code>go mod tidy</code> ที่มีโค้ดจริงแล้วเท่านั้น</p>
+</div>
+
+<h2 id="keycloak">11 · Keycloak — compose · endpoint · components</h2>
+
+<p><strong>Keycloak</strong> คือ Authorization Server แบบ open source ที่เรารันเองได้ —
+ทำหน้าที่เก็บผู้ใช้ · แสดงหน้า login · ออก token · ปิด session ให้เรา
+โดยที่เรา<strong>ไม่ต้องเขียนระบบเก็บรหัสผ่านเอง</strong></p>
+
+<h3><code>compose.yml</code></h3>
+
+<pre><code>services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7
+    container_name: wongnok-keycloak
+    restart: always
+    command: [<span class="s">"start-dev"</span>, <span class="s">"--import-realm"</span>]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_STRICT: <span class="s">"false"</span>
+      KC_HTTP_ENABLED: <span class="s">"true"</span>
+    ports:
+      - <span class="s">"8081:8080"</span>
+    volumes:
+      <span class="c"># เก็บข้อมูลของ embedded database ไว้</span>
+      - wongnok-keycloak-data:/opt/keycloak/data
+
+<span class="c"># ← บล็อกนี้ขาดไม่ได้ ไม่งั้น compose จะบอกว่า volume undefined</span>
+volumes:
+  wongnok-keycloak-data:</code></pre>
+
+<pre><code>$ docker-compose up -d
+ Image quay.io/keycloak/keycloak:26.7 Pulled
+ Network kc_default Created
+ Volume kc_wongnok-keycloak-data Created
+ Container wongnok-keycloak Created
+ Container wongnok-keycloak Started
+
+$ <span class="c"># รอจน ready</span>
+READY after ~4s (HTTP 200)
+
+$ docker logs wongnok-keycloak | tail
+2026-08-22 03:13:34,745 INFO  [org.keycloak.services] (main) KC-SERVICES0077: Created temporary admin user with username admin
+2026-08-22 03:13:34,883 INFO  [io.quarkus] (main) Keycloak 26.7.2 on JVM (powered by Quarkus 3.33.3.1) started in 5.582s. Listening on: http://0.0.0.0:8080</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัดใน compose</th><th>ทำอะไรจริง ๆ</th></tr></thead>
+  <tbody>
+    <tr><td><code>image: …:26.7</code></td><td>tag นี้มีจริง มี arm64 ด้วย และเป็น floating tag ที่ตอนนี้ชี้ไป <strong>26.7.2</strong></td></tr>
+    <tr><td><code>start-dev</code></td><td>โหมด dev — ใช้ H2 ไฟล์เดียวใน <code>/opt/keycloak/data/h2</code></td></tr>
+    <tr><td><code>--import-realm</code></td><td><strong>ไม่ทำอะไรเลย</strong> ถ้าไม่มีไฟล์ realm json อยู่ใน <code>/opt/keycloak/data/import</code> — และไม่ error ด้วย</td></tr>
+    <tr><td><code>KC_BOOTSTRAP_ADMIN_*</code></td><td>สร้าง temporary admin user ให้ตอน start</td></tr>
+    <tr><td><code>KC_HOSTNAME: localhost</code></td><td>บอกว่า URL ที่ Keycloak จะประกาศออกไปคืออะไร</td></tr>
+    <tr><td><code>KC_HOSTNAME_STRICT: "false"</code></td><td><strong>no-op</strong> เมื่อตั้ง <code>KC_HOSTNAME</code> แล้ว — ดูกล่องข้างล่าง</td></tr>
+    <tr><td><code>8081:8080</code></td><td>ข้างนอก 8081 · ข้างใน 8080 (เลี่ยงชนกับ API ของเราที่ 8080)</td></tr>
+    <tr><td><code>wongnok-keycloak-data:/opt/keycloak/data</code></td><td>ทำให้ realm/user/group/role <strong>รอด restart</strong> จริง — ทดสอบแล้ว</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ สามจุดที่ compose ในสไลด์ทำให้เข้าใจผิด</span>
+<pre><code>$ docker logs wongnok-keycloak | head -20
+2026-08-22 03:13:30,102 INFO  [org.keycloak.url.HostnameV2ProviderFactory] (main) If hostname is specified, hostname-strict is effectively ignored
+
+$ docker logs wongnok-keycloak 2&gt;&amp;1 | grep -i -E <span class="s">"import|realm"</span>
+2026-08-22 03:13:34,071 INFO  [org.keycloak.services] (main) KC-SERVICES0050: Initializing master realm
+<span class="c"># ← ไม่มีบรรทัด import สักบรรทัด</span></code></pre>
+  <p style="margin-bottom:0">① <code>KC_HOSTNAME_STRICT</code> ถูกเมิน — Keycloak พิมพ์บอกเองในล็อก<br>
+  ② <code>--import-realm</code> เงียบ ๆ ไม่ทำอะไร เพราะไม่มีอะไร mount เข้า
+  <code>/opt/keycloak/data/import</code><br>
+  ③ ถ้าลอก compose มาแค่ส่วน <code>services:</code> จะ error ตั้งแต่ยังไม่ทันขึ้น —
+  <code>service "keycloak" refers to undefined volume wongnok-keycloak-data: invalid compose project</code>
+  (ตัดบล็อก <code>volumes:</code> ออกแล้วรัน <code>docker-compose up -d</code> จริง · exit code 1)
+  — ต้องมี top-level <code>volumes:</code> ด้วย<br>
+  และล็อกยังเตือนเองว่า “Running the server in development mode. DO NOT use this configuration
+  in production.” — <code>start-dev</code> คือของ dev เท่านั้น</p>
+</div>
+
+<h3>endpoint สำคัญ — จาก OIDC discovery</h3>
+
+<p class="meta">ศัพท์ที่โผล่ใน URL ก่อนจะถูกอธิบายเต็ม ๆ ในหัวข้อย่อยถัดไป:
+<strong><code>realm</code> = พื้นที่แยกอิสระของแต่ละโปรเจกต์</strong> (user/client/role ไม่ปนข้าม realm) ·
+<strong><code>master</code> คือ realm ที่ Keycloak สร้างให้เองตอน start</strong> —
+ของจริงเราจะสร้าง realm ชื่อ <code>wongnok</code> แยกออกมา ไม่ใช้ <code>master</code> ทำงาน</p>
+
+<pre><code>$ curl -s http://localhost:8081/realms/master/.well-known/openid-configuration</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>field</th><th>ค่าจริง (realm <code>master</code>)</th><th>ใช้ตอนไหน</th></tr></thead>
+  <tbody>
+    <tr><td><code>issuer</code></td><td><code>http://localhost:8081/realms/master</code></td><td>ตรวจ <code>iss</code> ใน token</td></tr>
+    <tr><td><code>authorization_endpoint</code></td><td><code>…/protocol/openid-connect/auth</code></td><td>ขั้น 2 — พาผู้ใช้ไปหน้า login</td></tr>
+    <tr><td><code>token_endpoint</code></td><td><code>…/protocol/openid-connect/token</code></td><td>ขั้น 5 — แลก code เป็น token · และ refresh</td></tr>
+    <tr><td><code>jwks_uri</code></td><td><code>…/protocol/openid-connect/certs</code></td><td>ดึง public key มา verify token</td></tr>
+    <tr><td><code>end_session_endpoint</code></td><td><code>…/protocol/openid-connect/logout</code></td><td>logout</td></tr>
+    <tr><td><code>userinfo_endpoint</code></td><td><code>…/protocol/openid-connect/userinfo</code></td><td>ถามข้อมูลผู้ใช้เพิ่ม</td></tr>
+    <tr><td><code>introspection_endpoint</code></td><td><code>…/protocol/openid-connect/token/introspect</code></td><td>ถาม Keycloak ตรง ๆ ว่า token ยังใช้ได้ไหม</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>grant_types_supported = ["authorization_code", "client_credentials", "implicit", "password",
+  "refresh_token", "urn:ietf:params:oauth:grant-type:device_code",
+  "urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:token-exchange",
+  "urn:ietf:params:oauth:grant-type:uma-ticket", "urn:openid:params:grant-type:ciba"]
+response_types_supported = ["code", "none", "id_token", "token", "id_token token",
+  "code id_token", "code token", "code id_token token"]</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong><code>issuer</code> มี <code>:8081</code> ติดมาด้วย</strong>
+  เพราะ Keycloak เติม port จาก request · เอาไปตรวจ <code>iss</code> ต้องใส่ port ให้ตรงเป๊ะ
+  ไม่งั้น validate ไม่ผ่านแบบหาสาเหตุยาก</p>
+</div>
+
+<h3>components — ของสี่อย่างที่ต้องรู้จัก</h3>
+
+<div class="diagram">Realm: wongnok        พื้นที่แยกอิสระของแต่ละโปรเจกต์ — user/client/role ไม่ปนข้าม realm
+   │
+   ├── Clients        แอปที่ลงทะเบียนไว้ใช้ auth · มี client_id / client_secret · เช่น wongnok-api
+   │                  Client scope = ชุด claims ที่จะแนบไปกับ token
+   │
+   ├── Users          บัญชีผู้ใช้ในระบบ · login ด้วย username/email + password ที่ Keycloak
+   │
+   ├── Groups         รวม user เป็นกลุ่ม เช่น "admins", "chefs" · จัดสิทธิ์เป็นชุดได้ทีเดียว
+   │      │
+   │      └───────&gt;  user ที่อยู่ใน group ได้ role ของ group นั้นอัตโนมัติ
+   │                  │
+   └── Roles  &lt;───────┘  สิทธิ์ เช่น "recipe:write" · ผูกกับ Group แทนผูกกับ User ทีละคน</div>
+
+<h3>Group → Role ทำงานจริง — พิสูจน์ด้วย token</h3>
+
+<pre><code>== 3. map role recipe:write -&gt; group chefs ==   HTTP 204
+== 4. put user chef1 into group chefs ==        HTTP 204
+
+== 5a. DIRECT realm roles of chef1 ==
+['default-roles-wongnok']                       <span class="c">← ไม่เคยผูก recipe:write กับ user เลย</span>
+== 5b. COMPOSITE/effective realm roles of chef1 ==
+['default-roles-wongnok', 'offline_access', 'recipe:write', 'uma_authorization']
+== 5c. groups of chef1 ==
+['/chefs']
+
+== access_token payload AFTER group-&gt;role ==
+  "azp": "wongnok-api",
+  "preferred_username": "chef1",
+  "realm_access": { "roles": ["default-roles-wongnok", "recipe:write", "offline_access", "uma_authorization"] }</code></pre>
+
+<p>role โผล่ใน <code>realm_access.roles</code> (<strong>realm role</strong>)
+ไม่ใช่ <code>resource_access</code> — หาผิดที่แล้วจะงงว่าทำไมไม่เห็น</p>
+
+<h3>claim ที่ Keycloak ใส่มาใน <code>access_token</code></h3>
+
+<pre><code>{
+  "exp": …, "iat": 1787368445,
+  "jti": "onrtro:f1adacbf-bd71-072f-c8c8-b8a6d666cc03",
+  "iss": "http://localhost:8081/realms/wongnok",
+  "aud": "account",
+  "sub": "5da7f595-196f-44a6-8dfd-64306ce734d6",
+  "typ": "Bearer",
+  "azp": "wongnok-api",
+  "sid": "grEBoqUUX084tjH4AEFbI5aJ",
+  "acr": "1",
+  "allowed-origins": ["http://localhost:8080"],
+  "realm_access": { "roles": ["default-roles-wongnok", "offline_access", "uma_authorization"] },
+  "resource_access": { "account": { "roles": ["manage-account", "manage-account-links", "view-profile"] } },
+  "scope": "openid profile email",
+  "email_verified": true,
+  "name": "Chef One",
+  "preferred_username": "chef1",
+  "given_name": "Chef", "family_name": "One",
+  "email": "chef1@wongnok.dev"
+}</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ <code>aud</code> = <code>"account"</code> ไม่ใช่ชื่อ client</span>
+  <p style="margin-bottom:0">ใครเขียนโค้ดตรวจว่า <code>aud == "wongnok-api"</code>
+  จะ <strong>fail ทุกใบ</strong> · ตัวที่บอกว่า token ออกให้ client ไหนคือ <code>azp</code> ต่างหาก ·
+  อยากให้ <code>aud</code> เป็น client id ต้องไปเพิ่ม <strong>audience mapper</strong> เอง<br>
+  ส่วน <code>email</code> / <code>preferred_username</code> จะมีก็ต่อเมื่อขอ scope
+  <code>profile email</code> (default client scope ให้มาอยู่แล้ว)</p>
+</div>
+
+<h3>อายุ token ค่าเริ่มต้นของ 26.7</h3>
+
+<pre><code>expires_in         = 300     <span class="c"># access_token — 5 นาที</span>
+refresh_expires_in = 1800    <span class="c"># refresh_token — 30 นาที</span>
+token_type         = Bearer
+scope              = openid profile email
+
+access_token  len 1346   refresh_token len 694   id_token len 1037</code></pre>
+
+<p>ไม่ใช่ 1 ชั่วโมงตามที่หลายคนจำ · ถ้าอยากได้ token มาเทสต์เร็ว ๆ ต้องเปิด
+<code>directAccessGrantsEnabled: true</code> ที่ client ก่อนถึงจะใช้ password grant ได้</p>
+
+<h3>verify ด้วย public key อย่างเดียว — ไม่ต้องแชร์ secret</h3>
+
+<pre><code>$ curl -s http://localhost:8081/realms/wongnok/protocol/openid-connect/certs
+number of keys = 2
+{'kid': 'wyvKSfqZdLBxEgiFH8uLjDWqHbA_HNNaoo7eusbO...', 'kty': 'RSA', 'alg': 'RS256', 'use': 'sig', ...}
+{'kid': 'Mf4wHVuGfb9hhl_aZu4jyayOm94BXmiUsDX413Re...', 'kty': 'RSA', 'alg': 'RSA-OAEP', 'use': 'enc', ...}
+
+$ <span class="c"># Go stdlib ล้วน: ดึง JWKS → match kid → ประกอบ rsa.PublicKey → VerifyPKCS1v15</span>
+token header kid = wyvKSfqZdLBxEgiFH8uLjDWqHbA_HNNaoo7eusbOGF4  alg = RS256
+matched JWKS key: kid = wyvKSfqZdLBxEgiFH8uLjDWqHbA_HNNaoo7eusbOGF4 use = sig alg = RS256
+public key modulus bits = 2048  exponent = 65537
+VERIFY OK  -&gt; signature valid using ONLY the public key from jwks_uri (no client_secret used)
+tampered token correctly REJECTED: crypto/rsa: verification error</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ jwks คืน <strong>2</strong> คีย์ ไม่ใช่ 1</span>
+  <p style="margin-bottom:0">ใบ <code>use:sig</code> <code>alg:RS256</code> เอาไว้ verify ·
+  ใบ <code>use:enc</code> <code>alg:RSA-OAEP</code> เอาไว้เข้ารหัส ·
+  โค้ดที่หยิบ <code>keys[0]</code> ตรง ๆ จะ<strong>ถูกบ้างผิดบ้างแบบสุ่ม</strong> —
+  ต้อง match ด้วย <code>kid</code> จาก header ของ JWT เสมอ</p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ <code>refresh_token</code> verify ด้วย public key ไม่ได้</span>
+<pre><code>== JWT header of access_token ==
+{ "alg": "RS256", "typ": "JWT", "kid": "wyvKSfqZdLBxEgiFH8uLjDWqHbA_HNNaoo7eusbOGF4" }
+== refresh_token header ==
+{ "alg": "HS512", "typ": "JWT", "kid": "b2ffdb37-5e0e-4ae7-b420-370b9638d5b1" }</code></pre>
+  <p style="margin-bottom:0"><code>refresh_token</code> เซ็นด้วย <strong>HS512</strong>
+  ซึ่งเป็น symmetric — secret อยู่ที่ Keycloak เท่านั้น ·
+  service อื่นเอา public key ไป verify มันไม่ได้และไม่ควรทำ
+  ต้องส่งกลับให้ Keycloak แลกที่ <code>token_endpoint</code> เท่านั้น<br>
+  ประโยค “token ทุกใบ verify ด้วย public key ได้” จริงเฉพาะ
+  <code>access_token</code> กับ <code>id_token</code></p>
+</div>
+
+<h3>เลิกใช้แล้วเก็บกวาด</h3>
+
+<pre><code>$ docker-compose down -v
+ Container wongnok-keycloak Removed
+ Volume kc_wongnok-keycloak-data Removed
+ Network kc_default Removed
+
+$ <span class="c"># image ยังคาไว้ ถ้าอยากลบ</span>
+$ docker rmi quay.io/keycloak/keycloak:26.7</code></pre>
+
+<h2 id="flow">12 · flow <code>/login</code> <code>/callback</code> <code>/exchange</code> <code>/logout</code></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th>endpoint</th><th>ใครเป็นคนเรียก</th><th>เรียกยังไง</th><th>แตะ Redis ยังไง</th><th>ตอบอะไรกลับ</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><code>GET /api/v1/auth/login</code></td>
+      <td>Browser</td>
+      <td><code>window.location</code> · <strong>ห้าม AJAX</strong></td>
+      <td><code>SET oauth_state:xxx</code> TTL 300 วินาที</td>
+      <td><code>302</code> + <code>Location:</code> ไปหน้า login ของ Keycloak</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/v1/auth/callback</code></td>
+      <td>Browser (เดินตาม <code>302</code> ของ Keycloak)</td>
+      <td>ไม่มีใครสั่ง — เบราว์เซอร์เดินเองตาม redirect</td>
+      <td><code>GETDEL oauth_state:xxx</code> แล้ว <code>SET auth_ticket:yyy</code> TTL 30 วินาที</td>
+      <td><code>302</code> + <code>Location:</code> ไป <code>FRONTEND_URL/auth/success?ticket=yyy</code><br>
+      (<code>FRONTEND_URL</code> = env <strong>ของ API เราเอง</strong> ไม่ใช่ของ Keycloak — URL ของหน้าเว็บฝั่ง frontend)</td>
+    </tr>
+    <tr>
+      <td><code>POST /api/v1/auth/exchange</code></td>
+      <td>Frontend JS</td>
+      <td><code>axios.post</code> (AJAX) · body <code>{ticket}</code></td>
+      <td><code>GETDEL auth_ticket:yyy</code></td>
+      <td><code>200</code> + body <code>{accessToken, refreshToken, bearerType, expiresAt}</code></td>
+    </tr>
+    <tr>
+      <td><code>POST /api/v1/auth/logout</code></td>
+      <td>Frontend JS</td>
+      <td><code>axios.post</code> (AJAX) · body <code>{refreshToken}</code></td>
+      <td>ไม่แตะเลย</td>
+      <td><code>204 No Content</code> (body ว่าง)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำที่ต้องแยกให้ออก</th><th>หมายความว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>window.location = "…"</code></td><td><strong>สั่งเบราว์เซอร์ให้ย้ายทั้งหน้าไปที่ URL นั้น</strong> — หน้าปัจจุบันถูกทิ้ง แถบที่อยู่เปลี่ยน และ redirect ต่อ ๆ ไปเบราว์เซอร์เดินตามให้เอง</td></tr>
+    <tr><td>AJAX (<code>axios.get(…)</code>)</td><td><strong>ยิง request เบื้องหลังโดยไม่เปลี่ยนหน้า</strong> — JavaScript ได้ response กลับมาเป็นข้อมูลก้อนหนึ่ง หน้าจอไม่ขยับ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>ทำไม <code>/callback</code> ไม่คืน token ตรง ๆ แต่คืน <code>ticket</code></h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เทียบสองสิ่ง</th><th><code>ticket</code> (อยู่ใน URL)</th><th><code>accessToken</code> (อยู่ใน body ของ POST)</th></tr></thead>
+  <tbody>
+    <tr><td>เดินทางยังไง</td><td>query string ของ <code>302</code> → แถบที่อยู่</td><td>response body ของ <code>POST /exchange</code></td></tr>
+    <tr><td>เข้า access log ไหม</td><td><strong>เข้า</strong></td><td>ไม่เข้า</td></tr>
+    <tr><td>เข้า browser history ไหม</td><td><strong>เข้า</strong></td><td>ไม่เข้า</td></tr>
+    <tr><td>โผล่ใน <code>Referer</code> ไหม</td><td><strong>โผล่</strong> (สำหรับ origin เดียวกัน)</td><td>ไม่โผล่</td></tr>
+    <tr><td>อายุ</td><td><strong>30 วินาที</strong></td><td>300 วินาที (5 นาที) ตามค่า Keycloak</td></tr>
+    <tr><td>ใช้ได้กี่ครั้ง</td><td><strong>ครั้งเดียว</strong> — ถูก <code>GETDEL</code> ทันทีที่แลก</td><td>ใช้ซ้ำได้จนหมดอายุ</td></tr>
+    <tr><td>ถ้าหลุดแล้วเกิดอะไร</td><td>ผู้เก็บได้ต้องชิงใช้ให้ทันภายใน 30 วินาที <strong>และต้องชิงก่อนเจ้าของ</strong> — ซึ่งเจ้าของแลกไปแล้วตั้งแต่วินาทีแรก</td><td>เข้าถึง API ในนามผู้ใช้ได้จนกว่าจะหมดอายุ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0"><strong><code>GETDEL</code> คืออะไร</strong> — คำสั่ง Redis ที่
+  <strong>อ่านค่าและลบทิ้งในจังหวะเดียวกัน</strong> · สำคัญตรงที่มัน atomic:
+  ถ้าสอง request มาพร้อมกัน มีแค่ตัวเดียวที่ได้ค่า อีกตัวได้ค่าว่าง —
+  ทำให้ “ใช้ครั้งเดียว” เป็นจริงโดยไม่ต้องล็อกอะไรเอง</p>
+</div>
+
+<h2 id="goose">13 · goose + ตาราง <code>users</code></h2>
+
+<h3>DSN — ตัวที่ถูกต้อง กับตัวที่มีปัญหา</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>DSN</th><th>goose / pgx / lib/pq</th><th><code>psql</code> (libpq)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>postgres://postgres:Pe@devp00l@localhost:5432?database=wongnok</code><br><span class="meta">แบบที่อยู่ในสไลด์</span></td>
+      <td><strong>ผ่าน</strong> — ต่อเข้าฐาน <code>wongnok</code> ถูกต้อง</td>
+      <td><strong>พังสองต่อ</strong> — ดูข้างล่าง</td>
+    </tr>
+    <tr>
+      <td><code>postgres://postgres:Pe%40devp00l@localhost:5432/wongnok?sslmode=disable</code><br><span class="meta">แบบที่ถูก</span></td>
+      <td><strong>ผ่าน</strong></td>
+      <td><strong>ผ่าน</strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>$ <span class="c"># ฝั่ง Go ไม่พังเลย — สาม parser ให้ผลตรงกันหมด</span>
+=== DSN: postgres://postgres:Pe@devp00l@localhost:5432?database=wongnok
+  net/url.Parse  -&gt; user="postgres" password="Pe@devp00l" host="localhost:5432" rawquery="database=wongnok"
+  pgx ParseConfig-&gt; host="localhost" port=5432 user="postgres" password="Pe@devp00l" database="wongnok"
+  lib/pq ParseURL-&gt; "database='wongnok' host='localhost' password='Pe@devp00l' port='5432' user='postgres'"
+
+$ goose up
+2026/08/22 10:11:57 OK   20260822031131_create_users.sql (12.99ms)
+2026/08/22 10:11:57 goose: successfully migrated database to version: 20260822031131
+
+$ <span class="c"># ลงฐานไหน? เช็คทั้งสองฐาน</span>
+=== tables in DB 'postgres' ===   Did not find any relations.
+=== tables in DB 'wongnok' ===
+ public | goose_db_version | table | postgres
+ public | users            | table | postgres</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ DSN เดียวกันนี้พังทันทีเมื่อเอาไป <code>psql</code></span>
+<pre><code>$ psql <span class="s">"postgres://postgres:Pe@devp00l@localhost:5432/wongnok"</span> -c <span class="s">"select current_database()"</span>
+psql: error: could not translate host name "devp00l@localhost" to address: Name does not resolve
+
+$ psql <span class="s">"postgres://postgres:Pe@devp00l@localhost:5432?database=wongnok"</span> -c <span class="s">"select current_database()"</span>
+psql: error: invalid URI query parameter: "database"</code></pre>
+  <p style="margin-bottom:0">① <strong><code>@</code> ที่ไม่ encode</strong> —
+  Go ตัดที่ <code>@</code> <strong>ตัวสุดท้าย</strong> (<code>LastIndex</code>) เลยได้ password ถูก
+  แต่ libpq ตัดที่ <code>@</code> <strong>ตัวแรก</strong> host เลยกลายเป็น <code>devp00l@localhost</code>
+  → ต้องเขียน <code>%40</code> เสมอ<br>
+  ② <strong><code>?database=</code></strong> เป็นของฝั่ง Go เท่านั้น — <code>pgx</code>
+  ใช้ชื่อคีย์ว่า <code>database</code> อยู่แล้วเลยตีความได้ แต่ psql ปฏิเสธตรง ๆ
+  → ใช้ path <code>/wongnok</code> แทน<br>
+  <strong>ทั้งสองข้อกัดตอน debug</strong> เพราะเราจะก็อป DSN เดิมไปเปิด psql ดูตาราง แล้วงงว่าทำไมต่อไม่ได้
+  ทั้งที่แอปรันได้</p>
+</div>
+
+<pre><code>$ psql <span class="s">"postgres://postgres:Pe%40devp00l@localhost:5432/wongnok"</span> -c <span class="s">"select current_database()"</span>
+ current_database
+------------------
+ wongnok
+(1 row)</code></pre>
+
+<h3>คำสั่ง goose ที่ใช้จริง</h3>
+
+<pre><code><span class="c"># .env — goose CLI อ่านไฟล์นี้ให้เอง (flag -env ค่าเริ่มต้นคือ .env)</span>
+GOOSE_DRIVER=postgres
+GOOSE_DBSTRING=postgres://postgres:Pe%40devp00l@localhost:5432/wongnok?sslmode=disable
+GOOSE_MIGRATION_DIR=migrations</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ทำอะไร</th><th>ผลจริง</th></tr></thead>
+  <tbody>
+    <tr><td><code>goose create create_users sql</code></td><td>สร้างไฟล์ migration เปล่า</td><td><code>Created new file: migrations/20260822031131_create_users.sql</code></td></tr>
+    <tr><td><code>goose up</code></td><td>รัน migration ที่ยังไม่ได้รัน</td><td><code>OK … (8.73ms)</code> + <code>goose: successfully migrated database to version: …</code></td></tr>
+    <tr><td><code>goose down</code></td><td>ถอย <strong>1 ขั้น</strong></td><td><code>OK   20260822031131_create_users.sql (5.22ms)</code> — <strong>ไม่มีบรรทัด successfully</strong></td></tr>
+    <tr><td><code>goose status</code></td><td>ดูว่าอันไหนรันแล้ว/ยัง</td><td><code>Pending</code> หรือวันเวลาที่รัน</td></tr>
+    <tr><td><code>goose version</code></td><td>เลข version ปัจจุบันของฐาน</td><td><code>goose: version 20260822031131</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>$ <span class="c"># ไฟล์ที่ goose create สร้างมาให้</span>
+-- +goose Up
+SELECT 'up SQL query';
+
+-- +goose Down
+SELECT 'down SQL query';</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0"><strong>goose CLI โหลด <code>.env</code> ใน cwd ให้เอง</strong> —
+  ไม่ต้อง <code>source .env</code> ไม่ต้อง <code>export</code> ·
+  พิสูจน์โดย <code>env -u GOOSE_DRIVER -u GOOSE_DBSTRING -u GOOSE_MIGRATION_DIR goose status</code>
+  แล้วยังรันได้ พอย้าย <code>.env</code> ออกถึงพิมพ์ usage ·
+  แต่<strong>ต้องรันในโฟลเดอร์ที่มี <code>.env</code></strong></p>
+</div>
+
+<h3>migration ของตาราง <code>users</code></h3>
+
+<pre><code>-- +goose Up
+CREATE TABLE users (
+    id                 UUID PRIMARY KEY,
+    email              VARCHAR(255) NOT NULL,
+    name               VARCHAR(255),
+    bio                TEXT,
+    uid                VARCHAR(255) NOT NULL,
+    preferred_username VARCHAR(255),
+    last_signed_in_at  TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at         TIMESTAMPTZ
+);
+
+CREATE INDEX        idx_users_email      ON users (email);
+CREATE UNIQUE INDEX idx_users_uid        ON users (uid);
+CREATE INDEX        idx_users_deleted_at ON users (deleted_at);
+
+-- +goose Down
+DROP TABLE users;</code></pre>
+
+<pre><code>$ psql -U postgres -d wongnok -c <span class="s">'\d users'</span>
+                              Table "public.users"
+     Column       |           Type           | Collation | Nullable | Default
+--------------------+--------------------------+-----------+----------+---------
+ id                 | uuid                     |           | not null |
+ email              | character varying(255)   |           | not null |
+ name               | character varying(255)   |           |          |
+ bio                | text                     |           |          |
+ uid                | character varying(255)   |           | not null |
+ preferred_username | character varying(255)   |           |          |
+ last_signed_in_at  | timestamp with time zone |           |          |
+ created_at         | timestamp with time zone |           | not null | now()
+ updated_at         | timestamp with time zone |           | not null | now()
+ deleted_at         | timestamp with time zone |           |          |
+Indexes:
+    "users_pkey" PRIMARY KEY, btree (id)
+    "idx_users_deleted_at" btree (deleted_at)
+    "idx_users_email" btree (email)
+    "idx_users_uid" UNIQUE, btree (uid)</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คอลัมน์</th><th>มาจากไหน</th><th>ทำไมต้องมี</th></tr></thead>
+  <tbody>
+    <tr><td><code>uid</code></td><td><code>sub</code> ใน token ของ Keycloak</td><td>กุญแจที่<strong>ผูกผู้ใช้ในฐานเรากับผู้ใช้ใน Keycloak</strong> — จึงต้อง unique</td></tr>
+    <tr><td><code>preferred_username</code></td><td>claim ชื่อเดียวกันใน token</td><td>ชื่อที่เอาไว้แสดง</td></tr>
+    <tr><td><code>email</code> · <code>name</code></td><td>claim <code>email</code> / <code>name</code></td><td>ข้อมูลโปรไฟล์ที่ Keycloak ให้มา</td></tr>
+    <tr><td><code>last_signed_in_at</code></td><td>เราเขียนเองตอน callback</td><td>รู้ว่าใครยังใช้งานอยู่</td></tr>
+    <tr><td><code>deleted_at</code></td><td>GORM soft delete</td><td>มี index เพราะทุก query จะมี <code>WHERE deleted_at IS NULL</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>soft delete ของ GORM ทำงานยังไง</h3>
+
+<pre><code><span class="k">type</span> User <span class="k">struct</span> {
+	ID        uuid.UUID      `gorm:"type:uuid;primaryKey"`
+	DeletedAt gorm.DeletedAt `gorm:"index:idx_users_deleted_at"`
+	<span class="c">// ชนิดต้องเป็น gorm.DeletedAt เท่านั้น — *time.Time ใช้ไม่ได้</span>
+}</code></pre>
+
+<pre><code>1) Create OK, id = bae1dc16-8585-4f91-bbe6-d30160e7dbdd
+2) db.Delete() -&gt; DeletedAt.Valid = true
+3) Count() ปกติ (ถูกกรอง deleted_at IS NULL) = 0
+4) Unscoped().Count() (นับแถวที่ soft delete ด้วย) = 1</code></pre>
+
+<div class="warn">
+  <span class="label">⚠ unique index บน <code>uid</code> เฉย ๆ ชนกับ soft delete</span>
+<pre><code>INSERT 0 1
+UPDATE 1                       <span class="c"># soft delete</span>
+     uid      | soft_deleted
+--------------+--------------
+ oidc-sub-123 | t
+INSERT ...
+ERROR:  duplicate key value violates unique constraint "idx_users_uid"
+DETAIL:  Key (uid)=(oidc-sub-123) already exists.</code></pre>
+  <p>soft delete แล้วแถวยังอยู่ในตาราง unique index จึงยังกันอยู่ —
+  ผู้ใช้ที่ลบบัญชีไปแล้ว <strong>login กลับเข้ามาไม่ได้อีกเลย</strong></p>
+<pre><code>5) สมัครใหม่ uid เดิม -&gt; err = ERROR: duplicate key value violates unique constraint "idx_users_uid" (SQLSTATE 23505)
+6) FirstOrCreate      -&gt; err = ERROR: duplicate key value violates unique constraint "idx_users_uid" (SQLSTATE 23505)</code></pre>
+  <p style="margin-bottom:0"><code>FirstOrCreate</code> เจ็บกว่า — <code>First</code> หาไม่เจอ
+  (โดน scope <code>deleted_at IS NULL</code> กรอง) เลยไป <code>Create</code> แล้วชน unique
+  ของแถวที่ถูกลบ · โค้ด OIDC ชอบใช้ท่านี้พอดี</p>
+</div>
+
+<div class="win">
+  <span class="label">ทางแก้ — partial unique index</span>
+<pre><code>DROP INDEX idx_users_uid;
+CREATE UNIQUE INDEX idx_users_uid ON users (uid) WHERE deleted_at IS NULL;</code></pre>
+<pre><code>DROP INDEX
+CREATE INDEX
+INSERT 0 1
+     uid      | active
+--------------+--------
+ oidc-sub-123 | f
+ oidc-sub-123 | t
+(2 rows)
+ERROR:  duplicate key value violates unique constraint "idx_users_uid"   <span class="c"># ยังกัน uid ซ้ำในแถวที่ active</span></code></pre>
+  <p style="margin-bottom:0">ได้ทั้งสองอย่าง: สมัครใหม่หลัง soft delete ผ่าน
+  แต่ยังกัน <code>uid</code> ซ้ำในแถวที่ยัง active ·
+  ฝั่ง GORM เขียนเป็น <code>gorm:"uniqueIndex:idx_users_uid,where:deleted_at IS NULL"</code></p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠ <code>id UUID PRIMARY KEY</code> ไม่มี <code>DEFAULT</code></span>
+<pre><code>รอบแรก:
+Create โดยไม่เซ็ต ID -&gt; err=&lt;nil&gt;, id=00000000-0000-0000-0000-000000000000
+
+รอบสอง (uid ต่างกัน):
+Create โดยไม่เซ็ต ID -&gt; err=ERROR: duplicate key value violates unique constraint "users_pkey" (SQLSTATE 23505)
+
+แถวในตาราง:
+                  id                  |    uid
+--------------------------------------+-----------
+ 00000000-0000-0000-0000-000000000000 | no-id-set</code></pre>
+  <p style="margin-bottom:0">บั๊กเงียบสุดคลาสสิก — <strong>user คนแรกเข้าได้ด้วย UUID ศูนย์
+  คนที่สองถึงจะพัง</strong> · แก้ได้สองทาง: เติม <code>DEFAULT gen_random_uuid()</code>
+  ใน migration หรือเขียน <code>BeforeCreate</code> hook ใน GORM</p>
+</div>
+
+<h3>อ่าน <code>goose status</code> ให้ถูก</h3>
+
+<pre><code>$ goose status                              <span class="c"># หลัง up</span>
+    Applied At                  Migration
+    =======================================
+    Sat Aug 22 03:11:57 2026 -- 20260822031131_create_users.sql
+
+$ goose down ; goose status
+    Applied At                  Migration
+    =======================================
+    Pending                  -- 20260822031131_create_users.sql</code></pre>
+
+<p class="meta">หัวตาราง <code>Applied At / Migration</code> กับเส้น <code>====</code>
+goose พิมพ์มาให้<strong>ทุกครั้ง</strong>ที่เรียก <code>status</code> ไม่ว่าจะ pending หรือ applied ·
+และ <strong>goose ใส่ prefix วันเวลา (<code>2026/08/22 11:48:24 </code>) นำหน้า <em>ทุกบรรทัด</em>ที่มันพิมพ์</strong>
+รวมถึง <code>create</code> · <code>status</code> · <code>version</code> เหมือนบล็อก <code>goose up</code> ข้างบน —
+บล็อก <code>status</code> นี้กับตารางคำสั่งข้างบนตัด prefix ออกให้พอดีความกว้าง
+ของจริงบนเครื่องจะมีติดมาด้วยเสมอ</p>
+
+<pre><code>$ psql -c <span class="s">'select * from goose_db_version;'</span> -c <span class="s">'show timezone;'</span> ; date
+ id |   version_id   | is_applied |           tstamp
+----+----------------+------------+----------------------------
+  1 |              0 | t          | 2026-08-22 03:11:46.240423
+  3 | 20260822031131 | t          | 2026-08-22 03:14:26.155434
+(2 rows)
+
+ TimeZone
+----------
+ UTC
+
+local now:
+Sat Aug 22 10:15:38 +07 2026</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">สองเรื่องที่ทำให้คนงง:<br>
+  ① <strong>เวลาเป็น UTC</strong> — <code>tstamp</code> เป็น <code>timestamp</code> ไม่มี timezone
+  และเก็บ UTC · เพิ่งรันเสร็จแต่โชว์ย้อนหลัง 7 ชั่วโมง เป็นเรื่องปกติ ·
+  ชื่อไฟล์ที่ <code>goose create</code> ตั้งให้ก็เป็น UTC เหมือนกัน
+  (<code>20260822031131</code> = 03:11:31 UTC ไม่ใช่ 10:11 เวลาไทย)<br>
+  ② <strong><code>id</code> กระโดด 1 → 3</strong> — เพราะ <code>goose down</code>
+  <strong>ลบแถวทิ้งจริง</strong> ไม่ได้แค่ mark <code>is_applied=false</code></p>
+</div>
+
+<h2 id="traps">14 · ตารางกับดักรวมทั้งวัน</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียนแบบนี้</th><th>สิ่งที่เกิดขึ้นจริง</th><th>แก้</th></tr></thead>
+  <tbody>
+    <tr><td><code>`env:"X,required" envDefault:"y"`</code></td><td><code>required</code> <strong>ไม่มีผลเลย</strong> — ได้ default เงียบ ๆ <code>err=&lt;nil&gt;</code></td><td>เลือกอย่างใดอย่างหนึ่ง อย่าใส่คู่กัน</td></tr>
+    <tr><td><code>`env:"X,notEmpty" envDefault:"y"`</code></td><td>โดนกลบเหมือนกันเป๊ะ — ทั้งกรณีไม่ตั้ง env และตั้งเป็นค่าว่าง</td><td>เอา <code>envDefault</code> ออก</td></tr>
+    <tr><td><code>POSTGRES_DSN=</code> ใน compose (ไม่ใส่ค่า)</td><td><code>,required</code> <strong>ผ่านฉลุย</strong> — มันเช็คแค่ว่า “มีตัวแปรนี้ไหม”</td><td>ใช้ <code>,notEmpty</code> (และห้ามมี <code>envDefault</code>)</td></tr>
+    <tr><td><code>`env:"SECRET,file"`</code> ชี้ไฟล์ที่ลงท้ายด้วย newline</td><td>ได้ค่าติด <code>\n</code> มาด้วย → รหัสผ่านผิดแบบ debug ไม่เจอ</td><td><code>strings.TrimSpace</code> หลัง parse</td></tr>
+    <tr><td><code>APP_SHUTDOWN_TIMEOUT=10</code></td><td><code>unable to parse duration: time: missing unit in duration "10"</code></td><td>ใส่หน่วยเสมอ — <code>10s</code></td></tr>
+    <tr><td>ใช้ <code>cfg</code> ต่อโดยไม่เช็ค <code>err</code> จาก <code>ParseAs</code></td><td>field ที่พังได้ zero value <strong>แต่ field อื่นเติมครบ</strong> → ได้ <code>Port=0</code> ไปใช้</td><td>เช็ค <code>err</code> แล้ว <code>os.Exit(1)</code> ทันที</td></tr>
+    <tr><td>เขียนลง map ที่มาจาก env โดยไม่ตั้งค่า</td><td>ได้ <strong>nil map</strong> → <code>panic: assignment to entry in nil map</code></td><td>ใส่ <code>envDefault</code> หรือ <code>make</code> เอง</td></tr>
+    <tr><td><code>import _ ".../godotenv/autoload"</code> แล้ว <code>.env</code> พิมพ์ผิด</td><td><strong>เงียบสนิท</strong> — ไม่ panic ไม่ log <code>exit 0</code> แต่ไม่มี env จาก .env เลยสักตัว</td><td>ใช้ <code>godotenv.Load()</code> แล้วจับ <code>err</code> เอง</td></tr>
+    <tr><td><code>.env</code> มีบรรทัดพัง 1 บรรทัด</td><td><strong>all-or-nothing</strong> — บรรทัดก่อนหน้าที่ถูกต้องก็ไม่ถูก set เลย ทั้งไฟล์ถูกทิ้ง</td><td>อ่าน error ของ <code>Load()</code> ทุกครั้ง</td></tr>
+    <tr><td><code>123INVALID=x</code> หรือ <code>=novalue</code> ใน <code>.env</code></td><td><code>err=&lt;nil&gt;</code> — godotenv <strong>ไม่ validate ชื่อ key เลย</strong></td><td>ตรวจ <code>.env.example</code> ให้ตรงกับที่โค้ดอ่านจริง</td></tr>
+    <tr><td><code>P1="a$BCD"</code> ใน <code>.env</code></td><td>quote คู่ทำ variable expansion — ได้ <code>"aSURPRISE"</code> · จับเฉพาะชื่อ <code>[A-Z0-9_]+</code> (<code>PASS="a$bcd"</code> พิมพ์เล็ก <strong>รอด</strong>)</td><td>secret ที่มี <code>$</code> ใช้ quote <strong>เดี่ยว</strong></td></tr>
+    <tr><td><code>TOKEN=ab #cd</code> ใน <code>.env</code></td><td>ได้ <code>"ab"</code> — comment ท้ายบรรทัดถูกตัด · ต้องมี<strong>ช่องว่างนำหน้า</strong> <code>#</code> เท่านั้น (<code>TOKEN=ab#cd</code> ติดกันได้ <code>"ab#cd"</code> ครบ)</td><td>ใส่ quote ครอบ</td></tr>
+    <tr><td><code>TAB="a\tb"</code> ใน <code>.env</code></td><td>ได้ <code>"atb"</code> — รองรับแค่ <code>\n</code> กับ <code>\r</code></td><td>อย่าพึ่ง escape อื่นใน .env</td></tr>
+    <tr><td>รัน binary จากโฟลเดอร์อื่น</td><td><code>.env</code> หาไม่เจอ — มันหาจาก <strong>cwd</strong> ไม่ใช่ที่ตั้ง binary</td><td>รันจาก project root หรือส่ง env ตรง ๆ</td></tr>
+    <tr><td><code>validate:"oneof=dev,staging,prod"</code></td><td><strong>panic ตอน <code>Struct()</code> ครั้งแรก</strong> ไม่ใช่ตอน <code>New()</code> — โปรแกรม start ผ่านแล้วตายตอน request แรก</td><td>คั่นด้วย<strong>เว้นวรรค</strong>: <code>oneof=dev staging prod</code></td></tr>
+    <tr><td><code>validate:"gte=1"</code> บน <code>time.Duration</code></td><td>= 1 <strong>นาโนวินาที</strong> · <code>500ms</code> ผ่านฉลุย</td><td>เขียนหน่วยเสมอ — <code>gte=1s</code></td></tr>
+    <tr><td><code>validate:"required"</code> บน <code>time.Duration</code></td><td>กันได้แค่ <code>0s</code> · <code>-5s</code> <strong>ผ่านทั้ง ParseAs และ validator</strong></td><td><code>validate:"required,gt=0"</code></td></tr>
+    <tr><td><code>DB_HOST=db_server</code> + <code>validate:"hostname|ip"</code></td><td>ตก — <code>hostname</code> ไม่ยอมรับ underscore (และไม่ยอมรับ <code>host:port</code>)</td><td>ตั้งชื่อ service ด้วย <code>-</code> หรือเปลี่ยน tag</td></tr>
+    <tr><td><code>validator.New()</code> ใหม่ทุก request</td><td>ช้ากว่า singleton <strong>~72 เท่า</strong> (8638 ns vs 120.6 ns · 224 allocs vs 1)</td><td>ประกาศเป็น package-level <code>var</code> ครั้งเดียว</td></tr>
+    <tr><td><code>validator.New()</code> เปล่า ๆ + <code>required</code> บน nested struct</td><td>tag นั้น<strong>ถูกเมิน</strong> zero struct ผ่าน</td><td><code>validator.New(validator.WithRequiredStructEnabled())</code></td></tr>
+    <tr><td><code>FieldError.Value().(int64)</code> ของ Duration</td><td><strong>panic</strong> — <code>interface conversion: interface {} is time.Duration, not int64</code> · และถ้าพิมพ์ด้วย <code>%d</code>/<code>%#v</code> จะได้ <code>100000000</code> แทน <code>100ms</code></td><td>assert เป็น <code>time.Duration</code> · พิมพ์ด้วย <code>%v</code></td></tr>
+    <tr><td><code>Load()</code> คืน <code>*Config</code></td><td>ตอน error คืน <code>nil</code> — ลืมเช็ค <code>err</code> แล้ว <strong>panic</strong> · แถม handler แก้ค่าที่ validate แล้วได้</td><td>คืนเป็น value <code>Config</code></td></tr>
+    <tr><td><code>claims["sub"].(int)</code> กับ <code>jwt.MapClaims</code></td><td><strong>panic</strong> — MapClaims decode ตัวเลขเป็น <code>float64</code> เสมอ</td><td><code>.(float64)</code> หรือใช้ custom claims struct</td></tr>
+    <tr><td>เซ็น JWT โดยไม่ใส่ <code>exp</code></td><td><code>jwt.Parse</code> <strong>ผ่าน</strong> (<code>err=&lt;nil&gt;</code>) = token ตลอดชีพ</td><td>ใส่ <code>exp</code> ตอนเซ็น + <code>jwt.WithExpirationRequired()</code> ตอนตรวจ</td></tr>
+    <tr><td><code>jwt.Parse</code> โดยไม่ใส่ <code>WithValidMethods</code></td><td>กัน algorithm confusion ได้เพราะ <strong>type ไม่ match โดยบังเอิญ</strong> เท่านั้น</td><td>ใส่ <code>jwt.WithValidMethods([]string{"RS256"})</code> เสมอ</td></tr>
+    <tr><td><code>if ok { ให้ผ่าน }</code> หลัง <code>r.BasicAuth()</code></td><td><strong>ช่องโหว่</strong> — <code>ok=true</code> แม้รหัสผิด (แปลว่า “แกะ header สำเร็จ”)</td><td>เทียบ user/pass เองด้วย <code>subtle.ConstantTimeCompare</code></td></tr>
+    <tr><td>ยัด roles + permissions + ชื่อไทยลง JWT</td><td>บวมเป็น <strong>553 byte</strong> = 17.3 เท่าของ session id — และเดินทางทุก request</td><td>ใส่แค่ <code>sub</code> · <code>exp</code> · role ที่จำเป็น</td></tr>
+    <tr><td>ตรวจ <code>aud == "wongnok-api"</code> กับ token ของ Keycloak</td><td><strong>fail ทุกใบ</strong> — <code>aud</code> เป็น <code>"account"</code></td><td>ดู <code>azp</code> แทน หรือเพิ่ม audience mapper</td></tr>
+    <tr><td>หยิบ <code>keys[0]</code> จาก <code>jwks_uri</code></td><td>ถูกบ้างผิดบ้าง — มี 2 คีย์ (<code>use:sig</code> RS256 กับ <code>use:enc</code> RSA-OAEP)</td><td>match ด้วย <code>kid</code> จาก header ของ JWT</td></tr>
+    <tr><td>เอา public key ไป verify <code>refresh_token</code></td><td>ไม่ได้ — มันเซ็นด้วย <strong>HS512</strong> (symmetric)</td><td>ส่งกลับ Keycloak ที่ <code>token_endpoint</code></td></tr>
+    <tr><td>ลอก compose ของ Keycloak มาแค่ <code>services:</code></td><td>error <strong>volume undefined</strong> ตั้งแต่ยังไม่ทันขึ้น</td><td>ใส่ top-level <code>volumes:</code> ด้วย</td></tr>
+    <tr><td>เชื่อว่า <code>--import-realm</code> import อะไรให้</td><td>ไม่ทำอะไรเลยถ้าไม่มีไฟล์ใน <code>/opt/keycloak/data/import</code> — และ<strong>ไม่ error</strong></td><td>mount ไฟล์ realm json เข้าไปเอง</td></tr>
+    <tr><td><code>KC_HOSTNAME_STRICT: "false"</code> คู่กับ <code>KC_HOSTNAME</code></td><td><strong>no-op</strong> — Keycloak พิมพ์บอกเองในล็อก</td><td>ตัดออกได้ ไม่มีผลอะไร</td></tr>
+    <tr><td>DSN ที่มี <code>@</code> ไม่ encode</td><td>Go ผ่าน แต่ <code>psql</code> พัง — <code>could not translate host name "devp00l@localhost"</code></td><td>เขียน <code>%40</code></td></tr>
+    <tr><td>DSN ที่ใช้ <code>?database=wongnok</code></td><td>Go ผ่าน แต่ <code>psql</code> ปฏิเสธ — <code>invalid URI query parameter</code></td><td>ใช้ path <code>/wongnok</code></td></tr>
+    <tr><td>unique index บน <code>uid</code> เฉย ๆ + soft delete</td><td>ผู้ใช้ที่ลบบัญชี <strong>login กลับมาไม่ได้อีก</strong> · <code>FirstOrCreate</code> ก็พัง</td><td>partial index <code>… WHERE deleted_at IS NULL</code></td></tr>
+    <tr><td><code>id UUID PRIMARY KEY</code> ไม่มี <code>DEFAULT</code> + ลืมเซ็ตใน GORM</td><td>คนแรกได้ UUID ศูนย์เงียบ ๆ <strong>คนที่สองถึงพัง</strong></td><td><code>DEFAULT gen_random_uuid()</code> หรือ <code>BeforeCreate</code></td></tr>
+    <tr><td>อ่าน <code>Applied At</code> ของ goose เป็นเวลาไทย</td><td>เป็น <strong>UTC</strong> — ต่างจากเวลาไทย 7 ชั่วโมง</td><td>บวก 7 เอง หรือดูที่ <code>version_id</code> แทน</td></tr>
+    <tr><td>คาดว่า <code>exit status 1</code> เป็นข้อความของโปรแกรม</td><td><code>go run</code> พิมพ์เอง — build เป็น binary แล้วรันจะไม่มีบรรทัดนี้</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="errors">15 · ตารางแปล error / panic ที่เจอบ่อยของวันนี้</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อความ</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>env: required environment variable "MYVAR2" is not set</code></td><td><code>,required</code> ไม่เจอ env ตัวนั้น · type จริงคือ <code>env.VarIsNotSetError</code> ห่อใน <code>env.AggregateError</code></td></tr>
+    <tr><td><code>env: environment variable "NE_VAR" should not be empty</code></td><td><code>,notEmpty</code> เจอค่าว่าง · type คือ <code>env.EmptyVarError</code></td></tr>
+    <tr><td><code>env: could not load content of file "…" from variable F_VAR: open …: no such file or directory</code></td><td><code>,file</code> ชี้ไป path ที่ไม่มีจริง · type คือ <code>env.LoadFileContentError</code></td></tr>
+    <tr><td><code>env: parse error on field "AppPort" of type "int": strconv.ParseInt: parsing "abc": invalid syntax</code></td><td>ค่าใน env แปลงเป็น type ของ field ไม่ได้ · <strong>field อื่นยังถูกเติมครบ</strong></td></tr>
+    <tr><td><code>env: parse error on field "ShutdownTimeout" of type "time.Duration": unable to parse duration: time: missing unit in duration "10"</code></td><td>ลืมหน่วยของเวลา — เขียน <code>10s</code></td></tr>
+    <tr><td><code>env: parse error on field "Lvl" of type "main.LogLevel": unknown log level "VERBOSE"</code></td><td><code>UnmarshalText</code> ที่เราเขียนเองคืน error — ข้อความหลัง <code>:</code> คือของเราเอง</td></tr>
+    <tr><td>error หลายอันคั่นด้วย <code>"; "</code></td><td><code>env.AggregateError</code> — รวมทุกปัญหาไว้ในรอบเดียว ไม่ได้หยุดที่ตัวแรก</td></tr>
+    <tr><td><code>open .env: no such file or directory</code></td><td>ไม่มีไฟล์ <code>.env</code> ใน cwd · type <code>*fs.PathError</code> · <code>errors.Is(err, os.ErrNotExist)</code> = <code>true</code></td></tr>
+    <tr><td><code>unexpected character "\n" in variable name near "this line has no equals sign\nAFTER=2\n"</code></td><td><code>.env</code> มีบรรทัดที่ไม่มี <code>=</code> · <strong>ทั้งไฟล์ถูกทิ้ง</strong></td></tr>
+    <tr><td><code>unterminated quoted value "oops</code></td><td><code>.env</code> มี quote ที่ไม่ปิด · ทั้งไฟล์ถูกทิ้งเหมือนกัน</td></tr>
+    <tr><td><code>Key: 'App.Port' Error:Field validation for 'Port' failed on the 'lte' tag</code></td><td>validator: <code>App.Port</code> เกินค่าที่ <code>lte</code> กำหนด · รูปแบบนี้เป๊ะทุกช่องว่าง</td></tr>
+    <tr><td><code>panic: Undefined validation function 'staging' on field 'Env'</code></td><td>ใช้ comma ใน <code>oneof</code> · <strong>panic ตอน <code>validate.Struct()</code> ครั้งแรก</strong> ไม่ใช่ตอน <code>New()</code></td></tr>
+    <tr><td><code>token has invalid claims: token is expired</code></td><td>JWT: <code>exp</code> ผ่านไปแล้ว · <code>errors.Is(err, jwt.ErrTokenExpired)</code> = <code>true</code></td></tr>
+    <tr><td><code>token has invalid claims: token is not valid yet</code></td><td>JWT: <code>nbf</code> อยู่ในอนาคต</td></tr>
+    <tr><td><code>token has invalid claims: token has invalid audience</code></td><td>JWT: <code>aud</code> ไม่ตรงกับที่ <code>WithAudience</code> กำหนด</td></tr>
+    <tr><td><code>token has invalid claims: token is missing required claim: exp claim is required</code></td><td>ใส่ <code>WithExpirationRequired()</code> แต่ token ไม่มี <code>exp</code></td></tr>
+    <tr><td><code>token has invalid claims: token is missing required claim: iss claim is required</code></td><td><code>WithIssuer()</code> ทำให้ <code>iss</code> กลายเป็น required ไปด้วย — ไม่ใช่ “issuer ผิด”</td></tr>
+    <tr><td><code>token signature is invalid: signature is invalid</code></td><td>JWT ถูกแก้ หรือ secret ไม่ตรง · <code>ErrSignatureInvalid</code> และ <code>ErrTokenSignatureInvalid</code> เป็น <code>true</code> ทั้งคู่</td></tr>
+    <tr><td><code>token signature is invalid: signing method HS256 is invalid</code></td><td>alg ของ token ไม่อยู่ในรายการของ <code>WithValidMethods</code> · <strong><code>ErrSignatureInvalid</code> เป็น <code>false</code></strong> ในเคสนี้</td></tr>
+    <tr><td><code>token signature is invalid: token is unverifiable: 'none' signature type is not allowed</code></td><td>เจอ token <code>alg=none</code> — <code>golang-jwt/v5</code> บล็อกให้ตั้งแต่ค่าเริ่มต้น</td></tr>
+    <tr><td><code>token signature is invalid: key is of invalid type: HMAC verify expects []byte</code></td><td>algorithm confusion — keyfunc คืน <code>*rsa.PublicKey</code> แต่ token อ้างว่าเป็น HS256</td></tr>
+    <tr><td><code>token is malformed: token contains an invalid number of segments</code></td><td>token ว่าง / เป็นข้อความมั่ว / มีไม่ครบ 3 ส่วน — ทั้งสามเคสได้ข้อความเดียวกัน</td></tr>
+    <tr><td><code>oidc: malformed jwt: go-jose/go-jose: compact JWS format must have three parts</code></td><td>เหมือนข้างบน แต่มาจากฝั่ง <code>go-oidc</code> ซึ่งใช้ <code>go-jose/v4</code></td></tr>
+    <tr><td><code>psql: error: could not translate host name "devp00l@localhost" to address: Name does not resolve</code></td><td>DSN มี <code>@</code> ในรหัสผ่านที่ไม่ได้ encode — libpq ตัดที่ <code>@</code> ตัวแรก</td></tr>
+    <tr><td><code>psql: error: invalid URI query parameter: "database"</code></td><td>DSN ใช้ <code>?database=</code> ซึ่งเป็นของฝั่ง Go เท่านั้น — ใช้ path <code>/wongnok</code></td></tr>
+    <tr><td><code>ERROR: duplicate key value violates unique constraint "idx_users_uid" (SQLSTATE 23505)</code></td><td>สมัครซ้ำด้วย <code>uid</code> เดิมหลัง soft delete — แถวเก่ายังอยู่ในตาราง</td></tr>
+    <tr><td><code>ERROR: duplicate key value violates unique constraint "users_pkey" (SQLSTATE 23505)</code></td><td>ลืมเซ็ต <code>ID</code> ใน GORM — คนที่สองชนกับ UUID ศูนย์ของคนแรก</td></tr>
+    <tr><td><code>runtime error: invalid memory address or nil pointer dereference</code></td><td><code>Load()</code> คืน <code>*Config</code> เป็น <code>nil</code> ตอน error แล้วมีคนอ่านต่อโดยไม่เช็ค <code>err</code></td></tr>
+    <tr><td><code>docker: unknown command: docker compose</code></td><td>symlink ของ compose plugin ค้างไปที่ Docker Desktop ที่ถูกลบแล้ว — ใช้ <code>docker-compose</code> (มีขีด)</td></tr>
+    <tr><td><code>docker: error getting credentials - err: exec: "docker-credential-osxkeychain": executable file not found in $PATH</code></td><td>ซาก <code>credsStore</code> ใน <code>~/.docker/config.json</code></td></tr>
+    <tr><td><code>service "keycloak" refers to undefined volume wongnok-keycloak-data: invalid compose project</code></td><td>ลอก compose มาแค่ <code>services:</code> ลืม top-level <code>volumes:</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0"><span class="label">💬 ถามได้</span>เจอ error ที่ไม่มีในตารางนี้
+  ส่งข้อความเต็ม ๆ มาได้เลย เดี๋ยวรันซ้ำแล้วเพิ่มลงตาราง —
+  ทุกบรรทัดในตารางนี้มาจากของที่รันเจอจริงทั้งหมด ไม่ได้ลอกมาจากที่ไหน</p>
+</div>
+
+<nav class="nav">
+  <a href="../lessons/0045-caarlos0-env.html">← บทเรียน 45</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../lessons/0052-auth-flow-endpoints.html">บทเรียน 52 →</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://github.com/caarlos0/env">caarlos0/env</a> — README มีรายการ tag/option/type ครบ · <a href="https://pkg.go.dev/github.com/caarlos0/env/v11">pkg.go.dev</a></li>
+  <li><a href="https://github.com/joho/godotenv">joho/godotenv</a> — โดยเฉพาะ <code>godotenv.go</code> และ <code>parser.go</code> ที่หัวข้อ 4–5 อ้างถึง</li>
+  <li><a href="https://github.com/go-playground/validator">go-playground/validator</a> — รายการ <code>validate</code> tag ทั้งหมด · <a href="https://pkg.go.dev/github.com/go-playground/validator/v10">pkg.go.dev</a></li>
+  <li><a href="https://pkg.go.dev/errors#Join">pkg.go.dev — <code>errors.Join</code></a> · <a href="https://pkg.go.dev/errors#As">errors.As</a></li>
+  <li><a href="https://12factor.net/config">The Twelve-Factor App — III. Config</a> — ต้นทางของแนวคิด “config อยู่ใน environment”</li>
+  <li><a href="https://github.com/golang-jwt/jwt">golang-jwt/jwt</a> — <a href="https://pkg.go.dev/github.com/golang-jwt/jwt/v5">pkg.go.dev v5</a> · รายการ <code>Parser option</code> ทั้งหมด</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc7519">RFC 7519 — JSON Web Token (JWT)</a> · <a href="https://jwt.io/">jwt.io</a> — เครื่องมือ decode</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc6749">RFC 6749 — The OAuth 2.0 Authorization Framework</a> — นิยามตัวละคร 4 ตัวและ grant ทุกแบบ</li>
+  <li><a href="https://openid.net/specs/openid-connect-core-1_0.html">OpenID Connect Core 1.0</a> · <a href="https://github.com/coreos/go-oidc">coreos/go-oidc</a> · <a href="https://pkg.go.dev/golang.org/x/oauth2">golang.org/x/oauth2</a></li>
+  <li><a href="https://www.keycloak.org/documentation">Keycloak Documentation</a> · <a href="https://www.keycloak.org/server/containers">Running Keycloak in a container</a> · <a href="https://www.keycloak.org/server/hostname">Hostname configuration</a></li>
+  <li><a href="https://github.com/pressly/goose">pressly/goose</a> · <a href="https://gorm.io/docs/delete.html#Soft-Delete">GORM — Soft Delete</a></li>
+  <li><a href="https://www.postgresql.org/docs/16/indexes-partial.html">PostgreSQL — Partial Indexes</a> — ที่มาของทางแก้ในหัวข้อ 13</li>
+  <li><a href="../../day-8/reference/cheatsheet.html">Cheat sheet Day 8</a> — REST · Gin · Swagger · Environment Variables พื้นฐาน</li>
+  <li><a href="../../day-7/reference/cheatsheet.html">Cheat sheet Day 7</a> — Mockery · Testcontainers · Goose · Redis</li>
+</ul>
+
+</main>
+
+</body>
+</html>

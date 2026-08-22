@@ -1,0 +1,1668 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 53 — ต่อ Keycloak เข้ากับ Go จริง + migrate ตาราง users</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 53 · Day 9 · Authentication</p>
+  <h1>ต่อ Keycloak เข้ากับ Go จริง + migrate ตาราง <code>users</code></h1>
+  <p class="meta">~25 นาที · ต้องผ่าน: <a href="./0051-keycloak.html">บทเรียน 51</a> (Keycloak รันขึ้นแล้ว) · <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> (env และ <code>.env</code>) · เคยเห็น GORM มาแล้วจาก <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a></p>
+  <p class="standfirst">
+    บทนี้มาจาก<strong>สไลด์ Day 9 หน้า 48–54</strong> ซึ่งเป็นช่วงที่เลิกพูดเรื่องทฤษฎีแล้ว
+    ลงมือต่อ Keycloak เข้ากับโค้ด Go จริง ๆ และเตรียมตารางไว้เก็บผู้ใช้
+    <br>มีสามก้อน: <strong>ลง library สองตัว</strong> · <strong>เขียนโค้ด OIDC ให้ครบ flow</strong> ·
+    <strong>ตั้ง goose แล้ว migrate ตาราง <code>users</code></strong>
+    <br>สองก้อนแรกผมรันจริงจนได้ URL ของ Google ออกมา ส่วนก้อนที่สาม —
+    <strong>DSN ที่อยู่ในสไลด์หน้า 50 มีปัญหาที่ต้องรู้ก่อนพิมพ์ตาม</strong>
+    และมันพังแบบที่คุณเดาไม่ถูก: <em>ฝั่ง Go ผ่านฉลุย แต่พอเอา DSN บรรทัดเดียวกันไป <code>psql</code> จะพังทันที</em>
+    <br>ท้ายบทมีอีกเรื่องที่<strong>สไลด์ไม่ได้พูดเลยแต่จะทำให้ผู้ใช้ของคุณ login กลับเข้ามาไม่ได้ถาวร</strong> —
+    ผมรันให้ดูว่ามันเกิดตอนไหน
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ — เวอร์ชันจริงที่ผมรัน ทุก output ในหน้านี้มาจากเครื่องนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+golang.org/x/oauth2            v0.36.0
+github.com/coreos/go-oidc/v3   v3.20.0   <span class="c"># ลาก github.com/go-jose/go-jose/v4 v4.1.4 มาด้วย</span>
+goose version: v3.27.3
+gorm.io/gorm                   v1.31.2   <span class="c"># หัวข้อ 8 และโค้ด handler ท้ายหัวข้อ 9</span>
+gorm.io/driver/postgres        v1.6.2
+github.com/google/uuid         v1.6.0    <span class="c"># โค้ด handler ท้ายหัวข้อ 9 เรียก uuid.NewString()</span>
+PostgreSQL 16.15 on aarch64-unknown-linux-musl   <span class="c"># image postgres:16-alpine</span>
+Docker client 29.6.2 / server 29.5.2             <span class="c"># รันผ่าน colima ไม่ใช่ Docker Desktop</span></code></pre>
+  <p style="margin-bottom:0">
+    <strong>สังเกตบรรทัด Docker ให้ดี</strong> — <code>docker --version</code> บอก 29.6.2
+    แต่นั่นคือเลขของ <em>client</em> ส่วน engine ที่รัน container จริง ๆ คือ 29.5.2
+    ดูได้ด้วย <code>docker version --format '{{.Server.Version}}'</code>
+    <br>เวลามีคนถามว่า "Docker เวอร์ชันอะไร" แล้วปัญหาเกี่ยวกับพฤติกรรมของ container
+    <strong>เลขที่เขาอยากรู้คือเลข server ไม่ใช่ client</strong>
+  </p>
+</div>
+
+<h2>1 · บทนี้กำลังต่ออะไรเข้ากับอะไร</h2>
+
+<p>
+  จากบทที่แล้ว Keycloak รันอยู่แล้วที่ <code>localhost:8081</code> และมันเก็บผู้ใช้ของมันเองไว้ครบ
+  — ชื่อ อีเมล รหัสผ่าน role
+  <br>คำถามที่คนถามทันทีคือ: <strong>ถ้า Keycloak เก็บ user ให้แล้ว ทำไมเรายังต้องมีตาราง <code>users</code> ในฐานข้อมูลเราอีก</strong>
+</p>
+
+<p>
+  คำตอบสั้น ๆ คือ ของสองฝั่งเก็บคนละเรื่อง:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ฝั่ง</th><th>เก็บอะไร</th><th>ตัวอย่าง</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Keycloak</strong> (identity)</td>
+      <td>ตัวตนและสิทธิ์ — ใครคือใคร รหัสผ่านถูกไหม อยู่ group ไหน</td>
+      <td><code>sub</code>, <code>preferred_username</code>, <code>email</code>, role</td>
+    </tr>
+    <tr>
+      <td><strong>ฐานข้อมูลเรา</strong> (application data)</td>
+      <td>ข้อมูลที่เป็นของแอปเรา และ<strong>ความสัมพันธ์กับตารางอื่น</strong></td>
+      <td><code>bio</code>, สูตรอาหารที่คนนี้เขียน, ดาวที่ให้ไว้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  เหตุผลที่ตัดสินเรื่องนี้จริง ๆ คือข้อสอง — <strong>foreign key</strong>
+  <br>ตาราง <code>recipes</code> ต้องมีคอลัมน์ที่ชี้ว่า "สูตรนี้ใครเขียน" และมันชี้ไปหาแถวใน<em>ฐานข้อมูลเดียวกัน</em>ได้เท่านั้น
+  ชี้ข้ามไปหา user ที่อยู่ในฐานข้อมูลของ Keycloak ไม่ได้
+  <br>เพราะแบบนี้ทุกระบบที่ใช้ identity provider ภายนอกจึงต้องมี<strong>ตารางเงา</strong>ของผู้ใช้ฝั่งตัวเองเสมอ
+  และหัวข้อ 7 จะบอกว่าตารางเงานี้ต้องมีคอลัมน์อะไรเป็นพิเศษ
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>ลำดับที่บทนี้จะเดิน</strong> — ตามสไลด์เป๊ะ ๆ:
+    <br>หน้า 49 <strong>ลง library สองตัว</strong> → เขียนโค้ด OIDC (หัวข้อ 2–3)
+    <br>หน้า 50 <strong>ตั้ง goose ใน <code>.env</code></strong> (หัวข้อ 4–5)
+    <br>หน้า 51 <strong>migration <code>create_users</code></strong> (หัวข้อ 6–9)
+    <br>หน้า 53–54 <strong>ใช้ AI agent สร้าง migration ที่เหลือ</strong> (หัวข้อ 10 แล้วต่อบทเรียน 54)
+    <br>· <strong>หน้า 48 กับ 52 ไม่มีหัวข้อของตัวเองในบทนี้</strong> เพราะเป็นหน้าคั่นบทล้วน ๆ ไม่มีคำสั่งหรือโค้ด —
+    หน้า 48 เขียนว่า "🔓 Keycloak Auth 🔑 For Wongnok API" · หน้า 52 เขียนว่า "Implement recipes resource"
+  </p>
+</div>
+
+<h2>2 · Dependencies — <code>oauth2</code> กับ <code>go-oidc</code> ต่างกันยังไง</h2>
+
+<p>สไลด์หน้า 49 มีแค่สองบรรทัดนี้ ไม่มีคำอธิบายอะไรเลย:</p>
+
+<pre><code>go get golang.org/x/oauth2
+go get github.com/coreos/go-oidc/v3</code></pre>
+
+<p>
+  คนใหม่จะงงว่าทำไมต้องลงสองตัว ในเมื่อมันก็เรื่องเดียวกัน
+  คำตอบคือ<strong>มันทำงานคนละครึ่งของกระบวนการ</strong> และไม่มีตัวไหนทำแทนกันได้:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Library</th><th>รับผิดชอบอะไร</th><th>ถ้าไม่มีตัวนี้จะต้องเขียนเองว่าอะไร</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>golang.org/x/oauth2</code></td>
+      <td><strong>ขั้นตอนแลกของ</strong> — ประกอบ URL พาผู้ใช้ไปหน้า login · เอา <code>code</code> ที่ได้กลับมา
+          ยิงไป <code>token_endpoint</code> เพื่อ<strong>แลกเป็น token</strong> · เก็บ token ไว้ต่ออายุให้</td>
+      <td>ต้องประกอบ query string เอง ยิง POST เอง แกะ JSON เอง จัดการ refresh เอง</td>
+    </tr>
+    <tr>
+      <td><code>github.com/coreos/go-oidc/v3</code></td>
+      <td><strong>ขั้นตอนตรวจของ</strong> — อ่าน discovery document ให้ · ไป<strong>โหลด public key จาก <code>jwks_uri</code></strong>
+          มาเอง · <strong>verify ลายเซ็นของ <code>id_token</code></strong> และเช็ค <code>iss</code>/<code>aud</code>/วันหมดอายุให้</td>
+      <td>ต้องดึง JWKS เอง จับคู่ <code>kid</code> เอง ประกอบ RSA public key เอง verify เอง แล้วเช็ค claim เองทีละตัว</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">🏦 เทียบให้เห็นภาพ — คนเดินเรื่องที่เคาน์เตอร์ กับเครื่องส่องแบงก์ปลอม</span>
+  <p>
+    นึกถึงตอนไปทำธุระที่เคาน์เตอร์ธนาคาร งานมันแยกเป็นสองคนละคนอยู่แล้ว:
+    <br>· <strong>คนเดินเรื่อง</strong> — รู้ว่าต้องไปช่องไหน ยื่นใบคิวตรงไหน เอาใบคิวไปแลกเป็นของกลับมายังไง
+    <br>· <strong>เครื่องส่องแบงก์ปลอม</strong> — ไม่สนใจว่าคุณเดินมาจากช่องไหน มันมีหน้าที่เดียวคือเอาของที่ได้มา
+    ส่องดูว่าเป็นของจริงหรือของปลอม
+  </p>
+  <p>
+    <code>oauth2</code> คือ<strong>คนเดินเรื่อง</strong> — ประกอบ URL พาผู้ใช้ไปหน้า login
+    แล้วเอา <code>code</code> ที่ได้กลับมาไปแลกเป็น token
+    <br><code>go-oidc</code> คือ<strong>เครื่องส่อง</strong> — เอา <code>id_token</code> ที่แลกมาได้ไปตรวจลายเซ็น
+    ว่า Keycloak เซ็นมาจริงไหม หมดอายุหรือยัง
+    <br>คนเดินเรื่องไม่มีเครื่องส่อง เครื่องส่องก็เดินเรื่องแทนไม่ได้ — <strong>ต้องมีทั้งคู่ ถึงได้ลงสองบรรทัด</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> เครื่องส่องแบงก์ที่เคาน์เตอร์เสียบปลั๊กก็ทำงานได้เลย ตรวจจากตัวแบงก์อย่างเดียว
+    แต่ <code>go-oidc</code> <strong>ต้องออกไปโหลด public key จาก <code>jwks_uri</code> ผ่านเน็ตก่อน</strong>
+    ถึงจะตรวจได้ — เน็ตไปไม่ถึง Keycloak เมื่อไหร่ การ verify ก็ทำไม่ได้ทันที
+    <br>เพราะแบบนี้ <code>oidc.NewProvider</code> ในหัวข้อ 3 ถึงยิง HTTP ออกไป<em>ตั้งแต่ตอนสร้าง</em>
+    ไม่ใช่ฟังก์ชันที่แค่ตั้งค่าไว้เฉย ๆ
+  </p>
+</div>
+
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📖 <strong>ศัพท์ที่ต้องรู้ก่อนไปต่อ</strong> (จากบทเรียน 50–51 แต่ทวนให้)
+    <br>· <strong><code>id_token</code></strong> = JWT ที่บอกว่า "คนนี้คือใคร" — มีชื่อ อีเมล และ <code>sub</code> อยู่ข้างใน
+    เอาไว้ให้แอปเรารู้จักผู้ใช้ <em>ไม่ใช่</em> เอาไว้ยิง API
+    <br>· <strong><code>access_token</code></strong> = JWT ที่บอกว่า "คนนี้ทำอะไรได้บ้าง" เอาไว้แนบไปกับ request
+    <br>· <strong><code>jwks_uri</code></strong> = URL ที่ Keycloak แจก <strong>public key</strong> ของตัวเอง
+    ใครก็โหลดได้ ไม่ใช่ความลับ — เอาไว้ตรวจว่า token ใบนี้ Keycloak เซ็นมาจริงหรือมีคนปลอม
+    <br>· <strong><code>sub</code></strong> (subject) = รหัสประจำตัวผู้ใช้ที่ Keycloak ตั้งให้ เป็น UUID
+    และ<strong>ไม่เปลี่ยนตลอดชีพของ user คนนั้น</strong> — จำคำนี้ไว้ เดี๋ยวหัวข้อ 7 ใช้
+  </p>
+</div>
+
+<h3>ผลรันจริงของ <code>go get</code> ทั้งสองบรรทัด</h3>
+
+<pre><code>$ go mod init oidcdemo
+go: creating new go.mod: module oidcdemo
+
+$ go get golang.org/x/oauth2
+go: added golang.org/x/oauth2 <strong>v0.36.0</strong>
+
+$ go get github.com/coreos/go-oidc/v3
+go: added github.com/coreos/go-oidc/v3 <strong>v3.20.0</strong>
+
+$ go list -m all
+oidcdemo
+cloud.google.com/go/compute/metadata v0.3.0
+github.com/coreos/go-oidc/v3 v3.20.0
+<strong>github.com/go-jose/go-jose/v4 v4.1.4</strong>
+golang.org/x/oauth2 v0.36.0</code></pre>
+
+<p>
+  สั่งไปสองบรรทัด แต่ได้มา<strong>สี่ module</strong> — สองตัวที่ไม่ได้สั่งคือ:
+  <br>· <code>go-jose/v4</code> เป็นตัวที่ทำงานเข้ารหัสจริง ๆ ให้ <code>go-oidc</code> (แกะ JWT, เช็คลายเซ็น)
+  <br>· <code>cloud.google.com/go/compute/metadata</code> ติดมากับ <code>oauth2</code> เพราะมันมีโค้ดฝั่ง Google รวมอยู่ในแพ็กเกจ
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ ทำตามสไลด์เป๊ะ ๆ แล้ว <code>go build</code> ไม่ผ่าน — ผมเจอกับตัว</span>
+  <p>
+    <code>go get</code> ทั้งสองบรรทัดสำเร็จ ไม่มี error สักตัว แต่พอเขียนโค้ดเสร็จแล้วสั่ง build:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ go build ./... ; echo "BUILD_EXIT=$?"
+/Users/…/go-oidc/v3@v3.20.0/oidc/jose.go:3:8: <strong>missing go.sum entry</strong> for module providing
+package github.com/go-jose/go-jose/v4 (imported by github.com/coreos/go-oidc/v3/oidc); to add:
+	go get github.com/coreos/go-oidc/v3/oidc@v3.20.0
+BUILD_EXIT=<strong>1</strong>
+
+$ go vet ./... ; echo "VET_EXIT=$?"
+(ข้อความเดียวกันเป๊ะ)
+VET_EXIT=<strong>1</strong></code></pre>
+  <p>
+    สาเหตุ: สไลด์เขียน <code>go get github.com/coreos/go-oidc/v3</code> ซึ่งเป็น<strong>ชื่อ module</strong>
+    ไม่ใช่ชื่อ<strong>package</strong> ที่โค้ดเรา import จริง (โค้ด import <code>github.com/coreos/go-oidc/v3/oidc</code> — มี <code>/oidc</code> ต่อท้าย)
+    <br>Go เลยจดแค่ module ลง <code>go.mod</code> แต่ยังไม่ได้จด checksum ของ dependency ที่ package นั้นต้องใช้ลง <code>go.sum</code>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>วิธีแก้ที่สั้นที่สุดและควรทำเป็นนิสัย</strong> คือสั่ง <code>go mod tidy</code> หลังเขียนโค้ดเสร็จ
+    — มันไล่อ่าน <code>import</code> จริงในโค้ดแล้วเติมทุกอย่างให้ครบ:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ go mod tidy      <span class="c"># ไม่พิมพ์อะไรออกมาเลย = เรียบร้อย</span>
+$ go build ./... ; echo "BUILD_EXIT=$?"
+<strong>BUILD_EXIT=0</strong>
+$ go vet ./... ; echo "VET_EXIT=$?"
+<strong>VET_EXIT=0</strong>
+
+$ cat go.mod
+module oidcdemo
+
+go 1.26.5
+
+require (
+	github.com/coreos/go-oidc/v3 v3.20.0
+	golang.org/x/oauth2 v0.36.0
+)
+
+require github.com/go-jose/go-jose/v4 v4.1.4 <span class="c">// indirect</span></code></pre>
+</div>
+
+<p>
+  สังเกตอีกอย่างใน <code>go.mod</code> หลัง <code>tidy</code>: <strong><code>cloud.google.com/go/compute/metadata</code> หายไปแล้ว</strong>
+  เพราะ <code>tidy</code> ตัดของที่โค้ดเราไม่ได้ใช้จริงออก — เหลือแต่ <code>go-jose</code> ที่ติดป้าย
+  <code>// indirect</code> แปลว่า "เราไม่ได้ import เอง แต่ของที่เรา import ต้องใช้"
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>สี่คำนี้คือคำที่ dev ใช้เรียกสิ่งที่คุณเพิ่งเข้าใจไปในหัวข้อนี้ — ใช้คำให้ตรง จะได้คำตอบที่ตรง</p>
+  <dl>
+    <dt>OIDC (OpenID Connect)</dt>
+    <dd>ชั้นที่วางทับ OAuth2 อีกที · OAuth2 ตอบว่า <em>"ให้ทำอะไรได้บ้าง"</em> ·
+    OIDC เติมคำตอบว่า <em>"คนนี้คือใคร"</em> เข้ามาด้วย <code>id_token</code> ·
+    ประโยคที่ใช้ได้เลย: <em>"อันนี้เป็น OAuth2 เฉย ๆ หรือ OIDC ด้วยครับ ผมต้องได้ <code>id_token</code> ด้วย"</em></dd>
+    <dt>discovery document / well-known endpoint</dt>
+    <dd>ไฟล์ JSON ที่ <code>issuer</code> + <code>/.well-known/openid-configuration</code>
+    ซึ่งบอก URL ทุกตัวของ provider ในที่เดียว · ประโยคที่ใช้ได้เลย:
+    <em>"ขอ issuer URL ตัวเดียวพอครับ เดี๋ยวผมอ่าน well-known เอา ไม่ต้องส่ง endpoint มาทีละอัน"</em></dd>
+    <dt>indirect dependency</dt>
+    <dd>ของที่<strong>เราไม่ได้ <code>import</code> เอง แต่ของที่เรา import ต้องใช้</strong> ·
+    ใน <code>go.mod</code> มันติดป้าย <code>// indirect</code> ไว้ให้ ·
+    ประโยคที่ใช้ได้เลย: <em>"<code>go-jose</code> เป็น indirect ของเรานะ มันมาทาง <code>go-oidc</code>"</em></dd>
+    <dt><code>go mod tidy</code></dt>
+    <dd>คำสั่งที่ไล่อ่าน <code>import</code> จริงในโค้ด แล้วจัด <code>go.mod</code>/<code>go.sum</code> ให้ตรงกับของที่ใช้จริง ·
+    พิมพ์ถาม AI ว่า <em>"missing go.sum entry in Go, how to fix"</em> คำตอบแรกจะเป็นคำสั่งนี้ —
+    ซึ่งคือ error ที่กล่องข้างบนเจอเป๊ะ ๆ</dd>
+  </dl>
+</div>
+
+
+<h2>3 · โค้ด OIDC ครบ flow — ที่ compile ผ่านจริง</h2>
+
+<p>
+  สไลด์บอกแค่ให้ลง library แต่ไม่ได้ให้โค้ดมา ผมเลยเขียนให้ครบทั้งเส้นแล้ว
+  <strong>build ผ่านและ vet ผ่านจริง</strong> (ผลอยู่ในกล่องข้างบน)
+  <br>ก่อนดูโค้ด ดูลำดับก่อน เพราะโค้ดจะอ่านง่ายขึ้นมาก — <strong>มันมีแค่ 6 ขั้น</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>ฟังก์ชัน</th><th>เกิดอะไรขึ้น</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>oidc.NewProvider(ctx, issuer)</code></td>
+        <td>ยิง HTTP ไปที่ <code>issuer + /.well-known/openid-configuration</code> <strong>ตอนนั้นเลย</strong> แล้วจำ URL ทุกตัวไว้</td></tr>
+    <tr><td>2</td><td><code>provider.Endpoint()</code></td>
+        <td>คืน <code>AuthURL</code> กับ <code>TokenURL</code> ที่เพิ่งอ่านมา — <strong>เราไม่ต้อง hardcode URL เอง</strong></td></tr>
+    <tr><td>3</td><td><code>oauth2.Config{…}</code></td>
+        <td>ก้อนตั้งค่า: client id/secret, redirect URL, scope และ endpoint จากข้อ 2</td></tr>
+    <tr><td>4</td><td><code>cfg.AuthCodeURL(state)</code></td>
+        <td>ประกอบ URL หน้า login ให้ แล้วเรา <code>redirect</code> ผู้ใช้ไป</td></tr>
+    <tr><td>5</td><td><code>cfg.Exchange(ctx, code)</code></td>
+        <td>ยิง POST ไป <code>token_endpoint</code> เอา <code>code</code> แลกเป็น token — <strong>ขั้นนี้เป็น server-to-server</strong></td></tr>
+    <tr><td>6</td><td><code>verifier.Verify(ctx, rawIDToken)</code></td>
+        <td>โหลด public key จาก <code>jwks_uri</code> มา<strong>ตรวจลายเซ็น</strong>ของ <code>id_token</code> แล้วคืน token ที่แกะได้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทีนี้โค้ดจริง — ไฟล์ <code>auth/auth.go</code> ก้อนตั้งค่า
+  <br><strong>ก้อนนี้กับก้อนถัดไปคือไฟล์เดียวกัน</strong> วางต่อกันตามลำดับแล้ว <code>go build ./...</code> ผ่านเลย
+  (ต้องอยู่ในโฟลเดอร์ <code>auth/</code> ให้ตรงกับบรรทัด <code>package</code>)
+</p>
+
+<pre><code><span class="k">package</span> auth
+
+<span class="k">import</span> (
+	<span class="s">"context"</span>
+	<span class="s">"errors"</span>
+
+	<span class="s">"github.com/coreos/go-oidc/v3/oidc"</span>
+	<span class="s">"golang.org/x/oauth2"</span>
+)
+
+<span class="c">// Claims คือ field ที่เราสนใจจาก id_token ของ Keycloak</span>
+<span class="k">type</span> Claims <span class="k">struct</span> {
+	Sub               <span class="k">string</span> <span class="s">`json:"sub"`</span>
+	Email             <span class="k">string</span> <span class="s">`json:"email"`</span>
+	Name              <span class="k">string</span> <span class="s">`json:"name"`</span>
+	PreferredUsername <span class="k">string</span> <span class="s">`json:"preferred_username"`</span>
+}
+
+<span class="k">type</span> Authenticator <span class="k">struct</span> {
+	provider *oidc.Provider
+	oauth2   oauth2.Config
+	verifier *oidc.IDTokenVerifier
+}
+
+<span class="k">func</span> <span class="f">New</span>(ctx context.Context, issuer, clientID, clientSecret, redirectURL <span class="k">string</span>) (*Authenticator, <span class="k">error</span>) {
+	<span class="c">// ① ยิงไปอ่าน discovery document ตรงนี้เลย — ถ้า Keycloak ยังไม่ขึ้น บรรทัดนี้ error ทันที</span>
+	provider, err := oidc.<span class="f">NewProvider</span>(ctx, issuer)
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="k">return</span> <span class="k">nil</span>, err
+	}
+
+	cfg := oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redirectURL,
+		Endpoint:     provider.<span class="f">Endpoint</span>(),           <span class="c">// ② ไม่ hardcode URL</span>
+		Scopes:       []<span class="k">string</span>{oidc.ScopeOpenID, <span class="s">"profile"</span>, <span class="s">"email"</span>},
+	}
+
+	<span class="k">return</span> &amp;Authenticator{
+		provider: provider,
+		oauth2:   cfg,
+		verifier: provider.<span class="f">Verifier</span>(&amp;oidc.Config{ClientID: clientID}),
+	}, <span class="k">nil</span>
+}</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ <code>oidc.ScopeOpenID</code> ไม่ใช่ของประดับ — ขาดแล้วไม่มี <code>id_token</code></span>
+  <p style="margin-bottom:0">
+    <code>oidc.ScopeOpenID</code> คือค่าคงที่ที่มีค่าเป็นสตริง <code>"openid"</code>
+    <br>ถ้าไม่ใส่ scope ตัวนี้ Keycloak จะถือว่านี่เป็นคำขอแบบ OAuth2 ธรรมดา ไม่ใช่ OIDC —
+    มันจะคืน <code>access_token</code> มาให้ตามปกติ <strong>แต่จะไม่มี <code>id_token</code> ในคำตอบ</strong>
+    <br>อาการที่คุณจะเจอคือโค้ดขั้นที่ 6 พังด้วยข้อความว่าหา <code>id_token</code> ไม่เจอ
+    ทั้งที่ทุกอย่างก่อนหน้านั้นดูสำเร็จหมด
+  </p>
+</div>
+
+<p>
+  ต่อด้วยสองฟังก์ชันที่ handler เรียกใช้จริง — ขาไปกับขากลับ (ตัว handler เองอยู่ท้ายหัวข้อ 9)
+  <br><strong>ก้อนนี้เขียนต่อท้ายไฟล์ <code>auth/auth.go</code> เดิม</strong> จึงไม่มีบรรทัด <code>package</code>
+  และไม่มี <code>import</code> ซ้ำอีก — <code>context</code> กับ <code>errors</code> ที่ใช้ตรงนี้
+  ประกาศไว้ในก้อนบนแล้ว
+</p>
+
+<pre><code><span class="c">// LoginURL คือ URL ที่เรา redirect ผู้ใช้ไปหน้า login ของ Keycloak</span>
+<span class="k">func</span> (a *Authenticator) <span class="f">LoginURL</span>(state <span class="k">string</span>) <span class="k">string</span> {
+	<span class="k">return</span> a.oauth2.<span class="f">AuthCodeURL</span>(state)
+}
+
+<span class="c">// Callback เอา code ที่ Keycloak ส่งกลับมาแลกเป็น token แล้ว verify id_token</span>
+<span class="k">func</span> (a *Authenticator) <span class="f">Callback</span>(ctx context.Context, code <span class="k">string</span>) (*Claims, <span class="k">error</span>) {
+	tok, err := a.oauth2.<span class="f">Exchange</span>(ctx, code)
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="k">return</span> <span class="k">nil</span>, err
+	}
+
+	<span class="c">// ⚠️ id_token ไม่ได้อยู่ใน tok.AccessToken — ต้องดึงจาก Extra</span>
+	rawIDToken, ok := tok.<span class="f">Extra</span>(<span class="s">"id_token"</span>).(<span class="k">string</span>)
+	<span class="k">if</span> !ok {
+		<span class="k">return</span> <span class="k">nil</span>, errors.<span class="f">New</span>(<span class="s">"no id_token in token response"</span>)
+	}
+
+	idToken, err := a.verifier.<span class="f">Verify</span>(ctx, rawIDToken)
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="k">return</span> <span class="k">nil</span>, err
+	}
+
+	<span class="k">var</span> c Claims
+	<span class="k">if</span> err := idToken.<span class="f">Claims</span>(&amp;c); err != <span class="k">nil</span> {
+		<span class="k">return</span> <span class="k">nil</span>, err
+	}
+	<span class="k">return</span> &amp;c, <span class="k">nil</span>
+}</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ จุดที่คนพลาดมากที่สุดในโค้ดก้อนนี้: <code>tok.Extra("id_token")</code></span>
+  <p style="margin-bottom:0">
+    <code>oauth2.Token</code> ที่ <code>Exchange</code> คืนมามี field มาตรฐานอยู่ไม่กี่ตัว:
+    <code>AccessToken</code>, <code>TokenType</code>, <code>RefreshToken</code>, <code>Expiry</code>
+    <br><strong>ไม่มี field ชื่อ <code>IDToken</code></strong> เพราะ <code>id_token</code> เป็นของ OIDC ไม่ใช่ของ OAuth2
+    ซึ่ง library <code>oauth2</code> ไม่รู้จัก — มันเก็บ field ที่ไม่รู้จักไว้ในถุงรวมแล้วให้หยิบด้วย
+    <code>tok.Extra(ชื่อ)</code> ซึ่งคืน <code>any</code> จึงต้อง <code>.(string)</code> แปลงเอง
+    <br>คนที่เพิ่งเริ่มมักเผลอเอา <code>tok.AccessToken</code> ไป <code>Verify</code> แล้วงงว่าทำไมชื่อกับอีเมลไม่ครบ
+    — เพราะมันคนละใบกันจริง ๆ
+    <br>และ <code>Verify</code> คืน <strong>สองค่า</strong> คือ <code>(*oidc.IDToken, error)</code> ยังไม่ใช่ข้อมูลผู้ใช้ —
+    ต้องเรียก <code>idToken.Claims(&amp;dst)</code> อีกทีถึงจะได้ field ออกมา
+  </p>
+</div>
+
+<div class="predict">
+  <p>
+  <strong>ทายก่อนรัน</strong> — ผมเขียนโปรแกรมเล็ก ๆ ที่เรียกแค่สามอย่าง โดยชี้ไป <strong>Google</strong>
+  แทน Keycloak (เพราะ Google เป็น OIDC provider เหมือนกันและเปิดสาธารณะ ใครก็ยิงได้)
+  <br><em>ก้อนข้างล่างเป็นเศษโค้ดที่ตัดมาเฉพาะใจความ ไม่ใช่ไฟล์เต็ม</em> — ก๊อปไปวางเปล่า ๆ ยัง build ไม่ผ่าน
+  ต้องมี <code>package main</code> · <code>import</code> (<code>context</code>, <code>fmt</code>,
+  <code>oidc</code>, <code>oauth2</code>) · <code>func main()</code> และประกาศ <code>ctx</code> กับ <code>err</code> ครอบไว้ก่อน
+</p>
+  <pre><code>provider, _ := oidc.<span class="f">NewProvider</span>(ctx, <span class="s">"https://accounts.google.com"</span>)
+ep := provider.<span class="f">Endpoint</span>()
+fmt.<span class="f">Println</span>(<span class="s">"AuthURL  ="</span>, ep.AuthURL)
+fmt.<span class="f">Println</span>(<span class="s">"TokenURL ="</span>, ep.TokenURL)
+
+cfg := oauth2.Config{ClientID: <span class="s">"my-client-id"</span>, RedirectURL: <span class="s">"http://localhost:8080/auth/callback"</span>,
+	Endpoint: ep, Scopes: []<span class="k">string</span>{oidc.ScopeOpenID, <span class="s">"profile"</span>, <span class="s">"email"</span>}}
+fmt.<span class="f">Println</span>(<span class="s">"AuthCodeURL ="</span>, cfg.<span class="f">AuthCodeURL</span>(<span class="s">"state-abc123"</span>))
+
+verifier := provider.<span class="f">Verifier</span>(&amp;oidc.Config{ClientID: <span class="s">"my-client-id"</span>})
+_, err = verifier.<span class="f">Verify</span>(ctx, <span class="s">"this-is-not-a-jwt"</span>)   <span class="c">// จงใจส่งขยะเข้าไป</span></code></pre>
+  <p class="ask">
+    <strong>ทายสองข้อ</strong>
+    <br>1. <code>TokenURL</code> ของ Google จะขึ้นต้นด้วย <code>https://accounts.google.com/...</code> เหมือน <code>AuthURL</code> ไหม?
+    <br>2. ตอนส่งสตริง <code>"this-is-not-a-jwt"</code> เข้า <code>Verify</code> —
+    error ที่ได้จะเป็นข้อความของ <code>go-oidc</code> เอง หรือหลุดมาจาก library ชั้นล่าง?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ go run ./cmd/probe
+AuthURL  = https://accounts.google.com/o/oauth2/v2/auth
+TokenURL = <strong>https://oauth2.googleapis.com/token</strong>
+AuthCodeURL = https://accounts.google.com/o/oauth2/v2/auth?client_id=my-client-id&amp;redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fauth%2Fcallback&amp;response_type=code&amp;scope=openid+profile+email&amp;state=state-abc123
+Verify(ขยะ) ERROR = <strong>oidc: malformed jwt: go-jose/go-jose: compact JWS format must have three parts</strong></code></pre>
+    <p>
+      <strong>ข้อ 1 — คนละโดเมนกัน</strong> <code>AuthURL</code> อยู่ที่ <code>accounts.google.com</code>
+      แต่ <code>TokenURL</code> อยู่ที่ <code>oauth2.googleapis.com</code>
+      <br>นี่คือเหตุผลที่ <code>provider.Endpoint()</code> มีค่ามาก: ถ้า hardcode เองคุณจะเดาผิดแน่นอน
+      และเวลา provider ย้ายโดเมน โค้ดเราไม่ต้องแก้เลยเพราะมันอ่านใหม่ทุกครั้งที่ start
+    </p>
+    <p>
+      <strong>ข้อ 2 — error ไหลมาจากชั้นล่าง</strong> ข้อความมีสองท่อน: ท่อนหน้า
+      <code>oidc: malformed jwt:</code> เป็นของ <code>go-oidc</code> ส่วนท่อนหลัง
+      <code>go-jose/go-jose: compact JWS format must have three parts</code> มาจาก <code>go-jose/v4</code> ตรง ๆ
+      <br>มันกำลังบอกว่า JWT ที่ถูกต้องต้องมีสามท่อนคั่นด้วยจุด (<code>header.payload.signature</code>)
+      แต่สตริงที่เราส่งไปไม่มีจุดเลย
+      <br>นี่เป็นตัวอย่างที่ดีของเวลาอ่าน error ในโปรเจกต์จริง — <strong>ชื่อ library ที่อยู่หน้าข้อความคือเบาะแสว่าใครเป็นคนบ่น</strong>
+    </p>
+    <p style="margin-bottom:0">
+      สังเกต <code>AuthCodeURL</code> ด้วย: <code>redirect_uri</code> ถูก encode เป็น
+      <code>http%3A%2F%2Flocalhost%3A8080%2F…</code> ให้อัตโนมัติ และ scope สามตัวถูกรวมด้วยเครื่องหมาย <code>+</code>
+      — นี่คืองานที่ <code>oauth2</code> ทำแทนเรา
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong><code>state</code> คืออะไร ทำไมต้องมี</strong> —
+    <code>state</code> เป็นสตริงสุ่มที่เราสร้างตอนส่งผู้ใช้ไป login แล้ว Keycloak จะส่งกลับมาให้เหมือนเดิมตอน callback
+    <br>หน้าที่ของมันคือ<strong>เช็คว่า callback นี้มาจากคำขอที่เราเป็นคนเริ่มจริง ๆ</strong>
+    ไม่ใช่ใครยิง URL callback ใส่ผู้ใช้ของเราเอง (การโจมตีแบบนี้เรียกว่า CSRF)
+    <br>ในตัวอย่างข้างบนผมใส่ <code>"state-abc123"</code> ตายตัวเพราะเป็นแค่การทดสอบ —
+    <strong>ของจริงต้องสุ่มใหม่ทุกครั้ง เก็บไว้ใน session แล้วเทียบตอนกลับมา</strong>
+    <br>โค้ดที่ทำแบบนั้นจริงอยู่ท้ายหัวข้อ 9 (ฟังก์ชัน <code>Login</code> กับ <code>Callback</code>)
+  </p>
+</div>
+
+<h2>4 · ตั้ง goose ใน <code>.env</code> — และ DSN ในสไลด์ที่ต้องรู้ก่อนพิมพ์ตาม</h2>
+
+<p>
+  <strong>goose</strong> คือเครื่องมือ migration — โปรแกรมที่รันไฟล์ SQL ตามลำดับแล้ว<strong>จำไว้ว่ารันถึงไฟล์ไหนแล้ว</strong>
+  ทำให้ทุกคนในทีมและทุกเครื่องมีโครงสร้างตารางเหมือนกัน
+  <br>สไลด์หน้า 50 บอกให้ใส่สามบรรทัดนี้ในไฟล์ <code>.env</code>:
+</p>
+
+<pre><code><span class="c"># Setup .env file</span>
+<span class="c"># Goose</span>
+<span class="n">GOOSE_MIGRATION_DIR</span>=./migrations
+<span class="n">GOOSE_DRIVER</span>=postgres
+<span class="n">GOOSE_DBSTRING</span>=postgres://postgres:Pe@devp00l@localhost:5432?database=wongnok</code></pre>
+
+<p>
+  สองบรรทัดแรกตรงไปตรงมา — บอกว่าไฟล์ migration อยู่โฟลเดอร์ไหน และใช้ฐานข้อมูลชนิดไหน
+  <br>บรรทัดที่สามคือ <strong>DSN</strong> (Data Source Name — สตริงเส้นเดียวที่บอกว่าจะต่อฐานข้อมูลที่ไหน ด้วย user อะไร รหัสอะไร)
+  และมันมี<strong>สองจุดที่ผิดหลักการเขียน URL</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>จุด</th><th>สไลด์เขียน</th><th>ปัญหาคืออะไร</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>ก</td>
+      <td>รหัสผ่าน <code>Pe@devp00l</code> ใส่ดิบ ๆ</td>
+      <td>ตัว <code>@</code> ใน URL คือ<strong>ตัวคั่นระหว่างรหัสผ่านกับชื่อ host</strong> — พอรหัสผ่านมี <code>@</code> อยู่ในตัว จะมี <code>@</code> สองตัวในสตริงเดียว แล้วโปรแกรมต้องเดาว่าตัวไหนเป็นตัวคั่น</td>
+    </tr>
+    <tr>
+      <td>ข</td>
+      <td><code>?database=wongnok</code></td>
+      <td>ชื่อฐานข้อมูลตามมาตรฐาน PostgreSQL URI ต้องอยู่ใน<strong>ส่วน path</strong> คือ <code>/wongnok</code> ไม่ใช่ query parameter</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — นี่เป็นข้อที่ผมทายผิดเองตอนแรก</p>
+  <p class="ask">
+    ถ้าเอา DSN บรรทัดนั้นไปใช้จริง ๆ กับ <code>goose up</code> คุณคิดว่าจะเกิดอะไร?
+    <br>ก. <code>goose</code> พังทันที parse DSN ไม่ผ่าน
+    <br>ข. <code>goose</code> ผ่าน แต่ไปสร้างตารางผิดฐาน (ลงฐาน <code>postgres</code> แทน <code>wongnok</code>)
+    <br>ค. <code>goose</code> ผ่านและลงฐาน <code>wongnok</code> ถูกต้องทุกอย่าง
+    <br><strong>และคำถามที่สำคัญกว่า:</strong> ถ้าเอา DSN <em>บรรทัดเดียวกันนี้</em> ไปแปะใส่ <code>psql</code>
+    เพื่อเข้าไปส่องตารางที่เพิ่งสร้าง จะเกิดอะไรขึ้น?
+  </p>
+  <button class="reveal">ดูเฉลย — คำตอบไม่ใช่ที่คุณคิด</button>
+  <div class="answer">
+    <p><strong>ฝั่ง Go: ผ่านหมด ไม่มี error สักตัว</strong> ทั้งสามจุดที่ผมเช็ค —</p>
+    <pre style="margin:0.6rem 0"><code>=== DSN: postgres://postgres:Pe@devp00l@localhost:5432?database=wongnok
+net/url.Parse  -&gt; user="postgres" password=<strong>"Pe@devp00l"</strong> hasPassword=true host=<strong>"localhost:5432"</strong> path="" rawquery="database=wongnok"
+pgx ParseConfig-&gt; host="localhost" port=5432 user="postgres" password="Pe@devp00l" database=<strong>"wongnok"</strong>
+lib/pq ParseURL-&gt; "database='wongnok' host='localhost' password='Pe@devp00l' port='5432' user='postgres'"</code></pre>
+    <pre style="margin:0.6rem 0"><code>=== goose up ===
+2026/08/22 10:11:57 OK   20260822031131_create_users.sql (12.99ms)
+2026/08/22 10:11:57 goose: successfully migrated database to version: 20260822031131
+
+=== tables in DB 'postgres' ===
+Did not find any relations.
+
+=== tables in DB 'wongnok' ===
+              List of relations
+ Schema |       Name       | Type  |  Owner
+--------+------------------+-------+----------
+ public | goose_db_version | table | postgres
+ public | users            | table | postgres
+(2 rows)</code></pre>
+    <p>
+      คำตอบคือ <strong>ข้อ ค</strong> — ตารางไปลงฐาน <code>wongnok</code> ถูกต้อง ฐาน <code>postgres</code> ว่างเปล่า
+      <br>สาเหตุมีสองข้อ: <code>net/url</code> ของ Go ตัดที่ <strong><code>@</code> ตัวสุดท้าย</strong>
+      รหัสผ่านเลยออกมาถูก · และ <code>pgx</code> บังเอิญรู้จักคีย์ชื่อ <code>database</code> อยู่แล้ว
+      (ภายในมันใช้ชื่อนี้ ส่วน <code>dbname</code> เป็นชื่อพ้อง)
+    </p>
+    <p><strong>ฝั่ง <code>psql</code>: พังทั้งสองจุด</strong></p>
+    <pre style="margin:0.6rem 0"><code>$ psql "postgres://postgres:Pe@devp00l@localhost:5432/wongnok" -c "select current_database()"
+psql: error: could not translate host name <strong>"devp00l@localhost"</strong> to address: Name does not resolve
+
+$ psql "postgres://postgres:Pe@devp00l@localhost:5432?database=wongnok" -c "select current_database()"
+psql: error: <strong>invalid URI query parameter: "database"</strong></code></pre>
+    <p style="margin-bottom:0">
+      อันแรกคือของแสบจริง: <strong><code>libpq</code> ตัดที่ <code>@</code> ตัว<em>แรก</em></strong> ตรงข้ามกับ Go
+      มันเลยอ่านว่า host ชื่อ <code>devp00l@localhost</code> ซึ่งไม่มีอยู่ในโลก
+      <br>อันที่สองคือ <code>psql</code> ปฏิเสธคีย์ <code>database=</code> ตรง ๆ เพราะมันไม่รู้จัก —
+      คีย์นี้เป็นของฝั่ง Go เท่านั้น
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ บทเรียนที่ถูกไม่ใช่ "DSN นี้พัง" แต่คือ "DSN นี้พังตอนคุณจะ debug"</span>
+  <p>
+    ถ้าคุณลอกสไลด์ไปเป๊ะ ๆ <strong>ทุกอย่างจะดูปกติดี</strong> — <code>goose up</code> ผ่าน แอปต่อฐานได้
+    คุณจะไม่รู้เลยว่ามีอะไรผิด
+    <br>แล้ววันหนึ่งคุณอยากเข้าไปดูข้อมูลในตาราง ก็ทำสิ่งที่ทุกคนทำ: ก๊อป DSN จาก <code>.env</code> ไปแปะใส่ <code>psql</code>
+    <br><strong>ด่านแรก</strong> คุณจะได้ <code>invalid URI query parameter: "database"</code> —
+    อันนี้ยังพอเดาออก เพราะ error ชี้ตรงไปที่ <code>?database=</code> ที่ท้ายบรรทัด
+    <br>พอแก้ตามที่ error ใบ้ (ย้าย <code>?database=wongnok</code> ไปเป็น path <code>/wongnok</code>) แล้วสั่งใหม่ —
+    <strong>ด่านสองถึงจะโผล่</strong>: <code>could not translate host name "devp00l@localhost"</code>
+    ซึ่ง<strong>ไม่มีคำว่ารหัสผ่านอยู่ในข้อความเลย</strong>
+    คุณจะไปนั่งไล่ดู DNS ไล่ดู <code>/etc/hosts</code> ไล่ดูว่า Postgres รันอยู่ไหม
+  </p>
+  <p style="margin-bottom:0">
+    <strong>DSN ที่ถูก — ผ่านทั้ง Go และ <code>psql</code>:</strong>
+  </p>
+  <pre style="margin:0.6rem 0"><code><span class="n">GOOSE_DBSTRING</span>=postgres://postgres:Pe<strong>%40</strong>devp00l@localhost:5432<strong>/wongnok</strong>?sslmode=disable</code></pre>
+  <pre style="margin:0.6rem 0"><code>$ psql "postgres://postgres:Pe%40devp00l@localhost:5432/wongnok" -c "select current_database()"
+ current_database
+------------------
+ <strong>wongnok</strong>
+(1 row)</code></pre>
+  <p style="margin-bottom:0">
+    แก้สองที่: <code>@</code> ในรหัสผ่านเขียนเป็น <code>%40</code> · ชื่อฐานย้ายไปเป็น path <code>/wongnok</code>
+    <br><strong>กฎที่ควรจำติดตัว: อักขระพิเศษในรหัสผ่านต้อง URL-encode เสมอ</strong> —
+    ตัวที่เจอบ่อยคือ <code>@</code> → <code>%40</code> · <code>:</code> → <code>%3A</code> ·
+    <code>/</code> → <code>%2F</code> · <code>#</code> → <code>%23</code>
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">✉️ เทียบให้เห็นภาพ — ที่อยู่บนหน้าซองที่เขียนติดกันเป็นบรรทัดเดียว</span>
+  <p>
+    DSN คือที่อยู่ของฐานข้อมูลที่<strong>ยัดทุกอย่างไว้ในบรรทัดเดียว</strong> —
+    ใครเข้า รหัสอะไร เครื่องไหน พอร์ตอะไร ฐานชื่อไหน
+    แล้วใช้เครื่องหมายเป็นตัวคั่นว่าตรงไหนจบเรื่องอะไร · <code>@</code> คือตัวคั่นที่แปลว่า
+    <em>"ก่อนหน้านี้คือชื่อกับรหัสผ่าน หลังจากนี้คือที่อยู่เครื่อง"</em>
+  </p>
+  <p>
+    ทีนี้ลองนึกว่าเขียนหน้าซองว่า <strong>"สมชาย, ร้านข้าวมันไก่, ซอย 5"</strong>
+    แล้วระบบเขาใช้<strong>ลูกน้ำ</strong>เป็นตัวคั่นชื่อผู้รับกับที่อยู่พอดี
+    <br>พนักงานคนหนึ่งอาจตัดที่ลูกน้ำ<strong>ตัวแรก</strong> (ผู้รับ = "สมชาย")
+    อีกคนตัดที่ลูกน้ำ<strong>ตัวสุดท้าย</strong> (ผู้รับ = "สมชาย, ร้านข้าวมันไก่")
+    — <strong>ข้อความเดียวกัน แต่ได้ผลคนละอย่าง</strong>
+    <br>นี่คือสิ่งที่เกิดขึ้นจริงในหัวข้อนี้: รหัสผ่าน <code>Pe@devp00l</code> มี <code>@</code> อยู่ในตัวเอง
+    <strong>Go ตัดที่ <code>@</code> ตัวสุดท้าย จึงรอด · <code>libpq</code> ที่ <code>psql</code> ใช้ตัดที่ตัวแรก จึงพัง</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานไปรษณีย์อ่านแล้วเอะใจได้เองว่าอันไหนน่าจะเป็นชื่อคน
+    แต่โปรแกรม<strong>ไม่เดา</strong> มันทำตามกฎที่เขียนไว้ตายตัว และกฎของสองฝั่งนี้เขียนไว้คนละแบบจริง ๆ
+    <br>ทางแก้จึงไม่ใช่ "เขียนให้อ่านง่ายขึ้น" หรือ "ครอบด้วยเครื่องหมายคำพูด" —
+    แต่คือ<strong>ทำให้ไม่มี <code>@</code> ดิบเหลืออยู่ในสตริงเลย</strong> ด้วยการเขียนเป็น <code>%40</code>
+    ซึ่งทั้งสองฝั่งอ่านตรงกันว่า "นี่คือตัวอักษร ไม่ใช่ตัวคั่น"
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>DSN (Data Source Name)</dt>
+    <dd>สตริงเส้นเดียวที่บอกครบว่าจะต่อฐานไหน ที่เครื่องไหน ด้วยใคร รหัสอะไร ·
+    ประโยคที่ใช้ได้เลย: <em>"ขอ DSN ของ staging หน่อยครับ"</em> — สั้นกว่าไล่ถามทีละช่อง
+    และอีกฝ่ายจะรู้ทันทีว่าต้องส่งอะไรมาให้</dd>
+    <dt>percent-encoding (URL-encode)</dt>
+    <dd>วิธีเขียนอักขระที่มีความหมายพิเศษให้กลายเป็นตัวอักษรธรรมดา โดยแทนด้วย <code>%</code> ตามด้วยเลขฐานสิบหก —
+    <code>@</code> เขียนเป็น <code>%40</code> · พิมพ์ถาม AI ว่า
+    <em>"url-encode special characters in postgres connection string password"</em> จะได้คำตอบตรงจุด</dd>
+    <dt>driver</dt>
+    <dd>ตัวกลางที่แปลคำสั่งจากภาษาเราให้เป็นภาษาที่ฐานข้อมูลฟังรู้เรื่อง ·
+    ฝั่ง Go มีหลายตัวและ<strong>ตีความ DSN ไม่เหมือนกัน</strong> — <code>pgx</code> กับ <code>lib/pq</code> คือคนละตัว
+    (ผลรันข้างบนโชว์ทั้งคู่) · ส่วน <code>psql</code> ไม่ได้ใช้ของฝั่ง Go เลย มันใช้ <code>libpq</code> ที่เป็นไลบรารีภาษา C</dd>
+    <dt>sslmode</dt>
+    <dd>ตัวเลือกท้าย DSN ที่บอกว่าจะบังคับเข้ารหัสการเชื่อมต่อหรือไม่ ·
+    <code>sslmode=disable</code> ที่เห็นในบรรทัดที่ถูกคือ <strong>ปิด — ใช้ได้เฉพาะฐานที่รันบนเครื่องตัวเอง</strong> ·
+    ประโยคที่ใช้ได้เลย: <em>"ของ production ต้องตั้ง sslmode เป็นอะไรครับ"</em></dd>
+  </dl>
+</div>
+
+
+<h3><code>goose</code> อ่าน <code>.env</code> ให้เองไหม หรือต้อง <code>export</code></h3>
+
+<p>
+  บทเรียน 44 ย้ำว่าตัวแปรใน shell ที่ไม่ได้ <code>export</code> จะไม่ถึงโปรแกรมลูก
+  คำถามคือ <code>goose</code> ที่เป็น CLI แยกตัว จะเห็นค่าใน <code>.env</code> ได้ยังไง
+  <br>ผมทดสอบด้วยการ<strong>ลบตัวแปรทั้งสามตัวออกจาก environment ให้หมดก่อน</strong> แล้วสั่ง <code>goose status</code>:
+</p>
+
+<pre><code>$ env -u GOOSE_DRIVER -u GOOSE_DBSTRING -u GOOSE_MIGRATION_DIR goose status   <span class="c"># รันในโฟลเดอร์ที่มี .env</span>
+2026/08/22 10:15:27     Applied At                  Migration
+2026/08/22 10:15:27     =======================================
+2026/08/22 10:15:27     Sat Aug 22 03:14:26 2026 -- 20260822031131_create_users.sql</code></pre>
+
+<p>ทำงานได้ทั้งที่ไม่มี env สักตัว แล้วพอ<strong>ย้ายไฟล์ <code>.env</code> ออกจากโฟลเดอร์</strong> รันคำสั่งเดิม:</p>
+
+<pre><code>Usage: goose DRIVER DBSTRING [OPTIONS] COMMAND
+...
+  -env string
+    	load environment variables from file (<strong>default .env</strong>)</code></pre>
+
+<p>
+  คำตอบอยู่ในบรรทัดสุดท้าย: <code>goose</code> CLI มี flag <code>-env</code> ที่<strong>ค่าเริ่มต้นคือ <code>.env</code></strong>
+  มันจึงโหลดไฟล์นี้ให้เองอัตโนมัติ
+  <br><strong>เงื่อนไขเดียวคือต้องรันในโฟลเดอร์ที่มีไฟล์ <code>.env</code> อยู่</strong> —
+  <code>cd</code> ไปที่อื่นแล้วสั่ง <code>goose</code> จะเจอหน้า usage แบบข้างบนทันที
+  ซึ่งเป็นอาการที่คนเจอบ่อยแล้วนึกว่า goose พัง
+</p>
+
+<h2>5 · สร้างไฟล์ migration</h2>
+
+<p>สไลด์หน้า 50 ครึ่งล่างมีสองคำสั่ง:</p>
+
+<pre><code><span class="c"># Make directory</span>
+mkdir migrations
+
+<span class="c"># Create migration</span>
+goose create create_users sql</code></pre>
+
+<pre><code>$ goose create create_users sql
+2026/08/22 10:11:31 Created new file: <strong>migrations/20260822031131_create_users.sql</strong></code></pre>
+
+<p>ไฟล์ที่ได้มีแค่นี้ — เป็นโครงเปล่าที่รอเราเติม:</p>
+
+<pre><code><span class="c">-- +goose Up</span>
+<span class="k">SELECT</span> <span class="s">'up SQL query'</span>;
+
+<span class="c">-- +goose Down</span>
+<span class="k">SELECT</span> <span class="s">'down SQL query'</span>;</code></pre>
+
+<p>
+  บรรทัด <code>-- +goose Up</code> และ <code>-- +goose Down</code> หน้าตาเหมือน comment ของ SQL
+  แต่จริง ๆ เป็น<strong>คำสั่งที่ goose อ่าน</strong> — มันแบ่งไฟล์เป็นสองส่วน:
+  ส่วน <code>Up</code> รันตอน <code>goose up</code> (เดินหน้า) ส่วน <code>Down</code> รันตอน <code>goose down</code> (ถอยกลับ)
+  <br><strong>ห้ามลบสองบรรทัดนี้</strong> ไม่งั้น goose จะไม่รู้ว่าจะรันอะไร
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>เลขหน้าชื่อไฟล์คือเวลา UTC ไม่ใช่เวลาไทย</strong> —
+    <code>20260822031131</code> อ่านว่า 2026-08-22 เวลา <strong>03:11:31</strong>
+    แต่นาฬิกาบนเครื่องตอนนั้นคือ 10:11:31 (ไทยเร็วกว่า UTC 7 ชั่วโมง)
+    <br>ที่ goose ทำแบบนี้เพราะเลขนี้คือ<strong>ลำดับการรัน</strong> — ทีมที่อยู่คนละ timezone
+    ต้องได้ลำดับตรงกัน ถ้าใช้เวลาท้องถิ่นของแต่ละคน ไฟล์จะสลับลำดับกันมั่ว
+  </p>
+</div>
+
+<h2>6 · เขียน migration <code>create_users</code> แล้วรันจริง</h2>
+
+<p>เนื้อ migration ตามสไลด์หน้า 51 — ผมพิมพ์ตามทุกบรรทัดแล้วรันจริง:</p>
+
+<pre><code><span class="c">-- +goose Up</span>
+<span class="k">CREATE TABLE</span> users (
+  id <span class="k">UUID</span> <span class="k">PRIMARY KEY</span>,
+  email <span class="k">VARCHAR</span>(255) <span class="k">NOT NULL</span>,
+  name <span class="k">VARCHAR</span>(255),
+  bio <span class="k">TEXT</span>,
+  uid <span class="k">VARCHAR</span>(255) <span class="k">NOT NULL</span>,
+  preferred_username <span class="k">VARCHAR</span>(255),
+  last_signed_in_at <span class="k">TIMESTAMPTZ</span>,
+  created_at <span class="k">TIMESTAMPTZ</span> <span class="k">NOT NULL DEFAULT</span> <span class="f">now</span>(),
+  updated_at <span class="k">TIMESTAMPTZ</span> <span class="k">NOT NULL DEFAULT</span> <span class="f">now</span>(),
+  deleted_at <span class="k">TIMESTAMPTZ</span>
+);
+
+<span class="k">CREATE UNIQUE INDEX</span> idx_users_uid <span class="k">ON</span> users (uid);
+<span class="k">CREATE INDEX</span> idx_users_email <span class="k">ON</span> users (email);
+<span class="k">CREATE INDEX</span> idx_users_deleted_at <span class="k">ON</span> users (deleted_at);
+
+<span class="c">-- +goose Down</span>
+<span class="k">DROP TABLE IF EXISTS</span> users;</code></pre>
+
+<p><code>goose up</code> แล้วเข้าไปส่องด้วย <code>psql</code> ว่าได้ตารางหน้าตายังไงจริง ๆ:</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧰 <strong>เครื่องผมไม่มี <code>psql</code> ติดตั้งบน host</strong> (<code>which psql</code> ไม่เจอ)
+    ผมเลยรัน <code>psql</code> ทุกคำสั่งในบทนี้<strong>ผ่านคอนเทนเนอร์ Postgres ตัวเดียวกับที่ goose ต่อ</strong> —
+    ตอน <code>docker run</code> ผมตั้งชื่อไว้ว่า <code>day9check</code> (<code>docker run --name day9check …</code>)
+    คำสั่งจึงขึ้นต้นด้วย <code>docker exec day9check psql …</code> ทุกอัน
+    <br>ถ้าเครื่องคุณมี <code>psql</code> อยู่แล้ว ตัด <code>docker exec day9check</code> ข้างหน้าออกได้เลย
+    แต่ต้อง<strong>เติมปลายทางให้ครบเสมอ</strong> (<code>-U postgres -d wongnok</code> หรือใส่ DSN เต็ม) —
+    <code>psql -c '…'</code> เปล่า ๆ จะไปต่อฐานที่ชื่อเดียวกับ username ของคุณ ไม่ใช่ <code>wongnok</code>
+  </p>
+</div>
+
+<pre><code>$ docker exec day9check psql -U postgres -d wongnok -c '\d users'
+                              Table "public.users"
+     Column         |           Type           | Collation | Nullable | Default
+--------------------+--------------------------+-----------+----------+---------
+ id                 | uuid                     |           | not null |
+ email              | character varying(255)   |           | not null |
+ name               | character varying(255)   |           |          |
+ bio                | text                     |           |          |
+ uid                | character varying(255)   |           | not null |
+ preferred_username | character varying(255)   |           |          |
+ last_signed_in_at  | timestamp with time zone |           |          |
+ created_at         | timestamp with time zone |           | not null | now()
+ updated_at         | timestamp with time zone |           | not null | now()
+ deleted_at         | timestamp with time zone |           |          |
+Indexes:
+    "users_pkey" PRIMARY KEY, btree (id)
+    "idx_users_deleted_at" btree (deleted_at)
+    "idx_users_email" btree (email)
+    "idx_users_uid" <strong>UNIQUE</strong>, btree (uid)</code></pre>
+
+<p>
+  ตรงกับ SQL ในสไลด์ทุกบรรทัด สังเกตสองอย่าง:
+  <br>· <code>TIMESTAMPTZ</code> โผล่ออกมาเป็น <code>timestamp with time zone</code> — มันคือชื่อเดียวกัน แค่เขียนย่อ
+  <br>· <strong>คอลัมน์ <code>id</code> ไม่มี <code>Default</code></strong> (ช่องขวาสุดว่าง) — จำจุดนี้ไว้ เดี๋ยวหัวข้อ 8 จะกลับมาที่บรรทัดนี้
+</p>
+
+<h3><code>up</code> → <code>down</code> → <code>up</code> ให้ผลยังไง</h3>
+
+<pre><code>$ goose status      <span class="c"># หลัง up</span>
+2026/08/22 10:11:57     Applied At                  Migration
+2026/08/22 10:11:57     =======================================
+2026/08/22 10:11:57     Sat Aug 22 03:11:57 2026 -- 20260822031131_create_users.sql
+
+$ goose down
+2026/08/22 10:14:26 OK   20260822031131_create_users.sql (5.22ms)
+
+$ goose status      <span class="c"># หลัง down</span>
+2026/08/22 10:14:26     Applied At                  Migration
+2026/08/22 10:14:26     =======================================
+2026/08/22 10:14:26     <strong>Pending</strong>                  -- 20260822031131_create_users.sql
+
+$ goose up
+2026/08/22 10:14:26 OK   20260822031131_create_users.sql (8.73ms)
+2026/08/22 10:14:26 goose: successfully migrated database to version: 20260822031131
+
+$ goose version
+2026/08/22 10:14:26 goose: version 20260822031131</code></pre>
+
+<p>
+  สามอย่างที่ควรสังเกตจากผลนี้:
+  <br>1. <strong><code>goose down</code> ไม่พิมพ์บรรทัด <code>successfully migrated…</code></strong> เหมือน <code>up</code>
+  มันเงียบกว่า อย่าตกใจว่าไม่ทำงาน
+  <br>2. <strong><code>down</code> ถอยแค่หนึ่งขั้น</strong> ไม่ใช่ถอยหมดทุกไฟล์ — อยากถอยหมดต้องใช้ <code>goose reset</code>
+  <br>3. คอลัมน์ <code>Applied At</code> โชว์ <code>03:11:57</code> ทั้งที่ตอนรันนาฬิกาเป็น <code>10:11:57</code>
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ <code>Applied At</code> เป็นเวลา UTC — ต่างจากเวลาไทย 7 ชั่วโมง</span>
+  <p>
+    goose จดสถานะไว้ในตารางชื่อ <code>goose_db_version</code> ที่มันสร้างเองในฐานเดียวกัน เปิดดูได้:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ docker exec day9check psql -U postgres -d wongnok -c 'select * from goose_db_version;' -c 'show timezone;'
+ id |   version_id   | is_applied |           tstamp
+----+----------------+------------+----------------------------
+  1 |              0 | t          | 2026-08-22 03:11:46.240423
+  <strong>3</strong> | 20260822031131 | t          | 2026-08-22 03:14:26.155434
+(2 rows)
+
+ TimeZone
+----------
+ <strong>UTC</strong>
+(1 row)
+
+$ date
+Sat Aug 22 <strong>10:15:38 +07</strong> 2026</code></pre>
+  <p style="margin-bottom:0">
+    คอลัมน์ <code>tstamp</code> เป็นชนิด <code>timestamp</code> ที่<strong>ไม่มี time zone ติดมา</strong>
+    และเก็บเวลา UTC — คนที่รันในไทยจะเห็นเวลาย้อนหลังไป 7 ชั่วโมงเสมอ แล้วสงสัยว่าทำไม "เพิ่งรันไป"
+    ถึงโชว์เวลาเมื่อเช้า
+    <br>อีกจุดที่น่าสังเกต: <strong><code>id</code> กระโดดจาก 1 ไป 3</strong> ไม่มี 2
+    เพราะตอน <code>goose down</code> มัน<strong>ลบแถวทิ้งจริง ๆ</strong> ไม่ได้แค่เปลี่ยน <code>is_applied</code> เป็น false
+    <br>(แถว <code>version_id = 0</code> คือแถวที่ goose สร้างไว้เป็นหมุดเริ่มต้นตอนตั้งตารางครั้งแรก)
+  </p>
+</div>
+
+<h2>7 · ทำไมต้องมี <code>uid</code> ทั้งที่มี <code>id</code> อยู่แล้ว</h2>
+
+<p>
+  ตารางนี้มีคอลัมน์ที่หน้าตาเหมือนรหัสประจำตัวอยู่<strong>สองตัว</strong> ซึ่งเป็นจุดที่คนอ่านสไลด์แล้วงงที่สุด
+  <br>ทั้งสองตัวไม่ใช่ของซ้ำกัน มันเป็นรหัสของ<strong>คนละระบบ</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>&nbsp;</th><th><code>id</code></th><th><code>uid</code></th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>ใครเป็นคนตั้งค่า</strong></td>
+      <td>แอปเราเอง (UUID ที่เราสร้าง)</td>
+      <td><strong>Keycloak</strong> — คือค่า <code>sub</code> ที่อยู่ใน token</td>
+    </tr>
+    <tr>
+      <td><strong>เอาไว้ทำอะไร</strong></td>
+      <td>เป็น primary key · ให้ตารางอื่น (<code>recipes</code>, <code>ratings</code>) ชี้มาด้วย foreign key</td>
+      <td>เป็น<strong>สะพานเชื่อม</strong>ระหว่างคนใน token กับแถวในตารางเรา</td>
+    </tr>
+    <tr>
+      <td><strong>ใช้ตอนไหน</strong></td>
+      <td>ทุกครั้งที่ join ตาราง</td>
+      <td>ตอน login — เอา <code>sub</code> จาก token มาค้นว่า <code>WHERE uid = ?</code></td>
+    </tr>
+    <tr>
+      <td><strong>ถ้าย้าย identity provider</strong></td>
+      <td>ไม่กระทบ ข้อมูลทุกตารางยังชี้ถูก</td>
+      <td>ต้อง map ใหม่ เพราะ <code>sub</code> ของเจ้าใหม่เป็นคนละค่า</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แถวสุดท้ายคือเหตุผลจริง ๆ ที่ต้องแยกสองคอลัมน์
+  <br>ลองคิดตามว่าถ้าเราขี้เกียจ แล้ว<strong>เอา <code>sub</code> ของ Keycloak มาเป็น primary key ตรง ๆ เลย</strong>
+  วันหนึ่งบริษัทเปลี่ยนไปใช้ Google Workspace หรือย้าย Keycloak ไปอีก realm —
+  <code>sub</code> ของทุกคนเปลี่ยนหมด แปลว่า primary key เปลี่ยนหมด
+  แปลว่า<strong>ทุก foreign key ในทุกตารางที่ชี้มาหา user พังหมดพร้อมกัน</strong>
+  <br>พอแยกเป็นสองคอลัมน์ วันนั้นเราแค่ <code>UPDATE users SET uid = ...</code> — ข้อมูลอื่นไม่รู้เรื่องด้วยเลย
+</p>
+
+<p>
+  นี่เป็นรูปแบบที่มีชื่อเรียกว่า <strong>internal ID กับ external ID</strong> และใช้กับทุกอย่างที่มาจากข้างนอก
+  ไม่ใช่แค่ผู้ใช้ — เช่น <code>stripe_customer_id</code> หรือ <code>line_user_id</code> ก็ตรรกะเดียวกัน
+</p>
+
+<div class="analogy">
+  <span class="label">🎒 เทียบให้เห็นภาพ — เลขประจำตัวนักเรียน กับ เลขบัตรประชาชน</span>
+  <p>
+    โรงเรียนออก<strong>เลขประจำตัวนักเรียน</strong>ให้คุณเอง แล้วใช้เลขนี้ในเอกสารภายในทุกใบ —
+    ใบเช็คชื่อ ใบเกรด ใบยืมหนังสือห้องสมุด ทุกใบอ้างเลขนี้
+    <br>ส่วน<strong>เลขบัตรประชาชน</strong> โรงเรียนไม่ได้เป็นคนตั้ง มันมาจากข้างนอก
+    โรงเรียนแค่<strong>จดไว้ในทะเบียนช่องหนึ่ง</strong> เพื่อจะได้จับคู่คุณกับตัวตนที่ออกมาจากข้างนอกได้ถูกคน
+  </p>
+  <p>
+    <code>id</code> = <strong>เลขประจำตัวนักเรียน</strong> — แอปเราตั้งเอง และทุกตาราง
+    (<code>recipes</code>, <code>ratings</code>) ชี้มาที่เลขนี้
+    <br><code>uid</code> = <strong>เลขบัตรประชาชน</strong> — Keycloak เป็นคนออก (ก็คือ claim <code>sub</code>)
+    เราแค่จดไว้เพื่อใช้ตอน login ว่า <em>"คนที่ถือ token ใบนี้ คือแถวไหนในตารางเรา"</em>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> เลขบัตรประชาชนไทยติดตัวไปทั้งชีวิต ย้ายโรงเรียนกี่ครั้งก็เลขเดิม —
+    แต่ <code>sub</code> ของ Keycloak <strong>ผูกอยู่กับ realm และ provider ตัวนั้น</strong>
+    วันที่ย้ายไป identity provider เจ้าใหม่ ทุกคนได้เลขใหม่หมด
+    <br>ตรงนี้แหละคือเหตุผลที่ห้ามเอา <code>sub</code> มาเป็น primary key ตรง ๆ —
+    ไม่ใช่เพราะมันสั้นไปยาวไป แต่เพราะ<strong>มันเป็นเลขที่คนอื่นเป็นเจ้าของ และเปลี่ยนได้โดยที่เราไม่ได้สั่ง</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>primary key</dt>
+    <dd>คอลัมน์ที่ใช้ระบุแถวในตารางนี้แบบไม่ซ้ำ · ในตารางเราคือ <code>id</code> ·
+    ประโยคที่ใช้ได้เลย: <em>"primary key ของตารางนี้เป็น UUID ที่เราสร้างเองนะ ไม่ได้เอามาจาก Keycloak"</em></dd>
+    <dt>foreign key</dt>
+    <dd>คอลัมน์ในตารางหนึ่งที่<strong>ชี้ไปหา primary key ของอีกตาราง</strong> ·
+    ประโยคที่ใช้ได้เลย: <em>"<code>recipes.user_id</code> เป็น foreign key ไปหา <code>users.id</code> นะ
+    ไม่ใช่ไปหา <code>uid</code>"</em> — พูดแบบนี้อีกฝ่ายจะเห็นภาพทันทีว่าทำไมสองคอลัมน์นี้ห้ามสลับกัน</dd>
+    <dt>internal ID / external ID</dt>
+    <dd>ชื่อเรียกรูปแบบที่เพิ่งใช้ไป: <strong>เก็บรหัสจากระบบข้างนอกไว้คนละคอลัมน์กับ primary key ของเราเอง</strong> ·
+    พิมพ์ถาม AI ว่า <em>"internal id vs external id pattern with an external identity provider"</em>
+    จะเจอทั้งเหตุผลและตัวอย่าง schema</dd>
+    <dt>identity provider (IdP)</dt>
+    <dd>ระบบที่รับหน้าที่ยืนยันตัวตนแทนแอปเรา — Keycloak, Google, LINE เป็น IdP ทั้งนั้น ·
+    ประโยคที่ใช้ได้เลย: <em>"ถ้าวันหนึ่งเราย้าย IdP ตารางไหนต้อง map ใหม่บ้างครับ"</em></dd>
+    <dt>claim</dt>
+    <dd>ช่องข้อมูลหนึ่งช่องใน JWT — <code>sub</code>, <code>email</code>, <code>preferred_username</code>
+    แต่ละตัวเรียกว่า claim หนึ่งตัว · ประโยคที่ใช้ได้เลย:
+    <em>"token ที่ Keycloak ออกให้ มี claim <code>email</code> ติดมาด้วยไหมครับ"</em>
+    (หัวข้อ 9 จะบอกว่าคำตอบขึ้นกับ scope ที่ขอไป)</dd>
+  </dl>
+</div>
+
+
+<h3>แล้วทำไม <code>uid</code> ต้อง <code>UNIQUE</code></h3>
+
+<p>
+  ตอน login โค้ดจะทำสิ่งนี้: เอา <code>sub</code> จาก <code>id_token</code> ไปค้นว่า
+  <em>"คนนี้เคยมาแล้วหรือยัง"</em> ด้วย <code>WHERE uid = ?</code>
+  <br>ถ้าคำค้นนี้คืนมา<strong>สองแถว</strong> โค้ดจะทำอะไรถูก? แถวไหนคือ "เขา"?
+  สูตรอาหารที่เขาเขียนไว้ผูกกับแถวไหน?
+  <br><strong><code>UNIQUE</code> คือการบังคับให้คำถามนี้มีคำตอบเดียวเสมอ</strong> ในระดับฐานข้อมูล —
+  ไม่ได้ฝากไว้กับความระวังของโค้ด
+</p>
+
+<p>
+  และมันสำคัญเพราะ <strong>race condition</strong> — สถานการณ์ที่สองคำขอวิ่งพร้อมกันแล้วเหยียบกัน
+  <br>ผู้ใช้กดปุ่ม login รัว ๆ สองครั้ง เกิดสอง request พร้อมกัน ทั้งคู่ค้นแล้วไม่เจอ (เพราะยังไม่มีใครเขียน)
+  ทั้งคู่จึงสั่ง <code>INSERT</code>
+  <br>ถ้าไม่มี <code>UNIQUE</code> คุณได้ผู้ใช้ซ้ำสองแถวเงียบ ๆ · ถ้ามี ฐานข้อมูลจะปฏิเสธแถวที่สอง
+  แล้วโค้ดค่อยจับ error นั้นแล้วไปอ่านแถวที่มีอยู่แทน
+  <br><strong>index ยังทำให้การค้นเร็วขึ้นด้วย</strong> เพราะทุก request ที่มี token ต้องค้นด้วย <code>uid</code> —
+  ถ้าไม่มี index ฐานข้อมูลต้องไล่อ่านทั้งตารางทุกครั้ง
+</p>
+
+<h2>8 · เรื่องที่สไลด์ไม่ได้พูด — <code>UNIQUE</code> ชนกับ soft delete</h2>
+
+<p>
+  ก่อนอื่นนิยามศัพท์: <strong>soft delete</strong> คือการ "ลบ" ที่ไม่ได้ลบจริง —
+  แทนที่จะ <code>DELETE</code> แถวทิ้ง เราแค่ประทับเวลาลงคอลัมน์ <code>deleted_at</code>
+  แล้วให้ทุก query กรองแถวที่มีค่าออกไป
+  <br>ข้อดีคือกู้คืนได้ และข้อมูลที่ผูกอยู่ (สูตรอาหารของคนนี้) ไม่หายตามไปด้วย
+  <br>คอลัมน์ <code>deleted_at TIMESTAMPTZ</code> กับ index <code>idx_users_deleted_at</code> ในสไลด์
+  คือ<strong>รูปแบบที่ GORM รู้จักโดยตรง</strong> ผมยืนยันด้วยการรันจริง:
+</p>
+
+<pre><code><span class="c">// field ที่ต้องประกาศฝั่ง GORM — ชนิดต้องเป็น gorm.DeletedAt เท่านั้น ไม่ใช่ *time.Time</span>
+DeletedAt gorm.DeletedAt <span class="s">`gorm:"index:idx_users_deleted_at"`</span></code></pre>
+
+<pre><code>1) Create OK, id = bae1dc16-8585-4f91-bbe6-d30160e7dbdd
+2) db.Delete() -&gt; DeletedAt.Valid = <strong>true</strong>
+3) Count() ปกติ (ถูกกรอง deleted_at IS NULL) = <strong>0</strong>
+4) Unscoped().Count() (นับแถวที่ soft delete ด้วย) = <strong>1</strong></code></pre>
+
+<p>
+  บรรทัด 3 กับ 4 คือหัวใจ: <code>Count()</code> ธรรมดาได้ 0 (มองไม่เห็นแล้ว)
+  แต่ <code>Unscoped().Count()</code> ได้ 1 — <strong>แถวยังอยู่ในตารางจริง ๆ</strong>
+  GORM แค่แอบเติม <code>WHERE deleted_at IS NULL</code> ให้ทุก query
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน — ข้อนี้คือข้อที่สไลด์ข้ามไป และมันจะกัดคุณตอน production</strong></p>
+  <p>ลำดับเหตุการณ์สามขั้น ทุกขั้นเป็นเรื่องปกติที่เกิดได้จริง:</p>
+  <pre><code>1. ผู้ใช้ sub = "oidc-sub-123" login ครั้งแรก  -&gt; INSERT แถวใหม่ uid = 'oidc-sub-123'
+2. ผู้ใช้กด "ลบบัญชี"                          -&gt; UPDATE deleted_at = now()   (soft delete)
+3. <strong>ผู้ใช้คนเดิม เปลี่ยนใจ login กลับเข้ามาใหม่</strong>     -&gt; ???</code></pre>
+  <p class="ask">
+    ขั้นที่ 3 โค้ดจะค้นด้วย <code>WHERE uid = 'oidc-sub-123'</code> ก่อน — <strong>ค้นเจอไหม?</strong>
+    <br>แล้วถ้าค้นไม่เจอ มันจะ <code>INSERT</code> แถวใหม่ — <strong>INSERT ผ่านไหม?</strong>
+    <br>(ใบ้: <code>sub</code> ของ Keycloak ไม่เคยเปลี่ยนตลอดชีพของ user คนนั้น ·
+    และ index <code>idx_users_uid</code> เป็น <code>UNIQUE</code> ธรรมดา ไม่มีเงื่อนไขอะไรต่อท้าย)
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ค้นไม่เจอ และ INSERT ไม่ผ่าน — ผู้ใช้คนนี้ติดตาย กลับเข้ามาไม่ได้อีกเลย</strong></p>
+    <p>SQL ล้วน ๆ ก่อน เพื่อให้เห็นว่าไม่ใช่ความผิดของ ORM:</p>
+    <pre style="margin:0.6rem 0"><code>INSERT 0 1                                <span class="c"># ขั้น 1 สมัครครั้งแรก</span>
+UPDATE 1                                  <span class="c"># ขั้น 2 soft delete</span>
+     uid      | soft_deleted
+--------------+--------------
+ oidc-sub-123 | t                         <span class="c"># แถวยังอยู่ในตาราง แค่ถูกทำเครื่องหมายไว้</span>
+(1 row)
+
+<span class="c"># ขั้น 3 สมัครกลับเข้ามาด้วย uid เดิม</span>
+<strong>ERROR:  duplicate key value violates unique constraint "idx_users_uid"</strong>
+DETAIL:  Key (uid)=(oidc-sub-123) already exists.</code></pre>
+    <p>ฝั่ง GORM ก็เหมือนกัน และตัวที่โค้ด OIDC ชอบใช้ที่สุด (<code>FirstOrCreate</code>) เจ็บกว่าเพื่อน:</p>
+    <pre style="margin:0.6rem 0"><code>5) สมัครใหม่ uid เดิม -&gt; err = ERROR: duplicate key value violates unique constraint "idx_users_uid" (SQLSTATE 23505)
+6) <strong>FirstOrCreate</strong>        -&gt; err = ERROR: duplicate key value violates unique constraint "idx_users_uid" (SQLSTATE 23505)</code></pre>
+    <p style="margin-bottom:0">
+      <code>FirstOrCreate</code> คือ "หาก่อน ถ้าไม่เจอค่อยสร้าง" — ฟังดูปลอดภัยที่สุด แต่กลับเป็นกับดักพอดี:
+      <br>ท่อน <em>First</em> ถูกเงื่อนไข <code>deleted_at IS NULL</code> ที่ GORM แอบเติมให้ทุก query กรองออก
+      เลย<strong>หาไม่เจอ</strong>
+      <br>(GORM เรียกตัวกรองอัตโนมัตินี้ว่า <em>scope</em> — <strong>คนละความหมายกับ <code>scope</code> ของ OAuth
+      ในหัวข้อ 3</strong> ที่แปลว่า "ขอสิทธิ์อะไรบ้าง" ชื่อพ้องกันเฉย ๆ)
+      <br>ท่อน <em>Create</em> จึงทำงาน แล้วไป<strong>ชน unique ของแถวที่ถูกลบ</strong> ซึ่งยังนอนอยู่ในตาราง
+      <br>ผลคือทางตัน: หาก็ไม่เจอ สร้างก็ไม่ได้ — และมันเกิดกับ<strong>ผู้ใช้ที่เคยลบบัญชีทุกคน</strong>
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <p><strong>ทางแก้: <em>partial unique index</em> — บังคับ unique เฉพาะแถวที่ยังไม่ถูกลบ</strong></p>
+  <p style="margin-bottom:0">
+    PostgreSQL ให้เติม <code>WHERE</code> ท้าย index ได้ แปลว่า "กฎข้อนี้ใช้กับแถวที่เข้าเงื่อนไขนี้เท่านั้น"
+  </p>
+  <pre style="margin:0.6rem 0"><code><span class="k">DROP INDEX</span> idx_users_uid;
+<span class="k">CREATE UNIQUE INDEX</span> idx_users_uid <span class="k">ON</span> users (uid) <strong><span class="k">WHERE</span> deleted_at <span class="k">IS NULL</span></strong>;</code></pre>
+  <p style="margin-bottom:0">ผลรันหลังแก้ — ลอง INSERT ซ้ำสองรอบติดกัน:</p>
+  <pre style="margin:0.6rem 0"><code>DROP INDEX
+CREATE INDEX
+<strong>INSERT 0 1</strong>                               <span class="c"># รอบแรก: สมัครใหม่หลัง soft delete → ผ่านแล้ว</span>
+     uid      | active
+--------------+--------
+ oidc-sub-123 | f                          <span class="c"># แถวเก่าที่ถูกลบ</span>
+ oidc-sub-123 | t                          <span class="c"># แถวใหม่ที่ยัง active</span>
+(2 rows)
+
+<strong>ERROR:  duplicate key value violates unique constraint "idx_users_uid"</strong>
+DETAIL:  Key (uid)=(oidc-sub-123) already exists.   <span class="c"># รอบสอง: ยังกัน uid ซ้ำในแถวที่ active อยู่</span></code></pre>
+  <p style="margin-bottom:0">
+    ได้ทั้งสองอย่างพร้อมกัน: <strong>สมัครกลับเข้ามาได้</strong> และ <strong>ยังกันซ้ำในหมู่คนที่ยัง active</strong>
+    <br>ฝั่ง GORM เขียนเป็น tag แบบนี้:
+    <code>gorm:"uniqueIndex:idx_users_uid,where:deleted_at IS NULL"</code>
+    <br>ถ้าจะแก้ในโปรเจกต์จริง <strong>อย่าไปแก้ไฟล์ migration เดิมที่รันไปแล้ว</strong> —
+    ให้สร้าง migration ใหม่ที่ <code>DROP INDEX</code> แล้ว <code>CREATE</code> ใหม่ (คนอื่นในทีมรันไฟล์เดิมไปแล้ว
+    แก้ไฟล์เดิมจะทำให้ฐานของแต่ละคนไม่เหมือนกัน)
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧾 เทียบให้เห็นภาพ — กลับมาสมัครสมาชิกร้านด้วยเบอร์เดิม</span>
+  <p>
+    คุณเคยสมัครสมาชิกร้านไว้ด้วยเบอร์มือถือ วันหนึ่งขอยกเลิกสมาชิก
+    พนักงาน<strong>ไม่ได้ลบประวัติทิ้ง</strong> เขาแค่กดปุ่มให้บัญชีนั้นเป็น "ยกเลิกแล้ว"
+    เพราะประวัติการซื้อยังต้องเก็บไว้
+    <br>วันหลังคุณเปลี่ยนใจ กลับมาสมัครใหม่ด้วย<strong>เบอร์เดิม</strong> — แล้วเจอสองด่านนี้:
+    <br>· พนักงานค้นเบอร์คุณในหน้าจอ <strong>หาไม่เจอ</strong> เพราะหน้าค้นหากรองบัญชีที่ยกเลิกออกไปหมดแล้ว
+    <br>· พนักงานเลยกดสมัครใหม่ให้ ระบบเด้งว่า <strong>"เบอร์นี้มีสมาชิกอยู่แล้ว"</strong>
+    เพราะกฎห้ามเบอร์ซ้ำยังนับรวมบัญชีที่ยกเลิกด้วย
+    <br><strong>หาก็ไม่เจอ สมัครก็ไม่ได้</strong> — นี่คือเหตุการณ์เดียวกับ <code>FirstOrCreate</code> เป๊ะ ๆ:
+    ท่อน <em>First</em> โดน <code>deleted_at IS NULL</code> กรองออก ·
+    ท่อน <em>Create</em> ไปชน <code>idx_users_uid</code> ของแถวที่ถูกลบซึ่งยังนอนอยู่ในตาราง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ที่ร้านคุณเรียกผู้จัดการมาปลดล็อกให้ได้ในนาทีนั้น
+    แต่ unique index <strong>ไม่มีใครมาปลดให้ตอนโปรแกรมกำลังรัน</strong> มันเป็นกฎที่ฝังอยู่ในตัวฐานข้อมูล
+    <br>ทางออกจึงมีแค่สองทาง และทั้งคู่ต้องลงมือเขียนเอง: <strong>แก้ตัวกฎ</strong>
+    (ทำให้เป็น partial index อย่างที่กล่องข้างบนทำ) หรือ <strong>เขียนโค้ดไปปลดแถวเก่าเอง</strong>
+    ด้วย <code>Unscoped()</code> ของ GORM แล้วเคลียร์ <code>deleted_at</code> ทิ้ง
+    <br>อีกจุดที่การเปรียบเทียบพาไปผิดได้: ที่ร้านคุณอาจอยากได้ประวัติเก่ากลับมาด้วย
+    แต่ท่า partial index ในกล่องข้างบน<strong>ไม่ได้กู้แถวเก่าคืน</strong> — มันสร้างแถวใหม่คนละ <code>id</code>
+    ของเก่ายังนอนอยู่แบบถูกลบเหมือนเดิม (ผลรันโชว์ 2 แถว)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>soft delete</dt>
+    <dd>"ลบ" ด้วยการประทับเวลาลง <code>deleted_at</code> แล้วให้ทุก query กรองออก แทนที่จะ <code>DELETE</code> จริง ·
+    ประโยคที่ใช้ได้เลย: <em>"ตารางนี้เป็น soft delete นะ แถวยังอยู่ อย่าลืมตอนเขียน query"</em></dd>
+    <dt>partial index</dt>
+    <dd>index ที่มี <code>WHERE</code> ต่อท้าย แปลว่า <em>"กฎข้อนี้ใช้กับแถวที่เข้าเงื่อนไขเท่านั้น"</em> ·
+    พิมพ์ถาม AI ว่า <em>"postgres partial unique index soft delete deleted_at"</em>
+    จะได้ท่าเดียวกับที่ใช้แก้ในกล่องข้างบน</dd>
+    <dt>unique violation · SQLSTATE 23505</dt>
+    <dd>รหัสมาตรฐานที่แปลว่า "แถวนี้ชน unique" · โผล่ในผลรันทั้ง SQL ล้วนและฝั่ง GORM ·
+    <strong>รหัสนี้เอาไปเทียบในโค้ดได้ตรงกว่าการอ่านข้อความ error เป็นสตริง</strong> เพราะข้อความเปลี่ยนตามภาษาและเวอร์ชันได้</dd>
+    <dt>upsert · <code>ON CONFLICT</code></dt>
+    <dd>"มีอยู่แล้วก็อัปเดต ยังไม่มีก็แทรกใหม่" จบในคำสั่งเดียว ไม่ต้อง <code>SELECT</code> ก่อน ·
+    เป็นท่าที่โค้ด handler ท้ายหัวข้อ 9 ใช้แทน <code>FirstOrCreate</code> ·
+    ประโยคที่ใช้ได้เลย: <em>"ตรงนี้ทำเป็น upsert on <code>uid</code> ดีกว่าไหมครับ จะได้ไม่มีช่องให้ race"</em></dd>
+    <dt><code>Unscoped()</code></dt>
+    <dd>คำสั่งของ GORM ที่บอกว่า <em>"รอบนี้อย่าเติมตัวกรอง <code>deleted_at IS NULL</code> ให้"</em> ·
+    ใช้ตอนอยาก<strong>เห็น</strong>หรืออยาก<strong>ปลด</strong>แถวที่ถูก soft delete — ไม่ใส่ก็มองไม่เห็นแถวนั้นเลย</dd>
+  </dl>
+</div>
+
+
+<h3>บั๊กเงียบอีกตัวจากบรรทัด <code>id UUID PRIMARY KEY</code></h3>
+
+<p>
+  ย้อนกลับไปดู <code>\d users</code> ในหัวข้อ 6: คอลัมน์ <code>id</code> <strong>ไม่มี <code>DEFAULT</code></strong>
+  แปลว่าฐานข้อมูลไม่ได้สร้าง UUID ให้ — <strong>โค้ดฝั่งเราต้องเซ็ตเอง</strong>
+  <br>ผมลองรัน GORM แบบที่ลืมเซ็ต <code>ID</code> ดูสองรอบ (คนละ <code>uid</code>):
+</p>
+
+<pre><code>รอบแรก:
+Create โดยไม่เซ็ต ID -&gt; <strong>err=&lt;nil&gt;</strong>, id=00000000-0000-0000-0000-000000000000
+
+รอบสอง (uid ต่างกัน):
+Create โดยไม่เซ็ต ID -&gt; err=<strong>ERROR: duplicate key value violates unique constraint "users_pkey"</strong> (SQLSTATE 23505)
+
+แถวในตาราง:
+                  id                  |    uid
+--------------------------------------+-----------
+ 00000000-0000-0000-0000-000000000000 | no-id-set
+(1 row)</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ ผู้ใช้คนแรกเข้าได้ คนที่สองถึงจะพัง</span>
+  <p style="margin-bottom:0">
+    Go ให้ค่าเริ่มต้นของ UUID เป็นศูนย์ทั้งหมด <code>00000000-…-000000000000</code>
+    ซึ่งเป็นค่าที่<strong>ถูกต้องตามชนิด <code>uuid</code></strong> — ฐานข้อมูลจึงรับไว้เฉย ๆ ไม่บ่นอะไร
+    <br>บั๊กนี้เลย<strong>ผ่านทุกการทดสอบที่มี user คนเดียว</strong> แล้วไประเบิดตอนมีคนที่สองสมัคร
+    ด้วย error ที่พูดถึง <code>users_pkey</code> ซึ่งไม่ได้ชี้ไปที่ต้นเหตุเลย
+    <br><strong>แก้ได้สองทาง เลือกทางใดทางหนึ่ง:</strong>
+    <br>· ฝั่งฐานข้อมูล — เติม <code>DEFAULT gen_random_uuid()</code> ให้คอลัมน์ <code>id</code> ใน migration
+    (ฟังก์ชันนี้มีมาให้ใน PostgreSQL 13 ขึ้นไป ไม่ต้องลง extension)
+    <br>· ฝั่ง Go — เขียน <code>BeforeCreate</code> hook ใน GORM ให้สร้าง UUID ก่อนบันทึกทุกครั้ง
+  </p>
+</div>
+
+<h2>9 · <code>last_signed_in_at</code> และ <code>preferred_username</code> มาจากไหน</h2>
+
+<p>
+  สองคอลัมน์นี้ในสไลด์ไม่มีคำอธิบาย แต่มันไม่ใช่ของที่เราคิดขึ้นเอง —
+  <strong>มันมาจากข้อมูลใน token ที่ Keycloak ส่งมา</strong>
+  <br>นี่คือ payload จริงที่ผมถอดออกมาจาก token ของ Keycloak (ตัดเฉพาะบรรทัดที่เกี่ยว):
+</p>
+
+<pre><code>{
+  <span class="n">"sub"</span>: <span class="s">"5da7f595-196f-44a6-8dfd-64306ce734d6"</span>,      <span class="c">// → คอลัมน์ uid</span>
+  <span class="n">"preferred_username"</span>: <span class="s">"chef1"</span>,                     <span class="c">// → คอลัมน์ preferred_username</span>
+  <span class="n">"name"</span>: <span class="s">"Chef One"</span>,                                <span class="c">// → คอลัมน์ name</span>
+  <span class="n">"email"</span>: <span class="s">"chef1@wongnok.dev"</span>,                      <span class="c">// → คอลัมน์ email</span>
+  <span class="n">"given_name"</span>: <span class="s">"Chef"</span>,
+  <span class="n">"family_name"</span>: <span class="s">"One"</span>,
+  <span class="n">"email_verified"</span>: <span class="k">true</span>,
+  <span class="n">"iat"</span>: 1787368445,
+  <span class="n">"exp"</span>: 1787368745                              <span class="c">// = iat + 300 วินาที</span>
+}</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คอลัมน์</th><th>มาจากไหน</th><th>เขียนตอนไหน</th></tr></thead>
+  <tbody>
+    <tr><td><code>uid</code></td><td>claim <code>sub</code></td><td>ตอน login ครั้งแรก แล้ว<strong>ไม่แก้อีก</strong></td></tr>
+    <tr><td><code>email</code>, <code>name</code></td><td>claim <code>email</code>, <code>name</code></td><td>อัปเดตทุกครั้งที่ login (ผู้ใช้อาจไปแก้ที่ Keycloak)</td></tr>
+    <tr><td><code>preferred_username</code></td><td>claim <code>preferred_username</code></td><td>เหมือนกัน — เอาไว้โชว์เป็นชื่อผู้ใช้ในแอป</td></tr>
+    <tr><td><code>last_signed_in_at</code></td><td><strong>ไม่มีใน claim</strong> — เราเซ็ตเป็น <code>now()</code> เอง</td><td>ทุกครั้งที่ callback สำเร็จ</td></tr>
+    <tr><td><code>bio</code></td><td><strong>ไม่มีใน claim</strong> — ผู้ใช้พิมพ์เองในแอปเรา</td><td>ตอนผู้ใช้แก้โปรไฟล์</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สองแถวล่างคือคำตอบของคำถามในหัวข้อ 1 ว่า "ทำไมต้องมีตาราง users ในเมื่อ Keycloak เก็บให้แล้ว" —
+  <strong><code>bio</code> กับ <code>last_signed_in_at</code> เป็นของแอปเรา Keycloak ไม่มีให้และไม่ควรมี</strong>
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ claim ที่คุณคิดว่ามีอยู่แล้ว อาจไม่มา ถ้าไม่ได้ขอ</span>
+  <p style="margin-bottom:0">
+    <code>email</code> กับ <code>preferred_username</code> จะมาก็ต่อเมื่อขอ <strong>scope <code>profile</code> และ <code>email</code></strong>
+    ซึ่งเป็นเหตุผลที่โค้ดในหัวข้อ 3 เขียนว่า
+    <code>Scopes: []string{oidc.ScopeOpenID, "profile", "email"}</code>
+    <br>(ค่าเริ่มต้นของ Keycloak ใส่ scope สองตัวนี้ให้อยู่แล้ว แต่ถ้าใครไปปรับ client scope
+    แล้วโค้ดไม่ได้ขอเอง คุณจะได้ token ที่<strong>ไม่มีอีเมล</strong> แล้วบันทึกช่องว่างลงฐาน)
+    <br>อีกเรื่องที่ต้องรู้จาก payload ข้างบน: <strong><code>exp</code> ห่างจาก <code>iat</code> แค่ 300 วินาที</strong>
+    — access token ของ Keycloak 26.7 อายุ <strong>5 นาที</strong> ไม่ใช่ 1 ชั่วโมงอย่างที่หลายคนจำ
+    (refresh token 1800 วินาที = 30 นาที)
+  </p>
+</div>
+
+<h3>สะพานที่ขาดไป — <code>handler</code> ที่พา <code>Claims</code> ลงตาราง <code>users</code></h3>
+
+<p>
+  ถึงตรงนี้บทนี้มีสองครึ่งที่ยังไม่ต่อกัน: หัวข้อ 3 ให้ <code>auth.Callback</code> ที่คืน <code>*Claims</code> มา
+  และหัวข้อ 6 ให้ตาราง <code>users</code> — <strong>แต่ยังไม่มีโค้ดที่พา <code>c.Sub</code> ไปลงคอลัมน์ <code>uid</code></strong>
+  <br>ก้อนนี้คือสะพานนั้น เป็น handler สองตัวของ <code>net/http</code> ที่ผม<strong>คอมไพล์และรันจริงกับ Postgres ตัวเดิม</strong>
+  (ไฟล์ <code>httpx/handler.go</code>) — และมันยังตอบเรื่อง <code>state</code> ที่หัวข้อ 3 ค้างไว้ด้วยว่า
+  "สุ่มใหม่ทุกครั้งแล้วเทียบตอนกลับมา" เขียนยังไง
+  <br>ก้อนนี้ต้องลงเพิ่มอีกสองตัวจากหัวข้อ 2 ก่อน แล้วค่อย <code>go mod tidy</code>:
+  <code>go get github.com/google/uuid</code> · <code>go get gorm.io/gorm</code>
+  (ส่วน <code>gorm.io/driver/postgres</code> ใช้ในไฟล์ที่เปิดคอนเนกชัน ไม่ใช่ไฟล์นี้)
+</p>
+
+<pre><code><span class="k">package</span> httpx
+
+<span class="k">import</span> (
+	<span class="s">"crypto/rand"</span>
+	<span class="s">"encoding/base64"</span>
+	<span class="s">"net/http"</span>
+	<span class="s">"time"</span>
+
+	<span class="s">"github.com/google/uuid"</span>
+	<span class="s">"gorm.io/gorm"</span>
+	<span class="s">"gorm.io/gorm/clause"</span>
+
+	<span class="s">"oidcdemo/auth"</span>   <span class="c">// ← บรรทัดแรกของ go.mod + ชื่อโฟลเดอร์ ถ้า module คุณชื่ออื่นก็แก้ตรงนี้</span>
+)
+
+<span class="k">type</span> User <span class="k">struct</span> {                                 <span class="c">// map ตรงกับตารางในหัวข้อ 6</span>
+	ID                <span class="k">string</span> <span class="s">`gorm:"type:uuid;primaryKey"`</span>
+	Email             <span class="k">string</span>
+	Name              <span class="k">string</span>
+	Bio               <span class="k">string</span>
+	UID               <span class="k">string</span> <span class="s">`gorm:"column:uid"`</span>
+	PreferredUsername <span class="k">string</span>
+	LastSignedInAt    *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	DeletedAt         gorm.DeletedAt                <span class="c">// ← ตัวนี้แหละที่เปิดโหมด soft delete</span>
+}
+
+<span class="k">type</span> Server <span class="k">struct</span> {
+	Auth *auth.Authenticator
+	DB   *gorm.DB
+}
+
+<span class="c">// GET /auth/login — สุ่ม state ใหม่ทุกครั้ง เก็บใส่ cookie แล้วค่อย redirect</span>
+<span class="k">func</span> (s *Server) <span class="f">Login</span>(w http.ResponseWriter, r *http.Request) {
+	b := <span class="f">make</span>([]<span class="k">byte</span>, 32)
+	<span class="k">if</span> _, err := rand.<span class="f">Read</span>(b); err != <span class="k">nil</span> {
+		http.<span class="f">Error</span>(w, <span class="s">"cannot generate state"</span>, http.StatusInternalServerError)
+		<span class="k">return</span>
+	}
+	state := base64.RawURLEncoding.<span class="f">EncodeToString</span>(b)
+
+	http.<span class="f">SetCookie</span>(w, &amp;http.Cookie{
+		Name: <span class="s">"oauth_state"</span>, Value: state,
+		Path: <span class="s">"/"</span>, HttpOnly: <span class="k">true</span>, MaxAge: 300,
+	})
+	http.<span class="f">Redirect</span>(w, r, s.Auth.<span class="f">LoginURL</span>(state), http.StatusFound)
+}
+
+<span class="c">// GET /auth/callback — เทียบ state ก่อน แล้วค่อยเอา code ไปแลก token</span>
+<span class="k">func</span> (s *Server) <span class="f">Callback</span>(w http.ResponseWriter, r *http.Request) {
+	saved, err := r.<span class="f">Cookie</span>(<span class="s">"oauth_state"</span>)
+	<span class="k">if</span> err != <span class="k">nil</span> || saved.Value != r.URL.<span class="f">Query</span>().<span class="f">Get</span>(<span class="s">"state"</span>) {
+		http.<span class="f">Error</span>(w, <span class="s">"state mismatch"</span>, http.StatusBadRequest)
+		<span class="k">return</span>
+	}
+
+	c, err := s.Auth.<span class="f">Callback</span>(r.<span class="f">Context</span>(), r.URL.<span class="f">Query</span>().<span class="f">Get</span>(<span class="s">"code"</span>))
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		http.<span class="f">Error</span>(w, err.<span class="f">Error</span>(), http.StatusUnauthorized)
+		<span class="k">return</span>
+	}
+
+	now := time.<span class="f">Now</span>()
+	u := User{
+		ID:                uuid.<span class="f">NewString</span>(),      <span class="c">// ← หัวข้อ 8 บอกไว้: id ไม่มี DEFAULT เราต้องเซ็ตเอง</span>
+		UID:               c.Sub,               <span class="c">// ← claim sub ลงคอลัมน์ uid ตรงนี้</span>
+		Email:             c.Email,
+		Name:              c.Name,
+		PreferredUsername: c.PreferredUsername,
+		LastSignedInAt:    &amp;now,                <span class="c">// ← ไม่มีใน claim เราเซ็ตเอง</span>
+	}
+
+	<span class="c">// upsert: มี uid นี้อยู่แล้ว = อัปเดต · ยังไม่มี = INSERT ใหม่</span>
+	<span class="k">if</span> err := s.DB.<span class="f">Clauses</span>(clause.OnConflict{
+		Columns:     []clause.Column{{Name: <span class="s">"uid"</span>}},
+		TargetWhere: clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: <span class="s">"deleted_at IS NULL"</span>}}},
+		DoUpdates: clause.<span class="f">AssignmentColumns</span>([]<span class="k">string</span>{
+			<span class="s">"email"</span>, <span class="s">"name"</span>, <span class="s">"preferred_username"</span>, <span class="s">"last_signed_in_at"</span>, <span class="s">"updated_at"</span>,
+		}),
+	}).<span class="f">Create</span>(&amp;u).Error; err != <span class="k">nil</span> {
+		http.<span class="f">Error</span>(w, err.<span class="f">Error</span>(), http.StatusInternalServerError)
+		<span class="k">return</span>
+	}
+
+	http.<span class="f">Redirect</span>(w, r, <span class="s">"/"</span>, http.StatusFound)
+}</code></pre>
+
+<p>
+  ผลรันจริง — login ซ้ำสองครั้งด้วย <code>sub</code> เดิม (หลังแก้ index เป็น partial ตามหัวข้อ 8 แล้ว):
+</p>
+
+<pre><code>$ go build ./... ; echo "BUILD_EXIT=$?"
+<strong>BUILD_EXIT=0</strong>
+$ go vet ./... ; echo "VET_EXIT=$?"
+<strong>VET_EXIT=0</strong>
+
+login #1 err = &lt;nil&gt;
+after #1 -&gt; rows=1  id=c38fd545-7be8-4c04-aee5-af687e93867a  last_signed_in_at=04:51:45
+login #2 err = &lt;nil&gt;
+after #2 -&gt; rows=1  id=c38fd545-7be8-4c04-aee5-af687e93867a  last_signed_in_at=04:51:48</code></pre>
+
+<p>
+  สองครั้งได้<strong>แถวเดียว</strong> · <code>id</code> ไม่เปลี่ยน · <code>last_signed_in_at</code> ขยับจาก
+  <code>04:51:45</code> เป็น <code>04:51:48</code> — ตรงกับตารางข้างบนทุกช่อง
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ บรรทัด <code>TargetWhere</code> ไม่ใช่ของประดับ — มันคือหัวข้อ 8 ที่ตามมาเก็บ</span>
+  <p>
+    ตอนแรกผมเขียนแค่ <code>Columns: {uid}</code> เฉย ๆ ไม่มี <code>TargetWhere</code> ซึ่งใช้ได้ปกติ
+    <strong>ตราบใดที่ index ยังเป็น <code>UNIQUE</code> ธรรมดา</strong>
+    <br>พอเปลี่ยนเป็น partial index ตามที่หัวข้อ 8 แนะนำ โค้ดเดิมพังทันที:
+  </p>
+  <pre style="margin:0.6rem 0"><code>login #1 err = ERROR: <strong>there is no unique or exclusion constraint matching the ON CONFLICT specification</strong> (SQLSTATE 42P10)</code></pre>
+  <p style="margin-bottom:0">
+    เพราะ PostgreSQL ต้องหา index ที่<strong>ตรงกับที่เราประกาศไว้ใน <code>ON CONFLICT</code></strong> ให้เจอ —
+    ถ้า index มี <code>WHERE deleted_at IS NULL</code> ติดอยู่ ตัว <code>ON CONFLICT</code> ก็ต้องมีเงื่อนไขเดียวกัน
+    ซึ่งฝั่ง GORM เขียนด้วย field <code>TargetWhere</code>
+    <br><strong>บทเรียน:</strong> เปลี่ยน index ในฐานข้อมูลแล้วต้องกลับมาดูโค้ดที่พึ่ง index นั้นด้วยเสมอ
+    — migration กับ query ผูกกันแน่นกว่าที่คิด
+  </p>
+</div>
+
+<div class="win">
+  <p><strong>ของแถมที่โผล่มาตอนรัน: upsert ตัวนี้กับ soft delete เข้ากันได้พอดี</strong></p>
+  <p style="margin-bottom:0">
+    ลอง soft delete แถวนั้นทิ้ง แล้วให้ผู้ใช้ login กลับเข้ามาใหม่:
+  </p>
+  <pre style="margin:0.6rem 0"><code>login #1 err = &lt;nil&gt;
+after #1 -&gt; rows=1  id=0351bc34-73a3-4d5c-834e-baceac290515  last_signed_in_at=04:51:48
+
+$ docker exec day9check psql -U postgres -d wongnok -c "select uid, deleted_at is null as active from users"
+                 uid                  | active
+--------------------------------------+--------
+ 5da7f595-196f-44a6-8dfd-64306ce734d6 | f          <span class="c"># แถวเก่าที่ถูกลบ ยังอยู่</span>
+ 5da7f595-196f-44a6-8dfd-64306ce734d6 | t          <span class="c"># แถวใหม่ที่ยัง active</span>
+(2 rows)</code></pre>
+  <p style="margin-bottom:0">
+    ได้ <code>id</code> ใหม่ (ไม่ใช่ตัวเดิมที่ถูกลบ) และ<strong>ไม่มี error</strong> —
+    ซึ่งเป็นสิ่งที่ <code>FirstOrCreate</code> ในหัวข้อ 8 ทำไม่ได้
+  </p>
+</div>
+
+<h2>10 · หน้า 53–54 — ให้ AI agent สร้าง migration ที่เหลือ</h2>
+
+<p>
+  ตาราง <code>users</code> เป็นแค่ตารางแรก โปรเจกต์ wongnok ยังต้องการอีกหลายตาราง —
+  <code>recipes</code>, <code>difficulties</code>, และตารางเชื่อมอื่น ๆ
+  <br>สไลด์หน้า 53 โชว์การสร้างไฟล์ตัวถัดไปด้วยคำสั่งเดิม:
+</p>
+
+<pre><code><span class="c"># Create migration</span>
+goose create difficalties sql</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>ในสไลด์สะกดว่า <code>difficalties</code></strong> (ที่ถูกคือ <code>difficulties</code>)
+    ผมยกมาตามหน้าจริงเพื่อไม่ให้คุณงงตอนเทียบ
+    <br>และมันเป็นตัวอย่างที่ดีของบทเรียนหนึ่ง: <strong>ชื่อไฟล์ migration แก้ทีหลังไม่ได้ง่าย ๆ</strong>
+    เพราะพอรันไปแล้ว ชื่อกับ <code>version_id</code> จะไปนอนอยู่ในตาราง <code>goose_db_version</code>
+    ของทุกคนในทีมและของ production ด้วย
+    <br>เปลี่ยนชื่อไฟล์ทีหลัง = เครื่องที่รันไปแล้วกับเครื่องที่ยังไม่รันจะเห็นคนละเรื่อง —
+    <strong>ตรวจการสะกดก่อนกด <code>goose up</code> ครั้งแรกเสมอ</strong>
+  </p>
+</div>
+
+<p>
+  หน้า 54 คือจุดที่สไลด์เปลี่ยนวิธีทำงาน — แทนที่จะพิมพ์ SQL เอง
+  <strong>ให้ AI agent เขียน migration ให้จากเอกสารออกแบบ</strong> ด้วย prompt นี้:
+</p>
+
+<pre><code><span class="c"># Prompt</span>
+
+สร้างไฟล์ migrations ตาม docs/ARCHITECTURE.md โดยให้ทำเพียง
+สร้างไฟล์อย่างเดียวเท่านั้นเพื่อนำไปรีวิวก่อน ไม่ต้องตรวจสอบและ migrate จริง</code></pre>
+
+<p>
+  prompt นี้สั้นแต่มีของอยู่สามชิ้นที่วางไว้ตั้งใจ และเป็นเหตุผลที่มันใช้ได้จริง:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ท่อนในคำสั่ง</th><th>ทำหน้าที่อะไร</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>"ตาม <code>docs/ARCHITECTURE.md</code>"</strong></td>
+      <td>ชี้<strong>แหล่งความจริง</strong>ให้ชัด — ไม่ให้ agent เดาโครงตารางเอาเอง ทุกคอลัมน์ต้องอ้างกลับไปที่เอกสารได้</td>
+    </tr>
+    <tr>
+      <td><strong>"ทำเพียงสร้างไฟล์อย่างเดียว"</strong></td>
+      <td>จำกัดขอบเขต — ไม่ให้ไปแก้ไฟล์อื่น ไม่ให้ไปรันคำสั่งอื่น</td>
+    </tr>
+    <tr>
+      <td><strong>"ไม่ต้อง migrate จริง"</strong></td>
+      <td>กันไม่ให้แตะฐานข้อมูล — <strong>ผลลัพธ์เป็นแค่ไฟล์ที่กลับคืนได้</strong> ไม่ใช่ตารางที่สร้างไปแล้ว</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ท่อนที่สามคือท่อนสำคัญที่สุด และเชื่อมกลับมาที่ทั้งบทนี้พอดี:
+  <strong>ทุกกับดักในหัวข้อ 8 เป็นสิ่งที่คนรีวิวเห็นได้ตอนอ่านไฟล์ แต่มองไม่เห็นถ้าปล่อยให้รันไปแล้ว</strong>
+  <br>ทั้ง unique index ที่ชนกับ soft delete และ <code>id UUID</code> ที่ไม่มี default —
+  ทั้งคู่ <code>goose up</code> ผ่านฉลุยทั้งคู่ ไม่มี error ให้เห็น
+  <br><strong>เกณฑ์รีวิว migration ที่ AI เขียนให้ ขั้นต่ำสามข้อ</strong> — ทั้งสามข้อมาจากสิ่งที่รันเจอในบทนี้:
+</p>
+
+<ol>
+  <li>ทุก <code>UNIQUE INDEX</code> บนตารางที่มี <code>deleted_at</code> — <strong>มี <code>WHERE deleted_at IS NULL</code> ต่อท้ายหรือยัง</strong></li>
+  <li>ทุก <code>PRIMARY KEY</code> ชนิด <code>UUID</code> — <strong>มี <code>DEFAULT</code> ไหม ถ้าไม่มี ใครเป็นคนเซ็ตค่า</strong></li>
+  <li>ส่วน <code>-- +goose Down</code> — <strong>เขียนย้อนกลับไว้ครบจริงไหม</strong> หรือปล่อยว่างไว้ (ซึ่งแปลว่าถอยไม่ได้)</li>
+</ol>
+
+<p>
+  บทเรียน 54 จะพูดถึงเรื่องใหญ่กว่านั้น คือ<strong>โหมดการทำงานร่วมกับ AI agent</strong>
+  ว่าจะสั่งงานแบบไหน ควบคุมขอบเขตยังไง ซึ่ง prompt หน้า 54 เป็นตัวอย่างหนึ่งของโหมดเหล่านั้น
+</p>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ทำไมต้องลงทั้ง <code>golang.org/x/oauth2</code> และ <code>github.com/coreos/go-oidc/v3</code> ตัวเดียวไม่พอเหรอ?</p>
+  <div class="opts">
+    <button class="opt">เป็นของเดียวกัน แค่ <code>go-oidc</code> เป็นเวอร์ชันใหม่กว่า ลงตัวเดียวก็พอ</button>
+    <button class="opt"><code>oauth2</code> ใช้กับ Google เท่านั้น ส่วน <code>go-oidc</code> ใช้กับ Keycloak</button>
+    <button class="opt"><code>oauth2</code> ทำขั้นแลก <code>code</code> เป็น token ส่วน <code>go-oidc</code> ทำขั้นอ่าน discovery และ verify ลายเซ็นของ <code>id_token</code> ด้วย public key จาก <code>jwks_uri</code></button>
+    <button class="opt"><code>go-oidc</code> ทำได้ทุกอย่างอยู่แล้ว แต่ต้องลง <code>oauth2</code> ด้วยเพราะเป็น dependency บังคับ</button>
+  </div>
+  <div class="explain">
+    <p>สองตัวนี้ทำคนละครึ่งของกระบวนการและไม่ทำงานแทนกัน
+    <br><code>oauth2</code> รับผิดชอบ<strong>ขั้นตอนแลกของ</strong>: <code>AuthCodeURL</code> ประกอบ URL หน้า login ·
+    <code>Exchange</code> ยิง POST ไป <code>token_endpoint</code> เอา <code>code</code> แลกเป็น token
+    <br><code>go-oidc</code> รับผิดชอบ<strong>ขั้นตอนตรวจของ</strong>: <code>NewProvider</code> อ่าน discovery document ·
+    <code>Verifier(...).Verify</code> โหลด public key จาก <code>jwks_uri</code> มาตรวจลายเซ็น แล้วเช็ค <code>iss</code>/<code>aud</code>/วันหมดอายุให้
+    <br>ตัวเลือกที่ 4 ผิดคนละทาง: มันไม่ใช่ dependency บังคับของกันและกัน — <code>go list -m all</code>
+    หลัง <code>go mod tidy</code> แสดงว่าทั้งคู่เป็น <strong>direct dependency</strong> ทั้งสองตัว
+    และตัวที่เป็น <code>// indirect</code> จริง ๆ คือ <code>github.com/go-jose/go-jose/v4 v4.1.4</code>
+    ซึ่งเป็นตัวที่ <code>go-oidc</code> ใช้ทำงานเข้ารหัส
+    <br>หลักฐานว่าทั้งสองตัวจำเป็น: ผลรัน <code>go run ./cmd/probe</code> มีทั้ง
+    <code>AuthCodeURL</code> (งานของ <code>oauth2</code>) และ error
+    <code>oidc: malformed jwt: …</code> (งานของ <code>go-oidc</code>) อยู่ในโปรแกรมเดียวกัน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. ใช้ DSN ตามสไลด์เป๊ะ ๆ (<code>postgres://postgres:Pe@devp00l@localhost:5432?database=wongnok</code>) แล้วสั่ง <code>goose up</code> — เกิดอะไรขึ้นจริง ๆ?</p>
+  <div class="opts">
+    <button class="opt"><code>goose up</code> สำเร็จ ตารางลงฐาน <code>wongnok</code> ถูกต้อง — แต่ DSN บรรทัดเดียวกันนี้ใช้กับ <code>psql</code> ไม่ได้ทั้งสองจุด</button>
+    <button class="opt"><code>goose</code> parse DSN ไม่ผ่าน พังตั้งแต่บรรทัดแรก เพราะมี <code>@</code> สองตัว</button>
+    <button class="opt"><code>goose</code> ผ่าน แต่ไปสร้างตารางในฐาน <code>postgres</code> เพราะ <code>?database=</code> ไม่ใช่ path</button>
+    <button class="opt">พังทั้งฝั่ง Go และฝั่ง <code>psql</code> เหมือนกันหมด เพราะทั้งคู่ใช้มาตรฐาน URL เดียวกัน</button>
+  </div>
+  <div class="explain">
+    <p>ข้อนี้เป็นข้อที่ผมทายผิดเองตอนแรก ผลรันจริงคือ<strong>ฝั่ง Go ผ่านหมด</strong>:
+    <code>goose up</code> พิมพ์ <code>OK 20260822031131_create_users.sql (12.99ms)</code>
+    และ <code>psql -d wongnok</code> เห็นตาราง <code>users</code> กับ <code>goose_db_version</code>
+    ส่วนฐาน <code>postgres</code> ขึ้นว่า <code>Did not find any relations.</code>
+    <br>สาเหตุมีสองข้อ: <code>net/url</code> ของ Go ตัดที่ <strong><code>@</code> ตัวสุดท้าย</strong>
+    รหัสผ่านเลยได้ <code>"Pe@devp00l"</code> ถูกต้อง · และ <code>pgx</code> รู้จักคีย์ <code>database</code>
+    อยู่แล้ว (เป็นชื่อที่มันใช้ภายใน ส่วน <code>dbname</code> เป็นชื่อพ้อง)
+    <br>แต่พอเอา DSN เดิมไป <code>psql</code> พังทั้งสองจุด:
+    <code>could not translate host name "devp00l@localhost"</code> เพราะ
+    <strong><code>libpq</code> ตัดที่ <code>@</code> ตัว<em>แรก</em></strong> ตรงข้ามกับ Go ·
+    และ <code>invalid URI query parameter: "database"</code> เพราะ <code>psql</code> ไม่รู้จักคีย์นั้น
+    <br>ตัวเลือกที่ 4 คือความเข้าใจผิดที่ต้องแก้: <strong>Go กับ libpq ตีความ DSN เดียวกันไม่เหมือนกัน</strong>
+    <br>เขียนให้ปลอดภัยทั้งสองฝั่ง:
+    <code>postgres://postgres:Pe%40devp00l@localhost:5432/wongnok?sslmode=disable</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. ผู้ใช้ลบบัญชี (soft delete — <code>deleted_at</code> ถูกเซ็ต) แล้ววันหลัง login กลับเข้ามาใหม่ด้วยบัญชี Keycloak เดิม โค้ดเรียก <code>FirstOrCreate</code> — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">เจอแถวเดิมแล้วใช้ต่อได้ปกติ เพราะ <code>FirstOrCreate</code> มองเห็นแถวที่ถูก soft delete</button>
+    <button class="opt">สร้างแถวใหม่สำเร็จ แล้วมีสองแถวที่ <code>uid</code> เดียวกัน แถวเก่าถูกลบ แถวใหม่ active</button>
+    <button class="opt">GORM ปลด <code>deleted_at</code> ให้อัตโนมัติแล้วคืนแถวเดิมมาให้ (undelete)</button>
+    <button class="opt">หาไม่เจอ (โดน <code>deleted_at IS NULL</code> กรอง) จึงไป <code>Create</code> แล้วชน <code>idx_users_uid</code> ของแถวที่ถูกลบ — ผู้ใช้คนนี้กลับเข้ามาไม่ได้เลย</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงคือ <code>err = ERROR: duplicate key value violates unique constraint "idx_users_uid" (SQLSTATE 23505)</code>
+    ทั้งกรณี <code>db.Create</code> ธรรมดาและกรณี <code>FirstOrCreate</code>
+    <br>เหตุผลที่มันเป็นทางตัน: ท่อน <em>First</em> ถูกตัวกรอง soft delete ของ GORM (<code>deleted_at IS NULL</code>) กรองออก
+    (<code>WHERE deleted_at IS NULL</code>) เลยหาไม่เจอ · ท่อน <em>Create</em> จึงทำงาน
+    แล้วไปชน unique index ของแถวที่ยังนอนอยู่ในตาราง — <strong>หาก็ไม่เจอ สร้างก็ไม่ได้</strong>
+    <br>ตัวเลือกที่ 3 คือสิ่งที่หลายคน<em>หวัง</em>ว่า GORM ทำให้ แต่มันไม่ทำ —
+    การ undelete ต้องเขียนเองด้วย <code>Unscoped()</code>
+    <br>ยืนยันด้วย SQL ล้วนแล้วว่าไม่ใช่ความผิดของ ORM: <code>INSERT 0 1</code> →
+    <code>UPDATE 1</code> → <code>ERROR: duplicate key … Key (uid)=(oidc-sub-123) already exists.</code>
+    <br>ทางแก้คือ <strong>partial unique index</strong>:
+    <code>CREATE UNIQUE INDEX idx_users_uid ON users (uid) WHERE deleted_at IS NULL;</code>
+    ซึ่งพอรันแล้วได้ <code>INSERT 0 1</code> (สมัครใหม่ผ่าน) แต่รอบถัดไปยังได้
+    <code>ERROR: duplicate key</code> อยู่ (ยังกันซ้ำในแถวที่ active) — ได้ทั้งสองอย่างพร้อมกัน
+    <br>ฝั่ง GORM: <code>gorm:"uniqueIndex:idx_users_uid,where:deleted_at IS NULL"</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. หลัง <code>tok, err := cfg.Exchange(ctx, code)</code> สำเร็จ จะเอา <code>id_token</code> มา verify ต้องทำยังไง?</p>
+  <div class="opts">
+    <button class="opt">ใช้ <code>tok.AccessToken</code> ได้เลย เพราะ <code>access_token</code> กับ <code>id_token</code> เป็นใบเดียวกัน</button>
+    <button class="opt"><code>rawIDToken, ok := tok.Extra("id_token").(string)</code> แล้วค่อยส่งเข้า <code>verifier.Verify(ctx, rawIDToken)</code> ซึ่งคืน <code>(*oidc.IDToken, error)</code> — ต้องเรียก <code>idToken.Claims(&amp;dst)</code> อีกทีถึงได้ข้อมูลผู้ใช้</button>
+    <button class="opt">อ่านจาก <code>tok.IDToken</code> ซึ่งเป็น field มาตรฐานของ <code>oauth2.Token</code></button>
+    <button class="opt"><code>verifier.Verify</code> คืน struct ที่มี <code>Email</code> กับ <code>Name</code> อยู่ในตัวแล้ว ใช้ได้ทันทีไม่ต้องแกะอะไรอีก</button>
+  </div>
+  <div class="explain">
+    <p><code>oauth2.Token</code> ไม่มี field ชื่อ <code>IDToken</code> — ตัวเลือกที่ 3 จึง compile ไม่ผ่านด้วยซ้ำ
+    <br>เหตุผล: <code>id_token</code> เป็นของ<strong>มาตรฐาน OIDC</strong> ไม่ใช่ของ OAuth2
+    library <code>oauth2</code> จึงไม่รู้จักมัน และเก็บ field ที่ไม่รู้จักไว้ในถุงรวมที่หยิบด้วย
+    <code>tok.Extra(ชื่อ)</code> ซึ่งคืน <code>any</code> จึงต้อง <code>.(string)</code> แปลงเอง
+    <br>ตัวเลือกที่ 1 ผิดและอันตราย เพราะ <code>access_token</code> กับ <code>id_token</code>
+    เป็น JWT คนละใบ คนละหน้าที่ — ใบหนึ่งบอกว่าทำอะไรได้ อีกใบบอกว่าเป็นใคร
+    <br>ตัวเลือกที่ 4 ผิดหนึ่งขั้น: <code>Verify</code> คืน <code>*oidc.IDToken</code> ซึ่งยังเป็นก้อนที่ตรวจแล้ว
+    แต่ยังไม่ได้แกะเป็น field — ต้อง <code>idToken.Claims(&amp;c)</code> โดยที่ <code>c</code> เป็น struct
+    ที่มี tag <code>json:"preferred_username"</code> ฯลฯ ถึงจะได้ค่ามาเขียนลงตาราง <code>users</code>
+    <br>โค้ดก้อนนี้ผมรัน <code>go build ./...</code> และ <code>go vet ./...</code> แล้วได้ <code>exit=0</code> ทั้งคู่
+    (หลังสั่ง <code>go mod tidy</code> — ถ้าไม่สั่ง จะติด <code>missing go.sum entry</code> ก่อน)</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำให้ตาราง <code>users</code> ของคุณรอดเคสที่สไลด์ไม่ได้ทดสอบ</span>
+  <p>
+    เป้าหมายไม่ใช่ "รัน <code>goose up</code> ให้ผ่าน" — ผ่านมันง่ายมาก
+    <br>เป้าหมายคือ<strong>ทำให้คุณเห็นด้วยตาว่ามันผ่านทั้งที่ยังมีบั๊กอยู่ แล้วค่อยแก้</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งฐานข้อมูล:</strong> รัน Postgres สักตัว แล้วสร้างฐาน <code>wongnok</code>
+        <br>ถ้าใช้ Docker ให้<strong>ตั้งชื่อคอนเทนเนอร์ไว้ด้วย</strong> (<code>docker run --name day9check …</code>)
+        เดี๋ยวข้ออื่นจะได้เรียก <code>docker exec day9check psql …</code> ได้เลย
+        <br>สร้างโฟลเดอร์โปรเจกต์ · <code>mkdir migrations</code></li>
+    <li><strong>พิสูจน์เรื่อง DSN ด้วยตัวเอง:</strong> เขียน <code>.env</code> ด้วย DSN <em>ตามสไลด์เป๊ะ ๆ</em> ก่อน
+        แล้วสั่ง <code>goose status</code>
+        <br>จากนั้น<strong>ก๊อป DSN บรรทัดเดียวกันไปแปะใส่ <code>psql</code></strong>
+        <br><strong>ต้องได้ผลต่างกัน</strong> — ถ้าได้เหมือนกันแปลว่าพิมพ์ตกอะไรไปสักตัว จดข้อความ error ของ <code>psql</code> ไว้</li>
+    <li><strong>แก้เป็น DSN ที่ถูก:</strong> เปลี่ยน <code>@</code> เป็น <code>%40</code> และย้ายชื่อฐานไปเป็น path
+        <br>ยืนยันว่า<strong>ทั้ง <code>goose status</code> และ <code>psql</code> ใช้ DSN เดียวกันได้แล้ว</strong></li>
+    <li><strong>พิสูจน์ว่า goose อ่าน <code>.env</code> เอง:</strong> สั่ง
+        <code>env -u GOOSE_DRIVER -u GOOSE_DBSTRING -u GOOSE_MIGRATION_DIR goose status</code>
+        <br>แล้วลอง <code>cd</code> ออกไปโฟลเดอร์อื่นแล้วสั่ง <code>goose status</code> อีกที
+        <br><strong>ตอบให้ได้ว่าทำไมครั้งแรกทำงาน แต่ครั้งที่สองขึ้นหน้า usage</strong></li>
+    <li><strong>สร้างและรัน migration:</strong> <code>goose create create_users sql</code> ·
+        เติม SQL ตามหัวข้อ 6 · <code>goose up</code> · <code>psql -U postgres -d wongnok -c '\d users'</code>
+        <br><strong>ยืนยันด้วยตาว่า <code>idx_users_uid</code> ขึ้นคำว่า <code>UNIQUE</code>
+        และคอลัมน์ <code>id</code> ช่อง <code>Default</code> ว่างเปล่า</strong></li>
+    <li><strong>สร้างบั๊กด้วยมือตัวเอง (สำคัญที่สุด):</strong> ยิง SQL สามคำสั่งตามลำดับ —
+        <code>INSERT</code> user ที่ <code>uid='oidc-sub-123'</code> ·
+        <code>UPDATE users SET deleted_at = now() WHERE uid='oidc-sub-123'</code> ·
+        <code>INSERT</code> ซ้ำด้วย <code>uid</code> เดิม
+        <br><strong>จดข้อความ error ที่ได้แบบเต็ม ๆ</strong> รวมทั้งบรรทัด <code>DETAIL:</code></li>
+    <li><strong>แก้ด้วย migration ใหม่ (อย่าแก้ไฟล์เดิม):</strong>
+        <code>goose create fix_users_uid_partial_index sql</code>
+        <br>ส่วน <code>Up</code> ให้ <code>DROP INDEX</code> แล้ว <code>CREATE UNIQUE INDEX … WHERE deleted_at IS NULL</code> ·
+        <strong>ส่วน <code>Down</code> ต้องเขียนย้อนกลับให้ครบด้วย</strong>
+        <br>รันข้อ 6 ซ้ำ — <strong>รอบนี้ต้อง <code>INSERT</code> ผ่าน</strong>
+        แล้วลอง <code>INSERT</code> อีกรอบให้ได้ error กลับมา (ยืนยันว่ายังกันซ้ำอยู่)</li>
+    <li><strong>ทดสอบขาถอย:</strong> <code>goose down</code> · <code>goose status</code> · <code>goose up</code> · <code>goose status</code>
+        <br>แล้วเปิดตาราง <code>goose_db_version</code> ดู
+        <br><strong>ตอบให้ได้ว่าเลข <code>id</code> ในตารางนั้นเรียงต่อกันหรือกระโดด และทำไม</strong></li>
+    <li><strong>ท้าทาย:</strong> ปิดช่อง <code>id UUID</code> ที่ไม่มี default —
+        เลือกทางใดทางหนึ่ง (<code>DEFAULT gen_random_uuid()</code> ใน migration หรือ <code>BeforeCreate</code> hook ใน GORM)
+        <br>แล้ว<strong>เขียนคำอธิบายสามบรรทัดว่าทางที่คุณเลือกมีข้อเสียอะไร</strong> เทียบกับอีกทาง
+        <br>(ใบ้: ถ้ามีคนยิง SQL เข้าฐานตรง ๆ โดยไม่ผ่านแอปของคุณ ทางไหนยังคุ้มครองอยู่?)</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 4 และข้อ 8</button>
+  <div class="answer">
+    <p><strong>ข้อ 4 — ทำไมครั้งแรกทำงาน ครั้งที่สองขึ้น usage</strong></p>
+    <pre style="margin:0.6rem 0"><code>$ env -u GOOSE_DRIVER -u GOOSE_DBSTRING -u GOOSE_MIGRATION_DIR goose status
+2026/08/22 10:15:27     Applied At                  Migration
+2026/08/22 10:15:27     =======================================
+2026/08/22 10:15:27     Sat Aug 22 03:14:26 2026 -- 20260822031131_create_users.sql
+
+<span class="c"># หลังย้าย .env ออกจากโฟลเดอร์</span>
+Usage: goose DRIVER DBSTRING [OPTIONS] COMMAND
+...
+  -env string
+    	load environment variables from file (<strong>default .env</strong>)</code></pre>
+    <p>
+      คำอธิบายอยู่ในบรรทัดสุดท้ายที่ goose พิมพ์ออกมาเอง — มันมี flag <code>-env</code>
+      ที่ค่าเริ่มต้นเป็น <code>.env</code> จึง<strong>โหลดไฟล์นี้ให้อัตโนมัติ</strong> ไม่ต้อง <code>source</code> ไม่ต้อง <code>export</code>
+      <br>แต่มันหาไฟล์<strong>ในโฟลเดอร์ปัจจุบัน</strong> — <code>cd</code> ไปที่อื่นก็หาไม่เจอ แล้วไม่มี DSN ให้ใช้ จึงพิมพ์ usage
+      <br>ข้อควรระวังที่ตามมา: <strong>ถ้าคุณ <code>export GOOSE_DBSTRING</code> ไว้ในเทอร์มินัลเป็นค่าเก่า
+      แล้วแก้ <code>.env</code> เป็นค่าใหม่</strong> ตัวไหนชนะ? ผมทดลองให้แล้ว —
+      <strong>ค่าที่อยู่ใน environment ของ shell ชนะเสมอ</strong> ตัวโหลด <code>.env</code> ของ goose
+      จะ<strong>ไม่ทับ</strong>ตัวแปรที่มีค่าอยู่แล้ว มันเติมให้เฉพาะตัวที่ยังว่าง
+    </p>
+    <p style="margin-bottom:0">
+      (ผมพิสูจน์ในโฟลเดอร์ทดลองแยกอีกอันหนึ่ง เลข migration เลยคนละตัวกับข้างบน — ดูที่ผลลัพธ์เป็นหลัก)
+    </p>
+    <pre style="margin:0.6rem 0"><code><span class="c"># .env ชี้ไปฐานที่ไม่มีอยู่จริง แต่ export ค่าที่ถูกทับหน้าคำสั่ง</span>
+$ GOOSE_DBSTRING='postgres://…/wongnok?sslmode=disable' goose status
+2026/08/22 11:42:46     Applied At                  Migration
+2026/08/22 11:42:46     =======================================
+2026/08/22 11:42:46     Sat Aug 22 04:41:01 2026 -- 20260822044053_create_users.sql
+<span class="c"># → อ่านฐาน wongnok ได้ปกติ แปลว่า env ชนะ .env</span>
+
+<span class="c"># สลับกัน: .env ถูก แต่ export ค่าที่พัง</span>
+$ GOOSE_DBSTRING='postgres://…/DOES_NOT_EXIST?sslmode=disable' goose status
+2026/08/22 11:42:46 goose run: failed to ensure DB version: failed to connect to `user=postgres database=DOES_NOT_EXIST`:
+	… (localhost): server error: <strong>FATAL: database "DOES_NOT_EXIST" does not exist</strong> (SQLSTATE 3D000)
+<span class="c"># → พังทั้งที่ .env ถูก ยืนยันอีกทางว่า env ชนะ</span></code></pre>
+    <p style="margin-bottom:0">
+      เพราะฉะนั้นเวลาแก้ <code>.env</code> แล้วไม่เห็นผล ให้เช็ค <code>echo $GOOSE_DBSTRING</code> ก่อนเสมอ —
+      แต่ทางที่ปลอดภัยกว่าคือ<strong>อย่าตั้งซ้ำสองที่ตั้งแต่แรก</strong>
+    </p>
+    <p><strong>ข้อ 8 — ทำไมเลข <code>id</code> กระโดด</strong></p>
+    <pre style="margin:0.6rem 0"><code> id |   version_id   | is_applied |           tstamp
+----+----------------+------------+----------------------------
+  1 |              0 | t          | 2026-08-22 03:11:46.240423
+  <strong>3</strong> | 20260822031131 | t          | 2026-08-22 03:14:26.155434
+(2 rows)</code></pre>
+    <p style="margin-bottom:0">
+      หายไปคือ <code>id = 2</code> ซึ่งเป็นแถวที่ถูกเขียนตอน <code>goose up</code> รอบแรก
+      <br>พอสั่ง <code>goose down</code> มัน<strong>ลบแถวนั้นทิ้งจริง ๆ</strong> ไม่ได้แค่เปลี่ยน <code>is_applied</code> เป็น false
+      แล้วพอ <code>goose up</code> อีกรอบก็เขียนแถวใหม่ ซึ่งได้เลข 3 เพราะตัวนับของ Postgres เดินหน้าไปแล้วไม่ย้อนกลับ
+      <br><strong>สิ่งที่ควรจำจากข้อนี้:</strong> <code>goose_db_version</code> ไม่ได้เก็บ<em>ประวัติ</em>ว่าเคยรันอะไรบ้าง
+      มันเก็บ<em>สถานะปัจจุบัน</em>ว่าตอนนี้ migration ไหน apply อยู่ —
+      ถ้าอยากรู้ประวัติจริง ต้องดูจาก git ไม่ใช่จากตารางนี้
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 6 คือข้อที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong> —
+    เพราะ error <code>duplicate key value violates unique constraint "idx_users_uid"</code>
+    ที่โผล่ขึ้นมาต่อหน้าคุณเอง จะจำได้นานกว่าอ่านผ่านตาสิบรอบ
+    <br>และมันเป็นบั๊กประเภทที่<strong>ไม่มีทางเจอตอนพัฒนา</strong> เพราะตอนพัฒนาไม่มีใครลบบัญชีแล้วสมัครกลับ —
+    มันจะโผล่ตอนมีผู้ใช้จริงเท่านั้น
+    <br>ถ้ารันแล้ว output ไม่ตรงกับในบทนี้ <strong>ส่งมาได้เลย</strong> — ทุกบรรทัดในหน้านี้วัดบน
+    <strong>Go 1.26.5 darwin/arm64</strong> · <strong>goose v3.27.3</strong> ·
+    <strong>PostgreSQL 16.15</strong> (image <code>postgres:16-alpine</code>) ·
+    <strong>oauth2 v0.36.0</strong> กับ <strong>go-oidc v3.20.0</strong>
+    <br>จุดที่ต่างได้บ่อยที่สุดคือ<strong>เวอร์ชัน Postgres</strong> — <code>gen_random_uuid()</code>
+    ที่ผมพูดถึงในหัวข้อ 8 มีมาให้เองตั้งแต่ PostgreSQL 13 แต่เวอร์ชันเก่ากว่านั้นต้อง
+    <code>CREATE EXTENSION pgcrypto</code> ก่อน
+    <br>อีกอย่างที่ควรถามตัวเองก่อนส่งมา: <strong>คุณรัน <code>go mod tidy</code> แล้วหรือยัง</strong>
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0052-auth-flow-endpoints.html">← บทเรียน 52 · flow ของจริง</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0054-agent-skills.html">บทเรียน 54 → ให้ AI agent เขียนโค้ดแทน</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/golang.org/x/oauth2#Config">pkg.go.dev — <code>oauth2.Config</code></a> · <a href="https://pkg.go.dev/golang.org/x/oauth2#Token.Extra"><code>Token.Extra</code></a> — <strong>อ่านย่อหน้าของ <code>Extra</code></strong> มันบอกตรง ๆ ว่าเก็บ field ที่ไม่ใช่มาตรฐาน OAuth2 ไว้ตรงนี้ ซึ่งอธิบายว่าทำไม <code>id_token</code> ต้องหยิบด้วยวิธีนี้</li>
+  <li><a href="https://pkg.go.dev/github.com/coreos/go-oidc/v3/oidc">pkg.go.dev — <code>go-oidc/v3/oidc</code></a> — ดู signature ของ <code>NewProvider</code>, <code>Provider.Endpoint</code>, <code>Provider.Verifier</code> · <strong>สังเกตว่า <code>Verify</code> คืน <code>*IDToken</code> ไม่ใช่ struct ของ claim</strong></li>
+  <li><a href="https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims">OpenID Connect Core — Standard Claims</a> — นิยามทางการของ <code>sub</code>, <code>preferred_username</code>, <code>email</code>, <code>name</code> · <strong>อ่านคำเตือนเรื่อง <code>preferred_username</code></strong> ว่า spec ไม่รับประกันว่ามันไม่ซ้ำและไม่เปลี่ยน — เหตุผลที่เราใช้ <code>sub</code> เป็นสะพานแทน</li>
+  <li><a href="https://github.com/pressly/goose">pressly/goose — README</a> — รายการคำสั่งทั้งหมด (<code>up</code>, <code>down</code>, <code>status</code>, <code>reset</code>, <code>version</code>) และรายชื่อ env ที่มันอ่าน</li>
+  <li><a href="https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-CONNSTRING-URIS">PostgreSQL 16 — Connection URIs</a> — <strong>อ่านย่อหน้าที่บอกว่าอักขระพิเศษต้อง percent-encode</strong> และดูว่าชื่อฐานข้อมูลอยู่ส่วนไหนของ URI (คำตอบ: path ไม่ใช่ query)</li>
+  <li><a href="https://www.postgresql.org/docs/16/indexes-partial.html">PostgreSQL 16 — Partial Indexes</a> — ต้นทางของท่า <code>CREATE UNIQUE INDEX … WHERE …</code> ที่ใช้แก้ปัญหาในหัวข้อ 8</li>
+  <li><a href="https://gorm.io/docs/delete.html#Soft-Delete">GORM — Soft Delete</a> — <strong>อ่านว่าทำไมชนิดต้องเป็น <code>gorm.DeletedAt</code></strong> และ <code>Unscoped()</code> ใช้ตอนไหน</li>
+  <li><a href="https://pkg.go.dev/net/url#Parse">pkg.go.dev — <code>net/url.Parse</code></a> — ที่มาของพฤติกรรม "ตัดที่ <code>@</code> ตัวสุดท้าย" ที่ทำให้ฝั่ง Go รอด ส่วน <code>libpq</code> ไม่รอด</li>
+  <li><a href="./0051-keycloak.html">บทเรียน 51 — Keycloak: Authorization Server ที่รันเอง</a> — ที่มาของ <code>issuer</code>, <code>jwks_uri</code> และ claim ทั้งหมดที่หัวข้อ 9 ใช้</li>
+  <li><a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44 — Configuration &amp; Environment Variables</a> — เรื่อง <code>export</code> และไฟล์ <code>.env</code> ที่หัวข้อ 4 ต่อยอด</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

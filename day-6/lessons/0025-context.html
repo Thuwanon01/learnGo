@@ -73,6 +73,27 @@
    <strong>cancel ที่ต้นทาง = ทุกกิ่งที่แตกออกไปได้สัญญาณหมด</strong></pre>
 </div>
 
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — เบรกเกอร์ไฟในบ้าน</span>
+  <p>
+    ในตู้ไฟที่บ้านมีเบรกเกอร์ตัวใหญ่ตัวเดียว แล้วแตกเป็นเบรกเกอร์ย่อยของแต่ละห้อง
+    <br>· ปลด<strong>ตัวใหญ่</strong> → ดับทั้งบ้าน ทุกห้องที่ต่อจากมันดับหมด
+    <br>· ปลด<strong>ตัวของห้องครัว</strong> → ดับแค่ห้องครัว ห้องนอนยังสว่างอยู่
+  </p>
+  <p>
+    context ต่อกันแบบเดียวกันเป๊ะ ๆ · <code>context.Background()</code> = สายเมนที่ไม่มีวันดับ ·
+    <code>WithCancel</code> / <code>WithTimeout</code> = แยกเบรกเกอร์ย่อยออกมาอีกตัว ·
+    <code>cancel()</code> = ปลดเบรกเกอร์ตัวนั้น
+    <br>ปลดตัวไหน ตัวนั้นกับ<strong>ทุกกิ่งที่แตกออกไปจากมัน</strong>ได้สัญญาณหมด
+    ส่วนตัวที่อยู่<em>เหนือ</em>ขึ้นไปไม่กระทบ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ปลดเบรกเกอร์แล้วไฟ<em>ดับจริง</em>ทันที
+    แต่ <code>cancel()</code> แค่<strong>ส่งสัญญาณ</strong> — งานที่กำลังทำอยู่ไม่ได้หยุดเอง
+    ใครไม่เปิดดูสัญญาณก็ทำต่อไปเรื่อย ๆ (หัวข้อ 6 จะพิสูจน์ให้ดูด้วยผลรันจริง)
+  </p>
+</div>
+
 <h2>3 · <code>ctx.Done()</code> — ช่องรับสัญญาณ</h2>
 
 <p>
@@ -104,6 +125,30 @@
   </p>
 </div>
 
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>คำพวกนี้คือคำที่ dev คนอื่นใช้เรียกสิ่งที่คุณเพิ่งเข้าใจไป —
+  <strong>ใช้คำให้ตรง จะได้คำตอบที่ตรง</strong></p>
+  <dl>
+    <dt>parent context / child context</dt>
+    <dd>ตัวแม่กับตัวลูกในภาพเบรกเกอร์ · ประโยคที่จะได้ยินบ่อยคือ
+    <em>“ctx ตัวนี้ derive (แตก) มาจากตัวไหน”</em></dd>
+    <dt>cancel function</dt>
+    <dd>ฟังก์ชันตัวที่สองที่ <code>WithCancel</code>/<code>WithTimeout</code> คืนมา —
+    คือ “ปุ่มปลดเบรกเกอร์” · type จริงชื่อ <code>context.CancelFunc</code> ·
+    นิยมตั้งชื่อตัวแปรว่า <code>cancel</code> แต่ถ้ามีหลายตัวในฟังก์ชันเดียว
+    ก็ตั้งให้สื่อได้ เช่น <code>stop</code>, <code>cancelShutdown</code> (เจอทั้งสองแบบในหัวข้อ 9)</dd>
+    <dt>propagate</dt>
+    <dd>การที่สัญญาณยกเลิก “ไหลต่อ” จากแม่ลงไปหาลูกทุกตัว · พูดว่า
+    <em>“cancellation มัน propagate ลงไปถึงชั้น DB ไหม”</em></dd>
+    <dt>broadcast</dt>
+    <dd>บอกทุกคนพร้อมกันทีเดียว (ตรงข้ามกับส่งค่าที่ได้แค่คนเดียว) ·
+    ใน Go สำนวนที่ใช้บ่อยที่สุดคือ<strong>ปิด channel</strong>
+    (อีกทางคือ <code>sync.Cond.Broadcast</code>) · ถามรีวิวโค้ดได้ว่า
+    <em>“ตรงนี้อยากบอกทุก goroutine พร้อมกัน ใช้ปิด channel broadcast เอาไหม”</em></dd>
+  </dl>
+</div>
+
 <h2>4 · <code>context.WithTimeout</code> — ตั้งเวลาไว้ล่วงหน้า</h2>
 
 <pre><code>ctx, cancel := context.<span class="f">WithTimeout</span>(
@@ -120,11 +165,52 @@
     (timer + การเชื่อมกับ context แม่) ไว้จนกว่าจะครบเวลา
     <br>ถ้างานเสร็จใน 10ms แต่ timeout ตั้งไว้ 30 วินาที = ค้างไว้เปล่า ๆ 30 วินาที
     ทุกครั้งที่มี request → <strong>memory leak แบบค่อยเป็นค่อยไป</strong>
+    (หน่วยความจำที่จองไว้แล้วยังไม่ถูกคืน · ถ้า request ใหม่เข้ามาเร็วกว่า
+    ที่ของเก่าจะครบ timeout ก็ทับถมกันขึ้นเรื่อย ๆ)
     <br>ข่าวดี: <code>go vet</code> จับให้ — ผมลองละทิ้ง <code>cancel</code>
     ด้วย <code>ctx, _ := context.WithTimeout(...)</code> แล้วได้:
   </p>
   <pre style="margin:0.6rem 0 0"><code>the cancel function returned by context.WithTimeout should be called,
 not discarded, to avoid a context leak</code></pre>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — จองโต๊ะร้านอาหารไว้ 2 ชั่วโมง</span>
+  <p>
+    คุณโทรจองโต๊ะไว้ 2 ชั่วโมง ร้านก็<strong>กันโต๊ะนั้นไว้ให้</strong> ไม่ให้ใครนั่ง
+    <br>แต่คุณกินเสร็จใน 15 นาที แล้ว<em>เดินออกไปเฉย ๆ ไม่ได้บอกร้าน</em>
+    → โต๊ะถูกกันไว้เปล่า ๆ อีกชั่วโมงสี่สิบห้า ร้านรับลูกค้าใหม่ไม่ได้
+  </p>
+  <p>
+    <code>defer cancel()</code> คือการบอกร้านว่า <strong>“เราไปแล้วนะ ปล่อยโต๊ะได้เลย”</strong> —
+    เขียนไว้บรรทัดถัดจาก <code>WithTimeout</code> ทันที เท่ากับบอกร้านอัตโนมัติทุกครั้ง
+    ไม่ว่างานจะจบแบบไหน
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านอาหารเดี๋ยวพนักงานก็เดินมาเห็นเองว่าโต๊ะว่าง
+    แต่ Go <strong>ไม่มีใครเดินมาเช็คให้</strong> — ของที่ context จองไว้จะถูกปล่อยก็ต่อเมื่อ
+    (1) เราเรียก <code>cancel()</code> เอง (2) ครบเวลาที่ตั้งไว้ หรือ
+    (3) context แม่ถูกยกเลิก แล้วสัญญาณไหลลงมาปลดให้ —
+    ไม่มีพนักงานเดินมาเก็บโต๊ะให้เองนอกจากสามทางนี้
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>context leak</dt>
+    <dd>อาการ “ลืมบอกร้านว่าไปแล้ว” · เวลาแจ้งปัญหาให้พูดว่า
+    <em>“ตรงนี้น่าจะ context leak เพราะไม่ได้เรียก cancel”</em>
+    จะตรงกว่าบอกว่า “โปรแกรมกินแรมขึ้นเรื่อย ๆ”</dd>
+    <dt>deadline</dt>
+    <dd>“เส้นตายเป็นเวลาจริง” เช่น 10:30:00 · ส่วน <strong>timeout</strong> คือ
+    “นับจากตอนนี้ไปอีกเท่าไหร่” เช่น 2 วินาที — <code>WithTimeout</code> คือทางลัดของ
+    <code>WithDeadline</code> นั่นเอง</dd>
+    <dt>go vet · lostcancel</dt>
+    <dd><code>go vet</code> คือเครื่องมือหาโค้ดที่ compile ผ่านแต่น่าจะผิด ·
+    ตัวตรวจที่จับเรื่องนี้ชื่อ <code>lostcancel</code> · พูดกับ senior ได้เลยว่า
+    <em>“vet ฟ้อง lostcancel ตรงไฟล์นี้”</em></dd>
+  </dl>
 </div>
 
 <h2>5 · <code>ctx.Err()</code> — ถามว่าหยุดเพราะอะไร</h2>
@@ -194,6 +280,33 @@ DeadlineExceeded? true</code></pre>
   </div>
 </div>
 
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ส่งไลน์บอกเพื่อนที่เดินอยู่ในห้าง</span>
+  <p>
+    คุณฝากเพื่อนไปซื้อของ แล้วเปลี่ยนใจ จึงส่งไลน์ไปว่า <em>“ไม่ต้องซื้อแล้วนะ กลับได้เลย”</em>
+    <br>ข้อความส่งถึงแน่ ๆ แต่<strong>คุณบังคับให้เพื่อนเปิดอ่านไม่ได้</strong> —
+    คนที่หยิบมือถือขึ้นมาดูเป็นระยะก็เดินกลับ ส่วนคนที่ยัดมือถือไว้ในกระเป๋าก็ซื้อต่อจนครบลิสต์
+  </p>
+  <p>
+    <code>cancel()</code> = กดส่งไลน์ · <code>select</code> ที่เช็ค <code>ctx.Done()</code> ทุกรอบ
+    = การหยิบมือถือขึ้นมาดู · worker ที่ไม่เคยเช็คก็คือเพื่อนที่ไม่เปิดดูมือถือ
+    <br>และถ้าอยากรู้ว่าเพื่อน<strong>กลับถึงบ้านจริงหรือยัง</strong> ส่งไลน์อย่างเดียวไม่พอ
+    ต้องรอให้เขาตอบกลับด้วย — นั่นคือหน้าที่ของ <code>WaitGroup</code>
+  </p>
+  <p>
+    <strong>และมีอีกแบบที่เจ็บกว่า</strong> — เพื่อนที่ตั้งใจหยิบมือถือขึ้นมาดูทุก ๆ 400ms
+    แต่จังหวะที่เราส่งไลน์ เขาเพิ่งเก็บมือถือลงกระเป๋าพอดี
+    กว่าจะถึงรอบดูรอบหน้า ห้างปิดไปแล้ว (= <code>main</code> จบ) เขาเลยไม่ได้อ่านเหมือนกัน
+    <br><strong>นี่คือสิ่งที่เกิดในผลรันข้างบน</strong> — worker A/B เช็ค <code>ctx.Done()</code> ทุกรอบ
+    แต่ก็ยังไม่ทันพิมพ์ “ได้รับสัญญาณ” · <em>เช็คเป็นรอบ ๆ ก็ยังพลาดได้</em>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ในชีวิตจริงถ้าเพื่อนไม่อ่านไลน์ เรายัง<em>โทรตาม</em>ได้
+    แต่ Go <strong>ไม่มีช่องทางสำรองเลย</strong> — ไม่มีคำสั่งฆ่า goroutine จากข้างนอก
+    goroutine ที่ไม่ยอมเช็คสัญญาณจะอยู่ยาวจนโปรแกรมทั้งตัวจบไปพร้อมกัน
+  </p>
+</div>
+
 <p>
   รอให้ worker หยุดจริง ๆ ต้องใช้ <code>WaitGroup</code> คู่กับ context
   — <code>worker</code> จึงต้องรับ <code>wg</code> เพิ่มอีกตัว
@@ -238,6 +351,27 @@ fmt.<span class="f">Println</span>(<span class="s">"ทุก worker หยุ�
     <strong>context = บอกให้หยุด · WaitGroup = รอจนหยุดจริง</strong>
     <br>ต้องมีคู่กันเสมอ ถ้าอยากรู้ว่างานปิดเรียบร้อยแล้ว
   </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>cooperative cancellation</dt>
+    <dd>“ยกเลิกแบบขอความร่วมมือ” — ผู้ถูกยกเลิกต้องเช็คเอง ถึงจะหยุด ·
+    ประโยคที่ใช้ได้เลยคือ <em>“Go ใช้ cooperative cancellation ไม่มีคำสั่ง kill goroutine”</em>
+    — พูดแบบนี้ senior จะรู้ทันทีว่าคุณเข้าใจกลไก</dd>
+    <dt>cancellation point</dt>
+    <dd>“จุดที่โค้ดเงยหน้าขึ้นมาดูสัญญาณ” · ไม่ใช่แค่ <code>case &lt;-ctx.Done()</code> เท่านั้น —
+    ทุกฟังก์ชันที่รับ <code>ctx</code> ไปแล้วรอเป็น เช่น <code>db.QueryContext(ctx, ...)</code>
+    หรือ <code>http.NewRequestWithContext</code> ก็เป็น cancellation point ในตัวมันเอง ·
+    ที่ยกเลิกไม่ได้จริง ๆ คือ loop คำนวณหนัก ๆ ที่ไม่แตะ <code>ctx</code> เลย</dd>
+    <dt>goroutine leak</dt>
+    <dd>goroutine ที่ไม่มีวันจบ ค้างกินหน่วยความจำไปเรื่อย ๆ ·
+    เวลาถามให้พูดว่า <em>“ตรงนี้มีโอกาส goroutine leak ไหม”</em></dd>
+    <dt>graceful (จบแบบเรียบร้อย)</dt>
+    <dd>ปล่อยให้งานที่ค้างอยู่เก็บของจบเองก่อน ไม่ตัดกลางคัน ·
+    ตรงข้ามกับ <em>abrupt / force kill</em> ที่ตัดจบทันที</dd>
+  </dl>
 </div>
 
 <h2>7 · <code>ctx</code> ต้องเป็น parameter ตัวแรกเสมอ</h2>
@@ -303,7 +437,13 @@ fmt.<span class="f">Println</span>(<span class="s">"ทุก worker หยุ�
 <h2>9 · Graceful Shutdown — ปิดโดยไม่ตัดงานกลางคัน</h2>
 
 <p>
-  ตอน deploy หรือ scale down ระบบจะส่งสัญญาณ <code>SIGTERM</code> มาบอกให้ปิด
+  ตอน deploy หรือ scale down (ลดจำนวนเครื่องที่รันอยู่ลง)
+  ระบบจะส่ง <code>SIGTERM</code> มาบอกให้ปิด
+  <br><em><code>SIGTERM</code> คือสัญญาณมาตรฐานของระบบปฏิบัติการ แปลว่า “ขอให้ปิดตัวเองนะ”
+  ไม่ใช่การฆ่าทิ้งทันที — โปรแกรมมีสิทธิ์เก็บของก่อนจบ
+  แต่มีสิทธิ์ก็ต่อเมื่อเราดักไว้เอง (<code>signal.NotifyContext</code> ข้างล่างนี่แหละ)
+  ถ้าไม่ดัก OS ก็ปิดให้ทันทีอยู่ดี · ตัวที่ดักไม่ได้เลยคือ <code>SIGKILL</code> —
+  โดนแล้วจบทันที ไม่มีโอกาสเก็บของ</em>
   <br>ถ้าปิดทันที = request ที่ค้างอยู่ถูกตัดกลางคัน =
   ลูกค้าจ่ายเงินแล้วแต่ order ไม่ถูกบันทึก
 </p>
@@ -346,6 +486,9 @@ server กำลังรับ request...
   <p style="margin-bottom:0">
     <strong>สังเกตว่าได้ <code>context canceled</code> ไม่ใช่ <code>DeadlineExceeded</code></strong>
     — เพราะสัญญาณจาก OS นับเป็นการ "กด cancel" ไม่ใช่ "หมดเวลา"
+    <br>คำว่า <strong>drain</strong> ในผลรันข้างบนคือศัพท์ที่ใช้เรียกช่วงนี้:
+    “ไม่รับงานใหม่แล้ว แต่ปล่อยงานที่ค้างอยู่ให้จบก่อน”
+    เหมือนร้านที่ปิดป้ายแล้วแต่ยังให้คนที่นั่งอยู่กินให้เสร็จ
     <br><strong>สำนวนเต็มในระบบจริงมีสอง context</strong>: ตัวแรกรับสัญญาณปิด
     ตัวที่สองเป็น <code>WithTimeout</code> กำหนดว่า
     "ให้เวลาเก็บของ 30 วินาที ถ้าไม่เสร็จก็ตัดจบ"

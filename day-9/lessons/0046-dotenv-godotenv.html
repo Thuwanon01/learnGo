@@ -1,0 +1,1422 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 46 — .env กับ godotenv: คนละหน้าที่กับ caarlos0/env</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 46 · Day 9 · Config</p>
+  <h1><code>.env</code> กับ <code>godotenv</code> — คนละหน้าที่กับ <code>caarlos0/env</code></h1>
+  <p class="meta">~20 นาที · ต้องมี: <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> (environment variable คืออะไร) · <a href="./0045-caarlos0-env.html">บทเรียน 45</a> (<code>caarlos0/env</code>)</p>
+  <p class="standfirst">
+    บทนี้มาจาก<strong>สไลด์ Day 9 หน้า 11–14</strong>
+    <br>คำถามที่บทนี้ต้องตอบให้ได้มีข้อเดียว: <strong>ในเมื่อ <code>caarlos0/env</code> อ่าน environment ได้อยู่แล้ว
+    แล้วยังต้องมี <code>godotenv</code> ไปทำไม</strong>
+    <br>คำตอบสั้น ๆ ที่สไลด์เขียนไว้ท้ายหน้า 13 คือ:
+    <strong><code>godotenv</code> = เอาค่า<em>เข้า</em> environment · <code>caarlos0/env</code> = เอาค่า<em>ออกจาก</em> environment มาใส่ struct</strong>
+    — คนละทิศทาง คนละจังหวะ ไม่ได้แข่งกัน
+    <br>ผมรันทั้งเส้นให้ดูจริง ตั้งแต่ไฟล์ <code>.env</code> จนถึง <code>Config</code> struct
+    แล้วโชว์<strong>ตอนที่มันพังเงียบ</strong> ด้วย — พิมพ์ผิดในไฟล์ <code>.env</code> บรรทัดเดียว
+    ค่าหายทั้ง 9 ตัว แต่โปรแกรมยัง <code>exit 0</code> ไม่มี error สักตัว
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ — ทุก output ในหน้านี้มาจากการรันจริงบน</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+github.com/joho/godotenv v1.5.1
+github.com/caarlos0/env/v11 v11.4.1</code></pre>
+  <p style="margin-bottom:0">
+    ถ้าจะพิมพ์ตาม: สร้างโฟลเดอร์เปล่า · <code>go mod init pipe</code> ·
+    <code>go get github.com/joho/godotenv@v1.5.1</code> ·
+    <code>go get github.com/caarlos0/env/v11@v11.4.1</code>
+    <br>ส่วนหัวข้อ 10 ใช้ <code>git</code> ที่ติดมากับเครื่อง ไม่ต้องลงอะไรเพิ่ม
+  </p>
+</div>
+
+<h2>1 · ปัญหาที่ <code>.env</code> เกิดมาแก้</h2>
+
+<p>
+  ใน <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> เราสรุปไว้ว่า
+  ค่า config ต้องอยู่<strong>นอกโค้ด</strong> แล้วส่งเข้ามาทาง environment variable
+  <br>ซึ่งถูกต้อง — แต่พอเอามาใช้จริงตอน develop ในเครื่องตัวเอง มันกลายเป็นแบบนี้:
+</p>
+
+<pre><code>$ export APP_NAME=wongnok
+$ export APP_ENV=development
+$ export APP_PORT=8080
+$ export APP_SHUTDOWN_TIMEOUT=10s
+$ export LOG_LEVEL=DEBUG
+<span class="c"># ... อีกสิบกว่าบรรทัด ...</span>
+$ go run ./cmd/api</code></pre>
+
+<p>
+  แล้ววันรุ่งขึ้นคุณเปิด terminal ใหม่ — <strong>ต้องพิมพ์ใหม่ทั้งชุด</strong>
+  <br>เพราะ environment variable ที่ <code>export</code> ไว้<strong>อยู่กับ shell ตัวนั้นเท่านั้น</strong>
+  ปิด terminal ก็หายหมด (ข้อนี้ต่อจากบท 44 หัวข้อ 2 ที่พิสูจน์เรื่อง parent → child process ไว้แล้ว)
+  <br>สไลด์หน้า 11 เขียนปัญหานี้ไว้ตรง ๆ ว่า:
+  <em>"ตอน dev ในเครื่อง ไม่มีใครอยากพิมพ์ <code>export</code> 15 บรรทัดใหม่ทุกครั้งที่เปิด terminal"</em>
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ทางแก้ที่ทุกภาษาคิดออกตรงกัน:</strong> เอา 15 บรรทัดนั้นไปเก็บใน<strong>ไฟล์</strong>
+    แล้วให้โปรแกรมอ่านไฟล์นั้นตอนเริ่มทำงาน
+    <br>ไฟล์นั้นชื่อ <code>.env</code> — และ<strong>มันแก้ปัญหาแค่ข้อนี้ข้อเดียว</strong> ไม่ได้แก้อย่างอื่น
+  </p>
+</div>
+
+<h2>2 · <code>.env</code> หน้าตายังไง</h2>
+
+<p>นี่คือไฟล์ <code>.env</code> ตัวอย่างจากสไลด์ วางไว้ที่ root ของโปรเจกต์:</p>
+
+<pre><code><span class="c"># .env — วางที่ root ของโปรเจกต์</span>
+APP_NAME=wongnok
+APP_ENV=development
+APP_PORT=8080
+APP_SHUTDOWN_TIMEOUT=10s
+
+LOG_LEVEL=DEBUG
+LOG_FORMAT=text
+
+POSTGRES_DSN=postgres://postgres:secret@localhost:5432/wongnok?sslmode=disable
+POSTGRES_MAX_OPEN_CONNS=25
+POSTGRES_CONN_MAX_LIFETIME=30m</code></pre>
+
+<p>
+  สังเกตว่ามัน<strong>ไม่มี syntax อะไรเลย</strong> — ไม่มีวงเล็บ ไม่มีเครื่องหมายจบบรรทัด ไม่มี indent ที่มีความหมาย
+  <br>แค่ <code>KEY=value</code> บรรทัดละคู่ · บรรทัดที่ขึ้นต้นด้วย <code>#</code> คือ comment · บรรทัดว่างข้ามไป
+  <br>และค่าทุกตัวเป็น<strong>ตัวอักษรล้วน</strong> — <code>8080</code> ในไฟล์นี้คือตัวอักษรสี่ตัว ไม่ใช่เลข
+  (เรื่องนี้ยังเหมือนเดิมกับบท 44 ไม่มีอะไรเปลี่ยน)
+</p>
+
+<p>สไลด์หน้า 11 เน้นสี่ข้อเกี่ยวกับไฟล์นี้ ซึ่งสี่ข้อนี้คือทั้งหมดที่ต้องจำ:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สไลด์บอกว่า</th><th>แปลว่าอะไรในทางปฏิบัติ</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>เป็นแค่ไฟล์ text ธรรมดา</strong><br>Go / OS / Docker ไม่รู้จักมันโดยกำเนิด</td>
+      <td>ไม่มีใครอ่านให้อัตโนมัติ · วางไฟล์ไว้เฉย ๆ แล้วรันโปรแกรม จะไม่เกิดอะไรขึ้นเลย (พิสูจน์ในหัวข้อ 3)</td>
+    </tr>
+    <tr>
+      <td><strong>ต้องมีคนอ่านให้</strong><br>อ่านไฟล์แล้วยัดค่าเข้า environment = งานของ <code>godotenv</code></td>
+      <td><code>godotenv</code> เป็นแค่ "คนอ่านไฟล์แล้วเรียก <code>os.Setenv</code> ให้" — ไม่มีเวทมนตร์อะไรมากกว่านั้น</td>
+    </tr>
+    <tr>
+      <td><strong>ของ local development เท่านั้น</strong><br>production ไม่ใช้ และไม่ควรมี</td>
+      <td>บน production ค่ามาจาก Docker / Kubernetes / CI โดยตรง — ไม่ต้องมีไฟล์นี้ และมีก็ไม่ควร</td>
+    </tr>
+    <tr>
+      <td><strong>ห้าม commit ขึ้น Git</strong><br>มี password อยู่ข้างใน — <code>.gitignore</code> ก่อนเสมอ</td>
+      <td>ดูบรรทัด <code>POSTGRES_DSN</code> ข้างบน มีคำว่า <code>secret</code> อยู่กลางบรรทัด (หัวข้อ 10)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 ประโยคปิดของสไลด์หน้านั้นคือ
+    <strong>"<code>.env</code> ไม่ใช่ feature ของภาษา — เป็นแค่ข้อตกลงของเครื่องมือ"</strong>
+    <br>แปลว่าถ้าคุณไปดูสเปกของภาษา Go หรือดู man page ของ Linux
+    <strong>คุณจะไม่เจอคำว่า <code>.env</code> เลย</strong> — มันเป็นแค่ธรรมเนียมที่ library หลาย ๆ ตัว
+    (ในทุกภาษา) ตกลงกันเองว่าจะใช้ชื่อไฟล์นี้
+  </p>
+</div>
+
+<h2>3 · "แค่ไฟล์ text ธรรมดา" แปลว่าอะไรกันแน่</h2>
+
+<p>
+  ข้อนี้ฟังดูเหมือนคำพูดลอย ๆ แต่มันมีผลจริงที่จับต้องได้ — และเป็นสาเหตุที่คนติดกันบ่อยตอนขึ้น Docker
+  <br>ผมเขียนโปรแกรมเล็ก ๆ ตัวหนึ่งที่ <code>import _ "github.com/joho/godotenv/autoload"</code>
+  แล้วพิมพ์ <code>cwd</code> (current working directory) กับค่า env ที่ชื่อ <code>WHERE</code> ออกมา
+  <br>จากนั้น <code>go build -o app .</code> ได้ binary ก้อนเดียว แล้ว<strong>เอา binary ก้อนเดิมนั่นแหละ</strong> ไปรันสองที่:
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — โครงสร้างโฟลเดอร์เป็นแบบนี้</p>
+  <pre><code>p8/
+├── .env          <span class="c"># มีบรรทัด WHERE=root-dotenv</span>
+├── app           <span class="c"># binary ที่ build แล้ว</span>
+└── sub/          <span class="c"># โฟลเดอร์ว่าง ไม่มี .env</span></code></pre>
+  <p class="ask">
+    รันสองครั้ง — <code>./app</code> จากในโฟลเดอร์ <code>p8</code> · แล้ว <code>cd sub &amp;&amp; ../app</code>
+    <br><strong>binary ก้อนเดียวกันเป๊ะ ทั้งสองครั้งจะได้ <code>WHERE</code> เหมือนกันไหม?</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== run binary from project root (where .env lives) ===
+cwd=/var/folders/.../p8       WHERE=<strong>"root-dotenv"</strong>
+
+=== run same binary from sub/ (no .env there) ===
+cwd=/var/folders/.../p8/sub   WHERE=<strong>""</strong></code></pre>
+    <p>
+      <strong>ไม่เหมือนกัน</strong> — binary ก้อนเดิม โค้ดเดิม แต่ได้คนละผล
+      เพราะ <code>godotenv</code> หาไฟล์ <code>.env</code> จาก
+      <strong>current working directory (ที่ที่คุณยืนอยู่ตอนสั่งรัน)</strong>
+      ไม่ใช่ที่ที่ binary วางอยู่
+    </p>
+    <p>
+      ยืนยันจากซอร์สของ <code>godotenv</code> เอง (<code>godotenv.go</code> บรรทัด 179) —
+      ค่า default ของ filenames คือ:
+    </p>
+    <pre style="margin:0.6rem 0"><code><span class="k">return</span> []<span class="k">string</span>{<span class="s">".env"</span>}</code></pre>
+    <p style="margin-bottom:0">
+      เป็น<strong>ชื่อไฟล์เปล่า ๆ ไม่ใช่ absolute path</strong> — สุดท้ายมันก็คือ <code>os.Open(".env")</code>
+      ธรรมดาที่ทุกโปรแกรมทำได้ ไม่มีอะไรพิเศษ
+      <br>นี่แหละความหมายของ "Go / OS / Docker ไม่รู้จักมันโดยกำเนิด":
+      <strong>ถ้าระบบปฏิบัติการรู้จัก <code>.env</code> จริง binary จะหาไฟล์เจอไม่ว่ารันจากไหน</strong>
+      — ที่มันหาไม่เจอ เพราะมันเป็นแค่การเปิดไฟล์ธรรมดาจาก library ตัวหนึ่ง
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ จุดที่กัดคนตอนขึ้น Docker / systemd</span>
+  <p style="margin-bottom:0">
+    ใน Dockerfile ถ้าคุณ <code>COPY .env /app/.env</code> แล้วตั้ง <code>WORKDIR /srv</code>
+    โปรแกรมจะหาไฟล์<strong>ไม่เจอ</strong> — ทั้งที่ไฟล์อยู่ใน image แล้ว
+    <br>อาการที่เห็นคือ "รันในเครื่องได้ ขึ้น container แล้วค่าหาย" ซึ่งคนมักไปโทษ Docker
+    ทั้งที่ต้นเหตุคือ <code>cwd</code> คนละที่
+    <br>แต่ทางแก้ที่ถูกจริง ๆ <strong>ไม่ใช่</strong>การไปแก้ <code>WORKDIR</code> —
+    คือ<strong>ไม่ต้องเอา <code>.env</code> ขึ้น container ตั้งแต่แรก</strong> (ดูหัวข้อ 7 กล่องขวา)
+  </p>
+</div>
+
+<h2>4 · <code>godotenv</code> ทำงานยังไง — สองวิธี</h2>
+
+<p>
+  สไลด์หน้า 12 เขียนหน้าที่ของ <code>godotenv</code> ไว้บรรทัดเดียวว่า
+  <strong>"หน้าที่เดียว: อ่าน <code>.env</code> แล้วยัดค่าเข้า environment"</strong>
+  <br>และให้สองวิธีใช้:
+</p>
+
+<h3>วิธีที่ 1 — <code>autoload</code> (สไลด์ชุดนี้ใช้แบบนี้)</h3>
+
+<pre><code><span class="k">import</span> _ <span class="s">"github.com/joho/godotenv/autoload"</span></code></pre>
+
+<p>
+  จบ — <strong>ไม่ต้องเรียกอะไรเพิ่มเลย</strong>
+  <br>เครื่องหมาย <code>_</code> ข้างหน้าเรียกว่า <strong>blank identifier import</strong> แปลว่า
+  "เอา package นี้เข้ามา แต่ฉันไม่ได้จะเรียกฟังก์ชันอะไรของมัน — ฉันต้องการแค่<em>ผลข้างเคียง</em>ของการ import"
+  <br>ผลข้างเคียงที่ว่าคือฟังก์ชัน <code>init()</code> ซึ่ง Go เรียกให้อัตโนมัติทุก package ที่ถูก import
+</p>
+
+<p>
+  ผมเปิดซอร์สของ package <code>autoload</code> มาให้ดู — <strong>ทั้ง package มีแค่ 15 บรรทัดนี้จริง ๆ</strong>:
+</p>
+
+<pre><code><span class="c">// github.com/joho/godotenv@v1.5.1/autoload/autoload.go — ทั้งไฟล์</span>
+<span class="k">package</span> autoload
+
+<span class="c">/*
+	You can just read the .env file on import just by doing
+
+		import _ "github.com/joho/godotenv/autoload"
+
+	And bob's your mother's brother
+*/</span>
+
+<span class="k">import</span> <span class="s">"github.com/joho/godotenv"</span>
+
+<span class="k">func</span> <span class="f">init</span>() {
+	godotenv.<span class="f">Load</span>()
+}</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ อ่านบรรทัด <code>godotenv.Load()</code> ให้ดี — มันไม่ได้รับ error กลับมาเลย</span>
+  <p style="margin-bottom:0">
+    <code>Load()</code> คืน <code>error</code> แต่บรรทัดนี้<strong>ไม่ได้เอาไปเก็บที่ไหน</strong>
+    <br>แปลว่าถ้าอ่านไฟล์ไม่ได้ หรือไฟล์พัง — <strong>ไม่มีใครรู้เลย</strong>
+    <br>นี่คือราคาที่ต้องจ่ายของวิธีที่ 1 ซึ่งสไลด์ยังไม่ได้พูดถึง เดี๋ยวหัวข้อ 8 ผมโชว์ให้ดูว่ามันน่ากลัวแค่ไหน
+  </p>
+</div>
+
+<p>ผมรันยืนยันว่าแค่ <code>import _</code> อย่างเดียวพอจริง ไม่ต้องเรียกอะไรเพิ่ม:</p>
+
+<pre><code>--- run 1: autoload, no shell env ---   <span class="c"># .env มี APP_NAME=from-dotenv, PORT=9999</span>
+APP_NAME="from-dotenv"
+PORT="9999"</code></pre>
+
+<p>
+  แล้ว "<code>init()</code> ทำงานก่อนสุด" หมายถึงก่อนแค่ไหน? ผมรันพิสูจน์ด้วยโปรแกรมที่มี
+  ทั้ง package-level variable, <code>init()</code> ของตัวเอง และ <code>main()</code>:
+</p>
+
+<pre><code>1) package-level var init: GOOD=set-by-dotenv
+2) main package init(): GOOD = set-by-dotenv
+3) main(): GOOD = set-by-dotenv</code></pre>
+
+<p>
+  ลำดับที่พิมพ์ออกมาคือหลักฐานเอง — <strong>package-level variable ถูกสร้างก่อน · แล้วค่อย <code>init()</code> · แล้วค่อย <code>main()</code></strong>
+  และทั้งสามจุดเห็นค่าจาก <code>.env</code> ครบแล้ว
+  <br>สิ่งที่ผลนี้พิสูจน์คือ: <strong>ค่ามาถึงตั้งแต่ตอน package-level variable ถูกสร้าง</strong>
+  ซึ่งเกิดก่อนทุกอย่างของ <code>package main</code> — ไม่มีทางที่โค้ดของคุณจะทำงานก่อน <code>autoload</code> ได้
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — แอปที่ตั้งไว้ให้ "เปิดเองตอนบูตเครื่อง"</span>
+  <p>
+    ในคอมของคุณมีโปรแกรมบางตัวที่<strong>เด้งขึ้นมาเองทุกครั้งที่เปิดเครื่อง</strong> —
+    LINE · ตัวซิงก์ไฟล์ · โปรแกรมปริ้นเตอร์
+    <br>คุณไม่ได้กดเปิดมันเลยสักครั้ง คุณแค่<em>เคยติดตั้งมันไว้</em>เท่านั้นเอง
+    <br>· การติดตั้งครั้งนั้น = บรรทัด <code>import _ ".../godotenv/autoload"</code>
+    <br>· การที่มันเด้งขึ้นมาเองตอนบูต = <code>init()</code>
+    <br>· ของที่มันแอบทำให้ตอนเด้งขึ้นมา (ซิงก์ไฟล์ · ต่อปริ้นเตอร์) = <code>godotenv.Load()</code>
+  </p>
+  <p>
+    และมันขึ้นมา<strong>ก่อน</strong>ที่คุณจะได้ทำอะไรเลย — ตรงกับผลรันข้างบนที่ค่าจาก <code>.env</code>
+    มาถึงตั้งแต่ตอนสร้าง package-level variable ซึ่งเกิดก่อน <code>init()</code> ของเราเอง และก่อน <code>main()</code>
+  </p>
+  <p>
+    ทีนี้ลองนึกว่าตัวซิงก์ไฟล์นั้น<strong>ล็อกอินไม่ผ่านแล้วปิดตัวเองเงียบ ๆ</strong> —
+    ไม่เด้ง popup ไม่มีไอคอนแดง คุณจะทำงานไปทั้งวันโดยเชื่อว่าไฟล์ถูกซิงก์อยู่
+    <br>นั่นคือบรรทัด <code>godotenv.Load()</code> ใน <code>autoload.go</code> ที่ทิ้ง <code>error</code> ทั้งดุ้น เป๊ะ ๆ
+    (หัวข้อ 8 จะโชว์ว่าวันที่มันเกิดขึ้นจริง หน้าตาเป็นยังไง)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สองข้อ —
+    (1) โปรแกรม startup จริงคุณ<em>ปิดมันได้</em>จากหน้าตั้งค่า แต่ <code>autoload</code> ปิดไม่ได้เลย
+    <strong>ตราบใดที่บรรทัด <code>import _</code> ยังอยู่ มันทำงานแน่นอน</strong> ทางเดียวที่จะหยุดคือลบบรรทัดนั้นทิ้ง ·
+    (2) "ตอนบูตเครื่อง" เป็นเวลากว้าง ๆ ที่แต่ละครั้งไม่เหมือนกัน แต่ <code>init()</code>
+    มีลำดับตายตัวที่ Go การันตีให้ — <strong>package ที่ถูก import จะ initialize เสร็จก่อน package ที่ import มันเสมอ</strong>
+    ไม่ใช่เรื่องของโชค
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>blank identifier (<code>_</code>)</dt>
+    <dd>ขีดล่างที่แปลว่า <em>"ฉันรู้ว่ามีของตรงนี้ แต่ไม่ขอเรียกใช้"</em> ·
+    วางหน้า import แปลว่าเอา package เข้ามาโดยไม่แตะฟังก์ชันไหนเลย
+    <br><strong>พูดกับ senior ได้ว่า:</strong> <em>"บรรทัดนี้ import ด้วย blank identifier — มัน import มาเพื่ออะไรครับ"</em></dd>
+
+    <dt>import for side effects</dt>
+    <dd>การ import เพื่อเอา<strong>ผลข้างเคียง</strong> ไม่ได้เอาฟังก์ชัน · <code>autoload</code>
+    คือตัวอย่างที่เจอบ่อยที่สุดใน Go (อีกตัวที่จะเจอแน่ ๆ คือ database driver)
+    <br><strong>พิมพ์ถาม AI ได้เลยว่า:</strong>
+    <em>"in Go, what side effects does importing a package for its init() have?"</em></dd>
+
+    <dt><code>init()</code></dt>
+    <dd>ฟังก์ชันที่ Go เรียกให้เองตอนโหลด package — เรียกด้วยมือไม่ได้ และห้ามมีพารามิเตอร์
+    <br><strong>พูดได้ว่า:</strong> <em>"ค่านี้ถูกตั้งใน <code>init()</code> ของ package ไหน"</em>
+    ซึ่งเป็นคำถามที่ตรงกว่าการถามว่า "ค่านี้มาจากไหน"</dd>
+
+    <dt>กลืน error (swallow / ignore the error)</dt>
+    <dd>เขียนโค้ดที่ได้ <code>error</code> มาแล้ว<strong>ไม่เก็บ ไม่เช็ค ไม่ log</strong> ·
+    <code>godotenv.Load()</code> ใน <code>autoload.go</code> คือกรณีตัวอย่าง
+    <br><strong>ประโยคที่ใช้ได้จริงตอน review โค้ด:</strong>
+    <em>"ตรงนี้เรากลืน error อยู่นะ ถ้าไฟล์พังเราจะไม่รู้เลย"</em></dd>
+  </dl>
+</div>
+
+<h3>วิธีที่ 2 — เรียกเอง (ถ้าต้องคุมลำดับ)</h3>
+
+<p>สไลด์หน้า 12 เขียนไว้สามบรรทัดนี้ (เป็น<em>เศษโค้ด</em> ไม่ใช่ไฟล์ — เอาไปวางเดี่ยว ๆ ยังคอมไพล์ไม่ได้):</p>
+
+<pre><code><span class="k">if</span> err := godotenv.<span class="f">Load</span>(); err != <span class="k">nil</span> {
+    slog.<span class="f">Debug</span>(<span class="s">"no .env file, using real environment"</span>)
+}</code></pre>
+
+<p>
+  สามบรรทัดนั้นถูกแล้ว แต่ยังขาด <code>package</code> กับ <code>import</code> ที่ต้องมีครอบ
+  <br>นี่คือ<strong>ไฟล์เต็ม</strong>ที่ผมเอาไปรันจริงกับ <code>godotenv v1.5.1</code> คู่กับ
+  <code>caarlos0/env v11.4.1</code> — <strong>ก๊อปทั้งก้อนนี้ไปวางเป็น <code>main.go</code> แล้ว <code>go run .</code> ได้เลย</strong>:
+</p>
+
+<pre><code><span class="c">// main.go — วิธีที่ 2: เรียก godotenv.Load() เอง แล้วส่งต่อให้ caarlos0/env</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"fmt"</span>
+    <span class="s">"log/slog"</span>
+    <span class="s">"os"</span>
+
+    <span class="s">"github.com/caarlos0/env/v11"</span>
+    <span class="s">"github.com/joho/godotenv"</span>
+)
+
+<span class="k">type</span> Config <span class="k">struct</span> {
+    AppName <span class="k">string</span> <span class="s">`env:"APP_NAME"`</span>
+    Port    <span class="k">int</span>    <span class="s">`env:"PORT" envDefault:"8080"`</span>
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    <span class="k">if</span> err := godotenv.<span class="f">Load</span>(); err != <span class="k">nil</span> {
+        slog.<span class="f">Debug</span>(<span class="s">"no .env file, using real environment"</span>)
+    }
+
+    fmt.<span class="f">Println</span>(<span class="s">"=== with .env ==="</span>)
+    fmt.<span class="f">Printf</span>(<span class="s">"after Load, raw os.Getenv PORT=%q\n"</span>, os.<span class="f">Getenv</span>(<span class="s">"PORT"</span>))
+
+    cfg, err := env.<span class="f">ParseAs</span>[Config]()
+    fmt.<span class="f">Printf</span>(<span class="s">"ParseAs err=%v cfg=%+v\n"</span>, err, cfg)
+}</code></pre>
+
+<p>
+  ไฟล์ <code>.env</code> ที่วางคู่กันมีแค่สองบรรทัด — <code>APP_NAME=svc-from-dotenv</code>
+  และ <code>PORT=8081</code> · ผลรัน:
+</p>
+
+<pre><code>=== with .env ===
+after Load, raw os.Getenv PORT="8081"
+ParseAs err=&lt;nil&gt; cfg={AppName:svc-from-dotenv Port:8081}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>เก็บรายละเอียดเล็ก ๆ ที่สไลด์เขียนไม่ตรงกับตัวอย่างของตัวเอง</strong>
+    <br>ตารางหน้า 13 เขียนว่า <code>godotenv</code> "ทำงานตอน — <strong>ก่อนสุด <code>init()</code></strong>"
+    <br>ประโยคนี้<strong>จริงเฉพาะวิธีที่ 1</strong> — ส่วนวิธีที่ 2 ที่สไลด์เองสอนอยู่หน้าเดียวกัน
+    วาง <code>godotenv.Load()</code> ไว้ใน <code>main()</code> ซึ่งเกิด<em>หลัง</em> <code>init()</code> ทุกตัว
+    <br>เวลาจำ ให้จำแยกว่า: <strong><code>init()</code> เป็นของ <code>autoload</code> เท่านั้น</strong> ·
+    ถ้าเรียก <code>Load()</code> เอง มันทำงานตอนที่บรรทัดนั้นถูกรัน ไม่ใช่ก่อนสุด
+  </p>
+</div>
+
+<p>แล้วถ้า<strong>ไม่มีไฟล์ <code>.env</code> เลย</strong> <code>Load()</code> คืน error หน้าตายังไง? ผมรันดู:</p>
+
+<pre><code>err (%v)   = open .env: no such file or directory
+err type   = *fs.PathError
+os.ErrNotExist? = true
+program still running, did not panic
+exit code: 0</code></pre>
+
+<p>
+  สามชื่อในผลรันข้างบน ถ้ายังไม่เคยเจอ นิยามสั้น ๆ ก่อน:
+  <br>· <code>*fs.PathError</code> คือ<strong>ชนิดของ error ที่ Go คืนมาเวลาเปิดไฟล์ไม่ได้</strong>
+  (มาจาก package <code>io/fs</code>) — ข้างในเก็บชื่อไฟล์กับสาเหตุไว้ให้
+  <br>· <code>os.ErrNotExist</code> คือ<strong>ก้อน error สำเร็จรูป</strong>ของ Go ที่แปลว่า "ไม่มีไฟล์นี้" — มีไว้เอาไปเทียบโดยเฉพาะ
+  <br>· <code>errors.Is(err, target)</code> คือการถามว่า "error ก้อนนี้<strong>เป็นเรื่องเดียวกับ</strong> <code>target</code> ไหม"
+  โดยมันจะแกะ error ที่ถูกห่อไว้เป็นชั้น ๆ ให้เองจนเจอ — ไม่ต้องเทียบด้วย <code>==</code> เอง
+</p>
+
+<p>
+  ในเคสนี้จึงอ่านได้ว่า: error ที่ได้เป็น <code>*fs.PathError</code> ธรรมดา และ
+  <code>errors.Is(err, os.ErrNotExist)</code> คืน <code>true</code>
+  <br>ข้อมูลนี้มีประโยชน์กว่าที่คิด: ถ้าอยากเขียนให้ดีกว่า <code>slog.Debug</code> เฉย ๆ
+  คุณ<strong>แยกได้</strong>ว่า "ไม่มีไฟล์" (ปกติมากบน production — ข้ามไปเถอะ)
+  กับ "มีไฟล์แต่ไฟล์พัง" (อันนี้ควรตายตั้งแต่ตอน start):
+</p>
+
+<pre><code><span class="k">if</span> err := godotenv.<span class="f">Load</span>(); err != <span class="k">nil</span> {
+    <span class="k">if</span> errors.<span class="f">Is</span>(err, os.ErrNotExist) {
+        slog.<span class="f">Debug</span>(<span class="s">"no .env file, using real environment"</span>)   <span class="c">// ปกติบน prod</span>
+    } <span class="k">else</span> {
+        log.<span class="f">Fatalf</span>(<span class="s">"broken .env: %v"</span>, err)                     <span class="c">// ไฟล์มีอยู่แต่พัง = ปัญหาจริง</span>
+    }
+}</code></pre>
+
+<p style="font-size:0.95em">
+  <em>(ก้อนนี้เป็น<strong>เศษโค้ด</strong> ไม่ใช่ไฟล์ — เอาไปวางแทนที่ <code>if</code> ใน <code>main()</code> ของไฟล์เต็มข้างบน
+  แล้วเพิ่ม <code>"errors"</code> กับ <code>"log"</code> เข้าไปใน <code>import</code> ด้วย ถึงจะคอมไพล์ผ่าน)</em>
+</p>
+
+<h2>5 · <code>Load()</code> กับ <code>Overload()</code> ต่างกันตรงไหน</h2>
+
+<div class="predict">
+  <p>
+    <strong>ทายก่อนรัน</strong> — ไฟล์ <code>.env</code> มี <code>APP_NAME=from-dotenv</code>
+    และผมสั่งรันแบบนี้ (ตั้ง env จาก shell นำหน้าคำสั่ง ซึ่งชนะ <code>export</code> ตามบท 44):
+  </p>
+  <pre><code>$ APP_NAME=from-shell go run . load
+$ APP_NAME=from-shell go run . overload</code></pre>
+  <p class="ask">
+    <strong>สองคำสั่งนี้ได้ <code>APP_NAME</code> เป็นอะไร?</strong>
+    <br>และคำถามที่สำคัญกว่า: <strong>ถ้าเป็น <code>Load()</code> แล้วค่าจาก shell ชนะ
+    ค่าอื่นใน <code>.env</code> ที่ shell ไม่ได้ตั้ง จะยังเข้ามาไหม — หรือทั้งไฟล์ตกไปเลย?</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== Load() with shell env set ===
+before: APP_NAME="from-shell"
+err=&lt;nil&gt;
+after(load): APP_NAME=<strong>"from-shell"</strong>        <span class="c"># .env แพ้ ของเดิมอยู่ต่อ</span>
+
+=== Load() with NO shell env ===
+before: APP_NAME=""
+err=&lt;nil&gt;
+after(load): APP_NAME=<strong>"from-dotenv"</strong>       <span class="c"># ไม่มีของเดิม .env จึงได้เข้า</span>
+
+=== Overload() with shell env set ===
+before: APP_NAME="from-shell"
+err=&lt;nil&gt;
+after(overload): APP_NAME=<strong>"from-dotenv"</strong>   <span class="c"># .env ทับของเดิม</span></code></pre>
+    <p>
+      ส่วนคำถามข้อสอง — ผมรันแยกอีกชุดด้วย <code>autoload</code> (ซึ่งข้างในคือ <code>Load()</code>)
+      โดย shell ตั้งแค่ <code>APP_NAME</code> ตัวเดียว:
+    </p>
+    <pre style="margin:0.6rem 0"><code>--- run 2: autoload + APP_NAME from shell ---
+APP_NAME=<strong>"from-shell"</strong>    <span class="c"># shell ชนะ</span>
+PORT=<strong>"9999"</strong>             <span class="c"># PORT ที่ shell ไม่ได้ตั้ง ยังได้จาก .env</span></code></pre>
+    <p>
+      <strong>มันชนะกันเป็นราย key ไม่ใช่ทั้งไฟล์</strong> —
+      key ไหนมีอยู่ใน environment แล้ว <code>.env</code> ก็ข้ามไป · key ไหน<strong>ยังไม่มีอยู่</strong>ใน environment <code>.env</code> ก็เติมให้
+      <br>ยืนยันจาก comment ในซอร์ส <code>godotenv.go</code> บรรทัด 50 ที่เขียนไว้ตรง ๆ ว่า
+      <em>"It's important to note that it WILL NOT OVERRIDE an env variable that already exists"</em>
+      <br>และบรรทัด 73 ของ <code>Overload</code>: <em>"this WILL OVERRIDE an env variable that already exists"</em>
+    </p>
+    <p>
+      <strong>ระวังคำว่า "ยังไม่มี" ให้ดี — มันไม่ใช่ "ค่าว่าง"</strong>
+      <br><code>godotenv</code> ตัดสินจาก<em>ชื่อ key มีอยู่ใน <code>os.Environ()</code> หรือเปล่า</em> ไม่ได้ดูว่าค่าว่างหรือไม่ว่าง
+      (ซอร์ส <code>godotenv.go</code> บรรทัด 190–201 สร้างตาราง <code>currentEnv</code> จาก
+      <code>strings.Split(rawEnvLine, "=")[0]</code> แล้วเช็คแค่ <code>!currentEnv[key]</code>)
+      <br>แปลว่าถ้าคุณตั้งเป็น<strong>สตริงว่าง</strong> ถือว่า "มีอยู่แล้ว" — <code>.env</code> จะไม่เติมให้ ผมรันเทียบให้ดู:
+    </p>
+    <pre style="margin:0.6rem 0 0"><code>$ APP_NAME= go run .        <span class="c"># ตั้งเป็นสตริงว่าง</span>
+APP_NAME=<strong>""</strong>              <span class="c"># .env ไม่เติมให้ ทั้งที่ .env มี APP_NAME=from-dotenv</span>
+PORT="9999"
+
+$ go run .                  <span class="c"># ไม่ตั้งเลย</span>
+APP_NAME=<strong>"from-dotenv"</strong>    <span class="c"># คราวนี้ .env เติมให้</span>
+PORT="9999"</code></pre>
+    <p style="margin-bottom:0">
+      นี่คือความต่างระหว่าง "ค่าว่าง" กับ "ไม่ได้ตั้ง" ที่
+      <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> พูดไว้ทั้งหัวข้อ — มันโผล่มาใช้จริงตรงนี้พอดี
+    </p>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ฟังก์ชัน</th><th>พฤติกรรม (สไลด์หน้า 12)</th><th>ผลรันจริง</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>godotenv.Load()</code></td>
+      <td>env ที่มีอยู่แล้วชนะ — <code>.env</code> ไม่ทับของจริง</td>
+      <td><code>APP_NAME="from-shell"</code> (ค่าจาก shell อยู่ต่อ)</td>
+    </tr>
+    <tr>
+      <td><code>godotenv.Overload()</code></td>
+      <td><code>.env</code> ทับของเดิม — ใช้ระวัง</td>
+      <td><code>APP_NAME="from-dotenv"</code> (ค่าจาก shell โดนทับ)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>ทำไม <code>Load()</code> ถึงเป็น default ที่ถูกต้อง</strong>
+    <br>เพราะมันทำให้ <code>.env</code> เป็น<em>ค่าสำรอง</em> ไม่ใช่<em>คำสั่ง</em> —
+    ใครก็ตามที่ตั้ง env จริงมา (Docker, CI, หรือคุณเองตอนอยาก override ชั่วคราว) จะชนะเสมอ
+    <br>ท่าที่ใช้บ่อยมากตอน dev คือ <code>APP_PORT=9999 go run ./cmd/api</code> —
+    ได้พอร์ตใหม่ครั้งเดียวโดย<strong>ไม่ต้องแก้ไฟล์ <code>.env</code></strong>
+    ซึ่งจะทำแบบนี้ไม่ได้เลยถ้าใช้ <code>Overload()</code>
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ลานจอดรถที่ทุกช่องมีป้ายชื่อ</span>
+  <p>
+    นึกถึงลานจอดที่<strong>แต่ละช่องมีป้ายชื่อกำกับ</strong> — ช่อง <code>APP_NAME</code> ·
+    ช่อง <code>APP_PORT</code> · ช่อง <code>LOG_LEVEL</code> ไล่ไปเก้าช่อง
+    <br>ลานจอดนี้คือ <strong>environment</strong> · ไฟล์ <code>.env</code> คือ<strong>รถเก้าคันที่ขับตามกันมาถึงตอนเช้า</strong>
+  </p>
+  <p>
+    · <strong><code>Load()</code> = "ช่องไหนว่างค่อยจอด"</strong> —
+    เดินดูทีละช่อง ช่องไหนมีรถอยู่แล้วก็ข้ามไป ช่องไหนว่างถึงจอด
+    <br>· <strong><code>Overload()</code> = "ยกรถเดิมออก แล้วจอดทับ"</strong> — ไม่สนว่าใครจอดอยู่ก่อน
+  </p>
+  <p>
+    ภาพนี้ตอบคำถามข้อสองในกล่องเฉลยได้ทันที: <strong>มันตัดสินทีละช่อง ไม่ใช่ทั้งลาน</strong>
+    <br>รถคัน <code>APP_NAME</code> จอดไม่ได้เพราะมีรถของ shell จอดอยู่ ก็ไม่ได้แปลว่า
+    อีกแปดคันต้องขับกลับบ้านตามไปด้วย — <code>PORT</code> ยังจอดของมันได้ตามปกติ
+  </p>
+  <p>
+    ส่วน<strong>กรวยจราจร</strong>คือคำตอบของกับดัก <code>APP_NAME=</code> (ตั้งเป็นค่าว่าง) —
+    ในช่องนั้นไม่มีรถ แต่มันก็<strong>ไม่ว่าง</strong> รถจาก <code>.env</code> จึงจอดไม่ได้อยู่ดี
+    <br>ตรงกับผลรันข้างบนที่ <code>APP_NAME</code> ออกมาเป็น <code>""</code>
+    ทั้งที่ในไฟล์ <code>.env</code> มี <code>APP_NAME=from-dotenv</code> เขียนไว้ชัด ๆ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ลานจอดจริง ถ้ามีคนยกรถคุณออกไปจอดทับ เจ้าของรถโวยแน่นอน
+    แต่ที่นี่<strong>ไม่มีใครส่งเสียงเลย</strong> — ทั้ง <code>Load()</code> และ <code>Overload()</code>
+    คืน <code>err=&lt;nil&gt;</code> เหมือนกันหมดทั้งสามชุดในผลรันข้างบน
+    <br>แปลว่าคุณ<strong>ดูจาก error ไม่ได้</strong>ว่าตัวเองเรียกตัวไหนอยู่ ต้องไปอ่านที่โค้ดอย่างเดียว
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>override</dt>
+    <dd>"ทับค่าเดิม" · เป็นคำที่ documentation ของ <code>godotenv</code> ใช้ตรง ๆ
+    (<em>"WILL NOT OVERRIDE"</em> / <em>"WILL OVERRIDE"</em>)
+    <br><strong>พูดกับ senior ได้ว่า:</strong> <em>"ค่าจาก <code>.env</code> จะ override ค่าที่ Docker ส่งมาไหมครับ"</em>
+    — ชัดกว่าถามว่า "ตัวไหนมาก่อน"</dd>
+
+    <dt>precedence (ลำดับความสำคัญของค่า config)</dt>
+    <dd>กติกาว่าถ้าค่าเดียวกันมาจากหลายที่ ใครชนะ · ของบทนี้คือ
+    <strong>shell/Docker ชนะ <code>.env</code></strong> เมื่อใช้ <code>Load()</code>
+    <br><strong>พิมพ์ถาม AI ได้เลยว่า:</strong>
+    <em>"what is the config precedence order when using godotenv.Load with caarlos0/env?"</em></dd>
+
+    <dt>fallback (ค่าสำรอง)</dt>
+    <dd>ค่าที่จะถูกใช้ก็ต่อเมื่อไม่มีใครกำหนดมาให้ · นี่คือบทบาทที่ถูกต้องของไฟล์ <code>.env</code>
+    <br><strong>ประโยคที่ใช้ได้จริงตอนออกแบบ:</strong>
+    <em>"เราอยากให้ <code>.env</code> เป็น fallback เฉย ๆ ไม่ใช่ตัวสั่ง เพราะงั้นใช้ <code>Load()</code> ไม่ใช่ <code>Overload()</code>"</em></dd>
+
+    <dt>set-but-empty กับ unset</dt>
+    <dd>"ตั้งไว้แต่เป็นค่าว่าง" (<code>APP_NAME=</code>) กับ "ไม่ได้ตั้งเลย" —
+    คนละเรื่องกัน และ <code>godotenv</code> ดูแค่ว่า<em>ชื่อ key มีอยู่ไหม</em>
+    <br><strong>พิมพ์ถาม AI ได้เลยว่า:</strong>
+    <em>"in Go, how do I tell an unset environment variable from one set to an empty string?"</em>
+    (คำตอบที่ควรได้คือ <code>os.LookupEnv</code> ซึ่งคืนค่ามาสองตัว)</dd>
+  </dl>
+</div>
+
+<h2>6 · <code>godotenv</code> กับ <code>caarlos0/env</code> ทำหน้าที่ไม่เหมือนกัน</h2>
+
+<p>
+  มาถึงหน้าที่สำคัญที่สุดของบทนี้ (สไลด์หน้า 13)
+  <br>คนที่เพิ่งเห็นสองตัวนี้พร้อมกันมักคิดว่ามัน<em>ทำอย่างเดียวกัน</em> แล้วสงสัยว่าจะเลือกตัวไหนดี
+  — ซึ่งเป็นคำถามที่ผิดตั้งแต่ต้น เพราะมัน<strong>อยู่คนละจุดของท่อเดียวกัน</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th><code>godotenv</code></th><th><code>caarlos0/env</code></th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>หน้าที่</strong></td>
+      <td>อ่านไฟล์ <code>.env</code> → ยัดเข้า environment</td>
+      <td>อ่าน environment → เทค่าลง struct</td>
+    </tr>
+    <tr>
+      <td><strong>อ่านจาก</strong></td>
+      <td>ไฟล์ <code>.env</code> บน disk</td>
+      <td><code>os.Environ()</code></td>
+    </tr>
+    <tr>
+      <td><strong>เขียนไปที่</strong></td>
+      <td>environment ของ process</td>
+      <td><code>Config</code> struct ในโปรแกรม</td>
+    </tr>
+    <tr>
+      <td><strong>ทำงานตอน</strong></td>
+      <td>ก่อนสุด — <code>init()</code> <em>(เฉพาะแบบ <code>autoload</code> · ดูหมายเหตุหัวข้อ 4)</em></td>
+      <td>ตอนเรียก <code>env.ParseAs()</code></td>
+    </tr>
+    <tr>
+      <td><strong>ไม่มีมันได้ไหม</strong></td>
+      <td>ได้ — บน prod ไม่ต้องใช้เลย</td>
+      <td>ควรมี ไม่งั้นกลับไป <code>os.Getenv</code></td>
+    </tr>
+    <tr>
+      <td><strong>ถ้าใช้ผิดที่</strong></td>
+      <td>ใส่บน prod = ไม่เกิดอะไร (ไม่มีไฟล์)</td>
+      <td>ขาดไป = ไม่มีใครแปลง type ให้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ประโยคเดียวที่ควรจำจากทั้งบท (สไลด์เขียนไว้ท้ายหน้า 13):</strong>
+    <br>· <code>godotenv</code> = <strong>เอาค่า<em>เข้า</em> environment</strong>
+    <br>· <code>caarlos0/env</code> = <strong>เอาค่า<em>ออกจาก</em> environment มาใส่ struct</strong>
+    <br>ทิศทางตรงข้ามกัน ทำงานคนละจังหวะ และ<strong>ตัวหนึ่งไม่รู้จักอีกตัวเลย</strong> —
+    <code>caarlos0/env</code> ไม่มีโค้ดบรรทัดไหนที่รู้ว่าไฟล์ <code>.env</code> มีอยู่ในโลก
+    มันเห็นแค่ environment ที่ระบบส่งให้
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — โพยฝากซื้อของ · ตู้เย็น · คนทำกับข้าว</span>
+  <p>
+    ในครัวหนึ่งครัวมีสามอย่างที่หน้าที่ไม่ปนกันเลย:
+    <br>· <strong>โพยกระดาษที่แปะไว้หน้าตู้เย็น</strong> = ไฟล์ <code>.env</code> —
+    เป็นแค่กระดาษ กินไม่ได้ และถ้าไม่มีใครหยิบไปทำอะไร มันก็แปะอยู่อย่างนั้นทั้งวัน
+    (ตรงกับหัวข้อ 3 ที่ binary หาไฟล์ไม่เจอแล้วก็เดินหน้าต่อเฉย ๆ)
+    <br>· <strong>คนที่ถือโพยไปซื้อของแล้วเอามายัดใส่ตู้เย็น</strong> = <code>godotenv</code>
+    <br>· <strong>คนทำกับข้าวที่เปิดตู้ หยิบของตามสูตร แล้วชั่ง–ตวง–หั่นให้ตรงกับสูตร</strong> = <code>caarlos0/env</code>
+    <br>· <strong>สูตรอาหารที่เขียนไว้ว่าต้องใช้อะไรบ้าง กี่กรัม</strong> = <code>Config</code> struct
+  </p>
+  <p>
+    ตู้เย็นตรงกลางคือ <strong>environment</strong> — และของทุกอย่างในตู้เป็น "ของดิบ" เหมือนกันหมด
+    <br>ซึ่งตรงกับผลรันที่กำลังจะเห็นข้างล่าง: ค่าที่ออกจากตู้เป็น <code>string</code> ล้วน
+    <code>"8080"</code> ยังเป็นตัวอักษรสี่ตัว ไม่ใช่เลข <strong>จนกว่าคนทำกับข้าวจะแปลงให้</strong>
+  </p>
+  <p>
+    ภาพนี้ตอบคำถามหลักของทั้งบทได้ในประโยคเดียว —
+    <strong>สองตัวนี้ไม่ได้แข่งกัน เพราะมันยืนคนละฝั่งของตู้เย็น</strong>
+    <br>และบน production ก็แค่<strong>ไม่มีโพย ไม่มีคนไปซื้อของ</strong> —
+    แต่มีรถส่งของ (Docker · Kubernetes · CI) มาเติมตู้ให้ตรง ๆ
+    คนทำกับข้าวเปิดตู้เจอของครบเหมือนเดิม จึงไม่ต้องแก้โค้ดสักบรรทัด
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> คนทำกับข้าวจริงเปิดตู้แล้วไม่เจอไข่ จะร้องทันทีว่า "ไข่หมด"
+    <br>แต่ <code>caarlos0/env</code> เปิดตู้เจอตู้เปล่ายัง<strong>คืน <code>err=&lt;nil&gt;</code></strong>
+    แล้วทำอาหารต่อด้วย "ไข่ศูนย์ฟอง" — คือ <code>0</code> · <code>0s</code> · <code>""</code>
+    (ดูผลรันในหัวข้อ 8 และในกล่องเฉลยท้ายบท)
+    <br>นี่คือช่องว่างที่ยังไม่มีใครอุด และเป็นเหตุผลที่แผนภาพข้างล่างยังมีขั้น <code>validator</code>
+    ต่อท้ายอีกขั้น ซึ่งเป็นเนื้อหาของ <a href="./0047-validate-at-start.html">บทเรียน 47</a>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>parse</dt>
+    <dd>แปลง<strong>ข้อความดิบ</strong>ให้กลายเป็นของที่โปรแกรมใช้ได้จริง ·
+    ชื่อฟังก์ชัน <code>env.ParseAs[Config]()</code> มาจากคำนี้ตรง ๆ
+    <br><strong>พูดกับ senior ได้ว่า:</strong> <em>"ค่านี้ parse ไม่ผ่านหรือเปล่าครับ"</em>
+    ซึ่งแปลว่า "แปลงจาก string เป็น type ที่ประกาศไว้ไม่ได้" — คนละเรื่องกับ "ไม่มีค่า"</dd>
+
+    <dt>zero value</dt>
+    <dd>ค่าตั้งต้นที่ Go ใส่ให้เองเมื่อไม่มีใครกำหนด — <code>int</code> ได้ <code>0</code> ·
+    <code>string</code> ได้ <code>""</code> · <code>time.Duration</code> ได้ <code>0s</code>
+    <br><strong>ประโยคที่ใช้ได้จริงตอน debug:</strong>
+    <em>"DSN เป็น zero value อยู่ แปลว่าไม่มีใครส่งค่ามาให้เลย ไม่ใช่ส่งมาผิด"</em></dd>
+
+    <dt>struct tag</dt>
+    <dd>ข้อความในเครื่องหมาย <code>`...`</code> ที่ห้อยท้าย field เช่น <code>env:"APP_PORT"</code> ·
+    มันคือ "ป้ายบอกทาง" ที่ทำให้ library รู้ว่า field นี้ผูกกับ env ตัวไหน
+    <br><strong>พิมพ์ถาม AI ได้เลยว่า:</strong>
+    <em>"what struct tags does caarlos0/env v11 support?"</em></dd>
+
+    <dt>separation of concerns (แยกหน้าที่)</dt>
+    <dd>หลักที่ว่า "ของหนึ่งชิ้นทำเรื่องเดียว" · ทั้งบทนี้คือตัวอย่างของหลักข้อนี้ —
+    <code>godotenv</code> รู้จักแค่ไฟล์ · <code>caarlos0/env</code> รู้จักแค่ environment ·
+    ตัวหนึ่งไม่รู้ว่าอีกตัวมีอยู่
+    <br><strong>พูดได้ว่า:</strong> <em>"สองตัวนี้แยก concern กันชัดเจน เลยถอดตัวไหนออกก็ได้"</em></dd>
+  </dl>
+</div>
+
+<h2>7 · แผนภาพการทำงานทั้งหมด</h2>
+
+<p>
+  สไลด์หน้า 14 รวมทุกอย่างของ Day 9 ไว้ในภาพเดียว ผมวาดตามให้ดูทั้งเส้น —
+  <strong>ตัวเลข 1–5 คือลำดับเวลา</strong> ทุกขั้นเกิดก่อนที่ server จะรับ request แรก:
+</p>
+
+<div class="diagram">        ┌──────────────────────────────┐
+  (1)   │  .env                        │      ไฟล์ที่อยู่ในเครื่อง dev เท่านั้น
+        └──────────────┬───────────────┘
+                       │   godotenv/autoload
+                       │   อ่านไฟล์ แล้วยัดค่าเข้า environment
+                       v
+        ┌──────────────────────────────┐      ┌──────────────────────────────
+  (2)   │  Environment Variables       │ &lt;────┤  OS · Docker · Kubernetes · CI
+        │  key = value  (string only)  │      │  บน production ค่ามาทางนี้
+        └──────────────┬───────────────┘      │  ไม่มีไฟล์ .env และไม่ต้องมี
+                       │   caarlos0/env       └──────────────────────────────
+                       │   map คีย์ + แปลง type ให้ตรงกับที่ประกาศไว้
+                       v
+        ┌──────────────────────────────┐      ┌──────────────────────────────
+  (3)   │  Config Struct               │ - - -┤  ⛔ ถ้าพัง ต้องพังตรงนี้
+        │  type Config struct { ... }  │      │  ทุกขั้นตอนนี้เกิดก่อนรับ request
+        └──────────────┬───────────────┘      │  ขาดแม้แต่ตัวเดียว = exit status 1
+                       │   validator + errors.Join
+                       │   ตรวจว่าค่าที่ได้ใช้งานได้จริงไหม
+                       v
+        ┌──────────────────────────────┐
+  (4)   │  Valid Config                │      ค่าทุกตัวใช้งานได้จริง
+        └──────────────┬───────────────┘
+                       │
+                       v
+        ┌──────────────────────────────┐
+  (5)   │  Application                 │      slog · Gin · GORM
+        └──────────────────────────────┘</div>
+
+<p>
+  สองกล่องทางขวาคือส่วนที่คนอ่านข้ามบ่อยที่สุด แต่มันสำคัญที่สุด:
+</p>
+
+<ul>
+  <li>
+    <strong>กล่องบน — บน production ค่าเข้าที่ขั้น (2) โดยตรง</strong>
+    <br>ลูกศรชี้เข้า <em>Environment Variables</em> ไม่ได้ชี้เข้า <code>.env</code>
+    แปลว่า<strong>ขั้น (1) หายไปทั้งขั้น</strong>บน production
+    และเส้นทางที่เหลือ (2)→(3)→(4)→(5) <strong>เหมือนเดิมทุกประการ</strong>
+  </li>
+  <li>
+    <strong>กล่องล่าง — ถ้าพัง ต้องพังตรงนี้</strong>
+    <br>ทุกขั้นในภาพนี้เกิด<em>ก่อน</em>ที่ server จะเปิดรับ request
+    ถ้า config ขาดหรือผิดแม้แต่ตัวเดียว แอปต้อง <strong><code>exit status 1</code></strong> ทันที
+    ไม่ใช่ start ขึ้นมาแล้วไปพังตอนผู้ใช้จริงยิงเข้ามา
+    (เหตุผลเต็ม ๆ อยู่ใน <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> หัวข้อ 6 ข้อ 5)
+  </li>
+</ul>
+
+<h3>เดินทั้งเส้นด้วยของจริง</h3>
+
+<p>
+  ผมเอา <code>.env</code> ของสไลด์ (ไฟล์เดียวกับหัวข้อ 2 เป๊ะ ๆ ทั้ง 9 ค่า) มาต่อกับ struct จริง
+  แล้วพิมพ์ผลของขั้น (2) และ (3) ออกมาให้เห็นทั้งคู่
+  <br><strong>ไฟล์เต็มมีแค่นี้ — ก๊อปทั้งก้อนไปวางเป็น <code>main.go</code> ข้าง ๆ ไฟล์ <code>.env</code> ของหัวข้อ 2 แล้ว <code>go run .</code> ได้เลย</strong>:
+</p>
+
+<pre><code><span class="c">// main.go — เดินท่อทั้งเส้น: .env → environment → Config struct</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"fmt"</span>
+    <span class="s">"os"</span>
+    <span class="s">"time"</span>
+
+    <span class="s">"github.com/caarlos0/env/v11"</span>         <span class="c">// ขั้น 2 → 3</span>
+    _ <span class="s">"github.com/joho/godotenv/autoload"</span> <span class="c">// ขั้น 1 → 2</span>
+)
+
+<span class="k">type</span> Config <span class="k">struct</span> {
+    AppName         <span class="k">string</span>        <span class="s">`env:"APP_NAME"`</span>
+    AppEnv          <span class="k">string</span>        <span class="s">`env:"APP_ENV"`</span>
+    AppPort         <span class="k">int</span>           <span class="s">`env:"APP_PORT" envDefault:"8080"`</span>
+    ShutdownTimeout time.Duration <span class="s">`env:"APP_SHUTDOWN_TIMEOUT" envDefault:"10s"`</span>
+    LogLevel        <span class="k">string</span>        <span class="s">`env:"LOG_LEVEL" envDefault:"DEBUG"`</span>
+    LogFormat       <span class="k">string</span>        <span class="s">`env:"LOG_FORMAT"`</span>
+    PostgresDSN     <span class="k">string</span>        <span class="s">`env:"POSTGRES_DSN"`</span>
+    MaxOpenConns    <span class="k">int</span>           <span class="s">`env:"POSTGRES_MAX_OPEN_CONNS"`</span>
+    ConnMaxLifetime time.Duration <span class="s">`env:"POSTGRES_CONN_MAX_LIFETIME"`</span>
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    fmt.<span class="f">Println</span>(<span class="s">"--- STEP 2: os.Getenv (ค่าเป็น string ทั้งหมด) ---"</span>)
+    <span class="k">for</span> _, k := <span class="k">range</span> []<span class="k">string</span>{
+        <span class="s">"APP_ENV"</span>, <span class="s">"APP_NAME"</span>, <span class="s">"APP_PORT"</span>, <span class="s">"APP_SHUTDOWN_TIMEOUT"</span>,
+        <span class="s">"LOG_FORMAT"</span>, <span class="s">"LOG_LEVEL"</span>, <span class="s">"POSTGRES_CONN_MAX_LIFETIME"</span>,
+        <span class="s">"POSTGRES_DSN"</span>, <span class="s">"POSTGRES_MAX_OPEN_CONNS"</span>,
+    } {
+        fmt.<span class="f">Printf</span>(<span class="s">"%-26s  %q\n"</span>, k, os.<span class="f">Getenv</span>(k))
+    }
+
+    cfg, err := env.<span class="f">ParseAs</span>[Config]()
+
+    fmt.<span class="f">Println</span>(<span class="s">"\n--- STEP 3: env.ParseAs[Config]() ---"</span>)
+    fmt.<span class="f">Printf</span>(<span class="s">"err=%v\n"</span>, err)
+    fmt.<span class="f">Printf</span>(<span class="s">"%-15s %-8T %v\n"</span>, <span class="s">"AppPort"</span>, cfg.AppPort, cfg.AppPort)
+    fmt.<span class="f">Printf</span>(<span class="s">"%-15s %-8T %v\n"</span>, <span class="s">"ShutdownTimeout"</span>, cfg.ShutdownTimeout, cfg.ShutdownTimeout)
+    fmt.<span class="f">Printf</span>(<span class="s">"%-15s %-8T %v\n"</span>, <span class="s">"MaxOpenConns"</span>, cfg.MaxOpenConns, cfg.MaxOpenConns)
+    fmt.<span class="f">Printf</span>(<span class="s">"%-15s %-8T %v\n"</span>, <span class="s">"ConnMaxLifetime"</span>, cfg.ConnMaxLifetime, cfg.ConnMaxLifetime)
+    fmt.<span class="f">Printf</span>(<span class="s">"%-15s %-8T %q\n"</span>, <span class="s">"AppName"</span>, cfg.AppName, cfg.AppName)
+    fmt.<span class="f">Printf</span>(<span class="s">"%-15s %-8T %q\n"</span>, <span class="s">"PostgresDSN"</span>, cfg.PostgresDSN, cfg.PostgresDSN)
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <code>%-15s</code> / <code>%-8T</code> ในโค้ดข้างบนคือแค่การ<strong>จัดคอลัมน์ให้อ่านง่าย</strong> ไม่ได้เกี่ยวกับ config
+    <br>ตัวที่สำคัญคือ <code>%T</code> — มันพิมพ์ <strong>type ของค่า</strong> ออกมาให้ดู
+    ซึ่งเป็นทั้งหมดที่บทนี้อยากให้เห็น: ของที่ออกจากขั้น (2) เป็น <code>string</code> เสมอ
+    แต่ของที่ออกจากขั้น (3) เป็น <code>int</code> / <code>time.Duration</code> แล้ว
+  </p>
+</div>
+
+<pre><code>$ go run .          <span class="c"># มีไฟล์ .env อย่างเดียว ไม่ได้ตั้ง env จาก shell เลย</span>
+
+--- STEP 2: os.Getenv (ค่าเป็น string ทั้งหมด) ---
+APP_ENV                     "development"
+APP_NAME                    "wongnok"
+APP_PORT                    <strong>"8080"</strong>
+APP_SHUTDOWN_TIMEOUT        <strong>"10s"</strong>
+LOG_FORMAT                  "text"
+LOG_LEVEL                   "DEBUG"
+POSTGRES_CONN_MAX_LIFETIME  <strong>"30m"</strong>
+POSTGRES_DSN                "postgres://postgres:secret@localhost:5432/wongnok?sslmode=disable"
+POSTGRES_MAX_OPEN_CONNS     <strong>"25"</strong>
+
+--- STEP 3: env.ParseAs[Config]() ---
+err=&lt;nil&gt;
+AppPort         <strong>int</strong>      8080
+ShutdownTimeout <strong>time.Duration</strong> 10s
+MaxOpenConns    <strong>int</strong>      25
+ConnMaxLifetime <strong>time.Duration</strong> 30m0s
+AppName         string   "wongnok"
+PostgresDSN     string   "postgres://postgres:secret@localhost:5432/wongnok?sslmode=disable"</code></pre>
+
+<p>
+  <strong>เทียบสองบล็อกนี้แล้วจะเห็นการแบ่งงานชัดที่สุด</strong>
+  <br>· <code>godotenv</code> ทำให้ STEP 2 มีค่า — ถ้าไม่มีมัน ทั้งเก้าบรรทัดนั้นจะเป็น <code>""</code> หมด
+  <br>· <code>caarlos0/env</code> ทำให้ STEP 3 เกิดขึ้น — <code>"25"</code> (ตัวอักษรสองตัว) กลายเป็น
+  <code>int</code> ที่มีค่า <code>25</code> · <code>"30m"</code> กลายเป็น <code>time.Duration</code> ที่พิมพ์ออกมาเป็น <code>30m0s</code>
+  <br>ไม่มีใครทำงานแทนกันได้ และ<strong>ลำดับสลับกันไม่ได้</strong> — ถ้า <code>ParseAs</code> ทำงานก่อน <code>godotenv</code>
+  มันจะเห็น environment เปล่า ๆ
+</p>
+
+<p>ทีนี้ลองจำลอง production ตามกล่องขวาบนของแผนภาพ — <strong>ลบไฟล์ <code>.env</code> ทิ้ง</strong> แล้วส่งค่าทาง env แทน:</p>
+
+<pre><code>$ <span class="c"># (ไม่มีไฟล์ .env อยู่ในโฟลเดอร์แล้ว)</span>
+$ APP_NAME=wongnok APP_ENV=production APP_PORT=8080 LOG_LEVEL=INFO LOG_FORMAT=json \
+    POSTGRES_DSN='postgres://app:realsecret@db:5432/wongnok?sslmode=require' \
+    POSTGRES_MAX_OPEN_CONNS=25 POSTGRES_CONN_MAX_LIFETIME=30m go run .
+
+--- STEP 2: os.Getenv (ค่าเป็น string ทั้งหมด) ---
+APP_ENV                     <strong>"production"</strong>
+APP_NAME                    "wongnok"
+APP_PORT                    "8080"
+APP_SHUTDOWN_TIMEOUT        <strong>""</strong>            <span class="c"># ตัวนี้ไม่ได้ตั้ง</span>
+LOG_FORMAT                  "json"
+LOG_LEVEL                   "INFO"
+POSTGRES_CONN_MAX_LIFETIME  "30m"
+POSTGRES_DSN                "postgres://app:realsecret@db:5432/wongnok?sslmode=require"
+POSTGRES_MAX_OPEN_CONNS     "25"
+
+--- STEP 3: env.ParseAs[Config]() ---
+err=&lt;nil&gt;
+AppPort         int      8080
+ShutdownTimeout time.Duration <strong>10s</strong>          <span class="c"># ได้จาก envDefault:"10s"</span>
+MaxOpenConns    int      25
+ConnMaxLifetime time.Duration 30m0s
+AppName         string   "wongnok"
+PostgresDSN     string   "postgres://app:realsecret@db:5432/wongnok?sslmode=require"
+exit=0</code></pre>
+
+<p>
+  <strong>โค้ดไม่ได้แก้แม้แต่บรรทัดเดียว</strong> · <code>import _ autoload</code> ยังอยู่ในโปรแกรม ·
+  ไม่มีไฟล์ <code>.env</code> · <strong>ไม่มี error</strong> · แอปได้ config ครบ
+  <br>นี่คือความหมายของช่อง "ถ้าใช้ผิดที่ → ใส่บน prod = ไม่เกิดอะไร (ไม่มีไฟล์)" ในตารางหัวข้อ 6
+  <br>สังเกต <code>APP_SHUTDOWN_TIMEOUT</code> ด้วย: env เป็น <code>""</code> แต่ struct ได้ <code>10s</code>
+  เพราะ <code>envDefault</code> เข้ามาเติม — คนละกลไกกับ <code>godotenv</code> คนละขั้นตอนกันเลย
+</p>
+
+<h2>8 · ราคาของ <code>autoload</code> ที่สไลด์ยังไม่ได้บอก</h2>
+
+<p>
+  สไลด์เขียนว่าวิธีที่ 1 คือแบบที่ "เด็คนี้ใช้" — ซึ่งใช้ได้จริงและสั้นที่สุด
+  <br>แต่มันมีข้อแลกเปลี่ยนที่ต้องรู้ก่อนใช้ และผมพิสูจน์ให้ดูด้วยไฟล์ <code>.env</code> ตัวเดิมของสไลด์
+</p>
+
+<div class="predict">
+  <p>
+    <strong>ทายก่อนรัน</strong> — ผมแก้ไฟล์ <code>.env</code> ของหัวข้อ 2 <strong>แค่จุดเดียว</strong>
+    คือบรรทัดที่ 7 ลืมพิมพ์เครื่องหมาย <code>=</code>:
+  </p>
+  <pre><code><span class="c"># .env — วางที่ root ของโปรเจกต์</span>
+APP_NAME=wongnok
+APP_ENV=development
+APP_PORT=8080
+APP_SHUTDOWN_TIMEOUT=10s
+
+<strong>LOG_LEVEL DEBUG</strong>          <span class="c">← บรรทัดที่ 7 ลืม = (ที่ถูกคือ LOG_LEVEL=DEBUG)</span>
+LOG_FORMAT=text
+
+POSTGRES_DSN=postgres://postgres:secret@localhost:5432/wongnok?sslmode=disable
+POSTGRES_MAX_OPEN_CONNS=25
+POSTGRES_CONN_MAX_LIFETIME=30m</code></pre>
+  <p class="ask">
+    โปรแกรมยังใช้ <code>import _ "github.com/joho/godotenv/autoload"</code> เหมือนเดิม
+    <br><strong>ทายสามข้อ:</strong>
+    <br>1. <code>APP_NAME</code> ซึ่งอยู่<em>บรรทัดแรกสุด ก่อน</em>บรรทัดที่พัง — จะยังได้ค่าไหม?
+    <br>2. โปรแกรมจะพิมพ์ error อะไรออกมาไหม?
+    <br>3. <code>exit code</code> จะเป็นเท่าไหร่?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ go run .
+
+--- STEP 2: os.Getenv (ค่าเป็น string ทั้งหมด) ---
+APP_ENV                     <strong>""</strong>
+APP_NAME                    <strong>""</strong>
+APP_PORT                    <strong>""</strong>
+APP_SHUTDOWN_TIMEOUT        <strong>""</strong>
+LOG_FORMAT                  <strong>""</strong>
+LOG_LEVEL                   <strong>""</strong>
+POSTGRES_CONN_MAX_LIFETIME  <strong>""</strong>
+POSTGRES_DSN                <strong>""</strong>
+POSTGRES_MAX_OPEN_CONNS     <strong>""</strong>
+
+--- STEP 3: env.ParseAs[Config]() ---
+err=<strong>&lt;nil&gt;</strong>
+AppPort         int      <strong>8080</strong>
+ShutdownTimeout time.Duration <strong>10s</strong>
+MaxOpenConns    int      <strong>0</strong>
+ConnMaxLifetime time.Duration <strong>0s</strong>
+AppName         string   <strong>""</strong>
+PostgresDSN     string   <strong>""</strong>
+<strong>exit=0</strong></code></pre>
+    <p>
+      ตอบทีละข้อ:
+      <br><strong>1. ไม่ได้ค่า</strong> — <code>APP_NAME</code> อยู่บรรทัดแรกสุด ก่อนบรรทัดที่พังตั้ง 5 บรรทัด
+      แต่ก็ไม่ถูกตั้งเลย · <code>godotenv</code> เป็นแบบ <strong>all-or-nothing</strong>:
+      เจอบรรทัดพังที่ไหน <strong>ทิ้งทั้งไฟล์</strong> ไม่ใช่ "อ่านได้ถึงบรรทัดที่พังแล้วหยุด" อย่างที่คนส่วนใหญ่เดา
+      <br><strong>2. ไม่พิมพ์อะไรเลย</strong> — เพราะ <code>init()</code> ของ <code>autoload</code> ทิ้ง error ทั้งดุ้น (ดูซอร์สในหัวข้อ 4)
+      <br><strong>3. <code>exit=0</code></strong> — ในสายตาของ shell, CI, Kubernetes โปรแกรมนี้<em>สำเร็จ</em>
+    </p>
+    <p>
+      ที่ร้ายกว่านั้นคือบรรทัด <code>err=&lt;nil&gt;</code> ของ <code>caarlos0/env</code> —
+      มันไม่ได้ทำอะไรผิด environment ว่างจริง ๆ ไม่มีอะไรให้ error
+      <br>ผลคือแอปได้ <code>AppPort=8080</code> (จาก <code>envDefault</code>) กับ
+      <code>PostgresDSN=""</code> แล้ว<strong>เดินหน้าต่อ</strong> ไปเปิดเซิร์ฟเวอร์ตามปกติ
+    </p>
+    <p style="margin-bottom:0">
+      แล้วมันไปพังที่ไหน? — ตอนต่อฐานข้อมูล ด้วยข้อความว่า
+      <code>connection refused</code> ที่<strong>ไม่มีคำว่า <code>.env</code> อยู่ในนั้นเลย</strong>
+      (เคสเดียวกับ <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> หัวข้อ 6)
+      <br>คุณจะนั่งไล่ดู Docker ดู Postgres ดู firewall — ทั้งที่ต้นเหตุคือ <code>=</code> ตัวเดียวที่ลืมพิมพ์
+    </p>
+  </div>
+</div>
+
+<p>ผมทดสอบรูปแบบบรรทัดพังอีกสองแบบ ได้อาการเดียวกันทั้งหมด:</p>
+
+<pre><code><span class="c"># bad1.env — GOOD=1 / this line has no equals sign / AFTER=2</span>
+err  = unexpected character "\n" in variable name near "this line has no equals sign\nAFTER=2\n"
+GOOD after Load  = <strong>""</strong>
+AFTER after Load = <strong>""</strong>
+
+<span class="c"># bad3.env — GOOD=1 / UNCLOSED="oops / AFTER=2   (quote ไม่ปิด)</span>
+err  = unterminated quoted value "oops
+GOOD after Load  = <strong>""</strong>
+AFTER after Load = <strong>""</strong></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ และมี syntax ที่<em>ดูพัง</em> แต่กลับผ่านฉลุย ซึ่งเงียบกว่าอีก</span>
+  <p style="margin-bottom:0.6rem">
+    <code>godotenv</code> <strong>ไม่ validate ชื่อ key เลย</strong> — ผมลองสองเคสที่ไม่ควรผ่าน:
+  </p>
+  <pre style="margin:0.6rem 0"><code><span class="c"># bad2.env — 123INVALID=x   (ชื่อขึ้นต้นด้วยตัวเลข)</span>
+err  = &lt;nil&gt;
+123INVALID =&gt; "x"
+
+<span class="c"># bad4.env — =novalue   (ไม่มีชื่อ key เลย)</span>
+err  = &lt;nil&gt;
+           =&gt; "novalue"        <span class="c"># key เป็นสตริงว่าง</span>
+GOOD after Load = "1"</code></pre>
+  <p style="margin-bottom:0">
+    ทั้งคู่ <code>err=&lt;nil&gt;</code> — ผ่านหมด
+    <br>แปลว่าถ้าคุณพิมพ์ชื่อ env ผิดแบบที่ยังเป็น <code>KEY=value</code> ที่ถูกรูป
+    (เช่น <code>POSTGRES_DNS=</code> แทน <code>POSTGRES_DSN=</code>)
+    <strong>จะไม่มีใครฟ้องคุณตลอดทั้งเส้น</strong> — ไม่ใช่ <code>godotenv</code> ไม่ใช่ compiler
+    และไม่ใช่ <code>caarlos0/env</code> ด้วย (เว้นแต่ field นั้นใส่ <code>,required</code> ไว้ · บทเรียน 45)
+  </p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>วิธีที่ 1 — <code>autoload</code></th><th>วิธีที่ 2 — <code>godotenv.Load()</code> เอง</th></tr></thead>
+  <tbody>
+    <tr><td><strong>โค้ดที่ต้องเขียน</strong></td><td>1 บรรทัด (<code>import _</code>)</td><td>3–7 บรรทัดใน <code>main()</code></td></tr>
+    <tr><td><strong>ทำงานตอน</strong></td><td><code>init()</code> — ก่อนทุกอย่างของ <code>main</code></td><td>ตอนที่บรรทัดนั้นถูกรัน</td></tr>
+    <tr><td><strong>ไฟล์ <code>.env</code> พัง</strong></td><td><strong>เงียบสนิท</strong> · exit 0 · ค่าหายทั้งไฟล์</td><td>ได้ <code>err</code> มาให้ตัดสินใจเอง</td></tr>
+    <tr><td><strong>เลือกได้ไหมว่าจะ fatal</strong></td><td>ไม่ได้</td><td>ได้ (ตัวอย่าง <code>errors.Is</code> ในหัวข้อ 4)</td></tr>
+    <tr><td><strong>เหมาะกับ</strong></td><td>โปรเจกต์เรียน / เดโม / เด็คนี้</td><td>โปรเจกต์ที่มีคนอื่นมาช่วยรันด้วย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>9 · กับดักในไฟล์ <code>.env</code> ที่เจอตอนใส่ค่าจริง</h2>
+
+<p>
+  ไฟล์ตัวอย่างในสไลด์เป็นค่าง่าย ๆ ทั้งหมด แต่ของจริงคุณจะต้องใส่<strong>รหัสผ่าน</strong>
+  และรหัสผ่านคือที่ที่กับดักอยู่ ผมรันทดสอบมาให้ครบ
+</p>
+
+<h3>9.1 · เครื่องหมาย <code>$</code> ในรหัสผ่าน — ค่าหายได้จริง</h3>
+
+<p>
+  <code>godotenv</code> ทำ <strong>variable expansion</strong> ให้ด้วย —
+  คือถ้าเจอ <code>$SOMETHING</code> ในค่า มันจะแทนที่ด้วยค่าของตัวแปรชื่อนั้น เหมือนที่ shell ทำ
+  <br>ฟีเจอร์นี้มีประโยชน์ (เช่น <code>DSN="postgres://$DB_USER@localhost/db"</code>)
+  แต่มันทำงาน<strong>กับรหัสผ่านที่มี <code>$</code> ด้วย</strong> ผมทดสอบสามแบบ:
+</p>
+
+<pre><code><span class="c"># .env</span>
+A_lower=secret$ssw0rd
+B_UPPER=secret$SSW0RD
+C_squote='secret$SSW0RD'</code></pre>
+
+<pre><code>$ go run .           <span class="c"># อ่านด้วย godotenv.Read() แล้วพิมพ์ด้วย %q</span>
+err=&lt;nil&gt;
+A_lower        =&gt; "secret$ssw0rd"
+B_UPPER        =&gt; <strong>"secret"</strong>
+C_squote       =&gt; "secret$SSW0RD"</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ ดูบรรทัด <code>B_UPPER</code> อีกรอบ — รหัสผ่านหายไปครึ่งหนึ่ง โดยไม่มี error</span>
+  <p>
+    <code>$SSW0RD</code> ถูกมองว่าเป็นชื่อตัวแปร · ไม่มีตัวแปรชื่อนั้น ก็เลยแทนด้วย
+    <strong>สตริงว่าง</strong> เหลือแค่ <code>"secret"</code>
+    <br>แล้วทำไม <code>A_lower</code> ถึงรอด? ผมเปิดซอร์ส <code>parser.go</code> บรรทัด 253 มาดู:
+  </p>
+  <pre style="margin:0.6rem 0"><code>expandVarRegex = regexp.<span class="f">MustCompile</span>(<span class="s">`(\\)?(\$)(\()?\{?([A-Z0-9_]+)?\}?`</span>)</code></pre>
+  <p style="margin-bottom:0">
+    ชื่อตัวแปรที่มันรู้จักคือ <code>[A-Z0-9_]+</code> — <strong>ตัวพิมพ์ใหญ่กับตัวเลขเท่านั้น</strong>
+    <br><code>$ssw0rd</code> เป็นตัวพิมพ์เล็ก จึงไม่เข้าเงื่อนไข เลยรอดมาได้<em>โดยบังเอิญ</em>
+    <br><strong>ทางแก้: รหัสผ่านที่มี <code>$</code> ให้ใส่ single quote <code>'...'</code> เสมอ</strong> —
+    ในไฟล์เดียวกัน <code>expandVariables</code> ถูกเรียกแค่สองที่คือบรรทัด 157 (ค่าที่ไม่มี quote)
+    กับบรรทัด 177 (ค่าใน double quote) — <strong>ไม่มีบรรทัดไหนเรียกให้ค่าใน single quote เลย</strong>
+  </p>
+</div>
+
+<h3>9.2 · เครื่องหมาย <code>#</code> ในค่า — ตัดตอนได้ ถ้ามีช่องว่างนำหน้า</h3>
+
+<pre><code>TOK_NOSPACE=abc#123        =&gt; <strong>"abc#123"</strong>       <span class="c"># ติดกัน — ปลอดภัย</span>
+TOK_SPACE=abc #123         =&gt; <strong>"abc"</strong>           <span class="c"># มีช่องว่างก่อน # → โดนตัดเป็น comment</span>
+TOK_SPACE_Q="abc #123"     =&gt; <strong>"abc #123"</strong>     <span class="c"># ใส่ quote แล้วรอด</span></code></pre>
+
+<p>
+  กฎคือ <code>#</code> ที่มี<strong>ช่องว่างนำหน้า</strong>จะกลายเป็น comment ท้ายบรรทัด
+  <br>ซึ่งเป็นกฎที่คุณจะไม่นึกถึงเลยตอนก๊อป API token มาวาง — ถ้าโชคร้ายมันมี <code>" #"</code> อยู่กลางค่า
+  ค่าจะถูกตัดทิ้งครึ่งหลังแบบเงียบ ๆ
+</p>
+
+<h3>9.3 · escape ทำงานแค่ <code>\n</code> กับ <code>\r</code></h3>
+
+<pre><code>MULTILINE="line1
+line2
+line3"                      <span class="c"># ขึ้นบรรทัดใหม่จริงใน double quote — ใช้ได้</span>
+    bytes: 6c 69 6e 65 31 <strong>0a</strong> 6c 69 6e 65 32 <strong>0a</strong> 6c 69 6e 65 33
+                             ↑ 0a = newline จริง
+
+ESCAPED="tab\there"         <span class="c"># หวังว่า \t จะเป็น tab</span>
+    bytes: 74 61 62 <strong>74</strong> 68 65 72 65
+                    ↑ 74 = ตัวอักษร 't' ธรรมดา ไม่ใช่ 09 (tab)</code></pre>
+
+<p>
+  ผมยืนยันจากซอร์ส <code>parser.go</code> ฟังก์ชัน <code>expandEscapes</code> — <code>switch</code> ข้างในรู้จักแค่
+  <code>case "n"</code> กับ <code>case "r"</code> · ที่เหลือ regex <code>\\([^$])</code>
+  <strong>ตัด backslash ทิ้งเฉย ๆ</strong> เหลือแต่ตัวอักษรที่ตามมา
+</p>
+
+<h3>9.4 · รูปแบบอื่นที่รองรับ (รันยืนยันแล้ว)</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียนแบบนี้ใน <code>.env</code></th><th>ค่าที่ได้จริง</th><th>หมายเหตุ</th></tr></thead>
+  <tbody>
+    <tr><td><code>SPACED=hello world</code></td><td><code>"hello world"</code></td><td>ค่ามีช่องว่างได้ ไม่ต้องใส่ quote</td></tr>
+    <tr><td><code>SPACES_AROUND =  padded</code></td><td><code>"padded"</code></td><td>ช่องว่างรอบ <code>=</code> ถูก trim ให้</td></tr>
+    <tr><td><code>export EXPORTED=yes-with-export</code></td><td><code>"yes-with-export"</code></td><td>เขียน <code>export</code> นำหน้าได้ (ก๊อปจาก shell มาวางได้เลย)</td></tr>
+    <tr><td><code>DQ="double quoted value"</code></td><td><code>"double quoted value"</code></td><td>quote ถูกถอดออกให้</td></tr>
+    <tr><td><code>SQ='single quoted value'</code></td><td><code>"single quoted value"</code></td><td>เหมือนกัน แต่ไม่ทำ variable expansion</td></tr>
+    <tr><td><code># this is a comment</code></td><td>—</td><td>ไม่โผล่เป็น key ในผลลัพธ์เลย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>10 · ห้าม commit <code>.env</code> ขึ้น Git</h2>
+
+<p>
+  ข้อสุดท้ายของสไลด์หน้า 11 ข้อนี้ไม่ใช่พฤติกรรมของโค้ด — เป็น<strong>ธรรมเนียมปฏิบัติ</strong>
+  แต่เป็นข้อที่แพงที่สุดถ้าพลาด เพราะดูบรรทัดนี้ในไฟล์ตัวอย่างของสไลด์:
+</p>
+
+<pre><code>POSTGRES_DSN=postgres://postgres:<strong>secret</strong>@localhost:5432/wongnok?sslmode=disable</code></pre>
+
+<p>
+  คำว่า <code>secret</code> ตรงนั้นคือรหัสผ่านฐานข้อมูล — ถ้าไฟล์นี้เข้า Git มันจะอยู่ใน
+  <strong>ประวัติ repo ถาวร</strong> ลบทีหลังไม่ช่วย (เหตุผลเต็มอยู่ใน
+  <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> หัวข้อ 1)
+  <br>วิธีกันมีบรรทัดเดียว ผมรันให้ดูของจริงในโฟลเดอร์ทดสอบ:
+</p>
+
+<pre><code>$ /usr/bin/git status --porcelain      <span class="c"># ยังไม่มี .gitignore</span>
+?? .env
+?? .env.example
+
+$ printf '.env\n' &gt; .gitignore
+$ /usr/bin/git status --porcelain
+?? .env.example
+?? .gitignore                          <span class="c"># .env หายไปจากรายการแล้ว</span></code></pre>
+
+<p>ถ้าอยากเช็คให้แน่ใจว่ากฎไหนเป็นตัวกัน ใช้ <code>git check-ignore -v</code>:</p>
+
+<pre><code>$ git check-ignore -v .env
+<strong>.gitignore:1:.env	.env</strong>          <span class="c"># กฎบรรทัดที่ 1 ของ .gitignore เป็นตัวกัน</span>
+exit=0                                 <span class="c"># exit 0 = ถูก ignore</span>
+
+$ git check-ignore -v .env.example
+exit=1                                 <span class="c"># exit 1 = ไม่ถูก ignore (ถูกต้องแล้ว)</span></code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>คู่หูที่ต้องมาด้วยกันเสมอ: <code>.env</code> (ignore) + <code>.env.example</code> (commit)</strong>
+    <br>สังเกตในผลรันข้างบน — <code>.env.example</code> <strong>ไม่</strong>ถูก ignore ซึ่งตั้งใจให้เป็นแบบนั้น
+    <br>ไฟล์ <code>.env.example</code> คือ <code>.env</code> ที่<strong>ถอดค่าลับออกหมด เหลือแต่ชื่อ key</strong>:
+  </p>
+  <pre style="margin:0.6rem 0"><code><span class="c"># .env.example — commit ตัวนี้ขึ้น Git ได้</span>
+APP_NAME=wongnok
+APP_ENV=development
+APP_PORT=8080
+APP_SHUTDOWN_TIMEOUT=10s
+LOG_LEVEL=DEBUG
+LOG_FORMAT=text
+POSTGRES_DSN=postgres://postgres:<strong>CHANGE_ME</strong>@localhost:5432/wongnok?sslmode=disable
+POSTGRES_MAX_OPEN_CONNS=25
+POSTGRES_CONN_MAX_LIFETIME=30m</code></pre>
+  <p style="margin-bottom:0">
+    มันตอบคำถามที่คนใหม่เข้าทีมถามวันแรกพอดี — <em>"ต้องตั้ง env อะไรบ้างถึงจะรันได้"</em>
+    <br>คำสั่งแรกของคนเข้าทีมใหม่จึงกลายเป็น <code>cp .env.example .env</code> แล้วแก้เฉพาะค่าลับ
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>ถ้าเผลอ commit ไปแล้วต้องทำยังไง</strong>
+    <br>สั่ง <code>git rm --cached .env</code> เพื่อเอาออกจาก index (ไฟล์ในเครื่องยังอยู่) แล้วเพิ่ม <code>.gitignore</code>
+    — <strong>แต่นั่นแก้แค่ commit ต่อไป</strong>
+    <br>commit เก่ายังมีรหัสผ่านอยู่ · ใครที่ clone ไปแล้วก็ยังอ่านได้
+    <br><strong>สิ่งที่ต้องทำจริงคือไปเปลี่ยนรหัสผ่านที่ฐานข้อมูล</strong> ถือว่ารหัสเดิมหลุดแล้ว
+  </p>
+</div>
+
+<h2>11 · สรุปห้าบรรทัด</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำถาม</th><th>คำตอบ</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>.env</code> คืออะไร</td>
+      <td>ไฟล์ text ธรรมดา ที่เป็นแค่ข้อตกลงของเครื่องมือ — ไม่ใช่ feature ของ Go หรือของ OS</td>
+    </tr>
+    <tr>
+      <td><code>godotenv</code> ทำอะไร</td>
+      <td>อ่านไฟล์นั้นแล้ว<strong>ยัดค่าเข้า</strong> environment (ขั้น 1 → 2 ของแผนภาพ) จบแค่นั้น</td>
+    </tr>
+    <tr>
+      <td><code>caarlos0/env</code> ทำอะไร</td>
+      <td><strong>ดึงค่าออกจาก</strong> environment มาใส่ struct + แปลง type + เติม default (ขั้น 2 → 3)</td>
+    </tr>
+    <tr>
+      <td>บน production ใช้อะไร</td>
+      <td>ตัดขั้น 1 ทิ้ง — ค่าเข้าที่ขั้น 2 โดยตรงจาก Docker / Kubernetes / CI · โค้ดไม่ต้องแก้</td>
+    </tr>
+    <tr>
+      <td>แล้วใครตรวจว่าค่าถูกต้อง</td>
+      <td><strong>ยังไม่มีใครเลย</strong> — ทั้งบทนี้ยังไม่มีอะไรตรวจ (ดูกล่องข้างล่าง)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ช่องโหว่ที่ยังเปิดอยู่ — ไปต่อที่บทเรียน 47</span>
+  <p>
+    ผมรันเคส "ลืมทั้งสองทาง" ให้ดู: ไม่มีไฟล์ <code>.env</code> และไม่ได้ตั้ง env เลยสักตัว
+  </p>
+  <pre style="margin:0.6rem 0"><code>--- STEP 3: env.ParseAs[Config]() ---
+err=<strong>&lt;nil&gt;</strong>
+AppPort         int      8080         <span class="c">// จาก envDefault</span>
+ShutdownTimeout time.Duration 10s     <span class="c">// จาก envDefault</span>
+MaxOpenConns    int      <strong>0</strong>
+ConnMaxLifetime time.Duration <strong>0s</strong>
+AppName         string   <strong>""</strong>
+PostgresDSN     string   <strong>""</strong>
+exit=<strong>0</strong></code></pre>
+  <p style="margin-bottom:0">
+    <strong><code>err=&lt;nil&gt;</code> · <code>exit=0</code></strong> — ไม่มีอะไรผิดในสายตาของโปรแกรม
+    แต่ <code>PostgresDSN</code> เป็นสตริงว่าง และ <code>ConnMaxLifetime</code> เป็น <code>0s</code>
+    <br>แอปตัวนี้จะ start ขึ้นมาสวยงาม แล้วไปพังตอนต่อฐานข้อมูล
+    <br>นี่คือกล่องแดง "<strong>ถ้าพัง ต้องพังตรงนี้</strong>" ในแผนภาพหัวข้อ 7 ที่เรายังไม่ได้ทำ —
+    ขั้นที่ขาดคือ <strong><code>validator</code> + <code>errors.Join</code></strong> ซึ่งเป็นเนื้อหาของ
+    <a href="./0047-validate-at-start.html">บทเรียน 47</a>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. โปรแกรมใช้ <code>import _ "github.com/joho/godotenv/autoload"</code> · ไฟล์ <code>.env</code> ของหัวข้อ 2 (12 บรรทัด · 9 คู่ key=value) แต่บรรทัดที่ 7 คือ <code>LOG_LEVEL</code> ลืมพิมพ์ <code>=</code> — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">อ่านได้ 6 บรรทัดแรก แล้วหยุดตรงบรรทัดที่ 7 · บรรทัด 8–10 ไม่ถูกตั้ง</button>
+    <button class="opt">โปรแกรม <code>panic</code> ตอน <code>init()</code> พร้อมบอกเลขบรรทัดที่พัง</button>
+    <button class="opt">ไม่มีบรรทัดไหนถูกตั้งเลยทั้งไฟล์ · ไม่มี error พิมพ์ออกมา · <code>exit=0</code></button>
+    <button class="opt">อ่านได้ทุกบรรทัดยกเว้นบรรทัดที่ 7 เพราะ <code>godotenv</code> ข้ามบรรทัดที่ผิดรูปให้อัตโนมัติ</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงกับไฟล์ <code>.env</code> ของสไลด์ที่แก้บรรทัด <code>LOG_LEVEL=DEBUG</code> เป็น <code>LOG_LEVEL DEBUG</code>:
+    ค่าทั้ง 9 ตัวได้ <code>""</code> หมด รวมทั้ง <code>APP_NAME</code> ที่อยู่<strong>บรรทัดแรกสุด</strong>
+    <br>เหตุผลสองชั้น:
+    <br>· <code>godotenv</code> เป็น <strong>all-or-nothing</strong> — parse ทั้งไฟล์ก่อน เจอที่พังตรงไหนก็คืน error
+    แล้ว<strong>ไม่ตั้งอะไรเลยสักตัว</strong> (ตัวเลือกที่ 1 กับ 4 จึงผิด)
+    <br>· package <code>autoload</code> ทั้ง package มี 15 บรรทัด และ <code>init()</code> ข้างในเขียนแค่
+    <code>godotenv.Load()</code> เฉย ๆ — <strong>ไม่ได้รับ error กลับมาเลย</strong> (ตัวเลือกที่ 2 จึงผิด)
+    <br><strong>จุดที่ต้องจำ:</strong> ถ้าใช้วิธีที่ 2 (<code>if err := godotenv.Load(); err != nil</code>)
+    อย่างน้อยคุณจะได้ <code>unexpected character "\n" in variable name near ...</code> มาให้อ่าน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. ไฟล์ <code>.env</code> มี <code>APP_NAME=from-dotenv</code> และ <code>PORT=9999</code> · โปรแกรมใช้ <code>autoload</code> · สั่งรันด้วย <code>APP_NAME=from-shell go run .</code> — ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>APP_NAME="from-shell"</code> (shell ชนะ) และ <code>PORT="9999"</code> (ยังได้จาก <code>.env</code>)</button>
+    <button class="opt"><code>APP_NAME="from-dotenv"</code> และ <code>PORT="9999"</code> เพราะ <code>.env</code> ทับ env จาก shell เสมอ</button>
+    <button class="opt"><code>APP_NAME="from-shell"</code> และ <code>PORT=""</code> เพราะเมื่อ shell ตั้งค่ามาแล้ว ทั้งไฟล์ <code>.env</code> จะถูกข้ามไป</button>
+    <button class="opt">ได้ error เพราะ <code>APP_NAME</code> ถูกตั้งสองที่พร้อมกัน</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>APP_NAME="from-shell"</code> · <code>PORT="9999"</code>
+    <br><code>autoload</code> เรียก <code>godotenv.Load()</code> ข้างใน ซึ่ง comment ในซอร์ส
+    (<code>godotenv.go</code> บรรทัด 50) เขียนไว้ว่า
+    <em>"It's important to note that it WILL NOT OVERRIDE an env variable that already exists"</em>
+    <br>ตัวเลือกที่ 2 คือพฤติกรรมของ <code>godotenv.Overload()</code> ต่างหาก — ผมรันเทียบแล้วได้
+    <code>after(overload): APP_NAME="from-dotenv"</code>
+    <br>ตัวเลือกที่ 3 คือจุดที่คนเข้าใจผิดบ่อย: การชนะกัน<strong>เกิดเป็นราย key ไม่ใช่ทั้งไฟล์</strong> —
+    <code>PORT</code> ที่ shell ไม่ได้ตั้ง ก็ยังได้ค่าจาก <code>.env</code> ตามปกติ
+    <br><strong>ประโยชน์จริงของพฤติกรรมนี้:</strong> คุณ override ค่าครั้งเดียวได้ด้วย
+    <code>APP_PORT=9999 go run .</code> โดยไม่ต้องแตะไฟล์ <code>.env</code> เลย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. ทีมกำลังจะขึ้น production บน Kubernetes โดยส่ง config ทาง <code>env:</code> ใน manifest · โค้ดยังมี <code>import _ ".../godotenv/autoload"</code> ค้างอยู่ — ควรทำยังไง?</p>
+  <div class="opts">
+    <button class="opt">ต้องลบ <code>import</code> ออกก่อน ไม่งั้นแอปจะ crash เพราะหาไฟล์ <code>.env</code> ไม่เจอ</button>
+    <button class="opt">ต้อง <code>COPY .env</code> เข้า image ไปด้วย ไม่งั้น <code>caarlos0/env</code> จะไม่มีอะไรให้อ่าน</button>
+    <button class="opt">ต้องเปลี่ยนจาก <code>Load()</code> เป็น <code>Overload()</code> เพื่อให้ค่าจาก Kubernetes ถูกใช้</button>
+    <button class="opt">ปล่อยไว้ได้ — ไม่มีไฟล์ <code>.env</code> ก็ไม่เกิดอะไรขึ้น ค่าจาก Kubernetes เข้า environment ตรง ๆ อยู่แล้ว</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันเคสนี้จริง: ลบไฟล์ <code>.env</code> ทิ้ง แล้วส่งค่าทาง env ทั้งหมด โดย<strong>ไม่แก้โค้ดเลย</strong>
+    ผลคือ <code>err=&lt;nil&gt;</code> · config ครบทุกตัว · <code>exit=0</code>
+    <br>ตัวเลือกที่ 1 ผิด: <code>autoload</code> ทิ้ง error อยู่แล้ว และต่อให้เรียก <code>Load()</code> เอง
+    error ที่ได้ก็เป็นแค่ <code>open .env: no such file or directory</code> (<code>*fs.PathError</code>)
+    ที่ <code>errors.Is(err, os.ErrNotExist)</code> เป็น <code>true</code> — ไม่ใช่ crash
+    <br>ตัวเลือกที่ 2 ผิดและ<strong>อันตราย</strong>: <code>.env</code> มีรหัสผ่าน dev อยู่ข้างใน
+    การเอาขึ้น image คือการแจกรหัสผ่านไปกับ image · แถมยังเสี่ยงเจอปัญหา <code>cwd</code> ตามหัวข้อ 3 อีก
+    <br>ตัวเลือกที่ 3 ผิดกลับด้าน: <code>Overload()</code> จะทำให้ <code>.env</code> ไป<strong>ทับ</strong>
+    ค่าจริงจาก Kubernetes ซึ่งเป็นสิ่งที่ไม่ควรเกิดเด็ดขาด
+    <br><strong>นี่คือช่อง "ถ้าใช้ผิดที่" ของตารางหน้า 13:</strong> ใส่บน prod = ไม่เกิดอะไร (ไม่มีไฟล์)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. รหัสผ่านฐานข้อมูลจริงคือ <code>secret$SSW0RD</code> · เขียนใน <code>.env</code> ว่า <code>DB_PASS=secret$SSW0RD</code> — <code>godotenv</code> อ่านได้ค่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้ <code>"secret$SSW0RD"</code> ครบถ้วน เพราะค่าใน <code>.env</code> ถูกอ่านเป็นตัวอักษรตรง ๆ</button>
+    <button class="opt">ได้ <code>"secret"</code> เพราะ <code>$SSW0RD</code> ถูกมองเป็นชื่อตัวแปรที่ไม่มีอยู่ แล้วแทนด้วยสตริงว่าง</button>
+    <button class="opt">ได้ error <code>undefined variable "SSW0RD"</code> ตั้งแต่ตอนอ่านไฟล์</button>
+    <button class="opt">ได้ <code>"secret\$SSW0RD"</code> เพราะ <code>godotenv</code> ใส่ backslash escape ให้อัตโนมัติ</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>B_UPPER =&gt; "secret"</code> — <strong>รหัสผ่านหายไปครึ่งหลัง โดยไม่มี error</strong>
+    (ตัวเลือกที่ 3 จึงผิด · <code>err=&lt;nil&gt;</code>)
+    <br>สาเหตุคือ variable expansion · ผมเปิด <code>parser.go</code> บรรทัด 253 มาดู regex ที่มันใช้:
+    <code>(\\)?(\$)(\()?\{?([A-Z0-9_]+)?\}?</code>
+    <br>ชื่อตัวแปรที่มันจับคือ <code>[A-Z0-9_]+</code> — <strong>พิมพ์ใหญ่กับตัวเลขเท่านั้น</strong>
+    <br>ผมทดสอบเทียบให้เห็นชัด: <code>secret$ssw0rd</code> (พิมพ์เล็ก) ได้ค่าครบ
+    <code>"secret$ssw0rd"</code> เพราะไม่เข้า regex — <strong>รอดโดยบังเอิญ ไม่ใช่เพราะปลอดภัย</strong>
+    <br><strong>ทางแก้:</strong> ใช้ single quote — <code>DB_PASS='secret$SSW0RD'</code> ได้ค่าครบ
+    เพราะ <code>expandVariables</code> ถูกเรียกเฉพาะกรณี double quote และกรณีไม่มี quote เท่านั้น</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ต่อท่อทั้งเส้นด้วยมือตัวเอง แล้วทำให้มันพัง</span>
+  <p>
+    เป้าหมายไม่ใช่แค่ "ทำให้ <code>.env</code> ทำงานได้" —
+    เป้าหมายคือ<strong>เห็นด้วยตาตัวเองว่าตอนมันพังเงียบ หน้าตาเป็นยังไง</strong>
+    เพื่อที่วันที่เจอของจริง คุณจะจำได้ทันที
+  </p>
+  <ol>
+    <li><strong>ตั้งโปรเจกต์:</strong> สร้างโฟลเดอร์ใหม่ · <code>go mod init pipe</code> ·
+        <code>go get github.com/joho/godotenv@v1.5.1</code> ·
+        <code>go get github.com/caarlos0/env/v11@v11.4.1</code>
+        <br>สร้างไฟล์ <code>.env</code> ตามหัวข้อ 2 ทั้ง 9 ค่า และ <code>Config</code> struct ตามหัวข้อ 7</li>
+    <li><strong>พิมพ์ทั้งสองขั้นออกมา:</strong> ให้โปรแกรมพิมพ์ <code>os.Getenv</code> ของทั้ง 9 key
+        (ขั้น 2) แล้วตามด้วย <code>cfg</code> ที่ได้จาก <code>env.ParseAs[Config]()</code> (ขั้น 3)
+        <br><strong>พิมพ์ type ออกมาด้วย</strong> (<code>%T</code>) —
+        คุณต้องเห็นด้วยตาว่า <code>"25"</code> กลายเป็น <code>int</code> และ <code>"30m"</code> กลายเป็น <code>time.Duration</code></li>
+    <li><strong>ลบ <code>import _ autoload</code> ออกชั่วคราว</strong> แล้วรันใหม่
+        <br><strong>ตอบให้ได้ว่าขั้นไหนพัง และ <code>err</code> เป็นอะไร</strong> — แล้วใส่กลับ</li>
+    <li><strong>ทดสอบ Load ชนะกันเป็นราย key:</strong> รัน <code>APP_PORT=9999 go run .</code>
+        <br>ต้องได้ <code>AppPort=9999</code> แต่ค่าอื่นยังมาจาก <code>.env</code> ครบ
+        <br>จากนั้นเปลี่ยนไปใช้ <code>godotenv.Overload()</code> เอง (เลิกใช้ <code>autoload</code>) แล้วรันคำสั่งเดิม
+        — <strong>จดว่าได้พอร์ตอะไร แล้วตอบว่าทำไม <code>Load()</code> ถึงเป็น default ที่ถูกต้อง</strong></li>
+    <li><strong>ทำให้ <code>.env</code> พังหนึ่งบรรทัด:</strong> ลบ <code>=</code> ออกจากบรรทัด <code>LOG_LEVEL</code>
+        แล้วรันด้วย <code>autoload</code>
+        <br><strong>นับดูว่าค่าหายไปกี่ตัวจาก 9 ตัว</strong> · ดู <code>exit code</code> ด้วย
+        (<code>go run . ; echo "exit=$?"</code>)</li>
+    <li><strong>เปลี่ยนไปใช้วิธีที่ 2 แล้วทำซ้ำข้อ 5:</strong> เอา <code>autoload</code> ออก
+        แล้วเขียน <code>if err := godotenv.Load(); err != nil { … }</code> ที่<strong>พิมพ์ <code>err</code> ออกมา</strong>
+        <br>เทียบกับข้อ 5 — <strong>ตอบว่าคุณอยากใช้วิธีไหนในโปรเจกต์จริง และทำไม</strong></li>
+    <li><strong>ทดสอบกับดัก <code>$</code>:</strong> เปลี่ยนรหัสผ่านใน <code>POSTGRES_DSN</code>
+        เป็น <code>secret$SSW0RD</code> (ไม่ใส่ quote) แล้วพิมพ์ <code>cfg.PostgresDSN</code> ด้วย <code>%q</code>
+        <br>จากนั้นลองใส่ <code>'...'</code> ครอบทั้งค่า แล้วรันใหม่ — <strong>เทียบสองผลให้เห็นความต่าง</strong></li>
+    <li><strong>ทำ <code>.gitignore</code> + <code>.env.example</code>:</strong> <code>git init</code> ·
+        ใส่ <code>.env</code> ลง <code>.gitignore</code> · สร้าง <code>.env.example</code> ที่เปลี่ยนรหัสผ่านเป็น <code>CHANGE_ME</code>
+        <br><strong>ยืนยันด้วย <code>git check-ignore -v .env</code> และ <code>git check-ignore -v .env.example</code></strong>
+        — ต้องได้ exit code คนละค่า</li>
+    <li><strong>ท้าทาย:</strong> ลบไฟล์ <code>.env</code> ทิ้ง และไม่ตั้ง env เลย แล้วรัน
+        <br>คุณจะได้ <code>err=&lt;nil&gt;</code> กับ <code>PostgresDSN=""</code>
+        <br><strong>เขียนโค้ดเช็คเองสัก 5 บรรทัด</strong> ให้แอป <code>log.Fatal</code> ถ้า <code>PostgresDSN</code> ว่าง
+        แล้วดูว่าโค้ดแบบนี้จะบวมแค่ไหนถ้ามี config 15 ตัว — นั่นคือคำถามที่
+        <a href="./0047-validate-at-start.html">บทเรียน 47</a> เกิดมาตอบ</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 3 — ลบ <code>autoload</code> ออกแล้วพังตรงไหน</button>
+  <div class="answer">
+    <p>
+      ขั้นที่พังคือ<strong>ขั้น 1 → 2</strong> · ไม่มีใครอ่านไฟล์ <code>.env</code> อีกแล้ว
+      environment จึงว่างเปล่า
+      <br>แต่จุดที่คนตอบผิดคือ <code>err</code> — ผลรันจริงของเคส "ไม่มีค่าเข้ามาเลย" คือ:
+    </p>
+    <pre style="margin:0.6rem 0"><code>--- STEP 3: env.ParseAs[Config]() ---
+err=<strong>&lt;nil&gt;</strong>
+AppPort         int      8080
+ShutdownTimeout time.Duration 10s
+MaxOpenConns    int      <strong>0</strong>
+ConnMaxLifetime time.Duration <strong>0s</strong>
+AppName         string   <strong>""</strong>
+PostgresDSN     string   <strong>""</strong></code></pre>
+    <p>
+      <strong><code>err</code> ยังเป็น <code>&lt;nil&gt;</code></strong> —
+      เพราะ <code>caarlos0/env</code> ไม่ได้ทำอะไรผิดเลย environment ว่างจริง ๆ
+      และ struct ก็ไม่มี field ไหนใส่ <code>,required</code> ไว้
+      <br>สังเกตว่า <code>AppPort</code> กับ <code>ShutdownTimeout</code> ยัง<em>ดูปกติ</em>
+      เพราะมี <code>envDefault</code> — ส่วนตัวที่ไม่มี default ได้ zero value
+      (<code>0</code>, <code>0s</code>, <code>""</code>) ซึ่ง<strong>หน้าตาไม่เหมือน error เลย</strong>
+    </p>
+    <p style="margin-bottom:0">
+      ถ้าตอบว่า "<code>ParseAs</code> จะ error เพราะไม่มีค่า" แปลว่ายังติดกับดักเดียวกับ
+      <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> —
+      <strong>ค่าที่แปลงไม่ได้/ไม่มีค่า ไม่ได้กลายเป็น error มันกลายเป็นค่าที่ดูปกติแต่ผิด</strong>
+      <br>นี่คือเหตุผลที่แผนภาพหัวข้อ 7 ยังมีขั้น <code>validator</code> ต่อท้ายอีกขั้น
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 5 กับ 6 คือคู่ที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong> —
+    เพราะความรู้สึกตอนเห็นค่าหาย 9 ตัวโดยไม่มีอะไรบอก
+    คือสิ่งที่จะทำให้คุณ<em>ตัดสินใจเองได้</em>ว่าจะใช้ <code>autoload</code> หรือไม่
+    แทนที่จะเลือกเพราะสไลด์เขียนว่า "แนะนำ"
+    <br>ถ้ารันแล้ว output ไม่ตรงกับในบทนี้ <strong>ส่งมาได้เลย</strong> —
+    ทุกบรรทัดในหน้านี้วัดบน <strong>Go 1.26.5 darwin/arm64</strong> กับ
+    <code>godotenv v1.5.1</code> และ <code>caarlos0/env v11.4.1</code>
+    ซึ่งเลขบรรทัดของซอร์สที่ผมอ้าง (<code>parser.go:253</code>, <code>godotenv.go:50</code>, <code>godotenv.go:179</code>)
+    ก็เป็นของเวอร์ชันนั้น
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0045-caarlos0-env.html">← บทเรียน 45 · caarlos0/env</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0047-validate-at-start.html">บทเรียน 47 → validate ตอน start</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://github.com/joho/godotenv">github.com/joho/godotenv</a> — <strong>อ่าน README ส่วน "Usage"</strong> แล้วเทียบกับหัวข้อ 4 · ที่น่าอ่านกว่าคือไฟล์ <code>autoload/autoload.go</code> ที่มี 15 บรรทัดทั้ง package</li>
+  <li><a href="https://pkg.go.dev/github.com/joho/godotenv#Load">pkg.go.dev — <code>godotenv.Load</code></a> · <a href="https://pkg.go.dev/github.com/joho/godotenv#Overload">Overload</a> · <a href="https://pkg.go.dev/github.com/joho/godotenv#Read">Read</a> — <strong>อ่านประโยค "WILL NOT OVERRIDE"</strong> ในหน้า <code>Load</code> ซึ่งเป็นที่มาของหัวข้อ 5 ทั้งหมด · <code>Read</code> คืน <code>map</code> โดยไม่แตะ environment เหมาะกับเวลาอยาก debug ว่าไฟล์ถูก parse เป็นอะไร</li>
+  <li><a href="https://github.com/caarlos0/env">github.com/caarlos0/env</a> — ตัวที่ทำขั้น 2 → 3 ของแผนภาพ · รายละเอียดเต็มอยู่ใน <a href="./0045-caarlos0-env.html">บทเรียน 45</a></li>
+  <li><a href="https://12factor.net/config">The Twelve-Factor App — III. Config</a> — ต้นทางของประโยค "config ต้องอยู่ใน environment" · <strong>สังเกตว่าเอกสารนี้ไม่ได้พูดถึงไฟล์ <code>.env</code> เลย</strong> ซึ่งตรงกับที่สไลด์บอกว่ามันเป็นแค่ข้อตกลงของเครื่องมือ</li>
+  <li><a href="https://pkg.go.dev/os#Setenv">pkg.go.dev — <code>os.Setenv</code></a> — สิ่งที่ <code>godotenv</code> เรียกให้เราจริง ๆ ข้างใน · อ่านเพื่อเข้าใจว่าค่าที่ตั้งมีผลกับ process ตัวเองและลูกที่เกิดทีหลังเท่านั้น</li>
+  <li><a href="https://git-scm.com/docs/gitignore">git — <code>gitignore</code></a> · <a href="https://git-scm.com/docs/git-check-ignore">git-check-ignore</a> — <strong>อ่านส่วน exit code ของ <code>check-ignore</code></strong>: 0 = ถูก ignore · 1 = ไม่ถูก ignore ซึ่งเป็นผลที่ใช้ในหัวข้อ 10</li>
+  <li><a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44 — Configuration &amp; Environment Variables</a> — ปัญหาที่ทั้ง Day 9 เกิดมาแก้ · <a href="./0045-caarlos0-env.html">บทเรียน 45</a> · <a href="./0047-validate-at-start.html">บทเรียน 47</a> · <a href="./0048-internal-config.html">บทเรียน 48</a></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

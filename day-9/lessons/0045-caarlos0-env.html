@@ -1,0 +1,1221 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 45 — caarlos0/env: ประกาศ config เป็น struct ครั้งเดียว</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 45 · Day 9 · Config</p>
+  <h1><code>caarlos0/env</code> — ประกาศ config เป็น struct ครั้งเดียว</h1>
+  <p class="meta">~20 นาที · ต้องมี: <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> (env, <code>os.LookupEnv</code>, การแปลง type)</p>
+  <p class="standfirst">
+    <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> จบลงตรงประโยคเดียว:
+    <strong>"อยากประกาศครั้งเดียวว่าแอปต้องการอะไร แล้วให้เครื่องมือจัดการที่เหลือ"</strong>
+    — อ่านให้ · แปลง type ให้ · เติม default ให้ · ขาดตัวไหนก็ฟ้องตั้งแต่ตอน start
+    <br>สไลด์ชุดนั้น<strong>หยุดแค่ตรงโจทย์ ไม่เฉลย</strong> · Day 9 หน้า 9–10 คือคำตอบ และมันชื่อ
+    <code>github.com/caarlos0/env/v11</code>
+    <br>บทนี้ผมจะ<strong>ไม่เล่าแค่ว่า tag ไหนแปลว่าอะไร</strong> — เพราะอ่าน README เอาก็ได้
+    ผมจะรันของจริงให้ดูสามเรื่องที่<strong>ทำให้คนตกม้าตาย</strong>:
+    <code>,required</code> ที่ใส่คู่กับ <code>envDefault</code> แล้ว<em>ไม่มีผลเลย</em> (สไลด์เตือนเอง และเตือนถูก) ·
+    <code>,required</code> ที่<em>ไม่ได้</em>กันค่าว่าง (สไลด์ยังไม่ได้เตือน) ·
+    และ struct ที่<em>ไม่ได้ว่างเปล่า</em> เวลา parse พัง
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ — ทุก output ข้างล่างมาจากการรันจริงบน</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+github.com/caarlos0/env/v11 <strong>v11.4.1</strong></code></pre>
+  <p style="margin-bottom:0">
+    ถ้าจะพิมพ์ตาม: สร้างโฟลเดอร์เปล่าใหม่ · <code>cd</code> เข้าไป ·
+    <code>go mod init envdemo</code> · <code>go get github.com/caarlos0/env/v11@v11.4.1</code>
+    <br><strong>ระวังเลข v11 ในเส้นทาง import</strong> — Go บังคับให้ major version ตั้งแต่ 2 ขึ้นไป
+    ติดอยู่ในชื่อ path ด้วย ถ้าเขียน <code>github.com/caarlos0/env</code> เฉย ๆ จะได้ของเวอร์ชันเก่าคนละตัว
+  </p>
+</div>
+
+<h2>1 · ทวนโจทย์ที่บทเรียน 44 ค้างไว้ — แล้วนับบรรทัดกันจริง ๆ</h2>
+
+<p>
+  บทเรียน 44 พิสูจน์ไว้ห้าข้อว่าการโปรย <code>os.Getenv</code> ไปทั่วโค้ดพังยังไง:
+  พิมพ์ชื่อผิดไม่มีใครเตือน · ต้องแปลง type เองทุกที่ · <code>default</code> กระจัดกระจาย ·
+  ไม่มีที่ไหนบอกว่าแอปต้องการ config อะไรบ้าง · และมันระเบิดกลางทางแทนที่จะตายตอน start
+  <br>ท้ายบทนั้นสรุปสิ่งที่อยากได้ไว้เป็นประโยคเดียว —
+  <strong>ประกาศครั้งเดียว แล้วให้ library ทำที่เหลือ</strong> วันนี้เราจะได้ของชิ้นนั้นแล้ว
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ ตัวเลข "40 บรรทัด" บนสไลด์ — ผมนับให้ดูจริง ๆ ก่อน</span>
+  <p>
+    สไลด์หน้า 9 ทำตารางเทียบว่า <em>ก่อน</em> ใช้ <strong>"40 บรรทัด Getenv + Atoi"</strong>
+    ส่วน <em>หลัง</em> เหลือ <strong>"struct 4 บรรทัด + ParseAs"</strong>
+    <br>ปัญหาคือ <strong>บทเรียน 44 ไม่มีก้อนโค้ด 40 บรรทัดให้ไปนับตรง ๆ</strong> —
+    มันสอนเป็นชิ้น ๆ (<code>os.LookupEnv</code> · <code>strconv.Atoi</code> ·
+    <code>time.ParseDuration</code> · <code>if x == "" { x = ... }</code>)
+    <br>ผมเลยเอาวิธีของบท 44 มาประกอบเป็น <code>Load()</code> ที่ให้ผล<strong>เท่ากันเป๊ะ</strong>
+    กับโค้ดบนสไลด์ แล้วนับด้วยเครื่อง
+  </p>
+  <p style="margin-bottom:0">
+    ผลการนับ: <code>type Config struct</code> = <strong>6 บรรทัด</strong> ·
+    <code>func LoadManual()</code> = <strong>33 บรรทัด</strong> (นับบรรทัดว่างด้วย) หรือ
+    <strong>28 บรรทัด</strong> ถ้าไม่นับบรรทัดว่าง
+    <br>รวมทั้งสองก้อน = <strong>39 บรรทัด</strong>
+    <br>👉 <strong>สไลด์บอก 40 ผมนับได้ 39 — ถือว่าตรงในทางปฏิบัติ ไม่ได้พูดเว่อร์</strong>
+    (ยังไม่ได้นับ <code>import</code> อีก 6 บรรทัดที่ฝั่งนี้ต้องใช้ <code>strconv</code> กับ <code>time</code> เพิ่ม)
+  </p>
+</div>
+
+<p>
+  นี่คือของจริงที่ผมนับ — ก๊อปทั้งก้อนไปวางเป็นไฟล์ <code>internal/configmanual/manual.go</code>
+  แล้ว <code>go build</code> ผ่าน · <code>go vet</code> เงียบ
+  <br><strong>ต้องเป็นคนละโฟลเดอร์กับโค้ดในหัวข้อ 2 นะ</strong> — สองก้อนนี้ประกาศ
+  <code>type Config</code> ชื่อเดียวกัน ถ้าวางไว้ package เดียวกันจะได้
+  <code>Config redeclared in this block</code> ทันที
+  <br>ส่วนบล็อก <code>import</code> หกบรรทัดที่เห็นข้างล่างนี้ <strong>ไม่ได้นับรวมใน 39 บรรทัด</strong>
+  ตามที่กล่องข้างบนบอกไว้ — 39 นับเฉพาะ <code>type Config</code> (6) กับ <code>func LoadManual</code> (33)
+</p>
+
+<pre><code><span class="k">package</span> configmanual
+
+<span class="k">import</span> (
+	<span class="s">"fmt"</span>
+	<span class="s">"os"</span>
+	<span class="s">"strconv"</span>
+	<span class="s">"time"</span>
+)
+
+<span class="k">type</span> Config <span class="k">struct</span> {
+	AppPort         <span class="k">int</span>
+	ShutdownTimeout time.Duration
+	LogLevel        <span class="k">string</span>
+	PostgresDSN     <span class="k">string</span>
+}
+
+<span class="k">func</span> <span class="f">LoadManual</span>() (Config, <span class="k">error</span>) {
+	<span class="k">var</span> cfg Config
+
+	portStr, ok := os.<span class="f">LookupEnv</span>(<span class="s">"APP_PORT"</span>)
+	<span class="k">if</span> !ok || portStr == <span class="s">""</span> {
+		portStr = <span class="s">"8080"</span>
+	}
+	port, err := strconv.<span class="f">Atoi</span>(portStr)
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="k">return</span> cfg, fmt.<span class="f">Errorf</span>(<span class="s">"APP_PORT: %w"</span>, err)
+	}
+	cfg.AppPort = port
+
+	toStr, ok := os.<span class="f">LookupEnv</span>(<span class="s">"APP_SHUTDOWN_TIMEOUT"</span>)
+	<span class="k">if</span> !ok || toStr == <span class="s">""</span> {
+		toStr = <span class="s">"10s"</span>
+	}
+	to, err := time.<span class="f">ParseDuration</span>(toStr)
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="k">return</span> cfg, fmt.<span class="f">Errorf</span>(<span class="s">"APP_SHUTDOWN_TIMEOUT: %w"</span>, err)
+	}
+	cfg.ShutdownTimeout = to
+
+	lvl, ok := os.<span class="f">LookupEnv</span>(<span class="s">"LOG_LEVEL"</span>)
+	<span class="k">if</span> !ok || lvl == <span class="s">""</span> {
+		lvl = <span class="s">"DEBUG"</span>
+	}
+	cfg.LogLevel = lvl
+
+	cfg.PostgresDSN = os.<span class="f">Getenv</span>(<span class="s">"POSTGRES_DSN"</span>)
+
+	<span class="k">return</span> cfg, <span class="k">nil</span>
+}</code></pre>
+
+<p>
+  อ่านแล้วจะเห็นว่ามัน<strong>ไม่ได้ยาก</strong> — มันแค่<strong>ยาว ซ้ำ และน่าเบื่อ</strong>
+  <br>สังเกตว่า config 4 ตัวใช้ <code>if err != nil</code> ไปแล้วสองก้อน ถ้ามี 15 ตัวจะเป็นยังไง
+  และ<strong>บรรทัดที่คนขี้เกียจเขียนที่สุดคือบรรทัดเช็ก error</strong> — พอเผลอเขียน <code>_</code> ไปตัวหนึ่ง
+  คุณก็ได้กับดักทั้งหมดของบทเรียน 44 กลับมาทันที
+</p>
+
+<h2>2 · โค้ดทั้งหมดที่ต้องเขียน</h2>
+
+<p>
+  นี่คือโค้ดจากสไลด์หน้า 9 ทั้งดุ้น — ผมก๊อปมาวางแล้ว <code>go build</code> ผ่าน และ <code>go vet</code> เงียบสนิท
+  ไฟล์นี้คือ <code>internal/config/config.go</code> ตามโครง <code>internal/</code> ของ
+  <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a>
+  <br>สังเกต <code>import</code> ให้ดี — <strong>สไลด์เขียนไว้บรรทัดเดียวคือ <code>import "github.com/caarlos0/env/v11"</code>
+  ซึ่งคอมไพล์ไม่ผ่าน</strong> เพราะ field <code>ShutdownTimeout</code> ใช้ <code>time.Duration</code>
+  ต้องเติม <code>"time"</code> เข้าไปด้วย ผมเลยเขียนเป็นบล็อกให้ครบตั้งแต่ตรงนี้
+  (ถ้าไม่เติม จะได้ <code>cfgtest/config.go:7:18: undefined: time</code> ซึ่งไม่ได้บอกเลยว่าต้องไปเติม import):
+</p>
+
+<pre><code><span class="k">package</span> config
+
+<span class="k">import</span> (
+	<span class="s">"time"</span>
+
+	<span class="s">"github.com/caarlos0/env/v11"</span>
+)
+
+<span class="k">type</span> Config <span class="k">struct</span> {
+	AppPort         <span class="k">int</span>           `env:"APP_PORT" envDefault:"8080"`
+	ShutdownTimeout time.Duration `env:"APP_SHUTDOWN_TIMEOUT" envDefault:"10s"`
+	LogLevel        <span class="k">string</span>        `env:"LOG_LEVEL" envDefault:"DEBUG"`
+	PostgresDSN     <span class="k">string</span>        `env:"POSTGRES_DSN"`
+}
+
+<span class="k">func</span> <span class="f">Load</span>() (Config, <span class="k">error</span>) {
+	<span class="k">return</span> env.<span class="f">ParseAs</span>[Config]()
+}</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>ศัพท์ที่ต้องนิยามก่อนไปต่อ 3 คำ</strong>
+    <br>· <strong>struct tag</strong> — สตริงในเครื่องหมาย backtick (<code>`</code>) ที่ห้อยท้าย field ของ struct
+    Go ไม่ได้เอาไปทำอะไรเองเลย มันเป็นแค่<em>ป้ายกำกับ</em>ที่ปล่อยให้ library มาอ่าน
+    (ตัวเดียวกับ <code>json:"..."</code> ที่ใช้ใน <a href="../../day-8/lessons/0035-query-body-header.html">บทเรียน 35</a>
+    และ <code>binding:"..."</code> ใน <a href="../../day-8/lessons/0039-gin-binding-middleware.html">บทเรียน 39</a>)
+    <br>· <strong>reflection</strong> — ความสามารถของ Go ที่ให้โปรแกรมส่อง struct ตอนรันได้ว่ามี field อะไร
+    ชนิดอะไร tag เขียนว่าอะไร · <code>caarlos0/env</code> ใช้ท่านี้ในการทำงานทั้งหมด
+    <br>· <strong><code>ParseAs[Config]()</code></strong> — วงเล็บเหลี่ยมคือ <strong>generics</strong>
+    แปลว่า "อ่าน env ออกมาเป็น <code>Config</code> ให้หน่อย" แล้วมันคืน <code>(Config, error)</code>
+    ไม่ต้องประกาศตัวแปรมารอรับก่อน
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — สติกเกอร์ที่ร้านขนส่งแปะข้างกล่องพัสดุ</span>
+  <p>
+    นึกถึง<strong>กล่องพัสดุ</strong>ที่คุณเอาไปส่งที่ร้าน พนักงานแปะสติกเกอร์ให้สองสามใบ —
+    <em>"ปลายทาง เชียงใหม่"</em> · <em>"ห้ามวางซ้อน"</em> · <em>"ของแตกง่าย"</em>
+    <br>สติกเกอร์พวกนี้<strong>ไม่ได้เปลี่ยนของข้างในกล่องแม้แต่นิดเดียว</strong>
+    มันมีความหมายก็ต่อเมื่อ<strong>มีคนที่อ่านสติกเกอร์เป็น</strong>มาหยิบกล่องขึ้นมา
+    ถ้าเอากล่องไปวางไว้เฉย ๆ สติกเกอร์ก็เป็นแค่กระดาษแปะ
+  </p>
+  <p>
+    <code>struct tag</code> คือ<strong>สติกเกอร์</strong> · <code>Config</code> คือ<strong>กล่อง</strong> ·
+    <code>caarlos0/env</code> คือ<strong>พนักงานที่อ่านสติกเกอร์เป็น</strong>
+    <br>ส่วน Go compiler คือ<strong>สายพานที่ขนกล่องผ่านไปเฉย ๆ</strong> — มันตรวจว่ากล่องปิดเรียบร้อยไหม
+    (ชนิดของ field ถูกไหม) แต่<strong>ไม่เคยอ่านสติกเกอร์เลยสักใบ</strong>
+    <br>และคำว่า <strong>reflection</strong> ก็คือความสามารถ "หยิบกล่องขึ้นมาพลิกอ่านสติกเกอร์<em>ตอนกำลังทำงาน</em>"
+    นั่นเอง — ไม่ใช่ตอน compile
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สติกเกอร์จริงถ้าเขียนที่อยู่ผิด พนักงานหน้าร้านยังทักได้
+    แต่ struct tag ที่พิมพ์ผิด <strong>ไม่มีใครทักเลยสักคน</strong> ผมลองสะกด
+    <code>envDefault</code> สลับตัวเป็น <code>envDefualt</code> แล้วรันจริง:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code><span class="c">// `env:"APP_PORT" envDefualt:"8080"`   ← สะกดผิดหนึ่งตัว</span>
+$ go build ./...    <span class="c"># เงียบ</span>
+$ go vet ./...      <span class="c"># เงียบ</span>
+$ go run .
+[typo] main.Typo{AppPort:<strong>0</strong>, Timeout:10000000000} err=<strong>&lt;nil&gt;</strong></code></pre>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>คำสี่คำนี้คือคำที่ dev เขาใช้เรียกสิ่งที่คุณเพิ่งเข้าใจไป — ใช้คำให้ตรง จะได้คำตอบที่ตรง</p>
+  <dl>
+    <dt>struct tag</dt>
+    <dd>"สติกเกอร์" ที่ห้อยท้าย field · เป็นแค่สตริง compiler ไม่อ่านความหมาย ·
+    ประโยคที่เอาไปใช้ได้เลย: <em>"field นี้ต้องติด struct tag อะไรบ้าง"</em> หรือพิมพ์ถาม AI ว่า
+    <em>"Go struct tag for caarlos0/env with default value"</em></dd>
+    <dt>reflection</dt>
+    <dd>ความสามารถส่อง struct ตอนรันว่ามี field อะไร ชนิดอะไร tag เขียนว่าอะไร ·
+    ประโยคที่ใช้อธิบายอาการข้างบนได้เป๊ะ: <em>"library มันอ่าน tag ด้วย reflection ตอน runtime
+    เพราะงั้นพิมพ์ tag ผิดก็ไม่มี compile error"</em></dd>
+    <dt>generics / type parameter</dt>
+    <dd>วงเล็บเหลี่ยมใน <code>ParseAs[Config]()</code> — คือการ<strong>ส่งชนิดเข้าไปเป็นพารามิเตอร์</strong> ·
+    พูดว่า <em>"ParseAs มันเป็น generic function ส่ง type เข้าไปในวงเล็บเหลี่ยม"</em>
+    จะสื่อกว่าพูดว่า "ใส่ Config ในวงเล็บก้ามปู"</dd>
+    <dt>declarative</dt>
+    <dd>สไตล์ที่<strong>ประกาศว่าอยากได้อะไร</strong> แล้วให้เครื่องมือคิดวิธีเอง — ตรงข้ามกับ
+    <em>imperative</em> ที่สั่งเป็นขั้น ๆ เองแบบ <code>LoadManual</code> ในหัวข้อ 1 ·
+    ประโยคสรุปทั้งบทนี้: <em>"เปลี่ยนจากอ่าน env แบบ imperative มาเป็นประกาศ config แบบ declarative"</em></dd>
+  </dl>
+</div>
+
+<p>
+  รันจริงสองรอบ รอบแรกไม่ตั้ง env เลย รอบสองตั้งครบ (พิมพ์ด้วย <code>%#v</code> จึงเห็นชื่อ field)
+  <br>ตอนทดลองผมย้าย <code>Config</code> มาไว้ใน <code>package main</code> ไฟล์เดียวจบ <code>%#v</code>
+  เลยพิมพ์ว่า <code>main.Config</code> — <strong>ถ้าวางไว้ใน <code>internal/config</code> จริงตามโค้ดข้างบน
+  จะขึ้นเป็น <code>config.Config</code> แทน</strong> (ผมรันเทียบมาแล้วทั้งสองแบบ ค่าที่ได้เหมือนกันเป๊ะ
+  ต่างแค่ชื่อ package ที่ <code>type</code> ถูกประกาศไว้):
+</p>
+
+<pre><code>$ go run .
+cfg=main.Config{AppPort:<strong>8080</strong>, ShutdownTimeout:<strong>10000000000</strong>, LogLevel:<strong>"DEBUG"</strong>, PostgresDSN:""}
+err=&lt;nil&gt;
+
+$ APP_PORT=9999 APP_SHUTDOWN_TIMEOUT=1m30s LOG_LEVEL=INFO \
+    POSTGRES_DSN=<span class="s">"postgres://u:p@localhost:5432/db"</span> go run .
+cfg=main.Config{AppPort:<strong>9999</strong>, ShutdownTimeout:<strong>90000000000</strong>, LogLevel:<strong>"INFO"</strong>, PostgresDSN:"postgres://u:p@localhost:5432/db"}
+err=&lt;nil&gt;</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔍 <strong>ทำไม <code>ShutdownTimeout</code> ถึงพิมพ์ออกมาเป็น <code>10000000000</code></strong> —
+    ไม่ใช่บั๊ก · <code>time.Duration</code> ข้างในคือ <code>int64</code> ที่นับหน่วยเป็น<strong>นาโนวินาที</strong>
+    <br><code>10000000000</code> นาโนวินาที = 10 วินาที · <code>90000000000</code> = 1 นาที 30 วินาที
+    <br><code>%#v</code> พิมพ์โครงสร้างดิบจึงเห็นเป็นเลข · ถ้าพิมพ์ด้วย <code>%v</code> เฉย ๆ จะได้
+    <code>10s</code> กับ <code>1m30s</code> ซึ่งอ่านง่ายกว่า
+    <br>ที่สำคัญคือ <strong><code>1m30s</code> ถูกแปลงเป็น <code>time.Duration</code> ให้จริง</strong>
+    ไม่ใช่สตริง — ผมเช็กด้วย <code>%T</code> แล้วได้ <code>time.Duration</code>
+  </p>
+</div>
+
+<p>สรุปเป็นตารางเทียบตามที่สไลด์ให้ไว้ ทุกช่องฝั่งซ้ายมาจากโค้ดในหัวข้อ 1 ที่ผมนับบรรทัดจริง:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เรื่อง</th><th>ก่อน (<code>os.Getenv</code> + <code>strconv</code>)</th><th>หลัง (<code>caarlos0/env</code>)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>ปริมาณโค้ด</td>
+      <td><strong>39 บรรทัด</strong> (struct 6 + <code>Load</code> 33) — สไลด์เขียนไว้ว่า 40</td>
+      <td>struct <strong>4 field</strong> (บล็อก 6 บรรทัด) + <code>ParseAs</code> อีก <strong>3 บรรทัด</strong></td>
+    </tr>
+    <tr>
+      <td>ชื่อ env อยู่ที่ไหน</td>
+      <td>กระจายทั้งโปรเจกต์ ตามหาได้ด้วย <code>grep os.Getenv</code> เท่านั้น</td>
+      <td><strong>อยู่ที่เดียว มองเห็นครบ</strong> — เปิด struct เดียวรู้หมดว่าแอปต้องการอะไร</td>
+    </tr>
+    <tr>
+      <td>แปลง type</td>
+      <td>เขียน <code>Atoi</code> / <code>ParseDuration</code> เอง + เช็ก error เองทุกจุด</td>
+      <td><strong>แปลงให้อัตโนมัติ</strong> ตามชนิดของ field ที่ประกาศไว้</td>
+    </tr>
+    <tr>
+      <td>ค่า default</td>
+      <td><code>if x == "" { x = ... }</code> กระจาย คนละไฟล์ค่าไม่ตรงกันก็ไม่มีใครรู้</td>
+      <td><code>envDefault</code> <strong>ติดอยู่กับ field นั้นเลย</strong> เห็นพร้อมชื่อและชนิด</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>3 · struct tag ทั้ง 4 ตัว</h2>
+
+<p>สไลด์หน้า 10 ให้มาสี่ตัว ผมทดสอบมาครบทุกตัวแล้ว:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Tag</th><th>ทำอะไร</th><th>ตัวอย่างที่ผมรันจริง</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>env:"NAME"</code></td>
+      <td>ผูก field เข้ากับชื่อ environment variable</td>
+      <td><code>AppPort int `env:"APP_PORT"`</code></td>
+    </tr>
+    <tr>
+      <td><code>envDefault:"x"</code></td>
+      <td>ค่าที่ใช้เมื่อไม่ได้ตั้ง env ตัวนั้น</td>
+      <td><code>`env:"APP_PORT" envDefault:"8080"`</code> → ไม่ตั้งแล้วได้ <code>8080</code></td>
+    </tr>
+    <tr>
+      <td><code>envSeparator:","</code></td>
+      <td>ตัวคั่นสำหรับ slice · <strong>ไม่ใส่ = ใช้ comma</strong></td>
+      <td><code>`env:"ORIGINS" envSeparator:";"`</code></td>
+    </tr>
+    <tr>
+      <td><code>envPrefix:"DB_"</code></td>
+      <td>เติมนำหน้าชื่อ env ให้ทุก field ใน struct ซ้อน</td>
+      <td><code>Primary DB `envPrefix:"DB_"`</code> → อ่าน <code>DB_HOST</code>, <code>DB_PORT</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3><code>envSeparator</code> — ยังใช้ได้กับ slice ของชนิดอื่นด้วย</h3>
+
+<pre><code><span class="k">type</span> Sep <span class="k">struct</span> {
+	DefaultSep []<span class="k">string</span> `env:"HOSTS"`                        <span class="c">// ไม่ใส่ separator</span>
+	CustomSep  []<span class="k">string</span> `env:"ORIGINS" envSeparator:";"`
+	IntsSep    []<span class="k">int</span>    `env:"PORTS" envSeparator:"|"`       <span class="c">// slice ของ int</span>
+	SepDefault []<span class="k">string</span> `env:"TAGS" envDefault:"a,b,c"`      <span class="c">// default ก็ถูก split</span>
+}</code></pre>
+
+<pre><code>$ HOSTS=<span class="s">"a.com,b.com,c.com"</span> ORIGINS=<span class="s">"x.io;y.io"</span> PORTS=<span class="s">"1|2|3"</span> go run .
+[Sep] main.Sep{DefaultSep:[]string{"a.com", "b.com", "c.com"},
+      CustomSep:[]string{"x.io", "y.io"},
+      IntsSep:<strong>[]int{1, 2, 3}</strong>,
+      SepDefault:[]string{"a", "b", "c"}} err=&lt;nil&gt;</code></pre>
+
+<p>
+  สามเรื่องที่ได้จากผลนี้: <strong>ไม่ใส่ <code>envSeparator</code> ก็ได้ comma เป็นค่าเริ่มต้น</strong> ·
+  <strong>ใช้กับ <code>[]int</code> ได้ ไม่ใช่แค่ <code>[]string</code></strong> (มันแยกแล้วแปลงทีละชิ้น) ·
+  และ <strong><code>envDefault</code> ก็โดน split ด้วยตัวคั่นเดียวกัน</strong> — <code>TAGS</code> ที่ไม่ได้ตั้ง
+  ได้ <code>[]string{"a","b","c"}</code> ไม่ใช่สตริงเดียวว่า <code>"a,b,c"</code>
+</p>
+
+<h3><code>envPrefix</code> — สำหรับ struct ซ้อน struct</h3>
+
+<pre><code><span class="k">type</span> DB <span class="k">struct</span> {
+	Host <span class="k">string</span> `env:"HOST"`
+	Port <span class="k">int</span>    `env:"PORT" envDefault:"5432"`
+}
+<span class="k">type</span> Redis <span class="k">struct</span> { Host <span class="k">string</span> `env:"HOST"` }
+
+<span class="k">type</span> Nested <span class="k">struct</span> {
+	Primary DB    `envPrefix:"DB_"`
+	Cache   Redis `envPrefix:"REDIS_"`
+	NoPfx   DB                        <span class="c">// ← ไม่ใส่ prefix เลย</span>
+}</code></pre>
+
+<pre><code>$ DB_HOST=<span class="s">"pg.local"</span> DB_PORT=6543 REDIS_HOST=<span class="s">"redis.local"</span> HOST=<span class="s">"bare.local"</span> go run .
+[Nested] main.Nested{Primary:main.DB{Host:"pg.local", Port:6543},
+         Cache:main.Redis{Host:"redis.local"},
+         NoPfx:main.DB{Host:<strong>"bare.local"</strong>, Port:5432}} err=&lt;nil&gt;</code></pre>
+
+<p>
+  ประโยชน์ของมันชัดมาก: <code>DB</code> ตัวเดียวเอาไปใช้ซ้ำได้ทั้ง primary และ replica
+  แค่เปลี่ยน prefix — <strong>ไม่ต้องเขียน struct ซ้ำสองรอบเพื่อเปลี่ยนชื่อ env</strong>
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ struct ซ้อนที่ลืมใส่ <code>envPrefix</code> จะไปแย่งอ่าน key เปล่า ๆ</span>
+  <p style="margin-bottom:0">
+    ดู <code>NoPfx</code> ในผลรัน — มันได้ <code>Host:"bare.local"</code> มาจาก env ชื่อ
+    <code>HOST</code> เฉย ๆ เพราะไม่มี prefix มาเติมข้างหน้า
+    <br>ถ้าคุณมี struct ซ้อน<strong>สองตัวขึ้นไปที่ลืมใส่ prefix</strong> ทั้งคู่จะอ่าน <code>HOST</code>
+    ตัวเดียวกันแล้วได้ค่าเหมือนกันหมด — โดยไม่มี error ไม่มีคำเตือนอะไรเลย
+    <br>กฎง่าย ๆ: <strong>struct ซ้อนทุกตัวใส่ <code>envPrefix</code> ให้ครบ</strong> แม้จะมีแค่ตัวเดียวในตอนนี้
+  </p>
+</div>
+
+<h2>4 · option ต่อท้ายใน <code>env</code> tag</h2>
+
+<p>
+  ทั้งสี่ตัวนี้เขียนต่อท้ายชื่อ env <strong>ในอัญประกาศเดียวกัน คั่นด้วยจุลภาค</strong>
+  คือ <code>env:"NAME,option"</code> ไม่ใช่ tag แยกใหม่ — ตรงนี้คนพิมพ์ผิดกันบ่อย
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Option</th><th>สไลด์บอกว่า</th><th>ผลรันจริงของผม</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>,required</code></td>
+      <td>ไม่ได้ตั้ง → error ตอน parse</td>
+      <td>✅ จริง — แต่<strong>มีเงื่อนไขซ่อนอยู่สองข้อ</strong> ดูหัวข้อ 5</td>
+    </tr>
+    <tr>
+      <td><code>,notEmpty</code></td>
+      <td>ตั้งแล้วเป็นค่าว่าง → error</td>
+      <td>✅ จริง — และเป็นตัวที่คุณต้องการจริง ๆ บ่อยกว่า <code>,required</code></td>
+    </tr>
+    <tr>
+      <td><code>,file</code></td>
+      <td>อ่านค่าเป็น path แล้วเอาเนื้อไฟล์มาใส่</td>
+      <td>⚠️ จริง แต่<strong>ไม่ตัดขึ้นบรรทัดใหม่ทิ้งให้</strong> — ดูกล่องทายผลข้างล่าง</td>
+    </tr>
+    <tr>
+      <td><code>,unset</code></td>
+      <td>อ่านเสร็จลบทิ้งจาก environment</td>
+      <td>✅ จริง — <code>os.LookupEnv</code> คืน <code>exists=false</code> หลัง parse</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3><code>,notEmpty</code> กับ <code>,unset</code> — ผลรันจริง</h3>
+
+<pre><code><span class="c">// `env:"NE_VAR,notEmpty"` แล้วสั่ง os.Setenv("NE_VAR", "")</span>
+[notEmpty empty] err=<strong>env: environment variable "NE_VAR" should not be empty</strong>
+
+<span class="c">// `env:"U_VAR,unset"` แล้วสั่ง os.Setenv("U_VAR", "temp-value")</span>
+[unset] parsed=<strong>"temp-value"</strong> err=&lt;nil&gt; ; after parse LookupEnv -&gt; value="" <strong>exists=false</strong></code></pre>
+
+<p>
+  <code>,unset</code> มีประโยชน์กับ<strong>ค่าลับ</strong>: ค่าเข้า struct ครบแล้ว
+  แต่มันหายไปจาก environment ทันที — process ลูกที่คุณ spawn ทีหลัง (เช่นเรียก
+  <code>exec.Command</code>) จะ<strong>ไม่เห็นรหัสผ่านนั้นอีก</strong>
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — <code>,file</code> กับไฟล์ที่ลงท้ายด้วยขึ้นบรรทัดใหม่</p>
+  <pre><code><span class="k">type</span> File <span class="k">struct</span> {
+	V <span class="k">string</span> `env:"F_VAR,file"`
+}
+
+<span class="c">// เขียนไฟล์ชั่วคราวที่มีเนื้อว่า  s3cr3t-from-file\n   (มี \n ปิดท้าย)</span>
+<span class="c">// แล้ว os.Setenv("F_VAR", ชื่อไฟล์นั้น)</span></code></pre>
+  <p class="ask">
+    ท่านี้คือท่าที่ใช้กับ <strong>Docker secret</strong> (<code>/run/secrets/db_password</code>) กันจริง ๆ
+    <br><strong>ทาย 2 ข้อ</strong>
+    <br>1. <code>V</code> ที่ได้ คือ <code>"s3cr3t-from-file"</code> หรือ <code>"s3cr3t-from-file\n"</code>?
+    <br>2. ถ้าเปลี่ยน <code>F_VAR</code> ให้ชี้ไป path ที่<strong>ไม่มีอยู่จริง</strong> จะได้ error หน้าตายังไง —
+    มันจะบอกชื่อ env ให้ไหม หรือบอกแค่ชื่อไฟล์?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>[file ok] value=<strong>"s3cr3t-from-file\n"</strong> err=&lt;nil&gt;
+
+[file missing path] err=env: could not load content of file "/definitely/not/here.txt" <strong>from variable F_VAR</strong>: open /definitely/not/here.txt: no such file or directory</code></pre>
+    <p>
+      <strong>ข้อ 1 — ได้ <code>\n</code> ติดมาด้วย</strong> · <code>,file</code> อ่านไฟล์มาทั้งก้อน
+      <strong>ไม่ trim อะไรให้เลย</strong>
+      <br>นี่คือกับดักที่<strong>สไลด์ยังไม่ได้เตือน</strong> และมันเจ็บมาก:
+      ไฟล์ secret ส่วนใหญ่ถูกสร้างด้วย <code>echo "pass" &gt; secret.txt</code> ซึ่ง<strong>ใส่ <code>\n</code> ให้อัตโนมัติ</strong>
+      <br>ผลคือรหัสผ่านที่แอปคุณส่งไปหา database คือ <code>"pass\n"</code> ไม่ใช่ <code>"pass"</code> →
+      auth ไม่ผ่าน → error บอกแค่ว่ารหัสผ่านผิด ซึ่ง<strong>คุณเปิดไฟล์ดูแล้วก็เห็นว่ารหัสถูก</strong>
+      เพราะ <code>\n</code> มองไม่เห็นด้วยตา
+      <br>ทางแก้: สร้างไฟล์ด้วย <code>printf '%s' "pass" &gt; secret.txt</code> (ไม่มี <code>\n</code>)
+      หรือ <code>strings.TrimSpace</code> เองหลัง parse
+    </p>
+    <p style="margin-bottom:0">
+      <strong>ข้อ 2 — บอกครบทั้งสองอย่าง</strong> ทั้ง path (<code>"/definitely/not/here.txt"</code>)
+      และชื่อ env (<code>from variable F_VAR</code>)
+      <br>ข้อความนี้<strong>ดีกว่า error ของบทเรียน 44 คนละชั้น</strong> — เทียบกับ
+      <code>dial tcp [::1]:5432: connect: connection refused</code> ที่ไม่มีคำว่า env อยู่เลยสักตัว
+      <br>ตรงนี้แหละคือคุณค่าที่แท้จริงของ library: มัน<strong>รู้จักชื่อ env</strong>
+      เลยใส่ชื่อลงในข้อความ error ให้ได้
+    </p>
+  </div>
+</div>
+
+<h2>5 · กับดักที่สไลด์เตือนเอง — <code>,required</code> คู่กับ <code>envDefault</code></h2>
+
+<p>
+  มุมล่างขวาของสไลด์หน้า 10 มีกล่องแดงเขียนว่า:
+  <em>"ระวัง — <code>,required</code> ใส่คู่กับ <code>envDefault</code> แล้ว <code>envDefault</code> ชนะเสมอ
+  <code>required</code> จะไม่มีผลเลย"</em>
+  <br>ผมไปพิสูจน์มาแล้ว ทั้งด้วยการรันและด้วยการเปิดซอร์สอ่าน — <strong>สไลด์พูดถูกทุกตัวอักษร</strong>
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — สาม struct นี้ แล้วสั่ง <code>go run .</code> โดย<strong>ไม่ตั้ง env ตัวไหนเลย</strong></p>
+  <pre><code><span class="k">type</span> A <span class="k">struct</span> {
+	Both <span class="k">string</span> `env:"MYVAR,required" envDefault:"fallback"`
+}
+<span class="k">type</span> B <span class="k">struct</span> {
+	OnlyRequired <span class="k">string</span> `env:"MYVAR2,required"`        <span class="c">// ไม่มี envDefault</span>
+}
+<span class="k">type</span> C <span class="k">struct</span> {
+	BothNotEmpty <span class="k">string</span> `env:"MYVAR3,notEmpty" envDefault:"fallback3"`
+}</code></pre>
+  <p class="ask">
+    <strong>ทายทีละตัวว่าได้ค่าอะไร และ <code>err</code> เป็น <code>nil</code> หรือไม่</strong>
+    <br>· <code>A</code> — มี <code>required</code> แต่ก็มี <code>envDefault</code> ด้วย ใครชนะ?
+    <br>· <code>B</code> — มี <code>required</code> อย่างเดียว
+    <br>· <code>C</code> — <code>notEmpty</code> คู่กับ <code>envDefault</code> จะเหมือน <code>A</code> ไหม?
+    <br>แล้วทายเพิ่มอีกข้อ: ถ้ารัน <code>MYVAR2= go run .</code>
+    (<strong>ตั้ง <code>MYVAR2</code> เป็นสตริงว่าง</strong>) <code>B</code> จะ error หรือผ่าน?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ go run .
+=== ไม่ตั้ง env เลย ===
+[A required+envDefault] value=<strong>"fallback"</strong> err=<strong>&lt;nil&gt;</strong>
+[B required only]       value=""          err=<strong>env: required environment variable "MYVAR2" is not set</strong>
+[C notEmpty+envDefault] value=<strong>"fallback3"</strong> err=<strong>&lt;nil&gt;</strong>
+
+$ MYVAR2= go run .
+=== ตั้ง MYVAR2 เป็นค่าว่าง (MYVAR2=) ===
+[A required+envDefault] value="fallback" err=&lt;nil&gt;
+[B required only]       value=""         err=<strong>&lt;nil&gt;</strong>      <span class="c">// ← ผ่านฉลุย!</span>
+[C notEmpty+envDefault] value="fallback3" err=&lt;nil&gt;</code></pre>
+    <p>
+      <strong>1. สไลด์พูดถูก</strong> — <code>A</code> มี <code>,required</code> ติดอยู่ชัด ๆ
+      แต่ได้ <code>"fallback"</code> กับ <code>err=&lt;nil&gt;</code> เงียบ ๆ
+      ส่วน <code>B</code> ที่มี <code>,required</code> เปล่า ๆ error ตามคาด — เทียบกันเห็นชัดเจน
+    </p>
+    <p>
+      <strong>2. สิ่งที่สไลด์<em>ยังไม่ได้</em>เตือน ข้อแรก: <code>,notEmpty</code> โดนกลบเหมือนกันเป๊ะ</strong>
+      <br><code>C</code> ได้ <code>"fallback3"</code> ทั้งกรณีไม่ตั้ง env และกรณีตั้งเป็นค่าว่าง
+      (ผมรัน <code>MYVAR3= go run .</code> แยกอีกรอบก็ได้ <code>"fallback3"</code> เหมือนกัน)
+      <br>ถ้าจะเตือนเรื่อง <code>required</code> + <code>envDefault</code> ต้องเตือน
+      <code>notEmpty</code> + <code>envDefault</code> คู่กันไปเลย
+    </p>
+    <p style="margin-bottom:0">
+      <strong>3. สิ่งที่สไลด์ยังไม่ได้เตือน ข้อสอง — และข้อนี้อันตรายกว่าข้อแรก:
+      <code>,required</code> ไม่ได้กันค่าว่าง</strong>
+      <br>ดูบรรทัด <code>B</code> ในรอบที่สอง — ตั้ง <code>MYVAR2=</code> (มีตัวแปรอยู่ แต่ค่าว่าง)
+      แล้ว<strong>ผ่านฉลุย <code>err=&lt;nil&gt;</code></strong> ได้สตริงว่างไปใช้ต่อ
+      <br>ทำไมถึงอันตราย: ใน <code>docker-compose.yml</code> การเขียน
+      <code>POSTGRES_DSN=</code> แบบลืมใส่ค่า หรือ <code>POSTGRES_DSN=${DB_URL}</code>
+      ที่ <code>DB_URL</code> ไม่มีอยู่ <strong>เกิดขึ้นง่ายมาก</strong> และผลลัพธ์คือ env ที่มีอยู่จริงแต่ค่าว่าง
+      ซึ่ง <code>,required</code> ปล่อยผ่านหมด
+    </p>
+  </div>
+</div>
+
+<p>
+  เหตุผลไม่ได้อยู่ในเวทมนตร์ที่ไหน — มันอยู่ในซอร์สของ <code>env.go</code> เอง สองจุด
+  ผมเปิดของ v11.4.1 มาให้ดู:
+</p>
+
+<pre><code><span class="c">// env.go บรรทัด 613 — เงื่อนไขที่ตัดสินว่า required จะ error ไหม</span>
+<span class="k">if</span> fieldParams.Required &amp;&amp; <strong>!exists</strong> &amp;&amp; fieldParams.OwnKey != <span class="s">""</span> {
+	<span class="k">return</span> <span class="s">""</span>, <span class="f">newVarIsNotSetError</span>(fieldParams.Key)
+}
+
+<span class="k">if</span> fieldParams.NotEmpty &amp;&amp; <strong>val == ""</strong> {   <span class="c">// บรรทัด 617</span></code></pre>
+
+<pre><code><span class="c">// env.go บรรทัด 648 — ฟังก์ชันที่ตัดสินว่า exists กับ val เป็นอะไร</span>
+<span class="k">func</span> <span class="f">getOr</span>(key, defaultValue <span class="k">string</span>, defExists <span class="k">bool</span>, envs <span class="k">map</span>[<span class="k">string</span>]<span class="k">string</span>) (val <span class="k">string</span>, exists, isDefault <span class="k">bool</span>) {
+	value, exists := envs[key]
+	<span class="k">switch</span> {
+	<span class="k">case</span> (!exists || key == <span class="s">""</span>) &amp;&amp; defExists:
+		<span class="k">return</span> defaultValue, <strong>true</strong>, <span class="k">true</span>      <span class="c">// ← ไม่มี env แต่มี default → บอกว่า "มีอยู่"</span>
+	<span class="k">case</span> exists &amp;&amp; value == <span class="s">""</span> &amp;&amp; defExists:
+		<span class="k">return</span> defaultValue, <strong>true</strong>, <span class="k">true</span>      <span class="c">// ← env ว่าง แต่มี default → ก็ยังบอกว่า "มีอยู่"</span>
+	<span class="k">case</span> !exists:
+		<span class="k">return</span> <span class="s">""</span>, <span class="k">false</span>, <span class="k">false</span>
+	}
+	<span class="k">return</span> value, <span class="k">true</span>, <span class="k">false</span>
+}</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>💡 อ่านสองก้อนนี้ต่อกันแล้วทุกอย่างจะกระจ่าง</strong>
+    <br>· <code>required</code> เช็ก <code>!exists</code> — และ <code>getOr</code>
+    <strong>คืน <code>exists = true</code> ทุกครั้งที่มี <code>envDefault</code></strong>
+    เงื่อนไข <code>Required &amp;&amp; !exists</code> จึง<strong>ไม่มีทางเป็นจริง</strong> เมื่อมี default
+    <br>· <code>notEmpty</code> เช็ก <code>val == ""</code> — แต่ <code>val</code> ที่ส่งมาถึงบรรทัดนั้น
+    <strong>ถูกแทนด้วย default ไปแล้ว</strong> จึงไม่มีวันว่าง
+    <br>· <code>required</code> ดูแค่ <em>"มีตัวแปรนี้ไหม"</em> ไม่เคยดูว่า <em>"ค่าว่างหรือเปล่า"</em> —
+    ซึ่งตรงกับความต่างระหว่าง <code>os.LookupEnv</code> กับ <code>os.Getenv</code>
+    ที่<a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> อธิบายไว้เป๊ะ ๆ
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🛡 เทียบให้เห็นภาพ — ยามหน้าหมู่บ้านที่เช็กแค่ว่า "มีบัตรไหม"</span>
+  <p>
+    หมู่บ้านหนึ่งตั้งกฎว่า <em>"เข้าหมู่บ้านต้องมีบัตร"</em> แล้วให้ยามยืนตรวจหน้าประตู
+    <br>แต่ยามคนนี้เช็กแค่<strong>ว่า "ในมือถือบัตรอยู่หรือเปล่า"</strong> —
+    <strong>ไม่เคยพลิกดูว่าบัตรใบนั้นเขียนอะไรไว้</strong>
+    <br>นี่คือ <code>,required</code> เป๊ะ ๆ: ในซอร์สเขียนว่า <code>Required &amp;&amp; !exists</code>
+    มีแต่คำว่า <em>exists</em> (มีอยู่ไหม) ไม่มีการเทียบค่ากับสตริงว่างเลยสักตัว
+  </p>
+  <p>
+    ทีนี้ <code>envDefault</code> คือ<strong>คนที่ยืนแจกบัตรสำรองอยู่ก่อนถึงป้อมยาม</strong> —
+    ใครมือเปล่ามาก็ยัดบัตรใส่มือให้ก่อนหนึ่งใบ
+    <br>ผลคือพอเดินถึงยาม <strong>ทุกคนมีบัตรหมด</strong> ยามจึงไม่มีทางจับใครได้อีกเลย
+    นั่นแหละคือเหตุผลที่ <code>A</code> ได้ <code>"fallback"</code> กับ <code>err=&lt;nil&gt;</code>
+    ทั้งที่มี <code>,required</code> ติดอยู่ชัด ๆ
+    <br>ส่วน <code>,notEmpty</code> คือ<strong>ยามคนที่สองที่พลิกบัตรดูว่ามีตัวหนังสือไหม</strong> —
+    แต่ในเมื่อบัตรสำรองมีตัวหนังสืออยู่แล้ว ยามคนที่สองก็จับไม่ได้เหมือนกัน (นั่นคือ <code>C</code>)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สองข้อ —
+    (1) ที่หมู่บ้านจริง ถ้ามีใครมายืนแจกบัตรสำรองหน้าป้อมยาม นิติบุคคลคงไล่ออกไปตั้งนานแล้ว
+    แต่ใน Go <strong>ไม่มีใครมองเห็นความขัดแย้งนี้เลย</strong> — เขียน
+    <code>`env:"X,required" envDefault:"y"`</code> แล้ว compile ผ่าน · <code>go vet</code> เงียบ ·
+    ตอนรันก็เงียบ ·
+    (2) ยามจริงเห็นบัตรเปล่า ๆ ยังเอะใจได้ แต่ <code>,required</code>
+    <strong>ไม่ได้แปลว่า "ค่าต้องไม่ว่าง"</strong> มันแปลแค่ "ตัวแปรต้องมีอยู่" เท่านั้นจริง ๆ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>unset vs empty</dt>
+    <dd>สองสถานะที่คนละเรื่องกัน — <em>ไม่มีตัวแปรนั้นเลย</em> กับ <em>มีตัวแปรแต่ค่าว่าง</em> ·
+    เวลาดีบั๊กกับเพื่อนร่วมทีม ถามให้ตรงว่า
+    <em>"ตอนนี้ POSTGRES_DSN มัน unset หรือ set แล้วเป็นค่าว่าง"</em>
+    จะไปได้เร็วกว่าถามว่า "ตั้ง env รึยัง" เยอะมาก</dd>
+    <dt>silent failure (พังเงียบ)</dt>
+    <dd>อาการที่โปรแกรม<strong>ทำผิดโดยไม่มี error ออกมาเลย</strong> · นี่คือชื่อโรคของทั้งหัวข้อนี้ ·
+    ประโยคที่เอาไปพูดได้: <em>"เคสนี้มันเป็น silent failure นะ ไม่มี error ให้จับเลย
+    ต้องบังคับให้มันฟ้องเอง"</em></dd>
+    <dt>fail fast</dt>
+    <dd>ออกแบบให้พัง<strong>ตั้งแต่ตอน start ให้เร็วที่สุด</strong> ดีกว่าไปพังตอน request แรกของลูกค้า ·
+    ประโยคที่ใช้ขายไอเดียนี้กับ senior ได้เลย: <em>"ผมอยากให้ config มัน fail fast ตอน start
+    ไม่ใช่ไปตายตอน runtime"</em> — และนี่คือเหตุผลทั้งหมดที่มี <code>,required,notEmpty</code></dd>
+  </dl>
+</div>
+
+<div class="warn">
+  <span class="label">✅ กฎที่จำไปใช้ได้เลย 3 ข้อ</span>
+  <p style="margin-bottom:0">
+    1. <strong>ค่าไหน "บังคับ" ห้ามใส่ <code>envDefault</code> เด็ดขาด</strong> —
+    มันขัดกันในตัวเองอยู่แล้ว ถ้ามี default ได้ก็แปลว่าไม่บังคับ
+    <br>2. <strong>อยากกันจริง ๆ ใช้ <code>,required,notEmpty</code> คู่กัน</strong> —
+    <code>required</code> กันกรณี "ไม่มีตัวแปร" · <code>notEmpty</code> กันกรณี "มีแต่ค่าว่าง"
+    <br>3. ถ้าเขียน <code>`env:"X,required" envDefault:"y"`</code> ไปแล้ว
+    <strong>ไม่มีอะไรฟ้องคุณเลย</strong> — ไม่ compile error ไม่ vet warning ไม่ warning ตอนรัน
+    มันเงียบสนิทเหมือนกับดักทั้งหมดในบทเรียน 44
+  </p>
+</div>
+
+<h2>6 · type ที่รองรับ — และคำว่า "zero dependency"</h2>
+
+<p>
+  สไลด์หน้า 9 ลิสต์ type ที่รองรับไว้ ผมเขียน struct ที่มีครบทุกตัวแล้วรันทีเดียว — <strong>ผ่านหมด</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กลุ่ม</th><th>ชนิด</th><th>ตัวอย่างค่า env ที่ผมทดสอบผ่าน</th></tr></thead>
+  <tbody>
+    <tr><td>ตัวเลข</td><td><code>int</code> ทุกขนาด · <code>uint</code> · <code>float32/64</code></td><td><code>-12</code> · <code>9223372036854775807</code> · <code>3.14</code></td></tr>
+    <tr><td>พื้นฐาน</td><td><code>bool</code> · <code>string</code></td><td><code>true</code> · <code>hello</code></td></tr>
+    <tr><td>เวลา</td><td><code>time.Duration</code> · <code>time.Location</code></td><td><code>1h30m</code> → <code>1h30m0s</code> · <code>Asia/Bangkok</code></td></tr>
+    <tr><td>URL</td><td><code>url.URL</code> · <code>*url.URL</code></td><td><code>postgres://user@db:5432/app</code></td></tr>
+    <tr><td>รวมกลุ่ม</td><td><code>slice</code> · <code>map</code> · <code>pointer</code></td><td><code>a,b,c</code> · <code>a:1,b:2</code> (map ใช้ <code>:</code> คั่นคู่)</td></tr>
+    <tr><td>ทำเอง</td><td>ทุก type ที่ implement <code>encoding.TextUnmarshaler</code></td><td>ดูตัวอย่าง <code>LogLevel</code> ข้างล่าง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3><code>TextUnmarshaler</code> คือกุญแจของทั้งหมดนี้</h3>
+
+<p>
+  <strong><code>encoding.TextUnmarshaler</code></strong> คือ interface ของ standard library
+  ที่มีเมธอดเดียว: <code>UnmarshalText([]byte) error</code>
+  <br>แปลว่า <em>"ชนิดนี้รู้วิธีสร้างตัวเองจากข้อความ"</em> — ใครก็ตามที่เขียนเมธอดนี้ให้ type ของตัวเอง
+  จะใช้กับ <code>caarlos0/env</code> ได้ทันทีโดย library ไม่ต้องรู้จักคุณมาก่อน
+</p>
+
+<pre><code><span class="k">type</span> LogLevel <span class="k">struct</span>{ v <span class="k">string</span> }
+
+<span class="k">func</span> (l *LogLevel) <span class="f">UnmarshalText</span>(b []<span class="k">byte</span>) <span class="k">error</span> {
+	s := strings.<span class="f">ToUpper</span>(<span class="k">string</span>(b))
+	<span class="k">switch</span> s {
+	<span class="k">case</span> <span class="s">"DEBUG"</span>, <span class="s">"INFO"</span>, <span class="s">"WARN"</span>, <span class="s">"ERROR"</span>:
+		l.v = s
+		<span class="k">return</span> <span class="k">nil</span>
+	}
+	<span class="k">return</span> fmt.<span class="f">Errorf</span>(<span class="s">"unknown log level %q"</span>, s)
+}</code></pre>
+
+<pre><code>$ LVL=info LVLP=warn go run .
+Lvl=main.LogLevel{v:<strong>"INFO"</strong>} LvlP=&amp;{<strong>WARN</strong>}       <span class="c"># ส่ง info เข้าไป ได้ INFO ออกมา</span>
+
+$ LVL=verbose go run .
+ERR: env: parse error on field "Lvl" of type "main.LogLevel": <strong>unknown log level "VERBOSE"</strong></code></pre>
+
+<p>
+  สังเกตข้อความ error ให้ดี — <strong>ข้อความที่คุณเขียนเองใน <code>UnmarshalText</code>
+  ถูกยกมาใส่ในข้อความของ library ทั้งดุ้น</strong> พร้อมชื่อ field และชนิด
+  <br>นี่คือวิธีทำ validation ระดับ "ค่านี้ต้องเป็นหนึ่งในสี่ค่านี้เท่านั้น"
+  <strong>ตั้งแต่ตอน parse</strong> โดยไม่ต้องรอ validator (ซึ่งเป็นเรื่องของ
+  <a href="./0047-validate-at-start.html">บทเรียน 47</a>)
+</p>
+
+<div class="analogy">
+  <span class="label">🔌 เทียบให้เห็นภาพ — เต้ารับไฟบ้านกับหัวปลั๊กมาตรฐาน</span>
+  <p>
+    โรงงานที่ผลิต<strong>พัดลม · ที่ชาร์จมือถือ · หม้อหุงข้าว</strong>
+    ไม่เคยต้องโทรไปคุยกับการไฟฟ้าก่อนสักครั้ง
+    <br>เขาแค่ทำ<strong>หัวปลั๊กให้ตรงมาตรฐาน</strong> — สองขาแบน ระยะห่างเท่านี้ —
+    แล้วของชิ้นนั้นก็เสียบเต้ารับที่บ้านคุณได้ทันที
+    <br>ในทางกลับกัน <strong>เต้ารับก็ไม่เคยรู้จักว่ากำลังจ่ายไฟให้พัดลมหรือหม้อหุงข้าว</strong>
+    มันรู้อย่างเดียวว่า "หัวปลั๊กรูปทรงนี้เสียบได้"
+  </p>
+  <p>
+    <code>encoding.TextUnmarshaler</code> คือ<strong>รูปทรงหัวปลั๊กมาตรฐาน</strong>ที่ Go ประกาศไว้กลาง ๆ —
+    รูปทรงนั้นคือเมธอดเดียวชื่อ <code>UnmarshalText([]byte) error</code>
+    <br><code>caarlos0/env</code> คือ<strong>เต้ารับ</strong> — มันไม่รู้จัก <code>LogLevel</code> ของคุณ
+    และไม่เคยรู้จัก <code>time.Time</code> เป็นพิเศษด้วยซ้ำ มันแค่ถามว่า "หัวปลั๊กตรงไหม" ถ้าตรงก็ใช้เลย
+    <br>นี่คือคำตอบของกล่องเกร็ดข้างล่าง: <code>time.Time</code> ใช้ได้เพราะ<strong>มันทำหัวปลั๊กตรงมาตรฐานไว้ตั้งแต่แรก</strong>
+    ไม่ใช่เพราะคนเขียน library ไปเพิ่มโค้ดรองรับมัน
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ปลั๊กจริงถ้าขาไม่ตรงรู ก็เสียบไม่เข้าให้เห็นกับตา
+    แต่ Go <strong>ไม่มีคำว่า <code>implements</code> ให้เขียนที่ไหนเลย</strong> —
+    คุณไม่ได้ประกาศตรงไหนว่า "type นี้ทำตามมาตรฐานนี้นะ" มันดูจากลายเซ็นเมธอดล้วน ๆ
+    <br>ผลคือ<strong>เขียนพลาดนิดเดียวแล้วเงียบ</strong> ผมทดสอบมาแล้วสองแบบ — ต่างกันคนละโลก:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code><span class="c">// แบบ 1 — ลายเซ็นผิด (รับ string แทน []byte) → library ฟ้องให้ ดีมาก</span>
+err=env: <strong>no parser found for field "W" of type "main.Wrong"</strong>
+
+<span class="c">// แบบ 2 — ลืมใส่ * หน้า receiver:  func (l ValRecv) UnmarshalText(...)</span>
+$ go vet ./...      <span class="c"># เงียบ</span>
+$ V_VAR=warn go run .
+V=main.ValRecv{v:<strong>""</strong>} err=<strong>&lt;nil&gt;</strong>      <span class="c">// ← ค่าหายไปเฉย ๆ ไม่มี error</span></code></pre>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>interface</dt>
+    <dd>"รูปทรงหัวปลั๊ก" — รายการเมธอดที่ type ต้องมี ไม่สนใจว่าข้างในทำอะไร ·
+    ประโยคที่เอาไปใช้ได้เลย: <em>"type นี้มันต้อง implement interface ตัวไหนถึงจะใช้กับ library นี้ได้"</em></dd>
+    <dt>implement / satisfy</dt>
+    <dd>"ทำหัวปลั๊กให้ตรงมาตรฐาน" — คือการเขียนเมธอดครบตามที่ interface กำหนด ·
+    ใน Go <strong>ไม่ต้องประกาศ ไม่มีคีย์เวิร์ด</strong> เขียนเมธอดตรงลายเซ็นก็ถือว่าเข้าเงื่อนไขทันที
+    (ศัพท์ทางการของพฤติกรรมนี้คือ <em>implicit interface</em> หรือ <em>structural typing</em>)</dd>
+    <dt>pointer receiver</dt>
+    <dd>ตัว <code>*</code> ใน <code>func (l *LogLevel) ...</code> — แปลว่าเมธอดนี้
+    <strong>แก้ค่าของตัวจริงได้</strong> · ถ้าเขียนเป็น <em>value receiver</em> (ไม่มี <code>*</code>)
+    เมธอดจะได้แค่สำเนา แก้ไปก็หายไปกับสำเนานั้น — คือผลรันแบบ 2 ข้างบนเป๊ะ ·
+    เวลาโค้ด "ไม่ error แต่ค่าไม่เข้า" ให้ถามตัวเองก่อนเลยว่า <em>"receiver เป็น pointer รึเปล่า"</em></dd>
+    <dt>parse-time validation</dt>
+    <dd>การตรวจความถูกต้อง<strong>ตั้งแต่ตอนแปลงค่าเข้ามา</strong> ไม่ใช่ตรวจทีหลัง ·
+    ประโยคที่เอาไปคุยกับ senior ได้: <em>"ค่านี้ผมทำ validation ไว้ใน UnmarshalText เลย
+    มันเลย fail ตั้งแต่ parse ไม่ต้องรอ validator"</em></dd>
+  </dl>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🎁 <strong>เกร็ด — <code>time.Time</code> ใช้ได้ ทั้งที่ README ไม่ได้ลิสต์ไว้</strong>
+    <br>ผมลอง <code>T time.Time `env:"T"`</code> แล้วตั้ง <code>T="2026-08-22T10:30:00Z"</code>
+    ได้ <code>T=2026-08-22 10:30:00 +0000 UTC (time.Time)</code>
+    <br>ทำไมถึงได้? เพราะ <code>time.Time</code> <strong>implement <code>TextUnmarshaler</code> ไว้อยู่แล้ว</strong>
+    (รับรูปแบบ RFC3339) — library ไม่ต้องรู้จักมันเป็นพิเศษเลย
+    <br>นี่คือตัวอย่างที่ดีที่สุดของคำว่า "รองรับทุก type ที่ implement <code>TextUnmarshaler</code>" —
+    มันไม่ใช่คำโฆษณา มันคือ<strong>รายชื่อที่ยาวขึ้นเองโดยที่ผู้เขียน library ไม่ต้องทำอะไร</strong>
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ไม่ตั้ง env เลย → pointer / slice / map เป็น <code>nil</code></span>
+  <p>ผมรันโดยไม่ตั้ง env สักตัวแล้วพิมพ์ออกมาดู:</p>
+  <pre style="margin:0.6rem 0"><code>D=0s (time.Duration)
+LOC=<strong>UTC</strong> (*time.Location)          <span class="c"># ← ตัวนี้ไม่เป็น nil!</span>
+UP=&lt;nil&gt; (*url.URL)
+PI=&lt;nil&gt;
+SL=[]string(nil)
+M=<strong>map[string]int(nil)</strong>
+Lvl=main.LogLevel{v:""} LvlP=&lt;nil&gt;
+T=0001-01-01 00:00:00 +0000 UTC (time.Time)</code></pre>
+  <p style="margin-bottom:0">
+    สองเรื่องที่ต้องระวัง:
+    <br>1. <strong><code>map</code> ที่ได้เป็น <code>nil map</code></strong> — อ่านได้ (คืน zero value)
+    แต่<strong>เขียนลงไปจะ panic ทันที</strong> ถ้าโค้ดคุณจะ <code>cfg.M["x"] = 1</code>
+    ต้องเช็ก <code>nil</code> ก่อนเสมอ หรือใส่ <code>envDefault</code> ให้มัน
+    <br>2. <strong><code>*time.Location</code> ไม่สม่ำเสมอกับ pointer ตัวอื่น</strong> —
+    ไม่ตั้ง env แล้วได้ <code>UTC</code> ไม่ใช่ <code>nil</code> ในขณะที่
+    <code>*url.URL</code>, <code>*int</code>, <code>*string</code> ได้ <code>nil</code> หมด
+    <br>ถ้าโค้ดคุณเช็กว่า "ถ้าเป็น nil แปลว่าผู้ใช้ไม่ได้ตั้ง" — ตรรกะนั้น<strong>ใช้กับ timezone ไม่ได้</strong>
+  </p>
+</div>
+
+<h3>zero dependency — ผมไปตรวจมาแล้ว และมันจริงยิ่งกว่าที่สไลด์บอก</h3>
+
+<p>
+  กล่องเขียวล่างสุดของสไลด์หน้า 9 เขียนว่า <em>"zero dependency — ไลบรารีนี้ไม่พึ่ง package นอกเลยสักตัว"</em>
+  <br>วิธีตรวจคือเปิด <code>go.mod</code> ของมันดูว่ามีบล็อก <code>require</code> ไหม:
+</p>
+
+<pre><code>$ cat ~/go/pkg/mod/github.com/caarlos0/env/v11@v11.4.1/go.mod
+module github.com/caarlos0/env/v11
+
+<span class="c">// v11.0.1 accidentally introduced a breaking change regarding the behavior of nil pointers.</span>
+<span class="c">// You can now chose to auto-initialize them by setting the `init` tag option.</span>
+retract v11.0.1
+
+<span class="c">// v11.2.0 accidentally introduced a breaking change regarding the behavior of nil slices of complex types.</span>
+retract v11.2.0
+
+<span class="c">// v11.3.0 merges OS environment variables with environments set with Options instead of overriding them.</span>
+retract v11.3.0
+
+go 1.18
+
+$ wc -c ~/go/pkg/mod/github.com/caarlos0/env/v11@v11.4.1/go.sum
+       <strong>0</strong> /Users/tuwanon/go/pkg/mod/github.com/caarlos0/env/v11@v11.4.1/go.sum
+<span class="c"># ได้ 0 byte — ไฟล์ว่างเปล่า ไม่มี checksum ของ dependency ให้เก็บเลย</span>
+<span class="c"># (path หลังเลข 0 คือ path ของเครื่องผม ของคุณจะเป็นชื่อ user ตัวเอง)</span></code></pre>
+
+<p>
+  <strong>ไม่มีบรรทัด <code>require</code> แม้แต่บรรทัดเดียว</strong> และ <code>go.sum</code> ขนาด <strong>0 byte</strong>
+  <br>ที่แรงกว่านั้น: ผมเปิด <code>env_test.go</code> (ไฟล์ test ขนาด 62KB) ดู import ทั้งหมด —
+  มีแค่ <code>encoding/base64</code>, <code>encoding/json</code>, <code>errors</code>, <code>fmt</code>,
+  <code>net/http</code>, <code>net/url</code>, <code>os</code>, <code>path/filepath</code>,
+  <code>reflect</code>, <code>runtime</code>, <code>strconv</code>, <code>strings</code>,
+  <code>testing</code>, <code>time</code> — <strong>standard library ล้วน ไม่มีแม้แต่ testify</strong>
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>ทำไมเรื่องนี้ถึงควรสนใจ</strong> — dependency ทุกตัวที่คุณลากเข้าโปรเจกต์คือ
+    โค้ดที่คุณไม่ได้เขียนแต่ต้องรับผิดชอบ: ต้องตามอัปเดตเวลามีช่องโหว่ ·
+    ต้องตามแก้เวลามันขัดกับ dependency ตัวอื่น · และมันดึงของอื่นตามมาอีกเป็นทอด ๆ
+    <br>library ที่พึ่งแค่ standard library แปลว่า<strong>คุณเพิ่มความเสี่ยงเข้าโปรเจกต์แค่ตัวมันเอง ไม่มีของแถม</strong>
+    <br>💡 <strong>อีกเกร็ดจาก <code>go.mod</code> ก้อนนั้น</strong>: คำว่า <code>retract</code> คือคำสั่งของ Go
+    ที่ผู้เขียนใช้ประกาศว่า <em>"เวอร์ชันนี้มีปัญหา อย่าใช้"</em> — <code>go get</code> จะข้ามมันให้เอง
+    <br>สามเวอร์ชันที่โดน retract (v11.0.1 / v11.2.0 / v11.3.0) ล้วนเป็นเรื่อง
+    <strong>พฤติกรรมของ nil pointer และ nil slice</strong> ที่เปลี่ยนไปโดยไม่ตั้งใจ —
+    ซึ่งตรงกับกล่องเตือนเรื่อง <code>nil</code> ข้างบนพอดี แปลว่ามันเป็นจุดที่<strong>ยากจริง ๆ</strong>
+    แม้แต่คนเขียน library เองยังพลาดมาแล้วสามครั้ง
+  </p>
+</div>
+
+<h2>7 · แปลง type ไม่ได้ — error หน้าตาเป็นยังไง</h2>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — กลับมาที่ <code>Config</code> ตัวเดิมจากหัวข้อ 2 แล้วตั้งค่าผิดชนิด</p>
+  <pre><code><span class="k">type</span> Config <span class="k">struct</span> {
+	AppPort         <span class="k">int</span>           `env:"APP_PORT" envDefault:"8080"`
+	ShutdownTimeout time.Duration `env:"APP_SHUTDOWN_TIMEOUT" envDefault:"10s"`
+	LogLevel        <span class="k">string</span>        `env:"LOG_LEVEL" envDefault:"DEBUG"`
+	PostgresDSN     <span class="k">string</span>        `env:"POSTGRES_DSN"`
+}
+
+<span class="c">// แล้วรัน:  APP_PORT=abc go run .</span></code></pre>
+  <p class="ask">
+    เรารู้แน่ ๆ ว่าต้องได้ <code>err != nil</code> — <strong>คำถามอยู่ที่ <code>cfg</code> ที่คืนมาคู่กับ error ต่างหาก</strong>
+    <br>· <code>AppPort</code> จะเป็นอะไร — <code>0</code> หรือ <code>8080</code> (ตกกลับไปใช้ <code>envDefault</code>)?
+    <br>· แล้ว <code>LogLevel</code> กับ <code>ShutdownTimeout</code> ที่<em>ไม่ได้มีปัญหาอะไรเลย</em>
+    จะถูกเติมค่าให้ไหม หรือ struct โดนทิ้งทั้งก้อน?
+    <br>ทายให้ตรงก่อนกดเฉลย — เพราะคำตอบข้อนี้คือ<strong>ความต่างระหว่างแอปที่พังเสียงดัง
+    กับแอปที่รันด้วย port 0</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ APP_PORT=abc go run .
+cfg=main.Config{AppPort:<strong>0</strong>, ShutdownTimeout:<strong>10000000000</strong>, LogLevel:<strong>"DEBUG"</strong>, PostgresDSN:""}
+err=env: parse error on field "AppPort" of type "int": strconv.ParseInt: parsing "abc": invalid syntax</code></pre>
+    <p>
+      <strong>คำตอบ: <code>AppPort=0</code> (zero value ไม่ใช่ 8080) ส่วน field อื่นเติมครบตามปกติ</strong>
+      <br><code>ShutdownTimeout</code> ได้ <code>10s</code> · <code>LogLevel</code> ได้ <code>"DEBUG"</code>
+      — ทั้งคู่มาจาก <code>envDefault</code> เหมือนตอนที่ทุกอย่างปกติ
+      <br>แปลว่า <strong><code>envDefault</code> ไม่ใช่ตาข่ายรองรับตอน parse พัง</strong> —
+      มันใช้แค่ตอน "ไม่มี env" เท่านั้น ถ้ามี env แต่แปลงไม่ได้ field นั้นได้ zero value
+    </p>
+    <p style="margin-bottom:0">
+      <strong>นี่คือจุดที่ต้องระวังที่สุดของบทนี้</strong> — ถ้าใครเขียนแบบนี้:
+      <br><code>cfg, _ := config.Load()</code> แล้ว <code>r.Run(fmt.Sprintf(":%d", cfg.AppPort))</code>
+      <br>คุณจะได้เซิร์ฟเวอร์ที่<strong>เปิดที่พอร์ต <code>:0</code></strong> ซึ่งระบบปฏิบัติการจะแจกพอร์ตสุ่มให้
+      แอปขึ้นสวยงาม log ไม่มี error แต่<strong>ไม่มีใครต่อเข้ามาได้เลย</strong>
+      <br>👉 <strong>กฎเหล็ก: <code>Load()</code> ต้องตามด้วย <code>if err != nil { log.Fatal(err) }</code> เสมอ</strong>
+      ไม่มีข้อยกเว้น
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">☕ เทียบให้เห็นภาพ — สั่งกาแฟที่ร้านประจำ</span>
+  <p>
+    ร้านประจำที่คุณสั่งทุกเช้ามีกติกาอยู่ข้อหนึ่ง: <strong>ถ้าไม่บอกความหวาน ร้านจะทำ "หวานปกติ" ให้</strong>
+    <br>นั่นคือ <code>envDefault</code> เป๊ะ ๆ — ไม่ตั้ง <code>APP_PORT</code> ก็ได้ <code>8080</code>
+  </p>
+  <p>
+    ทีนี้ลองสั่งว่า <em>"เอาหวาน 300%"</em> ซึ่งเป็นคำสั่งที่ร้านทำไม่ได้
+    <br>คำถามคือ ร้านจะ<strong>ย้อนกลับไปทำหวานปกติให้ไหม</strong>? — <strong>ไม่</strong>
+    ร้านยื่น<strong>แก้วเปล่า</strong>มาให้พร้อมใบแจ้งว่า "รายการนี้ทำไม่ได้"
+    <br>นี่คือผลรันข้างบนทั้งดุ้น: <code>APP_PORT=abc</code> → ได้ <code>AppPort:0</code>
+    (แก้วเปล่า) คู่กับ <code>err=...invalid syntax</code> (ใบแจ้ง) —
+    <strong><code>envDefault</code> ทำงานเฉพาะตอน "ไม่ได้สั่ง" ไม่ใช่ตอน "สั่งแล้วทำไม่ได้"</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สองข้อที่ทำให้ของจริงอันตรายกว่าเยอะ —
+    (1) ที่ร้าน คุณเห็นแก้วเปล่าด้วยตาทันทีและไม่มีทางเผลอยกดื่ม แต่ <code>AppPort</code> ที่เป็น
+    <code>0</code> <strong>หน้าตาเหมือนเลขปกติทุกอย่าง</strong> ·
+    (2) ที่ร้าน ใบแจ้งถูกยื่นมาให้แน่ ๆ แต่ในโค้ด ถ้าเขียน <code>cfg, _ := config.Load()</code>
+    <strong>คุณโยนใบแจ้งทิ้งด้วยมือตัวเองตั้งแต่บรรทัดแรก</strong>
+    <br>แล้ว "แก้วเปล่า" ใบนั้นก็<em>ใช้งานได้จริง</em>ด้วย — ผมลองสั่งฟังพอร์ต <code>:0</code> ดู:
+  </p>
+  <pre style="margin:0.6rem 0 0"><code>$ go run .        <span class="c">// net.Listen("tcp", ":0")</span>
+listening on <strong>[::]:59055</strong>      <span class="c">// ← ระบบแจกพอร์ตสุ่มให้ ไม่มี error สักตัว</span></code></pre>
+</div>
+
+<p>อีกเคสที่มือใหม่พลาดบ่อยมาก — ลืมใส่หน่วยให้ <code>time.Duration</code>:</p>
+
+<pre><code>$ APP_SHUTDOWN_TIMEOUT=10 go run .
+cfg=main.Config{AppPort:8080, ShutdownTimeout:<strong>0</strong>, LogLevel:"DEBUG", PostgresDSN:""}
+err=env: parse error on field "ShutdownTimeout" of type "time.Duration": <strong>unable to parse duration: time: missing unit in duration "10"</strong></code></pre>
+
+<p>
+  เขียน <code>10</code> คิดว่าเป็น "10 วินาที" — ต้องเขียน <code>10s</code>
+  <br>สังเกตว่าข้อความ error ก้อนนี้<strong>ห่อกันสามชั้น</strong>:
+  <code>env:</code> (ของ library) → <code>parse error on field "ShutdownTimeout"</code> (ชื่อ field ที่พัง) →
+  <code>time: missing unit</code> (ข้อความจาก <code>time.ParseDuration</code> ของ standard library
+  ซึ่งเป็นตัวเดียวกับที่<a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> เจอ)
+  <br>ทั้งสามชั้นบอกคนละอย่างที่จำเป็นทั้งหมด: <em>ใครฟ้อง · field ไหน · เพราะอะไร</em>
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>zero value</dt>
+    <dd>"แก้วเปล่า" — ค่าเริ่มต้นที่ Go ใส่ให้ทุกตัวแปรที่ยังไม่ได้กำหนดค่า
+    (<code>int</code> → <code>0</code> · <code>string</code> → <code>""</code> ·
+    pointer/slice/map → <code>nil</code>) · ข้อควรระวังคือมัน<strong>แยกไม่ออกจากค่าจริงที่บังเอิญเป็น 0</strong> ·
+    ประโยคที่เอาไปใช้ได้: <em>"ตรงนี้ 0 มันคือ zero value หรือคือค่าที่ผู้ใช้ตั้งมาจริง ๆ"</em></dd>
+    <dt>error wrapping</dt>
+    <dd>การ<strong>ห่อ error เดิมไว้ข้างในแล้วเติมบริบทของตัวเอง</strong> — คือ <code>%w</code>
+    ใน <code>fmt.Errorf("APP_PORT: %w", err)</code> ที่โผล่ในโค้ดหัวข้อ 1 นั่นแหละ ·
+    ข้อความสามชั้นข้างบนคือผลของการห่อสองรอบ · ประโยคที่ใช้ได้เลย:
+    <em>"error ตัวนี้ wrap มากี่ชั้น ข้างในสุดมันคือ error ตัวไหน"</em></dd>
+    <dt>blank identifier (<code>_</code>)</dt>
+    <dd>ขีดล่างที่ใช้ทิ้งค่าที่ไม่อยากรับ · <code>cfg, _ := config.Load()</code> แปลว่า
+    <strong>"โยน error ทิ้ง"</strong> ไม่ใช่ "ไม่มี error" · ตอนรีวิวโค้ดจะได้ยินประโยคนี้บ่อยมาก:
+    <em>"อย่ากลืน error ด้วย <code>_</code> นะ"</em> (ภาษาอังกฤษเรียกอาการนี้ว่า
+    <em>swallowing the error</em>)</dd>
+  </dl>
+</div>
+
+<h3>ผิดหลายจุดพร้อมกัน — <code>env.AggregateError</code></h3>
+
+<p>
+  ถ้าเขียนเองด้วย <code>os.Getenv</code> แบบหัวข้อ 1 พอเจอ error แรกก็ <code>return</code> ทันที
+  คุณจะแก้ทีละตัว รันใหม่ทีละรอบ
+  <br><code>caarlos0/env</code> ทำคนละแบบ — ผมทดสอบด้วย struct ที่ผิดพร้อมกันสามจุด:
+</p>
+
+<pre><code><span class="k">type</span> Multi <span class="k">struct</span> {
+	A <span class="k">string</span> `env:"M_A,required"`   <span class="c">// ไม่ตั้ง</span>
+	B <span class="k">string</span> `env:"M_B,required"`   <span class="c">// ไม่ตั้ง</span>
+	C <span class="k">int</span>    `env:"M_C"`            <span class="c">// ตั้งเป็น notanint</span>
+}</code></pre>
+
+<pre><code>$ M_C=notanint go run .
+[multi errors] err=env: required environment variable "M_A" is not set<strong>;</strong> required environment variable "M_B" is not set<strong>;</strong> parse error on field "C" of type "int": strconv.ParseInt: parsing "notanint": invalid syntax
+
+    type=<strong>env.AggregateError</strong>
+    inner[0] env.VarIsNotSetError: required environment variable "M_A" is not set
+    inner[1] env.VarIsNotSetError: required environment variable "M_B" is not set
+    inner[2] env.ParseError: parse error on field "C" of type "int": strconv.ParseInt: parsing "notanint": invalid syntax</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>มันไม่ใช่ fail fast — มันบอกทุกปัญหาพร้อมกัน คั่นด้วย <code>"; "</code></strong>
+    <br>ประโยชน์ตรง ๆ: คนที่เพิ่งเข้าทีมรันครั้งเดียวก็รู้ว่าต้องตั้ง env อะไรบ้างครบทุกตัว
+    แทนที่จะแก้ทีละตัวรันใหม่สามรอบ
+    <br>ถ้าอยากจัดการ error ทีละตัวในโค้ด ทำได้สองทาง:
+    <br>· type assert เป็น <code>env.AggregateError</code> แล้ววนลูป field <code>.Errors</code>
+    <br>· ใช้ <code>errors.As</code> กับชนิดที่ต้องการ — สี่ตัวที่เจอบ่อยที่สุดคือ:
+    <code>env.VarIsNotSetError</code> · <code>env.EmptyVarError</code> ·
+    <code>env.ParseError</code> · <code>env.LoadFileContentError</code>
+    <br>(ไม่ได้มีแค่สี่ตัวนะ — v11.4.1 export ชื่อที่ลงท้ายด้วย <code>Error</code> ไว้ <strong>11 ชื่อ</strong>
+    ผมนับจากซอร์สจริง ในนั้นมี 2 ชื่อที่เป็น alias คือ <code>EnvVarIsNotSetError</code>
+    กับ <code>EmptyEnvVarError</code> ที่ชี้ไปตัวเดียวกับสองตัวแรกในลิสต์)
+  </p>
+</div>
+
+<h2>8 · สรุปสิ่งที่บทนี้ปิดไป และสิ่งที่ยังค้าง</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ปัญหาที่บทเรียน 44 ตั้งไว้</th><th><code>caarlos0/env</code> แก้ให้ไหม</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>พิมพ์ชื่อ env ผิดไม่มีใครเตือน</td>
+      <td>⚠️ <strong>แก้ได้ครึ่งเดียว</strong> — ชื่ออยู่ที่เดียวใน struct จึงตรวจด้วยตาง่ายขึ้นมาก
+      แต่ถ้าพิมพ์ผิดใน tag ก็ยังเงียบเหมือนเดิม เว้นแต่จะใส่ <code>,required</code></td>
+    </tr>
+    <tr><td>แปลง type เองทุกที่</td><td>✅ แก้ครบ — ประกาศชนิดที่ field แล้วจบ</td></tr>
+    <tr><td>default กระจัดกระจาย</td><td>✅ แก้ครบ — <code>envDefault</code> ติดกับ field</td></tr>
+    <tr><td>ไม่มีที่ไหนบอกว่าแอปต้องการอะไร</td><td>✅ แก้ครบ — เปิด struct เดียวเห็นครบทั้งชื่อ ชนิด และ default</td></tr>
+    <tr>
+      <td>ระเบิดกลางทาง ไม่ใช่ตอน start</td>
+      <td>⚠️ <strong>ยังไม่ครบ</strong> — <code>,required</code> ช่วยได้ระดับ "มีตัวแปรไหม"
+      แต่ไม่ได้ตรวจว่า <em>ค่าที่ได้ใช้ได้จริงไหม</em> (พอร์ต 70000 · URL ที่ไม่ใช่ URL) → เป็นงานของ
+      <a href="./0047-validate-at-start.html">บทเรียน 47</a></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>📌 แล้ววันนี้ยังเหลืออะไรอีก</strong>
+    <br>บทนี้ทำให้ <em>อ่าน env เข้ามาเป็น struct</em> ได้แล้ว แต่ยังมีสองช่องว่าง:
+    <br>· <strong>ตอน dev ใครจะเป็นคนตั้ง env ให้</strong> — จะพิมพ์
+    <code>APP_PORT=... POSTGRES_DSN=... go run .</code> ทุกครั้งคงไม่ไหว →
+    <a href="./0046-dotenv-godotenv.html">บทเรียน 46</a> (<code>.env</code> + <code>godotenv</code>)
+    <br>· <strong>ค่าที่อ่านเข้ามาแล้ว ใช้ได้จริงหรือเปล่า</strong> — <code>APP_PORT=99999</code>
+    แปลงเป็น <code>int</code> ผ่านฉลุย แต่มันไม่ใช่พอร์ตที่มีอยู่จริง →
+    <a href="./0047-validate-at-start.html">บทเรียน 47</a> (<code>validator/v10</code>)
+    <br>· แล้วเอาทั้งสามตัวมาประกอบเป็น <code>internal/config</code> ก้อนเดียวใน
+    <a href="./0048-internal-config.html">บทเรียน 48</a>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. เขียน <code>Both string `env:"MYVAR,required" envDefault:"fallback"`</code> แล้วรันโดย<strong>ไม่ตั้ง <code>MYVAR</code></strong> — ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">error <code>required environment variable "MYVAR" is not set</code> เพราะ <code>required</code> แรงกว่า <code>envDefault</code> เสมอ</button>
+    <button class="opt">ได้ error พร้อมกับค่า <code>"fallback"</code> — library เติม default ให้แล้วยังฟ้องด้วยว่าขาด</button>
+    <button class="opt">ได้ <code>value="fallback"</code> กับ <code>err=&lt;nil&gt;</code> — <code>envDefault</code> ชนะ <code>,required</code> ไม่มีผลอะไรเลย</button>
+    <button class="opt">คอมไพล์ไม่ผ่าน เพราะ <code>required</code> กับ <code>envDefault</code> ขัดกัน Go เลยไม่ยอมให้เขียนคู่กัน</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>[A required+envDefault] value="fallback" err=&lt;nil&gt;</code>
+    <br>เทียบกับ struct ที่มี <code>,required</code> เปล่า ๆ ในการรันรอบเดียวกัน:
+    <code>[B required only] value="" err=env: required environment variable "MYVAR2" is not set</code>
+    — เห็นชัดว่าตัวที่มี <code>envDefault</code> เท่านั้นที่เงียบ
+    <br>เหตุผลอยู่ในซอร์ส <code>env.go</code>: บรรทัด 613 เช็ก <code>Required &amp;&amp; !exists</code>
+    ส่วน <code>getOr</code> บรรทัด 648 คืน <code>exists = true</code> ทุกครั้งที่มี default —
+    เงื่อนไขนั้นจึง<strong>ไม่มีทางเป็นจริง</strong>
+    <br>ตัวเลือกที่ 4 ผิดเพราะ struct tag เป็นแค่สตริง compiler ไม่ได้อ่านความหมายของมันเลย
+    <br><strong>จุดที่ต้องจำ:</strong> field ไหนบังคับ ห้ามใส่ <code>envDefault</code> —
+    และ <code>notEmpty</code> คู่กับ <code>envDefault</code> ก็โดนกลบแบบเดียวกันเป๊ะ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. เขียน <code>OnlyRequired string `env:"MYVAR2,required"`</code> (ไม่มี <code>envDefault</code>) แล้วรัน <code>MYVAR2= go run .</code> คือ<strong>ตั้งตัวแปรไว้แต่ให้ค่าว่าง</strong> — ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ผ่านฉลุย <code>value="" err=&lt;nil&gt;</code> เพราะ <code>,required</code> เช็กแค่ว่า "มีตัวแปรนี้ไหม" ไม่ได้ดูว่าค่าว่างหรือเปล่า</button>
+    <button class="opt">error <code>should not be empty</code> เพราะค่าว่างถือว่าไม่ผ่าน <code>required</code></button>
+    <button class="opt">error <code>required environment variable "MYVAR2" is not set</code> เหมือนกับตอนไม่ได้ตั้งเลย</button>
+    <button class="opt">ได้ error สองตัวพร้อมกัน ทั้ง <code>is not set</code> และ <code>should not be empty</code></button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงของ <code>MYVAR2= go run .</code> คือ <code>[B required only] value="" err=&lt;nil&gt;</code>
+    <br>เทียบกับตอน<strong>ไม่ตั้งเลย</strong> ซึ่งได้ <code>err=env: required environment variable "MYVAR2" is not set</code>
+    — สองสถานะนี้ต่างกันจริง ๆ
+    <br>ตรงนี้คือความต่างระหว่าง <code>os.LookupEnv</code> กับ <code>os.Getenv</code>
+    ที่<a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> พิสูจน์ไว้เป๊ะ ๆ:
+    "ตั้งเป็นค่าว่าง" กับ "ไม่ได้ตั้ง" เป็นคนละสถานะ และ <code>,required</code> เลือกดูแค่สถานะแรก
+    <br>ซอร์สยืนยัน: <code>env.go</code> บรรทัด 613 เขียนว่า <code>Required &amp;&amp; !exists</code> — มีแต่คำว่า
+    <code>exists</code> ไม่มีการเทียบค่ากับสตริงว่างเลย
+    <br>ตัวเลือกที่ 2 คือผลของ <code>,notEmpty</code> ต่างหาก
+    <br><strong>ทำไมถึงอันตราย:</strong> ใน <code>docker-compose.yml</code> การเขียน
+    <code>POSTGRES_DSN=</code> ลืมใส่ค่า หรืออ้าง <code>${DB_URL}</code> ที่ไม่มีอยู่
+    ทำให้เกิด "ตัวแปรมีอยู่แต่ค่าว่าง" ได้ง่ายมาก · อยากกันจริงต้องเขียน
+    <code>`env:"X,required,notEmpty"`</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. <code>Config</code> มีสี่ field ที่มี <code>envDefault</code> อยู่สามตัว แล้วรัน <code>APP_PORT=abc go run .</code> — <code>cfg</code> ที่คืนมาคู่กับ error หน้าตาเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">struct ว่างเปล่าทั้งก้อน ทุก field เป็น zero value เพราะ parse ล้มเหลว library เลยทิ้งผลทั้งหมด</button>
+    <button class="opt">ทุก field เติมครบรวมทั้ง <code>AppPort</code> ที่ตกกลับไปใช้ <code>envDefault</code> คือ <code>8080</code></button>
+    <button class="opt"><code>ParseAs</code> คืนแค่ <code>error</code> ตัวเดียว ไม่มี struct คืนมาให้เมื่อ parse ไม่สำเร็จ</button>
+    <button class="opt"><code>AppPort=0</code> (zero value ไม่ใช่ 8080) ส่วน <code>ShutdownTimeout=10s</code> และ <code>LogLevel="DEBUG"</code> ถูกเติมครบตามปกติ</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง:
+    <code>cfg=main.Config{AppPort:0, ShutdownTimeout:10000000000, LogLevel:"DEBUG", PostgresDSN:""}</code>
+    พร้อม <code>err=env: parse error on field "AppPort" of type "int": strconv.ParseInt: parsing "abc": invalid syntax</code>
+    <br>ตัวเลือกที่ 2 คือจุดที่คนเข้าใจผิดกันมากที่สุด — <strong><code>envDefault</code> ไม่ใช่ตาข่ายรองรับตอน parse พัง</strong>
+    มันทำงานเฉพาะกรณี "ไม่มี env" เท่านั้น พอมี env แต่แปลงไม่ได้ field นั้นได้ zero value
+    <br>ตัวเลือกที่ 3 ผิดเพราะ <code>ParseAs</code> คืน <code>(Config, error)</code> เสมอ —
+    และนี่แหละคือปัญหา เพราะ struct ที่คืนมา<em>ดูใช้ได้</em>
+    <br><strong>อันตรายจริงอยู่ที่:</strong> ถ้าเขียน <code>cfg, _ := config.Load()</code>
+    แล้วเปิดเซิร์ฟเวอร์ที่ <code>cfg.AppPort</code> คุณจะได้พอร์ต <code>:0</code>
+    ซึ่งระบบแจกพอร์ตสุ่มให้ · แอปขึ้นสวย log ไม่มี error แต่ไม่มีใครต่อเข้ามาได้
+    <br><code>Load()</code> ต้องตามด้วย <code>if err != nil { log.Fatal(err) }</code> เสมอ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. struct มีสาม field ที่ผิดพร้อมกัน (<code>M_A,required</code> ไม่ตั้ง · <code>M_B,required</code> ไม่ตั้ง · <code>M_C int</code> ตั้งเป็น <code>notanint</code>) — <code>err</code> ที่ได้เป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">fail fast — คืน error ของ <code>M_A</code> ตัวแรกที่เจอแล้วหยุด ที่เหลือต้องแก้แล้วรันใหม่ทีละรอบ</button>
+    <button class="opt">เป็น <code>env.AggregateError</code> ที่รวมทั้งสามปัญหาไว้ในข้อความเดียว คั่นด้วย <code>"; "</code> และเจาะดูทีละตัวได้</button>
+    <button class="opt">คืน error ของตัวสุดท้าย (<code>M_C</code>) เพราะแต่ละรอบเขียนทับตัวก่อนหน้า</button>
+    <button class="opt">คืนเป็น <code>[]error</code> ตรง ๆ ทำให้เสีย signature <code>(Config, error)</code> ไป</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง:
+    <code>err=env: required environment variable "M_A" is not set; required environment variable "M_B" is not set; parse error on field "C" of type "int": strconv.ParseInt: parsing "notanint": invalid syntax</code>
+    <br>และเมื่อ type assert เป็น <code>env.AggregateError</code> แล้ววน <code>.Errors</code> ได้สามตัว:
+    <code>env.VarIsNotSetError</code> · <code>env.VarIsNotSetError</code> · <code>env.ParseError</code>
+    <br>ตัวเลือกที่ 4 ผิดตรงที่ <code>AggregateError</code> เป็น type ที่ implement <code>error</code> อยู่แล้ว —
+    signature ยังเป็น <code>(Config, error)</code> เหมือนเดิม แค่ข้างในมี <code>.Errors</code> ให้เจาะ
+    <br><strong>ทำไมถึงมีค่ากับคุณจริง ๆ:</strong> คนที่เพิ่งเข้าทีม
+    รันครั้งเดียวก็เห็นครบว่าต้องตั้ง env อะไรบ้าง แทนที่จะแก้ทีละตัวรันใหม่สามรอบ —
+    ซึ่งเป็นสิ่งที่โค้ด <code>os.Getenv</code> เขียนมือในหัวข้อ 1 ทำไม่ได้ เพราะมัน <code>return</code> ทันทีที่เจอ error แรก</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — สร้างกับดักด้วยมือตัวเองก่อน แล้วค่อยแก้</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำให้ <code>ParseAs</code> รันผ่าน" (อันนั้นง่ายเกินไป) —
+    เป้าหมายคือ<strong>ทำให้คุณเห็นกับดักด้วยตาตัวเอง จนจำได้โดยไม่ต้องท่อง</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งโปรเจกต์:</strong> สร้างโฟลเดอร์ใหม่ · <code>go mod init envdemo</code> ·
+        <code>go get github.com/caarlos0/env/v11@v11.4.1</code>
+        <br>ก๊อป <code>Config</code> สี่ field จากหัวข้อ 2 มาวาง แล้วพิมพ์ผลด้วย <code>%#v</code></li>
+    <li><strong>รันสองรอบ:</strong> ไม่ตั้ง env เลย · แล้วตั้งครบทั้งสี่ตัว
+        <br><strong>ยืนยันด้วยตาว่า <code>ShutdownTimeout</code> พิมพ์ออกมาเป็นเลขนาโนวินาที</strong>
+        แล้วลองเปลี่ยนเป็น <code>%v</code> ดูว่ามันเปลี่ยนเป็น <code>10s</code> จริงไหม</li>
+    <li><strong>ทำกับดักข้อ 1 ให้เห็นเอง:</strong> เพิ่ม field
+        <code>`env:"MYVAR,required" envDefault:"fallback"`</code> เข้าไป แล้วรันโดยไม่ตั้ง <code>MYVAR</code>
+        <br><strong>ต้องได้ <code>err=&lt;nil&gt;</code> กับค่า <code>"fallback"</code></strong> —
+        ถ้าได้ error แปลว่าคุณลืมใส่ <code>envDefault</code></li>
+    <li><strong>ทำกับดักข้อ 2:</strong> เพิ่มอีก field ที่มีแค่ <code>,required</code> เปล่า ๆ
+        แล้วรันสองแบบ — <code>go run .</code> กับ <code>MYVAR2= go run .</code>
+        <br><strong>ตอบให้ได้ว่าทำไมแบบที่สองถึงไม่ error ทั้งที่ค่าว่างเปล่า</strong></li>
+    <li><strong>แก้กับดักทั้งสอง:</strong> เปลี่ยนเป็น <code>`env:"MYVAR2,required,notEmpty"`</code>
+        แล้วลบ <code>envDefault</code> ออกจาก field ที่บังคับ · รันซ้ำทั้งสองแบบ
+        <br><strong>คราวนี้ต้อง error ทั้งสองแบบ</strong> ด้วยข้อความคนละอันกัน — จดไว้ว่าคนละอันยังไง</li>
+    <li><strong>กับดัก <code>,file</code>:</strong> สร้าง secret ด้วย
+        <code>echo "s3cr3t" &gt; /tmp/sec.txt</code> แล้วอ่านด้วย <code>`env:"F_VAR,file"`</code>
+        <br>พิมพ์ผลด้วย <code>%q</code> แล้ว<strong>ดูให้เห็น <code>\n</code> ท้ายค่า</strong>
+        <br>จากนั้นสร้างใหม่ด้วย <code>printf '%s' "s3cr3t" &gt; /tmp/sec2.txt</code> แล้วเทียบกัน</li>
+    <li><strong>ทำให้มันตายตอน start:</strong> เขียน <code>main()</code> ที่เรียก
+        <code>cfg, err := config.Load()</code> แล้ว <code>log.Fatal(err)</code> ถ้า err ไม่ nil
+        <br>รัน <code>APP_PORT=abc go run .</code> — <strong>เทียบสองแบบ</strong>:
+        แบบที่เช็ก err (ตายทันที) กับแบบที่ใช้ <code>_</code> แล้วเอา <code>cfg.AppPort</code> ไปใช้ต่อ</li>
+    <li><strong>ท้าทาย — เขียน type ของตัวเอง:</strong> ทำ <code>type LogLevel string</code>
+        พร้อมเมธอด <code>UnmarshalText</code> ที่รับแค่ <code>DEBUG/INFO/WARN/ERROR</code>
+        (แปลงเป็นตัวใหญ่ให้ด้วย) แล้วเปลี่ยน field <code>LogLevel</code> มาใช้ชนิดนี้
+        <br>รัน <code>LOG_LEVEL=verbose go run .</code> แล้ว<strong>ดูว่าข้อความที่คุณเขียนเอง
+        ไปโผล่ในข้อความ error ของ library ตรงไหน</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 5 — error สองอันต่างกันยังไง</button>
+  <div class="answer">
+    <p>ผลรันจริงของ <code>`env:"MYVAR2,required"`</code> (แบบยังไม่ใส่ <code>notEmpty</code>) สองสถานะ:</p>
+    <pre style="margin:0.6rem 0"><code><span class="c"># ไม่ตั้งเลย</span>
+err=env: <strong>required environment variable "MYVAR2" is not set</strong>
+    → ข้างในเป็น env.VarIsNotSetError
+
+<span class="c"># ตั้งเป็นค่าว่าง — MYVAR2= go run .</span>
+err=<strong>&lt;nil&gt;</strong>          <span class="c"># ผ่าน! นี่คือช่องโหว่</span></code></pre>
+    <p>พอเพิ่ม <code>,notEmpty</code> เข้าไป สถานะที่สองถึงจะโดนจับ — ข้อความคนละอันชัดเจน:</p>
+    <pre style="margin:0.6rem 0"><code>err=env: environment variable "NE_VAR" <strong>should not be empty</strong>
+    → ข้างในเป็น env.EmptyVarError</code></pre>
+    <p style="margin-bottom:0">
+      <strong>สองข้อความนี้ตอบคนละคำถาม</strong> และนั่นคือเหตุผลที่ต้องใส่ทั้งคู่:
+      <br>· <code>is not set</code> (<code>env.VarIsNotSetError</code>) = <em>ลืมประกาศ</em> —
+      มักเกิดตอนคนใหม่เข้าทีมแล้วยังไม่ได้ตั้ง env
+      <br>· <code>should not be empty</code> (<code>env.EmptyVarError</code>) = <em>ประกาศแล้วแต่ลืมใส่ค่า</em> —
+      มักเกิดใน <code>docker-compose.yml</code> หรือ CI ที่ตัวแปรถูกสร้างจากตัวแปรอื่นที่ไม่มีอยู่
+      <br>ถ้าใส่แค่ <code>,required</code> ตัวเดียว คุณจับได้แค่กรณีแรก — และกรณีที่สอง
+      <strong>จะทำให้แอปคุณต่อ database ด้วย DSN ว่างเปล่า</strong> ซึ่งเป็นเคสเดียวกับที่
+      <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44</a> พิสูจน์ว่า
+      <code>sql.Open</code> คืน <code>&lt;nil&gt;</code> แล้วไปพังตอน <code>Ping</code>
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 8 คือข้อที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong> —
+    เพราะเมื่อคุณเขียน <code>UnmarshalText</code> เองสำเร็จหนึ่งครั้ง
+    คำว่า "รองรับทุก type ที่ implement <code>encoding.TextUnmarshaler</code>"
+    จะเลิกเป็นคำโฆษณาที่อ่านผ่าน ๆ แล้วกลายเป็น<strong>ประตูที่คุณเปิดเองได้</strong>
+    <br>ถ้ารันแล้ว output ไม่ตรงกับในบทนี้ <strong>ส่งมาได้เลย</strong> —
+    ทุกบรรทัดในหน้านี้วัดบน <strong>Go 1.26.5 darwin/arm64</strong> กับ
+    <strong><code>caarlos0/env/v11</code> v11.4.1</strong>
+    และเลขบรรทัดของซอร์ส (<code>env.go</code> บรรทัด 613 / 617 / 648) ก็เป็นของเวอร์ชันนั้น
+    ถ้าคุณใช้เวอร์ชันอื่น เลขบรรทัดจะขยับ แต่ตรรกะยังเหมือนเดิม
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="../../day-8/lessons/0044-env-config.html">← บทเรียน 44</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0046-dotenv-godotenv.html">บทเรียน 46 → .env กับ godotenv</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://github.com/caarlos0/env">github.com/caarlos0/env</a> — README ตัวจริง · <strong>อ่านหัวข้อ "Caveats" ให้ครบ</strong> เพราะมันลิสต์พฤติกรรมที่คนคาดไม่ถึงไว้หลายข้อ</li>
+  <li><a href="https://pkg.go.dev/github.com/caarlos0/env/v11">pkg.go.dev — <code>caarlos0/env/v11</code></a> — <strong>ดูรายชื่อ error type ให้ครบ</strong> — ในซอร์ส v11.4.1 มีชื่อที่ลงท้ายด้วย <code>Error</code> ทั้งหมด 11 ชื่อ สี่ตัวที่เจอบ่อยคือ (<code>VarIsNotSetError</code>, <code>EmptyVarError</code>, <code>ParseError</code>, <code>LoadFileContentError</code>) และ <code>AggregateError</code> ที่ห่อทั้งหมดไว้</li>
+  <li><a href="https://pkg.go.dev/encoding#TextUnmarshaler">pkg.go.dev — <code>encoding.TextUnmarshaler</code></a> — interface เมธอดเดียวที่ทำให้ type ของคุณเข้ากับ library นี้ได้ (และกับ <code>encoding/json</code> ด้วย)</li>
+  <li><a href="https://pkg.go.dev/time#ParseDuration">pkg.go.dev — <code>time.ParseDuration</code></a> — ตัวที่ทำงานอยู่เบื้องหลัง <code>time.Duration</code> field · <strong>ไม่มีหน่วย <code>d</code> สำหรับวัน</strong> อยากได้ 1 วันต้องเขียน <code>24h</code></li>
+  <li><a href="https://pkg.go.dev/reflect">pkg.go.dev — <code>reflect</code></a> — กลไกที่ library ใช้ส่อง struct tag ตอนรัน · อ่านเพื่อเข้าใจว่าทำไม tag ที่พิมพ์ผิดถึงเงียบสนิท</li>
+  <li><a href="https://go.dev/ref/mod#go-mod-file-retract">Go Modules Reference — <code>retract</code></a> — คำสั่งที่เจอใน <code>go.mod</code> ของ library นี้สามบรรทัด อธิบายว่าผู้เขียนถอนเวอร์ชันที่มีปัญหายังไง</li>
+  <li><a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44 — Configuration &amp; Environment Variables</a> — โจทย์ทั้งหมดที่บทนี้มาตอบ · <strong>ถ้ายังไม่ชัดว่า "ค่าว่าง" กับ "ไม่ได้ตั้ง" ต่างกันยังไง ให้กลับไปอ่านหัวข้อ 4 ของบทนั้นก่อน</strong></li>
+  <li><a href="https://12factor.net/config">The Twelve-Factor App — III. Config</a> — ต้นทางของแนวคิด "config อยู่ใน environment"</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

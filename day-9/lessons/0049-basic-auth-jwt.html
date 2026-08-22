@@ -1,0 +1,1294 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 49 — จาก Basic Auth ถึง JWT</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 49 · Day 9 · Auth</p>
+  <h1>จาก Basic Auth ถึง JWT</h1>
+  <p class="meta">~25 นาที · ต้องมี: <a href="../../day-8/lessons/0034-http-status-code.html">บทเรียน 34</a> (status code) · <a href="../../day-8/lessons/0035-query-body-header.html">บทเรียน 35</a> (HTTP header) · <a href="../../day-8/lessons/0041-swagger-swaggo.html">บทเรียน 41</a> (Swagger annotation — ใช้ตอนท้ายบท)</p>
+  <p class="standfirst">
+    บทนี้มาจาก<strong>สไลด์ Day 9 หน้า 29–34</strong> ซึ่งไล่จากคำถามว่า
+    <em>Authentication ต่างจาก Authorization ยังไง</em> → <strong>Basic Auth</strong> → <strong>JWT</strong>
+    <br>สิ่งที่ผมจะทำในบทนี้คือ<strong>ถอดของจริงออกมาให้ดูทุกชิ้น</strong>:
+    ถอด header ของ Basic Auth กลับเป็นรหัสผ่าน ·
+    ถอด payload ของ JWT ตัวที่อยู่ในสไลด์<strong>โดยไม่ใช้ secret เลย</strong> ·
+    แล้วลองยิงโจมตีแบบ <code>alg=none</code> ใส่โปรแกรมของตัวเอง
+    <br><strong>มีสามจุดที่ผลรันจริงไม่ตรงกับที่คนมักสอนกัน</strong> —
+    <code>r.BasicAuth()</code> คืน <code>ok=true</code> ทั้งที่รหัสผ่านผิด ·
+    JWT ที่<em>ไม่มี</em> <code>exp</code> ผ่าน <code>jwt.Parse</code> ได้สบาย ๆ ·
+    และ secret ของ token ตัวอย่างในสไลด์ไม่ใช่ค่าที่คนส่วนใหญ่เขียนกัน
+    ผมจะชี้ให้ดูทีละจุดพร้อมผลรัน
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ — ทุก output ในหน้านี้มาจากการรันจริงบน</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+github.com/golang-jwt/jwt/v5 v5.3.1
+openssl / base64 ของ macOS   <span class="c"># ใช้ตอนถอด token ด้วยมือ</span>
+swag v1.16.4                 <span class="c"># ใช้เฉพาะหัวข้อ 9 (Swagger)</span></code></pre>
+  <p style="margin-bottom:0">
+    ถ้าจะพิมพ์ตาม: สร้างโฟลเดอร์เปล่าใหม่ · <code>cd</code> เข้าไป · <code>go mod init jwtcheck</code>
+    · <code>go get github.com/golang-jwt/jwt/v5</code>
+    <br>หัวข้อ 2–4 (Basic Auth) ใช้แค่ <strong>standard library</strong> ไม่ต้อง <code>go get</code> อะไรเลย
+    <br><br>
+    <strong>ในบทนี้มีโปรแกรมทดสอบหกตัว</strong> อยู่คนละโฟลเดอร์ใต้ <code>cmd/</code> —
+    อย่าสับสนว่าเป็นตัวเดียวกัน:
+    <br>· <code>cmd/basic</code> — เซิร์ฟเวอร์ Basic Auth ปลอม ๆ ที่พิมพ์ header ที่ได้รับออกมา
+    <br>· <code>cmd/mine</code> — ถอด token ของสไลด์ · สร้าง JWT เอง · เคส error สามแบบ
+    <br>· <code>cmd/algnone</code> — การโจมตี <code>alg=none</code>
+    <br>· <code>cmd/confusion</code> — การโจมตี algorithm confusion (RS256 → HS256)
+    <br>· <code>cmd/extra</code> — เคส <code>exp</code> / <code>nbf</code> / <code>aud</code> / <code>iss</code> / token พังรูปแบบ
+    <br>· <code>cmd/size</code> — วัดขนาด JWT เทียบกับ session id (ใช้ในหัวข้อ 10)
+    <br><br>
+    <strong>เรื่องเลขในผลรัน:</strong> ตัวเลขที่โปรแกรมพิมพ์นำหน้าแต่ละบล็อก
+    (<code>=== 1)</code> … <code>--- 4.1 ---</code>) เป็น<strong>เลขลำดับของโปรแกรม</strong>
+    ไม่ใช่เลขหัวข้อในบทเรียน — ถ้าเห็น <code>--- 4.1 ---</code> อยู่ใต้หัวข้อ 7.1 ก็ไม่ได้พิมพ์ผิด
+  </p>
+</div>
+
+<h2>1 · Authentication ต่างจาก Authorization ยังไง</h2>
+
+<p>
+  สองคำนี้ขึ้นต้นด้วย <code>Auth</code> เหมือนกัน ย่อเหมือนกันว่า "auth" และคนใช้ปนกันตลอด
+  <br>แต่มันตอบคนละคำถาม และ<strong>เกิดคนละเวลา</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Authentication (authn)</th><th>Authorization (authz)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>ถามว่าอะไร</td>
+      <td><strong>"คุณเป็นใคร"</strong></td>
+      <td><strong>"คุณทำอะไรได้บ้าง"</strong></td>
+    </tr>
+    <tr>
+      <td>ภาษาไทย</td>
+      <td>การพิสูจน์ตัวตน</td>
+      <td>การให้สิทธิ์</td>
+    </tr>
+    <tr>
+      <td>เทียบกับชีวิตจริง</td>
+      <td>ยามดูบัตรประชาชนคุณที่ประตู — ยืนยันว่าคุณคือคนนี้จริง</td>
+      <td>บัตรพนักงานของคุณรูดเข้าชั้น 3 ได้ แต่รูดเข้าห้องเซิร์ฟเวอร์ไม่ได้</td>
+    </tr>
+    <tr>
+      <td>เกิดเมื่อไร</td>
+      <td><strong>ก่อน</strong> — ต้องรู้ก่อนว่าเป็นใคร</td>
+      <td><strong>หลัง</strong> — พอรู้ว่าเป็นใครแล้วค่อยเช็คสิทธิ์</td>
+    </tr>
+    <tr>
+      <td>HTTP status ที่ตอบกลับ<br><span style="font-size:0.9em">(ทบทวนได้ที่ <a href="../../day-8/lessons/0034-http-status-code.html">บทเรียน 34</a>)</span></td>
+      <td><code>401</code> (ยังไม่รู้ว่าคุณเป็นใคร)</td>
+      <td><code>403</code> (รู้ว่าคุณเป็นใคร แต่ห้ามเข้า)</td>
+    </tr>
+    <tr>
+      <td>ตัวอย่างในโปรเจกต์ Wongnok</td>
+      <td>ล็อกอินด้วย username/password แล้วได้ token</td>
+      <td>เจ้าของสูตรอาหารแก้สูตรตัวเองได้ · คนอื่นแก้ไม่ได้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ จุดที่สับสนที่สุด — HTTP status <code>401</code> ชื่อว่า "Unauthorized" แต่มันคือเรื่อง authentication</span>
+  <p style="margin-bottom:0">
+    ชื่อนี้ตั้งผิดมาตั้งแต่ HTTP/1.0 (RFC 1945 · พฤษภาคม 1996 · หัวข้อ 9.4) และแก้ไม่ได้แล้วเพราะโลกทั้งใบใช้ไปแล้ว
+    <br>วิธีจำที่ไม่พลาด: ดูที่ <strong>header ที่มันตอบกลับมาคู่กัน</strong> —
+    <code>401</code> ตอบ <code>WWW-Authenticate</code> มาด้วย ซึ่งแปลว่า
+    <em>"ยังไม่ได้พิสูจน์ตัวตน กรุณาล็อกอินด้วยวิธีนี้"</em>
+    <br>เดี๋ยวหัวข้อ 2 คุณจะเห็น header ตัวนี้ในผลรันจริง
+    <br>ส่วน <code>403</code> ไม่มี header อะไรเพิ่ม เพราะไม่มีอะไรให้คุณทำ — คุณคือคุณ และคุณเข้าไม่ได้
+  </p>
+</div>
+
+<p>
+  ทั้งบทนี้อยู่ฝั่ง <strong>authentication</strong> ล้วน ๆ —
+  เรากำลังหาวิธีที่ดีที่สุดที่เซิร์ฟเวอร์จะรู้ว่า request ที่วิ่งเข้ามาเป็นของใคร
+  <br>ส่วน authorization (เช็คว่า role นี้ทำอะไรได้) เป็นเรื่องของบทถัดไป
+  แต่มันจะโผล่มาแวบหนึ่งในหัวข้อ 5 ตอนที่เราเห็นคำว่า <code>"admin":true</code> อยู่ใน token
+</p>
+
+<h2>2 · Basic Auth ทำงานยังไง</h2>
+
+<p>
+  <strong>Basic Auth</strong> คือวิธีล็อกอินที่เก่าที่สุดของ HTTP กติกาสั้นมาก:
+  <br>ทุก request ที่ยิงไปหาเซิร์ฟเวอร์ ให้แนบ header ชื่อ <code>Authorization</code> ที่มีหน้าตาแบบนี้
+</p>
+
+<pre><code>Authorization: Basic &lt;base64 ของสตริง "username:password"&gt;</code></pre>
+
+<p>
+  <strong>คำว่า "ทุก request" ในประโยคข้างบนคือหัวใจของทั้งบท</strong> —
+  ไม่ใช่แค่ตอนล็อกอินครั้งแรก แต่คือ<em>ทุกครั้ง</em> ที่คุยกับเซิร์ฟเวอร์
+  <br>ผมเขียนเซิร์ฟเวอร์เล็ก ๆ ด้วย <code>httptest</code>
+  (เซิร์ฟเวอร์จำลองที่รันอยู่ในหน่วยความจำ ไม่ต้องเปิดพอร์ตจริง — รายละเอียดอยู่ในบทเรียน 40)
+  ที่พิมพ์ header ทุกอันที่ได้รับ
+  แล้วให้ client ยิงไปสามครั้งด้วย <code>req.SetBasicAuth("somchai", "p@ssw0rd")</code>:
+</p>
+
+<pre><code>req, _ := http.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, url+<span class="s">"/foods"</span>, <span class="k">nil</span>)
+req.<span class="f">SetBasicAuth</span>(<span class="s">"somchai"</span>, <span class="s">"p@ssw0rd"</span>)   <span class="c">// ฝั่ง client — ใส่ header ให้</span>
+res, err := http.DefaultClient.<span class="f">Do</span>(req)
+
+<span class="c">// ---- ฝั่ง server ----</span>
+user, pass, ok := r.<span class="f">BasicAuth</span>()               <span class="c">// แกะ header กลับมาเป็น user/pass</span></code></pre>
+
+<p>ผลรันจริง — ดูค่า <code>Authorization</code> ของทั้งสาม request ให้ดี:</p>
+
+<pre><code>$ go run ./cmd/basic
+
+&gt;&gt;&gt; request #1
+[server] GET /foods  Authorization: <strong>"Basic c29tY2hhaTpwQHNzdzByZA=="</strong>
+[server] r.BasicAuth() -&gt; user="somchai" pass="p@ssw0rd" ok=true
+[client] status=200 body=hello somchai
+
+&gt;&gt;&gt; request #2
+[server] GET /foods  Authorization: <strong>"Basic c29tY2hhaTpwQHNzdzByZA=="</strong>
+[server] r.BasicAuth() -&gt; user="somchai" pass="p@ssw0rd" ok=true
+[client] status=200 body=hello somchai
+
+&gt;&gt;&gt; request #3
+[server] GET /foods  Authorization: <strong>"Basic c29tY2hhaTpwQHNzdzByZA=="</strong>
+[server] r.BasicAuth() -&gt; user="somchai" pass="p@ssw0rd" ok=true
+[client] status=200 body=hello somchai</code></pre>
+
+<p>
+  <strong>สตริงเดิมเป๊ะ ๆ ถูกส่งซ้ำทั้งสามครั้ง</strong> —
+  ไม่มี session ไม่มี cookie ไม่มีอะไรจำ เซิร์ฟเวอร์ไม่รู้จักคุณเลยจนกว่าคุณจะบอกใหม่ทุกครั้ง
+  <br>แปลว่า<strong>รหัสผ่านของคุณเดินทางข้ามเน็ตเวิร์กทุก request</strong> ตลอดอายุการใช้งานแอป
+  ไม่ใช่แค่ตอนล็อกอิน
+</p>
+
+<div class="analogy">
+  <span class="label">🪪 เทียบให้เห็นภาพ — บัตรประชาชน กับ บัตรผู้มาติดต่อที่ล็อบบี้ตึก</span>
+  <p>
+    เวลาไปติดต่อตึกออฟฟิศ คุณยื่น<strong>บัตรประชาชน</strong>ให้ รปภ. ที่ล็อบบี้<strong>ครั้งเดียว</strong>
+    แล้วได้<strong>บัตรผู้มาติดต่อ</strong>มาห้อยคอ
+    <br>หลังจากนั้นจะขึ้นลิฟต์ · เข้าห้องประชุม · เดินกลับออกมา ก็แค่แตะบัตรใบที่ห้อยคออยู่
+    <strong>ไม่มีใครขอดูบัตรประชาชนซ้ำทุกประตู</strong>
+  </p>
+  <p>
+    <strong>Basic Auth ทำตรงข้ามกับเรื่องนี้ทั้งหมด</strong> — มันยื่น "บัตรประชาชน" (username + password ตัวจริง)
+    ให้ใหม่<em>ทุกประตู ทุกครั้งที่ขยับ</em>
+    <br>ผลรันข้างบนคือหลักฐาน: สตริง <code>Basic c29tY2hhaTpwQHNzdzByZA==</code> ก้อนเดิมเป๊ะ ๆ
+    วิ่งซ้ำครบทั้งสามรอบ ไม่มีการแลกเป็นบัตรอะไรมาถือแทนเลย
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ที่ตึกจริง คุณยื่นบัตรให้คนที่ยืนตรงหน้าคุณ มองเห็นด้วยตาว่าใครดูบ้าง
+    <br>แต่ header ตัวนี้ต้องเดินผ่าน<strong>เราเตอร์ Wi-Fi ร้านกาแฟ · เสาสัญญาณ · เครื่องของผู้ให้บริการเน็ต</strong>
+    อีกหลายทอดกว่าจะถึงเซิร์ฟเวอร์ — และถ้าเว็บเป็น <code>http://</code> ธรรมดา ทุกทอดที่ผ่านอ่านได้หมด
+    <br>หัวข้อ 3 จะพิสูจน์ให้ดูว่า "อ่านได้" ที่ว่านี่ ง่ายแค่ไหน
+  </p>
+</div>
+
+<p>และเวลารหัสผิด เซิร์ฟเวอร์ตอบแบบนี้ — สังเกต header <code>WWW-Authenticate</code> ที่พูดถึงในหัวข้อ 1:</p>
+
+<pre><code>&gt;&gt;&gt; request รหัสผิด
+[server] GET /foods  Authorization: "Basic c29tY2hhaTp3cm9uZw=="
+[server] r.BasicAuth() -&gt; user="somchai" pass="wrong" <strong>ok=true</strong>
+[client] <strong>status=401</strong> <strong>WWW-Authenticate="Basic realm=\"wongnok\""</strong> body=unauthorized</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ กับดักที่ทำให้ระบบพังจริง — <code>ok=true</code> ทั้งที่รหัสผ่านผิด</span>
+  <p>
+    อ่านบรรทัดกลางอีกรอบ: รหัสผ่านคือ <code>"wrong"</code> ซึ่งผิด แต่ <code>ok</code> เป็น <code>true</code>
+    <br>เพราะ <code>ok</code> ของ <code>r.BasicAuth()</code> <strong>ไม่ได้แปลว่า "รหัสถูก"</strong> —
+    มันแปลว่า <strong>"แกะ header สำเร็จ"</strong> เท่านั้น
+    คือมี header <code>Authorization</code> · ขึ้นต้นด้วย <code>Basic</code> · และ base64 ข้างหลังถอดได้
+    <br>ถ้าใครเขียนโค้ดแบบนี้ ระบบจะเปิดให้ใครก็ได้ที่ใส่รหัสอะไรก็ได้เข้ามา:
+  </p>
+  <pre style="margin:0.6rem 0"><code>user, pass, ok := r.<span class="f">BasicAuth</span>()
+<span class="k">if</span> ok {                       <span class="c">// ❌ ช่องโหว่เต็ม ๆ — ok ไม่ได้แปลว่ารหัสถูก</span>
+    <span class="c">// ให้ผ่าน</span>
+}</code></pre>
+  <p style="margin-bottom:0">
+    ที่ถูกต้องคือต้อง<strong>เทียบ user กับ pass เองเสมอ</strong> และควรเทียบด้วย
+    <code>subtle.ConstantTimeCompare</code> (เทียบครบทุกไบต์เสมอ ไม่หยุดกลางคัน)
+    เพื่อไม่ให้ผู้โจมตีเดารหัสจากเวลาที่ใช้ตอบ:
+  </p>
+  <pre style="margin:0.6rem 0"><code>user, pass, ok := r.<span class="f">BasicAuth</span>()
+okUser := subtle.<span class="f">ConstantTimeCompare</span>([]<span class="k">byte</span>(user), []<span class="k">byte</span>(<span class="s">"somchai"</span>)) == <span class="n">1</span>
+okPass := subtle.<span class="f">ConstantTimeCompare</span>([]<span class="k">byte</span>(pass), []<span class="k">byte</span>(<span class="s">"p@ssw0rd"</span>)) == <span class="n">1</span>
+<span class="k">if</span> !ok || !okUser || !okPass {
+    w.Header().<span class="f">Set</span>(<span class="s">"WWW-Authenticate"</span>, <span class="s">`Basic realm="wongnok"`</span>)
+    w.<span class="f">WriteHeader</span>(http.StatusUnauthorized)   <span class="c">// 401</span>
+    <span class="k">return</span>
+}</code></pre>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>ห้าคำนี้คือคำที่ dev เขาใช้เรียกของที่คุณเพิ่งเห็นในผลรัน — ใช้คำให้ตรง จะได้คำตอบที่ตรง</p>
+  <dl>
+    <dt>authentication (authn)</dt>
+    <dd>"คุณเป็นใคร" — ด่านแรก ตอบด้วย <code>401</code> เมื่อไม่ผ่าน ·
+    เวลาคุยกับ senior คนทำ auth เขาย่อว่า <em>authn</em> (อ่านว่า ออธ-เอ็น)
+    ประโยคที่เอาไปใช้ได้เลย: <em>"ตรงนี้มันพังที่ authn หรือ authz ครับ"</em>
+    ถามแบบนี้คำตอบจะแคบลงทันที ต่างจากถามว่า "ล็อกอินไม่ได้"</dd>
+
+    <dt>authorization (authz)</dt>
+    <dd>"คุณทำอะไรได้บ้าง" — ด่านหลัง ตอบด้วย <code>403</code> เมื่อไม่ผ่าน ·
+    ใช้คู่กับ authn เสมอ · <em>"เคสนี้ authn ผ่านแล้วนะ ติดที่ authz"</em>
+    แปลว่า "รู้แล้วว่าเป็นใคร แต่สิทธิ์ไม่พอ"</dd>
+
+    <dt>credential</dt>
+    <dd>คำรวมของ "ของที่ใช้ยืนยันตัวตน" — คู่ username/password · token · API key นับหมด ·
+    ใช้เวลาไม่อยากเจาะจงว่าเป็นแบบไหน: <em>"credential มันหลุดไปโผล่ใน log รึเปล่า"</em>
+    ครอบคลุมกว่าถามว่า "รหัสผ่านหลุดไหม"</dd>
+
+    <dt>realm</dt>
+    <dd>ป้ายชื่อ<strong>ขอบเขต</strong>ที่ต้องล็อกอิน — คือคำว่า <code>wongnok</code> ใน
+    <code>WWW-Authenticate: Basic realm="wongnok"</code> ที่คุณเพิ่งเห็นในผลรัน ·
+    มันบอกว่า credential ชุดนี้ใช้กับพื้นที่ไหนของเว็บ ไม่ได้มีผลต่อการตรวจรหัสเลย</dd>
+
+    <dt>constant-time comparison</dt>
+    <dd>การเทียบค่าที่<strong>ใช้เวลาเท่ากันเสมอ</strong> ไม่ว่าจะตรงตั้งแต่ตัวแรกหรือตรงหมดทุกตัว —
+    ใน Go คือ <code>subtle.ConstantTimeCompare</code> ·
+    <em>"ตรงที่เทียบ secret เนี่ย ใช้ constant-time compare รึยังครับ"</em>
+    เป็นคำถามที่ reviewer สาย security ถามเป็นคำถามแรก ๆ</dd>
+  </dl>
+</div>
+
+<h2>3 · base64 ไม่ใช่การเข้ารหัส</h2>
+
+<p>
+  สไลด์เขียนไว้ตรง ๆ ว่า <em>"Base64 ไม่ใช่การเข้ารหัส — ถอดกลับได้ง่ายมาก"</em>
+  แต่พูดเฉย ๆ ไม่พอ ต้องเห็นด้วยตา
+  <br>ก่อนอื่นนิยามให้ชัด: <strong>base64</strong> คือวิธี<em>เขียน</em>ข้อมูลใหม่ให้เหลือแค่ตัวอักษร 64 ตัว
+  (<code>A–Z</code> <code>a–z</code> <code>0–9</code> <code>+</code> <code>/</code>)
+  เกิดมาเพื่อให้ข้อมูลที่มีอักขระแปลก ๆ เดินทางผ่าน HTTP header ได้ปลอดภัย
+  <br><strong>มันไม่ต้องใช้กุญแจ ไม่มีความลับอะไรในตัวมันเลย</strong> — ใครก็แปลงกลับได้
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — นี่คือค่าที่ผมดักได้จาก header ในหัวข้อ 2 ตรง ๆ</p>
+  <pre><code>Authorization: Basic <strong>c29tY2hhaTpwQHNzdzByZA==</strong></code></pre>
+  <p class="ask">
+    ถ้าผมเอาส่วนที่เป็นตัวหนาไปสั่ง <code>base64 -d</code> <strong>โดยไม่มีกุญแจอะไรเลย</strong> —
+    จะได้อะไรออกมา?
+    <br>แล้วคำถามที่สำคัญกว่า: <strong>ถ้ามีคนนั่งดักดูทราฟฟิกอยู่ที่ Wi-Fi ร้านกาแฟ เขาได้อะไรไป?</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ printf '%s' 'somchai:p@ssw0rd' | base64
+c29tY2hhaTpwQHNzdzByZA==
+
+$ echo 'c29tY2hhaTpwQHNzdzByZA==' | base64 -d
+<strong>somchai:p@ssw0rd</strong></code></pre>
+    <p>
+      <strong>ได้รหัสผ่านกลับมาเต็ม ๆ ในคำสั่งเดียว ไม่ต้องมีกุญแจ ไม่ต้องเดา ไม่ต้องแกะอะไร</strong>
+      <br>ผมยืนยันอีกทางด้วยโปรแกรม Go ที่วัดขนาด header ทั้งอันด้วย:
+    </p>
+    <pre style="margin:0.6rem 0"><code>Authorization: Basic c29tY2hhaTpwQHNzdzByZA==  (45 byte ทั้ง header)
+decode กลับได้ทันทีโดยไม่ต้องมี key: <strong>somchai:p@ssw0rd</strong></code></pre>
+    <p style="margin-bottom:0">
+      คนที่ดักได้ ได้ไปทั้ง <strong>username และ password ตัวจริง</strong> —
+      ไม่ใช่แค่ "สิทธิ์เข้าระบบนี้" แต่คือรหัสผ่านของคน ๆ นั้น
+      ซึ่งถ้าเขาใช้รหัสเดียวกันกับอีเมลหรือธนาคาร คุณเพิ่งทำให้เขาซวยทั้งชีวิตดิจิทัล
+      <br>นี่คือเหตุผลที่สไลด์เขียนว่า <strong>"ต้องใช้คู่กับ HTTPS เท่านั้น"</strong> —
+      HTTPS ต่างหากที่เข้ารหัส ตัว Basic Auth ไม่ได้เข้ารหัสอะไรเลยสักนิดเดียว
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🔢 เทียบให้เห็นภาพ — เขียนเบอร์โทรด้วยเลขไทย</span>
+  <p>
+    เบอร์ <code>0812345678</code> ถ้าเขียนใหม่เป็น <code>๐๘๑๒๓๔๕๖๗๘</code> หน้าตามันเปลี่ยนไปเลย
+    คนที่ไม่คุ้นอาจอ่านช้าลงหน่อย
+    <br>แต่ไม่มีใครเรียกสิ่งนี้ว่า "เข้ารหัส" เพราะ <strong>ไม่มีกุญแจ ไม่มีความลับอะไรอยู่ในนั้น</strong> —
+    ตารางแปลง <code>๐</code>=<code>0</code> <code>๑</code>=<code>1</code> อยู่ในหัวคนไทยทุกคน ใครก็อ่านกลับได้
+  </p>
+  <p>
+    <strong>base64 คือเรื่องเดียวกันเป๊ะ</strong> — มันเปลี่ยน<em>วิธีเขียน</em> ไม่ได้เปลี่ยน<em>ความลับ</em>
+    <br>ตารางแปลงของมันเป็นมาตรฐานสาธารณะ และคำสั่งที่ใช้อ่านกลับ (<code>base64 -d</code>)
+    ติดมากับ macOS/Linux ทุกเครื่องอยู่แล้ว ไม่ต้องลงอะไรเพิ่มด้วยซ้ำ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สามข้อ —
+    <br>(1) เลขไทยยังต้องมี<em>คน</em>นั่งอ่าน แต่ base64 มีคำสั่งสำเร็จรูปรออยู่
+    เครื่องเดียวถอดเป็นล้านชุดต่อนาทีได้สบาย ๆ ·
+    <br>(2) เลขไทยเขียนแล้วยาวเท่าเดิม แต่ base64 ทำให้ข้อมูล<strong>ใหญ่ขึ้น</strong>ราว 4/3 เท่า —
+    <code>somchai:p@ssw0rd</code> ที่ยาว <strong>16 byte</strong> กลายเป็น
+    <code>c29tY2hhaTpwQHNzdzByZA==</code> ที่ยาว <strong>24 ตัวอักษร</strong> ·
+    <br>(3) การเข้ารหัสของจริงต้องมี<strong>กุญแจ</strong> ไม่มีกุญแจก็ถอดไม่ได้เลย
+    แต่ในนิยามของ base64 <strong>ไม่มีคำว่ากุญแจอยู่แม้แต่คำเดียว</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>สองคำแรกคือคำที่คนสับสนกันมากที่สุดในเรื่องนี้ ถ้าแยกได้ คุณจะคุยเรื่อง security ได้คนละระดับเลย</p>
+  <dl>
+    <dt>encoding</dt>
+    <dd>"เปลี่ยนวิธีเขียนข้อมูล" — <strong>ไม่มีกุญแจ</strong> ใครก็ย้อนกลับได้ ·
+    base64 · URL-encoding (<code>%20</code>) · UTF-8 อยู่ในกลุ่มนี้หมด</dd>
+
+    <dt>encryption</dt>
+    <dd>"ล็อกข้อมูลด้วยกุญแจ" — <strong>ไม่มีกุญแจก็ถอดไม่ได้</strong> ·
+    ประโยคที่แยกสองคำนี้ออกจากกันได้ในทีเดียว:
+    <em>"อันนี้มัน encode หรือ encrypt ครับ"</em>
+    ถ้าเขาตอบว่า encode แปลว่าถือเป็นข้อมูลเปิด ห้ามเอาความลับใส่ลงไป</dd>
+
+    <dt>base64url</dt>
+    <dd>base64 รุ่นที่เปลี่ยน <code>+</code> เป็น <code>-</code> · <code>/</code> เป็น <code>_</code>
+    และตัด <code>=</code> ท้ายทิ้ง เพื่อให้แปะใน URL ได้โดยไม่ต้อง escape ·
+    JWT ใช้ตัวนี้ ไม่ใช่ base64 ธรรมดา — เดี๋ยวหัวข้อ 5 จะเจอผลของการตัด <code>=</code> ทิ้งด้วยตัวเอง</dd>
+
+    <dt>plaintext (cleartext)</dt>
+    <dd>ข้อความดิบที่อ่านออกตรง ๆ ยังไม่ถูกล็อกด้วยกุญแจ ·
+    credential ของ Basic Auth ถือเป็น plaintext เต็มตัว เพราะ base64 ถอดกลับได้ในคำสั่งเดียว ·
+    <em>"อันนี้เราส่ง password เป็น plaintext อยู่รึเปล่าครับ"</em></dd>
+
+    <dt>in transit</dt>
+    <dd>"ตอนข้อมูลกำลังเดินทาง" (คู่กับ <em>at rest</em> = ตอนนอนอยู่ในดิสก์) ·
+    สิ่งที่ปกป้อง in transit คือ <strong>TLS</strong> ซึ่งก็คือตัว <code>s</code> ใน <code>https</code> ·
+    <em>"ตรงนี้เราป้องกันตอน in transit ด้วยอะไรครับ TLS อย่างเดียวใช่ไหม"</em></dd>
+  </dl>
+</div>
+
+<h2>4 · ทำไม Basic Auth ไม่เหมาะกับระบบจริง</h2>
+
+<p>
+  สไลด์ลิสต์ไว้สี่ข้อ ผมจะอธิบายทีละข้อว่า<strong>ทำไมมันเป็นปัญหาจริง ไม่ใช่แค่ข้อเสียบนกระดาษ</strong>
+  <br>และทั้งสี่ข้อมีต้นเหตุเดียวกัน ซึ่งเห็นได้จากสิ่งที่เรา decode มาแล้วในหัวข้อ 3:
+</p>
+
+<pre><code>Basic: <strong>somchai:p@ssw0rd</strong>            <span class="c">// ทั้งหมดที่ header ตัวนี้บอกได้ มีแค่ 2 field</span></code></pre>
+
+<h3>1 · ไม่มีวันหมดอายุ</h3>
+
+<p>
+  ดูสตริงข้างบนอีกรอบ — <strong>ไม่มีที่ไหนให้ใส่วันหมดอายุเลย</strong>
+  มันมีแค่ชื่อกับรหัส คั่นด้วย <code>:</code> จบ
+  <br>ผลคือ header ที่หลุดออกไปวันนี้ ยังใช้ได้พรุ่งนี้ · สัปดาห์หน้า · ปีหน้า
+  ตราบใดที่รหัสผ่านยังไม่ถูกเปลี่ยน
+  <br>เทียบกับบัตรเข้าออฟฟิศแบบชั่วคราวที่หมดอายุเอง 6 โมงเย็น — Basic Auth ไม่มีกลไกแบบนั้นให้ใช้
+</p>
+
+<h3>2 · Revoke ยาก</h3>
+
+<p>
+  <strong>Revoke</strong> แปลว่า "ยกเลิกสิทธิ์ที่ให้ไปแล้ว" เช่นพนักงานลาออก
+  หรือรู้ตัวว่ารหัสหลุด แล้วอยากตัดการเข้าถึงทันที
+  <br>ปัญหาคือสิ่งเดียวที่ใช้ยืนยันตัวตนได้คือ<em>รหัสผ่าน</em>
+  ดังนั้นวิธีเดียวที่จะยกเลิกคือ <strong>เปลี่ยนรหัสผ่าน</strong>
+  <br>ซึ่งลากทุกอย่างของคน ๆ นั้นไปด้วยหมด: มือถือ · แล็ปท็อป · script ที่ตั้งไว้ · CI ·
+  <strong>ตัดขาดทุกเครื่องพร้อมกัน</strong> ทั้งที่คุณอยากตัดแค่เครื่องที่หาย
+  <br>ในระบบที่ออกแบบมาดี คุณควรจะ "เตะเครื่องนี้ออกเครื่องเดียว" ได้ — Basic Auth ทำไม่ได้เลย
+</p>
+
+<h3>3 · ไม่มี claims</h3>
+
+<p>
+  <strong>Claim</strong> (อ่านว่า เคลม) แปลตรงตัวว่า "ข้อกล่าวอ้าง" —
+  ในโลก auth หมายถึง<strong>ข้อมูลชิ้นหนึ่งที่ token กล่าวอ้างเกี่ยวกับผู้ถือ</strong>
+  เช่น "คนนี้ id 42" · "คนนี้เป็น admin" · "ใบนี้หมดอายุ 6 โมงเย็น"
+  <br>ลองเทียบสิ่งที่ Basic Auth บอกได้ กับสิ่งที่ JWT บอกได้ (ทั้งสองบรรทัดนี้ผม decode มาจากของจริง):
+</p>
+
+<pre><code>Basic: somchai:p@ssw0rd            <span class="c">// มีแค่ 2 field ไม่มี exp ไม่มี role</span>
+JWT  : <strong>{"sub":"1234567890","name":"John Doe","admin":true,"iat":1516239022}</strong></code></pre>
+
+<p>
+  บรรทัดล่างบอกได้ว่า <em>เป็นใคร</em> · <em>ชื่ออะไร</em> · <em>เป็น admin ไหม</em> · <em>ออกให้เมื่อไร</em>
+  ทั้งหมดนี้อยู่ในตัว token เอง
+  <br>บรรทัดบนบอกได้แค่ชื่อกับรหัส — เซิร์ฟเวอร์จึงไม่มีทางรู้อะไรมากกว่านั้น
+  <strong>นอกจากไปถามฐานข้อมูล</strong> ซึ่งพาเราไปสู่ข้อสุดท้ายพอดี
+</p>
+
+<h3>4 · ต้องเช็ค DB ทุก request</h3>
+
+<p>
+  เพราะ header ไม่มีข้อมูลอะไรที่เชื่อถือได้เลย ทุก request เซิร์ฟเวอร์จึงต้อง:
+  <br><strong>1.</strong> เอา username ไปหาแถวในตาราง users →
+  <strong>2.</strong> เอา password ที่ได้มาเข้าฟังก์ชัน hash แล้วเทียบกับที่เก็บไว้ →
+  <strong>3.</strong> ค่อยตัดสินใจ
+  <br>ข้อ 2 คือตัวปัญหา — ฟังก์ชัน hash รหัสผ่านที่ใช้กันจริง (เช่น bcrypt)
+  <strong>ถูกออกแบบมาให้ช้าโดยตั้งใจ</strong> เพื่อกันคนไล่เดารหัส
+  <br>ปกติจึงจงใจตั้งให้ใช้เวลาระดับ<em>หลักสิบถึงร้อยมิลลิวินาที</em>ต่อครั้ง
+  ซึ่งดีมากตอนล็อกอินวันละครั้ง แต่ถ้าต้องทำ<strong>ทุก request</strong> คุณเพิ่งแปะเวลานั้นลงบนทุกการกดปุ่มของผู้ใช้
+  และ CPU ของเซิร์ฟเวอร์ก็หมดไปกับการ hash แทนที่จะไปทำงานจริง
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>สรุปสี่ข้อให้เหลือประโยคเดียว:</strong> ปัญหาของ Basic Auth คือ
+    <em>ตัวมันเองไม่มีข้อมูลอะไรเลย</em> — มันเป็นแค่รหัสผ่านที่แปะซ้ำไปเรื่อย ๆ
+    <br>ทางแก้จึงชัด: <strong>ต้องมี "ใบผ่าน" ที่มีข้อมูลอยู่ในตัว ตรวจได้เองโดยไม่ต้องถาม DB
+    และหมดอายุเองได้</strong>
+    <br>ใบผ่านแบบนั้นมีชื่อว่า <strong>JWT</strong>
+  </p>
+</div>
+
+<h2>5 · JWT คืออะไร — ถอดของจริงในสไลด์ให้ดู</h2>
+
+<p>
+  <strong>JWT</strong> ย่อมาจาก <strong>JSON Web Token</strong> (คนส่วนใหญ่อ่านว่า "จ็อต")
+  คือสตริงยาว ๆ ก้อนหนึ่งที่ประกอบด้วย <strong>สามส่วนคั่นด้วยจุด</strong>:
+</p>
+
+<pre><code>header <span class="c">.</span> payload <span class="c">.</span> signature</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ส่วน</th><th>ข้างในคืออะไร</th><th>ใครอ่านได้</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>header</strong></td>
+      <td>JSON บอกว่าใช้อัลกอริทึมอะไรเซ็น เช่น <code>{"alg":"HS256","typ":"JWT"}</code></td>
+      <td>ทุกคน</td>
+    </tr>
+    <tr>
+      <td><strong>payload</strong></td>
+      <td>JSON ของ claims ทั้งหมด — id ผู้ใช้ · role · วันหมดอายุ</td>
+      <td><strong>ทุกคน</strong> ← จำข้อนี้ให้ดี</td>
+    </tr>
+    <tr>
+      <td><strong>signature</strong></td>
+      <td>ลายเซ็นที่คำนวณจาก header+payload+<strong>secret</strong></td>
+      <td>อ่านได้ แต่<strong>สร้างเองไม่ได้</strong>ถ้าไม่มี secret</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สองส่วนแรกเป็นแค่ JSON ที่เอาไปเขียนด้วย <strong>base64url</strong>
+  (base64 รุ่นที่เปลี่ยน <code>+</code> เป็น <code>-</code> และ <code>/</code> เป็น <code>_</code>
+  เพื่อให้ใส่ใน URL ได้ และมักตัด <code>=</code> ท้ายทิ้ง)
+  <br>ย้ำอีกครั้งจากหัวข้อ 3: <strong>base64 ไม่ใช่การเข้ารหัส</strong> —
+  ซึ่งแปลว่าเรื่องที่กำลังจะเกิดขึ้นข้างล่างนี้เป็นเรื่องปกติ ไม่ใช่การแฮ็ก
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — นี่คือ token ตัวที่อยู่ในสไลด์หน้า 32 ตัวเต็ม ผมแบ่งบรรทัดตามจุดให้ดูง่าย</p>
+  <pre><code><span class="c">// ส่วนที่ 1 — header</span>
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
+<span class="c">// ส่วนที่ 2 — payload</span>
+<strong>eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0</strong>
+<span class="c">// ส่วนที่ 3 — signature</span>
+KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30</code></pre>
+  <p class="ask">
+    <strong>ถ้าเอาส่วนที่ 2 (payload) ไป base64 decode จะเห็นอะไร?</strong>
+    <br>ผมไม่มี secret ของ token นี้ · ไม่มีกุญแจอะไรเลย · มีแค่สตริงที่คุณเห็นข้างบนนี้
+    <br>ลองทายสามข้อ: <strong>(ก)</strong> มันจะ decode ออกมาได้ไหม ·
+    <strong>(ข)</strong> ถ้าได้ ข้างในมีอะไร · <strong>(ค)</strong> แล้วส่วนที่ 3 (signature) มีไว้กันอะไรกันแน่?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p>ถอดด้วย shell ล้วน ๆ ไม่มี Go ไม่มี library:</p>
+    <pre style="margin:0.6rem 0"><code>$ echo 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9' | tr '_-' '/+' | base64 -d
+{"alg":"HS256","typ":"JWT"}
+
+$ echo 'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0=' \
+    | tr '_-' '/+' | base64 -d
+<strong>{"sub":"1234567890","name":"John Doe","admin":true,"iat":1516239022}</strong></code></pre>
+    <p>
+      <strong>(ก) ได้ · (ข) เห็นทุก claim รวมทั้ง <code>"admin":true</code></strong>
+      <br>ยืนยันซ้ำด้วย Go โดยใช้ <code>ParseUnverified</code> ซึ่งเป็นฟังก์ชันที่<strong>ไม่รับ secret เข้าไปเลย</strong>:
+    </p>
+    <pre style="margin:0.6rem 0"><code>claims := jwt.<span class="f">MapClaims</span>{}
+tok, parts, err := jwt.<span class="f">NewParser</span>().<span class="f">ParseUnverified</span>(demo, claims)</code></pre>
+    <pre style="margin:0.6rem 0"><code>=== 1) ParseUnverified (ไม่ส่ง secret เข้าไปเลย) ===
+<strong>err=&lt;nil&gt;</strong>
+alg=HS256 typ=JWT
+claims=map[<strong>admin:true</strong> iat:1.516239022e+09 name:John Doe sub:1234567890]
+จำนวนส่วนของ token=3</code></pre>
+    <p>
+      <code>err=&lt;nil&gt;</code> ทั้งที่ไม่มี secret แม้แต่ตัวเดียว — และเห็น <code>admin:true</code> ด้วย
+      <br>ส่วน <code>iat:1516239022</code> คือเวลาที่ออก token นับเป็นวินาทีตั้งแต่ปี 1970
+      แปลงกลับด้วย <code>date -r 1516239022 -u</code> ได้ <code>Thu Jan 18 01:30:22 UTC 2018</code>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>(ค) signature กันการ<em>แก้ไข</em> ไม่ได้กันการ<em>อ่าน</em></strong>
+      <br>ใครก็อ่าน payload ได้ แต่ถ้าแก้ตัวเลขในนั้นแล้วส่งกลับมา signature จะไม่ตรงทันที (เดี๋ยวหัวข้อ 7 พิสูจน์)
+      <br>กฎที่ตามมาจึงเป็นกฎเหล็ก: <strong>ห้ามใส่รหัสผ่าน · เลขบัตรประชาชน · เลขบัตรเครดิต
+      หรือความลับใด ๆ ลงใน JWT เด็ดขาด</strong> เพราะมันเท่ากับเขียนไว้บนกระดาษที่ทุกคนอ่านได้
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ กับดักตอนถอดเอง — <code>base64 -d</code> ตัดตัวท้ายทิ้งเงียบ ๆ แล้วบอกว่าสำเร็จ</span>
+  <p>
+    สังเกตว่าในคำสั่งข้างบนผมเติม <code>=</code> ต่อท้าย payload ก่อน decode
+    เพราะ base64url ของ JWT <strong>ตัด <code>=</code> ท้ายทิ้ง</strong> แต่ <code>base64 -d</code> ต้องการมัน
+    <br>ถ้าไม่เติม จะเกิดแบบนี้ — และมัน<strong>ไม่ฟ้อง error</strong>:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ echo 'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0' | tr '_-' '/+' | base64 -d
+{"sub":"1234567890","name":"John Doe","admin":true,"iat":<strong>151623902</strong>     <span class="c">← หายไป 2 ตัว!</span>
+
+$ echo $?
+<strong>0</strong>                                <span class="c">← exit code บอกว่าสำเร็จ</span></code></pre>
+  <p style="margin-bottom:0">
+    JSON ปิดวงเล็บไม่ครบ เลขผิดไปหนึ่งหลัก แต่ exit code เป็น <code>0</code>
+    <br>วิธีเช็คก่อน: ความยาวของแต่ละส่วนต้องหารด้วย 4 ลงตัว —
+    <code>${#P}</code> ของ payload นี้ได้ <strong>91</strong> ซึ่ง <code>91 % 4 = 3</code>
+    แปลว่าต้องเติม <code>=</code> อีก <strong>1</strong> ตัวให้ครบ 92
+    <br>(ใน Go ไม่ต้องคิดเรื่องนี้ เพราะ <code>base64.RawURLEncoding</code> จัดการให้แล้ว)
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🎬 เทียบให้เห็นภาพ — ตั๋วหนังที่พิมพ์ทุกอย่างไว้บนหน้าตั๋ว</span>
+  <p>
+    ตั๋วหนังใบหนึ่งพิมพ์ไว้ครบตั้งแต่แรก: ชื่อเรื่อง · โรง 5 · รอบ 19:30 · ที่นั่ง <strong>H12</strong>
+    <br>ใครหยิบขึ้นมาดูก็อ่านได้หมด <strong>ไม่ต้องขอกุญแจใคร ไม่ต้องถามพนักงาน</strong>
+    — เพราะมันไม่เคยถูกออกแบบมาให้เป็นความลับ
+    <br>ตรงนี้คือ <strong>payload ของ JWT เป๊ะ ๆ</strong> — เราเพิ่งอ่าน
+    <code>{"sub":"1234567890","name":"John Doe","admin":true,…}</code>
+    ออกมาได้โดยไม่มี secret เลยสักตัว
+  </p>
+  <p>
+    ทีนี้ลองเอาปากกาแก้ <code>H12</code> เป็น <code>A1</code> (ที่นั่งดีกว่า) แล้วยื่นให้พนักงานหน้าโรง —
+    <strong>พอสแกนแล้วมันไม่ตรง คุณก็ไม่ได้เข้า</strong>
+    <br>นั่นคือหน้าที่ทั้งหมดของ <strong>signature</strong>: มัน<strong>กันการแก้ ไม่ได้กันการอ่าน</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สองข้อ และทั้งสองข้อสำคัญกว่าตัวการเปรียบเทียบเสียอีก —
+    <br>(1) บาร์โค้ดบนตั๋วเป็นแค่การ<em>เขียนข้อมูลเดิมซ้ำอีกรอบ</em> ใครมีเครื่องพิมพ์ก็ทำเลียนแบบได้ ·
+    แต่ signature ของ JWT คำนวณจาก <strong>secret ที่มีแต่เซิร์ฟเวอร์รู้</strong> ไม่มี secret ก็สร้างไม่ได้เลย
+    (หัวข้อ 7.2 จะพิสูจน์ให้ดู: แก้ไปตัวเดียวจาก 185 ตัวก็พังทันที) ·
+    <br>(2) พนักงานหน้าโรงยัง<em>ยิงเข้าระบบ</em>เพื่อเช็คว่าตั๋วใบนี้ถูกใช้ไปหรือยัง ·
+    แต่ JWT ตั้งใจให้ตรวจจบในตัว <strong>ไม่ถามฐานข้อมูลเลย</strong> —
+    ซึ่งแปลว่าใบที่ถูกขโมยไปก็ยัง<strong>ใช้ได้จนกว่าจะหมดอายุ</strong> เรื่องนี้จะกลับมาหลอกเราในหัวข้อ 10
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>ห้าคำนี้จะโผล่ในทุกบทที่เหลือของ Day 9 และในทุกหน้า doc ของ auth ที่คุณจะอ่านต่อจากนี้</p>
+  <dl>
+    <dt>claim</dt>
+    <dd>"ข้อมูลหนึ่งชิ้นที่ token กล่าวอ้างเกี่ยวกับผู้ถือ" — <code>sub</code> · <code>exp</code> ·
+    <code>admin:true</code> แต่ละอันคือหนึ่ง claim ·
+    <em>"เราจะเอา role ใส่เป็น claim ในตัว token เลย หรือให้ไปอ่านจาก DB ดีครับ"</em>
+    เป็นคำถามออกแบบที่ senior จะเข้าใจทันทีว่าคุณกำลังชั่งอะไรอยู่</dd>
+
+    <dt>payload</dt>
+    <dd>ส่วนที่ 2 ของ token — ก้อน JSON ที่รวม claim ทั้งหมด ·
+    <strong>ถือว่าเป็นข้อความสาธารณะเสมอ</strong> ·
+    <em>"claim นี้อยู่ใน payload นะ แปลว่า client อ่านได้หมด โอเคไหม"</em></dd>
+
+    <dt>signature</dt>
+    <dd>ส่วนที่ 3 — ค่าที่คำนวณจาก header + payload + secret ·
+    ตอบคำถามเดียวคือ <em>"ก้อนนี้ถูกแก้ระหว่างทางไหม"</em> ไม่ได้ตอบว่า "ใครอ่านได้บ้าง"</dd>
+
+    <dt>HS256 (HMAC-SHA256)</dt>
+    <dd>วิธีเซ็นแบบ<strong>กุญแจก้อนเดียว</strong> — คนเซ็นกับคนตรวจต้องถือ secret ตัวเดียวกัน ·
+    คู่เทียบคือ <code>RS256</code> ที่เซ็นด้วย private key แล้วตรวจด้วย public key ·
+    <em>"ระบบเราเซ็นด้วย HS256 หรือ RS256 ครับ"</em> เป็นคำถามแรกเวลาต้องต่อ auth กับทีมอื่น</dd>
+
+    <dt>bearer token</dt>
+    <dd>"ใครถือใบนี้ = คนนั้นคือเจ้าของสิทธิ์" ไม่มีการเช็คซ้ำว่าคนถือเป็นคนเดียวกับที่ออกให้ ·
+    นี่คือที่มาของคำว่า <code>Bearer</code> ใน header <code>Authorization: Bearer &lt;token&gt;</code>
+    ที่จะเจอในหัวข้อ 9 · <em>"token เราเป็น bearer token ใช่ไหมครับ ถ้าหลุดคือจบเลย"</em></dd>
+  </dl>
+</div>
+
+<h3>secret ของ token ตัวนี้ไม่ใช่ค่าที่คนส่วนใหญ่เขียนกัน</h3>
+
+<p>
+  token ตัวข้างบนเป็นตัวอย่าง default ของเว็บ <code>jwt.io</code> ซึ่งคนก๊อปไปใช้กันทั้งโลก
+  และตำราเก่าเกือบทุกเล่มบอกว่า secret ของมันคือ <code>"your-256-bit-secret"</code>
+  <br><strong>ผมลองแล้วไม่ผ่าน</strong> — ผมคำนวณ HMAC ด้วย <code>openssl</code> ตรง ๆ เทียบกับ signature ในสไลด์:
+</p>
+
+<pre><code>$ SIGNING=&lt;header&gt;.&lt;payload&gt;
+$ printf '%s' "$SIGNING" | openssl dgst -sha256 -hmac "$s" -binary \
+    | base64 | tr '+/' '-_' | tr -d '='
+
+your-256-bit-secret                      reGQzG3OKdoIMWLDKOZ4TICJit3EW69cQE72E2CfzRE
+a-string-secret-at-least-256-bits-long   <strong>KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30</strong>
+target:                                  <strong>KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30</strong></code></pre>
+
+<p>ยืนยันซ้ำด้วย <code>jwt.Parse</code> ของ golang-jwt/jwt/v5 v5.3.1:</p>
+
+<pre><code>=== 2) ลอง secret หลายตัวกับ token ของ jwt.io ===
+secret="your-256-bit-secret"                      -&gt; FAIL: token signature is invalid: signature is invalid
+secret="secret"                                   -&gt; FAIL: token signature is invalid: signature is invalid
+secret="a-string-secret-at-least-256-bits-long"   -&gt; <strong>OK (signature ผ่าน)</strong></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <code>jwt.io</code> เปลี่ยนค่า default ไปแล้ว ตำราที่เขียนไว้ก่อนหน้านั้นจึงล้าสมัย —
+    ถ้าคุณลองตามตำราเก่าแล้วขึ้น <code>signature is invalid</code> <strong>คุณไม่ได้ทำผิด</strong> secret ต่างหากที่คนละตัว
+    <br>อีกเรื่องที่ควรรู้ไว้ก่อนงงเอง: กล่องเล็ก ๆ ในสไลด์หน้า 32 เขียนว่า <code>"alg":"RS256"</code>
+    แต่ token ตัวจริงที่อยู่หน้าเดียวกัน decode ออกมาได้ <code>{"alg":"HS256","typ":"JWT"}</code>
+    <br>สองอันนี้มาจากคนละรูป ไม่ใช่ของคู่กัน — <strong>ให้เชื่อผลที่ decode ออกมา</strong>
+    <br>(<code>HS256</code> = เซ็นด้วย secret ก้อนเดียวที่ทั้งคนเซ็นและคนตรวจต้องมีเหมือนกัน ·
+    <code>RS256</code> = เซ็นด้วย private key แล้วตรวจด้วย public key — คนละแบบกันคนละเรื่อง)
+  </p>
+</div>
+
+<h2>6 · สร้างและ verify JWT ด้วย golang-jwt/jwt/v5</h2>
+
+<p>สไลด์หน้า 33 บอกแค่บรรทัดเดียวว่าให้ลง library ตัวไหน:</p>
+
+<pre><code>$ go get github.com/golang-jwt/jwt/v5
+go: added github.com/golang-jwt/jwt/v5 <strong>v5.3.1</strong></code></pre>
+
+<p>
+  โค้ดสร้าง token มีแค่สองบรรทัดจริง ๆ — ที่เหลือคือการเตรียม claims
+  <br>ข้างล่างนี้คือ <code>cmd/mine/main.go</code> <strong>ฉบับย่อ</strong> (ตัดเหลือเฉพาะส่วนที่ 3 กับ 3b)
+  แต่เป็น<strong>ไฟล์เต็มที่ก๊อปทั้งก้อนไปวางแล้ว <code>go run</code> ได้เลย</strong> —
+  มีทั้งบรรทัด <code>package</code> และ <code>import</code> ครบ ไม่ต้องเติมอะไรเพิ่ม:
+</p>
+
+<pre><code><span class="c">// cmd/mine/main.go</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"fmt"</span>
+    <span class="s">"time"</span>
+
+    <span class="s">"github.com/golang-jwt/jwt/v5"</span>
+)
+
+<span class="k">var</span> secret = []<span class="k">byte</span>(<span class="s">"a-string-secret-at-least-256-bits-long"</span>)
+
+<span class="k">func</span> <span class="f">keyfunc</span>(t *jwt.Token) (<span class="k">any</span>, <span class="k">error</span>) { <span class="k">return</span> secret, <span class="k">nil</span> } <span class="c">// ใช้ตอน parse ในหัวข้อถัดไป</span>
+
+<span class="k">func</span> <span class="f">main</span>() {
+    now := time.<span class="f">Now</span>()
+    mine := jwt.<span class="f">NewWithClaims</span>(jwt.SigningMethodHS256, jwt.<span class="f">MapClaims</span>{
+        <span class="s">"sub"</span>:  <span class="s">"42"</span>,                        <span class="c">// subject = ผู้ใช้คนนี้เป็นใคร</span>
+        <span class="s">"name"</span>: <span class="s">"somchai"</span>,
+        <span class="s">"role"</span>: <span class="s">"admin"</span>,
+        <span class="s">"iat"</span>:  now.<span class="f">Unix</span>(),                 <span class="c">// issued at = ออกให้เมื่อไร</span>
+        <span class="s">"exp"</span>:  now.<span class="f">Add</span>(time.Hour).<span class="f">Unix</span>(), <span class="c">// expires = หมดอายุเมื่อไร</span>
+    })
+    s, err := mine.<span class="f">SignedString</span>(secret)      <span class="c">// secret เป็น []byte</span>
+
+    fmt.<span class="f">Println</span>(<span class="s">"=== 3) สร้าง JWT เอง (HS256) ==="</span>)
+    fmt.<span class="f">Println</span>(<span class="s">"SignedString err ="</span>, err)
+    fmt.<span class="f">Println</span>(<span class="s">"token ="</span>, s)
+    fmt.<span class="f">Println</span>(<span class="s">"len   ="</span>, <span class="f">len</span>(s))
+}</code></pre>
+
+<p>ผลรันจริง:</p>
+
+<pre><code>=== 3) สร้าง JWT เอง (HS256) ===
+SignedString err = &lt;nil&gt;
+token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODczNzI0MjksImlhdCI6MTc4NzM2ODgyOSwibmFtZSI6InNvbWNoYWkiLCJyb2xlIjoiYWRtaW4iLCJzdWIiOiI0MiJ9.1JpaiixbPQRhCTZEcNwFMJbEZSJVVw6xej3cSqg_nSc
+len   = <strong>185</strong>   <span class="c"># 185 ตัวอักษร = 185 byte เพราะ JWT เป็น ASCII ล้วน</span></code></pre>
+
+<p>
+  ฝั่งตรวจ ใช้ <code>jwt.Parse</code> ซึ่งขอสองอย่าง: <strong>ฟังก์ชันที่คืน key</strong> (เรียกว่า keyfunc) และ <strong>รายชื่อ alg ที่เรายอมรับ</strong>
+  <br>keyfunc เราประกาศไว้ในไฟล์ข้างบนแล้ว เหลือแค่<strong>เติมบรรทัดพวกนี้ต่อท้าย <code>main()</code></strong>
+  (ก้อนนี้เป็น<em>ส่วนที่เติมเข้าไป</em> ไม่ใช่ไฟล์เดี่ยว ๆ — ไม่ต้องใส่ <code>package</code>/<code>import</code> ซ้ำ):
+</p>
+
+<pre><code>    back, err := jwt.<span class="f">Parse</span>(s, keyfunc, jwt.<span class="f">WithValidMethods</span>([]<span class="k">string</span>{<span class="s">"HS256"</span>}))
+
+    fmt.<span class="f">Println</span>(<span class="s">"\n--- 3b) parse กลับ + verify ---"</span>)
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        fmt.<span class="f">Println</span>(<span class="s">"FAIL"</span>, err)
+        <span class="k">return</span>
+    }
+    c := back.Claims.(jwt.MapClaims)
+    fmt.<span class="f">Printf</span>(<span class="s">"OK  valid=%v claims=%v\n"</span>, back.Valid, c)
+    fmt.<span class="f">Printf</span>(<span class="s">"ชนิดจริงของ c[\"exp\"] = %T\n"</span>, c[<span class="s">"exp"</span>])
+    fmt.<span class="f">Printf</span>(<span class="s">"ชนิดจริงของ c[\"sub\"] = %T\n"</span>, c[<span class="s">"sub"</span>])</code></pre>
+
+<pre><code>--- 3b) parse กลับ + verify ---
+OK  valid=true claims=map[exp:1.787372429e+09 iat:1.787368829e+09 name:somchai role:admin sub:42]
+ชนิดจริงของ c["exp"] = <strong>float64</strong>
+ชนิดจริงของ c["sub"] = string</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ <code>MapClaims</code> แปลงตัวเลขเป็น <code>float64</code> เสมอ — เขียน <code>.(int)</code> เมื่อไหร่ panic เมื่อนั้น</span>
+  <p>
+    สังเกต <code>exp:1.787372429e+09</code> ในผลรัน — มันโชว์เป็นทศนิยมเพราะ<strong>มันเป็น <code>float64</code> จริง ๆ</strong>
+    <br>สาเหตุคือ <code>MapClaims</code> เป็น <code>map[string]any</code> ที่ decode มาจาก JSON
+    และตัวถอด JSON มาตรฐานของ Go แปลงตัวเลขทุกตัวเป็น <code>float64</code> ไม่มีข้อยกเว้น
+  </p>
+  <pre style="margin:0.6rem 0"><code>c := back.Claims.(jwt.MapClaims)
+
+<span class="c">// สองบรรทัดนี้เป็น "ตัวเลือก" ให้เทียบกัน — เอาไปใช้จริงให้เลือกบรรทัดเดียว</span>
+exp := c[<span class="s">"exp"</span>].(<span class="k">int</span>)              <span class="c">// ❌ panic: interface conversion: interface {} is float64, not int</span>
+exp := <span class="k">int64</span>(c[<span class="s">"exp"</span>].(<span class="k">float64</span>))   <span class="c">// ✅ ถูกต้อง</span></code></pre>
+  <p style="margin-bottom:0">
+    ส่วน <code>sub</code> ในตัวอย่างนี้เป็น <code>string</code> เพราะเราใส่เข้าไปเป็น <code>"42"</code> (มีเครื่องหมายคำพูด)
+    <br><strong>ทางที่ปลอดภัยกว่าคือเลิกใช้ <code>MapClaims</code></strong> แล้วประกาศ struct ของตัวเองที่ฝัง
+    <code>jwt.RegisteredClaims</code> — แบบนั้นชนิดจะถูกบังคับตั้งแต่ตอน compile ไม่ต้องมานั่ง cast เอง
+  </p>
+</div>
+
+<h2>7 · สามเคสที่ token ใช้ไม่ได้ — พร้อม error จริง</h2>
+
+<p>
+  ทั้งสามเคสข้างล่างผมรันด้วยฟังก์ชันตัวเดียวกัน คือ
+  <code>jwt.Parse(tokenStr, keyfunc, jwt.WithValidMethods([]string{"HS256"}))</code>
+  แล้วพิมพ์ทั้งข้อความ error และผลของ <code>errors.Is</code> สามตัวออกมาเทียบกัน
+</p>
+
+<h3>7.1 · token หมดอายุ</h3>
+
+<pre><code>--- 4.1 token หมดอายุ (exp ผ่านไป 1 ชม.) ---
+err  = <strong>token has invalid claims: token is expired</strong>
+errors.Is(err, jwt.ErrTokenExpired)          = <strong>true</strong>
+errors.Is(err, jwt.ErrSignatureInvalid)      = false
+errors.Is(err, jwt.ErrTokenSignatureInvalid) = false
+valid= false</code></pre>
+
+<h3>7.2 · signature ผิด (แก้ token ไปหนึ่งตัวอักษร)</h3>
+
+<pre><code>(แก้ตัวอักษรสุดท้าย "c" -&gt; "Q")
+--- 4.2 signature ผิด ---
+err  = <strong>token signature is invalid: signature is invalid</strong>
+errors.Is(err, jwt.ErrTokenExpired)          = false
+errors.Is(err, jwt.ErrSignatureInvalid)      = <strong>true</strong>
+errors.Is(err, jwt.ErrTokenSignatureInvalid) = <strong>true</strong>
+valid= false</code></pre>
+
+<p>
+  <strong>แก้แค่ตัวอักษรเดียวจาก 185 ตัวก็พังทันที</strong> —
+  นี่คือหลักฐานว่า signature ทำหน้าที่ของมันจริง: มันกันการ<em>แก้ไข</em>
+  (แต่ยังไม่ได้กันการ<em>อ่าน</em> ตามที่พิสูจน์ไปในหัวข้อ 5)
+</p>
+
+<h3>7.3 · alg ไม่ตรงกับที่เรายอมรับ</h3>
+
+<pre><code>--- 4.3 alg ไม่ตรง (token=HS256 แต่ยอมรับแค่ RS256) ---
+err  = <strong>token signature is invalid: signing method HS256 is invalid</strong>
+errors.Is(err, jwt.ErrTokenExpired)          = false
+errors.Is(err, jwt.ErrSignatureInvalid)      = <strong>false</strong>
+errors.Is(err, jwt.ErrTokenSignatureInvalid) = <strong>true</strong></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ <code>ErrSignatureInvalid</code> กับ <code>ErrTokenSignatureInvalid</code> ไม่ใช่ตัวเดียวกัน</span>
+  <p style="margin-bottom:0">
+    ชื่อต่างกันแค่คำว่า <code>Token</code> แต่ผลรันบอกว่าคนละตัวจริง ๆ:
+    <br>· เคส 7.2 (signature ผิด) — <code>errors.Is</code> เป็น <code>true</code> <strong>ทั้งคู่</strong>
+    <br>· เคส 7.3 (alg ไม่ตรง) — <code>ErrSignatureInvalid</code> เป็น <code>false</code>
+    แต่ <code>ErrTokenSignatureInvalid</code> เป็น <code>true</code>
+    <br>แปลว่าถ้าโค้ดคุณเช็คด้วย <code>ErrSignatureInvalid</code> อย่างเดียว
+    <strong>คุณจะไม่จับเคส alg ไม่ตรง</strong>
+    <br>เหตุผลอยู่ที่<strong>คนละไฟล์กัน</strong>: <code>ErrTokenSignatureInvalid</code> อยู่ใน <code>errors.go</code>
+    เป็น error กลางของตัว parser · ส่วน <code>ErrSignatureInvalid</code> อยู่ใน <code>hmac.go</code>
+    เป็นของ <code>SigningMethodHMAC</code> โดยเฉพาะ
+    <br>เคส 7.3 ถูกปฏิเสธตั้งแต่ตอนเช็ครายชื่อ alg — <strong>ยังไม่ทันเดินไปถึงตัวตรวจ HMAC เลย</strong>
+    error ของ HMAC จึงไม่มีทางโผล่ (ถ้าวันหนึ่งคุณย้ายไป <code>RS256</code> ก็จะไม่เจอ
+    <code>ErrSignatureInvalid</code> อีกเลยด้วยเหตุผลเดียวกัน)
+    <br><strong>สรุปให้จำ: ใช้ <code>jwt.ErrTokenSignatureInvalid</code> เพราะครอบคลุมกว่า</strong>
+  </p>
+</div>
+
+<h3>7.4 · เคสที่สไลด์ไม่ได้พูด แต่เจอบ่อยกว่า</h3>
+
+<p>ผมรันเพิ่มอีกชุด เพราะสามเคสข้างบนยังไม่ครบกับที่เจอจริงตอน debug:</p>
+
+<pre><code>$ go run ./cmd/extra
+
+nbf อยู่อนาคต (ยังใช้ไม่ได้)                         err = token has invalid claims: <strong>token is not valid yet</strong>
+aud ไม่ตรง (คาด mobile-app)                          err = token has invalid claims: <strong>token has invalid audience</strong>
+iss ไม่ตรง (token มี iss=evil, คาด wongnok)          err = token has invalid claims: <strong>token has invalid issuer</strong>
+iss ไม่มีเลย + WithIssuer()                          err = token has invalid claims: <strong>token is missing required claim: iss claim is required</strong>
+token มีแค่ 2 ส่วน (ตัด signature ทิ้ง)              err = <strong>token is malformed: token contains an invalid number of segments</strong>
+token เป็นข้อความมั่ว                                err = token is malformed: token contains an invalid number of segments
+token ว่าง                                           err = token is malformed: token contains an invalid number of segments</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>claim</th><th>ย่อมาจาก</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>sub</code></td><td>subject</td><td>token นี้พูดถึงใคร — ปกติใส่ id ผู้ใช้</td></tr>
+    <tr><td><code>iat</code></td><td>issued at</td><td>ออก token ตอนไหน</td></tr>
+    <tr><td><code>exp</code></td><td>expiration time</td><td>หมดอายุตอนไหน — <strong>หลังเวลานี้ห้ามใช้</strong></td></tr>
+    <tr><td><code>nbf</code></td><td>not before</td><td>ก่อนเวลานี้ห้ามใช้ — ใช้กับ token ที่ออกล่วงหน้า</td></tr>
+    <tr><td><code>aud</code></td><td>audience</td><td>token นี้ออกให้ระบบไหนใช้ — กัน token ของแอปหนึ่งไปใช้กับอีกแอป</td></tr>
+    <tr><td><code>iss</code></td><td>issuer</td><td>ใครเป็นคนออก token นี้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สังเกตสองอย่างจากผลรัน: <strong>token ว่าง · token มั่ว · token ขาดส่วน ได้ error เดียวกันหมด</strong>
+  คือ <code>invalid number of segments</code> —
+  ดังนั้นถ้าเจอ error นี้อย่าไปไล่หา secret ให้เสียเวลา ปัญหาอยู่ที่ตัว token ไม่ครบสามส่วน
+  (สาเหตุยอดฮิต: ลืมตัดคำว่า <code>"Bearer "</code> ออกจาก header ก่อนส่งเข้า <code>jwt.Parse</code>)
+  <br>อีกอย่าง: สังเกตสองบรรทัด <code>iss</code> ให้ดี — <code>jwt.WithIssuer("wongnok")</code>
+  ทำงาน<strong>สองหน้าที่ในตัวเดียว</strong> และให้ error คนละตัวกัน:
+  <br>· ถ้า token <strong>มี</strong> <code>iss</code> แต่ค่าไม่ตรง → <code>token has invalid issuer</code>
+  (<code>jwt.ErrTokenInvalidIssuer</code>)
+  <br>· ถ้า token <strong>ไม่มี</strong> <code>iss</code> เลย → <code>token is missing required claim: iss claim is required</code>
+  (<code>jwt.ErrTokenRequiredClaimMissing</code>) เพราะการใส่ <code>WithIssuer()</code>
+  ทำให้ <code>iss</code> กลายเป็น claim ที่<strong>บังคับต้องมี</strong>ไปด้วยเลย
+  <br>ถ้าคุณเจอ <code>invalid issuer</code> แปลว่า token มี <code>iss</code> อยู่แล้ว — ไปไล่ดูว่าใครออก token ให้
+  ไม่ใช่ไปไล่ดูว่าลืมใส่ claim
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ ข้อนี้สำคัญมาก — JWT ที่<em>ไม่มี</em> <code>exp</code> ผ่านฉลุย</span>
+  <p>
+    เราบอกไปในหัวข้อ 4 ว่า "JWT ดีกว่า Basic Auth เพราะมีวันหมดอายุ"
+    ประโยคนั้น<strong>จริงแค่ครึ่งเดียว</strong> — JWT <em>รองรับ</em> วันหมดอายุ แต่ไม่ได้<em>บังคับ</em>
+    <br>ผมสร้าง token ที่มีแค่ <code>sub</code> อย่างเดียว ไม่มี <code>exp</code> เลย แล้ว parse ดู:
+  </p>
+  <pre style="margin:0.6rem 0"><code>token ไม่มี exp เลย (default)                        err = <strong>&lt;nil&gt;</strong>
+token ไม่มี exp + WithExpirationRequired()           err = token has invalid claims: <strong>token is missing required claim: exp claim is required</strong></code></pre>
+  <p style="margin-bottom:0">
+    <code>err = &lt;nil&gt;</code> แปลว่า <strong>token ตลอดชีพ</strong> — หลุดเมื่อไหร่คือหลุดตลอดไป
+    ซึ่งแย่กว่า Basic Auth ด้วยซ้ำ เพราะ Basic Auth ยังเปลี่ยนรหัสผ่านตัดได้
+    <br>ต้องทำสองอย่างคู่กันเสมอ: <strong>ใส่ <code>exp</code> เองตอน sign</strong>
+    และ <strong>ใส่ <code>jwt.WithExpirationRequired()</code> ตอน parse</strong>
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>เรื่อง leeway (ค่าเผื่อนาฬิกาคลาดเคลื่อน)</strong> —
+    เซิร์ฟเวอร์คนละเครื่องมีเวลาไม่ตรงกันเป๊ะได้ ทำให้ token ที่เพิ่งออกมาโดนตีว่าหมดอายุแล้ว
+    <br>golang-jwt มี <code>jwt.WithLeeway()</code> ให้เผื่อได้ ค่า default คือ <strong>0 วินาที</strong> (ไม่เผื่อเลย):
+  </p>
+  <pre style="margin:0.6rem 0"><code>หมดอายุ 20 วิ (default ไม่มี leeway)                 err = token has invalid claims: token is expired
+หมดอายุ 20 วิ + WithLeeway(60s)                      err = <strong>&lt;nil&gt;</strong></code></pre>
+  <p style="margin-bottom:0">
+    เป็นดาบสองคม: มันทำให้ token ที่<strong>หมดอายุไปแล้วจริง ๆ</strong> ยังใช้ได้ต่ออีก 60 วินาที
+    <br>ใส่เมื่อจำเป็นเท่านั้น และใส่ให้น้อยที่สุดเท่าที่ระบบยอมได้
+  </p>
+</div>
+
+<h2>8 · การโจมตี <code>alg=none</code> และเหตุผลที่ต้องระบุ alg ตอน parse</h2>
+
+<p>
+  ย้อนกลับไปดู header ของ JWT: <code>{"alg":"HS256","typ":"JWT"}</code>
+  <br><strong>ช่องนี้อยู่ในตัว token ซึ่งแปลว่าผู้โจมตีเป็นคนเขียนเองได้</strong> —
+  แล้วถ้าเขาเขียนว่า <code>"alg":"none"</code> ล่ะ?
+  <br>มาตรฐาน JWT มีค่า <code>none</code> อยู่จริง หมายถึง "token นี้ไม่มีลายเซ็น"
+  ซึ่งถ้าเซิร์ฟเวอร์เชื่อตามนั้น ก็เท่ากับ<strong>ให้ผู้โจมตีพิมพ์บัตรผ่านของตัวเองได้เลย</strong>
+</p>
+
+<p>สร้าง token ปลอมแบบนี้ง่ายมาก ไม่ต้องมี library ด้วยซ้ำ — แค่ base64 สองก้อนแล้วปิดท้ายด้วยจุดเปล่า:</p>
+
+<pre><code>evil := <span class="f">b64</span>(<span class="s">`{"alg":"none","typ":"JWT"}`</span>) + <span class="s">"."</span> +
+        <span class="f">b64</span>(<span class="s">`{"role":"admin","sub":"42"}`</span>) + <span class="s">"."</span>   <span class="c">// ← ส่วนที่ 3 ว่างเปล่า</span></code></pre>
+
+<pre><code>$ go run ./cmd/algnone
+
+=== 5) alg=none attack ===
+evil token = eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJyb2xlIjoiYWRtaW4iLCJzdWIiOiI0MiJ9<strong>.</strong>
+
+A) มี WithValidMethods([HS256]) -&gt; err = token signature is invalid: <strong>signing method none is invalid</strong>
+B) ไม่มี WithValidMethods    -&gt; err = token signature is invalid: token is unverifiable: <strong>'none' signature type is not allowed</strong>
+C) คืน UnsafeAllowNoneSignatureType -&gt; err = <strong>&lt;nil&gt;</strong></code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ข่าวดี: golang-jwt/jwt/v5 v5.3.1 บล็อกให้ตั้งแต่ default อยู่แล้ว</strong> —
+    ดูเคส B ที่ไม่ได้ใส่ <code>WithValidMethods</code> เลย มันก็ยังไม่ยอมให้ผ่าน
+    <br>ทางเดียวที่ token <code>alg=none</code> จะทะลุเข้ามาได้ คือเคส C:
+    <strong>คนเขียนโค้ดเอง</strong>ไปคืน <code>jwt.UnsafeAllowNoneSignatureType</code> ใน keyfunc
+    (ชื่อมันขึ้นต้นด้วยคำว่า <code>Unsafe</code> อยู่แล้ว)
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>ตรงนี้ต้องพูดให้ตรง อย่าท่องตามกันมา</strong> —
+    หลายที่สอนว่า "ถ้าไม่ใส่ <code>WithValidMethods</code> แล้ว <code>alg=none</code> จะทะลุ"
+    <br>ในไลบรารีตัวนี้เวอร์ชันนี้ <strong>ไม่จริง</strong> (ดูเคส B)
+    <br>แต่คำแนะนำให้ใส่ <code>WithValidMethods</code> <strong>ยังถูกอยู่</strong> ด้วยเหตุผลอื่นสองข้อ:
+    <br><strong>1.</strong> error ชัดกว่ามาก — <code>signing method none is invalid</code>
+    อ่านแล้วรู้เลยว่าใครกำลังทำอะไร เทียบกับข้อความยาว ๆ ของ default
+    <br><strong>2.</strong> มันกันการโจมตีอีกแบบที่อันตรายกว่า ซึ่งอยู่ข้างล่างนี้
+  </p>
+</div>
+
+<h3>algorithm confusion — เอา public key มาเซ็นแบบ HS256</h3>
+
+<p>
+  <strong>Algorithm confusion</strong> คือการที่ผู้โจมตีสลับชนิดของอัลกอริทึมเพื่อหลอกให้เซิร์ฟเวอร์
+  เอา<em>ของที่เปิดเผยได้</em> มาใช้เป็น<em>ความลับ</em>
+  <br>ไอเดียคือ: ถ้าเซิร์ฟเวอร์ตั้งใจใช้ <code>RS256</code> (private key เซ็น / public key ตรวจ)
+  แล้ว <strong>public key เป็นของสาธารณะ ใครก็โหลดได้</strong>
+  <br>ผู้โจมตีก็เอา public key นั้นมาใช้เป็น "secret" ของ <code>HS256</code> แล้วเซ็น token เอง —
+  ถ้าเซิร์ฟเวอร์ไม่ได้ล็อก alg ไว้ มันจะหยิบ public key ตัวเดียวกันมาตรวจ แล้วก็ตรงกันพอดี
+</p>
+
+<p>
+  จุดที่ต้องเห็นให้ชัดคือ <strong>"เอา public key รูปแบบไหนมาใช้เป็น secret"</strong> —
+  ในโปรแกรมนี้ผมใช้ <strong>PEM ทั้งก้อน</strong> (ตัวเดียวกับที่เซิร์ฟเวอร์เอาไปแปะไว้ให้โหลด)
+  ฝั่งผู้โจมตีมีแค่สามบรรทัด:
+  <br>(โปรแกรมสุ่ม RSA key ใหม่ทุกครั้งที่รัน ตัว token ที่คุณได้เลยไม่เหมือนข้างล่าง —
+  แต่สอง<strong>บรรทัด error</strong> จะออกมาเหมือนกันเป๊ะ)
+</p>
+
+<pre><code>der, _ := x509.<span class="f">MarshalPKIXPublicKey</span>(pub)                                  <span class="c">// public key → DER</span>
+pubPEM := pem.<span class="f">EncodeToMemory</span>(&amp;pem.Block{Type: <span class="s">"PUBLIC KEY"</span>, Bytes: der}) <span class="c">// DER → PEM</span>
+s, err := jwt.<span class="f">NewWithClaims</span>(jwt.SigningMethodHS256, claims).<span class="f">SignedString</span>(pubPEM)</code></pre>
+
+<pre><code>$ go run ./cmd/confusion
+
+attacker เซ็น HS256 ด้วย public key: err=&lt;nil&gt;
+token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYWRtaW4iLCJzdWIiOiI0MiJ9.BTBZcWv8rupZ27-xkP_c6coRiTpy4nT6fwb23UrkOo4
+
+A) ไม่มี WithValidMethods -&gt; err = token signature is invalid: <strong>key is of invalid type: HMAC verify expects []byte</strong>
+B) มี WithValidMethods([RS256]) -&gt; err = token signature is invalid: <strong>signing method HS256 is invalid</strong></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ อ่าน error ของเคส A ให้ดี — มันรอดเพราะ<em>บังเอิญ</em> ไม่ใช่เพราะตรวจ</span>
+  <p style="margin-bottom:0">
+    เคส A รอดเพราะ keyfunc คืน <code>*rsa.PublicKey</code> ส่วนตัวตรวจ HMAC ต้องการ <code>[]byte</code>
+    ชนิดไม่ตรงกันมันเลยพัง — <strong>ไม่ได้แปลว่ามันเช็คว่า alg ผิด</strong>
+    <br>แปลว่าถ้าวันหนึ่งมีคนแก้ keyfunc ให้คืน <code>[]byte</code> (เช่นอ่าน PEM มาเป็น byte แล้วส่งดิบ ๆ)
+    <strong>ช่องโหว่นี้เปิดทันทีโดยไม่มีอะไรเตือน</strong>
+    <br>ส่วนเคส B ปฏิเสธเพราะ <em>alg ไม่อยู่ในรายชื่อที่เรายอมรับ</em> ตรง ๆ ซึ่งไม่ขึ้นกับชนิดของ key เลย
+    <br><strong>กฎที่ควรถือ: ใส่ <code>jwt.WithValidMethods()</code> ทุกครั้ง
+    เพราะเราอยากกันโดยตั้งใจ ไม่ใช่กันโดยบังเอิญ</strong>
+  </p>
+</div>
+
+<h2>9 · บอก Swagger ว่า endpoint นี้ต้องใช้ JWT</h2>
+
+<p>
+  สไลด์หน้า 34 เขียนสั้น ๆ ว่า <em>"เพิ่ม Swagger annotation เกี่ยวกับ Security Definition เพื่อระบุการใช้งาน JWT"</em>
+  <br>ของชิ้นนี้เราทำไปแล้วใน <a href="../../day-8/lessons/0041-swagger-swaggo.html">บทเรียน 41</a>
+  ตอนนี้แค่มาดูอีกครั้งว่ามันเชื่อมกับ JWT ตรงไหน — มันทำงานเป็นคู่ <strong>สองจุด</strong> ขาดจุดใดจุดหนึ่งก็ไม่เกิดผล
+</p>
+
+<p><strong>จุดที่ 1</strong> — ประกาศ "วิธีล็อกอิน" ไว้เหนือ <code>func main()</code> มีที่เดียวในทั้งโปรเจกต์:</p>
+
+<pre><code><span class="c">//	@securityDefinitions.apikey	BearerAuth</span>
+<span class="c">//	@in							header</span>
+<span class="c">//	@name						Authorization</span>
+<span class="c">//	@description				ใส่ค่าเป็น "Bearer {token}"</span>
+<span class="k">func</span> <span class="f">main</span>() { ... }</code></pre>
+
+<p><strong>จุดที่ 2</strong> — ติดป้ายบน handler ที่ต้องล็อกอิน (ใส่เฉพาะตัวที่ต้องการ):</p>
+
+<pre><code><span class="c">//	@Security		BearerAuth</span>
+<span class="c">//	@Router			/users/{id} [get]</span>
+<span class="k">func</span> (handler *Handler) <span class="f">FindByID</span>(ctx *gin.Context) { ... }</code></pre>
+
+<p>สั่ง <code>swag init</code> (v1.16.4) แล้วเปิด <code>docs/swagger.json</code> ดู จะได้สองก้อนนี้คนละที่:</p>
+
+<pre><code><span class="c">// ระดับเอกสาร มาจากจุดที่ 1</span>
+<span class="s">"securityDefinitions"</span>: {
+  <span class="s">"BearerAuth"</span>: {
+    <span class="s">"description"</span>: <span class="s">"ใส่ค่าเป็น \"Bearer {token}\""</span>,
+    <span class="s">"type"</span>: <span class="s">"apiKey"</span>,
+    <span class="s">"name"</span>: <span class="s">"Authorization"</span>,
+    <span class="s">"in"</span>: <span class="s">"header"</span>
+  }
+}
+
+<span class="c">// ระดับ endpoint มาจากจุดที่ 2 (อยู่ใต้ paths./users/{id}.get)</span>
+<span class="s">"security"</span>: [ { <span class="s">"BearerAuth"</span>: [] } ]</code></pre>
+
+<p>
+  ผลที่เห็นบนหน้าจอ: มี<strong>ปุ่ม Authorize มุมขวาบน</strong> ·
+  endpoint ที่ต้องล็อกอินมี<strong>รูปกุญแจ</strong> ·
+  ใส่ token ครั้งเดียวแล้วกด Try it out ได้ทุกอันโดยไม่ต้องเปิด Postman
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ ทำไมต้องเขียน <code>apikey</code> ทั้งที่มันคือ Bearer JWT — และทำไมต้องพิมพ์คำว่า "Bearer " เอง</span>
+  <p style="margin-bottom:0">
+    เพราะ <code>swag</code> v1 ออกไฟล์เป็น <strong>Swagger 2.0</strong> (ดูค่า <code>"swagger": "2.0"</code> ในไฟล์)
+    ซึ่งเป็นสเปกที่<strong>ยังไม่มี</strong> <code>type: http</code> / <code>scheme: bearer</code> —
+    ของพวกนั้นเพิ่งมาใน OpenAPI 3
+    <br>ท่าที่ทำได้ในสเปก 2.0 จึงมีแค่บอกว่า "มี header ชื่อ <code>Authorization</code>" ซึ่งก็คือ <code>apiKey</code>
+    <br>ผลข้างเคียงที่ต้องบอกทีมทุกครั้ง: ในช่อง Authorize <strong>ต้องพิมพ์คำว่า <code>Bearer </code>
+    (มีเว้นวรรค) นำหน้า token เอง</strong> เพราะ Swagger UI ส่งค่าที่พิมพ์ไปตรง ๆ ไม่ได้เติมให้
+    <br>นั่นแหละคือเหตุผลที่บรรทัด <code>@description</code> เขียนว่า <code>ใส่ค่าเป็น "Bearer {token}"</code> —
+    มันคือคำเตือนที่จะไปโผล่ใต้ช่องกรอกให้คนใช้เห็น
+  </p>
+</div>
+
+<h2>10 · JWT ไม่ได้ดีกว่าทุกเรื่อง</h2>
+
+<p>
+  ก่อนจบบท ต้องบอกฝั่งที่แลกมาด้วย ไม่งั้นคุณจะเอา JWT ไปใช้ผิดที่
+  <br>อย่างแรกคือ<strong>ขนาด</strong> — JWT พก claims ไว้ในตัว แปลว่ามันใหญ่กว่า session id มาก
+  และมันเดินทางไปกับ<em>ทุก</em> request เหมือน Basic Auth เป๊ะ ผมวัดมาให้ดู
+  <br>สามก้อนที่เอามาวัดคือ claims พวกนี้ (<code>cmd/size</code> เซ็นทั้งสามก้อนด้วย <code>HS256</code> เหมือนกันหมด):
+</p>
+
+<pre><code>minimal := jwt.<span class="f">MapClaims</span>{<span class="s">"sub"</span>: <span class="s">"42"</span>, <span class="s">"exp"</span>: exp}
+
+typical := jwt.<span class="f">MapClaims</span>{
+    <span class="s">"sub"</span>: <span class="s">"42"</span>, <span class="s">"name"</span>: <span class="s">"somchai"</span>, <span class="s">"role"</span>: <span class="s">"admin"</span>,
+    <span class="s">"iss"</span>: <span class="s">"wongnok"</span>, <span class="s">"iat"</span>: now.<span class="f">Unix</span>(), <span class="s">"exp"</span>: exp,
+}
+
+fat := jwt.<span class="f">MapClaims</span>{
+    <span class="s">"sub"</span>: <span class="s">"42"</span>, <span class="s">"name"</span>: <span class="s">"สมชาย ใจดี"</span>, <span class="s">"iss"</span>: <span class="s">"wongnok"</span>,
+    <span class="s">"roles"</span>: []<span class="k">string</span>{<span class="s">"admin"</span>, <span class="s">"editor"</span>, <span class="s">"reviewer"</span>},
+    <span class="s">"perms"</span>: []<span class="k">string</span>{<span class="s">"food:read"</span>, <span class="s">"food:write"</span>, <span class="s">"food:delete"</span>},
+    <span class="s">"iat"</span>: now.<span class="f">Unix</span>(), <span class="s">"exp"</span>: exp,
+}</code></pre>
+
+<pre><code>$ go run ./cmd/size
+
+แบบ                              byte  ตัวอย่าง
+JWT minimal (sub+exp)             120  eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODczNzcxNDIsInN1YiI6IjQyIn0.XJ3SsW28hIV-mK16uXjbmZJUApKMs1X11wvM6_OM2W4
+JWT typical (6 claims)            207  (ตัด token ออก)
+JWT fat (roles+perms+ชื่อไทย)     331  (ตัด token ออก)
+session id 128-bit hex             <strong>32</strong>  954aa83869ba92dfb8c586b374c221e3
+session id 256-bit b64url          43  syv3gevNPL5wqDBV7Z-J0zGCYrBegP_3_W101-LKLGE
+
+header ที่ส่งจริง Authorization: Bearer &lt;typical&gt; = 229 byte
+header ที่ส่งจริง Cookie: sid=&lt;hex&gt;              = 44 byte
+typical JWT ใหญ่กว่า session hex = <strong>6.5 เท่า</strong>
+fat JWT ใหญ่กว่า session hex     = <strong>10.3 เท่า</strong></code></pre>
+
+<p>
+  ถ้าคุณรันเอง <code>exp</code>/<code>iat</code> กับ session id จะเป็นค่าอื่น
+  แต่ตัวเลข <strong>byte</strong> จะเท่ากันเป๊ะ เพราะ unix timestamp ยาว 10 หลักเท่ากันทุกครั้ง
+  และ signature ของ <code>HS256</code> ยาว 43 ตัวอักษรเสมอ
+</p>
+
+<p>
+  ตัวที่บวมที่สุดคือ token ที่ยัด <code>roles</code> + <code>perms</code> + ชื่อภาษาไทย
+  <br>เหตุผลเรื่องภาษาไทยคือ<strong>จำนวนไบต์ ไม่ใช่การ escape</strong> —
+  <code>encoding/json</code> ของ Go <em>ไม่</em>แปลงอักษรไทยเป็น <code>\uXXXX</code>
+  (มัน escape แค่ <code>&lt;</code> <code>&gt;</code> <code>&amp;</code> และตัวคั่นบรรทัดพิเศษ <code>U+2028</code>/<code>U+2029</code>)
+  payload จึงเก็บภาษาไทยเป็น UTF-8 ดิบ ๆ อ่านออกได้ตรง ๆ ตอน decode
+  <br>แต่อักษรไทยหนึ่งตัวกิน <strong>3 ไบต์</strong> ใน UTF-8 (ASCII กินตัวละ 1 ไบต์)
+  แล้ว base64 ยังขยายอีก <strong>4/3 เท่า</strong> → ชื่อไทยหนึ่งตัวกลายเป็น <strong>4 ตัวอักษร</strong> ใน token
+  ขณะที่ตัวอักษรอังกฤษสามตัวถึงจะกินที่เท่ากัน
+  <br>ส่วนอย่างที่สองที่หนักกว่าเรื่องขนาด: <strong>JWT ที่ออกไปแล้ว เรียกคืนไม่ได้</strong>
+  <br>เพราะจุดขายทั้งหมดของมันคือ "เซิร์ฟเวอร์ตรวจได้เองโดยไม่ต้องถาม DB" —
+  ซึ่งแปลว่าเซิร์ฟเวอร์ก็ไม่รู้เหมือนกันว่ามีใครถูกแบนไปแล้ว
+  <br>ถ้าผู้ใช้ถูกไล่ออกตอน 10 โมง แต่ token ของเขาหมดอายุ 11 โมง เขายังใช้งานได้อีกชั่วโมงเต็ม
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Basic Auth</th><th>Session id + DB</th><th>JWT</th></tr></thead>
+  <tbody>
+    <tr><td>ส่งอะไรไปทุก request</td><td>รหัสผ่านตัวจริง</td><td>id สุ่ม 32 byte</td><td>ตัว token 120–331 byte</td></tr>
+    <tr><td>มีวันหมดอายุในตัว</td><td>ไม่มี</td><td>เซิร์ฟเวอร์คุมเอง</td><td>มี — <strong>ถ้าใส่ <code>exp</code> เอง</strong></td></tr>
+    <tr><td>เช็ค DB ทุก request</td><td>ต้อง (hash ด้วย)</td><td>ต้อง (แต่แค่หา key)</td><td><strong>ไม่ต้อง</strong></td></tr>
+    <tr><td>ยกเลิกทันทีได้ไหม</td><td>ต้องเปลี่ยนรหัสผ่าน</td><td><strong>ได้ — ลบแถวเดียว</strong></td><td>ไม่ได้ ต้องรอหมดอายุ</td></tr>
+    <tr><td>พก claims (role ฯลฯ)</td><td>ไม่ได้</td><td>ได้ (เก็บฝั่งเซิร์ฟเวอร์)</td><td><strong>ได้ — อยู่ในตัว token</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ท่ามาตรฐานที่ระบบจริงใช้กัน</strong> คือรวมข้อดีสองฝั่ง:
+    ออก <strong>access token</strong> (JWT) ที่<em>อายุสั้นมาก</em> เช่น 15 นาที เอาไว้ยิง API —
+    คู่กับ <strong>refresh token</strong> ที่อายุยาวและ<em>เก็บใน DB จริง</em> เอาไว้ขอ access token ใบใหม่
+    <br>เวลาจะแบนใคร ก็ลบ refresh token ของเขาทิ้ง — เขาใช้ได้อีกไม่เกิน 15 นาทีก็จบ
+    <br>คุณยังไม่ต้องทำท่านี้ตอนนี้ แค่รู้ไว้ว่า <em>"อายุ token สั้น"</em> ไม่ใช่ความจู้จี้ แต่เป็น
+    <strong>คำตอบเดียวที่ JWT มีให้กับปัญหา revoke</strong>
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ผู้ใช้ล็อกอินสำเร็จแล้ว แล้วกดปุ่มลบสูตรอาหารของคนอื่น — เซิร์ฟเวอร์ควรตอบ status อะไร และนั่นเป็นเรื่องของอะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>401</code> — เพราะเป็นเรื่อง authentication ผู้ใช้ยังพิสูจน์ตัวตนไม่ผ่าน</button>
+    <button class="opt"><code>401</code> พร้อม header <code>WWW-Authenticate</code> — เพื่อบอกให้ล็อกอินใหม่ด้วยบัญชีที่มีสิทธิ์</button>
+    <button class="opt"><code>403</code> — เพราะเป็นเรื่อง authorization: รู้แล้วว่าเขาเป็นใคร แต่เขาไม่มีสิทธิ์ทำสิ่งนี้</button>
+    <button class="opt"><code>400</code> — เพราะ request ผิดพลาด ส่งข้อมูลที่เซิร์ฟเวอร์ยอมรับไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p>ลำดับของสองเรื่องนี้คือกุญแจ: <strong>authentication เกิดก่อน</strong> (คุณเป็นใคร)
+    แล้ว <strong>authorization เกิดทีหลัง</strong> (คุณทำอะไรได้)
+    <br>โจทย์บอกชัดว่า "ล็อกอินสำเร็จแล้ว" แปลว่าด่าน authentication ผ่านไปแล้ว
+    เซิร์ฟเวอร์<em>รู้</em>ว่าเขาเป็นใคร — ที่ติดคือเรื่องสิทธิ์ล้วน ๆ ซึ่งคือ <code>403</code>
+    <br>ตัวเลือกที่ 1 กับ 2 ผิดเพราะ <code>401</code> แปลว่า "ยังไม่รู้ว่าคุณเป็นใคร" ซึ่งขัดกับโจทย์
+    <br>โดยเฉพาะข้อ 2 ที่ฟังดูดี — <code>WWW-Authenticate</code> คือ header ที่มาคู่กับ <code>401</code>
+    เพื่อบอก<em>วิธี</em>พิสูจน์ตัวตน (ในผลรันหัวข้อ 2 เราเห็นค่าจริงคือ
+    <code>WWW-Authenticate="Basic realm=\"wongnok\""</code>) — มันไม่ใช่เครื่องมือสำหรับบอกว่า "สิทธิ์ไม่พอ"
+    <br>ตัวเลือกที่ 4 ผิดเพราะ request ถูกต้องทุกอย่าง ไม่มีข้อมูลไหนพัง
+    <br><strong>จุดที่ต้องจำ:</strong> ชื่อ <code>401 Unauthorized</code> ตั้งผิดมาตั้งแต่ต้น —
+    มันหมายถึง unauthenticated ส่วนตัวที่แปลว่า "ไม่มีสิทธิ์" จริง ๆ คือ <code>403 Forbidden</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. โค้ดเซิร์ฟเวอร์เขียนว่า <code>user, pass, ok := r.BasicAuth()</code> แล้วตามด้วย <code>if ok { ให้ผ่าน }</code> — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">ใครก็ตามที่ส่ง header <code>Authorization: Basic ...</code> ที่ base64 ถอดได้ จะผ่านหมด ถึงรหัสผ่านจะผิดก็ตาม</button>
+    <button class="opt">ปลอดภัยดี เพราะ <code>ok</code> เป็น <code>true</code> ก็ต่อเมื่อ Go เทียบ username กับ password ให้แล้วว่าถูก</button>
+    <button class="opt">โปรแกรมจะ panic ตอนรหัสผิด เพราะ <code>r.BasicAuth()</code> คืน error มาด้วยเมื่อ credential ไม่ตรง</button>
+    <button class="opt">ปลอดภัยระดับหนึ่ง เพราะ <code>ok</code> เช็คแค่ username แต่ยังต้องเทียบ password เอง</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงที่ยิงด้วยรหัสผิดตั้งใจ (<code>req.SetBasicAuth("somchai", "wrong")</code>):
+    <br><code>[server] r.BasicAuth() -&gt; user="somchai" pass="wrong" <strong>ok=true</strong></code>
+    <br>รหัสผิดชัด ๆ แต่ <code>ok</code> ยังเป็น <code>true</code>
+    <br>เพราะ <code>ok</code> ตอบคำถามว่า <strong>"แกะ header สำเร็จไหม"</strong> —
+    คือมี header <code>Authorization</code> · ขึ้นต้นด้วย <code>Basic</code> · base64 ข้างหลังถอดได้ · มี <code>:</code> คั่น
+    <br>Go ไม่มีทางรู้เลยว่ารหัสที่ถูกต้องของระบบคุณคืออะไร มันจึงเทียบให้ไม่ได้ตั้งแต่ต้น
+    <br>ตัวเลือกที่ 3 ผิดเพราะ <code>r.BasicAuth()</code> ไม่คืน error และไม่ panic — คืนแค่ <code>bool</code>
+    <br>ตัวเลือกที่ 4 ผิดเพราะมันไม่ได้เช็ค username ด้วยซ้ำ แค่แกะออกมาเฉย ๆ
+    <br><strong>วิธีที่ถูก:</strong> เทียบเองทั้ง user และ pass ด้วย
+    <code>subtle.ConstantTimeCompare</code> แล้วตอบ <code>401</code> พร้อม <code>WWW-Authenticate</code> เมื่อไม่ตรง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. เพื่อนส่ง JWT มาให้ดูแล้วบอกว่า "ไม่เป็นไรหรอก ข้างในใส่รหัสผ่านไว้ แต่มันเข้ารหัสอยู่" — ตอบเขายังไง?</p>
+  <div class="opts">
+    <button class="opt">ถูกแล้ว payload ถูกเข้ารหัสด้วย secret ตัวเดียวกับที่ใช้เซ็น ต้องมี secret ถึงจะอ่านได้</button>
+    <button class="opt">ถูกครึ่งเดียว — อ่าน payload ได้ก็ต่อเมื่อรู้ว่า alg เป็น HS256 หรือ RS256 ก่อน</button>
+    <button class="opt">ผิด แต่ไม่เป็นไร เพราะถึงอ่าน payload ได้ ก็เอาไปใช้ต่อไม่ได้อยู่ดีเพราะมี signature กันไว้</button>
+    <button class="opt">ผิด — payload เป็นแค่ base64 ใครก็ decode อ่านได้โดยไม่ต้องมี secret ต้องเอารหัสผ่านออกทันที</button>
+  </div>
+  <div class="explain">
+    <p>ผมพิสูจน์สองทางในหัวข้อ 5 ด้วย token จากสไลด์:
+    <br><strong>ทางที่ 1</strong> — shell ล้วน ๆ: <code>echo '&lt;payload&gt;=' | tr '_-' '/+' | base64 -d</code>
+    ได้ <code>{"sub":"1234567890","name":"John Doe","admin":true,"iat":1516239022}</code>
+    <br><strong>ทางที่ 2</strong> — Go ด้วย <code>ParseUnverified</code> ที่ไม่รับ secret เข้าไปเลย:
+    ได้ <code>err=&lt;nil&gt;</code> และเห็น <code>admin:true</code> ครบ
+    <br>ตัวเลือกที่ 1 ผิดเพราะ JWT มาตรฐาน (JWS) <strong>ไม่เข้ารหัส payload เลย</strong> — แค่ base64
+    <br>ตัวเลือกที่ 2 ผิดเพราะ <code>alg</code> ไม่เกี่ยวกับการอ่าน payload เลย มันเกี่ยวกับการตรวจ signature อย่างเดียว
+    <br>ตัวเลือกที่ 3 คือกับดักที่หลอกที่สุด — <strong>มันเข้าใจหน้าที่ของ signature ถูก แต่ตอบผิดโจทย์</strong>:
+    signature กันการ<em>แก้ไข</em> ไม่ได้กันการ<em>อ่าน</em>
+    และปัญหาของเพื่อนคือรหัสผ่าน<em>ถูกอ่านไปแล้ว</em> ไม่ใช่กลัวคนแก้
+    <br><strong>จุดที่ต้องจำ:</strong> ถือว่า payload ของ JWT เป็นข้อความสาธารณะเสมอ —
+    ห้ามใส่รหัสผ่าน เลขบัตร หรือความลับใด ๆ ลงไป</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. โค้ดเขียน <code>jwt.Parse(s, keyfunc)</code> เฉย ๆ ไม่ได้ใส่ <code>jwt.WithValidMethods()</code> — ข้อไหนอธิบายความเสี่ยงได้ตรงกับผลรันจริงที่สุด?</p>
+  <div class="opts">
+    <button class="opt">token ที่มี <code>alg=none</code> จะผ่านทันที เพราะไม่ได้ระบุว่ายอมรับ alg ไหนบ้าง</button>
+    <button class="opt">golang-jwt/v5 ปฏิเสธ <code>alg=none</code> ให้อยู่แล้วตั้งแต่ default · ความเสี่ยงจริงคือ algorithm confusion ที่รอดเพราะชนิดของ key บังเอิญไม่ตรง ไม่ใช่เพราะตรวจ alg</button>
+    <button class="opt">ไม่มีความเสี่ยงอะไรเลย <code>WithValidMethods</code> เป็นแค่ตัวช่วยให้ error อ่านง่ายขึ้นเท่านั้น</button>
+    <button class="opt">token ทุกใบจะผ่านหมดโดยไม่ตรวจ signature เพราะไม่ได้บอกว่าจะตรวจด้วยวิธีไหน</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันของ <code>cmd/algnone</code> ปฏิเสธตัวเลือกที่ 1 ตรง ๆ:
+    <br><code>B) ไม่มี WithValidMethods -&gt; err = token signature is invalid: token is unverifiable: 'none' signature type is not allowed</code>
+    <br>ทางเดียวที่ <code>alg=none</code> ทะลุได้คือคนเขียนโค้ดคืน <code>jwt.UnsafeAllowNoneSignatureType</code> เอง (เคส C ได้ <code>err=&lt;nil&gt;</code>)
+    <br>ส่วนของจริงที่น่ากลัวอยู่ในผลรันของ <code>cmd/confusion</code>:
+    <br><code>A) ไม่มี WithValidMethods -&gt; err = token signature is invalid: <strong>key is of invalid type: HMAC verify expects []byte</strong></code>
+    <br>ข้อความนี้บอกเราว่ามันรอดเพราะ keyfunc คืน <code>*rsa.PublicKey</code> แล้วชนิดไม่ตรงกับที่ HMAC ต้องการ
+    <strong>ไม่ใช่เพราะมันเช็คว่า alg ผิด</strong> — วันไหน keyfunc คืน <code>[]byte</code> ช่องโหว่เปิดทันที
+    <br>เทียบกับตอนใส่: <code>B) มี WithValidMethods([RS256]) -&gt; signing method HS256 is invalid</code> ซึ่งปฏิเสธเพราะ alg ตรง ๆ
+    <br>ตัวเลือกที่ 3 ผิดเพราะมองข้าม algorithm confusion · ตัวเลือกที่ 4 ผิดชัดเพราะ signature ยังถูกตรวจอยู่เสมอ
+    <br><strong>จุดที่ต้องจำ:</strong> ใส่ <code>WithValidMethods</code> ทุกครั้ง เพราะเราต้องการกัน<em>โดยตั้งใจ</em>
+    ไม่ใช่กัน<em>โดยบังเอิญ</em></p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ถอด token ด้วยมือ แล้วลองโจมตีระบบของตัวเอง</span>
+  <p>
+    เป้าหมายไม่ใช่ "ทำให้ JWT ใช้ได้" — เป้าหมายคือ
+    <strong>ทำให้คุณเห็นด้วยตาตัวเองว่าอะไรที่ token กันได้ และอะไรที่มันกันไม่ได้</strong>
+  </p>
+  <ol>
+    <li><strong>ถอดด้วยมือก่อน:</strong> ก๊อป token ตัวในหัวข้อ 5 มา ตัดด้วย <code>cut -d. -f1</code>
+        แล้ว <code>-f2</code> แล้ว decode ทั้งสองส่วน
+        <br><strong>ห้ามใช้เว็บ jwt.io</strong> — พิมพ์คำสั่งเองจะได้รู้ว่ามันไม่มีอะไรมากไปกว่า base64
+        <br>อย่าลืมเติม <code>=</code> ให้ครบ 4 ตัว ไม่งั้นเลขท้ายจะหายไปเงียบ ๆ</li>
+    <li><strong>ตั้งโปรเจกต์:</strong> <code>go mod init jwtcheck</code> ·
+        <code>go get github.com/golang-jwt/jwt/v5</code>
+        <br>เขียนโปรแกรมที่ sign token ด้วย <code>HS256</code> โดยใส่ <code>sub</code> · <code>role</code> ·
+        <code>iat</code> · <code>exp</code> (ตั้ง 1 ชั่วโมง) แล้วพิมพ์ token กับ <code>len()</code> ออกมา</li>
+    <li><strong>parse กลับ:</strong> เขียนฝั่ง verify ด้วย <code>jwt.Parse</code> +
+        <code>jwt.WithValidMethods([]string{"HS256"})</code>
+        <br>พิมพ์ <code>claims</code> ออกมา แล้ว<strong>ลองเขียน <code>c["exp"].(int)</code> ดูสักครั้ง</strong>
+        เพื่อให้เห็น panic ด้วยตาตัวเอง ก่อนจะแก้เป็น <code>.(float64)</code></li>
+    <li><strong>สร้างสามเคส error:</strong> ตั้ง <code>exp</code> เป็นอดีต ·
+        แก้ตัวอักษรสุดท้ายของ token ไปหนึ่งตัว · parse ด้วย <code>WithValidMethods([]string{"RS256"})</code>
+        <br><strong>จดข้อความ error ทั้งสามอันไว้</strong> แล้วเทียบกับที่อยู่ในหัวข้อ 7 ว่าตรงกันไหม</li>
+    <li><strong>ทดสอบ <code>errors.Is</code>:</strong> ในทั้งสามเคสข้างบน พิมพ์ผลของ
+        <code>errors.Is(err, jwt.ErrSignatureInvalid)</code> กับ
+        <code>errors.Is(err, jwt.ErrTokenSignatureInvalid)</code>
+        <br><strong>ตอบให้ได้ว่ามีเคสไหนที่สองอันนี้ให้คำตอบไม่เหมือนกัน และควรใช้ตัวไหน</strong></li>
+    <li><strong>ลองโจมตีตัวเอง:</strong> สร้าง token <code>alg=none</code> ด้วยมือ —
+        <code>base64url</code> ของ <code>{"alg":"none","typ":"JWT"}</code> + <code>.</code> +
+        <code>base64url</code> ของ <code>{"role":"admin"}</code> + <code>.</code> (ปิดท้ายด้วยจุดเปล่า)
+        <br>ยิงเข้า parser ของคุณสามแบบ: มี <code>WithValidMethods</code> · ไม่มี ·
+        และให้ keyfunc คืน <code>jwt.UnsafeAllowNoneSignatureType</code>
+        <br><strong>แบบไหนที่ทะลุได้จริง?</strong></li>
+    <li><strong>กับดักตลอดชีพ:</strong> sign token ที่<strong>ไม่มี <code>exp</code> เลย</strong>
+        แล้ว parse ดู — จะได้ <code>err=&lt;nil&gt;</code>
+        <br>จากนั้นเติม <code>jwt.WithExpirationRequired()</code> แล้วรันซ้ำ
+        <br><strong>ตอบว่าทำไม default ถึงเป็นแบบนี้ และคุณจะกันไม่ให้เกิดในทีมยังไง</strong></li>
+    <li><strong>ท้าทาย:</strong> เปลี่ยนจาก <code>jwt.MapClaims</code> ไปเป็น struct ของตัวเองที่ฝัง
+        <code>jwt.RegisteredClaims</code> ข้างใน แล้วใส่ field <code>Role string</code> เพิ่ม
+        <br>แล้วตอบว่า <strong>ปัญหา <code>float64</code> ในข้อ 3 หายไปไหม และทำไม</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 6 — แบบไหนที่ทะลุได้</button>
+  <div class="answer">
+    <p>ผลรันจริงของทั้งสามแบบ:</p>
+    <pre style="margin:0.6rem 0"><code>evil token = eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJyb2xlIjoiYWRtaW4iLCJzdWIiOiI0MiJ9.
+
+A) มี WithValidMethods([HS256]) -&gt; err = token signature is invalid: signing method none is invalid
+B) ไม่มี WithValidMethods    -&gt; err = token signature is invalid: token is unverifiable: 'none' signature type is not allowed
+C) คืน UnsafeAllowNoneSignatureType -&gt; err = <strong>&lt;nil&gt;</strong></code></pre>
+    <p>
+      <strong>มีแบบ C แบบเดียวที่ทะลุ</strong> — และมันทะลุเพราะ<em>คนเขียนโค้ดอนุญาตเอง</em>
+      ไม่ใช่เพราะไลบรารีหละหลวม
+      <br>ถ้าคุณเคยได้ยินว่า "ไม่ใส่ <code>WithValidMethods</code> แล้ว <code>alg=none</code> ทะลุ"
+      — กับ golang-jwt/jwt/v5 v5.3.1 <strong>ไม่จริง</strong> ดูเคส B
+    </p>
+    <p style="margin-bottom:0">
+      แต่อย่าเพิ่งสรุปว่าไม่ต้องใส่ ลองข้อ 6 ต่ออีกนิด: เขียนโปรแกรมที่ keyfunc คืน
+      <code>*rsa.PublicKey</code> แล้วให้ "ผู้โจมตี" เอา public key นั้นไปเซ็นแบบ <code>HS256</code>
+      <br>คุณจะได้ error ว่า <code>key is of invalid type: HMAC verify expects []byte</code> —
+      ซึ่งแปลว่ามัน<strong>รอดเพราะชนิดของ key บังเอิญไม่ตรง</strong> ไม่ใช่เพราะตรวจ alg
+      <br>นั่นคือเหตุผลจริงที่ต้องใส่ <code>WithValidMethods</code> ทุกครั้ง
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 1 กับข้อ 6 คือสองข้อที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong> —
+    ข้อ 1 ทำให้คุณเลิกกลัว JWT (มันคือ base64 กับ JSON เท่านั้นเอง)
+    ส่วนข้อ 6 ทำให้คุณเลิกเชื่อว่ามันปลอดภัยเองโดยอัตโนมัติ
+    <br>ถ้ารันแล้ว output ไม่ตรงกับในบทนี้ <strong>ส่งมาได้เลย</strong> —
+    ทุกบรรทัดในหน้านี้วัดบน <strong>Go 1.26.5 darwin/arm64</strong> กับ
+    <strong>golang-jwt/jwt/v5 v5.3.1</strong>
+    <br>จุดที่มีโอกาสไม่ตรงมากที่สุดคือ <strong>ตัว token ที่คุณ sign เอง</strong> —
+    มันจะไม่เหมือนของผมแน่นอน เพราะ <code>iat</code> กับ <code>exp</code> เป็นเวลาตอนที่รัน
+    ดูที่<strong>ข้อความ error</strong> กับ<strong>โครงสร้าง</strong>แทน อย่าดูที่ตัวอักษรของ token
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0048-internal-config.html">← บทเรียน 48</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0050-oauth2-authorization-code.html">บทเรียน 50 → OAuth 2.0</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/net/http#Request.BasicAuth">pkg.go.dev — <code>http.Request.BasicAuth</code></a> — <strong>สังเกตว่า doc ไม่ได้อธิบายความหมายของ <code>ok</code> ไว้เลยสักคำ</strong> — มันเขียนแค่ว่าคืน username/password ที่ request "provides" มาใน header เท่านั้น · นั่นแหละคือกับดักในหัวข้อ 2: <code>ok</code> บอกว่า<em>แกะ header ได้</em> ไม่ได้บอกว่า<em>รหัสผ่านถูก</em></li>
+  <li><a href="https://pkg.go.dev/crypto/subtle#ConstantTimeCompare">pkg.go.dev — <code>subtle.ConstantTimeCompare</code></a> — ทำไมการเทียบรหัสผ่านด้วย <code>==</code> ธรรมดาถึงรั่วข้อมูลออกทางเวลาที่ใช้ตอบ</li>
+  <li><a href="https://datatracker.ietf.org/doc/html/rfc7519">RFC 7519 — JSON Web Token</a> — <strong>อ่านหัวข้อ 4.1</strong> ซึ่งเป็นรายชื่อ registered claims ทั้งเจ็ด (<code>iss</code> <code>sub</code> <code>aud</code> <code>exp</code> <code>nbf</code> <code>iat</code> <code>jti</code>) พร้อมนิยามทีละตัว</li>
+  <li><a href="https://datatracker.ietf.org/doc/html/rfc7515#section-4.1.1">RFC 7515 §4.1.1 — header <code>alg</code></a> · <a href="https://datatracker.ietf.org/doc/html/rfc8725">RFC 8725 — JWT Best Current Practices</a> — <strong>RFC 8725 คือฉบับที่ควรอ่านที่สุดในลิสต์นี้</strong> เขียนตรง ๆ ว่าต้องล็อกรายชื่อ alg ที่ยอมรับ และห้ามเชื่อ <code>alg</code> ที่มาจากตัว token</li>
+  <li><a href="https://pkg.go.dev/github.com/golang-jwt/jwt/v5">pkg.go.dev — <code>golang-jwt/jwt/v5</code></a> — รายชื่อ <code>ParserOption</code> ทั้งหมด (<code>WithValidMethods</code> · <code>WithExpirationRequired</code> · <code>WithLeeway</code> · <code>WithAudience</code> · <code>WithIssuer</code>) และค่า default ของแต่ละตัว</li>
+  <li><a href="https://github.com/golang-jwt/jwt/blob/main/errors.go">golang-jwt — <code>errors.go</code></a> — <strong>ในไฟล์นี้มีแค่ <code>ErrTokenSignatureInvalid</code></strong> (บรรทัด 15 — ไฟล์นี้ประกาศ error ไว้ 16 ตัวรวด บรรทัด 10–25 เช่น <code>ErrTokenInvalidIssuer</code> ที่เจอในหัวข้อ 7.4) · ส่วน <code>ErrSignatureInvalid</code> <strong>ไม่ได้อยู่ที่นี่</strong> — มันอยู่ใน <code>hmac.go</code> บรรทัด 21 เพราะเป็น error เฉพาะของ <code>SigningMethodHMAC</code> · นี่คือเหตุผลจริงที่หัวข้อ 7.3 ได้ <code>false</code>: เคส alg ไม่ตรงถูกปฏิเสธก่อนถึงตัวตรวจ HMAC จึงไม่มีทางได้ error ตัวนี้เลย</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/401">MDN — 401 Unauthorized</a> · <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/403">403 Forbidden</a> — หน้า 401 เขียนไว้เองว่าชื่อนี้หมายถึง "unauthenticated" ตามที่บทนี้บอกในหัวข้อ 1</li>
+  <li><a href="../../day-8/lessons/0041-swagger-swaggo.html">บทเรียน 41 — Swagger &amp; swaggo</a> — ที่มาของ annotation ทั้งชุดในหัวข้อ 9 · <a href="https://swagger.io/specification/v2/">Swagger 2.0 Specification</a> — ดูว่า <code>securityDefinitions</code> รองรับ <code>type</code> อะไรบ้าง (และทำไมไม่มี <code>http</code>)</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

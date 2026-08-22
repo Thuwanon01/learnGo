@@ -1,0 +1,1771 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 48 — internal/config: ประกอบทุกอย่างเข้าด้วยกัน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 48 · Day 9 · Config</p>
+  <h1><code>internal/config</code> — ประกอบทุกอย่างเข้าด้วยกัน</h1>
+  <p class="meta">~25 นาที · ต้องมี: <a href="./0045-caarlos0-env.html">บทเรียน 45</a> (<code>caarlos0/env</code>) · <a href="./0046-dotenv-godotenv.html">บทเรียน 46</a> (<code>.env</code>) · <a href="./0047-validate-at-start.html">บทเรียน 47</a> (<code>validator/v10</code>)</p>
+  <p class="standfirst">
+    สามบทที่แล้วได้เครื่องมือมาสามตัว: อ่านไฟล์ <code>.env</code> · แปลง env เป็น struct · ตรวจว่าค่าใช้ได้จริง
+    <br>แต่ละตัวเราลองแยกชิ้น <strong>บทนี้คือบทที่เอามาต่อกันเป็นของจริง</strong> —
+    โฟลเดอร์ <code>internal/config/</code> ที่เป็น<em>ที่เดียว</em>ในโปรเจกต์ที่รู้ว่าแอปต้องการ env อะไรบ้าง
+    <br>สิ่งที่ผมจะพิสูจน์ให้ดูด้วยผลรันจริง:
+    Go บังคับเรื่อง <code>internal/</code> ให้เองยังไง ·
+    ทำไม <code>Load()</code> ถึง wrap error ของ <code>ParseAs</code> แต่<strong>ห้าม</strong> wrap error ของ <code>Validate</code> ·
+    และ config ที่ผิดสามที่พร้อมกันทำให้แอป<strong>ตายตั้งแต่ยังไม่ทันเปิดพอร์ต</strong>
+    <br>ระหว่างทางมี <strong>สามจุดที่สไลด์เล่าไม่ครบ</strong> ซึ่งผมรันแล้วเจอ — จะบอกให้ครบทุกจุด
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ — ทุก output ในหน้านี้มาจากการรันจริงบน</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+
+github.com/caarlos0/env/v11        v11.4.1
+github.com/joho/godotenv           v1.5.1
+github.com/go-playground/validator/v10  v10.30.3
+gorm.io/gorm                       v1.31.2
+gorm.io/driver/postgres            v1.6.2
+postgres:16-alpine                 <span class="c"># ผ่าน colima (Docker 29.6.2)</span></code></pre>
+  <p style="margin-bottom:0">
+    โปรเจกต์ที่ผมรันชื่อ module <code>wongnok/api</code> · <code>go build ./...</code> และ
+    <code>go vet ./...</code> ผ่านทั้งก้อน
+    <br><strong>เกร็ดที่ต้องรู้ก่อนอ่านต่อ:</strong> ผมรัน Postgres ที่พอร์ต <strong>55432</strong>
+    ไม่ใช่ 5432 เพราะพอร์ตนั้นบนเครื่องผมมีของอื่นจองอยู่ —
+    ถ้าคุณเห็นเลขพอร์ตแปลก ๆ ใน DSN ตัวอย่าง นั่นคือสาเหตุ ไม่ใช่กฎอะไร
+  </p>
+</div>
+
+<h2>1 · โครงโปรเจกต์ — โฟลเดอร์ใหม่ที่จะเพิ่ม</h2>
+
+<p>
+  สไลด์วางโครงไว้แบบนี้ ส่วนที่เป็นของใหม่ในบทนี้คือ <code>internal/config/</code> ทั้งโฟลเดอร์:
+</p>
+
+<div class="diagram">api/
+├── cmd/
+│   └── api/
+│       └── main.go            ← จุดเริ่มโปรแกรม เรียก config.Load() ที่นี่ที่เดียว
+├── internal/
+│   ├── config/                ← <strong>โฟลเดอร์ใหม่ของบทนี้</strong>
+│   │   ├── config.go          ← Load() · Validate() ที่รวมทุก section
+│   │   ├── app.go             ← APP_NAME · APP_ENV · APP_PORT · APP_SHUTDOWN_TIMEOUT
+│   │   ├── logging.go         ← LOG_LEVEL · LOG_FORMAT
+│   │   ├── database.go        ← POSTGRES_DSN · DB_*
+│   │   └── config_test.go     ← เทสต์ของ config เอง
+│   ├── httputil/              ← ของเดิม
+│   └── user/                  ← ของเดิม
+├── docs/                      ← Swagger ที่ swag สร้าง (บทเรียน 41)
+├── .env                       ← ค่าจริงของเครื่องคุณ — <strong>ห้าม commit</strong>
+├── .env.example               ← โครงเปล่า ๆ ไว้ให้เพื่อนก๊อป — <strong>commit ได้</strong>
+└── Makefile</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>หลักการเดียวของโฟลเดอร์นี้: 1 ไฟล์ = 1 เรื่อง</strong>
+    <br>ไม่ได้แบ่งตาม "ไฟล์ยาวเกินไปแล้ว" แต่แบ่งตาม<em>กลุ่มของค่าที่เปลี่ยนพร้อมกัน</em> —
+    ค่าที่เกี่ยวกับ log อยู่ใน <code>logging.go</code> ค่าที่เกี่ยวกับฐานข้อมูลอยู่ใน <code>database.go</code>
+    <br>ผลที่ได้ตอนโปรเจกต์โต: <strong>เพิ่ม config กลุ่มใหม่ = เพิ่มไฟล์ใหม่</strong>
+    ไม่ต้องไปแทรกกลางไฟล์เดิมที่คนอื่นกำลังแก้อยู่
+    <br>วันหนึ่งต้องใช้ Redis ก็สร้าง <code>redis.go</code> แล้วเติมบรรทัดเดียวใน <code>Validate()</code> — จบ
+  </p>
+</div>
+
+<h2>2 · ทำไมต้องเป็นโฟลเดอร์แยก — เหตุผล 4 ข้อ</h2>
+
+<p>
+  คำถามที่ควรถามก่อนคือ "ทำไมไม่ประกาศ struct <code>Config</code> ไว้ใน <code>main.go</code> เลย มันก็ที่เดียวเหมือนกัน"
+  <br>สไลด์ให้เหตุผลไว้สี่ข้อ และมีข้อหนึ่งที่<strong>ไม่ใช่เรื่องของวินัย แต่เป็นเรื่องที่ Go บังคับให้เอง</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เหตุผล</th><th>แปลว่าอะไรในทางปฏิบัติ</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>จุดเดียวที่รู้ว่าแอปต้องการ env อะไรบ้าง</strong></td>
+      <td>คนใหม่เข้าทีมถามว่า "ต้องตั้งอะไรบ้างถึงจะรันได้" → เปิดโฟลเดอร์เดียว อ่าน struct tag ครบ ไม่ต้อง <code>grep os.Getenv</code> ทั้งโปรเจกต์</td>
+    </tr>
+    <tr>
+      <td><code>internal/</code> = <strong>คนนอก import ไม่ได้</strong></td>
+      <td>ไม่ใช่ข้อตกลงกันเอง — Go บังคับตอน build ให้เลย ดูผลรันข้างล่าง</td>
+    </tr>
+    <tr>
+      <td><strong>ส่งเป็น argument ได้</strong></td>
+      <td><code>NewHandler(svc, cfg.Auth)</code> แทนที่จะ <code>os.Getenv</code> ข้างใน handler — handler รับค่าที่ตรวจแล้วมา ไม่ต้องไปหาเอง</td>
+    </tr>
+    <tr>
+      <td><strong>test ง่าย</strong></td>
+      <td><code>config.Database{}.Validate()</code> เรียกได้ตรง ๆ ในเทสต์ — ต้องได้ error เพราะ struct เปล่ายังขาด <code>POSTGRES_DSN</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>ข้อ 2 — <code>internal/</code> ไม่ใช่คำแนะนำ มันเป็นกฎของ compiler</h3>
+
+<p>
+  คำว่า <strong>module</strong> ในที่นี้คือหน่วยที่มีไฟล์ <code>go.mod</code> หนึ่งไฟล์คุมอยู่ —
+  โปรเจกต์ <code>wongnok/api</code> ของเราคือหนึ่ง module
+  <br>กฎของ Go คือ: <strong>package ที่อยู่ใต้โฟลเดอร์ชื่อ <code>internal</code> จะ import ได้เฉพาะโค้ดที่อยู่ใต้โฟลเดอร์แม่ของ <code>internal</code> นั้น</strong>
+  <br>ผมทดสอบสองทาง — จาก <em>ใน</em> module เดียวกัน กับจาก module <em>อื่น</em> ที่ <code>replace</code> ชี้มาที่โฟลเดอร์เดียวกันเป๊ะ:
+</p>
+
+<pre><code>===== A. import จากใน module เดียวกัน (cmd/api → internal/config) =====
+inside module, import ok: wongnok
+exit=0
+
+===== B. import จาก module อื่น =====
+package outsider
+	main.go:6:2: <strong>use of internal package wongnok/api/internal/config not allowed</strong>
+exit=1</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    อ่านเคส B ให้ดี — มันไม่ใช่คำเตือน ไม่ใช่ <code>go vet</code> ที่บ่นแล้วปล่อยผ่าน
+    แต่คือ <strong><code>go build</code> ตกด้วย exit code 1</strong> โค้ดนั้น compile ไม่ออกเลย
+    <br>แปลว่าถ้าวันหนึ่งมีคนเอา repo คุณไปเป็น library แล้วอยากแอบใช้ <code>config</code> ของคุณ —
+    <strong>เขาทำไม่ได้ตั้งแต่แรก</strong> คุณจึงแก้ struct <code>Config</code> ได้อย่างอิสระ
+    โดยไม่ต้องกลัวว่าจะไปพังของใคร
+    <br>เทียบกับการวางไว้ที่ <code>pkg/config/</code> ซึ่งใครก็ import ได้: พอมีคนใช้แล้ว การเปลี่ยนชื่อ field
+    ก็กลายเป็น breaking change ทันที
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🚪 เทียบให้เห็นภาพ — ประตูหลังร้านที่ล็อกจริง ไม่ใช่แค่ป้ายแปะ</span>
+  <p>
+    ร้านกาแฟร้านหนึ่งมีสองโซน: <strong>หน้าร้าน</strong>ที่ลูกค้าเดินเข้าได้
+    กับ<strong>หลังร้าน</strong>ที่เป็นห้องเก็บของกับครัว
+    <br>โฟลเดอร์ <code>internal/</code> คือหลังร้าน — และมันไม่ใช่ป้ายกระดาษเขียนว่า "เฉพาะพนักงาน"
+    ที่ใครอยากเดินผ่านก็ผ่านได้ แต่เป็น<strong>ประตูที่ล็อกอยู่จริง</strong>
+    <br>"พนักงาน" ในที่นี้คือโค้ดที่อยู่ใต้โฟลเดอร์แม่ของ <code>internal</code> —
+    <code>cmd/api/main.go</code> เดินเข้าได้สบาย เพราะอยู่ในร้านเดียวกัน (module เดียวกัน)
+    <br>ส่วนคนจาก<em>ร้านอื่น</em> (module อื่น) ดันประตูยังไงก็ไม่เปิด —
+    ผลรันเคส B ข้างบนคือเสียงประตูที่ไม่ยอมเปิดนั่นเอง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สองข้อ และทั้งสองข้อคือจุดที่คนเข้าใจผิดบ่อย —
+    <br>(1) ประตูล็อกของจริง<strong>กันไม่ให้คนเห็นของข้างใน</strong> แต่ <code>internal/</code> ไม่ได้กันเรื่องนั้นเลย
+    ใครเปิด repo ก็อ่านโค้ดได้ครบทุกบรรทัด · มันกันแค่การเขียน <code>import</code> ข้าม module เท่านั้น
+    <br>(2) <strong>มันไม่ใช่เครื่องมือด้านความปลอดภัย</strong> — ย้าย <code>.env</code> ไปวางใต้ <code>internal/</code>
+    ก็ไม่ได้ทำให้ secret ปลอดภัยขึ้นแม้แต่นิดเดียว เรื่องนั้นเป็นหน้าที่ของ <code>.gitignore</code> คนละชั้นกัน
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>module</dt>
+    <dd>"ร้านทั้งร้าน" = 1 โปรเจกต์ในสายตา Go · หน่วยที่มีไฟล์ <code>go.mod</code> คุมอยู่หนึ่งไฟล์ ·
+    <strong>ประโยคที่เอาไปพูดได้จริง:</strong> <em>"cmd กับ internal อยู่ใน module เดียวกันไหมครับ"</em></dd>
+    <dt>module path</dt>
+    <dd>ชื่อเต็มของ module ที่เขียนไว้บรรทัดแรกของ <code>go.mod</code> — ของเราคือ <code>wongnok/api</code> ·
+    <strong>พิมพ์ถาม AI ได้เลย:</strong>
+    <em>"module path ผมคือ wongnok/api ทำไม import wongnok/api/internal/config จากอีก module ไม่ได้"</em></dd>
+    <dt>internal package</dt>
+    <dd>package ที่อยู่ใต้โฟลเดอร์ชื่อ <code>internal</code> เป๊ะ ๆ (สะกดอื่นไม่นับ) ·
+    <strong>พูดว่า</strong> <em>"ผมย้าย config ไปเป็น internal package แล้ว ข้างนอก import ไม่ได้"</em>
+    จะสื่อกว่าพูดว่า "ผมย้ายไปโฟลเดอร์ชื่อ internal"</dd>
+    <dt>breaking change</dt>
+    <dd>การแก้ที่ทำให้โค้ดของคนที่ใช้ของเราอยู่พัง เช่นเปลี่ยนชื่อ field ·
+    <strong>ประโยคที่จะได้ยินจาก senior:</strong>
+    <em>"อยู่ใต้ internal ก็เปลี่ยนชื่อ field ได้เลย ไม่นับเป็น breaking change"</em></dd>
+    <dt>compile error (build ตก)</dt>
+    <dd>พังตั้งแต่ตอนแปลโค้ด <strong>ยังไม่ทันได้รันสักบรรทัด</strong> —
+    ต่างจาก "พังตอน runtime" ที่โปรแกรมเริ่มทำงานไปแล้ว ·
+    เคส B ข้างบนคือ compile error และนี่คือเหตุผลที่มันน่าเชื่อถือกว่าข้อตกลงในทีม</dd>
+  </dl>
+</div>
+
+<h2>3 · anti-pattern vs pattern — env ต้องอ่านที่ไหน</h2>
+
+<p>
+  นี่คือหัวใจของทั้งบท และเป็นจุดที่คนพลาดกันมากที่สุดตอนเริ่มใช้ config struct:
+  <strong>มี struct แล้ว แต่ยังแอบเรียก <code>os.Getenv</code> ลึก ๆ ข้างในอยู่ดี</strong>
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ห้าม — อ่าน env ลึกใน handler</h4>
+<pre><code><span class="k">func</span> (h *Handler) <span class="f">Login</span>(c *gin.Context) {
+    secret := os.<span class="f">Getenv</span>(<span class="s">"JWT_SECRET"</span>)
+    <span class="c">// ...</span>
+}</code></pre>
+    <p>ลืมตั้ง env → <code>secret</code> เป็น <code>""</code> · <strong>ไม่มีอะไรเตือน</strong> handler ยังตอบ 200 ตามปกติ</p>
+  </div>
+  <div class="side good">
+    <h4>✅ ทำแบบนี้ — รับ config ทาง constructor</h4>
+<pre><code><span class="k">func</span> <span class="f">NewHandler</span>(svc Service, cfg config.Auth) *Handler {
+    <span class="k">return</span> &amp;Handler{svc: svc, cfg: cfg}
+}</code></pre>
+    <p>ค่าที่ handler ได้ <strong>ผ่าน validate มาแล้ว</strong> ตั้งแต่ตอน start · ขาดค่า = แอปไม่ขึ้นตั้งแต่แรก</p>
+  </div>
+</div>
+
+<p>
+  ฟังดูเป็นเรื่องความสวยงามของโค้ด แต่มันไม่ใช่ ผมเขียนสองแบบให้ยิงจริงด้วย
+  <code>httptest</code> โดย<strong>ไม่ตั้ง <code>JWT_SECRET</code> เลย</strong> (<code>env -u JWT_SECRET</code>)
+  แล้วดูว่าแต่ละแบบตอบอะไร:
+</p>
+
+<pre><code>JWT_SECRET ตอนนี้ = ""
+
+=== แบบห้าม (os.Getenv ใน handler) ===
+status : <strong>200</strong>
+body   : signed with secret=<strong>""</strong> (len=<strong>0</strong>)
+
+=== แบบทำ (validate ตอน start ก่อนถึง handler) ===
+แอปตายตั้งแต่ตอน start:
+Key: 'Auth.JWTSecret' Error:Field validation for 'JWTSecret' failed on the 'required' tag</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ บรรทัด <code>status : 200</code> คือบรรทัดที่น่ากลัวที่สุดในบทนี้</span>
+  <p style="margin-bottom:0">
+    handler แบบซ้าย <strong>ทำงานสำเร็จ</strong> — มัน "เซ็น" token ด้วยกุญแจที่มีความยาว 0 แล้วตอบกลับสวยงาม
+    ไม่มี error ไม่มี log ไม่มีอะไรผิดปกติให้เห็นเลย
+    <br>token ที่เซ็นด้วยกุญแจว่างคือ token ที่<strong>ใครก็ปลอมได้</strong> — และคุณจะรู้ตัวก็ตอนที่มีคนปลอมแล้ว
+    <br>ส่วนแบบขวา แอปไม่ยอมเริ่มทำงานตั้งแต่แรก ซึ่ง<em>น่ารำคาญกว่ามาก</em>ตอนพัฒนา
+    แต่เป็นความน่ารำคาญที่คุณเจอตอนบ่ายวันอังคาร ไม่ใช่ตอนตีสามวันเสาร์
+  </p>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>📌 หลักการที่จำไปใช้ได้ตลอด: อ่าน env ที่ "ขอบ" ของแอปครั้งเดียว แล้วส่งค่าต่อลงไปเป็น argument</strong>
+    <br>ขอบของแอปคือ <code>main()</code> — จุดเดียวที่รู้จักโลกภายนอก
+    <br>ทุกอย่างที่ลึกกว่านั้น (handler · service · repository) <strong>ไม่ควรรู้ด้วยซ้ำว่ามีสิ่งที่เรียกว่า environment variable อยู่ในโลก</strong>
+    มันควรรู้แค่ว่า "ฉันได้ <code>cfg.Auth</code> มา และค่าในนั้นใช้ได้"
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>fail fast</dt>
+    <dd>"ถ้าจะพัง พังตั้งแต่ต้นเลย" — ของไม่พร้อมก็อย่าเพิ่งเปิดร้าน ·
+    <strong>ประโยคที่เอาไปพูดได้จริง:</strong>
+    <em>"ผมอยากให้ config fail fast ตอน start ไม่ใช่ไปพังตอน request แรก"</em></dd>
+    <dt>dependency injection (DI)</dt>
+    <dd>"ยื่นของที่ต้องใช้ให้ถึงมือ" แทนที่จะปล่อยให้มันเดินไปหาเอง ·
+    <code>NewHandler(svc, cfg.Auth)</code> คือ DI แบบง่ายที่สุด ไม่ต้องมี framework อะไรเลย ·
+    <strong>พูดว่า</strong> <em>"handler ตัวนี้รับ config ทาง constructor แบบ DI"</em></dd>
+    <dt>constructor</dt>
+    <dd>ฟังก์ชัน <code>NewXxx()</code> ที่ประกอบของให้พร้อมใช้ก่อนส่งคืน ·
+    Go ไม่มี constructor ในตัวภาษาแบบ Java/C# เลยใช้ธรรมเนียมตั้งชื่อขึ้นต้นด้วย <code>New</code> แทน</dd>
+    <dt>silent failure</dt>
+    <dd>พังแบบไม่มีใครรู้ ไม่มี error ไม่มี log · บรรทัด <code>status : 200</code>
+    ที่เซ็น token ด้วยกุญแจความยาว 0 ข้างบน คือตัวอย่างที่ชัดที่สุดในบทนี้ ·
+    <strong>พิมพ์ถาม AI ได้:</strong> <em>"โค้ดนี้มีจุดไหนเป็น silent failure บ้าง"</em></dd>
+    <dt>boundary / edge ของแอป</dt>
+    <dd>"ขอบ" ที่แอปติดกับโลกภายนอก — env · ไฟล์ · network · ในบทนี้คือ <code>main()</code> ·
+    <strong>หลักที่ senior พูดกันบ่อย:</strong>
+    <em>"อ่านของจากข้างนอกที่ boundary ครั้งเดียว แล้วส่งค่าต่อเข้าไปข้างใน"</em></dd>
+  </dl>
+</div>
+
+<h2>4 · <code>config.go</code> — ตัวประกอบ</h2>
+
+<p>
+  ไฟล์นี้ไม่ประกาศ env สักตัว หน้าที่มันมีสองอย่างเท่านั้น:
+  <strong>รวม section เข้าด้วยกัน</strong> กับ <strong>เป็นประตูเดียวที่คนนอกเรียกเข้ามา</strong>
+</p>
+
+<pre><code><span class="c">// internal/config/config.go</span>
+<span class="k">package</span> config
+
+<span class="k">import</span> (
+	<span class="s">"errors"</span>
+	<span class="s">"fmt"</span>
+
+	<span class="s">"github.com/caarlos0/env/v11"</span>
+	<span class="s">"github.com/go-playground/validator/v10"</span>
+)
+
+<span class="c">// ใช้ตัวเดียวทั้ง package — validator แคชข้อมูล struct ไว้ข้างใน</span>
+<span class="k">var</span> validate = validator.<span class="f">New</span>(validator.<span class="f">WithRequiredStructEnabled</span>())
+
+<span class="k">type</span> Config <span class="k">struct</span> {
+	App      App
+	Logging  Logging
+	Database Database
+}
+
+<span class="k">func</span> <span class="f">Load</span>() (Config, <span class="k">error</span>) {
+	cfg, err := env.<span class="f">ParseAs</span>[Config]()
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="k">return</span> Config{}, fmt.<span class="f">Errorf</span>(<span class="s">"parse environment: %w"</span>, err)
+	}
+
+	<span class="c">// ไม่ wrap ด้วย fmt.Errorf — errors.Join จัดบรรทัดไว้แล้ว</span>
+	<span class="k">if</span> err := cfg.<span class="f">Validate</span>(); err != <span class="k">nil</span> {
+		<span class="k">return</span> Config{}, err
+	}
+
+	<span class="k">return</span> cfg, <span class="k">nil</span>
+}
+
+<span class="c">// รวม error ของ "ทุก section" มาแสดงทีเดียว</span>
+<span class="c">// เพิ่ม Redis? สร้าง redis.go + เติม 1 บรรทัดตรงนี้</span>
+<span class="k">func</span> (cfg Config) <span class="f">Validate</span>() <span class="k">error</span> {
+	<span class="k">return</span> errors.<span class="f">Join</span>(
+		cfg.App.<span class="f">Validate</span>(),
+		cfg.Logging.<span class="f">Validate</span>(),
+		cfg.Database.<span class="f">Validate</span>(),
+	)
+}</code></pre>
+
+<p>
+  อ่านลำดับใน <code>Load()</code> ให้ชัด — มันคือสามบรรทัดที่สรุปทั้งสามบทที่แล้ว:
+  <strong><code>ParseAs</code> → <code>Validate</code> → คืนค่า</strong>
+  <br>และมีรายละเอียดสองอย่างที่ดูเหมือนเรื่องสไตล์ แต่จริง ๆ มีเหตุผลที่วัดได้
+</p>
+
+<h3>รายละเอียดที่ 1 — ทำไม wrap อันบน แต่ไม่ wrap อันล่าง</h3>
+
+<p>
+  <code>fmt.Errorf("...: %w", err)</code> คือการ <strong>ห่อ error เดิมไว้ข้างใน แล้วเติมข้อความนำหน้า</strong>
+  เพื่อบอกว่ามันเกิดที่ไหน (<code>%w</code> คือช่องที่เก็บ error ตัวเดิมไว้ให้ <code>errors.Is</code>/<code>errors.As</code>
+  ขุดกลับมาได้)
+  <br>ส่วน <code>errors.Join(a, b, c)</code> คือการ <strong>มัด error หลายตัวเป็นก้อนเดียว</strong>
+  โดยที่ตัวไหนเป็น <code>nil</code> มันข้ามให้ และถ้าเป็น <code>nil</code> หมดก็คืน <code>nil</code>
+  <br>คำถามคือทำไมอันหนึ่ง wrap อีกอันไม่ wrap ทั้งที่มันดูเป็น error เหมือนกัน
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — <code>errors.Join</code> เอา error สองตัวมามัดกัน แล้วผมพิมพ์ออกมาสองแบบ</p>
+  <pre><code>joined := errors.<span class="f">Join</span>(errA, errB)
+
+fmt.<span class="f">Println</span>(joined)                                    <span class="c">// A. คืนตรง ๆ</span>
+fmt.<span class="f">Println</span>(fmt.<span class="f">Errorf</span>(<span class="s">"validate config: %w"</span>, joined))  <span class="c">// B. wrap ก่อน</span></code></pre>
+  <p class="ask">
+    <strong><code>errors.Join</code> คั่น error สองตัวด้วยอะไร?</strong>
+    และพอเอาไป wrap ด้วย <code>fmt.Errorf</code> แล้ว <strong>คำว่า <code>validate config:</code> จะไปโผล่ตรงไหน —
+    ทุกบรรทัด หรือบรรทัดเดียว?</strong>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>===== A. คืน err ตรง ๆ (ไม่ wrap) =====
+Key: 'App.Port' Error:Field validation for 'Port' failed on the 'lte' tag
+Key: 'Logging.Level' Error:Field validation for 'Level' failed on the 'oneofci' tag
+
+===== B. wrap ด้วย fmt.Errorf("validate config: %w") =====
+<strong>validate config: </strong>Key: 'App.Port' Error:Field validation for 'Port' failed on the 'lte' tag
+Key: 'Logging.Level' Error:Field validation for 'Level' failed on the 'oneofci' tag</code></pre>
+    <p>
+      <strong><code>errors.Join</code> คั่นด้วย <code>\n</code> (ขึ้นบรรทัดใหม่)</strong> ไม่มีช่องว่าง ไม่มีตัวคั่นอื่น
+      และ<strong>ไม่มี <code>\n</code> ปิดท้าย</strong> — ผมยืนยันด้วยการพิมพ์แบบ <code>%q</code>:
+      <code>errors.Join(a,b,c)</code> ของสตริง <code>alpha</code>/<code>beta</code>/<code>gamma</code>
+      ได้ <code>"alpha\nbeta\ngamma"</code> ยาว <strong>16</strong> ตัวอักษรพอดี (5+1+4+1+5)
+    </p>
+    <p>
+      พอ wrap แล้ว prefix ไปแปะแค่<strong>บรรทัดแรกบรรทัดเดียว</strong> —
+      บรรทัดที่สองกลายเป็นบรรทัดลอย ๆ ที่อ่านแล้วไม่รู้ว่าเป็นพวกกับใคร
+      <br>ถ้ามี error ห้า section ก็จะได้ prefix หนึ่งครั้งกับบรรทัดกำพร้าอีกสี่บรรทัด
+    </p>
+    <p style="margin-bottom:0">
+      <strong>นี่คือคำตอบทั้งหมด:</strong> <code>ParseAs</code> คืน error <em>ก้อนเดียว</em>
+      การ wrap จึงช่วยบอกที่มาได้จริง · แต่ <code>Validate</code> คืน error ที่
+      <strong>จัดบรรทัดของตัวเองมาเรียบร้อยแล้ว</strong> การ wrap มีแต่จะทำให้รูปแบบเสีย
+      <br>กฎที่ใช้ได้ทั่วไป: <em>wrap error ที่เป็นก้อนเดียว · อย่า wrap error ที่เป็นหลายบรรทัด</em>
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">📦 เทียบให้เห็นภาพ — สติกเกอร์ที่แปะติดได้แค่ชิ้นบนสุด</span>
+  <p>
+    ที่ศูนย์กระจายสินค้า ของถูกตีกลับมาสองแบบ
+    <br>· <strong><code>fmt.Errorf("...: %w", err)</code> = เอาของใส่กล่องอีกใบ แล้วเขียนหน้ากล่องว่ามาจากไหน</strong>
+    — "ตีกลับจากคลัง A" · แกะกล่องออกมา ของเดิมยังอยู่ครบ ไม่ได้หายไปไหน
+    <br>· <strong><code>errors.Join(a, b, c)</code> = เอาของสามชิ้นมามัดรวมด้วยเชือกเส้นเดียว</strong>
+    ไม่มีกล่องครอบ วางเรียงกันสามชิ้นอย่างนั้น
+    <br>ทีนี้ถ้าเอาสติกเกอร์ "ตีกลับจากคลัง A" ไปแปะบนมัดสามชิ้นนั้น
+    <strong>มันแปะติดได้แค่ชิ้นบนสุด</strong> — อีกสองชิ้นไม่มีป้าย ใครมาหยิบไปก็ไม่รู้ว่าเป็นพวกกับใคร
+    <br>นี่คือเหตุผลทั้งหมดที่ <code>Load()</code> wrap อันบน แต่ไม่ wrap อันล่าง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ที่ศูนย์จริงเราเดินไปแปะสติกเกอร์เพิ่มทีละชิ้นได้
+    แต่ error ใน Go เวลาพิมพ์ออกมาเป็น<strong>ข้อความก้อนเดียวที่มี <code>\n</code> คั่นอยู่ข้างใน</strong> —
+    <code>fmt.Errorf</code> ทำได้อย่างเดียวคือต่อข้อความไว้<em>ข้างหน้าสุด</em>
+    ไม่มีวิธีสั่งให้มันไปแปะทุกบรรทัด
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>wrap error</dt>
+    <dd>"ใส่กล่องแล้วเขียนหน้ากล่อง" — เติมข้อความบอกที่มา โดยที่ error เดิมยังอยู่ข้างในครบ ·
+    <strong>ประโยคที่เอาไปพูดได้จริง:</strong>
+    <em>"ตรงนี้ผม wrap error ด้วย %w เพื่อให้รู้ว่าพังตอนอ่าน env"</em></dd>
+    <dt><code>%w</code> เทียบกับ <code>%v</code></dt>
+    <dd>ข้อความที่พิมพ์ออกมา<strong>เหมือนกันทุกตัวอักษร</strong> แต่ <code>%w</code>
+    เก็บ error ตัวเดิมไว้ให้ขุดกลับได้ ส่วน <code>%v</code> เก็บแค่ตัวหนังสือ ·
+    ผมรันเทียบมาแล้ว: ทั้งคู่พิมพ์ออกมาว่า <code>layer: base failure</code> เหมือนกัน
+    แต่ <code>errors.Is</code> ตอบ <strong><code>true</code></strong> กับตัวที่ใช้ <code>%w</code>
+    และตอบ <strong><code>false</code></strong> กับตัวที่ใช้ <code>%v</code></dd>
+    <dt>unwrap / error chain</dt>
+    <dd>"โซ่ของ error ที่ห่อกันเป็นชั้น ๆ" · การแกะกล่องออกทีละชั้นเรียกว่า unwrap ·
+    <strong>พิมพ์ถาม AI ได้:</strong> <em>"ช่วยไล่ error chain ของ error ตัวนี้ให้หน่อย"</em></dd>
+    <dt><code>errors.Is</code> / <code>errors.As</code></dt>
+    <dd>สองวิธีขุดหาของในโซ่ — <code>Is</code> ถามว่า "ในโซ่มี error <em>ตัวนี้</em> อยู่ไหม" ·
+    <code>As</code> ถามว่า "ในโซ่มี error <em>ชนิดนี้</em> ไหม ถ้ามีขอตัวมันมาใช้ด้วย" ·
+    <code>Humanize()</code> ในหัวข้อ 8 ใช้ <code>As</code></dd>
+    <dt>multi-error</dt>
+    <dd>error หลายตัวที่ถูกมัดเป็นก้อนเดียว — ในไลบรารีมาตรฐานคือ <code>errors.Join</code> ·
+    <strong>พูดว่า</strong> <em>"Validate() มันคืน multi-error นะ อย่าไป wrap ทับ"</em></dd>
+  </dl>
+</div>
+
+<h3>รายละเอียดที่ 2 — <code>Load()</code> คืน <code>Config</code> ไม่ใช่ <code>*Config</code></h3>
+
+<p>
+  สังเกตว่าตอน error โค้ดเขียน <code>return Config{}, err</code> ไม่ใช่ <code>return nil, err</code>
+  — เพราะมันคืน<strong>ค่า</strong> (value) ไม่ใช่<strong>ตัวชี้</strong> (pointer)
+  <br>ผมรันเทียบสองเวอร์ชันให้ดูว่ามันต่างกันตรงไหนจริง ๆ:
+</p>
+
+<pre><code>sizeof(config.Config)  = 120 bytes
+sizeof(*config.Config) = 8 bytes
+
+[value ] err != nil? true | cfgVal.App.Port = 0 | cfgVal.App.<strong>Addr() = ":0"</strong>
+[ptr   ] err != nil? true | cfgPtr == nil? true
+[ptr   ] <strong>panic ตอนอ่าน cfgPtr.App.Port: runtime error: invalid memory address or nil pointer dereference</strong></code></pre>
+
+<p>
+  เวอร์ชัน value ตอน error คืน <code>Config{}</code> ที่ยัง<strong>เรียกเมธอดต่อได้</strong> —
+  <code>Addr()</code> ตอบ <code>":0"</code> ซึ่งอาจไม่มีประโยชน์ แต่มัน<em>ไม่พัง</em>
+  <br>เวอร์ชัน pointer คืน <code>nil</code> ถ้าคนเรียกเผลอลืมเช็ค <code>err</code> ก็ panic ทันที
+  <br>ราคาที่จ่ายคือ copy 120 byte แทน 8 byte ซึ่งเล็กมาก และ <code>Load()</code> ถูกเรียก<strong>ครั้งเดียวตอน start</strong>
+</p>
+
+<p>
+  แต่เหตุผลที่หนักแน่นกว่านั้นคือข้อสอง — <strong>ใครแก้ config หลัง validate ผ่านไปแล้วได้บ้าง</strong>
+  ผมเขียน handler สองตัว ตัวหนึ่งรับ value ตัวหนึ่งรับ pointer แล้วให้ทั้งคู่สั่ง <code>cfg.App.Port = 1</code> เหมือนกัน:
+</p>
+
+<pre><code>ก่อนเรียก              : Port=8080 Addr=":8080"
+หลัง handlerA(value)   : Port=8080 Addr=":8080"
+หลัง handlerB(pointer) : <strong>Port=1 Addr=":1"</strong>  &lt;-- validate ผ่านไปแล้ว แต่ค่าเปลี่ยนได้</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    ส่ง <strong>value</strong> = แต่ละคนได้สำเนาของตัวเอง แก้แล้วไม่กระทบตัวจริง →
+    <strong>ค่าที่ผ่าน validate แล้ว ยัง valid ตลอดอายุโปรแกรม</strong>
+    <br>ส่ง <strong>pointer</strong> = ใครก็ตามที่ถือตัวชี้อยู่ แก้ค่าที่ผ่านการตรวจแล้วได้ทุกเมื่อ
+    แล้วการ validate ตอน start ก็หมดความหมายไปเลย
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">📄 เทียบให้เห็นภาพ — ถ่ายสำเนาแจก กับ ส่งตัวจริงเวียนไปทุกแผนก</span>
+  <p>
+    เอกสารใบหนึ่งที่ผ่านการตรวจและประทับตราเรียบร้อยแล้ว ต้องส่งให้อีกสามแผนกใช้งาน ทำได้สองวิธี
+    <br>· <strong>ถ่ายสำเนาแจกคนละใบ</strong> (คืน <code>Config</code> เป็น value) —
+    ใครจะขีดจะเขียนบนสำเนาของตัวเองก็เรื่องของเขา <strong>ตัวจริงไม่เปลี่ยน</strong>
+    <br>· <strong>ส่งตัวจริงเวียนไปทีละแผนก</strong> (คืน <code>*Config</code>) —
+    แผนกที่สองขีดฆ่าตัวเลขทิ้ง แผนกที่สามก็เห็นรอยขีดนั้นด้วย ทั้งที่ตราประทับยังอยู่ ·
+    นี่คือบรรทัด <code>Port=1 Addr=":1"</code> ในผลรันข้างบน
+  </p>
+  <p>
+    แล้วตอน<em>ผิดพลาด</em> สองแบบนี้ยื่นของกลับมาไม่เหมือนกันด้วย
+    <br>· value คืน <code>Config{}</code> = <strong>ยื่นแบบฟอร์มเปล่าที่ยังไม่ได้กรอก</strong> —
+    เปิดอ่านได้ทุกช่อง แค่ว่างเปล่า (<code>Addr()</code> จึงตอบ <code>":0"</code> ออกมาได้โดยไม่พัง)
+    <br>· pointer คืน <code>nil</code> = <strong>ยื่นซองเปล่ามาให้</strong> —
+    พอเปิดซองหาเอกสารแล้วไม่มีอะไรอยู่ข้างใน โปรแกรมก็ล้มทันที
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สองข้อ —
+    <br>(1) ถ่ายสำเนาในชีวิตจริงเสียทั้งเวลาและกระดาษ แต่ในโค้ดคือคัดลอก <strong>120 byte</strong>
+    ซึ่งเร็วจนวัดแทบไม่ออก และ <code>Load()</code> ถูกเรียกครั้งเดียวตอน start เท่านั้น
+    <br>(2) สำเนาที่ Go ทำให้เป็น<strong>สำเนาชั้นเดียว</strong> — <code>Config</code> ของเรามีแต่
+    <code>string</code> · <code>int</code> · <code>time.Duration</code> จึงแยกขาดจากกันได้จริง
+    แต่ถ้าวันหนึ่งเติม field ที่เป็น slice หรือ map เข้าไปเมื่อไหร่
+    <strong>ของข้างในนั้นยังชี้ไปที่เดียวกัน</strong> สำเนาจะไม่ได้แยกขาดอีกต่อไป
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>value / pass by value</dt>
+    <dd>"ส่งสำเนา" · Go ส่ง argument แบบคัดลอก<strong>เสมอ ไม่มีข้อยกเว้น</strong> —
+    ที่ pointer แก้ของต้นทางได้ ก็เพราะสิ่งที่ถูกคัดลอกไปคือ<em>ที่อยู่</em> ไม่ใช่ตัวของ</dd>
+    <dt>pointer</dt>
+    <dd>"ที่อยู่ของของ" ไม่ใช่ตัวของ · เขียนว่า <code>*Config</code> ·
+    ขนาดของมันคงที่ <strong>8 byte</strong> บนเครื่อง 64-bit ไม่ว่า struct ปลายทางจะใหญ่แค่ไหน</dd>
+    <dt>zero value</dt>
+    <dd>ค่าเริ่มต้นที่ Go แจกให้เองเมื่อเราไม่ได้กำหนด — <code>0</code> · <code>""</code> · <code>nil</code> ·
+    <code>Config{}</code> คือ zero value ของทั้ง struct ·
+    <strong>จำคำนี้ไว้ให้ดี เดี๋ยวหัวข้อ 5 จะกลับมาใช้</strong> ตอนอธิบายว่า <code>required</code> เช็คอะไรกันแน่</dd>
+    <dt>nil pointer dereference</dt>
+    <dd>"เปิดซองเปล่าแล้วหาของข้างใน" — สาเหตุ panic อันดับหนึ่งของมือใหม่ ·
+    เห็นข้อความ <code>invalid memory address or nil pointer dereference</code> เมื่อไหร่
+    ให้ไปหาว่า<strong>ตัวแปรตัวไหนเป็น <code>nil</code> ตอนถูกเรียกใช้</strong></dd>
+    <dt>panic</dt>
+    <dd>โปรแกรมล้มกลางทางแบบไม่ได้วางแผนไว้ ต่างจากการคืน <code>error</code> ที่เราตั้งใจให้เกิด ·
+    <strong>ประโยคที่เอาไปพูดได้จริง:</strong> <em>"ตรงนี้ผมอยากให้คืน error ไม่อยากให้ panic"</em></dd>
+    <dt>shallow copy</dt>
+    <dd>"สำเนาชั้นเดียว" — คัดลอกแค่ชั้นบนสุด ของที่ชี้ต่อลงไป (slice · map · pointer) ยังใช้ร่วมกันอยู่ ·
+    <strong>พิมพ์ถาม AI ได้:</strong> <em>"struct ตัวนี้ copy แล้วเป็น shallow copy ตรงไหนบ้าง"</em></dd>
+  </dl>
+</div>
+
+<h2>5 · <code>app.go</code> — section แรก</h2>
+
+<p>
+  ไฟล์แต่ละ section หน้าตาเหมือนกันหมดสามส่วน: <strong>struct + helper + <code>Validate()</code> ของตัวเอง</strong>
+</p>
+
+<pre><code><span class="c">// internal/config/app.go</span>
+<span class="k">package</span> config
+
+<span class="k">import</span> (
+	<span class="s">"fmt"</span>
+	<span class="s">"time"</span>
+)
+
+<span class="k">type</span> App <span class="k">struct</span> {
+	Name            <span class="k">string</span>        <span class="s">`env:"APP_NAME" envDefault:"wongnok" validate:"required"`</span>
+	Env             <span class="k">string</span>        <span class="s">`env:"APP_ENV" envDefault:"development" validate:"required,oneof=development staging production"`</span>
+	Port            <span class="k">int</span>           <span class="s">`env:"APP_PORT" envDefault:"8080" validate:"gte=1,lte=65535"`</span>
+	ShutdownTimeout time.Duration <span class="s">`env:"APP_SHUTDOWN_TIMEOUT" envDefault:"10s" validate:"required"`</span>
+}
+
+<span class="k">func</span> (app App) <span class="f">Addr</span>() <span class="k">string</span>       { <span class="k">return</span> fmt.<span class="f">Sprintf</span>(<span class="s">":%d"</span>, app.Port) }
+<span class="k">func</span> (app App) <span class="f">IsProduction</span>() <span class="k">bool</span> { <span class="k">return</span> app.Env == <span class="s">"production"</span> }
+
+<span class="k">func</span> (app App) <span class="f">Validate</span>() <span class="k">error</span> { <span class="k">return</span> validate.<span class="f">Struct</span>(app) }</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>env</th><th>default</th><th>กฎที่บังคับ</th><th>ตกแล้วเห็นอะไร (ผลรันจริง)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>APP_NAME</code></td>
+      <td><code>wongnok</code></td>
+      <td><code>required</code></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>APP_ENV</code></td>
+      <td><code>development</code></td>
+      <td><code>oneof=development staging production</code></td>
+      <td><code>APP_ENV=prodction</code> (พิมพ์ตก i) → <code>Key: 'App.Env' … failed on the 'oneof' tag</code></td>
+    </tr>
+    <tr>
+      <td><code>APP_PORT</code></td>
+      <td><code>8080</code></td>
+      <td><code>gte=1,lte=65535</code></td>
+      <td><code>APP_PORT=99999</code> → <code>Key: 'App.Port' … failed on the 'lte' tag</code></td>
+    </tr>
+    <tr>
+      <td><code>APP_SHUTDOWN_TIMEOUT</code></td>
+      <td><code>10s</code></td>
+      <td><code>required</code> — ห้ามเป็น <code>0s</code></td>
+      <td><code>APP_SHUTDOWN_TIMEOUT=0s</code> → <code>Key: 'App.ShutdownTimeout' … failed on the 'required' tag</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทุกเคสในคอลัมน์ขวาผมรันจริง และทุกเคส <strong><code>env.ParseAs</code> ผ่านหมด</strong> —
+  <code>"99999"</code> เป็น int ได้ · <code>"prodction"</code> เป็น string ได้ ·
+  <code>"0s"</code> เป็น <code>time.Duration</code> ได้
+  <br>นี่คือการแบ่งงานที่ชัดเจนระหว่างสองไลบรารี: <strong><code>env</code> ตอบว่า "แปลงเป็นชนิดนั้นได้ไหม" ·
+  <code>validator</code> ตอบว่า "ค่านั้นใช้ได้จริงไหม"</strong>
+</p>
+
+<div class="predict">
+  <p>
+    <strong>ทายก่อนรัน</strong> — <code>ShutdownTimeout</code> ติด <code>validate:"required"</code> อยู่
+    และเราเพิ่งเห็นว่ามันจับ <code>0s</code> ได้
+    <br>ทีนี้มีคนพิมพ์ผิดเป็นค่าติดลบ:
+  </p>
+  <pre><code>$ env APP_SHUTDOWN_TIMEOUT=<strong>-5s</strong> go run ./cmd/probe</code></pre>
+  <p class="ask">
+    <strong>ผลจะเป็นอย่างไร?</strong> <code>ParseAs</code> พังไหม · <code>validator</code> จับได้ไหม
+    <br>(คำใบ้: ลองนิยามคำว่า <code>required</code> ให้แม่นก่อน — มันเช็คอะไรกันแน่?)
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>$ env POSTGRES_DSN="postgres://u:p@localhost:5432/db" APP_SHUTDOWN_TIMEOUT=-5s go run ./cmd/probe
+ParseAs  : <strong>OK</strong> -&gt; App.Port=8080 App.Env="development" Log.Level="info" <strong>Shutdown=-5s</strong> DSN="postgres://u:p@localhost:5432/db"
+Validate : <strong>OK</strong></code></pre>
+    <p>
+      <strong>ผ่านฉลุยทั้งสองด่าน</strong> — ค่าติดลบหลุดเข้าไปในแอปเรียบร้อย
+      <br>เหตุผล: <code>required</code> ของ validator แปลว่า <strong>"ห้ามเป็น zero value"</strong> เท่านั้น
+      ไม่ได้แปลว่า "ต้องมากกว่าศูนย์"
+      <br>zero value ของ <code>time.Duration</code> คือ <code>0s</code> — ส่วน <code>-5s</code> ไม่ใช่ zero
+      มันจึง<em>ผ่านกฎ</em> อย่างถูกต้องตามนิยาม
+    </p>
+    <p>ผมลองเติม <code>gt=0</code> เข้าไปแล้วรันซ้ำทั้งสี่ค่า:</p>
+    <pre style="margin:0.6rem 0"><code><span class="c">// validate:"required,gt=0"</span>
+-5s    -&gt; Key: 'A.T' Error:Field validation for 'T' failed on the <strong>'gt'</strong> tag
+0s     -&gt; Key: 'A.T' Error:Field validation for 'T' failed on the <strong>'required'</strong> tag
+500ms  -&gt; &lt;nil&gt;
+10s    -&gt; &lt;nil&gt;</code></pre>
+    <p style="margin-bottom:0">
+      คราวนี้ครบ — <code>required</code> รับหน้าที่กัน <code>0s</code> ส่วน <code>gt=0</code> กันค่าติดลบ
+      <br><strong>⚠️ ข้อนี้ต่างจากสไลด์:</strong> สไลด์โชว์เคส <code>0s</code> ว่าโดนจับ ซึ่งถูก
+      แต่ทำให้เข้าใจไปว่า <code>required</code> คุมค่าเวลาได้ครบ — <strong>มันคุมได้ครึ่งเดียว</strong>
+      <br>ของจริงที่ควรเขียนคือ <code>validate:"required,gt=0"</code>
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ กับดักพี่น้องกันอีกข้อ: <code>gte=1</code> เปล่า ๆ บน <code>time.Duration</code></span>
+  <p>
+    สไลด์เขียนบรรทัดเดียวรวบว่า <em>"<code>gte=1,lte=65535</code> — ช่วงตัวเลข ใช้กับ <code>time.Duration</code> ได้ เช่น <code>gte=1s</code>"</em>
+    ซึ่งปนกันสองเรื่อง ผมทดสอบแยกให้ดู:
+  </p>
+  <pre style="margin:0.6rem 0"><code><span class="c">// tag: gte=1  (ไม่ใส่หน่วย)</span>
+gte=1 with 1ns  -&gt; &lt;nil&gt;
+gte=1 with 0    -&gt; Key: 'A.T' Error:Field validation for 'T' failed on the 'gte' tag
+gte=1 with <strong>500ms</strong> -&gt; <strong>&lt;nil&gt;</strong>
+
+<span class="c">// tag: gte=1s,lte=30s  (ใส่หน่วย)</span>
+0s     -&gt; Key: 'B.T' Error:Field validation for 'T' failed on the 'gte' tag
+1s     -&gt; &lt;nil&gt;
+15s    -&gt; &lt;nil&gt;
+31s    -&gt; Key: 'B.T' Error:Field validation for 'T' failed on the 'lte' tag</code></pre>
+  <p style="margin-bottom:0">
+    <code>gte=1</code> บน <code>Duration</code> หมายถึง <strong>1 นาโนวินาที</strong> ไม่ใช่ 1 วินาที
+    เพราะข้างในมันเป็น <code>int64</code> ที่นับเป็นนาโน — <code>500ms</code> จึงผ่านสบาย ๆ
+    <br>ถ้าจะคุมเป็นหน่วยเวลา <strong>ต้องเขียนหน่วยเสมอ</strong>: <code>gte=1s</code>
+    <br>ข่าวดี: <code>gte</code>/<code>lte</code> เป็นแบบ inclusive ทั้งคู่ — <code>1s</code> พอดีผ่าน · <code>31s</code> ตก
+  </p>
+</div>
+
+<h2>6 · <code>logging.go</code> — section ที่สั้นที่สุด</h2>
+
+<pre><code><span class="c">// internal/config/logging.go</span>
+<span class="k">package</span> config
+
+<span class="c">// ไฟล์นี้ไม่ต้อง import อะไรเลย — validate มาจาก config.go ที่อยู่ package เดียวกัน</span>
+
+<span class="k">type</span> Logging <span class="k">struct</span> {
+	Level  <span class="k">string</span> <span class="s">`env:"LOG_LEVEL" envDefault:"info" validate:"required,oneofci=debug info warn error"`</span>
+	Format <span class="k">string</span> <span class="s">`env:"LOG_FORMAT" envDefault:"json" validate:"required,oneofci=json text"`</span>
+}
+
+<span class="k">func</span> (logging Logging) <span class="f">Validate</span>() <span class="k">error</span> { <span class="k">return</span> validate.<span class="f">Struct</span>(logging) }</code></pre>
+
+<p>
+  ตัวใหม่ในนี้คือ <strong><code>oneofci</code></strong> — เหมือน <code>oneof</code> ทุกอย่าง
+  ยกเว้นว่า<strong>ไม่สนตัวพิมพ์ใหญ่เล็ก</strong> (ci = case-insensitive) ผมรันยืนยัน:
+</p>
+
+<pre><code>---- tag: oneofci=Dev Staging PROD ----
+oneofci "dev"    -&gt; &lt;nil&gt;
+oneofci "DEV"    -&gt; &lt;nil&gt;
+oneofci "prod"   -&gt; &lt;nil&gt;
+oneofci "PrOd"   -&gt; &lt;nil&gt;
+oneofci "qa"     -&gt; Key: 'C.Env' Error:Field validation for 'Env' failed on the 'oneofci' tag</code></pre>
+
+<p>
+  เขียนรายการใน tag เป็นตัวพิมพ์อะไรก็ได้ ผู้ใช้จะพิมพ์มาแบบไหนก็ได้ ตราบใดที่<em>ตัวสะกดตรง</em>
+  <br>เหมาะกับ log level มาก เพราะคนตั้งกันทั้ง <code>debug</code>, <code>DEBUG</code>, <code>Debug</code>
+  ซึ่งทั้งสามอันหมายถึงสิ่งเดียวกันจริง ๆ
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>แล้วทำไม <code>APP_ENV</code> ถึงใช้ <code>oneof</code> ธรรมดา ไม่ใช้ <code>oneofci</code>?</strong>
+    <br>สองบรรทัดนี้อยู่คนละไฟล์แต่ควรเข้าใจคู่กัน — มันไม่ใช่ความไม่สม่ำเสมอ แต่เป็นการเลือกที่มีเหตุผล
+    <br>· <code>LOG_LEVEL</code> เป็นค่าที่<strong>คนพิมพ์ให้มนุษย์อ่าน</strong> ผิดพิมพ์ใหญ่เล็กไม่ได้แปลว่าเจตนาเปลี่ยน → ยอมรับหมด
+    <br>· <code>APP_ENV</code> เป็นค่าที่<strong>โค้ดเอาไปเทียบตรง ๆ</strong> — ดู <code>IsProduction()</code>
+    ที่เขียน <code>app.Env == "production"</code> ไว้
+    <br>ถ้ายอมรับ <code>PRODUCTION</code> เข้ามาได้ <code>IsProduction()</code> จะตอบ <code>false</code>
+    ทั้งที่กำลังรันอยู่บน production จริง — <strong>เข้มไว้ตรงนี้ปลอดภัยกว่า</strong>
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ <code>oneof</code> ห้ามคั่นด้วย comma — และมันไม่พังตรงที่คุณคิด</span>
+  <p>
+    รายการใน <code>oneof</code> คั่นด้วย <strong>ช่องว่าง</strong> เท่านั้น
+    ถ้าเผลอเขียน <code>oneof=dev,staging,prod</code> ตามความเคยชิน ผลคือ:
+  </p>
+  <pre style="margin:0.6rem 0"><code>before Struct()
+<strong>panic: Undefined validation function 'staging' on field 'Env'</strong>
+
+goroutine 1 [running]:
+github.com/go-playground/validator/v10.(*Validate).parseFieldTagsRecursive(...)
+	.../cache.go:311 +0x9e4
+github.com/go-playground/validator/v10.(*Validate).extractStructCache(...)
+github.com/go-playground/validator/v10.(*Validate).Struct(...)
+main.main()
+exit status 2</code></pre>
+  <p style="margin-bottom:0">
+    <strong>สังเกตบรรทัดแรกให้ดี: <code>before Struct()</code> ถูกพิมพ์ออกมาแล้ว</strong>
+    <br>แปลว่า <code>validator.New()</code> ผ่านฉลุย — โปรแกรม<strong>เริ่มทำงานได้ปกติ</strong>
+    แล้วไป panic ตอนเรียก <code>validate.Struct()</code> <em>ครั้งแรก</em> (จังหวะที่มันสร้าง cache ของ struct นั้น)
+    <br>และข้อความ error ไม่มีคำว่า <code>oneof</code> อยู่เลยสักตัว — มันบอกว่า
+    "ไม่รู้จัก validator ชื่อ <code>staging</code>" เพราะ comma ถูกอ่านเป็นตัวคั่น<em>ระหว่าง tag</em>
+    <code>staging</code> กับ <code>prod</code> จึงกลายเป็นชื่อกฎที่ไม่มีอยู่จริง
+    <br><strong>⚠️ จุดนี้สไลด์บอกแค่ว่า "จะ panic" ซึ่งทำให้เข้าใจว่าพังตั้งแต่ตอน init</strong> —
+    ของจริงคือ <code>go build</code> ผ่าน · แอป start ผ่าน · แล้วไปตายตอน request แรก
+  </p>
+</div>
+
+<h2>7 · <code>database.go</code> — ที่ที่ struct tag ไปไม่ถึง</h2>
+
+<p>
+  ถ้าอ่านสามไฟล์ที่แล้วแล้วสรุปว่า "ก็แค่แปะ tag ให้ครบ ก็ไม่ต้องเขียน <code>if</code> อีกเลย" —
+  <strong>ไฟล์นี้คือไฟล์ที่มาบอกว่าไม่จริง</strong>
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>ก่อน — เขียน <code>if</code> เองทุกกฎ</h4>
+<pre><code><span class="c">// internal/config/database.go — เวอร์ชันก่อน</span>
+<span class="k">package</span> config
+
+<span class="k">import</span> (
+	<span class="s">"errors"</span>
+	<span class="s">"time"</span>
+)
+
+<span class="k">type</span> Database <span class="k">struct</span> {
+	PostgresDSN     <span class="k">string</span>        <span class="s">`env:"POSTGRES_DSN"`</span>
+	MaxOpenConns    <span class="k">int</span>           <span class="s">`env:"DB_MAX_OPEN_CONNS" envDefault:"25"`</span>
+	MaxIdleConns    <span class="k">int</span>           <span class="s">`env:"DB_MAX_IDLE_CONNS" envDefault:"25"`</span>
+	ConnMaxLifetime time.Duration <span class="s">`env:"DB_CONN_MAX_LIFETIME" envDefault:"5m"`</span>
+}
+
+<span class="k">func</span> (database Database) <span class="f">Validate</span>() <span class="k">error</span> {
+	<span class="k">if</span> database.PostgresDSN == <span class="s">""</span> {
+		<span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"POSTGRES_DSN is required"</span>)
+	}
+	<span class="k">if</span> database.MaxOpenConns &lt; 1 || database.MaxOpenConns &gt; 500 {
+		<span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"DB_MAX_OPEN_CONNS must be between 1 and 500"</span>)
+	}
+	<span class="k">if</span> database.ConnMaxLifetime &lt;= 0 {
+		<span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"DB_CONN_MAX_LIFETIME must be greater than 0"</span>)
+	}
+	<span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+    <p>ยาว · เห็นทีละ error (<code>return</code> ทันทีที่เจอตัวแรก) · ข้อความเป็นภาษาที่เราเขียนเอง</p>
+  </div>
+  <div class="side good">
+    <h4>หลัง — ย้ายกฎขึ้นไปอยู่บน tag</h4>
+<pre><code><span class="c">// internal/config/database.go — เวอร์ชันหลัง</span>
+<span class="k">package</span> config
+
+<span class="k">import</span> <span class="s">"time"</span>
+
+<span class="k">type</span> Database <span class="k">struct</span> {
+	PostgresDSN     <span class="k">string</span>        <span class="s">`env:"POSTGRES_DSN" validate:"required"`</span>
+	MaxOpenConns    <span class="k">int</span>           <span class="s">`env:"DB_MAX_OPEN_CONNS" envDefault:"25" validate:"gte=1,lte=500"`</span>
+	MaxIdleConns    <span class="k">int</span>           <span class="s">`env:"DB_MAX_IDLE_CONNS" envDefault:"25" validate:"gte=1,lte=500"`</span>
+	ConnMaxLifetime time.Duration <span class="s">`env:"DB_CONN_MAX_LIFETIME" envDefault:"5m" validate:"required"`</span>
+}
+
+<span class="k">func</span> (database Database) <span class="f">Validate</span>() <span class="k">error</span> {
+	<span class="k">return</span> validate.<span class="f">Struct</span>(database)
+}</code></pre>
+    <p>สั้น · เห็น error <strong>ครบทุก field พร้อมกัน</strong> · กฎอยู่ติดกับ field ที่มันคุม</p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ จุดที่สไลด์ข้าม — การ refactor นี้ทำ behaviour หายไปหนึ่งข้อ</span>
+  <p>
+    ผมสลับไฟล์สองเวอร์ชันแล้วรันด้วย env ตัวเดียวกันเป๊ะ:
+  </p>
+  <pre style="margin:0.6rem 0"><code>$ env DB_CONN_MAX_LIFETIME=<strong>-5s</strong> go run ./cmd/probe
+
+########## [ก่อน refactor]
+ParseAs  : OK
+Validate : FAILED -&gt;
+<strong>DB_CONN_MAX_LIFETIME must be greater than 0</strong>
+
+########## [หลัง refactor]
+ParseAs  : OK
+Validate : <strong>OK</strong>          <span class="c">&lt;-- ค่าติดลบหลุดไปแล้ว</span></code></pre>
+  <p style="margin-bottom:0">
+    <code>if</code> เดิมเขียนว่า <code>ConnMaxLifetime &lt;= 0</code> ซึ่ง<strong>กันติดลบได้</strong>
+    แต่ <code>validate:"required"</code> กันได้แค่ <code>0s</code> — เหตุผลเดียวกับหัวข้อ 5
+    <br>ถ้าจะให้เท่าเดิมจริง ๆ ต้องเขียน <code>validate:"required,gt=0"</code>
+    <br><strong>บทเรียนที่ใหญ่กว่าเรื่องนี้:</strong> เวลา refactor validation อย่าเทียบว่า "โค้ดสั้นลงไหม"
+    ให้เทียบว่า <em>ค่าชุดเดิมยังให้ผลเดิมไหม</em> — วิธีที่ถูกคือ<strong>เขียนเทสต์ก่อน refactor</strong>
+    ไม่ใช่หลัง
+  </p>
+</div>
+
+<p>
+  แล้วความต่างอีกข้อที่ควรรู้: เวอร์ชัน <code>if</code> <strong>คืน error ทีละตัว</strong>
+  (เจอ <code>POSTGRES_DSN</code> ว่างก็ <code>return</code> เลย ไม่ดูข้ออื่นต่อ) ·
+  ส่วน <code>validate.Struct</code> <strong>คืนครบทุก field พร้อมกัน</strong> ผมยืนยันด้วย struct ที่ผิด 5 field รวดเดียว:
+</p>
+
+<pre><code>=== err.Error() ===
+Key: 'App.Name' Error:Field validation for 'Name' failed on the 'required' tag
+Key: 'App.Port' Error:Field validation for 'Port' failed on the 'lte' tag
+Key: 'App.Env' Error:Field validation for 'Env' failed on the 'oneof' tag
+Key: 'App.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+Key: 'App.Timeout' Error:Field validation for 'Timeout' failed on the 'gte' tag
+=== count ===
+len: <strong>5</strong></code></pre>
+
+<p>
+  ครบทั้งห้าจริง ๆ — และสังเกตว่า<strong>แต่ละบรรทัดถูกคั่นด้วย <code>\n</code> มาให้แล้ว</strong>
+  ตั้งแต่ก่อนถึงมือ <code>errors.Join</code> (validator มี <code>ValidationErrors.Error()</code> ที่ทำเอง)
+</p>
+
+<h3>สิ่งที่ struct tag เขียนไม่ได้ — และเหตุผลที่ <code>Validate()</code> ต้องเป็น method</h3>
+
+<p>
+  สไลด์หน้า <code>database.go</code> ยกตัวอย่างกฎที่<strong>ไม่มี tag ไหนเขียนได้</strong>:
+  DSN สองอันนี้ต่างกันแค่ท้ายสุด แต่ผลลัพธ์คนละเรื่อง
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>DSN</th><th>เกิดอะไรขึ้น</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>postgres://u:p@db:5432/wongnok</code></td>
+      <td>ok — มีชื่อ database (<code>wongnok</code>) ต่อท้าย</td>
+    </tr>
+    <tr>
+      <td><code>postgres://u:p@db:5432</code></td>
+      <td><strong>ต่อติด แต่ไปโผล่ที่ database ผิดตัว</strong> — ไม่มี error ให้เห็น</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  tag <code>url</code> ที่ validator มีให้ ตรวจแค่ว่า "รูปร่างเป็น URL ไหม" — ทั้งสองบรรทัดผ่านหมด
+  <br>กฎ "ต้องมีชื่อ database ต่อท้าย host" จึงต้องเขียนเอง และนี่คือคำตอบว่า
+  <strong>ทำไม <code>Validate()</code> ถึงต้องเป็น method ของ struct ไม่ใช่ปล่อยให้ validator ทำคนเดียว</strong>:
+</p>
+
+<pre><code><span class="c">// เมธอดนี้เอาไปแทน Validate() เดิมในไฟล์ internal/config/database.go</span>
+<span class="c">// แทนแล้วต้องเติม import ให้ครบเป็น: "errors" · "fmt" · "net/url" · "strings" · "time"</span>
+<span class="k">func</span> (database Database) <span class="f">Validate</span>() <span class="k">error</span> {
+	<span class="c">// ชั้นที่ 1 — กฎมาตรฐาน ให้ validator ทำ</span>
+	<span class="k">if</span> err := validate.<span class="f">Struct</span>(database); err != <span class="k">nil</span> {
+		<span class="k">return</span> err
+	}
+
+	<span class="c">// ชั้นที่ 2 — กฎเฉพาะทางที่ tag เขียนไม่ได้ เขียนเองตรงนี้</span>
+	u, err := url.<span class="f">Parse</span>(database.PostgresDSN)
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="k">return</span> fmt.<span class="f">Errorf</span>(<span class="s">"POSTGRES_DSN: %w"</span>, err)
+	}
+	<span class="k">if</span> strings.<span class="f">Trim</span>(u.Path, <span class="s">"/"</span>) == <span class="s">""</span> {
+		<span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"POSTGRES_DSN: ไม่มีชื่อ database ต่อท้าย host"</span>)
+	}
+
+	<span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>โครงสองชั้นนี้คือรูปแบบที่ควรจำ</strong> — struct tag ครอบคลุมกฎมาตรฐาน
+    (required · ช่วงตัวเลข · ค่าที่รู้จัก) ให้สั้นและอ่านง่าย
+    <br>ส่วนกฎที่รู้เรื่องเฉพาะของโดเมนเรา (DSN ต้องมีชื่อ db · ต้องมี MaxIdle ≤ MaxOpen · ฯลฯ)
+    เขียนต่อท้ายในเมธอดเดียวกัน
+    <br>ที่มันนั่งอยู่ใน <code>Validate()</code> ของ section นั้นได้พอดี เพราะ
+    <strong><code>errors.Join</code> ใน <code>config.go</code> ไม่สนใจว่าข้างในทำอะไร ขอแค่คืน error หรือ <code>nil</code></strong>
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>เกร็ดที่จะทำให้คุณเสียเวลาน้อยลงหนึ่งชั่วโมง</strong> — ถ้าคิดจะใช้ tag <code>hostname|ip</code>
+    ตรวจ <code>DB_HOST</code> (เครื่องหมาย <code>|</code> คือ "หรือ") ผมรันมาแล้ว 9 ค่า ได้ผลครบทุกค่าแบบนี้:
+    <br><strong>ผ่าน 6</strong> — <code>localhost</code> · <code>api.example.com</code> · <code>127.0.0.1</code> ·
+    <code>::1</code> · <code>10.0.0.1</code> · <code>my-db.internal</code>
+    <br><strong>ตก 3</strong> และสองตัวแรกคือที่คนไม่คาดคิด:
+    <code>db_server</code> (มี underscore) ·
+    <code>example.com:5432</code> (มี port ติดมา) ·
+    <code>""</code> (ค่าว่าง — กับดักตอนลืมตั้ง <code>DB_HOST</code>)
+    <br>ถ้า <code>docker-compose.yml</code> ของคุณตั้งชื่อ service ที่มี underscore
+    หรือ <code>.env</code> เก็บ host พร้อมพอร์ตไว้ในตัวเดียว คุณจะ validate ไม่ผ่านทั้งที่ค่าถูกต้องทุกอย่าง
+    <br>อีกอย่าง: ชื่อ tag ในข้อความ error พิมพ์ออกมาเป็นก้อนเดียว <code>'hostname|ip'</code>
+    ไม่ได้แยกว่าตกข้อไหน
+  </p>
+</div>
+
+<h2>8 · Error หน้าตาเป็นยังไง</h2>
+
+<p>
+  ทีนี้มาดูของจริง — ผมตั้ง env ให้ผิด <strong>สามที่พร้อมกัน คนละ section</strong>
+  แล้วรัน <code>./cmd/api</code>:
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — สั่งแบบนี้ (สังเกตว่า <code>POSTGRES_DSN=</code> คือตั้งเป็นค่าว่าง)</p>
+  <pre><code>$ env APP_PORT=99999 LOG_LEVEL=BANANA POSTGRES_DSN= go run ./cmd/api</code></pre>
+  <p class="ask">
+    <strong>แอปจะบ่นกี่ข้อ?</strong> ข้อเดียวแล้วตาย (เจออันแรกก็พอ)
+    หรือครบสามข้อ (บ่นทีเดียวให้หมด)
+    <br>และ<strong>เรียงลำดับยังไง</strong> — ตามลำดับที่ผมพิมพ์ใน command line
+    หรือตามลำดับที่ประกาศไว้ในโค้ด?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>(1) ของแถมฟรี — <code>errors.Join</code> จัดบรรทัดให้แล้ว</strong></p>
+    <pre style="margin:0.6rem 0"><code>=== raw error ===
+Key: 'App.Port' Error:Field validation for 'Port' failed on the 'lte' tag
+Key: 'Logging.Level' Error:Field validation for 'Level' failed on the 'oneofci' tag
+Key: 'Database.PostgresDSN' Error:Field validation for 'PostgresDSN' failed on the 'required' tag</code></pre>
+    <p>
+      <strong>ครบสามข้อในรอบเดียว</strong> — ไม่ต้องแก้ทีละข้อแล้วรันใหม่สามรอบ
+      <br>ลำดับ<strong>ไม่ได้</strong>ตามที่พิมพ์ใน command line แต่ตามที่ประกาศไว้ในโค้ด:
+      <code>App</code> → <code>Logging</code> → <code>Database</code> (ตามลำดับใน <code>errors.Join</code>)
+      และในแต่ละ section เรียงตามลำดับ field ใน struct
+      <br>แปลว่า<strong>ลำดับนี้คงที่ทุกครั้ง</strong> — เอาไปเขียนเทสต์เทียบตรง ๆ ได้
+    </p>
+    <p>
+      อ่านออกอยู่ แต่มี noise เยอะ (<code>Error:Field validation for</code> ซ้ำทุกบรรทัด)
+      พอใช้ได้สำหรับทีมเล็ก แต่ถ้าอยากให้สวยกว่านี้ก็มีทางเลือก:
+    </p>
+    <p><strong>(2) หลังใส่ <code>Humanize()</code></strong></p>
+    <pre style="margin:0.6rem 0"><code>time=... level=ERROR msg="load configuration"
+<strong>invalid configuration:</strong>
+  - App.Port: ผิดกฎ "lte"
+  - Logging.Level: ผิดกฎ "oneofci"
+  - Database.PostgresDSN: ผิดกฎ "required"
+time=... level=ERROR msg=fatal error="load configuration: Key: 'App.Port' ..."
+exit status 1</code></pre>
+    <p style="margin-bottom:0">
+      สั้นลงเยอะ และบอกครบว่า <em>field ไหน · ผิดกฎอะไร</em>
+      <br>บรรทัด <code>time=... level=ERROR</code> สองบรรทัดมาจาก <code>slog</code> TextHandler ใน
+      <code>main.go</code> (หัวข้อ 9) — บรรทัดบนคือ <code>bootLogger.Error("load configuration")</code>
+      บรรทัดล่างคือ <code>slog.Error("fatal", "error", err)</code> ที่พิมพ์ error ดิบไว้ให้ระบบเก็บ log
+      <br>ส่วนสี่บรรทัดตรงกลางคือของที่ <code>Humanize()</code> พิมพ์ลง <code>os.Stderr</code> ให้ <em>คน</em> อ่าน
+      <br>หัวใจของมันคือสอง method ของ <code>FieldError</code>:
+      <code>fe.Namespace()</code> ให้ <code>"App.Port"</code> · <code>fe.Tag()</code> ให้ <code>"lte"</code>
+    </p>
+  </div>
+</div>
+
+<p>
+  ตัว <code>Humanize()</code> ที่ผมใช้เขียนสั้น ๆ แบบนี้ (อยู่ในไฟล์ <code>humanize.go</code>) —
+  มันคือการ<strong>แกะกล่องสองชั้น</strong>: ชั้นนอกคือก้อนที่ <code>errors.Join</code> มัดไว้
+  ชั้นในคือ <code>ValidationErrors</code> ของแต่ละ section
+</p>
+
+<pre><code><span class="c">// internal/config/humanize.go</span>
+<span class="k">package</span> config
+
+<span class="k">import</span> (
+	<span class="s">"errors"</span>
+	<span class="s">"fmt"</span>
+	<span class="s">"strings"</span>
+
+	<span class="s">"github.com/go-playground/validator/v10"</span>
+)
+
+<span class="k">func</span> <span class="f">Humanize</span>(err <span class="k">error</span>) <span class="k">string</span> {
+	<span class="k">if</span> err == <span class="k">nil</span> {
+		<span class="k">return</span> <span class="s">""</span>
+	}
+	<span class="k">var</span> lines []<span class="k">string</span>
+
+	<span class="c">// ชั้นนอก: errors.Join คืน error ที่มีเมธอด Unwrap() []error</span>
+	<span class="k">var</span> joined <span class="k">interface</span>{ <span class="f">Unwrap</span>() []<span class="k">error</span> }
+	errs := []<span class="k">error</span>{err}
+	<span class="k">if</span> errors.<span class="f">As</span>(err, &amp;joined) {
+		errs = joined.<span class="f">Unwrap</span>()
+	}
+
+	<span class="k">for</span> _, e := <span class="k">range</span> errs {
+		<span class="c">// ชั้นใน: แต่ละ section คืน validator.ValidationErrors</span>
+		<span class="k">var</span> ve validator.ValidationErrors
+		<span class="k">if</span> errors.<span class="f">As</span>(e, &amp;ve) {
+			<span class="k">for</span> _, fe := <span class="k">range</span> ve {
+				lines = <span class="f">append</span>(lines, fmt.<span class="f">Sprintf</span>(<span class="s">"  - %s: ผิดกฎ %q"</span>, fe.<span class="f">Namespace</span>(), fe.<span class="f">Tag</span>()))
+			}
+			<span class="k">continue</span>
+		}
+		lines = <span class="f">append</span>(lines, <span class="s">"  - "</span>+e.<span class="f">Error</span>())
+	}
+
+	<span class="k">return</span> <span class="s">"invalid configuration:\n"</span> + strings.<span class="f">Join</span>(lines, <span class="s">"\n"</span>)
+}</code></pre>
+
+<p>
+  <code>errors.As(err, &amp;ve)</code> คือ <strong>"ขุดลงไปในกล่อง error ดูว่ามีตัวที่เป็นชนิดนี้ไหม ถ้ามีเอามาใส่ <code>ve</code>"</strong>
+  — ผมยืนยันว่ามันขุดทะลุ <code>errors.Join</code> ลงไปเจอ <code>ValidationErrors</code> ครบทุกตัวจริง:
+</p>
+
+<pre><code>errors.As -&gt; true len: 4
+errors.As through Join -&gt; true 4</code></pre>
+
+<p>
+  และแต่ละ <code>FieldError</code> ที่ได้มามีข้อมูลมากกว่าที่เราใช้
+  (ก้อนนี้ผมพิมพ์ช่อง <code>Value</code> ด้วย <code>%#v</code> — จำไว้ก่อน เดี๋ยวมันจะสำคัญ):
+</p>
+
+<pre><code>Namespace="Cfg.Name"      Field="Name"    Tag="required" Param=""         Kind=string Type=string        Value=""
+Namespace="Cfg.Env"       Field="Env"     Tag="oneof"    Param="dev prod" Kind=string Type=string        Value="qa"
+Namespace="Cfg.Timeout"   Field="Timeout" Tag="gte"      Param="1s"       Kind=int64  Type=time.Duration Value=<strong>100000000</strong>
+Namespace="Cfg.DB.Port"   Field="Port"    Tag="lte"      Param="65535"    Kind=int    Type=int           Value=99999</code></pre>
+
+<p>
+  สองอย่างที่น่าสังเกต:
+  <br>· <code>Namespace</code> ของ field ที่ซ้อนอยู่ใน struct ลูกเป็น <code>"Cfg.DB.Port"</code> —
+  <strong>validator ไล่ลงไปใน nested struct ให้เอง</strong> โดยไม่ต้องแปะ tag อะไรที่ field <code>DB</code> เลย
+  <br>· <code>Param()</code> คืนพารามิเตอร์ของกฎเป็นสตริง เช่น <code>"dev prod"</code> หรือ <code>"65535"</code> —
+  เอาไปเขียนข้อความว่า <em>"ต้องเป็นหนึ่งใน dev prod"</em> ได้เลย
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ สามข้อที่ต้องระวังกับกล่อง output หน้านี้</span>
+  <p style="margin-bottom:0">
+    <strong>1. <code>Value=100000000</code> บรรทัดที่สาม เป็นผลของ <code>%#v</code> ไม่ใช่นิสัยของ <code>time.Duration</code></strong> —
+    <code>Value()</code> มี static type เป็น <code>interface{}</code> ก็จริง แต่ค่าข้างในยังเป็น
+    <code>time.Duration</code> เต็มตัว ซึ่งมี <code>String()</code> ติดมาด้วย
+    ดังนั้น<strong>วิธีพิมพ์เปลี่ยนคำตอบ</strong> — ผมรัน <code>fe.Value()</code> ตัวเดียวกันสี่แบบ:
+    <br><code>%T</code> → <code>time.Duration</code> ·
+    <code>%v</code> → <code>100ms</code> ·
+    <code>%s</code> → <code>100ms</code> ·
+    <code>%d</code> และ <code>%#v</code> → <code>100000000</code>
+    <br>แปลว่าถ้าเอาไปโชว์ผู้ใช้ด้วย <code>%v</code> ปกติ ได้ <code>100ms</code> อ่านออกสบาย —
+    จะได้ตัวเลขนาโนวินาทีก็ต่อเมื่อ<em>เจาะจงใช้</em> <code>%d</code> หรือ <code>%#v</code> อย่างในกล่องข้างบนเท่านั้น
+    <br>ที่ต้องระวังจริง ๆ คือ<strong>ตอนเอาไปคำนวณต่อ</strong> ไม่ใช่ตอนพิมพ์:
+    <code>fe.Value()</code> เป็น <code>interface{}</code> จึงต้อง type-assert
+    (<code>fe.Value().(time.Duration)</code>) ก่อน ถึงจะบวกลบกับ duration อื่นได้
+    <br><br>
+    <strong>2. บรรทัด <code>exit status 1</code> ไม่ใช่ output ของโปรแกรม</strong> —
+    เป็นข้อความที่ <code>go run</code> พิมพ์เองเมื่อโปรแกรมลูกจบด้วย exit code ที่ไม่ใช่ 0
+    ผม build เป็น binary แล้วรันตรง ๆ เทียบ: <strong>ไม่มีบรรทัดนี้เลย</strong>
+    <br>ถ้าคุณเห็นบรรทัดนี้ในกล่องตัวอย่างที่ไหน ให้รู้ว่าคนเขียนใช้ <code>go run</code>
+    ไม่ใช่ว่า <code>os.Exit(1)</code> พิมพ์อะไรออกมา
+    <br><br>
+    <strong>3. บล็อกสามบรรทัดข้างบนใช้ได้เฉพาะ <code>database.go</code> เวอร์ชัน<em>หลัง</em> refactor</strong> —
+    ผมรันด้วยเวอร์ชันก่อน refactor ด้วย env ชุดเดียวกัน บรรทัดที่สามกลายเป็น:
+    <br><code>POSTGRES_DSN is required</code> (ข้อความที่เราเขียนเองใน <code>if</code>)
+    แทนที่จะเป็น <code>Key: 'Database.PostgresDSN' … 'required' tag</code>
+    <br>ซึ่งสมเหตุสมผล แต่ถ้าเอาผลของเวอร์ชันหนึ่งไปวางคู่กับโค้ดอีกเวอร์ชันเมื่อไหร่ คนอ่านจะงงทันที
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔍 <strong>รอยรั่วของ <code>Humanize()</code> ตัวนี้ที่ผมเจอตอนรัน — และวิธีคิดที่ได้จากมัน</strong>
+    <br>ผมลองให้ <code>ParseAs</code> พังจริง ๆ (ไม่ใช่ validation) ด้วย <code>APP_PORT=abc</code>:
+  </p>
+  <pre style="margin:0.6rem 0"><code>time=... level=ERROR msg="load configuration"
+<strong>invalid configuration:</strong>
+  - parse error on field "Port" of type "int": strconv.ParseInt: parsing "abc": invalid syntax</code></pre>
+  <p style="margin-bottom:0">
+    ปัญหาสองข้อ:
+    <br><strong>(1)</strong> พาดหัวยังขึ้นว่า <code>invalid configuration:</code> ทั้งที่นี่เป็น<em>parse error</em>
+    ไม่ใช่ค่าที่ผิดกฎ — คนอ่านจะไปนั่งหาว่ากฎไหนผิด
+    <br><strong>(2)</strong> ข้อความที่ <code>Load()</code> ตั้งใจใส่ไว้ (<code>parse environment: env:</code>) <strong>หายไป</strong>
+    <br>สาเหตุ: <code>errors.As(err, &amp;joined)</code> ที่มองหา <code>interface{ Unwrap() []error }</code>
+    มัน<em>วิ่งทะลุ</em> <code>fmt.Errorf</code> ลงไปเจอ error รวมของ <code>env/v11</code>
+    ซึ่งบังเอิญมีเมธอด <code>Unwrap() []error</code> เหมือนกันเป๊ะ
+    <br><strong>บทเรียนที่เอาไปใช้ได้กว้างกว่าเรื่องนี้:</strong> การจับ error ด้วย
+    <em>รูปร่างของ interface</em> แบบลอย ๆ มันจับ "ทุกอย่างที่หน้าตาเหมือนกัน" ไม่ใช่ "สิ่งที่เราหมายถึง"
+    <br>ทางแก้: แยกเคส parse ออกมาก่อนตั้งแต่ใน <code>Load()</code> (เช่นทำ error type ของตัวเอง)
+    แล้วค่อยให้ <code>Humanize</code> ตัดสินใจจากตรงนั้น
+  </p>
+</div>
+
+<h2>9 · <code>main.go</code> — เอาไปใช้จริง</h2>
+
+<p>
+  <code>main()</code> ทำอย่างเดียว: เรียก <code>run()</code> แล้วแปลง error เป็น exit code
+  <br>ส่วนงานจริงทั้งหมดอยู่ใน <code>run()</code> ซึ่งเป็น<strong>ลำดับ 5 ขั้นที่ห้ามสลับ</strong>:
+</p>
+
+<pre><code><span class="c">// cmd/api/main.go</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+	<span class="s">"fmt"</span>
+	<span class="s">"log/slog"</span>
+	<span class="s">"net/http"</span>
+	<span class="s">"os"</span>
+	<span class="s">"strings"</span>
+
+	<span class="s">"github.com/joho/godotenv"</span>
+	<span class="s">"gorm.io/driver/postgres"</span>
+	<span class="s">"gorm.io/gorm"</span>
+
+	<span class="s">"wongnok/api/internal/config"</span>
+)
+
+<span class="k">func</span> <span class="f">main</span>() {
+	<span class="k">if</span> err := <span class="f">run</span>(); err != <span class="k">nil</span> {
+		slog.<span class="f">Error</span>(<span class="s">"fatal"</span>, <span class="s">"error"</span>, err)
+		os.<span class="f">Exit</span>(1)
+	}
+}
+
+<span class="k">func</span> <span class="f">run</span>() <span class="k">error</span> {
+	<span class="c">// 1) logger ชั่วคราว — ยังไม่รู้ level/format เพราะยังไม่ได้อ่าน config</span>
+	bootLogger := slog.<span class="f">New</span>(slog.<span class="f">NewTextHandler</span>(os.Stderr, &amp;slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.<span class="f">SetDefault</span>(bootLogger)
+
+	_ = godotenv.<span class="f">Load</span>() <span class="c">// 2) .env → environment (ไม่มีไฟล์ก็ไม่เป็นไร)</span>
+
+	<span class="c">// 3) โหลด config — พังตรงนี้ = ตายตรงนี้ ไม่ต้องรอ request แรก</span>
+	cfg, err := config.<span class="f">Load</span>()
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		bootLogger.<span class="f">Error</span>(<span class="s">"load configuration"</span>)
+		fmt.<span class="f">Fprintf</span>(os.Stderr, <span class="s">"%s\n"</span>, config.<span class="f">Humanize</span>(err))
+		<span class="k">return</span> fmt.<span class="f">Errorf</span>(<span class="s">"load configuration: %w"</span>, err)
+	}
+
+	<span class="c">// 4) logger ตัวจริง — สร้างจาก config ที่ผ่าน validate แล้ว</span>
+	logger := <span class="f">newLogger</span>(cfg.Logging)
+	slog.<span class="f">SetDefault</span>(logger)
+	logger.<span class="f">Info</span>(<span class="s">"configuration loaded"</span>,
+		<span class="s">"app"</span>, cfg.App.Name, <span class="s">"env"</span>, cfg.App.Env, <span class="s">"addr"</span>, cfg.App.<span class="f">Addr</span>())
+
+	<span class="c">// 5) จากตรงนี้ไป มั่นใจได้ว่า cfg ทุกค่าใช้งานได้จริง</span>
+	db, err := gorm.<span class="f">Open</span>(postgres.<span class="f">Open</span>(cfg.Database.PostgresDSN), &amp;gorm.Config{})
+	<span class="k">if</span> err != <span class="k">nil</span> {
+		<span class="k">return</span> fmt.<span class="f">Errorf</span>(<span class="s">"open database: %w"</span>, err)
+	}
+	_ = db <span class="c">// ... SetMaxOpenConns / SetMaxIdleConns / SetConnMaxLifetime / Ping ...</span>
+
+	mux := http.<span class="f">NewServeMux</span>()
+	<span class="c">// ... ผูก handler เข้า mux ตามบทที่ผ่านมา ...</span>
+	<span class="k">return</span> http.<span class="f">ListenAndServe</span>(cfg.App.<span class="f">Addr</span>(), mux)
+}
+
+<span class="c">// ขั้นที่ 4 ของ run() อยู่ในฟังก์ชันนี้ — หัวข้อถัดไปจะยกมาอธิบายทีละบรรทัด</span>
+<span class="k">func</span> <span class="f">newLogger</span>(cfg config.Logging) *slog.Logger {
+	<span class="k">var</span> level slog.Level
+	<span class="k">if</span> err := level.<span class="f">UnmarshalText</span>([]<span class="k">byte</span>(cfg.Level)); err != <span class="k">nil</span> {
+		level = slog.LevelInfo <span class="c">// validate ผ่านมาแล้ว ปกติไม่มีทางเข้าบรรทัดนี้</span>
+	}
+	opts := &amp;slog.HandlerOptions{Level: level}
+
+	<span class="k">if</span> strings.<span class="f">EqualFold</span>(cfg.Format, <span class="s">"text"</span>) {
+		<span class="k">return</span> slog.<span class="f">New</span>(slog.<span class="f">NewTextHandler</span>(os.Stderr, opts))
+	}
+	<span class="k">return</span> slog.<span class="f">New</span>(slog.<span class="f">NewJSONHandler</span>(os.Stderr, opts))
+}</code></pre>
+
+<p>
+  โค้ดก้อนนี้ก๊อปไปวางเป็นไฟล์แล้ว <code>go build</code> ผ่านจริง —
+  บรรทัด <code>_ = db</code> มีไว้เพราะ Go <strong>ไม่ยอมให้ประกาศตัวแปรแล้วไม่ใช้</strong>
+  (ตัวแปรที่ประกาศแล้วทิ้งไว้เฉย ๆ คือ compile error ไม่ใช่แค่คำเตือน)
+  <br>พอคุณเขียนบรรทัด <code>SetMaxOpenConns</code> / <code>Ping</code> ที่ตามมาจริง ๆ
+  <code>db</code> ก็ถูกใช้งานแล้ว ให้ลบ <code>_ = db</code> ทิ้งไปได้เลย
+</p>
+
+<h3>ทำไมต้องมี logger สองตัว — ปัญหาไก่กับไข่</h3>
+
+<p>
+  ขั้นที่ 1 ดูเหมือนเปลืองโค้ดโดยใช่เหตุ ทำไมไม่สร้าง logger ตัวเดียวให้จบ?
+  <br>เพราะ <strong>logger ตัวจริงต้องรู้ <code>LOG_LEVEL</code> กับ <code>LOG_FORMAT</code> ซึ่งอยู่ใน config</strong>
+  <br>แต่ขั้นตอนโหลด config เอง<strong>ก็ต้องการที่ log ตอนมันพัง</strong>
+  <br>ไก่กับไข่พอดี — และทางออกคือยอมมี logger ธรรมดา ๆ ตัวหนึ่งไว้ก่อน
+  (<code>TextHandler</code> · level <code>Info</code> · ไม่ต้องอ่าน config อะไรเลย)
+  แล้วค่อยเปลี่ยนเป็นตัวจริงหลังโหลดสำเร็จ
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>รูปแบบนี้เจอได้ทั่วไปเวลาระบบต้อง bootstrap ตัวเอง</strong> —
+    "ของชั่วคราวที่ไม่ต้องพึ่งใคร ใช้ไปก่อน แล้วเปลี่ยนเป็นของจริงเมื่อพร้อม"
+    <br>ผลพลอยได้ที่มองไม่เห็นตอนอ่านโค้ด: log สองบรรทัดแรกของแอปจะเป็น <strong>รูปแบบข้อความธรรมดา</strong>
+    ส่วนบรรทัดหลังจากนั้นเป็น <strong>JSON</strong> ตามที่ config สั่ง — ไม่ใช่ bug แต่เป็นผลของลำดับที่ตั้งใจไว้
+  </p>
+</div>
+
+<h3><code>newLogger()</code> — จุดที่ <code>LOG_LEVEL</code> กับ <code>LOG_FORMAT</code> ได้ใช้งานจริง</h3>
+
+<p>
+  หัวข้อ 6 เราตั้งกฎให้ <code>Logging</code> ไว้แล้ว แต่ยังไม่เคยเห็นว่ามันถูกใช้ตรงไหน —
+  คำตอบอยู่ที่ฟังก์ชันสั้น ๆ ที่ต่อท้ายไฟล์ <code>main.go</code> เมื่อกี้ ขอยกมาดูใกล้ ๆ อีกที
+  เพราะมันคือขั้นที่ 4 ของ <code>run()</code> ทั้งหมด:
+</p>
+
+<pre><code><span class="k">func</span> <span class="f">newLogger</span>(cfg config.Logging) *slog.Logger {
+	<span class="k">var</span> level slog.Level
+	<span class="k">if</span> err := level.<span class="f">UnmarshalText</span>([]<span class="k">byte</span>(cfg.Level)); err != <span class="k">nil</span> {
+		level = slog.LevelInfo <span class="c">// validate ผ่านมาแล้ว ปกติไม่มีทางเข้าบรรทัดนี้</span>
+	}
+	opts := &amp;slog.HandlerOptions{Level: level}
+
+	<span class="k">if</span> strings.<span class="f">EqualFold</span>(cfg.Format, <span class="s">"text"</span>) {
+		<span class="k">return</span> slog.<span class="f">New</span>(slog.<span class="f">NewTextHandler</span>(os.Stderr, opts))
+	}
+	<span class="k">return</span> slog.<span class="f">New</span>(slog.<span class="f">NewJSONHandler</span>(os.Stderr, opts))
+}</code></pre>
+
+<p>
+  ผมรันด้วย <code>Logging</code> สามชุดเทียบกัน (แต่ละชุดสั่ง <code>Debug</code> · <code>Info</code> · <code>Warn</code> อย่างละบรรทัด):
+</p>
+
+<pre><code>--- level=info format=json ---
+{"time":"...","level":"INFO","msg":"configuration loaded","app":"wongnok","addr":":8080"}
+{"time":"...","level":"WARN","msg":"warn line"}
+
+--- level=DEBUG format=text ---
+time=... level=DEBUG msg="debug line"
+time=... level=INFO msg="configuration loaded" app=wongnok addr=:8080
+time=... level=WARN msg="warn line"
+
+--- level=warn format=JSON ---
+{"time":"...","level":"WARN","msg":"warn line"}</code></pre>
+
+<p style="margin-bottom:0">
+  สามอย่างที่กล่องนี้ยืนยัน:
+  <br>· ชุดแรก <strong>ไม่มีบรรทัด DEBUG</strong> — <code>LOG_LEVEL=info</code> กรองทิ้งจริง
+  <br>· ชุดที่สาม <code>LOG_LEVEL=warn</code> เหลือบรรทัดเดียว
+  <br>· <code>"DEBUG"</code> กับ <code>"JSON"</code> ตัวใหญ่ก็ใช้ได้ เพราะ <code>UnmarshalText</code> กับ
+  <code>strings.EqualFold</code> ไม่สนตัวพิมพ์ — เข้าคู่กับ tag <code>oneofci</code> ที่เราตั้งไว้ในหัวข้อ 6 พอดี
+  <br>(สาม package ที่ฟังก์ชันนี้ใช้ — <code>log/slog</code> · <code>os</code> · <code>strings</code> —
+  อยู่ใน <code>import</code> ของ <code>main.go</code> ข้างบนครบแล้ว ไม่ต้องเติมอะไรอีก)
+</p>
+
+<h3>พิสูจน์ว่า "ตายตั้งแต่ start" จริงไหม</h3>
+
+<p>
+  ประโยคว่า "config ผิดแล้วแอปตายตั้งแต่ start" ฟังบ่อยจนกลายเป็นคำขวัญ
+  ผมเลยรันแล้ววัดสามชั้นให้เห็นกับตา — สั่ง config ผิดสามที่เหมือนเดิม แล้วเช็คว่า
+  process ยังอยู่ไหม · มีใคร bind พอร์ต 8080 ไหม · curl ต่อติดไหม:
+</p>
+
+<pre><code>--- ps เช็คว่า process ยังอยู่ไหม ---
+<strong>process ตายไปแล้ว</strong>
+
+--- lsof :8080 ---
+<strong>(ไม่มี process ไหน listen :8080)</strong>
+
+--- curl /healthz ---
+http_code=<strong>000</strong>
+curl exit=<strong>7</strong>
+
+EXIT_CODE=<strong>1</strong></code></pre>
+
+<p>
+  <code>curl exit=7</code> คือ <em>Failed to connect</em> — ไม่ใช่ 404 ไม่ใช่ 500
+  แต่คือ<strong>ไม่มีอะไรอยู่ปลายสายให้ต่อเลย</strong>
+  <br>นี่คือสิ่งที่เราต้องการจริง ๆ: ไม่มีหน้าต่างเวลาแม้แต่วินาทีเดียวที่แอปเปิดรับ request
+  ทั้งที่ config ยังผิดอยู่
+</p>
+
+<p>ทีนี้ตั้ง config ให้ถูกแล้วรันใหม่ (มี Postgres รออยู่จริง) — ได้ลำดับตามที่ออกแบบไว้เป๊ะ:</p>
+
+<pre><code>--- curl /healthz ---
+ok
+http_code=<strong>200</strong>
+
+--- stderr ของ server ---
+{"time":"2026-08-22T10:13:43.048067+07:00","level":"INFO","msg":"configuration loaded","app":"wongnok","env":"development","addr":":8080"}
+{"time":"2026-08-22T10:13:43.084594+07:00","level":"INFO","msg":"database connected"}
+{"time":"2026-08-22T10:13:43.085393+07:00","level":"INFO","msg":"server starting","addr":":8080"}</code></pre>
+
+<p>
+  สังเกตว่า log ออกมาเป็น <strong>JSON</strong> แล้ว — เพราะบรรทัดพวกนี้พิมพ์<em>หลัง</em>ขั้นที่ 4
+  logger ตัวจริงจึงถูกสร้างจาก <code>cfg.Logging</code> ที่มี <code>LOG_FORMAT=json</code> เป็น default
+</p>
+
+<h2>10 · <code>config_test.go</code> — เทสต์ config ที่ไม่ต้องมีไฟล์ <code>.env</code></h2>
+
+<p>
+  <code>t.Setenv(key, value)</code> คือของที่ทำให้เทสต์ config ง่ายขึ้นมาก —
+  มันตั้ง env ให้เฉพาะระหว่างเทสต์นั้น แล้ว<strong>คืนค่าเดิมให้อัตโนมัติเมื่อเทสต์จบ</strong>
+  ไม่ต้องเขียน cleanup เอง และไม่ต้องมีไฟล์ <code>.env</code> ในเครื่อง CI
+</p>
+
+<pre><code><span class="c">// internal/config/config_test.go</span>
+<span class="k">package</span> config_test
+
+<span class="k">import</span> (
+	<span class="s">"strings"</span>
+	<span class="s">"testing"</span>
+
+	<span class="s">"wongnok/api/internal/config"</span>
+)
+
+<span class="k">func</span> <span class="f">TestLoad_ThreeErrorsAtOnce</span>(t *testing.T) {
+	t.<span class="f">Setenv</span>(<span class="s">"APP_PORT"</span>, <span class="s">"99999"</span>)
+	t.<span class="f">Setenv</span>(<span class="s">"LOG_LEVEL"</span>, <span class="s">"BANANA"</span>)
+	t.<span class="f">Setenv</span>(<span class="s">"POSTGRES_DSN"</span>, <span class="s">""</span>)
+
+	_, err := config.<span class="f">Load</span>()
+	<span class="k">if</span> err == <span class="k">nil</span> {
+		t.<span class="f">Fatal</span>(<span class="s">"Load() error = nil, want error"</span>)
+	}
+
+	got := config.<span class="f">Humanize</span>(err)
+	<span class="k">for</span> _, want := <span class="k">range</span> []<span class="k">string</span>{
+		<span class="s">`App.Port: ผิดกฎ "lte"`</span>,
+		<span class="s">`Logging.Level: ผิดกฎ "oneofci"`</span>,
+		<span class="s">`Database.PostgresDSN: ผิดกฎ "required"`</span>,
+	} {
+		<span class="k">if</span> !strings.<span class="f">Contains</span>(got, want) {
+			t.<span class="f">Errorf</span>(<span class="s">"Humanize() ไม่มี %q\nได้:\n%s"</span>, want, got)
+		}
+	}
+}
+
+<span class="k">func</span> <span class="f">TestLoad_ReturnsZeroValueOnError</span>(t *testing.T) {
+	t.<span class="f">Setenv</span>(<span class="s">"POSTGRES_DSN"</span>, <span class="s">""</span>)
+
+	cfg, err := config.<span class="f">Load</span>()
+	<span class="k">if</span> err == <span class="k">nil</span> {
+		t.<span class="f">Fatal</span>(<span class="s">"want error"</span>)
+	}
+	<span class="c">// value ไม่ใช่ pointer -&gt; เรียกเมธอดต่อได้เลย ไม่ panic</span>
+	<span class="k">if</span> cfg.App.<span class="f">Addr</span>() != <span class="s">":0"</span> {
+		t.<span class="f">Errorf</span>(<span class="s">"Addr() = %q, want %q"</span>, cfg.App.<span class="f">Addr</span>(), <span class="s">":0"</span>)
+	}
+}</code></pre>
+
+<p>
+  ในไฟล์จริงผมมีอีกตัวหนึ่งชื่อ <code>TestLoad_Defaults</code> (เช็คว่า <code>envDefault</code> ทำงานจริง)
+  ซึ่งไม่ได้ยกมาโชว์ตรงนี้ — ตอนรันจึงเห็นสามตัว:
+</p>
+
+<pre><code>$ go test ./internal/config/ -v
+=== RUN   TestLoad_Defaults
+--- PASS: TestLoad_Defaults (0.00s)
+=== RUN   TestLoad_ThreeErrorsAtOnce
+--- PASS: TestLoad_ThreeErrorsAtOnce (0.00s)
+=== RUN   TestLoad_ReturnsZeroValueOnError
+--- PASS: TestLoad_ReturnsZeroValueOnError (0.00s)
+PASS
+ok  	wongnok/api/internal/config	0.572s</code></pre>
+
+<p>
+  เทสต์ตัวที่สามคือตัวที่พิสูจน์เหตุผลข้อ "คืน value ไม่ใช่ pointer" จากหัวข้อ 4 —
+  <strong>เรียก <code>cfg.App.Addr()</code> ได้ทั้งที่ <code>Load()</code> เพิ่งคืน error มา</strong>
+  ถ้าเปลี่ยนเป็น <code>*Config</code> เมื่อไหร่ บรรทัดนี้จะ panic ทันที
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>เกร็ดเรื่องประสิทธิภาพที่เกี่ยวกับบรรทัด <code>var validate = validator.New(...)</code></strong>
+    <br>เอกสารของ validator บอกว่ามันออกแบบมาให้ใช้เป็น <strong>singleton</strong>
+    (สร้างครั้งเดียวใช้ทั้งโปรแกรม) เพราะมันแคชข้อมูล struct ไว้ข้างใน — ผมวัดจริงด้วย benchmark
+    ที่<strong>เรียก <code>validate.Struct(cfg.App)</code> (section เดียว 4 field) รอบละครั้ง</strong>
+    ต่างกันแค่ตัว validator มาจากไหน:
+  </p>
+  <pre style="margin:0.6rem 0"><code>cpu: Apple M4
+BenchmarkSingleton-10      	 7712509	     <strong>145.9 ns/op</strong>	     48 B/op	  <strong>1 allocs/op</strong>
+BenchmarkNewEachTime-10    	  124420	    <strong>9609 ns/op</strong>	  16617 B/op	<strong>232 allocs/op</strong></code></pre>
+  <p style="margin-bottom:0">
+    เรียก <code>New()</code> ใหม่ทุกครั้ง <strong>ช้ากว่าประมาณ 66 เท่า</strong> และจองหน่วยความจำ 232 ครั้งต่อรอบ
+    เทียบกับ 1 ครั้ง
+    <br><strong>ตัวเลข "กี่เท่า" ผูกกับ struct ที่วัด</strong> — ผมลองวัดทั้ง <code>Config</code>
+    (สาม section รวดในรอบเดียว) ได้ <code>434.0 ns/op</code> เทียบ <code>13341 ns/op</code> คือต่างกัน 31 เท่า
+    เพราะฝั่ง singleton มีงานให้ทำมากขึ้น ส่วนฝั่ง <code>New()</code> ต้นทุนคงที่ก้อนใหญ่เท่าเดิม
+    <br>สิ่งที่ไม่เปลี่ยนไม่ว่าจะวัด struct ไหน คือ<strong>ช้ากว่าหลายสิบเท่า และจองหน่วยความจำหลักร้อยครั้งต่อรอบ
+    เทียบกับหลักหน่วย</strong>
+    <br>เหตุผลไม่ใช่แค่ "ทิ้งแคช struct" อย่างที่มักได้ยิน — <code>New()</code>
+    ต้อง<strong>คัดลอกตารางกฎ built-in ทั้งชุดใหม่ทุกครั้ง</strong>ด้วย
+    <br>สำหรับ config ที่โหลดครั้งเดียวตอน start ตัวเลขนี้ไม่มีผลอะไรเลย
+    แต่ถ้าคุณเอา validator ตัวเดียวกันนี้ไปใช้ตรวจ request body ทุก request (ซึ่ง Gin ทำอยู่)
+    ความต่างนี้จะเห็นทันที
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔎 <strong>อีกเรื่องเกี่ยวกับ <code>WithRequiredStructEnabled()</code> ที่เอกสารเขียนไว้สั้นมาก</strong>
+    <br>ผมรันเทียบ <code>validator.New()</code> เปล่า ๆ กับ <code>New(WithRequiredStructEnabled())</code>
+    แล้วพบว่ามันต่างกัน<strong>จุดเดียวเป๊ะ</strong>: tag <code>required</code> ที่แปะบน
+    <em>struct ลูกที่ไม่ใช่ pointer</em>
+  </p>
+  <pre style="margin:0.6rem 0"><code>plain  / zero nested struct  -&gt; &lt;nil&gt;              <span class="c">// tag ถูกเมิน</span>
+opt    / zero nested struct  -&gt; Key: 'Cfg.DB' Error:Field validation for 'DB' failed on the 'required' tag
+
+--- pointer nested (*DB), nil ---
+plain -&gt; Key: 'Cfg2.DB' Error:... failed on the 'required' tag
+opt   -&gt; Key: 'Cfg2.DB' Error:... failed on the 'required' tag   <span class="c">// เท่ากันทั้งคู่</span></code></pre>
+  <p style="margin-bottom:0">
+    ถ้าโค้ดของคุณใช้ <code>*DB</code> (pointer) ตลอด option นี้จะ<strong>ไม่เปลี่ยนอะไรเลย</strong> —
+    ซึ่งเป็นเหตุผลที่หลายคนใส่แล้วลองแล้วไม่เห็นความต่าง แล้วสรุปว่ามันไม่มีผล
+    <br>ใน <code>Config</code> ของเราที่ประกาศ <code>App App</code> · <code>Logging Logging</code> · <code>Database Database</code>
+    เป็น non-pointer ทั้งหมด — option นี้จึงมีผลจริง ถ้าวันหนึ่งเราแปะ <code>validate:"required"</code> บน field พวกนั้น
+  </p>
+</div>
+
+<h2>11 · Mental Model — ท่อลำเลียงค่า</h2>
+
+<p>
+  ก่อนจะปิดบท ลองถอยออกมามองภาพรวม สิ่งที่เราสร้างมาทั้งสี่บทคือ<strong>ท่อลำเลียงค่าหนึ่งท่อ</strong>
+  ที่ค่าไหลจาก<em>ไฟล์บนดิสก์</em> ไปจนถึง<em>ตัวแปรที่โค้ดใช้จริง</em>:
+</p>
+
+<div class="diagram">   .env
+     │        godotenv
+     ▼
+   Environment Variables
+     │        caarlos0/env
+     ▼
+   Config Struct
+     │        validator
+     ▼
+   Valid Config
+     │
+     ▼
+   Application</div>
+
+<p>
+  ถ้ายังนึกภาพไม่ออก สไลด์เทียบกับ<strong>งานเอกสารที่เคาน์เตอร์</strong> ซึ่งเข้าใจง่ายกว่ามาก:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ตัวจริงในโค้ด</th><th>เทียบกับคนที่เคาน์เตอร์</th><th>ทำอะไร</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>.env</code></td>
+      <td><strong>โพย</strong></td>
+      <td>จดค่าที่ต้องใช้ไว้ก่อน ยังไม่ได้ยื่นให้ใคร</td>
+    </tr>
+    <tr>
+      <td><code>godotenv</code></td>
+      <td><strong>คนเอาโพยไปกรอกเข้าระบบ</strong></td>
+      <td>อ่านจากกระดาษ ใส่เข้า environment ให้โปรแกรมเห็น</td>
+    </tr>
+    <tr>
+      <td><code>caarlos0/env</code></td>
+      <td><strong>คนจัดข้อมูลลงช่องในฟอร์ม</strong></td>
+      <td>เอาค่าที่เป็น string ยัดลงช่องที่ถูกชนิด — ช่องไหนว่าง เติม default ให้</td>
+    </tr>
+    <tr>
+      <td><code>validator</code></td>
+      <td><strong>ฝ่ายตรวจเอกสาร</strong></td>
+      <td>ตรวจว่าครบและถูกกฎไหม ไม่ครบ<strong>ตีกลับ</strong> — และตีกลับพร้อมกันทุกข้อที่ผิด</td>
+    </tr>
+    <tr>
+      <td><code>internal/config</code></td>
+      <td><strong>เคาน์เตอร์รับเรื่อง</strong></td>
+      <td>ที่เดียวที่รู้ทุกอย่าง — ใครอยากได้ค่าต้องผ่านตรงนี้ ห้ามเดินอ้อมไปหลังร้าน</td>
+    </tr>
+    <tr>
+      <td>Application</td>
+      <td><strong>คนที่ได้ใช้ข้อมูลที่ผ่านการตรวจแล้ว</strong></td>
+      <td>ไม่ต้องเช็คซ้ำ ไม่ต้องรู้ว่าค่ามาจากไหน — ของที่ถึงมือแล้วคือของที่ใช้ได้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ประโยคเดียวที่สรุปทั้งบท:</strong> ค่าที่<em>ยังไม่ผ่านการตรวจ</em> กับค่าที่<em>ผ่านแล้ว</em>
+    เป็นของคนละชนิดกัน และ <code>internal/config</code> คือ<strong>เส้นแบ่งระหว่างสองโลกนั้น</strong>
+    <br>ก่อนเส้นนี้: ทุกอย่างเป็น string ที่ไม่มีใครรับรอง · หลังเส้นนี้: ทุกค่าถูกชนิด ถูกกฎ และใช้ได้เลย
+    <br>ทุกครั้งที่คุณเผลอเขียน <code>os.Getenv</code> ลึก ๆ ในโค้ด คุณกำลัง<strong>เจาะรูให้ค่าที่ไม่ผ่านการตรวจข้ามเส้นมา</strong>
+  </p>
+</div>
+
+<h2>12 · แบบฝึกหัด — จับคู่</h2>
+
+<div class="predict">
+<p>
+  ทั้งหกข้อคือหกอย่างที่ผ่านมาในสี่บทนี้ ถ้าตอบได้ครบแปลว่าคุณเห็นภาพแล้วว่าใครทำอะไร
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th style="width:55%">ความต้องการ</th><th>ตัวเลือก</th></tr></thead>
+  <tbody>
+    <tr><td>1. อ่านไฟล์ <code>.env</code> แล้วยัดค่าเข้า environment</td><td>A. <code>validate:"oneof=..."</code></td></tr>
+    <tr><td>2. แปลง <code>"8080"</code> เป็น <code>int</code> ใส่ลง struct</td><td>B. <code>.gitignore</code></td></tr>
+    <tr><td>3. ตรวจว่า <code>APP_ENV</code> เป็นค่าที่รู้จัก</td><td>C. <code>godotenv/autoload</code></td></tr>
+    <tr><td>4. กำหนดค่า default ถ้าไม่ได้ตั้ง env</td><td>D. <code>env.ParseAs[Config]()</code></td></tr>
+    <tr><td>5. กันไม่ให้ secret หลุดขึ้น Git</td><td>E. <code>errors.Join</code></td></tr>
+    <tr><td>6. รวม error ของทุก section มาแสดงที่เดียว</td><td>F. <code>envDefault</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="ask">
+  จับคู่ให้ครบทั้งหกข้อก่อนกดดูเฉลย — ตอบในใจหรือจดลงกระดาษก็ได้
+  <br>ตัวเลือกทั้งหกใช้ครั้งละหนึ่งข้อพอดี ไม่มีตัวไหนเหลือและไม่มีตัวไหนใช้ซ้ำ
+</p>
+
+<button class="reveal">ดูเฉลยแบบฝึกหัดจับคู่</button>
+<div class="answer">
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>ข้อ</th><th>คู่</th><th>ทำไม</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>1. อ่าน <code>.env</code> เข้า environment</td>
+        <td><strong>C</strong> <code>godotenv/autoload</code></td>
+        <td>import แบบ <code>_</code> แล้วมันทำงานให้ตอน package ถูกโหลด — ก่อน <code>main()</code> เริ่มด้วยซ้ำ</td>
+      </tr>
+      <tr>
+        <td>2. แปลง <code>"8080"</code> เป็น <code>int</code></td>
+        <td><strong>D</strong> <code>env.ParseAs[Config]()</code></td>
+        <td>อ่าน tag <code>env:"APP_PORT"</code> แล้วแปลงชนิดตามที่ field ประกาศไว้ให้เอง</td>
+      </tr>
+      <tr>
+        <td>3. ตรวจว่า <code>APP_ENV</code> เป็นค่าที่รู้จัก</td>
+        <td><strong>A</strong> <code>validate:"oneof=..."</code></td>
+        <td>เป็นงานของ validator ไม่ใช่ของ env — <code>"prodction"</code> แปลงเป็น string ได้ แต่ไม่ใช่ค่าที่ยอมรับ</td>
+      </tr>
+      <tr>
+        <td>4. กำหนดค่า default</td>
+        <td><strong>F</strong> <code>envDefault</code></td>
+        <td>เขียนติดไว้กับ field เลย ไม่ต้องมี <code>if x == "" { x = ... }</code> กระจายทั่วโปรเจกต์</td>
+      </tr>
+      <tr>
+        <td>5. กัน secret หลุดขึ้น Git</td>
+        <td><strong>B</strong> <code>.gitignore</code></td>
+        <td>ข้อเดียวในนี้ที่<strong>ไม่ใช่โค้ด Go</strong> — เป็นเรื่องของ git ล้วน ๆ และเป็นด่านที่สำคัญที่สุด</td>
+      </tr>
+      <tr>
+        <td>6. รวม error ของทุก section</td>
+        <td><strong>E</strong> <code>errors.Join</code></td>
+        <td>อยู่ใน <code>Config.Validate()</code> · คั่นบรรทัดด้วย <code>\n</code> ให้เอง · ตัวไหน <code>nil</code> ก็ข้ามให้</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin-bottom:0">
+    <strong>ข้อที่คนตอบผิดบ่อยที่สุดคือข้อ 2 กับข้อ 3</strong> — เพราะสองอันนี้ดูเหมือน "ตรวจค่า" เหมือนกัน
+    <br>เส้นแบ่งจำง่าย ๆ: <strong><code>env</code> ถามว่า "แปลงเป็นชนิดนี้ได้ไหม" · <code>validator</code> ถามว่า "ค่านี้ใช้ได้จริงไหม"</strong>
+    <br>ผมพิสูจน์เส้นแบ่งนี้ไปแล้วในหัวข้อ 5: <code>APP_PORT=99999</code> ผ่าน <code>ParseAs</code> สบาย ๆ
+    (มันเป็น int ที่ถูกต้อง) แต่ตกที่ <code>validator</code> เพราะไม่มีพอร์ตหมายเลขนั้นในโลก
+  </p>
+</div>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ใน <code>Load()</code> ทำไม error ของ <code>env.ParseAs</code> ถึง wrap ด้วย <code>fmt.Errorf("parse environment: %w", err)</code> แต่ error ของ <code>cfg.Validate()</code> กลับ <code>return err</code> เฉย ๆ?</p>
+  <div class="opts">
+    <button class="opt">เพราะ <code>errors.Join</code> คืน <code>nil</code> เสมอเมื่อไม่มี error จึง wrap ไม่ได้</button>
+    <button class="opt">เพราะ <code>fmt.Errorf</code> ใช้กับผลของ <code>errors.Join</code> ไม่ได้ — จะ compile ไม่ผ่าน</button>
+    <button class="opt">เพราะ <code>errors.Join</code> คั่น error แต่ละตัวด้วย <code>\n</code> ไว้แล้ว ถ้า wrap ทับ prefix จะไปโผล่แค่บรรทัดแรก บรรทัดที่เหลือกลายเป็นบรรทัดลอย</button>
+    <button class="opt">เพราะการ wrap จะทำให้ <code>errors.As</code> ขุดลงไปหา <code>ValidationErrors</code> ข้างในไม่เจออีกต่อไป</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันเทียบสองแบบให้ดูในหัวข้อ 4 — แบบ wrap ได้ผลแบบนี้:
+    <br><code>validate config: Key: 'App.Port' Error:... 'lte' tag</code>
+    <br><code>Key: 'Logging.Level' Error:... 'oneofci' tag</code> ← <strong>บรรทัดนี้ไม่มี prefix</strong>
+    <br>ยืนยันด้วยว่า <code>errors.Join</code> คั่นด้วย <code>\n</code> จริง: <code>errors.Join(a,b,c)</code>
+    ของ alpha/beta/gamma ได้ <code>"alpha\nbeta\ngamma"</code> ยาว 16 ตัวอักษรพอดี และไม่มี <code>\n</code> ปิดท้าย
+    <br>ตัวเลือกที่ 1 ผิดครึ่งเดียว: <code>errors.Join</code> คืน <code>nil</code> เมื่อทุกตัวเป็น <code>nil</code> จริง
+    แต่นั่นไม่เกี่ยวกับการ wrap — และโค้ดเช็ค <code>err != nil</code> ก่อนอยู่แล้ว
+    <br>ตัวเลือกที่ 2 ผิด: <code>fmt.Errorf</code> รับ error ตัวไหนก็ได้ compile ผ่านสบาย มันแค่<em>อ่านแล้วดูแย่</em>
+    <br>ตัวเลือกที่ 4 ผิด และผมรันพิสูจน์แล้ว: <code>errors.As</code> ขุดทะลุทั้ง <code>fmt.Errorf</code>
+    และ <code>errors.Join</code> ลงไปเจอ <code>ValidationErrors</code> ครบ 4 ตัว (<code>errors.As through Join -&gt; true 4</code>)
+    <br><strong>กฎที่ใช้ได้ทั่วไป:</strong> wrap error ที่เป็นก้อนเดียว · อย่า wrap error ที่จัดหลายบรรทัดมาให้แล้ว</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. field <code>ShutdownTimeout time.Duration</code> ติด <code>validate:"required"</code> ไว้ แล้วมีคนตั้ง <code>APP_SHUTDOWN_TIMEOUT=-5s</code> — ผลเป็นอย่างไร?</p>
+  <div class="opts">
+    <button class="opt">ผ่านทั้ง <code>ParseAs</code> และ <code>Validate</code> — ค่าติดลบหลุดเข้าแอป เพราะ <code>required</code> เช็คแค่ว่า "ไม่ใช่ zero value"</button>
+    <button class="opt"><code>ParseAs</code> พังก่อน เพราะ <code>time.ParseDuration</code> ไม่รับเครื่องหมายลบ</button>
+    <button class="opt"><code>ParseAs</code> ผ่าน แต่ <code>Validate</code> จับได้ด้วย tag <code>required</code> เหมือนกรณี <code>0s</code></button>
+    <button class="opt">panic ตอนเรียก <code>validate.Struct</code> เพราะ <code>required</code> ใช้กับ <code>time.Duration</code> ไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>ParseAs : OK -&gt; ... Shutdown=-5s ...</code> แล้วตามด้วย <code>Validate : OK</code>
+    — <strong>ผ่านทั้งสองด่าน</strong>
+    <br>เหตุผล: <code>required</code> ของ validator แปลว่า "ห้ามเป็น zero value" เท่านั้น
+    zero value ของ <code>time.Duration</code> คือ <code>0s</code> ส่วน <code>-5s</code> ไม่ใช่ zero มันจึงผ่านตามนิยาม
+    <br>ตัวเลือกที่ 2 ผิด — <code>time.ParseDuration("-5s")</code> รับค่าติดลบได้ปกติ
+    <br>ตัวเลือกที่ 3 คือคำตอบของเคส <code>APP_SHUTDOWN_TIMEOUT=0s</code> ต่างหาก ซึ่งโดนจับจริง
+    (<code>Key: 'App.ShutdownTimeout' Error:... failed on the 'required' tag</code>) —
+    นี่คือจุดที่หลอกที่สุด เพราะเห็นว่า <code>0s</code> โดนจับแล้วเลยเหมาเอาว่าคุมได้ครบ
+    <br>ตัวเลือกที่ 4 ผิด ไม่มี panic
+    <br><strong>ทางแก้ที่ผมรันยืนยันแล้ว:</strong> <code>validate:"required,gt=0"</code> —
+    <code>-5s</code> ตกที่ <code>'gt'</code> · <code>0s</code> ตกที่ <code>'required'</code> · <code>500ms</code> กับ <code>10s</code> ผ่าน
+    <br>กับดักเดียวกันนี้โผล่อีกครั้งใน <code>database.go</code>: การเปลี่ยน <code>if ConnMaxLifetime &lt;= 0</code>
+    มาเป็น <code>validate:"required"</code> ทำให้ <code>DB_CONN_MAX_LIFETIME=-5s</code> หลุดไปเลย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. ในกล่องตัวอย่างของสไลด์ ผลลัพธ์จบด้วยบรรทัด <code>exit status 1</code> — บรรทัดนี้ใครพิมพ์?</p>
+  <div class="opts">
+    <button class="opt"><code>os.Exit(1)</code> พิมพ์ให้อัตโนมัติก่อนจบโปรแกรม</button>
+    <button class="opt"><code>slog</code> พิมพ์ต่อท้ายทุกครั้งที่ log ระดับ <code>ERROR</code></button>
+    <button class="opt"><code>config.Humanize()</code> ต่อท้ายให้ เพื่อบอกว่า config พังระดับร้ายแรง</button>
+    <button class="opt"><code>go run</code> พิมพ์เอง เมื่อโปรแกรมลูกจบด้วย exit code ที่ไม่ใช่ 0 — build เป็น binary แล้วรันตรง ๆ จะไม่มีบรรทัดนี้</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันเทียบสองทางกับ env ชุดเดียวกันเป๊ะ: ผ่าน <code>go run ./cmd/api</code> มีบรรทัดนี้ ·
+    build เป็น binary แล้วรันตรง ๆ <strong>ไม่มีบรรทัดนี้เลย</strong> (บรรทัดสุดท้ายกลายเป็น log
+    <code>level=ERROR msg=fatal error="load configuration: ..."</code> แทน)
+    <br><code>go run</code> ทำหน้าที่เป็น parent process — พอลูกจบด้วย exit code ไม่ใช่ 0 มันรายงานให้เราทราบ
+    <br>ตัวเลือกที่ 1 ผิด: <code>os.Exit(1)</code> แค่ทำให้ process จบด้วยรหัส 1 <strong>มันไม่พิมพ์อะไรเลย</strong>
+    <br>ตัวเลือกที่ 2 กับ 3 ผิด — ทั้ง <code>slog</code> และ <code>Humanize</code> ไม่มีโค้ดส่วนไหนสร้างข้อความนี้
+    <br><strong>ทำไมต้องรู้:</strong> เวลาไล่ปัญหาบน production คุณรัน binary ไม่ได้รันผ่าน <code>go run</code> —
+    ถ้าไปตามหาบรรทัด <code>exit status 1</code> ใน log แล้วไม่เจอ อาจเข้าใจผิดว่าโปรแกรมยังไม่ตาย
+    <br>วิธีเช็ค exit code จริงคือ <code>echo $?</code> หลังคำสั่ง ซึ่งผมวัดได้ <strong>1</strong> ทั้งสองทาง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. การวาง config ไว้ที่ <code>internal/config/</code> แทนที่จะเป็น <code>pkg/config/</code> ให้ผลอะไร?</p>
+  <div class="opts">
+    <button class="opt">เป็นแค่ข้อตกลงเรื่องการตั้งชื่อโฟลเดอร์ในทีม — Go ไม่ได้ปฏิบัติกับสองชื่อนี้ต่างกัน</button>
+    <button class="opt">Go บังคับตอน build ให้เอง: module อื่น import ไม่ได้ · <code>go build</code> ตกด้วย <code>use of internal package ... not allowed</code></button>
+    <button class="opt">ป้องกันได้จริง แต่ต้องเปิดด้วย flag ตอน build เช่น <code>go build -internalcheck</code></button>
+    <button class="opt"><code>go vet</code> จะเตือนถ้ามีคนนอก import แต่ <code>go build</code> ยังผ่านตามปกติ</button>
+  </div>
+  <div class="explain">
+    <p>ผมทดสอบสองทางด้วยโฟลเดอร์เดียวกันเป๊ะ (module นอกใช้ <code>replace</code> ชี้เข้ามา):
+    <br>· จากใน module เดียวกัน (<code>cmd/api</code> → <code>internal/config</code>): <code>inside module, import ok: wongnok</code> · <code>exit=0</code>
+    <br>· จาก module อื่น: <code>main.go:6:2: use of internal package wongnok/api/internal/config not allowed</code> · <code>exit=1</code>
+    <br>ตัวเลือกที่ 1 ผิด — <code>internal</code> เป็นชื่อที่ toolchain ของ Go รู้จักเป็นพิเศษ ต่างจาก <code>pkg</code>
+    ที่เป็นแค่ธรรมเนียมจริง ๆ
+    <br>ตัวเลือกที่ 3 ผิด ไม่มี flag แบบนั้น กฎนี้เปิดอยู่ตลอดเวลา ปิดไม่ได้
+    <br>ตัวเลือกที่ 4 ผิดตรงระดับความรุนแรง: มันไม่ใช่คำเตือนของ <code>go vet</code> แต่คือ
+    <strong><code>go build</code> ตกจริง exit code 1</strong> — โค้ดนั้น compile ไม่ออกเลย
+    <br><strong>ประโยชน์จริงที่ได้:</strong> คุณเปลี่ยนชื่อ field ใน <code>Config</code> ได้อย่างอิสระ
+    เพราะรู้แน่ว่าไม่มีใครนอก module นี้ผูกอยู่กับมัน</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — สร้าง <code>internal/config</code> ของตัวเอง แล้วทำให้มันพังให้ครบทุกแบบ</span>
+  <p>
+    เป้าหมายไม่ใช่ "ก๊อปโค้ดในบทนี้ไปวางแล้วรันผ่าน" — เป้าหมายคือ
+    <strong>ทำให้มันพังในแบบที่คุณสั่งได้ แล้วอ่าน error ออกว่าเกิดจากอะไร</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งโครง:</strong> ในโปรเจกต์ Go ของคุณ สร้าง <code>internal/config/</code>
+        แล้วแยกเป็น <code>config.go</code> · <code>app.go</code> · <code>logging.go</code> · <code>database.go</code>
+        <br>ตอนนี้ยังไม่ต้องมี validate — แค่ให้ <code>env.ParseAs[Config]()</code> ทำงานได้ก่อน</li>
+    <li><strong>พิสูจน์กฎ <code>internal/</code> ด้วยตัวเอง:</strong> สร้างโฟลเดอร์ใหม่นอกโปรเจกต์
+        <code>go mod init outsider</code> · เพิ่ม <code>replace</code> ชี้มาที่โปรเจกต์คุณ
+        แล้วลอง import <code>internal/config</code> ดู
+        <br><strong>ต้องได้ <code>use of internal package ... not allowed</code> และ <code>exit=1</code></strong> —
+        ถ้าได้ exit 0 แปลว่า import ผิด path</li>
+    <li><strong>เติม validate ทีละ section:</strong> เริ่มจาก <code>app.go</code> อย่างเดียว
+        แล้วลองยิงสี่เคสนี้ทีละอัน จดข้อความ error ที่ได้ทั้งหมด:
+        <br><code>APP_PORT=99999</code> · <code>APP_PORT=abc</code> · <code>APP_ENV=prodction</code> · <code>APP_SHUTDOWN_TIMEOUT=0s</code>
+        <br><strong>ตอบให้ได้ว่าเคสไหนพังที่ <code>ParseAs</code> และเคสไหนพังที่ <code>Validate</code></strong>
+        (คำใบ้: มีเคสเดียวที่พังที่ <code>ParseAs</code>)</li>
+    <li><strong>ทำให้ error ออกมาพร้อมกันหลายข้อ:</strong> เขียน <code>Config.Validate()</code> ด้วย
+        <code>errors.Join</code> แล้วตั้ง env ให้ผิดสามที่คนละ section พร้อมกัน
+        <br><strong>ต้องเห็น error ครบสามบรรทัดในการรันครั้งเดียว</strong> —
+        ถ้าเห็นบรรทัดเดียว แปลว่าคุณเผลอ <code>return</code> ทันทีที่เจอตัวแรก</li>
+    <li><strong>ลองอีกทางแล้วเทียบ:</strong> เปลี่ยน <code>return err</code> ของ <code>Validate</code>
+        เป็น <code>return fmt.Errorf("validate: %w", err)</code> แล้วรันซ้ำ
+        <br><strong>ดูว่าคำว่า <code>validate:</code> ไปโผล่กี่บรรทัด</strong> แล้วตัดสินเองว่าจะเก็บไว้หรือเอาออก</li>
+    <li><strong>ล่ากับดักค่าติดลบ:</strong> ตั้ง <code>APP_SHUTDOWN_TIMEOUT=-5s</code> แล้วรัน
+        <br>ยืนยันว่า<strong>มันผ่านทั้งสองด่าน</strong> · จากนั้นเติม <code>gt=0</code> เข้า tag แล้วรันซ้ำ
+        <br>สังเกตว่าชื่อ tag ใน error เปลี่ยนจาก <code>'required'</code> เป็น <code>'gt'</code></li>
+    <li><strong>เขียน <code>Humanize()</code> ของตัวเอง:</strong> วน <code>validator.ValidationErrors</code>
+        แล้วพิมพ์ <code>fe.Namespace()</code> กับ <code>fe.Tag()</code>
+        <br><strong>ท้าทาย:</strong> ลองใช้ <code>fe.Param()</code> เพิ่ม เพื่อเขียนข้อความแบบ
+        <em>"App.Env: ต้องเป็นหนึ่งใน development staging production"</em></li>
+    <li><strong>เขียนเทสต์ด้วย <code>t.Setenv</code>:</strong> อย่างน้อยสองตัว —
+        ตัวหนึ่งเช็คว่า default ทำงาน อีกตัวเช็คว่า config ผิดสามที่แล้วได้ error ครบสามข้อ
+        <br><strong>รันเทสต์โดยลบไฟล์ <code>.env</code> ออกก่อน</strong> — ถ้ายังผ่าน แปลว่าเทสต์ของคุณ
+        ไม่ได้แอบพึ่งเครื่องตัวเอง ซึ่งเป็นเงื่อนไขที่ต้องมีถ้าจะเอาไปรันบน CI</li>
+    <li><strong>ท้าทายสุดท้าย:</strong> ทำ <code>run()</code> แบบ 5 ขั้นใน <code>main.go</code>
+        แล้วรันด้วย config ที่ผิด · เปิดอีก terminal ยิง <code>curl http://localhost:8080/healthz</code>
+        <br><strong>ต้องต่อไม่ติด (<code>curl</code> exit 7)</strong> ไม่ใช่ได้ 500 —
+        ถ้าได้ 500 แปลว่าแอปคุณยังเปิดพอร์ตก่อนตรวจ config อยู่</li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 3 — เคสไหนพังที่ไหน</button>
+  <div class="answer">
+    <p>ผลรันจริงทั้งสี่เคส (ตัวโปรแกรมพิมพ์ผลของ <code>ParseAs</code> กับ <code>Validate</code> แยกบรรทัด):</p>
+    <pre style="margin:0.6rem 0"><code>APP_PORT=99999
+  ParseAs  : <strong>OK</strong>  -&gt; App.Port=99999
+  Validate : FAILED -&gt; Key: 'App.Port' Error:Field validation for 'Port' failed on the 'lte' tag
+
+APP_PORT=abc
+  <strong>ParseAs  : FAILED</strong> -&gt; <strong>env: </strong>parse error on field "Port" of type "int": strconv.ParseInt: parsing "abc": invalid syntax
+
+APP_ENV=prodction
+  ParseAs  : <strong>OK</strong>  -&gt; App.Env="prodction"
+  Validate : FAILED -&gt; Key: 'App.Env' Error:Field validation for 'Env' failed on the 'oneof' tag
+
+APP_SHUTDOWN_TIMEOUT=0s
+  ParseAs  : <strong>OK</strong>  -&gt; Shutdown=0s
+  Validate : FAILED -&gt; Key: 'App.ShutdownTimeout' Error:Field validation for 'ShutdownTimeout' failed on the 'required' tag</code></pre>
+    <p>
+      <strong>มีเคสเดียวที่พังที่ <code>ParseAs</code> คือ <code>APP_PORT=abc</code></strong> —
+      เพราะเป็นเคสเดียวที่ "แปลงเป็นชนิดที่ประกาศไว้ไม่ได้"
+      <br>อีกสามเคส<em>แปลงได้หมด</em>: <code>99999</code> เป็น int ที่ถูกต้อง ·
+      <code>"prodction"</code> เป็น string ที่ถูกต้อง · <code>0s</code> เป็น <code>time.Duration</code> ที่ถูกต้อง
+      <br>มันแค่<strong>ไม่ใช่ค่าที่แอปเราใช้ได้</strong> ซึ่งเป็นคนละคำถามกัน และเป็นงานของ validator
+    </p>
+    <p style="margin-bottom:0">
+      สังเกตข้อความของสองด่านให้ดี มันหน้าตาคนละแบบชัดเจน:
+      <br>· <code>ParseAs</code> พูดถึง <strong>ชนิดข้อมูล</strong>: <code>of type "int"</code>, <code>strconv.ParseInt</code>
+      <br>· <code>validator</code> พูดถึง <strong>ชื่อกฎ</strong>: <code>failed on the 'lte' tag</code>
+      <br>อ่านสองคำนี้เป็นก็แยกออกทันทีว่าปัญหาอยู่ด่านไหน โดยไม่ต้องไปเปิดโค้ดดู
+      <br><br>เกร็ดเล็ก ๆ ที่คุ้มจะสังเกต: บรรทัด <code>ParseAs</code> ข้างบนมีคำว่า
+      <code>env: </code> นำหน้า เพราะเป็นข้อความที่ <code>env.ParseAs</code> คืนมาตรง ๆ
+      แต่ในกล่อง 🔍 ของหัวข้อ 8 กลับ<strong>ไม่มี</strong>คำนี้ — ไม่ใช่พิมพ์ตก
+      แต่เพราะตรงนั้นข้อความผ่าน <code>Humanize()</code> ซึ่ง <code>errors.As</code>
+      แกะชั้นนอกออกไปแล้วหยิบ error ชั้นในมาพิมพ์ · <em>ห่อกี่ชั้น อ่านออกมาก็ได้ข้อความคนละแบบ</em>
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 5 กับข้อ 6 คือสองข้อที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong>
+    <br>ข้อ 5 เพราะการเห็น prefix ไปโผล่บรรทัดเดียวด้วยตาตัวเอง จะทำให้คุณจำกฎ
+    "อย่า wrap error หลายบรรทัด" ได้โดยไม่ต้องท่อง
+    <br>ข้อ 6 เพราะมันสอนบทเรียนที่ใหญ่กว่าเรื่อง <code>gt=0</code>:
+    <strong>กฎที่เราเขียนไว้ ไม่ได้แปลว่าเราคุมได้อย่างที่คิด</strong> —
+    ต้องยิงค่าจริงเข้าไปทดสอบถึงจะรู้
+    <br><br>
+    ถ้ารันแล้ว output ไม่ตรงกับในบทนี้ <strong>ส่งมาได้เลย</strong> —
+    ทุกบรรทัดในหน้านี้วัดบน <strong>Go 1.26.5 darwin/arm64</strong> ·
+    <code>env/v11 v11.4.1</code> · <code>validator/v10 v10.30.3</code> · <code>godotenv v1.5.1</code>
+    <br>จุดที่มีโอกาสต่างกันมากที่สุดคือ <code>validator</code> เวอร์ชันอื่น เพราะข้อความ error
+    ของมันเคยเปลี่ยนรูปแบบมาแล้วในอดีต
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0047-validate-at-start.html">← บทเรียน 47</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0049-basic-auth-jwt.html">บทเรียน 49 → Basic Auth &amp; JWT</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://go.dev/doc/go1.4#internalpackages">Go 1.4 Release Notes — Internal packages</a> · <a href="https://pkg.go.dev/cmd/go#hdr-Internal_Directories">cmd/go — Internal Directories</a> — <strong>อ่านสองย่อหน้าสั้น ๆ นี้</strong> จะเห็นกฎเป๊ะ ๆ ว่า "ใต้ <code>internal</code> import ได้จากใต้โฟลเดอร์แม่ของมันเท่านั้น" ซึ่งเป็นที่มาของ error <code>use of internal package ... not allowed</code></li>
+  <li><a href="https://pkg.go.dev/errors#Join">pkg.go.dev — <code>errors.Join</code></a> — <strong>อ่านประโยคเดียวที่บอกว่าคั่นด้วย newline</strong> และประโยคที่บอกว่าข้าม <code>nil</code> ให้ · ที่มาของ <code>Unwrap() []error</code> ที่ <code>Humanize()</code> ใช้แกะกล่อง</li>
+  <li><a href="https://pkg.go.dev/errors#As">pkg.go.dev — <code>errors.As</code></a> · <a href="https://pkg.go.dev/fmt#Errorf">fmt.Errorf</a> — ความต่างของ "ห่อ error หนึ่งตัว" กับ "มัดหลายตัว" และเหตุผลที่ <code>%w</code> ทำให้ขุดกลับมาได้</li>
+  <li><a href="https://pkg.go.dev/github.com/go-playground/validator/v10#Validate.Struct">validator/v10 — <code>Validate.Struct</code></a> · <a href="https://pkg.go.dev/github.com/go-playground/validator/v10#FieldError">FieldError</a> — รายชื่อ method ทั้งหมดของ <code>FieldError</code> · <strong>สังเกตว่า <code>Value()</code> คืน <code>interface{}</code></strong> — พิมพ์ด้วย <code>%v</code> ยังได้ <code>100ms</code> ตามปกติ แต่ถ้าจะเอาไปคำนวณต่อต้อง type-assert กลับเป็น <code>time.Duration</code> ก่อน</li>
+  <li><a href="https://pkg.go.dev/github.com/go-playground/validator/v10#WithRequiredStructEnabled">validator/v10 — <code>WithRequiredStructEnabled</code></a> — doc comment บรรทัดเดียวที่บอกครบ: <em>"enables required tag on non-pointer structs"</em> ซึ่งตรงกับผลรันในหัวข้อ 10 พอดี</li>
+  <li><a href="https://pkg.go.dev/github.com/caarlos0/env/v11">caarlos0/env v11</a> — รายการ tag ทั้งหมด (<code>env</code> · <code>envDefault</code> · <code>envSeparator</code> · <code>required</code>) และชนิดข้อมูลที่แปลงให้ได้เอง</li>
+  <li><a href="https://pkg.go.dev/testing#T.Setenv">pkg.go.dev — <code>t.Setenv</code></a> — <strong>อ่านย่อหน้าที่บอกว่าใช้กับ <code>t.Parallel()</code> ไม่ได้</strong> ซึ่งเป็นข้อจำกัดที่เจอตอนเทสต์เริ่มเยอะ</li>
+  <li><a href="https://12factor.net/config">The Twelve-Factor App — III. Config</a> — ต้นทางของแนวคิดทั้งสี่บท และเกณฑ์ทดสอบ "เปิด repo เป็น public ตอนนี้ได้ไหม"</li>
+  <li><a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44 — Configuration &amp; Environment Variables</a> — จุดที่เรื่องนี้เริ่ม: ห้าปัญหาของ <code>os.Getenv</code> ที่ทั้งสี่บทนี้เกิดมาเพื่อแก้</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

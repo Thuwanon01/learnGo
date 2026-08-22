@@ -1,0 +1,1390 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 47 — ทำไมต้อง validate และทำไมต้องทำตอน start</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 47 · Day 9 · Config</p>
+  <h1>ทำไมต้อง validate และทำไมต้องทำตอน start</h1>
+  <p class="meta">~20 นาที · ต้องมี: <a href="./0045-caarlos0-env.html">บทเรียน 45</a> (<code>caarlos0/env</code> · <code>env.ParseAs</code>) · <a href="./0046-dotenv-godotenv.html">บทเรียน 46</a> (<code>.env</code> · <code>godotenv</code>)</p>
+  <p class="standfirst">
+    บทนี้มาจาก<strong>สไลด์ Day 9 หน้า 16–18</strong>
+    <br>ประโยคเดียวที่เป็นหัวใจของทั้งบท: <strong><code>env.ParseAs()</code> ผ่าน <em>ไม่เท่ากับ</em> ค่าใช้ได้จริง</strong>
+    <br>บทที่แล้วเราได้เครื่องมือที่อ่าน env เข้ามาใส่ struct ให้อัตโนมัติ แปลง type ให้ เติม default ให้
+    ซึ่งแก้ปัญหา "ลืมแปลง type" กับ "พิมพ์ชื่อผิด" ไปเรียบร้อย
+    <br>แต่มันยังปล่อยของเสียอีกชั้นหนึ่งให้ผ่านไปได้ — และของเสียชั้นนั้น<strong>ไม่มีอะไรจับได้เลย
+    จนกว่าผู้ใช้คนแรกจะกดใช้งาน</strong>
+    <br>ผมจะพิสูจน์ด้วยเซิร์ฟเวอร์จริงสองตัวที่ต่างกันแค่เรื่อง validate แล้วรันด้วยสภาพเดียวกัน —
+    ตัวที่ไม่ validate <strong>ผ่าน health check ได้ 200</strong>
+    ทั้งที่ config พังอยู่ · ส่วนตัวที่ validate ตอน start <strong>ตายทันทีจนไม่มีอะไร listen พอร์ตเลย</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ในบทนี้ — ทุก output ในหน้านี้มาจากการรันจริงบน</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64        <span class="c"># CPU: Apple M4 (มีผลเฉพาะตัวเลข benchmark หัวข้อ 6.2)</span>
+github.com/go-playground/validator/v10  v10.30.3   <span class="c"># พระเอกของบทนี้</span>
+github.com/caarlos0/env/v11             v11.4.1    <span class="c"># จากบทเรียน 45</span>
+github.com/lib/pq                       v1.10.9    <span class="c"># ใช้เฉพาะหัวข้อ 3 ตอนทำเซิร์ฟเวอร์ตัวอย่าง</span></code></pre>
+  <p style="margin-bottom:0">
+    ถ้าจะพิมพ์ตาม: สร้างโฟลเดอร์เปล่าใหม่ · <code>cd</code> เข้าไป · <code>go mod init v10check</code> · แล้ว
+    <br><code>go get github.com/go-playground/validator/v10@v10.30.3</code>
+    <br><code>go get github.com/caarlos0/env/v11@v11.4.1</code>
+    <br><code>go get github.com/lib/pq@v1.10.9</code>
+    <br><br>
+    <strong>ในบทนี้มีเซิร์ฟเวอร์ตัวอย่างสองตัว</strong> ที่หน้าตาเกือบเหมือนกัน อย่าสับสน:
+    <br>· <code>api47bad</code> — <strong>ไม่มี</strong> <code>validate</code> tag เลย (หัวข้อ 3 ฝั่งซ้าย)
+    <br>· <code>api47</code> — มี <code>validate</code> tag และเรียก <code>Validate()</code> ตอน start (หัวข้อ 3 ฝั่งขวา)
+  </p>
+</div>
+
+<h2>1 · <code>ParseAs</code> ผ่าน ไม่ได้แปลว่าค่าใช้ได้</h2>
+
+<p>
+  ทวนจาก <a href="./0045-caarlos0-env.html">บทเรียน 45</a> สั้น ๆ ก่อน —
+  <code>env.ParseAs[Config]()</code> ทำสามอย่าง: อ่านค่าจาก env ตามชื่อใน tag <code>env:"..."</code> ·
+  <strong>แปลง string ให้เป็นชนิดของ field</strong> (<code>int</code>, <code>bool</code>, <code>time.Duration</code>) ·
+  ถ้าไม่มีค่าก็เติมจาก <code>envDefault</code>
+  <br>ถ้าแปลงไม่สำเร็จมันคืน error ให้ — ซึ่งดีมาก แต่คำถามคือ <strong>มันตรวจแค่ไหน</strong>
+</p>
+
+<div class="predict">
+  <p><strong>ทายก่อนรัน</strong> — นี่คือ config struct ที่ยังไม่มี <code>validate</code> tag เลย มีแค่ <code>env</code> กับ <code>envDefault</code></p>
+  <pre><code><span class="k">type</span> App <span class="k">struct</span> {
+    Port            <span class="k">int</span>           `env:<span class="s">"APP_PORT"</span> envDefault:<span class="s">"8080"</span>`
+    Env             <span class="k">string</span>        `env:<span class="s">"APP_ENV"</span> envDefault:<span class="s">"development"</span>`
+    ShutdownTimeout time.Duration `env:<span class="s">"APP_SHUTDOWN_TIMEOUT"</span> envDefault:<span class="s">"10s"</span>`
+}</code></pre>
+  <p>
+    <em>ตัดให้สั้นเหลือก้อนเดียวพอเห็นภาพ</em> — ของจริงที่ผมรันมีอีกสองก้อนอยู่ใน <code>Config</code> เดียวกัน
+    คือ <code>Logging.Level</code> (<code>env:"LOG_LEVEL" envDefault:"info"</code>)
+    และ <code>Database.PostgresDSN</code> (<code>env:"POSTGRES_DSN"</code> — <strong>ไม่มี <code>envDefault</code></strong>)
+    <br>นั่นคือที่มาของค่า <code>Log.Level="info"</code> กับ <code>DSN=""</code> ที่จะโผล่ในเฉลย —
+    <em>บรรทัดผลรันย่อชื่อให้สั้นลงเพื่อให้พอบรรทัดเดียว</em> (<code>Logging.Level</code> → <code>Log.Level</code> ·
+    <code>Database.PostgresDSN</code> → <code>DSN</code> · <code>App.ShutdownTimeout</code> → <code>Shutdown</code>)
+  </p>
+  <p class="ask">
+    ทีนี้มีคนตั้งค่าห้าแบบนี้มา — <strong>ทายว่า <code>env.ParseAs</code> จะฟ้อง error กี่ตัว</strong>
+    <br>1. <code>APP_PORT=99999</code> (พอร์ตของ TCP มีแค่ 1–65535)
+    <br>2. <code>POSTGRES_DSN=</code> (ตั้งชื่อไว้ แต่ค่าว่าง)
+    <br>3. <code>APP_ENV=prodction</code> (ตั้งใจพิมพ์ <code>production</code> แต่ตก <code>u</code>)
+    <br>4. <code>LOG_LEVEL=BANANA</code>
+    <br>5. <code>APP_SHUTDOWN_TIMEOUT=0s</code>
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <p><strong>ศูนย์ตัว — ผ่านหมดทั้งห้าแบบ</strong> ผมรันจริงทีละเคส (โปรแกรมพิมพ์บรรทัด <code>ParseAs</code> ก่อน แล้วค่อยลอง validate ทีหลัง):</p>
+    <pre style="margin:0.6rem 0"><code>### APP_PORT=99999
+<strong>ParseAs  : OK</strong> -&gt; App.Port=99999 App.Env="development" Log.Level="info" Shutdown=10s DSN=""
+
+### POSTGRES_DSN=
+<strong>ParseAs  : OK</strong> -&gt; App.Port=8080 App.Env="development" Log.Level="info" Shutdown=10s DSN=""
+
+### APP_ENV=prodction
+<strong>ParseAs  : OK</strong> -&gt; App.Port=8080 App.Env="prodction" Log.Level="info" Shutdown=10s DSN=""
+
+### LOG_LEVEL=BANANA
+<strong>ParseAs  : OK</strong> -&gt; App.Port=8080 App.Env="development" Log.Level="BANANA" Shutdown=10s DSN=""
+
+### APP_SHUTDOWN_TIMEOUT=0s
+<strong>ParseAs  : OK</strong> -&gt; App.Port=8080 App.Env="development" Log.Level="info" Shutdown=0s DSN=""</code></pre>
+    <p style="margin-bottom:0">
+      ดูค่าที่มันคืนมาให้ดี ๆ: <code>App.Port=99999</code> · <code>DSN=""</code> · <code>App.Env="prodction"</code> ·
+      <code>Log.Level="BANANA"</code> · <code>Shutdown=0s</code>
+      <br><strong>ทุกค่าเข้าไปนั่งใน struct เรียบร้อย</strong> พร้อมให้โปรแกรมหยิบไปใช้ต่อ
+      โดยไม่มีอะไรบอกเลยว่ามีอะไรผิด
+    </p>
+  </div>
+</div>
+
+<p>
+  เหตุผลที่มันผ่านหมดตรงไปตรงมามาก — <strong><code>ParseAs</code> ถามคำถามเดียว: "แปลงเป็นชนิดนี้ได้ไหม"</strong>
+  <br><code>"99999"</code> แปลงเป็น <code>int</code> ได้ · <code>""</code> เป็น <code>string</code> อยู่แล้ว ·
+  <code>"prodction"</code> ก็เป็น <code>string</code> · <code>"0s"</code> แปลงเป็น <code>time.Duration</code> ได้
+  <br>ทุกอันตอบว่า "ได้" มันเลยส่งต่อ ทั้งที่ทุกอัน<strong>ใช้งานจริงไม่ได้สักอัน</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ค่าที่ได้</th><th><code>ParseAs</code></th><th>ความจริงตอนใช้งาน</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>APP_PORT=99999</code></td>
+      <td><strong>ผ่าน</strong></td>
+      <td>พอร์ต TCP มีแค่ <strong>1–65535</strong> — <code>99999</code> ไม่มีอยู่จริง</td>
+    </tr>
+    <tr>
+      <td><code>POSTGRES_DSN=</code></td>
+      <td><strong>ผ่าน</strong></td>
+      <td>ต่อฐานข้อมูลไม่ได้ — ไม่รู้ว่าจะต่อไปที่ไหน</td>
+    </tr>
+    <tr>
+      <td><code>APP_ENV=prodction</code></td>
+      <td><strong>ผ่าน</strong></td>
+      <td>พิมพ์ผิด — โค้ดที่เขียน <code>if env == "production"</code> จะ<strong>เข้าเงื่อนไขไม่ติด</strong> แล้วเดินสาย dev อยู่บน production เงียบ ๆ</td>
+    </tr>
+    <tr>
+      <td><code>LOG_LEVEL=BANANA</code></td>
+      <td><strong>ผ่าน</strong></td>
+      <td>ไม่ใช่ level ที่ <code>slog</code> รู้จัก (มีแค่ <code>debug</code> / <code>info</code> / <code>warn</code> / <code>error</code>)</td>
+    </tr>
+    <tr>
+      <td><code>APP_SHUTDOWN_TIMEOUT=0s</code></td>
+      <td><strong>ผ่าน</strong></td>
+      <td>ตอนปิดเซิร์ฟเวอร์จะ<strong>ตัดการเชื่อมต่อทันที</strong> — request ที่ค้างอยู่ตายกลางคัน</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>เคสที่ 3 คือเคสที่คนมองข้ามที่สุด</strong> — อีกสี่เคสอย่างน้อยยัง "พัง" ให้เห็น
+    แต่ <code>APP_ENV=prodction</code> ไม่พังเลย มันแค่<strong>ทำงานผิด</strong>
+    <br>โค้ดที่เขียนว่า <em>"ถ้าเป็น production ให้ปิด debug log · ให้บังคับ HTTPS · ให้ไม่แสดง stack trace ให้ผู้ใช้เห็น"</em>
+    จะไม่เข้าเงื่อนไขสักข้อ แล้ว production ของคุณก็จะรันโหมด dev อยู่หลายเดือนโดยไม่มีใครรู้
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ กับดักแถม — <code>envDefault</code> กับค่าว่าง</span>
+  <p style="margin-bottom:0">
+    เคสที่ 2 ข้างบนได้ <code>DSN=""</code> ก็เพราะ field <code>PostgresDSN</code>
+    <strong>ไม่มี <code>envDefault</code></strong>
+    <br>ถ้ามันมี <code>envDefault</code> ติดอยู่ ผลจะกลับด้านทันที — ผมลองแล้ว:
+  </p>
+  <pre style="margin:0.6rem 0"><code><span class="c">// field เดียวกัน แต่คราวนี้ติด envDefault ไว้ด้วย</span>
+PostgresDSN <span class="k">string</span> `env:<span class="s">"POSTGRES_DSN"</span> envDefault:<span class="s">"postgres://u:p@localhost:5432/db"</span>`
+
+$ env POSTGRES_DSN= ./probe
+ParseAs  : OK -&gt; ... <strong>DSN="postgres://u:p@localhost:5432/db"</strong>
+           os.LookupEnv POSTGRES_DSN -&gt; value="" present=<strong>true</strong></code></pre>
+  <p style="margin-bottom:0">
+    <strong>ตั้งไว้เป็นค่าว่าง = <code>caarlos0/env</code> เมินแล้วใช้ <code>envDefault</code> แทน</strong>
+    ทั้งที่ <code>os.LookupEnv</code> ยืนยันว่าคีย์นี้<em>มีอยู่จริง</em>
+    <br>ต้นเหตุอยู่ใน <code>env.go</code> ของ v11.4.1 ฟังก์ชัน <code>getOr</code>:
+    <code>case exists &amp;&amp; value == "" &amp;&amp; defExists: return defaultValue, true, true</code>
+    <br>จำไว้ว่า <strong>สำหรับ <code>caarlos0/env</code> "ตั้งเป็นค่าว่าง" กับ "ไม่ได้ตั้งเลย" ให้ผลเหมือนกัน</strong>
+    ถ้า field นั้นมี <code>envDefault</code> — ซึ่งต่างจาก <code>godotenv</code> ใน
+    <a href="./0046-dotenv-godotenv.html">บทเรียน 46</a> ที่ถือว่า "ค่าว่าง" คือ "มีอยู่แล้ว" จึงไม่เติมให้
+  </p>
+</div>
+
+<h2>2 · คำสองคำที่ต้องแยกให้ออก — syntax กับ semantics</h2>
+
+<p>
+  สองคำนี้จะโผล่ตลอดทั้งบท เลยขอนิยามให้ชัดก่อน:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำ</th><th>แปลว่า</th><th>คำถามที่มันถาม</th><th>ใครตอบให้</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>syntax</strong> (รูปแบบ)</td>
+      <td>ค่านั้น<em>เขียนถูกรูป</em>ตามชนิดข้อมูลไหม</td>
+      <td>"แปลงเป็น <code>int</code> ได้ไหม"</td>
+      <td><code>env.ParseAs</code></td>
+    </tr>
+    <tr>
+      <td><strong>semantics</strong> (ความหมาย)</td>
+      <td>ค่านั้น<em>มีความหมายที่ใช้ได้</em>ในบริบทของแอปเราไหม</td>
+      <td>"<code>int</code> ตัวนี้อยู่ในช่วงที่ใช้ได้ไหม"</td>
+      <td><strong>validator</strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  เทียบให้เห็นภาพ: <code>"31 กุมภาพันธ์"</code> เขียนถูกรูปทุกอย่าง — มีเลขวัน มีชื่อเดือน
+  <strong>syntax ผ่าน</strong> แต่วันนั้นไม่มีอยู่จริงบนโลก <strong>semantics ตก</strong>
+  <br><code>APP_PORT=99999</code> ก็เรื่องเดียวกันเป๊ะ: เป็นตัวเลขจริง แปลงเป็น <code>int</code> ได้จริง
+  แต่พอร์ตหมายเลขนั้นไม่มีอยู่ในโลกของ TCP
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>📌 ประโยคที่ต้องจำจากบทนี้</strong>
+    <br><code>env.ParseAs</code> ตรวจแค่ <strong>syntax</strong> — <em>"แปลงเป็น int ได้ไหม"</em>
+    <br><code>validator</code> ตรวจ <strong>semantics</strong> — <em>"int ตัวนี้อยู่ในช่วงที่ใช้ได้ไหม"</em>
+    <br>สองตัวนี้<strong>ไม่ได้แทนกัน</strong> มันเป็นด่านคนละด่านที่ต้องผ่านทั้งคู่
+  </p>
+</div>
+
+<h2>3 · ทำไมต้องตรวจ "ตอน start" ไม่ใช่ตอนใช้</h2>
+
+<p>
+  สมมติว่าเรารู้แล้วว่าต้องตรวจ คำถามถัดมาคือ <strong>ตรวจตอนไหน</strong>
+  <br>คนส่วนใหญ่จะตอบว่า "ก็ตรวจตอนจะใช้สิ" — เช่นตอนจะต่อ DB ค่อยเช็คว่า DSN ว่างไหม
+  <br>ผลของสองทางเลือกนี้ต่างกันมากกว่าที่คิด สไลด์หน้า 16 วางไทม์ไลน์ของวันเดียวกันไว้เทียบกัน:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ไม่ validate</h4>
+    <pre><code><strong>09:00</strong>  deploy สำเร็จ
+<strong>09:00</strong>  health check ผ่าน
+<strong>09:00</strong>  pod Running
+
+   ⋮   (เงียบ ๆ ทั้งเช้า)
+
+<strong>14:32</strong>  user คนแรกกดใช้
+<strong>14:32</strong>  panic
+<strong>14:32</strong>  ลูกค้าเจอ 500</code></pre>
+    <p>คนที่เจอปัญหาคือ<strong>ลูกค้า</strong> · ห่างจากตอน deploy <strong>5 ชั่วโมงครึ่ง</strong> —
+    ตอนนั้นไม่มีใครนึกถึง deploy ตอนเช้าแล้ว</p>
+  </div>
+  <div class="side good">
+    <h4>✅ validate ตอน start</h4>
+    <pre><code><strong>09:00</strong>  deploy
+<strong>09:00</strong>  FATAL: DSN required
+<strong>09:00</strong>  CrashLoopBackOff
+       → rollout หยุดเอง
+<strong>09:01</strong>  แก้ Secret แล้ว deploy
+
+
+<strong>ไม่มีใครถูกค้างคาไหนเจอ</strong></code></pre>
+    <p>คนที่เจอปัญหาคือ<strong>คนที่เพิ่งกด deploy</strong> · ห่างจากตอนทำ <strong>ไม่กี่วินาที</strong> —
+    เขายังจำได้ว่าเพิ่งไปแก้อะไรมา</p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🔖 <strong>ศัพท์ที่โผล่ในกล่องขวา</strong> — <code>CrashLoopBackOff</code> คือสถานะของ Kubernetes
+    ที่แปลว่า "container นี้เริ่มแล้วตาย เริ่มแล้วตาย ซ้ำ ๆ" ·
+    ส่วน <strong>rollout</strong> คือขั้นตอนที่ Kubernetes ค่อย ๆ เปลี่ยนของเก่าเป็นของใหม่ทีละ pod
+    <br>จุดสำคัญคือ <strong>Kubernetes จะหยุด rollout ทันทีที่ pod ใหม่ขึ้นไม่ได้</strong> —
+    แอปที่ตายตั้งแต่ start เลยทำให้ rollout ค้างอยู่ตรงนั้นเอง และ<strong>pod เก่าที่เหลือก็ยังให้บริการอยู่</strong>
+    <br>(ไม่ใช่ว่ามันไม่แตะของเก่าเลยนะ — <code>RollingUpdate</code> ค่าเริ่มต้นคือ
+    <code>maxUnavailable=25%</code> แปลว่าอาจมีของเก่าถูกเอาลงไปก่อนบางส่วน แล้วค่อยหยุดค้าง)
+    <br>นี่คือของแถมที่ได้มาฟรี ๆ จากการเลือกตายตอน start
+  </p>
+</div>
+
+<p>
+  ไทม์ไลน์ข้างบนมาจากสไลด์ ยังเป็น<em>เรื่องเล่า</em> ผมเลยทำของจริงมาให้ดู —
+  เซิร์ฟเวอร์สองตัวที่โค้ดต่างกันแค่เรื่อง validate แล้วรันด้วย<strong>สภาพเดียวกันคือลืมตั้ง <code>POSTGRES_DSN</code></strong>
+</p>
+
+<h3>ฝั่งซ้ายของภาพ — เซิร์ฟเวอร์ที่ไม่ validate</h3>
+
+<p>
+  ตัวนี้มีแค่ <code>env</code> tag ไม่มี <code>validate</code> tag เลย ปล่อยให้ <code>ParseAs</code> ผ่านแล้วเดินต่อทันที:
+</p>
+
+<pre><code><span class="c">// api47bad/main.go — ไฟล์เต็มทั้งไฟล์ ก๊อปไปวางแล้ว go build ผ่าน</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"database/sql"</span>
+    <span class="s">"fmt"</span>
+    <span class="s">"net/http"</span>
+    <span class="s">"os"</span>
+
+    <span class="s">"github.com/caarlos0/env/v11"</span>
+    _ <span class="s">"github.com/lib/pq"</span>      <span class="c">// ← ขาดบรรทัดนี้ไม่ได้: driver ชื่อ "postgres" มาจากที่นี่</span>
+)
+
+<span class="c">// ไม่มี validate tag เลย — ParseAs ผ่านคือจบ</span>
+<span class="k">type</span> Config <span class="k">struct</span> {
+    Port        <span class="k">int</span>    `env:<span class="s">"APP_PORT"</span> envDefault:<span class="s">"8080"</span>`
+    PostgresDSN <span class="k">string</span> `env:<span class="s">"POSTGRES_DSN"</span>`
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+    cfg, err := env.<span class="f">ParseAs</span>[Config]()
+    <span class="k">if</span> err != <span class="k">nil</span> { fmt.<span class="f">Fprintln</span>(os.Stderr, <span class="s">"FATAL:"</span>, err); os.<span class="f">Exit</span>(<span class="n">1</span>) }
+    db, _ := sql.<span class="f">Open</span>(<span class="s">"postgres"</span>, cfg.PostgresDSN)   <span class="c">// ← DSN ว่างก็ยังผ่าน (บทเรียน 44 หัวข้อ 6)</span>
+
+    http.<span class="f">HandleFunc</span>(<span class="s">"/healthz"</span>, <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+        fmt.<span class="f">Fprint</span>(w, <span class="s">"ok"</span>)                          <span class="c">// health check ไม่ได้แตะ DB เลย</span>
+    })
+    http.<span class="f">HandleFunc</span>(<span class="s">"/recipes"</span>, <span class="k">func</span>(w http.ResponseWriter, r *http.Request) {
+        <span class="k">if</span> err := db.<span class="f">Ping</span>(); err != <span class="k">nil</span> {        <span class="c">// ← จังหวะที่แตะ DB ครั้งแรก</span>
+            http.<span class="f">Error</span>(w, <span class="s">"internal error: "</span>+err.<span class="f">Error</span>(), http.StatusInternalServerError)
+            <span class="k">return</span>
+        }
+        fmt.<span class="f">Fprint</span>(w, <span class="s">"[]"</span>)
+    })
+    fmt.<span class="f">Println</span>(<span class="s">"server starting on :8080"</span>)
+    http.<span class="f">ListenAndServe</span>(fmt.<span class="f">Sprintf</span>(<span class="s">":%d"</span>, cfg.Port), <span class="k">nil</span>)
+}</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ บรรทัด <code>_ "github.com/lib/pq"</code> ไม่ใช่ของประดับ</span>
+  <p style="margin-bottom:0">
+    ถ้าลืมบรรทัดนี้ <code>sql.Open("postgres", ...)</code> จะคืน error แล้ว <code>db</code> เป็น <code>nil</code> —
+    และเพราะโค้ดเขียนว่า <code>db, _ := sql.Open(...)</code> (กลืน error ทิ้ง) มันจะไม่มีใครบอกอะไรเลย
+    จนกว่าจะยิง <code>/recipes</code> แล้วเจอ panic แทนที่จะเจอ 500 ตามในบท · ผมลองแล้วได้:
+    <br><code>Open err=sql: unknown driver "postgres" (forgotten import?) db==nil? true</code>
+    <br><code>panic: runtime error: invalid memory address or nil pointer dereference</code>
+  </p>
+</div>
+
+<p>รันโดย<strong>ไม่ตั้ง <code>POSTGRES_DSN</code></strong> แล้วยิงสองปลายทาง:</p>
+
+<pre><code>$ env -u POSTGRES_DSN ./api47bad &amp;
+<strong>server starting on :8080</strong>
+
+--- ps ---
+<strong>ยังรันอยู่ (deploy สำเร็จ)</strong>
+
+--- health check ---
+ok <strong>http_code=200</strong>
+
+--- request จริงของผู้ใช้ ---
+internal error: dial tcp [::1]:5432: connect: connection refused
+<strong>http_code=500</strong></code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ อ่านสองบรรทัดกลางอีกรอบ — <code>health check ผ่าน 200</code></span>
+  <p>
+    นี่คือจุดที่ไทม์ไลน์ฝั่งซ้ายเกิดขึ้นจริง ๆ:
+    <strong>ระบบทุกตัวที่คอยดูแลแอปให้เรา รายงานว่าแอปนี้แข็งแรงดี</strong>
+    <br>Kubernetes เห็น pod เป็น <code>Running</code> · rollout เดินจนจบ · เวอร์ชันเก่าถูกเอาลงไปแล้ว ·
+    dashboard เขียว · ไม่มี alert
+    <br>เพราะ <code>/healthz</code> ตอบแค่ว่า "process ยังอยู่และรับ HTTP ได้" — มัน<strong>ไม่ได้แตะฐานข้อมูลเลย</strong>
+    ก็เลยไม่มีทางรู้ว่า DSN ว่าง
+  </p>
+  <p style="margin-bottom:0">
+    แล้วดูข้อความ error ที่ผู้ใช้ได้ตอน 14:32 —
+    <code>dial tcp [::1]:5432: connect: connection refused</code>
+    <br><strong>ไม่มีคำว่า DSN ไม่มีคำว่า env ไม่มีคำว่า config อยู่ในนั้นเลยสักคำ</strong>
+    (เหตุผลอยู่ใน <a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44 หัวข้อ 6</a>:
+    driver ของ Postgres เจอ DSN ว่างแล้วไป<em>เดา</em> localhost:5432 ให้)
+    <br>คนที่ถูกเรียกมาแก้ตอนบ่ายจะไปไล่ดู Docker ไล่ดู firewall ไล่ดูว่า Postgres ล่มหรือเปล่า —
+    ทั้งที่ต้นเหตุคือ Secret ที่ลืมใส่ตอนเก้าโมงเช้า
+  </p>
+</div>
+
+<h3>ฝั่งขวาของภาพ — เซิร์ฟเวอร์ที่ validate ตอน start</h3>
+
+<p>
+  ตัวนี้ต่างกันแค่สองอย่าง: มี <code>validate</code> tag บน field และ<strong>เรียก <code>Validate()</code>
+  ก่อนจะทำอะไรทั้งสิ้น</strong>
+</p>
+
+<pre><code><span class="c">// api47/main.go — ไฟล์เต็มทั้งไฟล์ ก๊อปไปวางแล้ว go build ผ่าน</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+    <span class="s">"fmt"</span>
+    <span class="s">"os"</span>
+
+    <span class="s">"github.com/caarlos0/env/v11"</span>
+    <span class="s">"github.com/go-playground/validator/v10"</span>
+)
+
+<span class="c">// struct ตัวเดียวกับฝั่งซ้าย เติมมาแค่ validate tag</span>
+<span class="k">type</span> Config <span class="k">struct</span> {
+    Port        <span class="k">int</span>    `env:<span class="s">"APP_PORT"</span> envDefault:<span class="s">"8080"</span> validate:<span class="s">"gte=1,lte=65535"</span>`
+    PostgresDSN <span class="k">string</span> `env:<span class="s">"POSTGRES_DSN"</span> validate:<span class="s">"required"</span>`
+}
+
+<span class="k">var</span> validate = validator.<span class="f">New</span>(validator.<span class="f">WithRequiredStructEnabled</span>())
+
+<span class="k">func</span> (c Config) <span class="f">Validate</span>() <span class="k">error</span> { <span class="k">return</span> validate.<span class="f">Struct</span>(c) }
+
+<span class="k">func</span> <span class="f">main</span>() {
+    cfg, err := env.<span class="f">ParseAs</span>[Config]()
+    <span class="k">if</span> err == <span class="k">nil</span> {
+        err = cfg.<span class="f">Validate</span>()          <span class="c">// ← บรรทัดที่เปลี่ยนทุกอย่าง</span>
+    }
+    <span class="k">if</span> err != <span class="k">nil</span> {
+        fmt.<span class="f">Fprintf</span>(os.Stderr, <span class="s">"FATAL load configuration:\n%s\n"</span>, err)
+        os.<span class="f">Exit</span>(<span class="n">1</span>)               <span class="c">// ← ตายก่อนถึงบรรทัด ListenAndServe</span>
+    }
+    <span class="c">// ... ต่อ DB / เปิดเซิร์ฟเวอร์ ...</span>
+}</code></pre>
+
+<p>รันด้วยสภาพเดียวกันเป๊ะ — ลืมตั้ง <code>POSTGRES_DSN</code> เหมือนกัน:</p>
+
+<pre><code>$ env -u POSTGRES_DSN ./api47 &amp;
+<strong>FATAL load configuration:</strong>
+Key: 'Config.PostgresDSN' Error:Field validation for 'PostgresDSN' failed on the 'required' tag
+
+--- ps: process ยังอยู่ไหม ---
+<strong>process ตายไปแล้ว</strong>
+
+--- lsof :8080 ---
+<strong>(ไม่มี process ไหน listen :8080)</strong>
+
+--- curl /healthz ---
+http_code=<strong>000</strong>
+curl exit=<strong>7</strong>
+
+<strong>EXIT_CODE=1</strong></code></pre>
+
+<p>
+  ผลนี้ยืนยันสามชั้นว่าแอป<strong>ไม่มีทางหลอกใครได้เลย</strong>:
+  <br>· <code>ps</code> — process ตายแล้วจริง
+  <br>· <code>lsof</code> — ไม่มีอะไร bind พอร์ต 8080 อยู่ ก็เลยไม่มี "เซิร์ฟเวอร์ที่ดูเหมือนพร้อม"
+  <br>· <code>curl</code> — ต่อไม่ติดตั้งแต่แรก (<code>exit=7</code> ของ curl แปลว่า <em>Failed to connect</em>
+  ไม่ใช่ "ได้ response ที่เป็น error") และ <code>http_code=000</code> คือรหัสที่ curl ใช้บอกว่า
+  <strong>ไม่เคยมี HTTP response เลย</strong>
+  <br>· <code>EXIT_CODE=1</code> — exit code ไม่ใช่ 0 คือสัญญาณที่ Docker / Kubernetes / systemd / CI
+  <strong>ทุกตัวเข้าใจตรงกัน</strong>ว่า "อันนี้ล้มเหลว"
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ร้านข้าวแกงที่ยกป้าย "เปิดแล้ว" ทั้งที่แก๊สหมด</span>
+  <p>
+    ร้านเปิดไฟ กวาดพื้นเสร็จ ยกป้าย <strong>"เปิดแล้ว"</strong> ออกมาตั้งหน้าร้าน พนักงานยืนรออยู่ครบ
+    <br>ใครเดินผ่านแล้วชะโงกถามว่า "เปิดไหมครับ" ก็ได้คำตอบว่า <strong>"เปิดครับ"</strong> — ทุกอย่างดูปกติทั้งเช้า
+    <br>จนลูกค้าคนแรกสั่งผัดกะเพราตอนบ่าย ถึงได้รู้ว่า<strong>ถังแก๊สหมดมาตั้งแต่ก่อนยกป้าย</strong>
+  </p>
+  <p>
+    เซิร์ฟเวอร์ฝั่งซ้ายคือร้านนั้นเป๊ะ ๆ:
+    <br>· ป้าย "เปิดแล้ว" = <code>/healthz</code> ที่ตอบ <code>okhttp_code=200</code> (ที่เห็นติดกันไม่ใช่พิมพ์ตก — handler ตอบ <code>ok</code> โดยไม่มีขึ้นบรรทัดใหม่ แล้ว <code>curl -w</code> ต่อข้อความของมันชิดเข้าไปเลย · อยากให้แยกบรรทัดให้ใส่ <code>\n</code> นำหน้าใน <code>-w</code>)
+    <br>· ถังแก๊ส = <code>POSTGRES_DSN</code> ที่ลืมตั้ง
+    <br>· ลูกค้าสั่งกะเพรา = <code>/recipes</code> ที่เพิ่งไปแตะ <code>db.Ping()</code> เป็นครั้งแรก
+    <br>ส่วนฝั่งขวาคือ<strong>เขย่าถังแก๊สดูก่อนยกป้าย</strong> — ถังเบา ก็ไม่ยกป้าย ไม่เปิดร้าน จบตั้งแต่เช้า
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านข้าวแกงพอรู้ว่าแก๊สหมดก็เก็บป้ายกลับเข้าร้านได้เอง
+    แต่โปรแกรมที่ start ไปแล้ว<strong>ไม่มีใครสั่งให้มันเก็บป้าย</strong> —
+    Kubernetes เห็น process ยังอยู่และ <code>/healthz</code> ยังตอบ ก็นับว่าปกติ
+    แล้ว<strong>เอาเวอร์ชันเก่าที่ยังทำกับข้าวได้ลงไปแทน</strong>ให้เรียบร้อยด้วย
+    <br>อีกจุดที่ต่าง: ร้านข้าวแกงเสียลูกค้าไปทีละคน แต่เซิร์ฟเวอร์ที่ config พังเสียลูกค้า<strong>ทุกคนพร้อมกัน</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>fail fast</dt>
+    <dd>"พังให้เร็วที่สุดเท่าที่จะพังได้" — เจอปัญหาแล้วหยุดทันที ไม่ฝืนเดินต่อ ·
+    พูดกับ senior ได้ว่า <em>"ผมอยากให้ config validation มัน fail fast ตอน start เลย ดีกว่าไปตายตอน request แรก"</em></dd>
+    <dt>health check / probe</dt>
+    <dd>ปลายทางที่ระบบภายนอกยิงมาถามว่า "ยังไหวอยู่ไหม" เช่น <code>/healthz</code> ·
+    พิมพ์ถาม AI ได้ตรง ๆ ว่า <em>"health check ที่ไม่แตะ dependency เลย มันซ่อนปัญหาอะไรได้บ้าง"</em></dd>
+    <dt>exit code</dt>
+    <dd>เลขที่โปรแกรมคืนให้ระบบตอนจบ · <code>0</code> = สำเร็จ · ไม่ใช่ <code>0</code> = ล้มเหลว
+    (ในบทนี้คือ <code>os.Exit(1)</code>) · พูดว่า <em>"ให้มัน exit non-zero ตอน config ไม่ผ่าน CI จะได้จับได้"</em></dd>
+    <dt>fail silently (พังเงียบ)</dt>
+    <dd>พังจริงแต่ไม่มีสัญญาณอะไรฟ้องเลย — คือสิ่งที่เกิดกับฝั่งซ้ายทั้งเช้า ·
+    พูดว่า <em>"เคสนี้มัน fail silently นะ dashboard เขียวหมดแต่ของข้างในเสียอยู่"</em></dd>
+  </dl>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>สรุปหัวข้อนี้เป็นประโยคเดียว:</strong> การ validate ตอน start ไม่ได้ทำให้ bug หายไป
+    มันแค่<strong>ย้ายจังหวะที่ bug โผล่ ให้มาอยู่ใกล้กับจังหวะที่มันถูกสร้างที่สุด</strong>
+    <br>ต้นทุนของ bug ไม่ได้อยู่ที่ตัว bug แต่อยู่ที่<em>ระยะห่างระหว่างตอนที่ทำผิดกับตอนที่รู้ตัว</em> —
+    5 ชั่วโมงครึ่งกับ 30 วินาที คือคนละราคากันคนละโลก
+  </p>
+</div>
+
+<h2>4 · Validation แบบทั่วไป — เขียน <code>if</code> เอง</h2>
+
+<p>
+  ก่อนจะไปหา library มาช่วย เรามาลองทำมือกันก่อน เพราะ<strong>ถ้าไม่เคยเจ็บกับวิธีทำมือ
+  คุณจะไม่รู้ว่า library แก้อะไรให้</strong>
+  <br>สไลด์หน้า 17 ให้โค้ดนี้มา — เป็น method <code>Validate()</code> ของ struct <code>Database</code>
+  ที่เช็คทีละเงื่อนไขด้วย <code>if</code>:
+</p>
+
+<pre><code><span class="c">// internal/config/database.go — ไฟล์เต็มทั้งไฟล์ ก๊อปไปวางแล้ว go build ผ่าน</span>
+<span class="k">package</span> config
+
+<span class="k">import</span> (
+    <span class="s">"errors"</span>
+    <span class="s">"fmt"</span>
+    <span class="s">"time"</span>
+)
+
+<span class="k">type</span> Database <span class="k">struct</span> {
+    PostgresDSN     <span class="k">string</span>        `env:<span class="s">"POSTGRES_DSN"</span>`
+    MaxOpenConns    <span class="k">int</span>           `env:<span class="s">"POSTGRES_MAX_OPEN_CONNS"</span> envDefault:<span class="s">"25"</span>`
+    ConnMaxLifetime time.Duration `env:<span class="s">"POSTGRES_CONN_MAX_LIFETIME"</span> envDefault:<span class="s">"5m"</span>`
+}
+
+<span class="c">// ↓ นี่คือ 16 บรรทัดที่หัวข้อ 5 จะย่อให้เหลือ 3</span>
+<span class="k">func</span> (database Database) <span class="f">Validate</span>() <span class="k">error</span> {
+    <span class="k">if</span> database.PostgresDSN == <span class="s">""</span> {
+        <span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"POSTGRES_DSN is required"</span>)
+    }
+
+    <span class="k">if</span> database.MaxOpenConns &lt; <span class="n">1</span> || database.MaxOpenConns &gt; <span class="n">500</span> {
+        <span class="k">return</span> fmt.<span class="f">Errorf</span>(<span class="s">"POSTGRES_MAX_OPEN_CONNS must be 1-500, got %d"</span>,
+            database.MaxOpenConns)
+    }
+
+    <span class="k">if</span> database.ConnMaxLifetime &lt;= <span class="n">0</span> {
+        <span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"POSTGRES_CONN_MAX_LIFETIME must be > 0"</span>)
+    }
+
+    <span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+
+<p>
+  <strong>อย่าเพิ่งมองว่าโค้ดนี้แย่</strong> — มันมีข้อดีจริง ๆ อยู่หลายข้อ
+  และหลายโปรเจกต์ก็ใช้แบบนี้ตลอดชีวิตโดยไม่มีปัญหา:
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ข้อดีของการเขียน <code>if</code> เอง</strong>
+    <br>· <strong>ตรงไปตรงมา</strong> — อ่านแล้วรู้ทันทีว่าเช็คอะไร ไม่ต้องไปเปิดคู่มือว่า tag ตัวนี้แปลว่าอะไร
+    <br>· <strong>ไม่มี dependency</strong> — ไม่ต้อง <code>go get</code> อะไรเพิ่ม ไม่ต้องกังวลว่า library จะเลิกดูแล
+    <br>· <strong>debug ง่าย</strong> — วาง breakpoint หรือ <code>fmt.Println</code> ตรงไหนก็ได้ เพราะมันคือโค้ดของเราเอง
+    <br>· <strong>เขียน message เองได้ตามใจ</strong> — บอก<em>ชื่อ env จริง</em> ได้
+    (<code>POSTGRES_MAX_OPEN_CONNS</code>) ไม่ใช่ชื่อ field ใน Go และใส่ค่าที่ได้มาด้วยก็ได้ (<code>got %d</code>)
+  </p>
+</div>
+
+<p>
+  ข้อดีข้อสุดท้ายสำคัญกว่าที่คิด และเป็นข้อที่ library จะเอาไปคืนได้ยาก —
+  เดี๋ยวเราจะเห็นในหัวข้อ 5 ว่า error ของ validator พูดถึง <code>Database.PostgresDSN</code>
+  ซึ่งเป็นชื่อ field ใน Go ไม่ใช่ <code>POSTGRES_DSN</code> ที่คนตั้งค่าต้องไปแก้
+</p>
+
+<p>ทีนี้มาดูฝั่งข้อเสีย ซึ่งจะหนักขึ้นเรื่อย ๆ ตามขนาดโปรเจกต์:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อเสียเมื่อโปรเจกต์โต</th><th>รายละเอียด</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>ยาวมาก</strong></td>
+      <td>config 20 field → ราว <strong>80 บรรทัด <code>if</code></strong> — และมันคือ 80 บรรทัดที่ไม่ได้ทำงานอะไรเลยนอกจากบอกว่า "ค่านี้ต้องอยู่ในช่วงไหน"</td>
+    </tr>
+    <tr>
+      <td><strong>ซ้ำ</strong></td>
+      <td>logic <em>"อยู่ในช่วง 1–65535"</em> ต้องเขียนซ้ำทุกครั้งที่มี port ตัวใหม่ · แล้วก็มีสักตัวที่เผลอเขียนเป็น <code>65536</code></td>
+    </tr>
+    <tr>
+      <td><strong>หยุดที่ error แรก</strong></td>
+      <td><code>return</code> ตัวแรกที่เจอ = เห็นทีละข้อ · <strong>ลืมตั้ง 5 ตัว → แก้ 5 รอบ deploy 5 รอบ</strong></td>
+    </tr>
+    <tr>
+      <td><strong>หลุดง่าย</strong></td>
+      <td>เพิ่ม field ใหม่เข้า struct แล้วลืมเพิ่ม <code>if</code> — <strong>ไม่มีใครเตือน</strong> เพราะโค้ดยัง compile ผ่าน</td>
+    </tr>
+    <tr>
+      <td><strong>อ่านยาก</strong></td>
+      <td>ต้องไล่อ่านทั้ง function ถึงจะรู้ว่า field ไหนบังคับบ้าง · เปิด struct ดูเฉย ๆ ไม่บอกอะไรเลย</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="predict">
+  <p>
+    <strong>ทายก่อนรัน</strong> — ข้อเสียข้อ "หยุดที่ error แรก" ฟังดูเล็กน้อย ลองดูของจริง
+    <br>ผมส่ง <code>Database</code> ที่<strong>ผิดครบทั้งสามที่พร้อมกัน</strong> เข้าไปใน <code>Validate()</code> ข้างบน:
+  </p>
+  <pre><code>old.Database{
+    PostgresDSN:     <span class="s">""</span>,                <span class="c">// ← ผิด: ต้องไม่ว่าง</span>
+    MaxOpenConns:    <span class="n">9999</span>,              <span class="c">// ← ผิด: เกิน 500</span>
+    ConnMaxLifetime: -<span class="n">5</span> * time.Second,  <span class="c">// ← ผิด: ติดลบ</span>
+}.<span class="f">Validate</span>()</code></pre>
+  <p class="ask">
+    <strong>ทายว่า error ที่ได้กลับมามีกี่บรรทัด และเขียนว่าอะไรบ้าง?</strong>
+    <br>แล้วถ้าคุณคือคนที่ต้องแก้ config นี้ให้ถูก <strong>ต้อง deploy กี่รอบ</strong>?
+  </p>
+  <button class="reveal">ดูเฉลย</button>
+  <div class="answer">
+    <pre style="margin:0.6rem 0"><code>=== if ยาว ๆ : ผิด 3 ที่พร้อมกัน ===
+<strong>POSTGRES_DSN is required</strong></code></pre>
+    <p>
+      <strong>บรรทัดเดียว</strong> — และมันบอกแค่ปัญหาข้อแรกเท่านั้น
+      <br>อีกสองข้อ (<code>MaxOpenConns=9999</code> กับ <code>ConnMaxLifetime=-5s</code>)
+      <strong>ยังผิดอยู่ครบ แต่ไม่มีใครบอกคุณ</strong> เพราะ <code>return</code> ตัวแรกทำให้ function จบไปแล้ว
+    </p>
+    <p style="margin-bottom:0">
+      คำตอบข้อสอง: <strong>3 รอบ</strong> — แก้ DSN → deploy → เจอ MaxOpenConns → แก้ → deploy →
+      เจอ ConnMaxLifetime → แก้ → deploy
+      <br>ถ้าแต่ละรอบใช้เวลา build + push + rollout 8 นาที นี่คือ<strong>24 นาทีที่หายไป</strong>
+      กับปัญหาที่รู้ได้ครบตั้งแต่รอบแรก
+      <br>เดี๋ยวหัวข้อหน้าเราจะรันเคสเดียวกันนี้ด้วย validator แล้วเทียบผลกัน
+    </p>
+  </div>
+</div>
+
+<h2>5 · Refactor → <code>go-playground/validator/v10</code></h2>
+
+<p>
+  <strong>Refactor</strong> แปลว่า <em>เปลี่ยนวิธีเขียนโค้ดโดยที่พฤติกรรมยังเหมือนเดิม</em> —
+  จำคำนี้ไว้ให้ดี เพราะหัวข้อ 6.4 จะพิสูจน์ว่า refactor รอบนี้<strong>ทำพฤติกรรมหายไปจริง ๆ หนึ่งข้อ</strong>
+  ถ้าเราเผลอ
+  <br>ตัวที่เราจะใช้คือ <code>github.com/go-playground/validator/v10</code> —
+  <strong>ตัวเดียวกับที่ Gin เรียกใช้อยู่เบื้องหลัง</strong> ตอนคุณเขียน tag <code>binding:"required"</code>
+  ใน <a href="../../day-8/lessons/0039-gin-binding-middleware.html">บทเรียน 39</a>
+  ต่างกันแค่ชื่อ tag: Gin ตั้งให้อ่านคำว่า <code>binding</code> ส่วนเราจะเรียกเองด้วยชื่อมาตรฐานคือ <code>validate</code>
+</p>
+
+<p>โค้ดทั้งก้อนหลัง refactor ตามสไลด์หน้า 18 หน้าตาแบบนี้:</p>
+
+<pre><code><span class="c">// internal/config/database.go — ไฟล์เต็ม · คู่กับ config.go ข้างล่าง (package เดียวกัน) แล้ว go build ผ่าน</span>
+<span class="k">package</span> config
+
+<span class="k">import</span> <span class="s">"time"</span>
+
+<span class="k">type</span> Database <span class="k">struct</span> {
+    PostgresDSN     <span class="k">string</span>        `env:<span class="s">"POSTGRES_DSN"</span> validate:<span class="s">"required"</span>`
+    MaxOpenConns    <span class="k">int</span>           `env:<span class="s">"POSTGRES_MAX_OPEN_CONNS"</span> validate:<span class="s">"gte=1,lte=500"</span>`
+    ConnMaxLifetime time.Duration `env:<span class="s">"POSTGRES_CONN_MAX_LIFETIME"</span> validate:<span class="s">"required,gt=0"</span>`
+}
+
+<span class="k">func</span> (database Database) <span class="f">Validate</span>() <span class="k">error</span> {
+    <span class="k">return</span> validate.<span class="f">Struct</span>(database)   <span class="c">// ได้ error ของ "ทุก field" ที่ผิดพร้อมกัน</span>
+}</code></pre>
+
+<p>
+  <strong>16 บรรทัดกลายเป็น 3</strong> และที่สำคัญกว่านั้นคือ
+  <em>กฎย้ายจาก function ขึ้นไปอยู่ติดกับ field ที่มันคุมอยู่</em> —
+  เปิด struct ดูเฉย ๆ ก็รู้ครบแล้วว่า field ไหนบังคับ field ไหนมีช่วงเท่าไร
+</p>
+
+<p>ตัว <code>validate</code> ที่ถูกเรียกใน method นั้นสร้างไว้<strong>ที่เดียวทั้ง package</strong>:</p>
+
+<pre><code><span class="c">// internal/config/config.go — ไฟล์เต็ม · ใช้ validator ตัวเดียวทั้ง package</span>
+<span class="k">package</span> config
+
+<span class="k">import</span> <span class="s">"github.com/go-playground/validator/v10"</span>
+
+<span class="k">var</span> validate = validator.<span class="f">New</span>(validator.<span class="f">WithRequiredStructEnabled</span>())</code></pre>
+
+<p>
+  ทำไมต้องเป็น <code>var</code> ระดับ package ไม่ใช่สร้างใหม่ในทุก method —
+  <strong>เรื่องนี้สำคัญพอที่จะมีหัวข้อของตัวเอง</strong> อยู่ที่ 6.2
+  <br>ส่วน <code>WithRequiredStructEnabled()</code> คือ option ที่แนะนำให้เปิดไว้ อธิบายที่ 6.6
+</p>
+
+<h3>tag ที่ใช้ในบทนี้</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Tag</th><th>ความหมาย</th><th>ผลรันจริง</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>required</code></td>
+      <td>ห้ามเป็น <strong>zero value</strong> — คือค่าเริ่มต้นของชนิดนั้น: <code>""</code> สำหรับ string · <code>0</code> สำหรับตัวเลข · <code>nil</code> สำหรับ pointer/slice/map</td>
+      <td><code>PostgresDSN=""</code> → ตก <code>'required' tag</code></td>
+    </tr>
+    <tr>
+      <td><code>gte=1,lte=65535</code></td>
+      <td>ช่วงตัวเลข · <code>gte</code> = <em>greater than or equal</em> (≥) · <code>lte</code> = <em>less than or equal</em> (≤) · <strong>comma = AND</strong> คือต้องผ่านทั้งคู่</td>
+      <td><code>Port=99999</code> → ตก <code>'lte' tag</code></td>
+    </tr>
+    <tr>
+      <td><code>gte=1s,lte=30s</code></td>
+      <td>ใช้กับ <code>time.Duration</code> ได้ <strong>ถ้าเขียนหน่วยกำกับ</strong> · ทั้งสองฝั่งเป็นแบบ inclusive (<code>1s</code> พอดีผ่าน · <code>31s</code> ตก) · <strong>ดูกับดักที่ 6.3</strong></td>
+      <td><code>0s</code> → ตก <code>'gte'</code> · <code>31s</code> → ตก <code>'lte'</code></td>
+    </tr>
+    <tr>
+      <td><code>oneof=a b c</code></td>
+      <td>ต้องเป็นหนึ่งในรายการนี้ · <strong>คั่นด้วย space เท่านั้น</strong> — comma = panic (<strong>กับดักที่ 6.1</strong>)</td>
+      <td><code>Env="qa"</code> → ตก <code>'oneof' tag</code></td>
+    </tr>
+    <tr>
+      <td><code>oneofci=a b c</code></td>
+      <td>เหมือน <code>oneof</code> แต่<strong>ไม่สนตัวพิมพ์ใหญ่เล็ก</strong> (<code>ci</code> = case-insensitive)</td>
+      <td><code>"PrOd"</code> → ผ่าน · <code>"qa"</code> → ตก <code>'oneofci' tag</code></td>
+    </tr>
+    <tr>
+      <td><code>hostname|ip</code></td>
+      <td><strong><code>|</code> = OR</strong> (ผ่านอันใดอันหนึ่งก็พอ) เทียบกับ <strong><code>,</code> = AND</strong> (ต้องผ่านทุกอัน) · <strong>ดูกับดักที่ 6.5</strong></td>
+      <td><code>"localhost"</code> ผ่าน · <code>"::1"</code> ผ่าน · <code>"not a host!"</code> ตก</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>ผลลัพธ์จริงเทียบกัน — เคสเดียวกับหัวข้อ 4</h3>
+
+<p>
+  ผมเอา <code>Database</code> ที่ผิดครบสามที่ก้อนเดิม ยิงเข้าทั้งสองเวอร์ชันในโปรแกรมเดียวกัน:
+</p>
+
+<pre><code>=== if ยาว ๆ : ผิด 3 ที่พร้อมกัน ===
+POSTGRES_DSN is required
+
+=== validator/v10 : ผิด 3 ที่เดียวกัน ===
+Key: 'Database.PostgresDSN' Error:Field validation for 'PostgresDSN' failed on the '<strong>required</strong>' tag
+Key: 'Database.MaxOpenConns' Error:Field validation for 'MaxOpenConns' failed on the '<strong>lte</strong>' tag
+Key: 'Database.ConnMaxLifetime' Error:Field validation for 'ConnMaxLifetime' failed on the '<strong>gt</strong>' tag</code></pre>
+
+<p>
+  <strong>1 บรรทัด ↔ 3 บรรทัด</strong> — นี่คือความต่างที่แปลว่า "deploy 3 รอบ" กับ "deploy รอบเดียว"
+  <br>สังเกตรูปแบบข้อความให้ดี เพราะคุณจะเห็นมันบ่อยมาก:
+</p>
+
+<pre><code>Key: 'Database.PostgresDSN' Error:Field validation for 'PostgresDSN' failed on the 'required' tag
+     └──────── ตำแหน่งของ field ────┘                └── ชื่อ field ──┘              └─ tag ที่ตก ─┘</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>รายละเอียดสองข้อที่ต้องรู้เกี่ยวกับข้อความนี้</strong>
+    <br>1. <strong>มันเป็นข้อความก้อนเดียวที่คั่นบรรทัดด้วย <code>\n</code> มาให้แล้วตั้งแต่ต้น</strong> —
+    ไม่ได้เกิดจาก <code>errors.Join</code> หรืออะไร แต่เป็นสิ่งที่ตัว error ของ validator
+    (ชนิด <code>validator.ValidationErrors</code>) ทำเองในเมธอด <code>Error()</code> ของมัน
+    <br>2. <strong>มันพูดถึงชื่อ field ใน Go ไม่ใช่ชื่อ env</strong> — คนอ่านเห็น <code>PostgresDSN</code>
+    แต่สิ่งที่เขาต้องไปแก้คือ <code>POSTGRES_DSN</code>
+    <br>นี่คือราคาที่จ่ายให้ความสั้น และเป็นสิ่งที่ <a href="./0048-internal-config.html">บทเรียน 48</a>
+    จะเอามาแปลงเป็นข้อความที่มนุษย์อ่านรู้เรื่อง
+  </p>
+</div>
+
+<h3>แล้ว struct หลายก้อนล่ะ</h3>
+
+<p>
+  config จริงไม่ได้มีแค่ <code>Database</code> — มันมี <code>App</code> มี <code>Logging</code> ด้วย
+  วิธีที่สไลด์ใช้คือให้แต่ละก้อนมี <code>Validate()</code> ของตัวเอง แล้วเอามารวมด้วย
+  <code>errors.Join</code> (ฟังก์ชันของ standard library ที่เอา error หลายตัวมามัดเป็นก้อนเดียว
+  โดยข้าม <code>nil</code> ให้อัตโนมัติ):
+</p>
+
+<pre><code><span class="k">func</span> (config Config) <span class="f">Validate</span>() <span class="k">error</span> {
+    <span class="k">return</span> errors.<span class="f">Join</span>(
+        config.App.<span class="f">Validate</span>(),
+        config.Logging.<span class="f">Validate</span>(),
+        config.Database.<span class="f">Validate</span>(),
+    )
+}</code></pre>
+
+<p>ผลรันจริงตอนตั้งค่าผิดสามที่พร้อมกัน คนละ struct กันทั้งสามตัว:</p>
+
+<pre><code>$ env APP_PORT=99999 LOG_LEVEL=BANANA POSTGRES_DSN= go run ./probe2
+=== raw error ===
+Key: '<strong>App</strong>.Port' Error:Field validation for 'Port' failed on the 'lte' tag
+Key: '<strong>Logging</strong>.Level' Error:Field validation for 'Level' failed on the 'oneofci' tag
+Key: '<strong>Database</strong>.PostgresDSN' Error:Field validation for 'PostgresDSN' failed on the 'required' tag
+
+$ env POSTGRES_DSN=<span class="s">"postgres://u:p@localhost:5432/db"</span> go run ./probe2
+config OK</code></pre>
+
+<p>
+  ครบสามก้อน สามบรรทัด รอบเดียว
+  <br>และเทียบกับตอนที่ <code>Database</code> ยัง<strong>ไม่ได้</strong> refactor (ยังเป็น <code>if</code> อยู่)
+  ผลจะต่างกันที่บรรทัดสุดท้าย:
+</p>
+
+<pre><code>Key: 'App.Port' Error:Field validation for 'Port' failed on the 'lte' tag
+Key: 'Logging.Level' Error:Field validation for 'Level' failed on the 'oneofci' tag
+<strong>POSTGRES_DSN is required</strong>          <span class="c">// ← ข้อความจาก errors.New ของเราเอง ไม่ใช่ของ validator</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>สังเกตว่าสองแบบผสมกันได้</strong> — <code>errors.Join</code> ไม่สนใจว่าแต่ละ error มาจากไหน
+    <br>แปลว่าคุณ<strong>ไม่ต้อง refactor ทั้งหมดรวดเดียว</strong> จะเปลี่ยนทีละ struct ก็ได้
+    หรือจะเก็บ <code>if</code> ไว้เฉพาะกฎแปลก ๆ ที่ไม่มี tag รองรับ แล้วใช้ tag กับที่เหลือก็ได้
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ใบสมัครที่มีกฎเขียนไว้ข้างช่องกรอก</span>
+  <p>
+    แบบเก่า (<code>if</code> ยาว ๆ) เหมือน<strong>เจ้าหน้าที่นั่งไล่ตรวจใบสมัครทีละช่อง</strong>
+    เจอช่องแรกที่ผิดปุ๊บก็ตีกลับทันที <em>"ช่องชื่อว่างครับ ไปแก้มาใหม่"</em>
+    <br>คุณเดินกลับไปแก้ชื่อ ต่อคิวใหม่ แล้วเขาถึงบอกว่า <em>"ช่องอายุก็ผิดครับ"</em> — ต่อคิวอีกรอบ
+    <br>นี่คือ "แก้ทีละข้อ deploy ทีละรอบ" ที่หัวข้อ 4 คำนวณว่าเสียไป 24 นาที
+  </p>
+  <p>
+    แบบใหม่ (<code>validate</code> tag) เหมือน<strong>ย้ายกฎไปเขียนไว้ข้างช่องกรอกบนตัวใบสมัครเลย</strong>
+    <br>· <code>validate:"required"</code> = ป้าย <em>"ห้ามเว้นว่าง"</em>
+    <br>· <code>validate:"gte=1,lte=500"</code> = ป้าย <em>"กรอกได้ 1–500"</em>
+    <br>แล้วให้เครื่องสแกนทั้งใบรวดเดียว <strong>วงแดงทุกช่องที่ผิดพร้อมกัน</strong> — ต่อคิวรอบเดียวจบ
+    <br>ของแถมคือ<strong>เปิดใบสมัครดูเฉย ๆ ก็รู้กฎครบ</strong> ไม่ต้องไปตามอ่านคู่มือในหัวเจ้าหน้าที่
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ป้ายบนใบสมัครถ้าพิมพ์ผิด คนอ่านยังเดาออกว่าหมายถึงอะไร
+    แต่ <code>validate</code> tag <strong>เป็นแค่สตริงธรรมดาในสายตา compiler</strong> —
+    พิมพ์ผิดแล้ว <code>go build</code> ก็ยังผ่าน ไม่มีใครเตือนสักคำ แล้วค่อยไประเบิดตอนรัน
+    <br>และเจ้าหน้าที่คนเดิมยัง<em>เขียนข้อความตีกลับเองได้</em> (<code>POSTGRES_MAX_OPEN_CONNS must be 1-500</code>)
+    ส่วนเครื่องสแกนพูดได้แค่ชื่อ field ใน Go — ข้อดีข้อสุดท้ายของหัวข้อ 4 ที่ยังไม่ได้คืนมา
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>struct tag</dt>
+    <dd>สตริงที่ห้อยท้าย field ใน struct (ก้อนที่อยู่ในเครื่องหมาย backtick) · library อ่านมันตอนรัน
+    ส่วน compiler ไม่ตรวจความหมายให้ · พูดว่า <em>"กฎของ field นี้อยู่ใน struct tag นะ ไม่ได้เขียนเป็น if"</em></dd>
+    <dt>declarative ↔ imperative</dt>
+    <dd><code>validate:"gte=1,lte=500"</code> คือ <strong>declarative</strong> — บอกแค่ว่า "ต้องเป็นยังไง" ·
+    <code>if x &lt; 1 || x &gt; 500</code> คือ <strong>imperative</strong> — บอกว่า "ต้องตรวจยังไง" ·
+    ถาม AI ได้ว่า <em>"เคสนี้ควรใช้ declarative validation หรือเขียน if เองดี"</em></dd>
+    <dt>ValidationErrors</dt>
+    <dd>ชนิด error ที่ <code>validate.Struct()</code> คืนมา · ข้างในเก็บ<strong>ทุก field ที่ตก</strong> ไม่ใช่แค่ตัวแรก ·
+    พูดว่า <em>"ผมจะแปลงเป็น <code>validator.ValidationErrors</code> แล้ววนอ่านทีละ field เพื่อทำข้อความเอง"</em>
+    (บทเรียน 48 ทำจริง)</dd>
+    <dt>aggregate error</dt>
+    <dd>error ก้อนเดียวที่ห่อ error หลายตัวไว้ข้างใน — ในบทนี้คือสิ่งที่ <code>errors.Join</code> ทำให้ ·
+    พูดว่า <em>"ให้ <code>Validate()</code> คืน aggregate error จะได้เห็นทุกปัญหาในรอบเดียว"</em></dd>
+  </dl>
+</div>
+
+<h2>6 · กับดักหกข้อที่ต้องรู้ก่อนเอาไปใช้จริง</h2>
+
+<h3>6.1 · <code>oneof</code> คั่นด้วย space — ใส่ comma แล้ว panic</h3>
+
+<p>
+  ข้อนี้สไลด์เตือนไว้ และเป็นข้อที่คนพลาดมากที่สุด เพราะ<strong>ทุกที่ในโลกของโปรแกรมคั่นรายการด้วย comma</strong>
+  <br>แต่ใน tag ของ validator <strong>comma ถูกจองไว้สำหรับคั่น tag คนละตัว</strong> (ที่แปลว่า AND) แล้ว
+  รายการใน <code>oneof</code> เลยต้องใช้ space:
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ ถูก — คั่นด้วย space</h4>
+    <pre><code>Env <span class="k">string</span> `validate:<span class="s">"oneof=dev staging prod"</span>`</code></pre>
+    <p>อ่านได้ว่า: tag ชื่อ <code>oneof</code> หนึ่งตัว มีพารามิเตอร์เป็นรายการ 3 คำ</p>
+  </div>
+  <div class="side bad">
+    <h4>❌ ผิด — คั่นด้วย comma</h4>
+    <pre><code>Env <span class="k">string</span> `validate:<span class="s">"oneof=dev,staging,prod"</span>`</code></pre>
+    <p>ถูกอ่านว่า: tag ชื่อ <code>oneof=dev</code> + tag ชื่อ <code>staging</code> + tag ชื่อ <code>prod</code></p>
+  </div>
+</div>
+
+<p>ผลของฝั่งขวาเมื่อรันจริง:</p>
+
+<pre><code>validator.New() ผ่านแล้ว
+before Struct()
+<strong>panic: Undefined validation function 'staging' on field 'Env'</strong>
+
+goroutine 1 [running]:
+github.com/go-playground/validator/v10.(*Validate).parseFieldTagsRecursive(...)
+	.../validator/v10@v10.30.3/cache.go:311 +0x9e4
+github.com/go-playground/validator/v10.(*Validate).extractStructCache(...)</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ จุดที่ panic สำคัญกว่าตัว panic — <strong>มันไม่ได้ตายตอน <code>validator.New()</code></strong></span>
+  <p>
+    ดูสองบรรทัดแรกของ output อีกรอบ: <code>validator.New() ผ่านแล้ว</code> และ <code>before Struct()</code>
+    <strong>ถูกพิมพ์ออกมาแล้วทั้งคู่</strong>
+    <br>แปลว่า panic เกิดตอนเรียก <strong><code>validate.Struct()</code> ครั้งแรก</strong>
+    (จังหวะที่ validator ไปแกะ tag ของ struct นั้นมาทำ cache) ไม่ใช่ตอนสร้าง validator
+    <br>โปรแกรมของคุณ<strong>ผ่าน <code>go build</code> ผ่าน <code>go vet</code> และ start ขึ้นมาได้ปกติ</strong>
+    แล้วค่อยไประเบิดตอนไปถึงบรรทัดที่เรียก <code>Struct()</code> ครั้งแรก
+  </p>
+  <p style="margin-bottom:0">
+    และดูข้อความอีกรอบ: <code>Undefined validation function 'staging' on field 'Env'</code>
+    <br><strong>ไม่มีคำว่า <code>oneof</code> อยู่ในนั้นเลย ไม่มีคำว่า comma ไม่มีคำว่า tag</strong>
+    <br>มือใหม่ที่เจอข้อความนี้จะไปหาว่า "ฟังก์ชัน staging" คืออะไร ทั้งที่ต้นเหตุคือเครื่องหมายจุลภาคสองตัว
+    <br>ที่ต้องจำ: <strong>ถ้าเห็น <code>Undefined validation function '&lt;คำที่คุณพิมพ์เอง&gt;'</code>
+    ให้ไปดู tag ที่มี comma ก่อนเสมอ</strong>
+  </p>
+</div>
+
+<h3>6.2 · validator ต้องเป็น singleton</h3>
+
+<p>
+  <strong>Singleton</strong> แปลว่า <em>สร้างขึ้นมาก้อนเดียวแล้วใช้ก้อนนั้นทั้งโปรแกรม</em>
+  <br>เอกสารของ validator บอกเรื่องนี้ไว้ตรง ๆ ใน <code>doc.go</code> ของ v10.30.3:
+</p>
+
+<pre><code><span class="c">// จาก doc.go บรรทัด 10–15</span>
+# Singleton
+
+Validator is designed to be thread-safe and used as a singleton instance.
+It caches information about your struct and validations,
+in essence only parsing your validation tags once per struct type.
+<strong>Using multiple instances neglects the benefit of caching.</strong></code></pre>
+
+<p>
+  แปลไทย: validator <strong>จำผลการแกะ tag ของ struct แต่ละชนิดไว้</strong> เพื่อจะได้แกะแค่ครั้งเดียว
+  ถ้าสร้าง instance ใหม่ทุกครั้ง แคชนั้นก็ถูกทิ้งทุกครั้ง
+  <br>ฟังดูเป็นเรื่องเล็ก ผมเลยวัดจริงด้วย benchmark เทียบสองแบบ
+  <strong>บน <code>Database</code> ก้อนเดียวกับหัวข้อ 5</strong> (ใส่ค่าที่ถูกต้องครบทุก field
+  จะได้ไม่ไปวัดต้นทุนของการสร้าง error):
+</p>
+
+<pre><code><span class="c">// bench_test.go — ไฟล์เต็มทั้งไฟล์ ก๊อปไปวางแล้ว go test -bench=. -benchmem รันได้เลย</span>
+<span class="k">package</span> v10check
+
+<span class="k">import</span> (
+    <span class="s">"testing"</span>
+    <span class="s">"time"</span>
+
+    <span class="s">"github.com/go-playground/validator/v10"</span>
+)
+
+<span class="k">type</span> Database <span class="k">struct</span> {
+    PostgresDSN     <span class="k">string</span>        `validate:<span class="s">"required"</span>`
+    MaxOpenConns    <span class="k">int</span>           `validate:<span class="s">"gte=1,lte=500"</span>`
+    ConnMaxLifetime time.Duration `validate:<span class="s">"required,gt=0"</span>`
+}
+
+<span class="c">// ใส่ค่าที่ถูกต้องครบทุก field จะได้ไม่ไปวัดต้นทุนของการสร้าง error</span>
+<span class="k">var</span> good = Database{<span class="s">"postgres://u:p@localhost:5432/db"</span>, <span class="n">25</span>, <span class="n">5</span> * time.Minute}
+
+<span class="c">// ทั้งสองตัววน validate.Struct(good) เหมือนกันเป๊ะ ต่างแค่ validator มาจากไหน</span>
+<span class="k">var</span> validate = validator.<span class="f">New</span>(validator.<span class="f">WithRequiredStructEnabled</span>())
+
+<span class="k">func</span> <span class="f">BenchmarkSingleton</span>(b *testing.B) {
+    <span class="k">for</span> i := <span class="n">0</span>; i &lt; b.N; i++ { _ = validate.<span class="f">Struct</span>(good) }        <span class="c">// ใช้ตัวเดิมทุกรอบ</span>
+}
+
+<span class="k">func</span> <span class="f">BenchmarkNewEachTime</span>(b *testing.B) {
+    <span class="k">for</span> i := <span class="n">0</span>; i &lt; b.N; i++ {
+        v := validator.<span class="f">New</span>(validator.<span class="f">WithRequiredStructEnabled</span>())   <span class="c">// สร้างใหม่ทุกรอบ</span>
+        _ = v.<span class="f">Struct</span>(good)
+    }
+}</code></pre>
+
+<pre><code>$ go test -bench=. -benchmem
+goos: darwin
+goarch: arm64
+pkg: v10check
+cpu: <strong>Apple M4</strong>
+BenchmarkSingleton-10      	 8937212	       <strong>120.8 ns/op</strong>	      32 B/op	       <strong>1 allocs/op</strong>
+BenchmarkNewEachTime-10    	  131307	      <strong>9394 ns/op</strong>	   16375 B/op	     <strong>227 allocs/op</strong></code></pre>
+
+<p>
+  อ่านตัวเลขนี้: <code>ns/op</code> คือนาโนวินาทีต่อหนึ่งรอบ · <code>allocs/op</code> คือจำนวนครั้งที่ขอหน่วยความจำใหม่ต่อรอบ
+  <br><strong>ช้าลงประมาณ 78 เท่า</strong> (9394 ÷ 120.8) และขอหน่วยความจำ <strong>227 ครั้งต่อรอบ</strong>
+  เทียบกับ <strong>1 ครั้ง</strong> — ต่างกัน 200 กว่าเท่าในแง่จำนวนครั้งที่ไปกวน memory
+  <br>เหตุผลไม่ใช่แค่ "ทิ้งแคช" อย่างเดียว — <code>validator.New()</code> ยังต้อง<strong>คัดลอกตารางรายชื่อ
+  validator สำเร็จรูปทั้งชุดใหม่ทุกครั้ง</strong>ด้วย ซึ่ง v10.30.3 มีอยู่ <strong>181 ตัว</strong>
+  (นับจาก map <code>bakedInValidators</code> ใน <code>baked_in.go</code> — หรือให้โปรแกรมนับให้ก็ได้ค่าเดียวกัน)
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>ตัวเลขบนเครื่องคุณจะไม่เท่ากับผมเป๊ะ ๆ</strong> — <code>ns/op</code> ขึ้นกับ CPU
+    ส่วน <code>B/op</code> กับ <code>allocs/op</code> ขึ้นกับ<strong>ว่า struct มีกี่ field และมีกี่ tag</strong>
+    <br>สิ่งที่จะเหมือนกันทุกเครื่องคือ<strong>รูปทรงของผล</strong>: ฝั่ง singleton จบใน
+    <em>หลักสิบถึงหลักร้อยนาโนวินาที กับ alloc หลักหน่วย</em> ·
+    ฝั่งสร้างใหม่ทุกรอบกระโดดไป <em>หลักพันปลาย ๆ ถึงหลักหมื่นนาโนวินาที กับ alloc หลักสองร้อย</em>
+    (ผมลองกับ struct สามแบบ ได้ 212 / 218 / 227 allocs)
+    <br>(ฝั่ง singleton ได้ <strong>1 alloc/op</strong> เพราะ struct ตัวอย่างมี field — ผมรันเทียบสามแบบบน validator v10.30.3 ได้ <code>struct{}</code> ที่เปล่าจริง ๆ = <strong>0 allocs</strong> · มี field แต่ไม่มี tag = <strong>1</strong> · มี tag = <strong>1</strong> เท่ากัน แปลว่าตัว alloc มาจาก "มี field ให้เดิน" ไม่ใช่ "มี tag ให้ตรวจ")
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    🧭 <strong>แล้วมันสำคัญจริงไหมสำหรับ config?</strong> — ตอบตรง ๆ ว่า<strong>สำหรับ config อย่างเดียว ไม่สำคัญเลย</strong>
+    เพราะ <code>Load()</code> ถูกเรียกครั้งเดียวตอน start ต่อให้ช้าลง 78 เท่าก็ยังเป็นหลักไมโครวินาที
+    <br><strong>ที่สำคัญคือตอนคุณเอา validator ตัวเดียวกันนี้ไปใช้ตรวจ request body ของทุก request</strong> —
+    ตรงนั้นแหละที่มันวิ่งหลายพันครั้งต่อวินาที
+    <br>เขียนเป็น <code>var</code> ระดับ package ตั้งแต่ต้นไปเลยง่ายกว่ามาไล่แก้ทีหลัง
+    และมันปลอดภัยเพราะเอกสารรับรองว่า <strong>thread-safe</strong> (หลาย goroutine เรียกพร้อมกันได้)
+  </p>
+</div>
+
+<h3>6.3 · <code>gte=1</code> บน <code>time.Duration</code> = 1 <em>นาโนวินาที</em></h3>
+
+<p>
+  ข้อนี้สไลด์ไม่ได้เตือน แต่ผมเจอตอนรันทดสอบ และมันเงียบมาก
+  <br>สไลด์เขียนบรรทัดเดียวว่า <em>"<code>gte=1,lte=65535</code> ช่วงตัวเลข ใช้กับ <code>time.Duration</code> ได้
+  (<code>gte=1s</code>)"</em> — ซึ่งพูดสองเรื่องปนกัน แล้วทำให้คนเผลอเขียน <code>gte=1</code> บน Duration
+</p>
+
+<pre><code><span class="c">// field ชนิด time.Duration ที่ tag ไม่มีหน่วย</span>
+T time.Duration `validate:<span class="s">"gte=1"</span>`</code></pre>
+
+<pre><code>--- gte=1 (ไม่มีหน่วย) ---
+gte=1 with 1ns   -&gt; &lt;nil&gt;                <span class="c"># ผ่าน</span>
+gte=1 with 0s    -&gt; Key: 'A.T' Error:Field validation for 'T' failed on the 'gte' tag
+<strong>gte=1 with 500ms -&gt; &lt;nil&gt;</strong>                <span class="c"># ผ่านฉลุย!</span>
+
+--- gte=1s,lte=30s ---
+0s     -&gt; Key: 'B.T' Error:Field validation for 'T' failed on the 'gte' tag
+1s     -&gt; &lt;nil&gt;                          <span class="c"># 1s พอดีผ่าน (inclusive)</span>
+15s    -&gt; &lt;nil&gt;
+31s    -&gt; Key: 'B.T' Error:Field validation for 'T' failed on the 'lte' tag</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ <code>gte=1</code> ไม่ได้แปลว่า "อย่างน้อย 1 วินาที"</span>
+  <p style="margin-bottom:0">
+    <code>time.Duration</code> ข้างในคือจำนวน<strong>นาโนวินาที</strong> เก็บเป็น <code>int64</code>
+    <br>เขียน <code>gte=1</code> เปล่า ๆ validator เลยเทียบกับเลข <code>1</code> ตรง ๆ = <strong>1 นาโนวินาที</strong>
+    <br>ผลคือ <code>500ms</code> ผ่านสบาย ทั้งที่ถ้าคุณตั้งใจจะเขียน "shutdown timeout อย่างน้อย 1 วินาที"
+    ค่านี้ควรจะตก
+    <br><strong>กฎง่าย ๆ: บน <code>time.Duration</code> ให้เขียนหน่วยกำกับเสมอ</strong> —
+    <code>gte=1s</code> ไม่ใช่ <code>gte=1</code>
+  </p>
+</div>
+
+<h3>6.4 · <code>required</code> บน <code>time.Duration</code> ไม่ได้กันค่าติดลบ</h3>
+
+<p>
+  ข้อนี้คือข้อที่ทำให้คำว่า "refactor" ในหัวข้อ 5 <strong>ไม่จริง</strong> ถ้าเราไม่ระวัง
+  <br>ย้อนไปดู <code>if</code> ตัวที่สามของโค้ดเดิม:
+</p>
+
+<pre><code><span class="k">if</span> database.ConnMaxLifetime &lt;= <span class="n">0</span> {                          <span class="c">// ← กันทั้ง 0 และค่าติดลบ</span>
+    <span class="k">return</span> errors.<span class="f">New</span>(<span class="s">"POSTGRES_CONN_MAX_LIFETIME must be > 0"</span>)
+}</code></pre>
+
+<p>
+  ถ้าเราแปลบรรทัดนี้เป็น <code>validate:"required"</code> เฉย ๆ ตามที่สไลด์หน้า 18 ทำกับ <code>PostgresDSN</code>
+  <strong>เราจะเสียครึ่งหนึ่งของกฎไป</strong> เพราะ <code>required</code> แปลว่า
+  <em>"ห้ามเป็น zero value"</em> เท่านั้น — ไม่ได้แปลว่า "ต้องมากกว่า 0"
+  <br>ผมรันเทียบสามเวอร์ชันบนค่าเดียวกัน:
+</p>
+
+<pre><code>value    if(&lt;=0)   required   required,gt=0
+0s       FAIL      FAIL       FAIL
+<strong>-5s      FAIL      OK         FAIL</strong>
+5m0s     OK        OK         OK
+
+-5s / required      -&gt; <strong>&lt;nil&gt;</strong>
+-5s / required,gt=0 -&gt; Key: 'ReqGt.ConnMaxLifetime' Error:Field validation for 'ConnMaxLifetime' failed on the '<strong>gt</strong>' tag</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ อ่านแถวกลาง — <code>-5s</code> ผ่าน <code>required</code> ไปได้</span>
+  <p>
+    <code>-5s</code> ไม่ใช่ zero value (zero value ของ <code>time.Duration</code> คือ <code>0</code>)
+    <code>required</code> เลยพอใจแล้ว
+    <br><strong>และค่าติดลบนี้หลุด <code>env.ParseAs</code> มาด้วย</strong> เพราะ <code>-5s</code>
+    แปลงเป็น <code>time.Duration</code> ได้สนิท — syntax ผ่านเต็ม ๆ
+    <br>แปลว่าถ้า refactor แบบนี้ ค่า <code>DB_CONN_MAX_LIFETIME=-5s</code> จะ<strong>ทะลุทั้งสองด่าน</strong>
+    ทั้งที่โค้ดเดิมจับได้
+  </p>
+  <p style="margin-bottom:0">
+    ทางแก้คือเติม <code>gt=0</code> (<em>greater than</em>) เข้าไปด้วย:
+    <code>validate:"required,gt=0"</code> ซึ่งจับได้ทั้งสองเคสตามตาราง
+    <br><strong>บทเรียนที่ใหญ่กว่านั้น:</strong> เวลา refactor validation อย่าดูแค่ว่า
+    "เคสที่เคยตกยังตกอยู่ไหม" ต้องดูด้วยว่า <strong>"มีเคสที่เคยตกแล้วตอนนี้ผ่านไหม"</strong> —
+    และวิธีเดียวที่รู้ได้คือ<strong>เขียนเทสต์ครอบไว้ก่อนแตะโค้ด</strong>
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ช่อง "ห้ามเว้นว่าง" บนใบสั่งของ</span>
+  <p>
+    ใบสั่งของมีช่อง <em>จำนวน</em> เขียนกำกับไว้ว่า <strong>"ห้ามเว้นว่าง"</strong>
+    <br>คนกรอกใส่เลข <strong>−5</strong> ลงไป — ช่องนั้น<strong>ไม่ว่างแล้ว</strong> กฎที่เขียนไว้ก็เลยพอใจ ผ่านฉลุย
+    <br>แต่ "สั่งของ −5 ชิ้น" ก็ยังเป็นคำสั่งที่ทำตามไม่ได้อยู่ดี
+  </p>
+  <p>
+    <code>validate:"required"</code> คือป้าย "ห้ามเว้นว่าง" ใบนั้นเป๊ะ ๆ —
+    มันถามคำถามเดียวคือ <strong>"ช่องนี้ยังเป็นค่าเริ่มต้นอยู่ไหม"</strong>
+    ไม่ได้ถามว่าค่าที่กรอกมาสมเหตุสมผลไหม
+    <br>อยากกัน −5 ด้วย ต้องแขวนป้ายเพิ่มอีกใบ: <code>validate:"required,gt=0"</code>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> บนใบสั่งของ ถ้าเขียนช่องเวลาไว้ว่า <em>"อย่างน้อย 1"</em>
+    คนอ่านยังเดาหน่วยจากบริบทได้ว่าน่าจะเป็นวัน
+    <br>แต่ <code>gte=1</code> บน <code>time.Duration</code> <strong>ไม่เดาให้เลย</strong> —
+    มันอ่านเป็น <strong>1 นาโนวินาที</strong> ตรงตัว ทำให้ <code>500ms</code> ผ่านสบาย
+    <br>ผมรันเทียบมาแล้วในรอบนี้: <code>gte=1</code> กับ <code>500ms</code> ได้ <code>&lt;nil&gt;</code> (ผ่าน) ·
+    <code>gte=1s</code> กับ <code>500ms</code> ได้ <code>failed on the 'gte' tag</code> (ตก)
+    <br>บน <code>time.Duration</code> จึงต้อง<strong>เขียนหน่วยกำกับเสมอ</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>zero value</dt>
+    <dd>ค่าเริ่มต้นที่ Go ใส่ให้เองเมื่อไม่ได้กำหนดอะไร — <code>0</code> สำหรับตัวเลขและ <code>time.Duration</code> ·
+    <code>""</code> สำหรับ string · <code>nil</code> สำหรับ pointer/slice/map ·
+    พูดกับ senior ว่า <em>"ระวังนะ <code>required</code> มันเช็คแค่ว่าไม่ใช่ zero value ไม่ได้เช็คว่าค่าใช้ได้"</em></dd>
+    <dt>gt · gte · lt · lte</dt>
+    <dd>ย่อจาก <em>greater than</em> · <em>greater than or equal</em> · <em>less than</em> ·
+    <em>less than or equal</em> · ชื่อชุดนี้ใช้เหมือนกันทั้งใน validator, MongoDB และ Elasticsearch
+    ไม่ใช่ศัพท์เฉพาะของ Go · พูดว่า <em>"ใส่ <code>gt=0</code> ไปด้วยสิ ไม่งั้นค่าติดลบหลุด"</em></dd>
+    <dt>regression (พฤติกรรมถอยหลัง)</dt>
+    <dd>ของที่เคยทำงานถูก แล้วกลับมาผิดหลังแก้โค้ด — เคส <code>-5s</code> ในหัวข้อนี้คือ regression
+    ที่เกิดจากการ refactor · พูดว่า <em>"ขอเขียนเทสต์ครอบเคสติดลบไว้ก่อน กัน regression ตอน refactor validation"</em></dd>
+  </dl>
+</div>
+
+<h3>6.5 · <code>hostname</code> ไม่รับ underscore และไม่รับ <code>host:port</code></h3>
+
+<p>
+  tag <code>hostname|ip</code> ดูสะดวกมาก แต่มันเข้มกว่าที่คิด ผมยิงค่าเก้าแบบเข้าไป:
+</p>
+
+<pre><code>hostname|ip "localhost"        -&gt; &lt;nil&gt;
+hostname|ip "api.example.com"  -&gt; &lt;nil&gt;
+hostname|ip "127.0.0.1"        -&gt; &lt;nil&gt;
+hostname|ip "::1"              -&gt; &lt;nil&gt;                  <span class="c"># IPv6 ก็ผ่าน</span>
+hostname|ip "192.168.1.300"    -&gt; Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+hostname|ip "not a host!"      -&gt; Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+hostname|ip ""                 -&gt; Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+<strong>hostname|ip "db_server"        -&gt;</strong> Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag
+<strong>hostname|ip "example.com:5432" -&gt;</strong> Key: 'H.Host' Error:Field validation for 'Host' failed on the 'hostname|ip' tag</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ สองบรรทัดล่างคือสองเคสที่คุณจะเจอจริงในคอร์สนี้</span>
+  <p style="margin-bottom:0">
+    · <code>db_server</code> — <strong>hostname ไม่รับ underscore</strong> ตามมาตรฐาน
+    แต่ชื่อ service ใน <code>docker-compose.yml</code> ตั้งชื่อมี underscore ได้สบาย
+    ถ้าคุณเขียน <code>DB_HOST=db_server</code> ใน <code>.env</code> ตาม compose แล้ว validate ตกทันที
+    <br>· <code>example.com:5432</code> — <strong>hostname ไม่ใช่ที่สำหรับใส่พอร์ต</strong>
+    ถ้า config ของคุณเก็บ host กับ port รวมกันในตัวแปรเดียว tag นี้ใช้ไม่ได้
+    <br>สังเกตอีกอย่าง: ชื่อ tag ใน error พิมพ์เป็น <code>'hostname|ip'</code> ทั้งก้อน
+    <strong>ไม่ได้แยกว่าตกที่ <code>hostname</code> หรือ <code>ip</code></strong> —
+    ซึ่งก็สมเหตุสมผล เพราะ OR แปลว่าตกทั้งคู่ถึงจะถือว่าตก
+  </p>
+</div>
+
+<h3>6.6 · <code>WithRequiredStructEnabled()</code> เปลี่ยนอะไรกันแน่</h3>
+
+<p>
+  option ตัวนี้ทุกตัวอย่างใส่ไว้จนดูเหมือนต้องใส่ แต่มันเปลี่ยน<strong>พฤติกรรมเดียวเป๊ะ ๆ</strong> —
+  doc comment ในซอร์สของ v10.30.3 (<code>options.go</code> บรรทัด 6–11 · ตัดย่อ) เขียนว่า:
+</p>
+
+<pre><code>// WithRequiredStructEnabled enables required tag on <strong>non-pointer structs</strong> to be applied instead of ignored.
+//
+// ...
+//
+// It is recommended you enabled this as it will be the default behaviour in v11+</code></pre>
+
+<p>
+  แปลว่า: ถ้า<strong>ไม่</strong>ใส่ option นี้ tag <code>required</code> ที่แปะบน field
+  ซึ่งเป็น struct ธรรมดา (ไม่ใช่ pointer) จะถูก<strong>เมินทิ้งเงียบ ๆ</strong>
+  <br>ผลรันเทียบ (<code>zero nested struct</code> คือ struct ลูกที่ทุก field ยังเป็นค่าเริ่มต้น):
+</p>
+
+<pre><code>plain  / zero nested struct  -&gt; &lt;nil&gt;                     <span class="c"># ไม่ใส่ option = tag ถูกเมิน</span>
+<strong>opt    / zero nested struct  -&gt;</strong> Key: 'Cfg.DB' Error:Field validation for 'DB' failed on the 'required' tag
+plain  / filled nested       -&gt; &lt;nil&gt;
+opt    / filled nested       -&gt; &lt;nil&gt;
+
+--- pointer nested (*DB), nil ---
+plain -&gt; Key: 'Cfg2.DB' Error:Field validation for 'DB' failed on the 'required' tag
+opt   -&gt; Key: 'Cfg2.DB' Error:Field validation for 'DB' failed on the 'required' tag</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    📌 <strong>ดูสองบรรทัดล่างสุด — เหมือนกันเป๊ะ</strong>
+    <br>ถ้า config ของคุณใช้ <strong>pointer struct (<code>*DB</code>) ตลอด option นี้จะไม่เปลี่ยนอะไรเลย</strong>
+    เพราะ <code>nil</code> เป็น zero value ของ pointer อยู่แล้ว <code>required</code> จับได้ทั้งสองแบบ
+    <br>ที่มันมีอยู่เพราะเหตุผลเรื่องความเข้ากันได้ย้อนหลัง — เอกสารบอกว่าใน <strong>v11 ขึ้นไปจะเป็นค่าเริ่มต้น</strong>
+    เลยแนะนำให้เปิดไว้ตั้งแต่วันนี้ จะได้ไม่เจอพฤติกรรมเปลี่ยนตอนอัปเกรด
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. <code>APP_PORT=99999</code> ถูกส่งเข้า struct ที่มี field <code>Port int</code> พร้อม tag <code>env:"APP_PORT"</code> (ยังไม่มี <code>validate</code> tag) แล้วเรียก <code>env.ParseAs</code> — ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้ error เพราะ <code>caarlos0/env</code> รู้ว่า field ชื่อ <code>Port</code> ต้องอยู่ในช่วงพอร์ตที่ถูกต้อง</button>
+    <button class="opt">ได้ <code>Port=65535</code> เพราะมันตัดค่าให้อยู่ในช่วงสูงสุดของพอร์ตให้อัตโนมัติ</button>
+    <button class="opt">ผ่าน ได้ <code>Port=99999</code> เข้า struct ตรง ๆ เพราะ <code>ParseAs</code> ถามแค่ว่าแปลงเป็น <code>int</code> ได้ไหม</button>
+    <button class="opt">panic ทันที เพราะเลขเกินช่วงของ <code>uint16</code> ที่ระบบเครือข่ายใช้</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง: <code>ParseAs  : OK -&gt; App.Port=99999 ...</code>
+    <br><code>"99999"</code> แปลงเป็น <code>int</code> ได้สนิท — <strong>syntax ผ่าน</strong> — <code>ParseAs</code> ก็เลยส่งต่อ
+    <br>ตัวเลือกที่ 1 ผิดเพราะ <code>caarlos0/env</code> ไม่รู้จักความหมายของคำว่า "port" เลย
+    มันเห็นแค่ว่า field นี้เป็น <code>int</code>
+    <br>ตัวเลือกที่ 2 ผิด — ไม่มี library ตัวไหนแอบตัดค่าให้ (และถ้ามี จะน่ากลัวกว่าเดิมมาก
+    เพราะคุณจะได้พอร์ตที่ไม่ได้ตั้ง)
+    <br>ตัวเลือกที่ 4 ผิดเพราะ field เป็น <code>int</code> ซึ่งบน 64-bit เก็บได้ถึง
+    <code>9223372036854775807</code> (ราว 9.2 × 10<sup>18</sup>) — <code>99999</code> ไม่ล้นอะไรทั้งนั้น
+    <br><strong>จุดที่ต้องจำ:</strong> ค่านี้จะโดนจับก็ต่อเมื่อเราเติม <code>validate:"gte=1,lte=65535"</code> เข้าไปเอง
+    แล้วผลที่ได้คือ <code>failed on the 'lte' tag</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">2. <code>Database</code> ที่ใช้ <code>if</code> เช็คสามเงื่อนไขเรียงกัน ถูกส่งค่าที่<strong>ผิดครบทั้งสามที่พร้อมกัน</strong> — <code>Validate()</code> คืน error กี่ตัว?</p>
+  <div class="opts">
+    <button class="opt">1 ตัว — <code>return</code> ตัวแรกทำให้ function จบทันที อีกสองข้อไม่มีใครรายงาน</button>
+    <button class="opt">3 ตัว เรียงตามลำดับที่เขียน <code>if</code> ไว้ในโค้ด</button>
+    <button class="opt">3 ตัวถูกมัดเป็นก้อนเดียวด้วย <code>errors.Join</code> โดยอัตโนมัติ</button>
+    <button class="opt">1 ตัว แต่เป็นตัว<strong>สุดท้าย</strong> เพราะ <code>if</code> ตัวหลังทับค่า return ของตัวก่อนหน้า</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงกับ <code>PostgresDSN:""</code> · <code>MaxOpenConns:9999</code> · <code>ConnMaxLifetime:-5s</code>:
+    <br><code>POSTGRES_DSN is required</code> — <strong>บรรทัดเดียว</strong>
+    <br><code>return</code> ใน Go จบ function ทันที บรรทัดที่เหลือไม่ถูกรันเลย
+    ปัญหาอีกสองข้อจึงยังอยู่ครบแต่ไม่มีใครบอก
+    <br>ตัวเลือกที่ 2 กับ 3 คือผลของฝั่ง <code>validator.Struct()</code> ต่างหาก —
+    ผมรันเคสเดียวกันได้ครบสามบรรทัด (<code>required</code> · <code>lte</code> · <code>gt</code>)
+    และมันคั่นบรรทัดให้เองโดย<strong>ไม่ต้องใช้ <code>errors.Join</code></strong>
+    <br>ตัวเลือกที่ 4 ผิดตามหลักภาษา — โค้ดหลัง <code>return</code> ไม่มีทางรัน
+    <br><strong>ผลกระทบจริง:</strong> 1 บรรทัด = แก้แล้ว deploy แล้วเจอข้อถัดไป <strong>3 รอบ</strong> ·
+    3 บรรทัด = <strong>รอบเดียวจบ</strong></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. มีคนเขียน <code>Env string `validate:"oneof=dev,staging,prod"`</code> (ใช้ comma) แล้ว build และรันโปรแกรม — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt"><code>go build</code> ไม่ผ่าน เพราะ compiler ตรวจรูปแบบของ struct tag ให้</button>
+    <button class="opt">ทำงานได้ปกติ เพราะ validator รับทั้ง comma และ space เป็นตัวคั่นรายการ</button>
+    <button class="opt">panic ตั้งแต่บรรทัด <code>validator.New()</code> พร้อมข้อความว่า <code>oneof</code> ใช้ comma ไม่ได้</button>
+    <button class="opt">build ผ่าน · <code>validator.New()</code> ผ่าน · แล้ว panic ตอนเรียก <code>validate.Struct()</code> ครั้งแรก ด้วยข้อความ <code>Undefined validation function 'staging' on field 'Env'</code></button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงพิมพ์ <code>validator.New() ผ่านแล้ว</code> และ <code>before Struct()</code> ออกมาก่อน
+    แล้วค่อย <code>panic: Undefined validation function 'staging' on field 'Env'</code>
+    <br>สาเหตุ: ใน tag ของ validator <strong>comma ถูกจองไว้เป็นตัวคั่น tag คนละตัว (AND)</strong>
+    ตัวแยก tag เลยอ่าน <code>oneof=dev,staging,prod</code> เป็น <em>สาม</em> tag คือ
+    <code>oneof=dev</code> · <code>staging</code> · <code>prod</code> แล้วหาฟังก์ชันชื่อ <code>staging</code> ไม่เจอ
+    <br>ตัวเลือกที่ 3 คือตัวที่หลอกที่สุด และเป็นสิ่งที่สไลด์ทำให้เข้าใจผิดได้ถ้าบอกแค่ว่า "จะ panic" —
+    ของจริงคือ panic ตอน <code>Struct()</code> ครั้งแรก (จังหวะที่ validator แกะ tag มาทำแคช)
+    ไม่ใช่ตอนสร้าง instance <strong>แปลว่าโปรแกรม start ขึ้นได้ก่อน แล้วค่อยตาย</strong>
+    <br>ตัวเลือกที่ 1 ผิดเพราะ struct tag เป็นแค่สตริงในสายตา compiler — ตรวจอะไรไม่ได้
+    <br><strong>สิ่งที่ต้องจำ:</strong> ข้อความ panic <strong>ไม่มีคำว่า <code>oneof</code> เลย</strong> —
+    เห็น <code>Undefined validation function</code> เมื่อไร ให้ไปไล่หา comma ใน tag ก่อน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">4. Refactor จาก <code>if database.ConnMaxLifetime &lt;= 0 { ... }</code> มาเป็น <code>validate:"required"</code> แล้วมีคนตั้ง <code>DB_CONN_MAX_LIFETIME=-5s</code> — ผลเป็นอย่างไร?</p>
+  <div class="opts">
+    <button class="opt">ตกเหมือนเดิม เพราะ <code>required</code> บนตัวเลขแปลว่า "ต้องมากกว่า 0"</button>
+    <button class="opt">ผ่านทั้ง <code>ParseAs</code> และ <code>required</code> — เพราะ <code>-5s</code> ไม่ใช่ zero value จึงหลุดไปได้ ต้องเขียน <code>required,gt=0</code> ถึงจะเทียบเท่าของเดิม</button>
+    <button class="opt"><code>env.ParseAs</code> จับได้ตั้งแต่ต้น เพราะ <code>time.Duration</code> ไม่รับค่าติดลบ</button>
+    <button class="opt">ตกที่ <code>required</code> เพราะ validator ถือว่าค่าติดลบเป็นค่าที่ไม่ได้ตั้ง</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริง — <code>-5s / required -&gt; &lt;nil&gt;</code> (ผ่าน) ส่วน
+    <code>-5s / required,gt=0 -&gt; ... failed on the 'gt' tag</code> (ตก)
+    <br><code>required</code> แปลว่า <strong>"ห้ามเป็น zero value"</strong> เท่านั้น —
+    zero value ของ <code>time.Duration</code> คือ <code>0</code> ส่วน <code>-5s</code> ไม่ใช่ 0 มันเลยพอใจแล้ว
+    <br>ตัวเลือกที่ 3 ผิดด้วย: <code>time.ParseDuration("-5s")</code> คืนค่าสำเร็จ — ค่าติดลบเป็น Duration ที่ถูกต้องตามภาษา
+    <strong>ค่านี้จึงหลุดทั้งสองด่าน</strong>
+    <br>ตารางผลรันเต็ม: <code>0s</code> ตกทั้งสามแบบ · <code>-5s</code> ตกเฉพาะ <code>if</code> เดิมกับ <code>required,gt=0</code>
+    · <code>5m0s</code> ผ่านหมด
+    <br><strong>บทเรียนที่ใหญ่กว่าคำตอบ:</strong> คำว่า "refactor" แปลว่าพฤติกรรมต้องเหมือนเดิม —
+    แต่ refactor validation ทำพฤติกรรม<em>หาย</em>ได้ง่ายมากโดยไม่มีอะไรฟ้อง
+    เพราะโค้ดยัง compile ผ่านและเทสต์ที่ไม่ครอบเคสติดลบก็ยังเขียว</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำให้ตัวเองเห็นความต่างระหว่าง "พังตอนบ่าย" กับ "ตายตอนเช้า"</span>
+  <p>
+    เป้าหมายไม่ใช่ "เขียน validate tag เป็น" — เป้าหมายคือ
+    <strong>ทำให้คุณเคยเห็นด้วยตาว่า health check ตอบ 200 ให้แอปที่ config พังได้</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งโปรเจกต์:</strong> โฟลเดอร์ใหม่ · <code>go mod init v10check</code> ·
+        <code>go get github.com/go-playground/validator/v10@v10.30.3</code> และ
+        <code>go get github.com/caarlos0/env/v11@v11.4.1</code></li>
+    <li><strong>ทำ struct ที่ยังไม่มี <code>validate</code>:</strong> สร้าง <code>App</code> ที่มี
+        <code>Port int</code> · <code>Env string</code> · <code>ShutdownTimeout time.Duration</code>
+        พร้อม <code>env</code>/<code>envDefault</code> tag แล้วเรียก <code>env.ParseAs[App]()</code>
+        <br>รันด้วย <code>APP_PORT=99999</code> · <code>APP_ENV=prodction</code> ·
+        <code>APP_SHUTDOWN_TIMEOUT=0s</code>
+        <br><strong>ยืนยันด้วยตาว่าไม่มี error สักตัว</strong> แล้วพิมพ์ค่าที่ได้ออกมาดู</li>
+    <li><strong>เติม <code>validate</code> tag:</strong> ใส่
+        <code>validate:"required,gte=1,lte=65535"</code> ให้ <code>Port</code> ·
+        <code>validate:"required,oneof=development staging production"</code> ให้ <code>Env</code> ·
+        <code>validate:"required,gt=0"</code> ให้ <code>ShutdownTimeout</code>
+        <br>สร้าง <code>var validate = validator.New(validator.WithRequiredStructEnabled())</code>
+        ระดับ package แล้วเรียก <code>validate.Struct(cfg)</code>
+        <br><strong>รันซ้ำเคสเดิมทั้งสามแบบ แล้วจดชื่อ tag ที่ปรากฏใน error ของแต่ละเคส</strong></li>
+    <li><strong>พิสูจน์ว่าได้ครบทุก field พร้อมกัน:</strong> ตั้งค่าผิดทั้งสามตัว<strong>ในคำสั่งเดียว</strong>
+        <br><strong>ต้องได้ error 3 บรรทัด</strong> — ถ้าได้บรรทัดเดียว แปลว่าคุณเผลอเขียน <code>if</code> +
+        <code>return</code> อยู่ที่ไหนสักแห่ง</li>
+    <li><strong>สร้างกับดัก comma:</strong> เปลี่ยน tag ของ <code>Env</code> เป็น
+        <code>oneof=development,staging,production</code> ชั่วคราว
+        <br>เพิ่ม <code>fmt.Println("new ok")</code> ไว้ <em>หลัง</em> <code>validator.New()</code> แต่
+        <em>ก่อน</em> <code>validate.Struct()</code>
+        <br><strong>ยืนยันด้วยตาว่า <code>new ok</code> ถูกพิมพ์ออกมาก่อน panic</strong> —
+        แล้วตอบว่าทำไมเรื่องนี้อันตรายกว่า panic ตอน <code>New()</code></li>
+    <li><strong>กับดัก Duration:</strong> เปลี่ยน tag ของ <code>ShutdownTimeout</code> เป็น
+        <code>gte=1</code> (ไม่มีหน่วย) แล้วยิงค่า <code>500ms</code> เข้าไป
+        <br><strong>ทายก่อนว่าจะผ่านหรือตก แล้วค่อยรัน</strong> · เสร็จแล้วเปลี่ยนเป็น
+        <code>gte=1s</code> แล้วรันซ้ำ</li>
+    <li><strong>ทำเซิร์ฟเวอร์สองตัวเทียบกัน (ข้อสำคัญที่สุด):</strong>
+        เขียนเซิร์ฟเวอร์ที่มี <code>/healthz</code> ตอบ <code>ok</code> เฉย ๆ
+        และ <code>/recipes</code> ที่เรียก <code>db.Ping()</code> ก่อนตอบ
+        <br>ทำสองเวอร์ชัน: เวอร์ชันที่<strong>ไม่</strong>เรียก <code>Validate()</code>
+        กับเวอร์ชันที่เรียกแล้ว <code>os.Exit(1)</code> ถ้าไม่ผ่าน
+        <br>รันทั้งคู่โดย<strong>ไม่ตั้ง <code>POSTGRES_DSN</code></strong> แล้วยิง
+        <code>curl -w "http_code=%{http_code}\n"</code> ใส่ทั้งสองปลายทาง</li>
+    <li><strong>ท้าทาย:</strong> ลองเช็คด้วย <code>lsof -nP -iTCP:8080 -sTCP:LISTEN</code> ทั้งสองเวอร์ชัน
+        แล้วตอบคำถามนี้: <strong>ในสายตาของ Kubernetes ที่ดูแค่ "pod ยัง Running ไหม" กับ
+        "health check ตอบ 200 ไหม" — สองเวอร์ชันนี้ต่างกันตรงไหน และทำไมความต่างนั้นถึงสำคัญ</strong></li>
+  </ol>
+  <button class="reveal">เฉลยข้อ 7 — ผลรันจริงของทั้งสองเซิร์ฟเวอร์</button>
+  <div class="answer">
+    <p><strong>เวอร์ชันที่ไม่ validate</strong> — รันโดยไม่ตั้ง <code>POSTGRES_DSN</code>:</p>
+    <pre style="margin:0.6rem 0"><code>server starting on :8080
+--- ps ---
+ยังรันอยู่ (deploy สำเร็จ)
+--- health check ---
+ok <strong>http_code=200</strong>
+--- request จริงของผู้ใช้ ---
+internal error: dial tcp [::1]:5432: connect: connection refused
+<strong>http_code=500</strong></code></pre>
+    <p><strong>เวอร์ชันที่ validate ตอน start</strong> — สภาพเดียวกันเป๊ะ:</p>
+    <pre style="margin:0.6rem 0"><code>FATAL load configuration:
+Key: 'Config.PostgresDSN' Error:Field validation for 'PostgresDSN' failed on the 'required' tag
+--- ps: process ยังอยู่ไหม ---
+<strong>process ตายไปแล้ว</strong>
+--- lsof :8080 ---
+<strong>(ไม่มี process ไหน listen :8080)</strong>
+--- curl /healthz ---
+http_code=<strong>000</strong>
+curl exit=<strong>7</strong>
+<strong>EXIT_CODE=1</strong></code></pre>
+    <p>
+      คำตอบข้อ 8: ในสายตา Kubernetes เวอร์ชันแรก<strong>ผ่านทุกด่าน</strong> —
+      pod เป็น <code>Running</code> · health check ได้ 200 · rollout เดินจนจบ ·
+      <strong>เวอร์ชันเก่าที่ทำงานได้ถูกเอาลงไปเรียบร้อยแล้ว</strong>
+      <br>เวอร์ชันที่สองไม่มีอะไรผ่านเลยแม้แต่ด่านเดียว pod จะวนเป็น <code>CrashLoopBackOff</code>
+      <strong>rollout เลยหยุดค้างไว้เอง และเวอร์ชันเก่ายังให้บริการอยู่ต่อ</strong>
+    </p>
+    <p style="margin-bottom:0">
+      ความต่างนั้นสำคัญเพราะ <strong>ระบบ deploy ทุกตัวตัดสินใจจากสัญญาณเดียวคือ
+      "process นี้ start สำเร็จไหม"</strong>
+      <br>ถ้าเรายอมให้แอปที่ config พัง start สำเร็จ เราก็กำลัง<strong>โกหกระบบ deploy ของตัวเอง</strong> —
+      แล้วมันก็จะเอาของดีลงไปแทนที่ด้วยของเสียให้เราอย่างเรียบร้อย
+      <br>การ <code>os.Exit(1)</code> ตอน config ผิด จึงไม่ใช่ "การทำให้แอปเปราะ"
+      แต่คือ<strong>การบอกความจริงกับเครื่องมือที่คอยดูแลเราอยู่</strong>
+    </p>
+  </div>
+</div>
+
+<div class="note ask">
+  <p style="margin-bottom:0">
+    💬 <strong>ข้อ 7 คือข้อที่ผมอยากให้ทำจริง ๆ ของบทนี้</strong> —
+    เพราะบรรทัด <code>okhttp_code=200</code> ที่โผล่บนแอปที่ config พังอยู่
+    คือภาพที่จะติดตาคุณไปตลอด และมันอธิบายทุกอย่างที่บทนี้พยายามพูดได้ในบรรทัดเดียว
+    <br>ถ้ารันแล้ว output ไม่ตรงกับในบทนี้ <strong>ส่งมาได้เลย</strong> —
+    ทุกบรรทัดในหน้านี้วัดบน <strong>Go 1.26.5 darwin/arm64</strong> กับ
+    <strong>validator/v10 v10.30.3</strong> และ <strong>env/v11 v11.4.1</strong>
+    <br>เกร็ดที่ต้องระวังเวลาเทียบผล: เครื่องผม<strong>ไม่มี Postgres รันอยู่ที่พอร์ต 5432</strong>
+    ถ้าเครื่องคุณมี เคส DSN ว่างอาจ<em>ต่อติด</em>แล้วไปเจอ error เรื่อง auth หรือชื่อ database แทน
+    ซึ่งยิ่งหลอกกว่าเดิม แต่ข้อสรุปยังเหมือนเดิมทุกประการ
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0046-dotenv-godotenv.html">← บทเรียน 46</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0048-internal-config.html">บทเรียน 48 → internal/config</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://pkg.go.dev/github.com/go-playground/validator/v10">pkg.go.dev — <code>go-playground/validator/v10</code></a> — <strong>อ่านหัวข้อ Singleton ที่อยู่บนสุด</strong> เป็นที่มาของกฎในหัวข้อ 6.2 ตรง ๆ</li>
+  <li><a href="https://github.com/go-playground/validator/blob/master/README.md#baked-in-validations">validator — Baked-in Validations</a> — รายชื่อ tag ทั้งหมดที่ใช้ได้ทันทีโดยไม่ต้องเขียนเอง · ที่ควรกวาดตาดูคือกลุ่ม <code>gt</code>/<code>gte</code>/<code>lt</code>/<code>lte</code> และกลุ่ม <code>oneof</code></li>
+  <li><a href="https://pkg.go.dev/github.com/go-playground/validator/v10#Validate.Struct">pkg.go.dev — <code>Validate.Struct</code></a> · <a href="https://pkg.go.dev/github.com/go-playground/validator/v10#ValidationErrors">ValidationErrors</a> · <a href="https://pkg.go.dev/github.com/go-playground/validator/v10#FieldError">FieldError</a> — ที่มาของหน้าตาข้อความ <code>Key: '...' Error:Field validation for ...</code> และช่องทางดึงข้อมูลออกมาจัดข้อความเอง (จะใช้จริงใน <a href="./0048-internal-config.html">บทเรียน 48</a>)</li>
+  <li><a href="https://pkg.go.dev/github.com/go-playground/validator/v10#WithRequiredStructEnabled">pkg.go.dev — <code>WithRequiredStructEnabled</code></a> — ประโยคเดียวที่อธิบายหัวข้อ 6.6 ทั้งหมด: <em>non-pointer structs</em></li>
+  <li><a href="https://pkg.go.dev/errors#Join">pkg.go.dev — <code>errors.Join</code></a> — <strong>อ่านย่อหน้าที่บอกว่ามันคั่นด้วย newline และข้าม <code>nil</code> ให้</strong> คือเหตุผลที่ <code>Config.Validate()</code> เขียนสั้นได้ขนาดนั้น</li>
+  <li><a href="https://pkg.go.dev/time#Duration">pkg.go.dev — <code>time.Duration</code></a> — ประโยคแรกบอกว่ามันคือ <code>int64</code> ที่นับเป็นนาโนวินาที ซึ่งอธิบายกับดักที่ 6.3 ทั้งข้อ</li>
+  <li><a href="https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes">Kubernetes — Container probes</a> — ที่มาของคำว่า liveness / readiness และเหตุผลที่ <code>/healthz</code> ที่ไม่แตะ dependency ตอบ 200 ให้แอปที่ config พังได้</li>
+  <li><a href="https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#rolling-update-deployment">Kubernetes — Rolling Update Deployment</a> — ที่มาของค่าเริ่มต้น <code>maxUnavailable=25%</code> ที่กล่องหัวข้อ 3 พูดถึง · อ่านย่อหน้า <em>Max Unavailable</em> กับ <em>Max Surge</em> คู่กันจะเห็นว่าทำไม rollout ถึง "หยุดค้าง" ไม่ใช่ "ไม่แตะของเก่าเลย"</li>
+  <li><a href="../../day-8/lessons/0044-env-config.html">บทเรียน 44 — Configuration &amp; Environment Variables</a> — หัวข้อ 6 ของบทนั้นคือที่มาของ <code>dial tcp [::1]:5432: connect: connection refused</code> ที่โผล่ในหัวข้อ 3</li>
+  <li><a href="../../day-8/lessons/0039-gin-binding-middleware.html">บทเรียน 39 — Gin binding &amp; middleware</a> — ที่ที่คุณเคยใช้ validator ตัวนี้มาแล้วโดยไม่รู้ตัว ผ่าน tag <code>binding:"required"</code> · เปรียบเทียบกับ tag <code>validate</code> ในบทนี้จะเห็นว่าเป็นของตัวเดียวกัน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

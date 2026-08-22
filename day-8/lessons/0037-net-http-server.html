@@ -16,6 +16,7 @@
   <p class="standfirst">
     ผ่านมา 36 บท เราเขียน Go มาเยอะมาก — แต่<strong>ยังไม่เคยเปิดพอร์ตสักครั้ง</strong>
     บทนี้เปิด และเปิดด้วย stdlib ล้วน ไม่ลง library อะไรเลย
+    (<em>stdlib</em> = standard library คือชุดเครื่องมือที่ติดมากับ Go ตั้งแต่ตอนติดตั้ง ไม่ต้องโหลดเพิ่ม)
     <br>หัวใจของบทไม่ใช่ "เขียน server ยังไง" — แต่คือกฎข้อเดียวที่ทำให้ API พังเงียบ ๆ ทั้งทีม:
     <strong><code>ResponseWriter</code> เขียนได้ครั้งเดียว</strong>
     ผมจะทำให้ handler (ฟังก์ชันที่รับ request แล้วเขียนคำตอบกลับ) ที่ "ดูเหมือนตอบ 400" ตอบ 200 ให้ดูกับตา
@@ -49,7 +50,9 @@
 
 <p>
   ก่อนอื่นต้องตกลงกันว่า "HTTP server" คืออะไรในเชิงโค้ด — มันไม่ใช่ของวิเศษ
-  <br>มันคือโปรแกรมที่ <strong>(1)</strong> จอง TCP port ไว้หนึ่งพอร์ต ·
+  <br>มันคือโปรแกรมที่ <strong>(1)</strong> จอง TCP port ไว้หนึ่งพอร์ต
+  (<em>พอร์ต</em> = เลขช่องทางเข้าของเครื่อง เครื่องหนึ่งมีหลายพันช่อง แต่หนึ่งช่องมีโปรแกรมจองได้ทีละตัวเท่านั้น —
+  ถ้าจองซ้ำจะได้ error <code>address already in use</code> · ส่วนโปรแกรมเดียวเปิดฟังหลายพอร์ตพร้อมกันได้ปกติ) ·
   <strong>(2)</strong> นั่งรอจนมีใครต่อเข้ามา ·
   <strong>(3)</strong> อ่านตัวอักษรที่เข้ามาว่าเป็นคำขออะไร ·
   <strong>(4)</strong> เขียนตัวอักษรกลับไปตามรูปแบบที่ browser อ่านออก
@@ -120,6 +123,36 @@ hello from GET /hello</code></pre>
 </table>
 </div>
 
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — เคาน์เตอร์ประชาสัมพันธ์โรงพยาบาล</span>
+  <p>
+    คุณเดินเข้าโรงพยาบาล ไม่ได้เดินตรงไปห้องหมอเอง — คุณไปที่<strong>เคาน์เตอร์ประชาสัมพันธ์</strong>ก่อน
+    <br>คุณบอกว่า "มาตรวจฟัน" เจ้าหน้าที่เปิด<strong>ตารางที่ติดไว้ข้างเคาน์เตอร์</strong>
+    แล้วบอกว่า "ไปชั้น 3 ห้อง 302"
+    <br>เจ้าหน้าที่ไม่ได้รักษาคุณเอง หน้าที่เดียวของเขาคือ<strong>ส่งคุณไปให้ถูกห้อง</strong>
+  </p>
+  <p>
+    โค้ดสี่บรรทัดข้างบนคือเรื่องเดียวกันเป๊ะ ๆ:
+    <br>· <code>ListenAndServe(":8080")</code> = <strong>เปิดประตูโรงพยาบาล</strong> แล้วยืนรอคนเดินเข้ามา
+    <br>· <code>mux</code> = <strong>เจ้าหน้าที่ที่เคาน์เตอร์</strong> — ดูอย่างเดียวว่าใครควรไปห้องไหน
+    <br>· <code>HandleFunc("GET /hello", ...)</code> = <strong>จดหนึ่งบรรทัดลงตารางข้างเคาน์เตอร์</strong>
+    ว่า "เรื่องนี้ ไปห้องนี้" — จดตอนก่อนเปิดโรงพยาบาล ไม่ใช่จดตอนคนไข้ยืนรออยู่
+    <br>· ฟังก์ชันที่เราเขียนไว้ = <strong>ห้องตรวจ</strong> ที่ทำงานจริง ๆ คือ <strong>handler</strong>
+    <br>· <code>w</code> = <strong>ใบผลตรวจที่ยื่นกลับให้คนไข้</strong> — สิ่งที่เขียนลงใบนี้เท่านั้นที่คนไข้ได้กลับบ้าน
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> เจ้าหน้าที่คนเดียวส่งคนไข้ได้ทีละคน แต่ <code>net/http</code>
+    <strong>เปิด goroutine ใหม่ให้ทุก connection ที่ต่อเข้ามา</strong> — คนละคนที่ต่อเข้ามาพร้อมกัน
+    จึงเข้าห้องตรวจพร้อมกันได้จริง แปลว่า handler ของเราถูกเรียกพร้อมกันหลายตัวได้
+    <strong>ต้องระวังตัวแปรที่ใช้ร่วมกัน</strong>
+    (ส่วนหลาย request ที่วิ่งบน connection เดิม — HTTP/1.1 keep-alive — ใช้ goroutine ตัวเดิม เรียงกันทีละอัน)
+    <br>และเจ้าหน้าที่จริงอาจถามต่อเมื่อฟังไม่เข้าใจ แต่ mux ตัดสินจากตารางอย่างเดียว:
+    ถ้า <strong>path ไม่มีในตารางเลย</strong> ตอบ <code>404</code> ·
+    ถ้า <strong>path มีแต่ method ไม่ตรง</strong> ตอบ <code>405</code> พร้อมบอก <code>Allow</code>
+    ให้เองว่า method ไหนใช้ได้ — ของใหม่ที่จะเห็นเต็ม ๆ ในหัวข้อ 3
+  </p>
+</div>
+
 <div class="win">
   <p style="margin-bottom:0">
     <strong>✅ สังเกตว่า import มีแค่สองบรรทัด และไม่มี <code>go get</code> เลย</strong> —
@@ -130,10 +163,43 @@ hello from GET /hello</code></pre>
   </p>
 </div>
 
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>คำพวกนี้คือคำที่คนทำ backend ใช้กันทุกวัน · <strong>ใช้คำให้ตรง แล้วคำตอบที่ได้จะตรง</strong>
+  ไม่ว่าจะถาม senior หรือพิมพ์ถาม AI</p>
+  <dl>
+    <dt>port (พอร์ต)</dt>
+    <dd>เลขช่องทางเข้าของเครื่อง · ถามว่า <em>"service นี้ฟังพอร์ตอะไร"</em>
+    จะได้คำตอบเร็วกว่าถามว่า "เข้าเว็บนี้ยังไง"</dd>
+    <dt>handler</dt>
+    <dd>ฟังก์ชันที่รับ request แล้วเขียนคำตอบกลับ = "ห้องตรวจ" ·
+    เวลาไล่บั๊กให้พูดว่า <em>"handler ของ endpoint นี้อยู่ไฟล์ไหน"</em></dd>
+    <dt>router / multiplexer (mux)</dt>
+    <dd>ตารางจับคู่ "method + path → handler" = "เจ้าหน้าที่ที่เคาน์เตอร์" ·
+    Go เรียก <code>ServeMux</code> ส่วนภาษาอื่นเรียก router — ความหมายเดียวกัน ·
+    ประโยคที่ใช้ได้เลย: <em>"โปรเจกต์นี้ใช้ router ของ stdlib หรือของ Gin"</em></dd>
+    <dt>route / register (ลงทะเบียน)</dt>
+    <dd>การจดหนึ่งบรรทัดลงตาราง · <em>"route นี้ยัง register ไม่ครบ"</em>
+    = ยังไม่ได้เขียน <code>HandleFunc</code> ให้มัน</dd>
+    <dt>endpoint</dt>
+    <dd>ที่อยู่ที่ยิงเข้ามาได้จริง · คำนี้คนใช้กันหลวม ๆ สองแบบ — บางทีหมายถึง path เฉย ๆ
+    บางทีหมายถึงคู่ method + path · <strong>จะให้ชัดก็พูด method มาด้วยเลย</strong>
+    เช่น <code>GET /users/{id}</code> · (ในเอกสาร OpenAPI บทเรียน
+    <a href="./0041-swagger-swaggo.html">41</a> เขาเรียกคู่ method + path ว่า <em>operation</em>) ·
+    คำนี้ใช้คุยกับฝั่ง frontend บ่อยที่สุด: <em>"endpoint นี้ตอบอะไรกลับมาบ้าง"</em></dd>
+    <dt>blocking (บล็อก)</dt>
+    <dd>ฟังก์ชันที่ค้างอยู่ตรงนั้น ไม่ยอมคืนค่าจนกว่าจะจบงาน · <code>ListenAndServe</code> เป็นแบบนี้ ·
+    <em>"บรรทัดนี้มัน block นะ โค้ดข้างล่างจะไม่ได้รัน"</em> เป็นประโยคที่จะได้ยินบ่อยมาก</dd>
+  </dl>
+</div>
+
 <h2>2 · อ่าน signature ให้ขาด — ทำไม <code>w</code> ไม่มี <code>*</code> แต่ <code>r</code> มี</h2>
 
 <p>
-  บรรทัดนี้จะตามคุณไปทุกที่ในชีวิตการเขียน Go backend:
+  ก่อนอื่น <em>signature</em> แปลว่า <strong>"หน้าตาของฟังก์ชัน"</strong> —
+  พารามิเตอร์ที่รับ + ค่าที่คืน เท่านั้น <strong>ชื่อไม่นับ</strong>
+  (เพราะงั้นฟังก์ชันจะชื่ออะไรก็เอาไปใส่ <code>HandleFunc</code> ได้ ขอแค่รับ/คืนตรงกัน)
+  <br>และบรรทัดนี้จะตามคุณไปทุกที่ในชีวิตการเขียน Go backend:
 </p>
 
 <pre><code><span class="k">func</span>(w http.ResponseWriter, r *http.Request)</code></pre>
@@ -229,6 +295,34 @@ unsafe.Sizeof(interface ค่า w)     = <strong>16 bytes</strong></code></pre
 </table>
 </div>
 
+<div class="analogy">
+  <span class="label">🔌 เทียบให้เห็นภาพ — เต้ารับไฟบ้าน กับ แฟ้มเอกสารหนา ๆ</span>
+  <p>
+    <strong><code>w</code> = เต้ารับไฟบ้าน</strong>
+    <br>พัดลมที่บ้านคุณไม่รู้เลยว่าไฟที่เสียบอยู่มาจากการไฟฟ้า หรือมาจากเครื่องปั่นไฟตอนไฟดับ
+    มันขอแค่<strong>รูปทรงของเต้ารับตรงกัน</strong> เท่านั้น เสียบแล้วก็หมุนได้เหมือนกัน
+    <br>· <code>ResponseWriter</code> = <strong>รูปทรงเต้ารับ</strong> — บอกแค่ว่า "ต้องทำได้ 3 อย่าง"
+    (<code>Header</code>, <code>Write</code>, <code>WriteHeader</code>)
+    <br>· ตอนรัน server จริง Go เสียบ <strong>ไฟบ้านจริง</strong> (<code>*http.response</code> ที่เขียนลงสายจริง) เข้ามา
+    <br>· ตอนเทส Go เสียบ <strong>เครื่องปั่นไฟ</strong> (<code>*httptest.ResponseRecorder</code> ที่แค่จดใส่กระดาษ) เข้ามา
+    <br>· <strong>handler ของเราคือพัดลม</strong> — ไม่ต้องแก้อะไรเลยสักบรรทัด
+  </p>
+  <p>
+    <strong><code>r</code> = ตำแหน่งของแฟ้มเอกสาร ไม่ใช่สำเนาของแฟ้ม</strong>
+    <br>แฟ้มคนไข้หนา 300 หน้า เวลาส่งต่อให้แผนกอื่น เขาบอกกันว่า
+    "แฟ้มวางอยู่ชั้นสอง โต๊ะ 4" — <strong>ไม่มีใครถ่ายเอกสารใหม่ทั้งแฟ้มทุกครั้งที่ส่งต่อ</strong>
+    <br>เพราะ (1) เปลืองเวลาเปล่า ๆ และ (2) ถ้าแผนกหลังเขียนเพิ่มลง<em>สำเนา</em>
+    แผนกอื่นก็จะไม่มีวันเห็นสิ่งที่เขาเขียน
+    <br>ดาว <code>*</code> ก็คือการบอก "ตำแหน่งของแฟ้ม" แทนการถ่ายสำเนา 304 ไบต์ทุก request
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> เต้ารับที่บ้านคุณเลือกเสียบเองได้
+    แต่ <code>w</code> <strong>เราไม่ได้เป็นคนเลือก</strong> — Go เป็นคนยัดของจริงเข้ามาให้ตอนเรียก handler
+    <br>และ "มีที่อยู่ของแฟ้ม" ก็<strong>ไม่ได้แปลว่ามีสิทธิ์เขียนลงแฟ้ม</strong>
+    ซึ่งเป็นเรื่องที่กล่องข้างล่างนี้จะเตือน
+  </p>
+</div>
+
 <div class="warn">
   <p style="margin-bottom:0">
     <span class="label">⚠️ pointer ไม่ได้แปลว่าแก้ได้ตามใจ</span>
@@ -268,6 +362,37 @@ $ go doc net/http.HandlerFunc
   <br>เพราะแบบนี้ <strong>ฟังก์ชันธรรมดาถึงกลายเป็น <code>Handler</code> ได้</strong> โดยไม่ต้องประกาศ struct
   — <code>HandleFunc</code> ก็แค่ห่อฟังก์ชันที่เราส่งไปด้วย <code>HandlerFunc(...)</code> แล้วจดลงตาราง
 </p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>interface</dt>
+    <dd>"รูปทรงเต้ารับ" — รายการ method ที่ต้องมี โดยไม่สนว่าของจริงคือใคร ·
+    คำถามที่ทำให้ senior ตอบได้ทันทีคือ <em>"ตัวนี้เป็น interface หรือ struct"</em>
+    เพราะคำตอบเปลี่ยนวิธีเขียนเทสไปทั้งหมด</dd>
+    <dt>concrete type / implementation</dt>
+    <dd>"ของจริงที่มาเสียบ" ในเต้ารับนั้น · ประโยคที่ใช้ได้เลย:
+    <em>"ตอน runtime ตัวจริงที่อยู่หลัง <code>w</code> คือ <code>*http.response</code>"</em> ·
+    วิธีดูด้วยตาคือพิมพ์ <code>%T</code> อย่างที่ทำไปข้างบน</dd>
+    <dt>pointer</dt>
+    <dd>"ที่อยู่ของของ" ไม่ใช่ตัวของ · เครื่องหมาย <code>*</code> หน้าชนิด ·
+    เวลาถามให้พูดว่า <em>"ตรงนี้รับเป็น value หรือ pointer"</em>
+    จะสื่อกว่าถามว่า "ต้องใส่ดาวไหม"</dd>
+    <dt>signature</dt>
+    <dd>หน้าตาของฟังก์ชัน = สิ่งที่รับ + สิ่งที่คืน · <strong>ชื่อไม่นับ</strong>
+    เพราะงั้นฟังก์ชันชื่ออะไรก็เอาไปใส่ <code>HandleFunc</code> ได้ ขอแค่รับ/คืนตรงกัน ·
+    <em>"ฟังก์ชันนี้ signature ไม่ตรงกับ <code>http.HandlerFunc</code>"</em>
+    คือประโยคที่อธิบาย error ตอนเอาฟังก์ชันไปใส่ <code>HandleFunc</code> ไม่ได้</dd>
+    <dt>middleware</dt>
+    <dd>ฟังก์ชันที่ห่อ handler อีกชั้น เพื่อทำงานบางอย่างก่อน/หลัง handler ตัวจริง ·
+    <em>"ตัว log นี้ทำเป็น middleware ดีกว่าไหม"</em> — ของจริงอยู่บทเรียน
+    <a href="./0039-gin-binding-middleware.html">39</a></dd>
+    <dt>adapter</dt>
+    <dd>ตัวแปลงหัวเสียบ — ของที่ทำให้ของชนิดหนึ่งเข้าที่ของอีกชนิดได้ ·
+    <code>HandlerFunc</code> คือ adapter ที่ทำให้ <em>ฟังก์ชันธรรมดา</em> ใช้แทน
+    <code>Handler</code> ได้ · เอกสารทางการเรียกมันแบบนี้ตรง ๆ</dd>
+  </dl>
+</div>
 
 <h2>3 · pattern <code>"GET /hello"</code> — ของใหม่ที่มาพร้อม Go 1.22</h2>
 
@@ -529,8 +654,8 @@ panic: pattern "GET /a/b/{y}" conflicts with pattern "GET /a/{x}/c":
     </tr>
     <tr>
       <td><code>json.NewEncoder(w).Encode(v)</code></td>
-      <td>เขียนตรงลง <code>w</code> เป็นสาย ไม่พักใน RAM · <strong>ใส่ <code>\n</code> ท้ายให้เสมอ</strong></td>
-      <td><strong>เกือบทุกกรณี</strong> — สั้นกว่าและไม่กินหน่วยความจำเพิ่ม</td>
+      <td>ปั้น JSON แล้วเขียนลง <code>w</code> ให้เลยในขั้นตอนเดียว (ก็ปั้นทั้งก้อนใน RAM เหมือนกัน แค่เราไม่ต้องรับ <code>[]byte</code> มาถือเอง) · <strong>ใส่ <code>\n</code> ท้ายให้เสมอ</strong></td>
+      <td><strong>เกือบทุกกรณี</strong> — เขียนสั้นกว่า พลาดยากกว่า</td>
     </tr>
   </tbody>
 </table>
@@ -557,6 +682,30 @@ Content-Length: 28
   client บางตัวก็ยังอ่านได้ แต่บางตัว (เช่น <code>fetch</code> ที่เช็ค Content-Type
   หรือ SDK ที่ generate มา) จะปฏิเสธ <strong>แล้วคุณจะหาสาเหตุไม่เจอเพราะ body ดูถูกทุกอย่าง</strong>
 </p>
+
+<div class="analogy">
+  <span class="label">📦 เทียบให้เห็นภาพ — ป้ายหน้ากล่องพัสดุ</span>
+  <p>
+    ส่งพัสดุทุกครั้งจะมีสองส่วนแยกกันชัดเจน: <strong>ของข้างในกล่อง</strong> กับ
+    <strong>ป้ายที่แปะหน้ากล่อง</strong>
+    <br>ข้างในเป็นแก้วน้ำ แต่ป้ายเขียนว่า "เสื้อผ้า" — <strong>กล่องยังส่งถึงปลายทางได้ปกติ</strong>
+    ไม่มีใครทัก ไม่มีใครตีกลับ
+    <br>แต่คนขนของจะโยนกล่องนั้นเหมือนโยนเสื้อผ้า เพราะเขา<em>เชื่อป้าย ไม่ได้เปิดดูข้างใน</em>
+  </p>
+  <p>
+    · <strong>ของข้างใน</strong> = <code>body</code> — ในตัวอย่างข้างบนคือ JSON ที่ถูกต้องทุกตัวอักษร
+    <br>· <strong>ป้ายหน้ากล่อง</strong> = header <code>Content-Type</code>
+    <br>· ถ้าเราไม่แปะป้ายเอง Go จะ<strong>แอบเปิดดู 512 ไบต์แรกแล้วเดาให้</strong>
+    (<code>http.DetectContentType</code>) — และมันเดา JSON ไม่ออก จึงแปะว่า <code>text/plain</code>
+    <br>ผลคือ frontend บางตัวเห็นป้ายว่า "ข้อความธรรมดา" ก็ไม่ยอมแปลงเป็น JSON ให้
+    <strong>ทั้งที่ข้างในคือ JSON เต็ม ๆ</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> พัสดุเปิดกล่องดูทีหลังได้ แต่ <code>Content-Type</code>
+    <strong>แก้ทีหลังไม่ได้เลย</strong> — พอ body ไหลออกไปแล้ว ป้ายก็ถูกส่งไปก่อนหน้านั้นแล้ว
+    ซึ่งคือเรื่องของหัวข้อถัดไป
+  </p>
+</div>
 
 <p>ทางแก้คือ set เอง — แต่ <strong>ต้อง set ให้ถูกจังหวะ</strong> ผมรันเทียบให้ดูสองแบบ:</p>
 
@@ -602,6 +751,35 @@ Content-Length: 28
   </p>
 </div>
 
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>header กับ body</dt>
+    <dd>ทุก response แบ่งเป็นสองส่วนเสมอ — <em>header</em> คือป้ายกำกับ (ใครส่ง ยาวเท่าไหร่ ชนิดอะไร)
+    <em>body</em> คือเนื้อหาจริง · เวลาแจ้งบั๊กให้แยกให้ชัด:
+    <em>"body ถูก แต่ header <code>Content-Type</code> ผิด"</em> — ประโยคเดียวจบ ไม่ต้องอธิบายยาว</dd>
+    <dt>Content-Type / MIME type</dt>
+    <dd>ป้ายบอกชนิดของ body เช่น <code>application/json</code>, <code>text/plain</code> ·
+    ชื่อรูปแบบนี้เรียกรวม ๆ ว่า MIME type · คำถามที่ตรงจุดคือ
+    <em>"endpoint นี้ตอบ Content-Type อะไร"</em></dd>
+    <dt>content sniffing</dt>
+    <dd>"การแอบเดาชนิดจากเนื้อไฟล์" เมื่อไม่มีป้ายบอก · Go ทำผ่าน
+    <code>http.DetectContentType</code> · และ header <code>X-Content-Type-Options: nosniff</code>
+    ที่เห็นบ่อย ๆ แปลว่า <em>"ห้าม browser เดาเอง ให้เชื่อป้ายอย่างเดียว"</em></dd>
+    <dt>marshal / encode</dt>
+    <dd>การแปลง struct ของ Go ให้เป็น JSON · <code>Marshal</code> = ได้ <code>[]byte</code>
+    กลับมาถือเอง (เช็ค error / ดูขนาดได้ก่อนเริ่มตอบ) · <code>Encode</code> = ปั้นแล้วเขียนลง
+    <code>io.Writer</code> ให้เลยในขั้นตอนเดียว ใส่ <code>\n</code> ท้ายให้ด้วย ·
+    <strong>ทั้งคู่ปั้นทั้งก้อนใน RAM เหมือนกัน</strong> <code>Encode</code> แค่สั้นกว่า —
+    อย่าเรียกมันว่า <em>streaming</em> เพราะคำนั้นหมายถึงการทยอยส่งออกทีละชิ้น ซึ่ง <code>Encode</code> ไม่ได้ทำ ·
+    ขาตรงข้ามคือ <em>unmarshal / decode</em> ตอนอ่าน JSON เข้ามา</dd>
+    <dt>status code</dt>
+    <dd>เลขสามหลักที่บอกผลลัพธ์ · <code>2xx</code> = สำเร็จ · <code>4xx</code> = คนเรียกทำผิด ·
+    <code>5xx</code> = ฝั่งเราพัง · พูดว่า <em>"endpoint นี้ควรตอบ 400 ไม่ใช่ 500"</em>
+    จะสื่อกว่าพูดว่า "มัน error"</dd>
+  </dl>
+</div>
+
 <h2>6 · หัวใจของบท — <code>ResponseWriter</code> เขียนได้ครั้งเดียว</h2>
 
 <p>
@@ -625,6 +803,30 @@ Content-Length: 28
   w.<span class="f">Header</span>().<span class="f">Set</span>(...)     <strong>สาย</strong> — ไม่มีผล ไม่มี error ไม่มี log
   w.<span class="f">WriteHeader</span>(400)      <strong>สาย</strong> — ไม่มีผล แต่ <em>มี log</em> ฝั่ง server
   w.<span class="f">Write</span>(...)            ต่อ body ได้เรื่อย ๆ ตามปกติ</pre>
+</div>
+
+<div class="analogy">
+  <span class="label">📢 เทียบให้เห็นภาพ — ประกาศเสียงตามสายในห้าง</span>
+  <p>
+    พนักงานกดไมค์ประกาศในห้าง: <em>"ประกาศตามหาเด็กชายอายุ 5 ขวบ…"</em>
+    <br>ประโยคเปิดนั้น<strong>ออกลำโพงไปแล้ว ดึงกลับไม่ได้</strong> คนทั้งห้างได้ยินพร้อมกันหมด
+    <br>เขาจะพูดต่ออีกกี่ประโยคก็ได้ — แต่จะเปลี่ยนประโยคเปิดเป็น
+    "ประกาศโปรโมชั่นชั้น 4" ไม่ได้แล้ว เพราะคนตัดสินใจไปแล้วว่าเรื่องนี้เกี่ยวกับตัวเองไหม
+  </p>
+  <p>
+    · <strong>ประโยคเปิดที่บอกว่าเรื่องอะไร</strong> = <code>status</code> + <code>header</code> ทั้งชุด
+    — ส่งได้<strong>ครั้งเดียว</strong> ตอนที่ <code>WriteHeader</code> ทำงาน
+    <br>· <strong>เนื้อความที่พูดต่อ</strong> = <code>body</code> — <code>Write</code> ต่อไปเรื่อย ๆ ได้
+    <br>· และถ้าพนักงานลืมกดประกาศหัวเรื่อง แล้วพูดเนื้อความเลย ระบบจะ<strong>ใส่หัวเรื่อง
+    "ประกาศทั่วไป" ให้อัตโนมัติ</strong> — นั่นคือ <code>Write</code> ที่แอบเรียก
+    <code>WriteHeader(200)</code> ให้เราโดยที่เราไม่ได้สั่ง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ในห้างพูดผิดยังขอโทษแล้วประกาศแก้ได้
+    แต่ HTTP <strong>ไม่มีช่องให้แก้เลย</strong> และที่ร้ายกว่าคือ Go
+    <strong>ไม่ฟ้อง error ไม่ panic</strong> — บอกเราแค่ log บรรทัดเดียวฝั่ง server เท่านั้น
+    ซึ่งเป็นเหตุผลที่บั๊กชนิดนี้อยู่ยาวเป็นปี
+  </p>
 </div>
 
 <p>
@@ -730,6 +932,32 @@ after WriteHeader</code></pre>
       แค่คราวนี้ "ลืม return" ไม่ได้ทำให้ค่าผิด แต่ทำให้ <strong>HTTP response ผิด</strong>
     </p>
   </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <p>หัวข้อนี้คือหัวใจของบท — <strong>ศัพท์ห้าคำนี้ทำให้คุณอธิบายบั๊กให้ senior ฟังจบใน 1 ประโยค</strong></p>
+  <dl>
+    <dt>commit (response ถูก commit แล้ว)</dt>
+    <dd>"จุดไม่ย้อนกลับ" ในภาพข้างบน · หมายถึง status + header <strong>ถูกล็อกแล้ว แก้ไม่ได้อีก</strong>
+    (Go จดลงบัฟเฟอร์เตรียมส่งเรียบร้อย — ไม่ว่าไบต์จะออกจากเครื่องไปจริงหรือยัง) ·
+    ประโยคที่ตรงที่สุดเวลาไล่บั๊กคือ
+    <em>"handler นี้ commit response ไปตั้งแต่บรรทัดไหน"</em></dd>
+    <dt>implicit 200</dt>
+    <dd>"200 ที่เกิดขึ้นเองโดยไม่มีใครสั่ง" — ผลของการเขียน body ก่อนสั่ง status ·
+    <em>"ตรงนี้มัน implicit 200 ไปแล้ว <code>WriteHeader(400)</code> เลยไม่มีผล"</em></dd>
+    <dt>superfluous WriteHeader</dt>
+    <dd>ข้อความ log ของ Go เอง แปลว่า "สั่ง status ซ้ำโดยไม่จำเป็น" ·
+    <strong>คำนี้ค้นหาได้ตรงตัว</strong> — พิมพ์ถาม AI ว่า
+    <em>"Go บอก superfluous response.WriteHeader call แปลว่าอะไร"</em>
+    ได้คำตอบตรงจุดกว่าถามว่า "ทำไม API ตอบ 200"</dd>
+    <dt>guard clause / early return</dt>
+    <dd>"เจอเคสผิดแล้วตอบแล้วออกทันที" ด้วย <code>return</code> ·
+    <em>"ตรงนี้ลืม early return"</em> คือคำที่ reviewer ใช้จริงตอน comment PR</dd>
+    <dt>silent failure (พังเงียบ)</dt>
+    <dd>บั๊กที่ไม่ทำให้อะไรพัง ไม่มี error ไม่มี alert แต่ผลลัพธ์ผิด ·
+    <em>"บั๊กนี้ fail เงียบ เทสเลยไม่จับ"</em> — เป็นคำที่ทำให้คนอื่นรู้ทันทีว่าทำไมมันรอดมาได้นาน</dd>
+  </dl>
 </div>
 
 <h2>7 · <code>ListenAndServe</code> คืน <code>error</code> เสมอ — อย่ากลืนมัน</h2>
