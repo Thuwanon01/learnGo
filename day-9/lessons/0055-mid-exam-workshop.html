@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 55 — อ่านโจทย์สอบกลางภาคให้ขาด ก่อนลงมือเขียน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 55 · Day 9 · โจทย์สอบกลางภาค</p>
+  <h1>อ่านโจทย์สอบกลางภาคให้ขาด ก่อนลงมือเขียน</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="../../day-8/lessons/0035-query-body-header.html">บทเรียน 35</a> (query · body · header)
+    และ <a href="0053-keycloak-in-go.html">บทเรียน 53</a> (ตาราง <code>users</code>) มาก่อน</p>
+  <p class="standfirst">
+    บทนี้มาจากสไลด์ Day 9 ฉบับหลังเรียน <strong>หน้า 65–66</strong>
+    <br>สไลด์ฉบับก่อนเรียนมีหน้าโจทย์แค่<strong>หน้าเดียว</strong> ฉบับหลังเรียน<strong>เพิ่มมาอีกหนึ่งหน้าเต็ม ๆ</strong>
+    และหน้าที่เพิ่มมาคือหน้าที่ยากกว่า
+    <br>โจทย์ทั้งหมดมี 9 ข้อ ซึ่งอ่านผ่าน ๆ แล้วดูเหมือน CRUD ธรรมดา —
+    แต่ในนั้นมี<strong>คำอยู่ 4 คำที่เปลี่ยนงานทั้งข้อ</strong>ถ้าอ่านข้าม
+    <br>บทนี้<strong>ไม่ได้เฉลยโค้ด</strong> เพราะมันคือข้อสอบของคุณ
+    สิ่งที่ผมทำคือ: แปลโจทย์ทีละคำ · ชี้ที่ที่คนพลาดพร้อมผลรันจริง ·
+    และบอก<strong>สิ่งที่โจทย์ไม่ได้บอกแต่คุณต้องตัดสินใจเอง</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้ (รันวันที่ 25 สิงหาคม 2026)</strong></p>
+  <pre style="margin:0.5rem 0"><code>go version go1.26.5 darwin/arm64
+github.com/gin-gonic/gin v1.12.0
+RFC 9110 (HTTP Semantics)      <span class="c"># อ่านหัวข้อ 9.3.4 PUT ของจริง</span></code></pre>
+  <p style="margin-bottom:0">
+    ผลรันทุกอันในบทนี้มาจาก <code>httptest</code> ที่รันจริงบนเครื่องผม
+    ไม่ได้เขียนจากความจำ — คุณ copy โค้ดในกล่องไปรันซ้ำได้
+  </p>
+</div>
+
+<h2>1 · โจทย์ทั้ง 9 ข้อ วางเรียงในที่เดียว</h2>
+
+<p>สไลด์แบ่งเป็น 4 กลุ่ม ผมเรียงตามนั้นและใส่เลขข้อกำกับไว้ให้อ้างถึงง่าย:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>กลุ่ม</th><th>สิ่งที่ต้องทำ</th><th>มาจากหน้า</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td rowspan="2">Recipe</td><td><code>PUT /api/v1/recipes/:id</code> — <strong>replace</strong> ข้อมูล recipe ตาม id</td><td rowspan="4">65 <em>(หน้าใหม่)</em></td></tr>
+    <tr><td>2</td><td><code>DELETE /api/v1/recipes/:id</code> — ลบแบบ <strong>soft delete</strong></td></tr>
+    <tr><td>3</td><td rowspan="2">Profile</td><td><code>GET /api/v1/users/:id</code> — <code>:id</code> <strong>รับได้แค่ <code>"me"</code></strong></td></tr>
+    <tr><td>4</td><td><code>PUT /api/v1/users/:id</code> — <code>:id</code> รับได้แค่ <code>"me"</code> และแก้ได้<strong>แค่ <code>bio</code> กับ <code>imageUrl</code></strong></td></tr>
+    <tr><td>5</td><td rowspan="3">Favorite</td><td><code>POST /api/v1/recipes/:id/favorite</code></td><td rowspan="5">66</td></tr>
+    <tr><td>6</td><td><code>DELETE /api/v1/recipes/:id/favorite</code></td></tr>
+    <tr><td>7</td><td>เพิ่ม query <code>favorite=true|false</code> ที่ <code>GET /api/v1/recipes</code></td></tr>
+    <tr><td>8</td><td rowspan="2">Rating</td><td><code>POST /api/v1/recipes/:id/rating</code></td></tr>
+    <tr><td>9</td><td>ส่ง <code>averageRating</code> เพิ่มใน response ของ <code>GET /api/v1/recipes</code> และ <code>GET /api/v1/recipes/:id</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  รวมแล้วเป็น endpoint ใหม่ <strong>7 เส้น</strong> และเป็นการ<strong>แก้ของเดิม 2 จุด</strong> (ข้อ 7 กับข้อ 9)
+  <br>ข้อ 7 กับ 9 คือสองข้อที่คนลืมบ่อยที่สุด เพราะมันไม่ได้ขึ้นต้นด้วยคำว่า "สร้าง"
+</p>
+
+<h2>2 · สี่คำในโจทย์ที่เปลี่ยนงานทั้งข้อ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำในโจทย์</th><th>อ่านผ่าน ๆ จะเข้าใจว่า</th><th>ที่จริงแปลว่า</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>replace</strong> (ข้อ 1)</td>
+      <td>"แก้ข้อมูล"</td>
+      <td>ส่งอะไรมา ของเดิม<strong>ถูกแทนทั้งก้อน</strong> · ช่องที่ไม่ส่งมาต้อง<strong>กลายเป็นค่าว่าง</strong> ไม่ใช่ค่าเดิม</td>
+    </tr>
+    <tr>
+      <td><strong>Soft deleted</strong> (ข้อ 2)</td>
+      <td>"ลบ"</td>
+      <td>แถวยัง<strong>อยู่ในตาราง</strong> แค่ประทับ <code>deleted_at</code> · ทุก query หลังจากนี้ต้องกรองมันออก</td>
+    </tr>
+    <tr>
+      <td><strong>รับได้เพียงแค่ "me" เท่านั้น</strong> (ข้อ 3, 4)</td>
+      <td>"ใส่ id ก็ได้"</td>
+      <td>ใส่ id จริงต้อง<strong>ถูกปฏิเสธ</strong> · ตัวตนคนเรียกมาจาก <strong>token ไม่ใช่จาก URL</strong></td>
+    </tr>
+    <tr>
+      <td><strong><code>true|false</code></strong> (ข้อ 7)</td>
+      <td>"ส่ง <code>true</code> เพื่อกรอง"</td>
+      <td>มี <strong>3 สถานะ</strong> ไม่ใช่ 2 — <em>ไม่ส่ง</em> / <em>true</em> / <em>false</em> ต้องได้ผลคนละแบบ</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <span class="label">✅ ฉบับ Post แก้คำนี้ให้ชัดขึ้นจริง</span>
+  <p style="margin-bottom:0">
+    ข้อ 7 ในสไลด์ฉบับก่อนเรียนเขียนว่า <code>favorite=true</code> เฉย ๆ
+    <br>ฉบับหลังเรียนเปลี่ยนเป็น <strong><code>favorite=true|false</code></strong>
+    <br>เปลี่ยนไปแค่ 6 ตัวอักษร แต่มัน<strong>เปลี่ยนโจทย์จากง่ายเป็นยาก</strong> —
+    รายละเอียดอยู่หัวข้อ 6 ซึ่งเป็นหัวข้อที่ยาวที่สุดในบทนี้ด้วยเหตุผลนั้นพอดี
+  </p>
+</div>
+
+<h2>3 · <code>PUT</code> แปลว่า replace — RFC เขียนไว้ตรง ๆ</h2>
+
+<p>ไม่ต้องเชื่อผม เปิด RFC 9110 หัวข้อ 9.3.4 อ่านประโยคแรกได้เลย:</p>
+
+<pre><code>The PUT method requests that the state of the target resource be
+<strong>created or replaced</strong> with the state defined by the representation
+enclosed in the request message content.</code></pre>
+
+<p>
+  แล้ว RFC ยังบอกต่อว่า<strong>ต้องตอบ status อะไร</strong> ซึ่งเป็นจุดที่โจทย์ไม่ได้บอก
+  แต่คนตรวจงานจะดู:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สถานการณ์</th><th>RFC บอกให้ตอบ</th><th>ระดับความบังคับ</th></tr></thead>
+  <tbody>
+    <tr><td>ยังไม่มีของ แล้ว PUT สร้างขึ้นมาใหม่</td><td><code>201 Created</code></td><td><strong>MUST</strong></td></tr>
+    <tr><td>มีของอยู่แล้ว แล้วแก้สำเร็จ</td><td><code>200 OK</code> หรือ <code>204 No Content</code></td><td><strong>MUST</strong> (เลือกได้ 1 ใน 2)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ข้อ 4 เรียกตัวเองว่า PUT แต่บรรยายพฤติกรรมของ PATCH</span>
+  <p>
+    อ่านข้อ 4 อีกรอบ: <em>"<code>PUT /api/v1/users/:id</code> เพื่อ replace ข้อมูลของ user …
+    และ update ได้เพียง <code>bio</code> และ <code>imageUrl</code> เท่านั้น"</em>
+  </p>
+  <p>
+    สองครึ่งของประโยคนี้<strong>ขัดกันเองตามนิยามของ RFC</strong> —
+    "replace" คือแทนทั้งก้อน แต่ "แก้ได้แค่สองช่อง" คือแก้บางส่วน ซึ่งคือ <code>PATCH</code>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>แล้วทำยังไง:</strong> ทำตามโจทย์ — ใช้ <code>PUT</code> และรับแก้แค่ <code>bio</code> กับ <code>imageUrl</code>
+    <br>โจทย์ข้อสอบชนะ RFC เสมอ <strong>แต่ให้รู้ว่ามันไม่ตรงนิยาม</strong>
+    เพราะวันที่คุณออกแบบ API เองในงานจริง คุณจะต้องเป็นคนเลือกว่าจะใช้ verb ไหน
+    <br>และในทางปฏิบัติ ข้อจำกัดนี้<strong>มีเหตุผลของมัน</strong>: ช่องอื่นในตาราง <code>users</code>
+    (<code>email</code> · <code>name</code> · <code>uid</code>) เป็นของที่<strong>ลอกมาจาก Keycloak</strong>
+    ให้ผู้ใช้แก้ผ่าน API เราไม่ได้ เดี๋ยว login รอบหน้าก็โดนทับกลับอยู่ดี
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — กรอกใบคำร้องใหม่ทั้งใบ กับ ขีดฆ่าแก้ทีละช่อง</span>
+  <p>
+    ไปติดต่อราชการเพื่อแก้ที่อยู่ มีสองวิธี:
+    <br>· <strong>กรอกใบใหม่ทั้งใบ</strong> — เขาฉีกใบเก่าทิ้ง ใช้ใบใหม่แทน
+    ช่องไหนคุณเว้นว่าง ก็<strong>ว่างจริง ๆ</strong> ไม่ได้ไปลอกจากใบเก่ามาให้
+    <br>· <strong>ยื่นคำร้องขอแก้เฉพาะช่องที่อยู่</strong> — ใบเก่ายังอยู่ เขาแก้ให้ช่องเดียว ช่องอื่นเหมือนเดิม
+  </p>
+  <p>
+    <code>PUT</code> คือวิธีแรก · <code>PATCH</code> คือวิธีที่สอง
+    <br>คนที่คิดว่า <code>PUT</code> = "แก้ข้อมูล" มักส่งมาแค่ช่องที่อยากแก้
+    แล้วงงว่าทำไมชื่อกับเบอร์โทรหายไป — ทั้งที่ระบบทำถูกตามที่บอกทุกอย่าง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> เจ้าหน้าที่เห็นใบที่กรอกไม่ครบจะทักคุณก่อน
+    ("ช่องเบอร์โทรไม่ได้เขียนนะคะ") แต่ API <strong>ไม่ทัก</strong> —
+    มันทำตามที่ได้รับเป๊ะ ๆ แล้วตอบ <code>200</code> กลับมาเหมือนทุกอย่างเรียบร้อย
+    <br>ความ "เรียบร้อย" ที่ผิดนี้แหละที่ทำให้ bug ของ <code>PUT</code> ถูกเจอช้ากว่าปกติ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>replace (semantics ของ <code>PUT</code>)</dt>
+    <dd>แทนสถานะของ resource ทั้งก้อนด้วยสิ่งที่ส่งมา ·
+        <strong>ถาม senior ได้ว่า “endpoint นี้ PUT แบบ replace จริง หรือ PATCH ที่ตั้งชื่อว่า PUT”</strong>
+        คำถามนี้จะได้คำตอบเร็วกว่าถามว่า “ต้องส่งอะไรมาบ้าง”</dd>
+    <dt>partial update (semantics ของ <code>PATCH</code>)</dt>
+    <dd>แก้เฉพาะช่องที่ส่งมา ช่องที่ไม่ส่งคงค่าเดิม ·
+        <strong>พิมพ์บอก AI ได้ว่า “this handler must do a partial update — unset fields keep their current value”</strong></dd>
+    <dt>MUST / SHOULD ใน RFC</dt>
+    <dd><code>MUST</code> = ไม่ทำถือว่าผิดมาตรฐาน · <code>SHOULD</code> = ควรทำ เว้นแต่มีเหตุผลชัด ·
+        <strong>เวลาอ้าง RFC ให้บอกด้วยว่าเป็นระดับไหน</strong> จะน่าเชื่อกว่าพูดว่า “RFC บอกว่า…”</dd>
+  </dl>
+</div>
+
+<h2>4 · <code>:id</code> ที่รับได้แค่ <code>"me"</code> — ทำไมออกแบบแบบนี้</h2>
+
+<p>
+  คำถามแรกที่ควรถามคือ <strong>"ถ้ารับได้แค่คำเดียว จะทำเป็น <code>:id</code> ทำไม"</strong>
+  <br>ทำไมไม่เขียน <code>GET /api/v1/users/me</code> ไปตรง ๆ
+</p>
+
+<p>
+  คำตอบคือ <strong>เผื่อวันข้างหน้า</strong> — เส้นทาง URL ถูกจองไว้ในรูปแบบที่จะขยายได้
+  วันที่แอปมีหน้าโปรไฟล์สาธารณะ <code>GET /api/v1/users/&lt;uuid&gt;</code> จะเสียบเข้ามาได้เลย
+  โดย<strong>ไม่ต้องเปลี่ยน URL ที่ client เก่าเรียกอยู่</strong>
+</p>
+
+<p>ผมลองจดเส้นนี้แล้วยิงสามแบบ:</p>
+
+<pre><code>r.GET(<span class="s">"/api/v1/users/:id"</span>, <span class="k">func</span>(c *gin.Context) {
+	<span class="k">if</span> c.Param(<span class="s">"id"</span>) != <span class="s">"me"</span> {
+		c.JSON(http.StatusForbidden, gin.H{<span class="s">"error"</span>: <span class="s">`only "me" is allowed`</span>})
+		<span class="k">return</span>
+	}
+	<span class="c">// ...</span>
+})</code></pre>
+
+<pre><code>/api/v1/users/me    -&gt; 200 {"id":"me"}
+/api/v1/users/42    -&gt; 403 {"error":"only \"me\" is allowed"}
+/api/v1/users/      -&gt; 404 404 page not found</code></pre>
+
+<p>
+  แถวล่างสุดคือของแถมที่ควรรู้: <strong>Gin ไม่ยอมให้ <code>:id</code> เป็นค่าว่าง</strong>
+  <br>ต่อท้ายด้วย <code>/</code> เฉย ๆ ไม่เข้า handler เลย ได้ 404 จาก router ตรง ๆ
+  แปลว่าคุณ<strong>ไม่ต้องเขียนโค้ดเช็คว่า id ว่างไหม</strong>
+</p>
+
+<div class="note">
+  <span class="label">📌 401 หรือ 403 — เลือกยังไง</span>
+  <p style="margin-bottom:0">
+    · ไม่ได้แนบ token มา หรือ token หมดอายุ → <strong><code>401 Unauthorized</code></strong>
+    ("คุณยังไม่ได้บอกว่าคุณเป็นใคร")
+    <br>· token ดี แต่พยายามเรียก <code>/users/42</code> ทั้งที่ระบบรับแค่ <code>me</code> → <strong><code>403 Forbidden</code></strong>
+    ("รู้แล้วว่าคุณเป็นใคร แต่ทำสิ่งนี้ไม่ได้")
+    <br>ทั้งสองตัวชื่อชวนสับสนมาตั้งแต่แรก — <code>401</code> ควรจะชื่อ <em>Unauthenticated</em> ด้วยซ้ำ
+    <br><strong>จุดสำคัญกว่าเลข:</strong> ตัวตนของคนเรียกต้องมาจาก <code>sub</code> ใน token
+    แล้วเอาไปหาแถวใน <code>users</code> ด้วยคอลัมน์ <code>uid</code> —
+    <strong>ห้ามเชื่อค่าอะไรก็ตามที่มาจาก URL</strong> ถ้าเชื่อ ใครก็สวมรอยเป็นคนอื่นได้
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — บอกชื่อเอง กับ ยื่นบัตรให้ดู</span>
+  <p>
+    ไปรับพัสดุที่เคาน์เตอร์ มีสองแบบ:
+    <br>· <strong>"ผมมารับของคุณสมชายครับ"</strong> — พนักงานเชื่อคำพูด แล้วยกของให้
+    <br>· <strong>ยื่นบัตรประชาชนให้ดู</strong> — พนักงานอ่านชื่อจากบัตร ไม่ได้อ่านจากปากคุณ
+  </p>
+  <p>
+    ค่า <code>:id</code> ใน URL = <strong>คำพูด</strong> — ใครพิมพ์อะไรมาก็ได้
+    <br>claim <code>sub</code> ใน token = <strong>บัตรที่มีลายเซ็นดิจิทัล</strong> ปลอมไม่ได้เพราะ Keycloak เซ็นไว้
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานที่เผลอเชื่อคำพูด ยังพอมีกล้องวงจรปิดกับสามัญสำนึกช่วยจับผิด
+    ("คนนี้มารับของคนอื่นทุกวันเลยนะ")
+    <br>แต่ API ที่เชื่อ <code>:id</code> จาก URL <strong>ไม่มีทางรู้เลย</strong> —
+    request ที่สวมรอยกับ request ปกติหน้าตาเหมือนกันทุกตัวอักษร ต่างกันแค่ตัวเลขใน URL
+    <br>นี่คือเหตุผลที่โจทย์บังคับให้ <code>:id</code> รับได้แค่ <code>"me"</code>:
+    มัน<strong>ตัดทางเลือกที่จะเชื่อ URL ทิ้งตั้งแต่ต้น</strong>
+  </p>
+</div>
+
+<h2>5 · Soft delete — แถวไม่ได้หายไปไหน</h2>
+
+<p>
+  ตาราง <code>users</code> กับ <code>recipes</code> มีคอลัมน์ <code>deleted_at</code> อยู่แล้ว
+  (ดู <a href="0053-keycloak-in-go.html">บทเรียน 53</a>) และ GORM รู้จักมันเองถ้าตั้งชนิดเป็น
+  <code>gorm.DeletedAt</code>
+</p>
+
+<p>สิ่งที่ต้องระวังคือ <strong>สิ่งที่เกิดขึ้นหลังจากลบ</strong> ไม่ใช่ตัวการลบ:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำถามที่โจทย์ไม่ได้ตอบให้</th><th>สิ่งที่คุณต้องตัดสินใจ</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /recipes</code> หลังลบ — เห็นไหม</td><td><strong>ต้องไม่เห็น</strong> · GORM กรอง <code>deleted_at IS NULL</code> ให้เอง ถ้าใช้ชนิดถูก</td></tr>
+    <tr><td><code>GET /recipes/:id</code> ของที่ถูกลบ</td><td><code>404</code> — ไม่ใช่ <code>410 Gone</code> และไม่ใช่ตอบข้อมูลกลับไป</td></tr>
+    <tr><td>ลบซ้ำอันเดิมอีกรอบ</td><td>เลือกได้ แต่ต้อง<strong>เลือกแล้วทำให้เหมือนกันทุกครั้ง</strong> — <code>404</code> (ไม่เจอของที่ยังอยู่) หรือ <code>204</code> (ผลลัพธ์สุดท้ายเหมือนกัน)</td></tr>
+    <tr><td>ลบ recipe ที่มีคนกด favorite ไว้</td><td>แถวใน favorite ค้างอยู่ · <strong>ข้อ 7 ต้องกรองมันออกด้วย</strong> ไม่งั้นจะมีรายการโปรดที่ชี้ไปหาของที่ไม่มีแล้ว</td></tr>
+    <tr><td>ตอบอะไรกลับตอนลบสำเร็จ</td><td><code>204 No Content</code> (ไม่มี body) เป็นตัวเลือกที่ตรงความหมายที่สุด</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แถวสุดท้ายของตารางคือ<strong>กับดักที่คนพลาดกันจริง ๆ</strong> —
+  ข้อ 2 กับข้อ 7 อยู่คนละหน้าสไลด์ คนละกลุ่มหัวข้อ
+  แต่มันเกี่ยวกันโดยตรง และไม่มีใครบอกคุณ
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ลบชื่อออกจากสารบัญ แต่หน้ายังอยู่ในเล่ม</span>
+  <p>
+    หนังสือเล่มหนึ่งเลิกขายบทที่ 7 แล้ว วิธีที่ง่ายที่สุดคือ<strong>ลบชื่อบทออกจากสารบัญ</strong>
+    <br>คนเปิดสารบัญหาไม่เจอ = เหมือนบทนั้นไม่มีอยู่
+    <br>แต่<strong>หน้ากระดาษยังอยู่ในเล่มครบ</strong> — เปิดข้ามไปตรง ๆ ก็ยังอ่านได้
+  </p>
+  <p>
+    soft delete ทำงานแบบนี้เป๊ะ: ประทับ <code>deleted_at</code> = ลบชื่อออกจากสารบัญ ·
+    ทุก query ที่มี <code>WHERE deleted_at IS NULL</code> = คนที่เปิดผ่านสารบัญ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> สารบัญของหนังสือมีที่เดียว ลบครั้งเดียวจบ
+    <br>แต่ฐานข้อมูลมี "สารบัญ" อยู่ทุกที่ที่มีคน <code>JOIN</code> ตารางนั้น —
+    ตารางรายการโปรดก็เป็นสารบัญอีกอันหนึ่ง และ<strong>มันไม่ได้อัปเดตตามให้เอง</strong>
+    <br>ลบ recipe แล้วลืมกรองที่ฝั่งรายการโปรด = ผู้ใช้เห็นชื่อบทในสารบัญเล่มอื่น
+    กดเข้าไปแล้วเจอหน้าว่าง
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>soft delete / hard delete</dt>
+    <dd>ประทับเวลาแทนการลบแถว · ตรงข้ามคือ <em>hard delete</em> ที่ลบจริง ·
+        <strong>ถาม senior ได้ว่า “ตารางนี้ soft delete หรือ hard delete” ก่อนเขียน query แรก</strong>
+        เพราะคำตอบเปลี่ยนทุก <code>WHERE</code> ที่คุณจะเขียนต่อจากนั้น</dd>
+    <dt><code>Unscoped()</code> ของ GORM</dt>
+    <dd>สั่งให้ query <strong>ไม่</strong>กรอง <code>deleted_at IS NULL</code> ·
+        เป็นทางเดียวที่จะเห็นแถวที่ถูกลบตอน debug ·
+        <strong>พิมพ์ถาม AI ได้ว่า “show me the soft-deleted rows with Unscoped and their deleted_at”</strong></dd>
+    <dt><code>204 No Content</code></dt>
+    <dd>"สำเร็จ และไม่มีอะไรจะส่งกลับ" — ห้ามมี body ·
+        <strong>ใช้คำนี้แทนการพูดว่า “ตอบ 200 แต่ body ว่าง”</strong> ซึ่งเป็นคนละอย่างและทำให้ client บางตัวงง</dd>
+    <dt><code>404</code> vs <code>410 Gone</code></dt>
+    <dd><code>404</code> = "ไม่เจอ" (อาจไม่เคยมี หรือมีแล้วหายไป) ·
+        <code>410</code> = "เคยมี และหายไปถาวรแล้ว" ·
+        <strong>soft delete ควรตอบ <code>404</code></strong> เพราะ <code>410</code> เป็นการยืนยันกับคนนอกว่าของชิ้นนี้เคยมีอยู่จริง</dd>
+  </dl>
+</div>
+
+<h2>6 · <code>favorite=true|false</code> — สามสถานะ ไม่ใช่สอง</h2>
+
+<p>
+  นี่คือข้อที่ทำให้คนเสียคะแนนมากที่สุด และเสียแบบ<strong>ที่โค้ดไม่ error เลย</strong>
+</p>
+
+<p>ลองไล่ดูว่าผู้ใช้ยิงมาได้กี่แบบ:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ผู้ใช้ยิงมาว่า</th><th>แปลว่าเขาต้องการ</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /api/v1/recipes</code></td><td>เอา<strong>ทั้งหมด</strong> ไม่สนใจ favorite</td></tr>
+    <tr><td><code>GET /api/v1/recipes?favorite=true</code></td><td>เอา<strong>เฉพาะที่กดไว้</strong></td></tr>
+    <tr><td><code>GET /api/v1/recipes?favorite=false</code></td><td>เอา<strong>เฉพาะที่ยังไม่ได้กด</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สามสถานะ แต่ชนิด <code>bool</code> ของ Go เก็บได้แค่สองค่า
+  <br>ผมเขียน struct สองแบบวางคู่กันแล้วยิงจริงทั้งสี่แบบ ดูผลเทียบกัน:
+</p>
+
+<pre><code><span class="k">type</span> Filter <span class="k">struct</span> {
+	Favorite *<span class="k">bool</span> <span class="s">`form:"favorite"`</span>   <span class="c">// ← pointer</span>
+}
+<span class="k">type</span> FilterPlain <span class="k">struct</span> {
+	Favorite <span class="k">bool</span> <span class="s">`form:"favorite"`</span>    <span class="c">// ← ธรรมดา</span>
+}</code></pre>
+
+<pre><code>/x                   -&gt; *bool=<strong>nil (ไม่ได้ส่งมา)</strong>  bool=<strong>false</strong>  Query()=""       Has=false
+/x?favorite=true     -&gt; *bool=true                bool=true   Query()="true"   Has=true
+/x?favorite=false    -&gt; *bool=<strong>false</strong>               bool=<strong>false</strong>  Query()="false"  Has=true
+/x?favorite=         -&gt; *bool=false               bool=false  Query()=""       Has=true</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ ดูสองแถวที่หนาไว้ — คอลัมน์ <code>bool</code> ตอบ <code>false</code> เหมือนกันเป๊ะ</span>
+  <p style="margin-bottom:0">
+    <strong>"ไม่ได้ส่ง <code>favorite</code> มาเลย"</strong> กับ <strong>"ส่ง <code>favorite=false</code> มา"</strong>
+    เป็นคนละความต้องการโดยสิ้นเชิง —
+    อันแรกแปลว่า "เอาทั้งหมด" อันหลังแปลว่า "เอาเฉพาะที่ยังไม่ได้กด"
+    <br>แต่ถ้าคุณประกาศเป็น <code>bool</code> ธรรมดา <strong>คุณจะแยกมันไม่ออกตลอดกาล</strong>
+    <br>และนี่<strong>ไม่ error</strong> · ไม่มี warning · เทสที่ยิงแค่ <code>favorite=true</code> ก็ผ่านหมด
+    <br>มันจะโผล่ตอนคนตรวจงานยิง <code>?favorite=false</code> แล้วได้ผลเหมือนไม่ได้ใส่อะไรเลย
+  </p>
+</div>
+
+<p>
+  ทางแก้มีสองทาง เลือกทางไหนก็ได้ แต่ต้อง<strong>ตั้งใจเลือก</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ทาง</th><th>เขียนยังไง</th><th>ข้อดี / ข้อเสีย</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>*bool</code></td>
+      <td><code>Favorite *bool `form:"favorite"`</code> แล้วเช็ค <code>if f.Favorite != nil</code></td>
+      <td>✅ ได้ validation ของ Gin ฟรี (ส่งค่ามั่วมาได้ 400)<br>⚠️ ต้อง dereference ทุกที่ที่ใช้</td>
+    </tr>
+    <tr>
+      <td><code>c.GetQuery()</code></td>
+      <td><code>v, ok := c.GetQuery("favorite")</code> — <code>ok</code> บอกว่ามีคีย์นี้ไหม</td>
+      <td>✅ อ่านง่าย ไม่มี pointer<br>⚠️ ได้ <code>string</code> ต้องแปลงเอง และ<strong>ต้องเขียนเช็คค่ามั่วเอง</strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <span class="label">📌 ของแถมสองอย่างที่เจอตอนรัน</span>
+  <p style="margin-bottom:0">
+    <strong>① <code>?favorite=</code> (มีคีย์ แต่ไม่มีค่า)</strong> — <code>*bool</code> ได้ <code>false</code> ไม่ใช่ <code>nil</code>
+    และ<strong>ไม่ error</strong>
+    <br>แปลว่าคนที่พิมพ์ <code>?favorite=</code> มาจะได้ผลเหมือนพิมพ์ <code>?favorite=false</code>
+    ซึ่งอาจไม่ใช่สิ่งที่เขาตั้งใจ — ถ้าอยากกันต้องใช้ <code>GetQuery</code> แล้วเช็คสตริงว่างเอง
+    <br><strong>② Gin ใช้ <code>strconv.ParseBool</code></strong> ซึ่งรับเยอะกว่าที่คิด:
+    <br>· <code>?favorite=1</code> → <strong>ผ่าน</strong> (= true) · <code>?favorite=TRUE</code> → <strong>ผ่าน</strong>
+    <br>· <code>?favorite=yes</code> → <strong>400</strong> <code>strconv.ParseBool: parsing "yes": invalid syntax</code>
+    <br>ถ้าเอกสาร API ของคุณเขียนว่ารับ <code>true|false</code> แต่โค้ดรับ <code>1</code> ด้วย — นั่นคือช่องว่างระหว่างเอกสารกับของจริง
+    ซึ่ง<strong>ต้องเลือก</strong>ว่าจะแก้เอกสารหรือแก้โค้ด
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ช่องติ๊กในใบสมัคร</span>
+  <p>
+    ใบสมัครมีช่อง <strong>"เคยทำงานที่นี่มาก่อนหรือไม่"</strong> แล้วมีช่องติ๊ก [ ] เดียว
+    <br>คนกรอกติ๊ก = เคย · ไม่ติ๊ก = <strong>อ่านไม่ออกว่าอะไร</strong>
+    เพราะมันปนกันระหว่าง "ไม่เคย" กับ "ยังไม่ได้อ่านคำถามนี้"
+  </p>
+  <p>
+    ใบสมัครที่ออกแบบดีจะให้ <strong>สองช่อง</strong> — [ ] เคย · [ ] ไม่เคย
+    ใบที่เว้นทั้งคู่คือใบที่กรอกไม่ครบ และคนตรวจ<strong>รู้ทันที</strong>ว่าต้องโทรกลับไปถาม
+  </p>
+  <p style="margin-bottom:0">
+    <code>bool</code> ธรรมดา = ช่องติ๊กช่องเดียว · <code>*bool</code> = ช่องติ๊กสองช่อง (และรู้ว่าเว้นว่าง)
+    <br><strong>ที่ไม่เหมือนกัน:</strong> ใบสมัครที่กรอกไม่ครบ คนตรวจเห็นด้วยตาว่าว่าง
+    แต่ <code>bool</code> ใน Go <strong>ไม่มีสภาพ "ว่าง" ให้เห็น</strong> — มันเติม <code>false</code> ให้เองเงียบ ๆ
+    ตั้งแต่วินาทีที่ประกาศตัวแปร คุณจึงไม่มีทางรู้เลยว่าค่านั้น "เขาตอบว่าไม่" หรือ "เขาไม่ได้ตอบ"
+  </p>
+</div>
+
+<h2>7 · <code>averageRating</code> — สไลด์แก้ให้แล้วหนึ่งจุด ยังเหลืออีกหนึ่ง</h2>
+
+<p>เทียบสองฉบับบรรทัดต่อบรรทัดในข้อ 9:</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>ฉบับก่อนเรียน</h4>
+    <pre><code>Update response ให้ส่ง
+<strong>average_rating</strong> เพิ่มเข้ามาด้วย</code></pre>
+  </div>
+  <div class="side">
+    <h4>ฉบับหลังเรียน</h4>
+    <pre><code>Update response ให้ส่ง
+<strong>averageRating</strong> เพิ่มเข้ามาด้วย</code></pre>
+  </div>
+</div>
+
+<p>
+  เปลี่ยนจาก <code>snake_case</code> เป็น <code>camelCase</code> —
+  ซึ่ง<strong>ตรงกับที่เหลือของ API แล้ว</strong> (สังเกตว่าข้อ 4 ก็เขียน <code>imageUrl</code> ไม่ใช่ <code>image_url</code>)
+</p>
+
+<div class="note">
+  <span class="label">📌 คอลัมน์ในฐานกับช่องใน JSON ไม่จำเป็นต้องชื่อเดียวกัน</span>
+  <p style="margin-bottom:0">
+    ตาราง <code>users</code> ใช้ <code>image_url</code> (snake_case — ธรรมเนียมของ SQL)
+    <br>JSON ที่ส่งออกใช้ <code>imageUrl</code> (camelCase — ธรรมเนียมของ JavaScript ที่ฝั่งหน้าเว็บใช้)
+    <br><strong>สองอันนี้เป็นคนละชั้นกัน</strong> และเชื่อมกันด้วย struct tag บรรทัดเดียว:
+    <br><code>ImageURL string `gorm:"column:image_url" json:"imageUrl"`</code>
+    <br>คนที่พยายามทำให้ชื่อเหมือนกันทั้งระบบ มักจบด้วยการยอมให้ชั้นหนึ่งผิดธรรมเนียมของตัวเอง
+  </p>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ จุดที่สไลด์ยังพิมพ์ผิดอยู่ในฉบับ Post — <code>favoite</code></span>
+  <p style="margin-bottom:0">
+    บรรทัดตัวอย่างใต้ข้อ 7 ยังเขียนว่า:
+    <br><code>GET /api/v1/recipes?<strong>favoite</strong>=true</code>
+    <br>ตกตัว <code>r</code> ไป (ที่ถูกคือ <code>favorite</code>) และ<strong>ยังไม่ได้แก้ในฉบับหลังเรียน</strong>
+    <br>ที่ต้องระวังคือ query parameter ที่สะกดผิด <strong>ไม่ทำให้ error</strong> —
+    Gin จะมองว่า "ไม่ได้ส่ง <code>favorite</code> มา" แล้วคืนรายการทั้งหมดตามปกติ
+    <br>ถ้าคุณลอกบรรทัดนี้ไปทำเป็นเทส <strong>เทสจะผ่าน</strong> ทั้งที่ฟีเจอร์ไม่ทำงาน
+    <br>ยึดจากบรรทัดหัวข้อที่เขียนว่า <code>favorite=true|false</code> ซึ่งสะกดถูก
+  </p>
+</div>
+
+<h2>8 · จด route ทั้ง 10 เส้นโดยไม่ให้ Gin panic</h2>
+
+<p>
+  หลังทำครบ ระบบจะมี route ที่มี <code>:id</code> อยู่หลายเส้นซ้อนกันบน path เดียวกัน
+  <br>Gin มีกฎข้อหนึ่งที่ทำให้โปรแกรม<strong>ตายตั้งแต่ยังไม่ทันรับ request แรก</strong>
+  ถ้าคุณตั้งชื่อ parameter ไม่ตรงกัน:
+</p>
+
+<pre><code>e.GET(<span class="s">"/api/v1/recipes/:id"</span>, ...)
+e.GET(<span class="s">"/api/v1/recipes/<strong>:recipeId</strong>/favorite"</span>, ...)   <span class="c">// ชื่อคนละชื่อ</span></code></pre>
+
+<pre><code>PANIC: ':recipeId' in new path '/api/v1/recipes/:recipeId/favorite'
+conflicts with existing wildcard ':id' in existing prefix '/api/v1/recipes/:id'</code></pre>
+
+<div class="warn">
+  <span class="label">⚠️ กฎนี้ดักคุณ<em>บางที</em> ซึ่งแย่กว่าดักทุกที</span>
+  <p>ผมลองเทียบสามชุด ได้ผลต่างกันแบบที่ต้องจำ:</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>ชุดที่จด</th><th>ผล</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET :id</code> + <code>GET :recipeId/favorite</code></td><td>❌ <strong>PANIC</strong></td></tr>
+      <tr><td><code>GET :id</code> + <code><strong>POST</strong> :recipeId/favorite</code></td><td>✅ <strong>จดได้ ไม่ panic</strong></td></tr>
+      <tr><td>ชุดจริงของโจทย์ทั้ง 10 เส้น (ชื่อ <code>:id</code> ตรงกันหมด)</td><td>✅ จดได้ครบ</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin-bottom:0">
+    แถวกลางคือตัวอันตราย — <strong>Gin แยก routing tree ตาม HTTP method</strong>
+    ชื่อ parameter ที่ไม่ตรงกันจึงลอดผ่านได้ถ้าอยู่คนละ method
+    <br>แปลว่าโค้ดที่ตั้งชื่อมั่ว ๆ <strong>รันได้สบายเป็นเดือน</strong>
+    แล้ววันที่มีคนเพิ่ม <code>GET /recipes/:recipeId/favorite</code> เข้าไป
+    <strong>ทั้งแอปตายตอน start</strong> โดยที่คนเพิ่มไม่ได้ทำอะไรผิดเลย
+    <br><strong>กฎง่าย ๆ:</strong> resource เดียวกันใช้ชื่อ parameter เดียวตลอดทั้งโปรเจกต์
+  </p>
+</div>
+
+<h2>9 · ตารางสรุป — endpoint กับ status ที่ควรตอบ</h2>
+
+<p>
+  ย้ำว่า<strong>โจทย์ไม่ได้กำหนด status code ให้</strong> ตารางนี้คือข้อเสนอที่อิง RFC 9110
+  ไม่ใช่คำสั่งจากสไลด์ ถ้าคุณเลือกต่างจากนี้ ให้เลือกแล้ว<strong>ทำให้เหมือนกันทั้งระบบ</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>Endpoint</th><th>สำเร็จ</th><th>ไม่เจอ</th><th>อื่น ๆ ที่ต้องคิดถึง</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>PUT /recipes/:id</code></td><td><code>200</code></td><td><code>404</code></td><td><code>400</code> ถ้า body ไม่ครบ · <code>403</code> ถ้าไม่ใช่เจ้าของ</td></tr>
+    <tr><td>2</td><td><code>DELETE /recipes/:id</code></td><td><code>204</code></td><td><code>404</code></td><td>ลบซ้ำต้องได้ผลเหมือนเดิมทุกครั้ง</td></tr>
+    <tr><td>3</td><td><code>GET /users/:id</code></td><td><code>200</code></td><td>—</td><td><code>403</code> ถ้า <code>:id</code> ไม่ใช่ <code>me</code> · <code>401</code> ถ้าไม่มี token</td></tr>
+    <tr><td>4</td><td><code>PUT /users/:id</code></td><td><code>200</code></td><td>—</td><td>ช่องนอกจาก <code>bio</code>/<code>imageUrl</code> ที่ส่งมา — จะเมินหรือ <code>400</code> ต้องเลือก</td></tr>
+    <tr><td>5</td><td><code>POST /recipes/:id/favorite</code></td><td><code>201</code> หรือ <code>204</code></td><td><code>404</code></td><td>กดซ้ำอันเดิม<strong>ห้ามพัง</strong> — ต้องมี unique key กันแถวซ้ำ</td></tr>
+    <tr><td>6</td><td><code>DELETE /recipes/:id/favorite</code></td><td><code>204</code></td><td><code>404</code></td><td>ยกเลิกสิ่งที่ไม่เคยกด — เลือกว่าจะ <code>404</code> หรือ <code>204</code></td></tr>
+    <tr><td>7</td><td><code>GET /recipes?favorite=…</code></td><td><code>200</code></td><td>—</td><td><code>400</code> ถ้าค่าไม่ใช่ bool · <strong>ไม่ส่ง ≠ <code>false</code></strong></td></tr>
+    <tr><td>8</td><td><code>POST /recipes/:id/rating</code></td><td><code>201</code></td><td><code>404</code></td><td>ให้คะแนนซ้ำ = <strong>ทับของเดิม ไม่ใช่เพิ่มแถว</strong> · ช่วงคะแนนที่รับได้</td></tr>
+    <tr><td>9</td><td>เติม <code>averageRating</code></td><td><code>200</code></td><td>—</td><td>recipe ที่<strong>ยังไม่มีใครให้คะแนน</strong> ส่งอะไร — <code>0</code> หรือ <code>null</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <span class="label">📌 สามช่องในคอลัมน์ขวาที่โจทย์เงียบสนิท และคนตรวจจะกดแน่</span>
+  <p style="margin-bottom:0">
+    <strong>① กด favorite ซ้ำ</strong> — ถ้าไม่มี unique index บน <code>(user_id, recipe_id)</code>
+    คุณจะได้แถวซ้ำ แล้ว <code>?favorite=true</code> จะคืน recipe เดิมซ้ำหลายรอบ
+    <br><strong>② ให้ rating ซ้ำ</strong> — โจทย์ใช้คำว่า <code>POST</code> ซึ่งปกติแปลว่า "เพิ่มใหม่"
+    แต่ในทางความหมาย คนหนึ่งคนควรมีคะแนนต่อ recipe หนึ่ง<strong>ค่าเดียว</strong>
+    (ไม่งั้นกดรัว ๆ ก็ปั่นคะแนนได้) — ท่าที่ใช้กันคือ <em>upsert</em>: มีแล้วทับ ไม่มีแล้วเพิ่ม
+    <br><strong>③ <code>averageRating</code> ของ recipe ที่ยังไม่มีคะแนน</strong> —
+    <code>AVG()</code> ของ SQL คืน <code>NULL</code> ไม่ใช่ <code>0</code>
+    ถ้าปล่อยผ่านจะได้ <code>"averageRating": null</code> โผล่ไปหาหน้าเว็บ
+    <br>ทั้งสามข้อไม่มีคำตอบที่ถูกต้องข้อเดียว — <strong>แต่มีคำตอบที่ผิดคือ "ไม่ได้คิดถึงมัน"</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>idempotent</dt>
+    <dd>ยิงซ้ำกี่ครั้งผลสุดท้ายเหมือนเดิม · <code>PUT</code> กับ <code>DELETE</code> ควรเป็นแบบนี้ ·
+        <strong>ถาม senior ได้ว่า “endpoint นี้ต้อง idempotent ไหม ถ้า client retry แล้วจะเกิดอะไรขึ้น”</strong></dd>
+    <dt>soft delete</dt>
+    <dd>ลบด้วยการประทับเวลาแทนการลบแถวจริง · <strong>พิมพ์ถาม AI ได้ว่า
+        “make this GORM query exclude soft-deleted rows and add a partial unique index that ignores them”</strong></dd>
+    <dt>unique constraint</dt>
+    <dd>กฎที่ฐานข้อมูลบังคับเองว่าคู่ค่านี้ห้ามซ้ำ · เป็นทาง<strong>เดียว</strong>ที่กันแถวซ้ำได้จริงตอนมีหลาย request พร้อมกัน
+        (เช็คในโค้ดก่อน insert กันไม่ได้) ·
+        <strong>พูดว่า “ใส่ unique constraint บน (user_id, recipe_id)” จะตรงกว่า “กันกดซ้ำ”</strong></dd>
+    <dt>upsert</dt>
+    <dd>"มีแล้วทับ ไม่มีแล้วเพิ่ม" ในคำสั่งเดียว · ใน Postgres คือ
+        <code>INSERT … ON CONFLICT … DO UPDATE</code> ·
+        <strong>ใช้คำนี้ตอนคุยเรื่อง rating ซ้ำ จะสื่อกว่าอธิบายยาว ๆ</strong></dd>
+    <dt>three-state / nullable boolean</dt>
+    <dd>ค่าที่มีได้สามสถานะ: จริง · เท็จ · <strong>ไม่ได้ระบุ</strong> ·
+        <strong>บอก AI ตรง ๆ ว่า “this filter is tri-state — absent must not be treated as false”</strong>
+        แล้วมันจะเลือก <code>*bool</code> ให้เอง</dd>
+  </dl>
+</div>
+
+<h2>10 · เช็กลิสต์ก่อนส่ง</h2>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    ☐ <code>?favorite=false</code> ให้ผล<strong>ต่าง</strong>จากไม่ใส่ <code>favorite</code> เลย<br>
+    ☐ <code>?favorite=yes</code> ได้ <code>400</code> ไม่ใช่เงียบ ๆ แล้วคืนทั้งหมด<br>
+    ☐ recipe ที่ soft delete แล้ว <strong>ไม่โผล่</strong>ใน <code>GET /recipes</code> และไม่โผล่ในรายการโปรด<br>
+    ☐ <code>GET /users/42</code> ถูกปฏิเสธ · <code>GET /users/me</code> ผ่าน<br>
+    ☐ ตัวตนคนเรียกมาจาก token <strong>ไม่ใช่</strong>จาก URL หรือ body<br>
+    ☐ กด favorite อันเดิมสองครั้ง ไม่พัง และไม่ได้แถวซ้ำ<br>
+    ☐ ให้ rating อันเดิมสองครั้ง คะแนนถูก<strong>ทับ</strong> ไม่ใช่เพิ่มแถว<br>
+    ☐ <code>averageRating</code> ของ recipe ที่ยังไม่มีคะแนน ส่งค่าที่ตั้งใจ ไม่ใช่ <code>null</code> โดยบังเอิญ<br>
+    ☐ ทุก route ใช้ชื่อ parameter <code>:id</code> ตรงกันหมด — แอป start ขึ้นจริง<br>
+    ☐ <code>PUT /recipes/:id</code> ที่ไม่มี id นั้น ได้ <code>404</code> ไม่ใช่สร้างใหม่เงียบ ๆ
+  </p>
+</div>
+
+<h2>ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. โจทย์ข้อ 7 เขียนว่า <code>favorite=true|false</code> — ถ้าประกาศ struct เป็น <code>Favorite bool `form:"favorite"`</code> จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">Gin จะ error ตอน bind เพราะ <code>bool</code> รับสองค่าไม่พอกับสามสถานะ</button>
+    <button class="opt">ทำงานถูกต้องทุกกรณี เพราะ <code>true</code> กับ <code>false</code> ก็คือสองค่าของ <code>bool</code> พอดี</button>
+    <button class="opt">แยก "ไม่ได้ส่งมา" กับ "ส่ง <code>false</code> มา" ไม่ออก — ทั้งคู่ได้ <code>false</code> และ<strong>ไม่มี error ใด ๆ</strong></button>
+    <button class="opt">Gin จะตั้งค่าเริ่มต้นให้เป็น <code>true</code> เมื่อไม่ได้ส่ง parameter มา</button>
+  </div>
+  <div class="explain">
+    <p>ผลรันจริงจาก <code>httptest</code>:
+    <br><code>/x</code> (ไม่ส่ง) → <code>bool=false</code>
+    <br><code>/x?favorite=false</code> → <code>bool=false</code>
+    <br><strong>เหมือนกันเป๊ะ</strong> ทั้งที่ความต้องการของผู้ใช้คนละเรื่อง —
+    อันแรกคือ "เอาทั้งหมด" อันหลังคือ "เอาเฉพาะที่ยังไม่ได้กด"
+    <br>ตัวเลือกที่ 1 ผิดตรงที่คิดว่ามันจะ error — <strong>มันเงียบสนิท</strong> ซึ่งคือปัญหาทั้งหมด
+    ถ้ามัน error คุณจะเจอตั้งแต่ยังไม่ส่งงาน
+    <br>ตัวเลือกที่ 2 คือกับดักตัวจริง เพราะฟังดูมีเหตุผลมาก — <code>bool</code> มีสองค่า โจทย์มีสองค่า
+    แต่โจทย์จริงมี<strong>สาม</strong>สถานะ สถานะที่สามคือ "ไม่ได้พูดถึง" ซึ่งไม่มีที่อยู่ใน <code>bool</code>
+    <br><strong>จุดที่ต้องจำ:</strong> ทุกครั้งที่ query parameter เป็น optional
+    ให้ถามตัวเองว่า "ไม่ส่งมา" กับ "ส่งค่า zero มา" ต้องได้ผลต่างกันไหม —
+    ถ้าต่าง ต้องใช้ pointer หรือ <code>GetQuery</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. จด route สองเส้นนี้ในแอปเดียวกัน: <code>e.GET("/recipes/:id", …)</code> และ <code>e.POST("/recipes/:recipeId/favorite", …)</code> — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">panic ทันทีตอน start เพราะชื่อ wildcard ไม่ตรงกันบน prefix เดียวกัน</button>
+    <button class="opt">จดได้ ไม่ panic — เพราะ Gin แยก routing tree ตาม HTTP method · จะพังวันที่มีคนเพิ่มเส้น <code>GET</code> ที่ใช้ <code>:recipeId</code></button>
+    <button class="opt">จดได้ และปลอดภัยถาวร เพราะ Gin เทียบเฉพาะ path ไม่สนใจชื่อ parameter</button>
+    <button class="opt">จดได้ แต่ <code>c.Param("id")</code> จะคืนค่าว่างในเส้น <code>POST</code></button>
+  </div>
+  <div class="explain">
+    <p>ผมรันเทียบสามชุด:
+    <br>· <code>GET :id</code> + <code>GET :recipeId/favorite</code> → <strong>PANIC</strong>
+    <code>':recipeId' … conflicts with existing wildcard ':id'</code>
+    <br>· <code>GET :id</code> + <code>POST :recipeId/favorite</code> → <strong>จดได้ ไม่ panic</strong>
+    <br>· ชุดจริงของโจทย์ 10 เส้น (ชื่อตรงกันหมด) → จดได้ครบ
+    <br>ตัวเลือกที่ 1 ถูกสำหรับกรณี method เดียวกัน แต่<strong>ผิดสำหรับกรณีในคำถาม</strong> ซึ่งเป็นคนละ method
+    <br>ตัวเลือกที่ 3 อันตรายที่สุด เพราะมันถูกครึ่งเดียว — จดได้จริง แต่ไม่ปลอดภัยถาวร
+    <br><strong>จุดที่ต้องจำ:</strong> bug ที่ "ยังไม่ระเบิด" ไม่ใช่ bug ที่ไม่มี —
+    มันแค่รอคนที่ไม่รู้เรื่องมาเพิ่มโค้ดบรรทัดเดียวแล้วรับผิดแทน
+    ตั้งชื่อ parameter ให้ตรงกันทั้งโปรเจกต์ตั้งแต่แรกจบเรื่อง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. ข้อ 4 บอกว่า "<code>PUT /api/v1/users/:id</code> เพื่อ <strong>replace</strong> ข้อมูล … และ update ได้เพียงแค่ <code>bio</code> และ <code>imageUrl</code>" — ควรทำยังไง?</p>
+  <div class="opts">
+    <button class="opt">เปลี่ยนเป็น <code>PATCH</code> เพราะ RFC 9110 บอกว่า <code>PUT</code> ต้อง replace ทั้งก้อน</button>
+    <button class="opt">ทำ <code>PUT</code> ที่ replace ทั้งแถวจริง ๆ — ช่องที่ไม่ส่งมาให้กลายเป็นค่าว่าง รวมทั้ง <code>email</code> และ <code>name</code></button>
+    <button class="opt">ทำทั้งสองเส้น ทั้ง <code>PUT</code> และ <code>PATCH</code> เพื่อความปลอดภัย</button>
+    <button class="opt">ทำตามโจทย์ — ใช้ <code>PUT</code> และรับแก้แค่สองช่อง · แต่รู้ไว้ว่า semantics จริงคือ partial update</button>
+  </div>
+  <div class="explain">
+    <p>โจทย์ข้อนี้<strong>ขัดกันเองตามนิยาม RFC</strong> จริง — "replace" คือแทนทั้งก้อน
+    แต่ "แก้ได้แค่สองช่อง" คือพฤติกรรมของ <code>PATCH</code>
+    <br>แต่นี่คือ<strong>ข้อสอบ</strong> ไม่ใช่ API ที่คุณออกแบบเอง — เกณฑ์การตรวจคือโจทย์
+    <br>ตัวเลือกที่ 2 คือคำตอบที่ "ถูกตามหลักการ" และ<strong>อันตรายที่สุด</strong>:
+    ช่อง <code>email</code> · <code>name</code> · <code>uid</code> เป็นข้อมูลที่<strong>ลอกมาจาก Keycloak</strong>
+    ให้ผู้ใช้เคลียร์ทิ้งผ่าน API เราไม่ได้ — และถึงเคลียร์ไป login รอบหน้าก็ถูกทับกลับอยู่ดี
+    <br>ตัวเลือกที่ 1 กับ 3 คือการ<strong>เปลี่ยนโจทย์เอง</strong> ซึ่งในข้อสอบแปลว่าทำผิดข้อ
+    <br><strong>จุดที่ต้องจำ:</strong> เจอ spec ที่ขัดกับมาตรฐาน ให้ทำสองอย่างพร้อมกัน —
+    <strong>ทำตาม spec</strong> และ <strong>พูดออกมาว่ามันไม่ตรงมาตรฐานตรงไหน</strong>
+    การเงียบแล้วทำตามอย่างเดียว กับการแอบแก้ spec เอง แย่พอ ๆ กัน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. ทำข้อ 2 (soft delete recipe) เสร็จแล้ว มีข้อไหนที่ต้องกลับไปแก้ตามอีก?</p>
+  <div class="opts">
+    <button class="opt">ข้อ 7 — รายการโปรดต้องกรอง recipe ที่ถูกลบออกด้วย ไม่งั้นจะมีรายการโปรดที่ชี้ไปหาของที่ไม่มีแล้ว</button>
+    <button class="opt">ข้อ 3 — เพราะ <code>GET /users/me</code> ต้องนับจำนวน recipe ที่ผู้ใช้เขียน</button>
+    <button class="opt">ไม่มี — soft delete เป็นเรื่องภายในของตาราง <code>recipes</code> ล้วน ๆ</button>
+    <button class="opt">ข้อ 1 — เพราะ <code>PUT</code> ต้องเช็คก่อนว่า recipe ยังไม่ถูกลบ ซึ่งเป็นข้อเดียวที่กระทบ</button>
+  </div>
+  <div class="explain">
+    <p>ข้อ 2 กับข้อ 7 อยู่<strong>คนละหน้าสไลด์</strong>และคนละกลุ่มหัวข้อ (Recipe กับ Favorite)
+    แต่ผูกกันโดยตรง — แถวใน favorite ที่ชี้ไปหา recipe ที่ถูก soft delete <strong>ยังอยู่ครบ</strong>
+    ถ้า <code>?favorite=true</code> ไม่ join แล้วกรอง <code>recipes.deleted_at IS NULL</code>
+    ผู้ใช้จะเห็นรายการโปรดที่กดเข้าไปแล้วได้ <code>404</code>
+    <br>ตัวเลือกที่ 4 ถูกครึ่งเดียว — <code>PUT</code> ก็ต้องเช็คจริง แต่ GORM กรอง
+    <code>deleted_at IS NULL</code> ให้เองอยู่แล้วถ้าใช้ <code>gorm.DeletedAt</code>
+    คำว่า "ข้อเดียวที่กระทบ" คือส่วนที่ผิด
+    <br>ตัวเลือกที่ 2 ไม่มีในโจทย์ — ข้อ 3 ไม่ได้ขอให้นับอะไร
+    <br><strong>จุดที่ต้องจำ:</strong> โจทย์ที่แบ่งเป็นหัวข้อสวย ๆ ทำให้รู้สึกว่าแต่ละข้อแยกกัน
+    แต่ฐานข้อมูลไม่ได้แบ่งตามหัวข้อในสไลด์ —
+    <strong>ทุกครั้งที่เพิ่มเงื่อนไขการกรองที่ตารางหนึ่ง ให้ไล่ดูว่ามีใคร join ตารางนั้นอยู่บ้าง</strong></p>
+  </div>
+</div>
+
+<nav class="nav">
+  <a href="./0054-agent-skills.html">← บทเรียน 54 · ให้ AI agent เขียนโค้ดแทน</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📋 สรุป Day 9</a>
+</nav>
+
+<h2>อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.4">RFC 9110 §9.3.4 — PUT</a> —
+      <strong>อ่านแค่สองย่อหน้าแรก</strong> ก็ได้คำตอบเรื่อง "replace ทั้งก้อน" และ status code ที่ต้องตอบ
+      (<code>201</code> เมื่อสร้างใหม่ · <code>200</code>/<code>204</code> เมื่อแก้ของเดิม)</li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.5">RFC 9110 §9.3.5 — DELETE</a> —
+      อ่านเพื่อดูว่า RFC <strong>ไม่ได้บังคับ</strong>ว่าต้องลบจริง ขอแค่ resource นั้นเลิกให้เข้าถึง —
+      soft delete จึงไม่ผิดมาตรฐาน</li>
+  <li><a href="https://pkg.go.dev/strconv#ParseBool"><code>strconv.ParseBool</code></a> —
+      ตัวที่ Gin เรียกตอน bind <code>bool</code> · <strong>ดูรายการค่าที่รับได้</strong>
+      จะเห็นว่า <code>1</code> · <code>t</code> · <code>TRUE</code> ผ่านหมด ส่วน <code>yes</code> ไม่ผ่าน</li>
+  <li><a href="https://gorm.io/docs/delete.html#Soft-Delete">GORM — Soft Delete</a> —
+      <strong>อ่านหัวข้อ <em>Find soft deleted records</em></strong> เพื่อรู้จัก <code>Unscoped()</code>
+      ซึ่งคือทางเดียวที่จะเห็นแถวที่ถูกลบตอน debug</li>
+  <li><a href="0053-keycloak-in-go.html">บทเรียน 53</a> —
+      ที่มาของคอลัมน์ <code>image_url</code> ซึ่งสไลด์ฉบับ Post เพิ่งเพิ่มเข้ามาเพื่อรองรับข้อ 4 โดยเฉพาะ</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>
