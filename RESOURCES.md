@@ -1,7 +1,10 @@
-# Go (Enterprise Backend) Resources
+# Resources — Backend (Go) และ Frontend (HTML/CSS/TypeScript)
 
 แหล่งอ้างอิงที่ผ่านการตรวจแล้วสำหรับ workspace นี้ ทุก lesson ต้องอ้างจากที่นี่
 ไม่ใช่จากความจำของ agent
+
+ส่วนฝั่ง Frontend อยู่ท้ายไฟล์ — ทุกลิงก์ในส่วนนั้นตรวจแล้วว่าได้ HTTP 200
+เมื่อ 27 ส.ค. 2026
 
 ## Knowledge
 
@@ -182,6 +185,54 @@
   ใช้ทำ predict-the-output ในบทเรียนทุกครั้ง
 - `go build -gcflags="-m"` — ให้ compiler บอกว่าตัวแปรไหน escape ไป heap
 - `go vet` / `go test -race` — จับบั๊กที่ compiler ไม่จับ
+
+## Frontend — HTML, CSS (บทเรียน 56–62)
+
+### ระดับปฐมภูมิ
+
+- [MDN — Structuring content with HTML](https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Structuring_content)
+  ใช้กับ: บท 56–58 · **อ่านหัวข้อ "Basic HTML syntax" ก่อน** ถ้าไม่เคยเขียน HTML มาเลย
+
+- [MDN — The box model](https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Styling_basics/Box_model)
+  ใช้กับ: บท 60 · **อ่านหัวข้อ "The alternative CSS box model"** คือคำอธิบายของ
+  `box-sizing: border-box` ที่เป็นกับดักอันดับหนึ่งของมือใหม่
+
+- [MDN — Specificity](https://developer.mozilla.org/en-US/docs/Web/CSS/Specificity)
+  ใช้กับ: บท 59 · **ดูตารางคะแนน** แล้วจะเข้าใจว่าทำไม id ชนะ class ชนะ tag
+
+- [MDN — Basic concepts of flexbox](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_flexible_box_layout/Basic_concepts_of_flexbox)
+  ใช้กับ: บท 61 · **อ่านหัวข้อ "The two axes of flexbox"** ก่อนอย่างอื่น เพราะ
+  `justify-content` กับ `align-items` สลับความหมายกันตาม `flex-direction`
+
+### อ่านง่าย เปิดตอนทำงานจริง
+
+- [CSS-Tricks — A Complete Guide to Flexbox](https://css-tricks.com/snippets/css/a-guide-to-flexbox/)
+  หน้าเดียวจบ มีรูปทุก property — สไลด์ Day นี้แนะนำเอง
+
+- [Material Design 3](https://m3.material.io/) และ
+  [WCAG 2.1 Quick Reference](https://www.w3.org/WAI/WCAG21/quickref/)
+  ใช้กับ: บท 62 (state และการเข้าถึง) · สไลด์แนะนำทั้งคู่
+
+### ฝึกด้วยเกม (สไลด์แนะนำ)
+
+- [CSS Diner](https://flukeout.github.io/) — ฝึก selector
+- [Flexbox Froggy](https://flexboxfroggy.com/) — ฝึก flexbox
+
+## Frontend — TypeScript (บทเรียน 63–68)
+
+### ระดับปฐมภูมิ (ทีม TypeScript เขียนเอง)
+
+- [TypeScript Handbook — Everyday Types](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html)
+  ใช้กับ: บท 63–64 · หัวข้อที่ต้องอ่านจริง ๆ มีสามอัน —
+  `#differences-between-type-aliases-and-interfaces` · `#type-assertions` · `#any`
+
+- [TypeScript Handbook — More on Functions](https://www.typescriptlang.org/docs/handbook/2/functions.html)
+  ใช้กับ: บท 65 · **อ่านหัวข้อ "Optional Parameters"** เพื่อดูว่าทำไม `num2?` ถึงกลายเป็น
+  `number | undefined` แล้วเอาไปบวกตรง ๆ ไม่ได้
+
+- [MDN — Array.prototype.reduce()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce)
+  ใช้กับ: บท 67 · **อ่านหัวข้อ "Exceptions"** — เป็นที่เดียวที่บอกตรง ๆ ว่า
+  array ว่าง + ไม่ใส่ค่าเริ่มต้น = `TypeError`
 
 ## Wisdom (Communities)
 

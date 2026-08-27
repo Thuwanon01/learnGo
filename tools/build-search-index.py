@@ -21,7 +21,7 @@ idempotent: ไม่มี timestamp ในไฟล์ผลลัพธ์ �
 
 page (หนึ่ง object ต่อหนึ่งไฟล์ HTML):
   "f"  file    path ของไฟล์ เทียบจากรากเว็บ  เช่น "day-6/lessons/0019-generics.html"
-  "d"  day     เลขวัน 1-9 (int)
+  "d"  day     เลขกลุ่ม: ฝั่ง Backend = เลขวัน (1-9) · ฝั่ง Frontend = 101, 102 (int)
   "n"  number  เลขบท 1-55 (int) — **ไม่มี key นี้** ถ้าเป็นหน้า cheat sheet
   "t"  title   ชื่อหน้าไว้โชว์เป็น breadcrumb ("อยู่บทไหน") — มาจาก <h1>
 
@@ -110,6 +110,12 @@ CODE_MAX_LEN = 60          # code token ที่ยาวกว่านี้�
 KIND_PRIORITY = {"l": 4, "t": 3, "h": 2, "c": 1}
 
 # id ที่ navbar จองไว้ใช้เอง — ห้ามให้ anchor ไปชน
+# tag ที่เนื้อข้างในไม่นับเป็น "เนื้อหาของหน้า"
+#   script/style = โค้ด ไม่ใช่ข้อความ
+#   template     = เนื้อในไปเรนเดอร์ใน <iframe> ของกล่อง .demo ผู้อ่านหาด้วย Ctrl+F
+#                  บนหน้านี้ไม่เจอ จึงไม่ควรพาผลค้นหามาลงที่นี่
+SKIP_TAGS = ("script", "style", "template")
+
 RESERVED_ID_PREFIXES = ("sn-root", "sn-style", "sn-main", "sn-panel-", "sn-mgroup-")
 
 
@@ -202,16 +208,19 @@ class PageParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         d = dict(attrs)
 
-        if "id" in d and d["id"]:
-            if d["id"] in self.ids:
-                self.dup_ids.add(d["id"])
-            self.ids.add(d["id"])
-
-        if tag in ("script", "style"):
+        if tag in SKIP_TAGS:
             self._skip_depth += 1
             return
         if self._skip_depth:
             return
+
+        # เก็บ id "หลัง" ด่าน SKIP_TAGS เท่านั้น — id ที่อยู่ใน <template> ไม่ได้อยู่ใน
+        # document จริง (มันไปเรนเดอร์ใน <iframe> ของกล่อง .demo) จะลิงก์ #id ไปหาไม่ได้
+        # และบทที่มีฟอร์มตัวอย่างสองอันจะใช้ id ซ้ำกันโดยไม่ผิดอะไร
+        if "id" in d and d["id"]:
+            if d["id"] in self.ids:
+                self.dup_ids.add(d["id"])
+            self.ids.add(d["id"])
 
         if tag == "pre":
             self._pre_depth += 1
@@ -248,7 +257,7 @@ class PageParser(HTMLParser):
             return
 
     def handle_endtag(self, tag):
-        if tag in ("script", "style"):
+        if tag in SKIP_TAGS:
             if self._skip_depth:
                 self._skip_depth -= 1
             return
@@ -305,14 +314,45 @@ class PageParser(HTMLParser):
 
 # ---------------------------------------------------------------- เก็บข้อมูล
 
+# เลขกลุ่มของฝั่ง Frontend — สไลด์ฝั่งนี้ไม่ได้กำกับวันมาให้ จึงต้องแจกเลขเอง
+# ใช้ช่วง 100+ เพื่อไม่ให้ชนกับเลขวันของฝั่ง Backend แม้คอร์สจะยาวถึง Day 99
+#
+# ⚠️ ค่านี้ต้องตรงกับฟิลด์ `d:` ของ FRONT ใน assets/nav.js
+#    (nav.js ใช้มันเทียบว่า "ผลค้นหาอันนี้อยู่กลุ่มเดียวกับหน้าที่เปิดอยู่ไหม")
+#    เพิ่มกลุ่มใหม่ต้องแก้ทั้งสองที่ ถ้าลืม สคริปต์นี้จะหยุดพร้อมบอกชื่อกลุ่มที่ขาด
+FE_GROUP_ID = {
+    "fe-html-css": 101,
+    "fe-ts-fp": 102,
+}
+
+
 def discover_pages():
-    """คืนรายการหน้าเรียงแบบ deterministic: บทเรียน 55 ตามเลขบท แล้วต่อด้วย cheat sheet 9"""
-    lessons = sorted(glob.glob(os.path.join(ROOT, "day-*", "lessons", "*.html")))
-    sheets = sorted(glob.glob(os.path.join(ROOT, "day-*", "reference", "cheatsheet.html")))
+    """คืนรายการหน้าเรียงแบบ deterministic: บทเรียนทุกบทตามเลขบท แล้วต่อด้วย cheat sheet
+
+    กวาดสองแบบ: `day-N/` (ฝั่ง Backend) และ `fe-*/` (ฝั่ง Frontend)
+    """
+    patterns = ("day-*", "fe-*")
+    lessons, sheets = [], []
+    for pat in patterns:
+        lessons += glob.glob(os.path.join(ROOT, pat, "lessons", "*.html"))
+        sheets += glob.glob(os.path.join(ROOT, pat, "reference", "cheatsheet.html"))
+
+    def group_of(path):
+        rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
+        return rel.split("/")[0]
 
     def day_of(path):
-        m = re.search(r"day-(\d+)", path.replace(os.sep, "/"))
-        return int(m.group(1))
+        g = group_of(path)
+        m = re.fullmatch(r"day-(\d+)", g)
+        if m:
+            return int(m.group(1))
+        if g not in FE_GROUP_ID:
+            sys.exit(
+                "กลุ่ม '%s' ยังไม่มีเลขใน FE_GROUP_ID ของ %s\n"
+                "เพิ่มเลขใหม่ที่นี่ และเพิ่มฟิลด์ d: เลขเดียวกันใน FRONT ของ assets/nav.js ด้วย"
+                % (g, os.path.basename(__file__))
+            )
+        return FE_GROUP_ID[g]
 
     def num_of(path):
         m = re.match(r"(\d+)-", os.path.basename(path))

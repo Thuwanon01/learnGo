@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 66 — แปลงข้อมูล: join, split, slice</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 66 · Frontend · Functional Programming with TypeScript</p>
+  <h1>แปลงข้อมูล — join, split, slice</h1>
+  <p class="meta">~20 นาที · ควรผ่าน <a href="./0065-typing-functions.html">บทเรียน 65</a> (ใส่ type ให้ฟังก์ชัน) มาก่อน
+    · ถ้าเคยอ่านเรื่อง slice ของ Go ในบทเรียน 06 มาแล้วจะยิ่งได้เปรียบ เพราะบทนี้จะชี้ให้เห็นว่ามันคนละเรื่องกัน</p>
+  <p class="standfirst">
+    บทนี้มาจากสไลด์ TypeScript <strong>หน้า 29–32</strong> หัวข้อ <em>Transform Element</em>
+    ซึ่งสอนสามคำสั่ง: <code>join</code> · <code>split</code> · <code>slice</code>
+    <br>สามคำสั่งนี้ทำงานง่ายมาก — array กลายเป็น string, string กลายเป็น array, และตัดเอาบางส่วนออกมา
+    <br>แต่มัน<strong>มีกับดักซ่อนอยู่สี่อัน</strong>ที่สไลด์ไม่ได้พูดถึง และทุกอันเคยทำให้โปรแกรมพังจริง:
+    <code>slice</code> ที่หน้าตาเหมือน <code>splice</code> แต่ทำคนละเรื่อง ·
+    เลขติดลบที่หลายคนไม่รู้ว่าใส่ได้ ·
+    <code>split("")</code> กับ <code>split(" ")</code> ที่ต่างกันแค่เคาะเดียวแต่ได้ผลคนละโลก ·
+    และเรื่องใหญ่ที่สุดสำหรับคุณ — <strong>คำว่า slice ใน Go กับใน TypeScript ไม่ใช่ของอย่างเดียวกัน</strong>
+    <br>ทุกผลลัพธ์ในบทนี้ผมรันจริงแล้วก็อปมาวาง ไม่ได้พิมพ์จากความจำ
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code>Version 7.0.2          <span class="c"># tsc -v</span>
+v24.14.0               <span class="c"># node --version</span>
+go version go1.26.5 darwin/arm64   <span class="c"># ใช้เทียบกับ slice ของ Go</span></code></pre>
+  <p style="margin-bottom:0">
+    ทุกไฟล์ตรวจ type ด้วย <code>tsc --noEmit --strict</code>
+    แล้วคอมไพล์ด้วย <code>tsc --target es2022 --module nodenext --moduleResolution nodenext</code>
+    ก่อนรันด้วย <code>node</code> — <strong>ข้อความ error ทุกอันก็อปมาจาก tsc ตัวจริง</strong> ทั้งเลข <code>TSxxxx</code> และตัวหนังสือ
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · ปัญหาที่สามคำสั่งนี้เกิดมาแก้</h2>
+
+<p>
+  ข้อมูลในโปรแกรมเว็บมีสองรูปร่างที่เจอบ่อยที่สุด:
+</p>
+
+<ul>
+  <li><strong>string</strong> — ข้อความยาวก้อนเดียว เช่น <code>"Alice, Bob"</code>
+      เป็นรูปร่างที่<strong>เอาไปแสดงบนหน้าจอได้ทันที</strong> และเป็นรูปร่างที่มาจากช่องกรอกของผู้ใช้</li>
+  <li><strong>array</strong> — รายการของหลายชิ้น เช่น <code>["Alice", "Bob"]</code>
+      เป็นรูปร่างที่<strong>เอาไปวนลูป นับ กรอง เรียงได้</strong></li>
+</ul>
+
+<p>
+  ปัญหาคือของที่คุณได้มา มักอยู่ในรูปร่างที่ผิดกับสิ่งที่คุณจะทำต่อ
+  <br>ผู้ใช้พิมพ์ <code>"Alice, Bob, Carol"</code> มาให้ในช่องเดียว แต่คุณอยากนับว่ากี่คน — ต้องแปลงเป็น array ก่อน
+  <br>คุณมี array ของชื่อ แต่จะเอาไปโชว์ใต้ชื่อสูตรอาหาร — ต้องแปลงกลับเป็น string ก่อน
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>รับอะไรมา</th><th>คืนอะไรกลับ</th><th>พูดสั้น ๆ</th></tr></thead>
+  <tbody>
+    <tr><td><code>join</code></td><td>array</td><td>string</td><td>ร้อยหลายชิ้นให้เป็นก้อนเดียว</td></tr>
+    <tr><td><code>split</code></td><td>string</td><td>array</td><td>ผ่าก้อนเดียวให้เป็นหลายชิ้น</td></tr>
+    <tr><td><code>slice</code></td><td>string <em>หรือ</em> array</td><td>ชนิดเดิม</td><td>ตัดเอาบางส่วน ของเดิมไม่แตะ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สังเกตช่องขวาสุดของ <code>slice</code>: <strong>"ของเดิมไม่แตะ"</strong> — จำประโยคนี้ไว้ก่อน
+  เดี๋ยวหัวข้อ 6 จะเป็นเรื่องนี้ทั้งหัวข้อ
+</p>
+
+<h2 id="sn-sec-2">2 · join — เอา array มาร้อยเป็นข้อความเดียว</h2>
+
+<p>
+  สไลด์หน้า 30 เขียนไว้แบบนี้:
+</p>
+
+<pre><code><span class="k">const</span> teamA: <span class="n">string</span>[] = [<span class="s">"Alice"</span>, <span class="s">"Bob"</span>];
+
+<span class="c">// ✅ Expect team A are "Alice, Bob"</span>
+<span class="k">const</span> teamAMember = teamA.<span class="f">join</span>(<span class="s">", "</span>);</code></pre>
+
+<p>
+  ตัวหนังสือที่ใส่ในวงเล็บ (ในที่นี้คือ <code>", "</code> — คอมมาแล้วเคาะหนึ่งที)
+  คือ<strong>สิ่งที่จะไปแทรกอยู่ระหว่างชิ้น</strong> ไม่ใช่ต่อท้ายทุกชิ้น
+  <br>ของ 2 ชิ้น จะมีที่แทรกแค่ 1 จุด · ของ 4 ชิ้น จะมีที่แทรก 3 จุด
+</p>
+
+<p>ผมรันจริงพร้อมเคสข้างเคียงทั้งหมด ได้แบบนี้:</p>
+
+<pre><code><span class="k">const</span> teamA: <span class="n">string</span>[] = [<span class="s">"Alice"</span>, <span class="s">"Bob"</span>];
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"1)"</span>, teamA.<span class="f">join</span>(<span class="s">", "</span>));
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"2)"</span>, <span class="k">typeof</span> teamA.<span class="f">join</span>(<span class="s">", "</span>));
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"3)"</span>, teamA.<span class="f">join</span>());
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"4)"</span>, teamA.<span class="f">join</span>(<span class="s">""</span>));
+
+<span class="k">const</span> messy = [<span class="s">"a"</span>, <span class="k">null</span>, <span class="k">undefined</span>, <span class="s">"b"</span>];
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"5)"</span>, messy.<span class="f">join</span>(<span class="s">"-"</span>));
+
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"6)"</span>, ([] <span class="k">as</span> <span class="n">string</span>[]).<span class="f">join</span>(<span class="s">", "</span>));
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"7)"</span>, [<span class="s">"Alice"</span>].<span class="f">join</span>(<span class="s">", "</span>));
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"8)"</span>, [<span class="n">2026</span>, <span class="n">8</span>, <span class="n">27</span>].<span class="f">join</span>(<span class="s">"-"</span>));
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"9)"</span>, [[<span class="s">"a"</span>, <span class="s">"b"</span>], [<span class="s">"c"</span>]].<span class="f">join</span>(<span class="s">"|"</span>));</code></pre>
+
+<pre><code><span class="c">$ node a-join.js</span>
+1) Alice, Bob
+2) string
+3) Alice,Bob
+4) AliceBob
+5) a---b
+6)
+7) Alice
+8) 2026-8-27
+9) a,b|c</code></pre>
+
+<p>อ่านผลทีละบรรทัดแล้วจะได้กฎครบชุด:</p>
+
+<ul>
+  <li><strong>บรรทัด 2</strong> — คืนมาเป็น <code>string</code> เสมอ ไม่ว่าข้างในจะเป็นอะไร</li>
+  <li><strong>บรรทัด 3</strong> — <code>join()</code> ไม่ใส่อะไรเลย <strong>ไม่ได้แปลว่าไม่มีตัวคั่น</strong>
+      แต่มันใช้คอมมาให้อัตโนมัติ ได้ <code>Alice,Bob</code> (ไม่มีเคาะ)
+      ถ้าอยากได้แบบไม่มีอะไรคั่นจริง ๆ ต้องเขียน <code>join("")</code> อย่างบรรทัด 4</li>
+  <li><strong>บรรทัด 5</strong> — <code>null</code> กับ <code>undefined</code> กลายเป็นข้อความว่าง
+      <code>["a", null, undefined, "b"]</code> จึงได้ <code>a---b</code> ที่มีขีดสามอัน ไม่ใช่ <code>a-b</code>
+      <br>ถ้าเห็นขีดติดกันเยอะผิดปกติบนหน้าเว็บ ให้สงสัยข้อนี้ก่อนเลย</li>
+  <li><strong>บรรทัด 6</strong> — array ว่างได้ข้อความว่าง (บรรทัดนั้นจึงว่างเปล่า) ไม่ใช่ error</li>
+  <li><strong>บรรทัด 8</strong> — array ของตัวเลขก็ join ได้ มันแปลงเป็นตัวหนังสือให้เอง</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ร้อยพวงมาลัย กับ แกะพวงมาลัย</span>
+  <p>
+    <code>join</code> คือ<strong>การร้อยพวงมาลัย</strong> — คุณมีดอกมะลิกองหนึ่ง (array)
+    เอาด้ายร้อยเข้าไประหว่างดอก ได้ออกมาเป็นพวงเดียว (string)
+    <br><strong>ด้ายคือตัวที่ใส่ในวงเล็บ</strong> — จะร้อยด้วยด้ายสีอะไรก็ได้ ด้วยคอมมา ด้วยขีด ด้วยลูกศร
+    <br><code>split</code> คือ<strong>การตัดด้ายออก</strong> — พวงมาลัยกลับกลายเป็นดอกมะลิกองเดิม
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้อยพวงมาลัยแล้วแกะออก คุณได้ดอกมะลิครบเท่าเดิมเสมอ
+    <br>แต่ <code>join</code> แล้ว <code>split</code> กลับ <strong>ไม่การันตีว่าจะได้ของเดิม</strong> —
+    ถ้าในชื่อคนมีคอมมาอยู่แล้ว เช่น <code>["Alice, Jr.", "Bob"]</code>
+    พอ join ด้วย <code>", "</code> แล้ว split กลับด้วย <code>", "</code> คุณจะได้ <strong>3 ชิ้น ไม่ใช่ 2</strong>
+    <br>นี่คือเหตุผลที่คนไม่เก็บข้อมูลจริงจังไว้ในรูป string ที่คั่นด้วยคอมมา
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🏷️ ติดป้ายศัพท์</span>
+  <dl>
+    <dt>serializer</dt>
+    <dd>ตัวที่แปลงข้อมูลเป็นข้อความก้อนเดียวเพื่อเอาไปเก็บหรือส่งต่อ
+        <br>สไลด์หน้า 30 เขียนไว้ตรง ๆ ว่า <em>"It's more of a serializer than a transform"</em> —
+        แปลว่า <code>join</code> ไม่ได้เปลี่ยนเนื้อข้อมูล มันแค่<strong>เปลี่ยนรูปร่างของภาชนะ</strong>
+        <br>พิมพ์ถาม AI ได้ว่า: "ผมใช้ <code>join(&quot;,&quot;)</code> เก็บ tag ลง database ช่องเดียว
+        มันเป็น serializer ที่แย่ตรงไหน ควรใช้อะไรแทน"</dd>
+    <dt>delimiter (ตัวคั่น)</dt>
+    <dd>ตัวหนังสือที่ใช้แบ่งชิ้นออกจากกัน — ในที่นี้คือ <code>", "</code>
+        <br>ศัพท์ตัวเดียวกันนี้ใช้ทั้งฝั่ง <code>join</code> และ <code>split</code> และใช้ทั้งใน CSV, log, และ config
+        <br>ถาม senior ได้ว่า: "ไฟล์นี้ delimiter เป็นอะไร คอมมาหรือ tab" — เป็นคำถามที่ใช้ได้จริงในที่ทำงาน</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">3 · split — ผ่าข้อความให้เป็น array</h2>
+
+<p>สไลด์หน้า 31 ใช้ตัวอย่างนี้:</p>
+
+<pre><code><span class="k">const</span> helloWorld: <span class="n">string</span> = <span class="s">"Hello World"</span>;
+
+<span class="c">// ✅ Expect characters are</span>
+<span class="c">// ["H", "e", "l", "l", "o", " ", "W", "o", "r", "l", "d"]</span>
+<span class="k">const</span> characters = helloWorld.<span class="f">split</span>(<span class="s">""</span>);</code></pre>
+
+<p>
+  ตัวที่ใส่ในวงเล็บคือ <strong>ตัวคั่นที่ให้ไปตามหาแล้วตัดตรงนั้น</strong>
+  <br>ใส่ <code>""</code> (ว่างเปล่า) = ตัดทุกช่องว่างระหว่างตัวอักษร = ได้ทีละตัวอักษร
+</p>
+
+<div class="predict">
+<pre><code><span class="k">const</span> s: <span class="n">string</span> = <span class="s">"Hello World"</span>;
+
+<span class="f">console</span>.<span class="f">log</span>(s.<span class="f">split</span>(<span class="s">" "</span>).length);
+<span class="f">console</span>.<span class="f">log</span>(s.<span class="f">split</span>(<span class="s">""</span>).length);
+<span class="f">console</span>.<span class="f">log</span>(s.<span class="f">split</span>(<span class="s">","</span>).length);
+<span class="f">console</span>.<span class="f">log</span>(s.<span class="f">split</span>(<span class="s">" "</span>).<span class="f">join</span>(<span class="s">"-"</span>));</code></pre>
+  <p class="ask">สี่บรรทัดนี้พิมพ์อะไรออกมา? บรรทัดที่สาม (ตัวคั่นเป็นคอมมา ซึ่ง <code>"Hello World"</code> ไม่มีเลย) น่าคิดที่สุด</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ node p1.js</span>
+2
+11
+1
+Hello-World</code></pre>
+    <p>
+      <strong>2</strong> — <code>split(" ")</code> ตัดตรงเคาะ ได้ <code>["Hello", "World"]</code>
+      <br><strong>11</strong> — <code>split("")</code> ได้ทีละตัวอักษร รวมเคาะตรงกลางด้วย จึงเป็น 11 ไม่ใช่ 10
+      <br><strong>1</strong> — <strong>นี่คือข้อที่คนทายผิดบ่อยที่สุด</strong>
+      หาคอมมาไม่เจอ มัน<strong>ไม่ได้คืน array ว่าง และไม่ error</strong>
+      แต่คืน <code>["Hello World"]</code> คือ array ที่มีข้อความทั้งก้อนอยู่ข้างในชิ้นเดียว
+      <br><strong>4</strong> — <code>join</code> ต่อกลับได้ แต่ด้วยด้ายเส้นใหม่ ได้ <code>Hello-World</code>
+    </p>
+    <p style="margin-bottom:0">
+      บรรทัดที่สามคือกับดักจริงในโปรแกรม: คุณเขียนโค้ดคาดว่าจะได้หลายชิ้น
+      แล้วไปหยิบ <code>[1]</code> มาใช้ ซึ่งเป็น <code>undefined</code> —
+      โปรแกรมไม่พังตรงนั้น แต่ไปพังอีกสิบบรรทัดถัดไป หาต้นตอยาก
+    </p>
+  </div>
+</div>
+
+<p>นี่คือผลรันเคสอื่น ๆ ทั้งหมดที่ผมลอง:</p>
+
+<pre><code><span class="c">$ node b-split.js</span>
+1) [
+  'H', 'e', 'l', 'l',
+  'o', ' ', 'W', 'o',
+  'r', 'l', 'd'
+]
+2) 11
+3) [ 'Hello', 'World' ]
+4) 2
+5) [ 'Hello World' ]        <span class="c">// split() ไม่ใส่อะไร (ต้องเลี่ยง type ก่อน — ดูข้างล่าง)</span>
+6) [ 'Hello World' ]        <span class="c">// split(",") หาไม่เจอ</span>
+7) [ 'Alice', ' Bob', ' Carol' ]   <span class="c">// "Alice, Bob, Carol".split(",")</span>
+8) [ 'Alice', 'Bob', 'Carol' ]     <span class="c">// "Alice, Bob, Carol".split(", ")</span>
+9) [ '', 'a', 'b', '' ]     <span class="c">// ",a,b,".split(",")</span>
+10) [ '' ]                  <span class="c">// "".split(",")</span>
+11) []                      <span class="c">// "".split("")</span>
+12) [ 'a', 'b' ]            <span class="c">// "a-b-c-d".split("-", 2)</span>
+13) [ 'ก', 'ิ', 'น' ]
+14) 8
+15) 5</code></pre>
+
+<p>สามอันที่ต้องหยุดดู:</p>
+
+<ul>
+  <li><strong>บรรทัด 7 กับ 8</strong> — ต่างกันแค่เคาะเดียวใน delimiter
+      <br><code>split(",")</code> ทิ้งเคาะไว้ติดหน้าชื่อ ได้ <code>' Bob'</code> ที่มีเคาะนำ
+      <br>ชื่อที่มีเคาะนำจะทำให้การเทียบ <code>=== "Bob"</code> พังเงียบ ๆ —
+      ทางแก้จริงไม่ใช่ไปเดา delimiter ให้เป๊ะ แต่ใช้ <code>.trim()</code> ทีหลัง (หัวข้อ 8 มีให้ดู)</li>
+  <li><strong>บรรทัด 9</strong> — ตัวคั่นอยู่หัวและท้าย จะได้ชิ้นว่าง <code>''</code> ติดมาด้วยหัวท้าย
+      <br>ผู้ใช้เผลอพิมพ์คอมมาท้ายบรรทัด แล้วคุณนับได้ 4 ทั้งที่มีของจริง 2 — มาจากข้อนี้</li>
+  <li><strong>บรรทัด 10 กับ 11</strong> — ข้อความว่างให้ผล<strong>คนละอย่าง</strong>ตาม delimiter
+      <br><code>"".split(",")</code> ได้ <code>[ '' ]</code> — <strong>ยาว 1</strong>
+      <br><code>"".split("")</code> ได้ <code>[]</code> — <strong>ยาว 0</strong>
+      <br>ถ้าคุณเช็ก <code>if (arr.length === 0)</code> เพื่อดูว่า "ผู้ใช้ไม่ได้กรอกอะไรมา" มันจะไม่จับกรณีแรก</li>
+</ul>
+
+<div class="warn">
+  <p><strong>⚠️ กับดักคนไทย: <code>split("")</code> ไม่ได้แบ่งเป็น "ตัวอักษรที่คนอ่านเห็น"</strong></p>
+  <p>บรรทัด 13–15 ข้างบนคือของจริงที่รันมา:</p>
+  <pre style="margin:0.6rem 0"><code>13) [ 'ก', 'ิ', 'น' ]      <span class="c">// "กิน".split("")  → คนเห็น 2 ตัว แต่ได้ 3</span>
+14) 8                       <span class="c">// "👨‍👩‍👧".split("").length  → emoji ตัวเดียว ได้ 8</span>
+15) 5                       <span class="c">// [..."👨‍👩‍👧"].length      → ยังไม่ใช่ 1 อยู่ดี</span></code></pre>
+  <p style="margin-bottom:0">
+    คำว่า <strong>"กิน"</strong> คนไทยอ่านเห็น 2 ตัว แต่ <code>split("")</code> ได้ 3
+    เพราะสระอิเป็นตัวอักษรแยกต่างหากในหน่วยความจำ
+    <br>เพราะฉะนั้น <strong>ห้ามใช้ <code>split("")</code> เพื่อนับความยาวข้อความ หรือเพื่อกลับด้านข้อความ</strong>
+    ถ้าข้อความอาจมีภาษาไทยหรือ emoji — ผลจะเพี้ยนแบบที่เทสภาษาอังกฤษจับไม่ได้
+    <br>ถ้าต้องการหั่นให้ตรงกับที่ตาเห็นจริง ๆ ต้องใช้ <code>Intl.Segmenter</code> ซึ่งอยู่นอกขอบเขตบทนี้
+  </p>
+</div>
+
+<h3 id="sn-sub-1">ข้อต่างเล็ก ๆ ที่ tsc จับได้: <code>join()</code> ว่างได้ แต่ <code>split()</code> ว่างไม่ได้</h3>
+
+<p>
+  <code>join</code> เว้นวงเล็บว่างได้ (ได้คอมมาเป็นค่าเริ่มต้น) แต่ <code>split</code> ทำแบบเดียวกันไม่ได้
+  — และ TypeScript ไม่ปล่อยผ่าน:
+</p>
+
+<pre><code><span class="k">const</span> helloWorld: <span class="n">string</span> = <span class="s">"Hello World"</span>;
+
+<span class="c">// join() ไม่ใส่อะไรเลยได้</span>
+<span class="k">const</span> joined: <span class="n">string</span> = [<span class="s">"a"</span>, <span class="s">"b"</span>].<span class="f">join</span>();
+
+<span class="c">// split() ไม่ใส่อะไรเลย — ไม่ได้</span>
+<span class="k">const</span> parts = helloWorld.<span class="f">split</span>();</code></pre>
+
+<pre><code><span class="c">$ tsc --noEmit --strict b2-split-noarg.ts</span>
+b2-split-noarg.ts(7,26): error TS2554: Expected 1-2 arguments, but got 0.</code></pre>
+
+<p>
+  <strong>นี่คือของฟรีที่ TypeScript ให้</strong> — ใน JavaScript ล้วน ๆ บรรทัดนี้รันผ่านและได้
+  <code>[ 'Hello World' ]</code> เงียบ ๆ ซึ่งแทบไม่เคยเป็นสิ่งที่ใครตั้งใจ
+  <br>คำว่า <code>1-2 arguments</code> ในข้อความ error กำลังบอกด้วยว่า <code>split</code> รับได้ถึงสองตัว —
+  ตัวที่สองคือ <strong>limit</strong> คือจำนวนชิ้นสูงสุดที่จะเอา (บรรทัด 12 ในผลรันข้างบน)
+</p>
+
+<h2 id="sn-sec-4">4 · slice — ตัดเอาบางส่วน (ใช้ได้ทั้ง string และ array)</h2>
+
+<p>สไลด์หน้า 32 เขียนไว้แบบนี้:</p>
+
+<pre><code><span class="k">const</span> errorMessages: <span class="n">string</span> = <span class="s">"Hello World"</span>;
+
+<span class="c">// ✅ Expect slice between are "llo "</span>
+<span class="k">const</span> sliceBetween = errorMessages.<span class="f">slice</span>(<span class="n">2</span>, <span class="n">6</span>);
+
+<span class="c">// ✅ Expect slice from are "llo World"</span>
+<span class="k">const</span> sliceFrom = errorMessages.<span class="f">slice</span>(<span class="n">2</span>);</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ ผมรันแล้ว สไลด์ถูกทั้งสองบรรทัด</strong> —
+    <code>slice(2, 6)</code> ได้ <code>"llo "</code> (มีเคาะติดท้ายจริง ๆ)
+    และ <code>slice(2)</code> ได้ <code>"llo World"</code>
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>📝 หมายเหตุเรื่องสไลด์:</strong> หน้า 32 พาดหัวว่า <em>"Returns a new array with a portion of the original"</em>
+    แต่โค้ดตัวอย่างเป็น <code>string</code> ไม่ใช่ array และตัวแปรชื่อ <code>errorMessages</code>
+    (ชื่อแบบพหูพจน์ที่ฟังเหมือน array) ทั้งที่ค่าข้างในคือ <code>"Hello World"</code>
+    <br>ไม่ได้ผิดสาระ — <code>slice</code> ใช้ได้จริงทั้งสองชนิด แต่ถ้าอ่านสไลด์แล้วงงว่าตกลงมันของ array หรือของ string
+    คำตอบคือ <strong>ของทั้งคู่</strong> และหัวข้อนี้จะรันให้ดูทั้งสองแบบ
+  </p>
+</div>
+
+<p>
+  กติกาการนับที่ต้องจำมีสองข้อ:
+  <br>· <strong>เลขตัวแรกคือจุดเริ่ม นับจาก 0</strong>
+  <br>· <strong>เลขตัวหลังคือจุดจบ แบบ "ไปไม่ถึง"</strong> — ตัดก่อนถึงตำแหน่งนั้น
+</p>
+
+<div class="diagram">
+<pre style="margin:0"><code>ตำแหน่ง:  0    1    2    3    4    5    6    7    8    9   10
+ตัวอักษร: H    e    l    l    o   (เคาะ) W    o    r    l    d
+                    ↑                        ↑
+                 เริ่มที่ 2                จบก่อนถึง 6
+
+slice(2, 6)  →  เอาตำแหน่ง 2, 3, 4, 5  →  "llo "     (4 ตัว = 6 - 2)
+slice(2)     →  เอาตั้งแต่ 2 จนหมด      →  "llo World"</code></pre>
+</div>
+
+<p>
+  จำง่าย ๆ ว่า <strong>ความยาวของผลลัพธ์ = เลขหลัง − เลขหน้า</strong>
+  — <code>6 - 2 = 4</code> ตัวพอดี ไม่ต้องมานั่งเถียงกับตัวเองว่ารวมตัวที่ 6 ไหม
+  <br>แต่สูตรนี้<strong>ใช้ได้เฉพาะตอนที่เลขทั้งคู่เป็นบวกและไม่เกินความยาวจริง</strong> —
+  ถ้าเลขหลังเกินขอบ มันหยุดที่ปลายให้เอง (รันแล้ว: <code>"Hello World".slice(2, 100).length</code>
+  ได้ <code>9</code> ไม่ใช่ <code>98</code>) และถ้าเลขหน้ามากกว่าเลขหลังจะได้ <code>0</code> ไม่ใช่เลขติดลบ
+</p>
+
+<h3 id="sn-sub-2">เลขติดลบ — ของที่สไลด์ไม่ได้บอก แต่ใช้บ่อยกว่าเลขบวก</h3>
+
+<p>
+  <code>slice</code> รับเลขติดลบได้ และแปลว่า <strong>"นับถอยหลังจากท้าย"</strong>
+  <br>เจอบ่อยเวลาอยากได้ "3 รายการล่าสุด" โดยไม่ต้องรู้ว่าทั้งหมดมีกี่รายการ
+</p>
+
+<pre><code><span class="k">const</span> errorMessages: <span class="n">string</span> = <span class="s">"Hello World"</span>;
+<span class="f">console</span>.<span class="f">log</span>(<span class="f">JSON</span>.<span class="f">stringify</span>(errorMessages.<span class="f">slice</span>(<span class="n">2</span>, <span class="n">6</span>)));
+<span class="f">console</span>.<span class="f">log</span>(<span class="f">JSON</span>.<span class="f">stringify</span>(errorMessages.<span class="f">slice</span>(<span class="n">2</span>)));
+<span class="f">console</span>.<span class="f">log</span>(<span class="f">JSON</span>.<span class="f">stringify</span>(errorMessages.<span class="f">slice</span>(-<span class="n">5</span>)));
+<span class="f">console</span>.<span class="f">log</span>(<span class="f">JSON</span>.<span class="f">stringify</span>(errorMessages.<span class="f">slice</span>(-<span class="n">5</span>, -<span class="n">1</span>)));
+<span class="f">console</span>.<span class="f">log</span>(<span class="f">JSON</span>.<span class="f">stringify</span>(errorMessages.<span class="f">slice</span>(<span class="n">6</span>, <span class="n">2</span>)));</code></pre>
+
+<pre><code><span class="c">$ node h-quote.js</span>
+"llo "
+"llo World"
+"World"
+"Worl"
+""</code></pre>
+
+<p>
+  (ผมห่อด้วย <code>JSON.stringify</code> เพื่อให้เห็นเครื่องหมายคำพูด —
+  ไม่งั้นเคาะที่ติดท้าย <code>"llo "</code> จะมองไม่ออกเลยว่ามีอยู่)
+</p>
+
+<ul>
+  <li><code>slice(-5)</code> = เอา 5 ตัวสุดท้าย → <code>"World"</code></li>
+  <li><code>slice(-5, -1)</code> = 5 ตัวสุดท้าย แต่ตัดตัวสุดท้ายทิ้ง → <code>"Worl"</code>
+      <br>สูตรที่ใช้จริงบ่อยมากคือ <code>slice(0, -1)</code> = <strong>"ตัดตัวท้ายทิ้งหนึ่งตัว"</strong>
+      เช่นเวลาต้องการลบคอมมาที่เกินมาท้ายข้อความ</li>
+  <li><code>slice(6, 2)</code> = เลขหน้ามากกว่าเลขหลัง → <strong>ได้ข้อความว่าง ไม่ error ไม่กลับด้านให้</strong>
+      <br>ข้อนี้เป็นตัวทำให้หน้าเว็บว่างเปล่าโดยที่ console ไม่มีอะไรแดงเลย</li>
+</ul>
+
+<p>ฝั่ง array ใช้กติกาเดียวกันเป๊ะ:</p>
+
+<pre><code><span class="k">const</span> team: <span class="n">string</span>[] = [<span class="s">"Alice"</span>, <span class="s">"Bob"</span>, <span class="s">"Carol"</span>, <span class="s">"Dave"</span>];
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"9)"</span>, team.<span class="f">slice</span>(<span class="n">0</span>, <span class="n">2</span>));
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"10)"</span>, team.<span class="f">slice</span>(-<span class="n">2</span>));
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"11)"</span>, team);</code></pre>
+
+<pre><code><span class="c">$ node c-slice.js   (ตัดมาเฉพาะสามบรรทัดนี้)</span>
+9) [ 'Alice', 'Bob' ]
+10) [ 'Carol', 'Dave' ]
+11) [ 'Alice', 'Bob', 'Carol', 'Dave' ]</code></pre>
+
+<p>
+  บรรทัด 11 คือประเด็นทั้งหมดของหัวข้อถัดไป: <strong>ตัดไปสองรอบแล้ว ของเดิมยังครบ 4 คน</strong>
+</p>
+
+<h2 id="sn-sec-5">5 · slice ของ TypeScript ไม่ใช่ slice ของ Go</h2>
+
+<p>
+  คุณเรียน Go มาเก้าวัน และในบทเรียน 06 คุณเจอเรื่องนี้มาแล้ว —
+  ใน Go การเฉือน slice <strong>ไม่ได้ก๊อปข้อมูล</strong> มันคืนหน้าต่างที่มองไปยัง<strong>ก้อนความจำก้อนเดิม</strong>
+  <br>เขียนทับผ่านหน้าต่างใหม่ ของเดิมเปลี่ยนตาม ผมรันให้ดูจริงด้วย <code>go1.26.5</code>:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>Go — แชร์ความจำกัน</h4>
+<pre><code><span class="k">func</span> <span class="f">main</span>() {
+	s1 := []<span class="n">string</span>{<span class="s">"Alice"</span>, <span class="s">"Bob"</span>, <span class="s">"Carol"</span>, <span class="s">"Dave"</span>}
+	s2 := s1[<span class="n">1</span>:<span class="n">3</span>]
+	s2[<span class="n">0</span>] = <span class="s">"BOB"</span>
+	fmt.<span class="f">Println</span>(<span class="s">"s2 ="</span>, s2)
+	fmt.<span class="f">Println</span>(<span class="s">"s1 ="</span>, s1)
+}</code></pre>
+<pre><code><span class="c">$ go run main.go</span>
+s2 = [BOB Carol]
+s1 = [Alice BOB Carol Dave]</code></pre>
+    <p style="margin-bottom:0"><strong>s1 โดนแก้ไปด้วย</strong> ทั้งที่โค้ดไม่ได้แตะ <code>s1</code> เลยสักบรรทัด</p>
+  </div>
+  <div class="side good">
+    <h4>TypeScript — ก๊อปออกมาใหม่</h4>
+<pre><code><span class="k">const</span> s1: <span class="n">string</span>[] = [<span class="s">"Alice"</span>, <span class="s">"Bob"</span>, <span class="s">"Carol"</span>, <span class="s">"Dave"</span>];
+<span class="k">const</span> s2 = s1.<span class="f">slice</span>(<span class="n">1</span>, <span class="n">3</span>);
+s2[<span class="n">0</span>] = <span class="s">"BOB"</span>;
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"1) s2 ="</span>, s2);
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"2) s1 ="</span>, s1);</code></pre>
+<pre><code><span class="c">$ node e-shallow.js</span>
+1) s2 = [ 'BOB', 'Carol' ]
+2) s1 = [ 'Alice', 'Bob', 'Carol', 'Dave' ]</code></pre>
+    <p style="margin-bottom:0"><strong>s1 ไม่ขยับ</strong> — <code>slice</code> คืน array ก้อนใหม่ที่แยกขาดจากของเดิม</p>
+  </div>
+</div>
+
+<p>
+  โค้ดหน้าตาเกือบเหมือนกัน ชื่อคำสั่งเหมือนกัน แต่<strong>ผลตรงข้ามกัน</strong>
+  <br>ถ้าคุณพก mental model ของ Go ข้ามมา คุณจะกลัวการ slice โดยไม่จำเป็น
+  หรือแย่กว่านั้น — คุณจะไปเขียน Go ด้วย mental model ของ JS แล้วโดนของเก่าเปลี่ยนใต้เท้า
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ถ่ายเอกสาร กับ ที่คั่นหนังสือ</span>
+  <p>
+    คุณมีหนังสือหนึ่งเล่ม อยากได้เนื้อหาหน้า 2 ถึง 5
+    <br>· <strong>TypeScript ทำแบบ "เดินไปถ่ายเอกสาร"</strong> — ได้กระดาษชุดใหม่ 4 แผ่นมาถือ
+    คุณจะขีดเขียนบนกระดาษที่ถ่ายมายังไงก็ได้ <strong>หนังสือต้นฉบับบนชั้นไม่รู้เรื่องด้วย</strong>
+    <br>· <strong>Go ทำแบบ "หนีบที่คั่นสองอัน"</strong> — ยังเป็นหนังสือเล่มเดิม
+    คุณแค่ทำเครื่องหมายว่าสนใจช่วงนี้ <strong>ขีดเขียนลงไป = ขีดเขียนลงหนังสือจริง</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> การถ่ายเอกสารในชีวิตจริง ก๊อปทุกอย่างที่อยู่บนหน้ากระดาษไปหมด
+    <br>แต่ <code>slice</code> ก๊อปแค่ <strong>"รายชื่อของที่อยู่ในช่อง"</strong> ไม่ได้ก๊อปตัวของ —
+    ถ้าในช่องเป็น object การแก้ object ผ่านก้อนใหม่ยังไปโดนของเดิมอยู่ดี
+    <br>ประเด็นนี้สำคัญพอที่จะมีกล่องเตือนของตัวเองข้างล่าง
+  </p>
+</div>
+
+<div class="warn">
+  <p><strong>⚠️ slice ก๊อป "ชั้นเดียว" — ถ้าข้างในเป็น object ยังแชร์กันอยู่</strong></p>
+<pre style="margin:0.6rem 0"><code><span class="k">type</span> <span class="n">Member</span> = { name: <span class="n">string</span> };
+<span class="k">const</span> teamObj: <span class="n">Member</span>[] = [{ name: <span class="s">"Alice"</span> }, { name: <span class="s">"Bob"</span> }, { name: <span class="s">"Carol"</span> }];
+<span class="k">const</span> part = teamObj.<span class="f">slice</span>(<span class="n">0</span>, <span class="n">2</span>);
+part[<span class="n">0</span>]!.name = <span class="s">"ALICE"</span>;
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"3) part    ="</span>, part);
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"4) teamObj ="</span>, teamObj);
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"5) เป็นก้อนเดียวกันไหม:"</span>, part[<span class="n">0</span>] === teamObj[<span class="n">0</span>]);</code></pre>
+<pre style="margin:0.6rem 0"><code><span class="c">$ node e-shallow.js</span>
+3) part    = [ { name: 'ALICE' }, { name: 'Bob' } ]
+4) teamObj = [ { name: 'ALICE' }, { name: 'Bob' }, { name: 'Carol' } ]
+5) เป็นก้อนเดียวกันไหม: true</code></pre>
+  <p style="margin-bottom:0">
+    ตอนข้างในเป็น <code>string</code> การเขียนทับ <code>s2[0] = "BOB"</code> คือ<strong>เปลี่ยนว่าช่องนั้นชี้ไปที่ไหน</strong> ของเดิมจึงไม่ขยับ
+    <br>แต่ <code>part[0].name = "ALICE"</code> คือ<strong>เข้าไปแก้ข้างในของที่ช่องนั้นชี้อยู่</strong> —
+    และของชิ้นนั้นเป็นชิ้นเดียวกับที่ <code>teamObj[0]</code> ชี้อยู่ (บรรทัด 5 ยืนยันด้วย <code>true</code>)
+    <br>สรุป: <strong>slice ทำให้ "กล่อง" แยกกัน แต่ "ของในกล่อง" ยังเป็นชิ้นเดียวกัน</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-6">6 · slice กับ splice — ต่างกันตัวเดียว แต่คนละเรื่องเลย</h2>
+
+<p>
+  <code>slice</code> กับ <code>splice</code> ต่างกันแค่ตัว <code>p</code> ตัวเดียว
+  พิมพ์ผิดไม่มีอะไรเตือน เพราะ<strong>มันมีอยู่จริงทั้งคู่</strong>
+  <br>ลองทายก่อนดูเฉลย:
+</p>
+
+<div class="predict">
+<pre><code><span class="k">const</span> a: <span class="n">string</span>[] = [<span class="s">"Alice"</span>, <span class="s">"Bob"</span>, <span class="s">"Carol"</span>, <span class="s">"Dave"</span>];
+<span class="k">const</span> x = a.<span class="f">slice</span>(<span class="n">1</span>, <span class="n">3</span>);
+
+<span class="k">const</span> b: <span class="n">string</span>[] = [<span class="s">"Alice"</span>, <span class="s">"Bob"</span>, <span class="s">"Carol"</span>, <span class="s">"Dave"</span>];
+<span class="k">const</span> y = b.<span class="f">splice</span>(<span class="n">1</span>, <span class="n">3</span>);
+
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"x ="</span>, x, <span class="s">"| a เหลือ"</span>, a.length, <span class="s">"ตัว"</span>);
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"y ="</span>, y, <span class="s">"| b เหลือ"</span>, b.length, <span class="s">"ตัว"</span>);</code></pre>
+  <p class="ask">array เริ่มต้นเหมือนกันเป๊ะ ตัวเลขในวงเล็บก็ <code>(1, 3)</code> เหมือนกัน — <code>x</code> กับ <code>y</code> ได้เท่ากันไหม? แล้ว <code>a</code> กับ <code>b</code> เหลือกี่ตัว?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ node p2.js</span>
+x = [ 'Bob', 'Carol' ] | a เหลือ 4 ตัว
+y = [ 'Bob', 'Carol', 'Dave' ] | b เหลือ 1 ตัว</code></pre>
+    <p>
+      <strong>ต่างกันทั้งสองด้าน ไม่มีอะไรตรงกันเลย:</strong>
+    </p>
+    <ul>
+      <li><strong>ของที่ได้กลับมาไม่เท่ากัน</strong> — <code>x</code> ได้ 2 ชิ้น <code>y</code> ได้ 3 ชิ้น
+          เพราะเลขตัวที่สองแปลคนละความหมาย
+          <br><code>slice(1, 3)</code> = "จาก<strong>ตำแหน่ง</strong> 1 ถึงก่อนถึงตำแหน่ง 3" → 2 ชิ้น
+          <br><code>splice(1, 3)</code> = "จากตำแหน่ง 1 <strong>เอาออกไป 3 ชิ้น</strong>" → 3 ชิ้น</li>
+      <li><strong>ของเดิมไม่เท่ากัน</strong> — <code>a</code> ยังครบ 4
+          แต่ <code>b</code> <strong>เหลือ 1</strong> เพราะ <code>splice</code> ควักออกจากของเดิมจริง ๆ</li>
+    </ul>
+    <p style="margin-bottom:0">
+      อีกจุดที่ทำให้หลงง่าย: <code>splice</code> <strong>คืนของที่ควักออกมา ไม่ใช่ array ที่เหลือ</strong>
+      <br>คนที่เขียน <code>const remaining = list.splice(0, 1)</code> โดยตั้งใจว่าจะได้ "รายการที่เหลือ"
+      จะได้แค่ชิ้นแรกที่ถูกลบ และ <code>list</code> ก็โดนแก้ไปแล้วเรียบร้อย
+    </p>
+  </div>
+</div>
+
+<p>อีกด้านหนึ่ง <code>splice</code> <strong>แทรกของใหม่</strong>ได้ด้วย ซึ่ง <code>slice</code> ทำไม่ได้เลย:</p>
+
+<pre><code><span class="k">const</span> e: <span class="n">string</span>[] = [<span class="s">"Alice"</span>, <span class="s">"Bob"</span>, <span class="s">"Dave"</span>];
+<span class="k">const</span> removed = e.<span class="f">splice</span>(<span class="n">2</span>, <span class="n">0</span>, <span class="s">"Carol"</span>);   <span class="c">// ที่ตำแหน่ง 2 ลบ 0 ชิ้น แล้วยัด "Carol" เข้าไป</span>
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"7) splice คืน:"</span>, removed);
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"8) ของเดิม   :"</span>, e);</code></pre>
+
+<pre><code><span class="c">$ node d-splice.js   (ตัดมาสองบรรทัด)</span>
+7) splice คืน: []
+8) ของเดิม   : [ 'Alice', 'Bob', 'Carol', 'Dave' ]</code></pre>
+
+<p>
+  ตรงนี้ยิ่งชัด — <strong>ผลของงานอยู่ที่ <code>e</code> ไม่ได้อยู่ที่ค่าที่คืนมา</strong> (ซึ่งเป็น array ว่าง)
+  <br>ถ้าคุณเขียน <code>const newList = e.splice(2, 0, "Carol")</code> คุณจะได้ <code>[]</code> แล้วงงว่าของหายไปไหน
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th><code>slice</code></th><th><code>splice</code></th></tr></thead>
+  <tbody>
+    <tr><td>ของเดิม</td><td>ไม่แตะ</td><td><strong>โดนแก้</strong></td></tr>
+    <tr><td>คืนอะไร</td><td>ส่วนที่ตัดมา (ก้อนใหม่)</td><td>ส่วนที่<strong>ควักทิ้ง</strong></td></tr>
+    <tr><td>เลขตัวที่สอง</td><td>ตำแหน่งที่จะหยุดก่อนถึง</td><td><strong>จำนวนชิ้นที่จะลบ</strong></td></tr>
+    <tr><td>เลขติดลบ</td><td>ได้ทั้งสองตัว (นับจากท้าย)</td><td>ได้<strong>เฉพาะเลขตัวแรก</strong> · เลขตัวที่สองติดลบ = ลบ 0 ชิ้น</td></tr>
+    <tr><td>ใช้กับ string</td><td>ได้</td><td><strong>ไม่มี</strong></td></tr>
+    <tr><td>แทรกของใหม่</td><td>ไม่ได้</td><td>ได้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แถวรองสุดท้าย — <code>string</code> ไม่มี <code>splice</code> เพราะ<strong>ข้อความใน JavaScript แก้ไม่ได้เลย</strong>
+  ทุกคำสั่งของ string จึงคืนข้อความก้อนใหม่เสมอ ไม่มีทางเลือกอื่น
+  <br>และ TypeScript จับให้ตั้งแต่ยังไม่รัน พร้อมเดาให้ด้วยว่าคุณน่าจะหมายถึงอะไร:
+</p>
+
+<pre><code><span class="k">const</span> errorMessages: <span class="n">string</span> = <span class="s">"Hello World"</span>;
+
+<span class="k">const</span> cut = errorMessages.<span class="f">splice</span>(<span class="n">2</span>, <span class="n">6</span>);</code></pre>
+
+<pre><code><span class="c">$ tsc --noEmit --strict d2-string-splice.ts</span>
+d2-string-splice.ts(3,27): error TS2551: Property 'splice' does not exist on type 'string'. Did you mean 'slice'?</code></pre>
+
+<p>
+  <code>Did you mean 'slice'?</code> — <strong>tsc พิมพ์ให้เองเลย</strong>
+  <br>นี่คือคุณค่าของ TypeScript แบบเห็นกับตา: ใน JavaScript ล้วน ๆ บรรทัดนี้จะระเบิดตอนรัน
+  ด้วยข้อความ <code>errorMessages.splice is not a function</code> ซึ่งเกิดขึ้นหลังจากผู้ใช้กดปุ่มไปแล้ว
+</p>
+
+<div class="jargon">
+  <span class="label">🏷️ ติดป้ายศัพท์</span>
+  <dl>
+    <dt>mutate / mutating method</dt>
+    <dd>คำสั่งที่<strong>เข้าไปแก้ของเดิม</strong> ไม่ใช่คืนของใหม่ — <code>splice</code>, <code>sort</code>, <code>reverse</code>, <code>push</code> อยู่กลุ่มนี้
+        <br>พิมพ์ถาม AI ได้ว่า: "method ของ Array ตัวไหนบ้างที่ mutate ของเดิม และมีตัวไหนที่มีคู่แฝดแบบไม่ mutate ให้ใช้แทน"
+        <br>(คำตอบที่คุณจะได้จะมี <code>toSorted</code> กับ <code>toSpliced</code> อยู่ด้วย — เป็นของใหม่ที่ Node 24 มีแล้ว)</dd>
+    <dt>immutable / non-mutating</dt>
+    <dd>ตรงข้ามกับ mutate — คืนของก้อนใหม่ ของเดิมอยู่ครบ · <code>slice</code>, <code>map</code>, <code>filter</code>, <code>join</code> อยู่กลุ่มนี้
+        <br>คำนี้คือหัวใจของคำว่า <strong>Functional Programming</strong> ในชื่อวิชานี้ —
+        และเป็นเหตุผลที่ React ถึงบังคับให้คุณสร้าง array ใหม่แทนการ <code>push</code> ของเดิม
+        <br>ถาม senior ได้ว่า: "ทำไม React ถึงไม่เห็นการเปลี่ยนแปลงเวลาผม <code>push</code> เข้า state โดยตรง"</dd>
+    <dt>shallow copy (ก๊อปชั้นเดียว)</dt>
+    <dd>ก๊อปเฉพาะชั้นนอกสุด ของที่อยู่ข้างในยังเป็นชิ้นเดิมร่วมกัน — คือสิ่งที่ <code>slice</code> ทำ
+        <br>ตรงข้ามคือ <strong>deep copy</strong> ที่ก๊อปลงไปทุกชั้น (ใน Node 24 ใช้ <code>structuredClone()</code> ได้)
+        <br>พิมพ์บอก AI ได้ว่า: "ผม slice array ของ object ออกมาแล้วแก้ ปรากฏว่าของเดิมเปลี่ยนตาม
+        ช่วยอธิบายว่าเป็น shallow copy ยังไง และควรแก้ด้วยอะไร"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">7 · TypeScript ช่วยตรงไหนอีก</h2>
+
+<p>
+  นอกจากจับ <code>splice</code> บน string ได้ มันยังจับ<strong>รูปร่างของผลลัพธ์</strong>ให้ด้วย
+  <br>กับดักคลาสสิกคือลืมว่า <code>join</code> คืน <code>string</code> ไม่ใช่ array:
+</p>
+
+<pre><code><span class="k">const</span> team: <span class="n">string</span>[] = [<span class="s">"Alice"</span>, <span class="s">"Bob"</span>];
+
+<span class="k">const</span> label: <span class="n">string</span>[] = team.<span class="f">join</span>(<span class="s">", "</span>);</code></pre>
+
+<pre><code><span class="c">$ tsc --noEmit --strict g-typeerr.ts</span>
+g-typeerr.ts(3,7): error TS2322: Type 'string' is not assignable to type 'string[]'.</code></pre>
+
+<p>
+  ในกล่องโค้ดข้างบน <code>string[]</code> อ่านว่า <strong>"array ของ string"</strong>
+  (เขียนแบบเต็มยศได้ว่า <code>Array&lt;string&gt;</code> ก็ความหมายเดียวกัน)
+  <br>error บอกตรง ๆ ว่าฝั่งขวาเป็น <code>string</code> เดี่ยว ๆ แต่ฝั่งซ้ายประกาศไว้ว่าจะรับ array —
+  ใส่กันไม่ได้
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียน</th><th>ได้ type อะไร</th></tr></thead>
+  <tbody>
+    <tr><td><code>["a","b"].join(", ")</code></td><td><code>string</code></td></tr>
+    <tr><td><code>"a, b".split(", ")</code></td><td><code>string[]</code></td></tr>
+    <tr><td><code>"Hello".slice(1, 3)</code></td><td><code>string</code></td></tr>
+    <tr><td><code>["a","b"].slice(0, 1)</code></td><td><code>string[]</code></td></tr>
+    <tr><td><code>["a","b"].splice(0, 1)</code></td><td><code>string[]</code> (ของที่ควักออก)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <code>slice</code> เป็นตัวเดียวในตารางที่ <strong>type ขาออกเปลี่ยนตาม type ขาเข้า</strong> —
+  ใส่ string ได้ string ใส่ array ได้ array
+</p>
+
+<h2 id="sn-sec-8">8 · เอามาต่อกันใช้จริง</h2>
+
+<p>
+  งานที่เจอบ่อยที่สุดคือ: ผู้ใช้พิมพ์รายชื่อมาในช่องเดียว เว้นวรรคมั่ว ๆ
+  แล้วคุณต้องเอาไปแสดงแค่ 3 ชื่อแรก
+</p>
+
+<pre><code><span class="k">const</span> raw: <span class="n">string</span> = <span class="s">"Alice, Bob ,Carol,  Dave"</span>;
+
+<span class="k">const</span> names: <span class="n">string</span>[] = raw.<span class="f">split</span>(<span class="s">","</span>);
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"1)"</span>, names);
+
+<span class="k">const</span> cleaned: <span class="n">string</span>[] = raw.<span class="f">split</span>(<span class="s">","</span>).<span class="f">map</span>((n) =&gt; n.<span class="f">trim</span>());
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"2)"</span>, cleaned);
+
+<span class="k">const</span> firstThree: <span class="n">string</span>[] = cleaned.<span class="f">slice</span>(<span class="n">0</span>, <span class="n">3</span>);
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"3)"</span>, firstThree);
+
+<span class="k">const</span> label: <span class="n">string</span> = firstThree.<span class="f">join</span>(<span class="s">" · "</span>);
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"4)"</span>, label);
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"5) ของเดิมยังอยู่:"</span>, raw);
+
+<span class="k">const</span> long = <span class="s">"รายการวัตถุดิบทั้งหมดของสูตรอาหารนี้"</span>;
+<span class="f">console</span>.<span class="f">log</span>(<span class="s">"6)"</span>, long.<span class="f">slice</span>(<span class="n">0</span>, <span class="n">12</span>) + <span class="s">"…"</span>);</code></pre>
+
+<pre><code><span class="c">$ node f-pipeline.js</span>
+1) [ 'Alice', ' Bob ', 'Carol', '  Dave' ]
+2) [ 'Alice', 'Bob', 'Carol', 'Dave' ]
+3) [ 'Alice', 'Bob', 'Carol' ]
+4) Alice · Bob · Carol
+5) ของเดิมยังอยู่: Alice, Bob ,Carol,  Dave
+6) รายการวัตถุด…</code></pre>
+
+<p>
+  ทางเดินคือ <strong>split → ล้าง → slice → join</strong> —
+  แปลงเป็น array เพื่อจัดการ แล้วแปลงกลับเป็น string เพื่อแสดงผล
+  <br>บรรทัด 5 คือสิ่งที่ผมอยากให้สังเกต: ผ่านมาสี่ขั้นตอนแล้ว <code>raw</code> ยังเหมือนเดิมเป๊ะ
+  ทุกขั้นตอนคืนของก้อนใหม่หมด ถ้าอยากย้อนกลับไปเริ่มใหม่ก็ทำได้ตลอดเวลา
+</p>
+
+<p>
+  บรรทัด 6 เป็นการใช้ <code>slice</code> ที่คุณจะเจอทุกโปรเจกต์: <strong>ตัดข้อความยาวให้พอดีการ์ด</strong>
+  <br>แต่ระวัง — ถ้าข้อความเป็นภาษาไทย <code>slice(0, 12)</code> อาจตัดกลางสระได้ ด้วยเหตุผลเดียวกับกล่องเตือนในหัวข้อ 3
+</p>
+
+<h2 id="sn-sec-9">9 · ทวนความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. <code>"Hello World".split(",")</code> — ข้อความนี้ไม่มีคอมมาอยู่เลยสักตัว จะได้อะไรกลับมา?</p>
+  <div class="opts">
+    <button class="opt">array ว่าง <code>[]</code> เพราะหา delimiter ที่สั่งไว้ไม่เจอสักที่ในข้อความ</button>
+    <button class="opt">โยน error ออกมาตอนรัน เพราะ delimiter ที่ส่งไปไม่มีอยู่จริงในข้อความ</button>
+    <button class="opt">array ที่มีชิ้นเดียว คือ <code>["Hello World"]</code> — ข้อความทั้งก้อนอยู่ในชิ้นแรก</button>
+    <button class="opt">คืน <code>null</code> เพื่อบอกว่าแบ่งไม่สำเร็จ ให้ผู้เขียนไปเช็กต่อเอง</button>
+  </div>
+  <div class="explain">
+    <p>
+      ผลรันจริง (บรรทัด 6 ของ <code>b-split.js</code>): <code>[ 'Hello World' ]</code> และ <code>.length</code> เป็น <code>1</code>
+      <br><code>split</code> คิดแบบนี้: "ตัดตรงที่เจอ delimiter" — เจอ 0 จุด ก็ตัด 0 ครั้ง เหลือชิ้นเดียวคือทั้งก้อน
+      <br>ตัวเลือกที่ 1 ผิด — <code>split</code> จะคืน array ว่างได้แค่สองกรณี คือ <code>"".split("")</code>
+      (บรรทัด 11 ในผลรัน) กับตอนที่สั่ง limit เป็น <code>0</code>
+      (รันแล้ว: <code>"Hello World".split(",", 0)</code> ได้ <code>[]</code>) — ทั้งคู่คนละเรื่องกับข้อนี้
+      <br>ตัวเลือกที่ 2 ผิด — <code>split</code> ไม่เคยโยน error เรื่อง delimiter หาไม่เจอ มัน<strong>เงียบเสมอ</strong> ซึ่งคือปัญหา
+      <br>ตัวเลือกที่ 4 ผิด — <code>split</code> คืน <code>string[]</code> เสมอ ไม่เคยคืน <code>null</code> และ TypeScript ก็ประกาศ type ไว้แบบนั้น
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> split ที่หา delimiter ไม่เจอ ไม่ได้ว่างเปล่าและไม่ได้พัง — มันคืน array ยาว 1 ที่มีของทั้งก้อน แล้วปล่อยให้คุณไปพังทีหลัง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. <code>const a = ["Alice","Bob","Carol","Dave"]</code> แล้วเรียก <code>a.splice(1, 3)</code> — หลังบรรทัดนี้ <code>a</code> เหลืออะไร และค่าที่คืนกลับมาคืออะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>a</code> ยังครบ 4 ตัว · คืน <code>["Bob","Carol"]</code> เหมือน <code>slice(1, 3)</code> ทุกประการ</button>
+    <button class="opt"><code>a</code> เหลือ <code>["Alice"]</code> ตัวเดียว · คืน <code>["Bob","Carol","Dave"]</code> ที่ถูกควักออกไป</button>
+    <button class="opt"><code>a</code> เหลือ <code>["Alice"]</code> ตัวเดียว · คืน <code>["Alice"]</code> ซึ่งคือส่วนที่ยังเหลืออยู่</button>
+    <button class="opt"><code>a</code> เหลือ <code>["Alice","Dave"]</code> · คืน <code>["Bob","Carol"]</code> ตามช่วงตำแหน่งที่ระบุ</button>
+  </div>
+  <div class="explain">
+    <p>
+      ผลรันจริงจาก <code>p2.js</code>: <code>y = [ 'Bob', 'Carol', 'Dave' ] | b เหลือ 1 ตัว</code>
+      <br>มีสองเรื่องเกิดพร้อมกัน: (ก) เลข <code>3</code> ใน <code>splice</code> คือ<strong>จำนวนชิ้นที่ลบ</strong> ไม่ใช่ตำแหน่งสิ้นสุด
+      จึงลบ Bob, Carol, Dave ครบสามชิ้น · (ข) <code>splice</code> <strong>แก้ของเดิม</strong> และคืน<strong>ของที่ควักออก</strong>
+      <br>ตัวเลือกที่ 1 ผิดทั้งสองเรื่อง — เป็นพฤติกรรมของ <code>slice</code> ไม่ใช่ <code>splice</code> (รันเทียบกันแล้วใน <code>p2.ts</code>)
+      <br>ตัวเลือกที่ 3 ผิดครึ่งเดียว — <code>a</code> เหลือ <code>["Alice"]</code> ถูก แต่ค่าที่คืนคือของที่ลบ ไม่ใช่ของที่เหลือ
+      <br>ตัวเลือกที่ 4 ผิด — คิดว่าเลข <code>3</code> เป็นตำแหน่งสิ้นสุด จึงเหลือ Dave ไว้ ซึ่งจริง ๆ Dave ถูกลบไปด้วย
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> <code>splice(เริ่ม, จำนวนที่ลบ)</code> แก้ของเดิมและคืนของที่ลบ ส่วน <code>slice(เริ่ม, ก่อนถึง)</code> ไม่แตะของเดิมและคืนของที่ตัดมา</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. คุณเรียน Go มาแล้วรู้ว่า <code>s2 := s1[1:3]</code> แล้วเขียนทับ <code>s2[0]</code> จะไปโดน <code>s1</code> ด้วย — ใน TypeScript <code>const s2 = s1.slice(1, 3)</code> แล้ว <code>s2[0] = "BOB"</code> จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">เหมือน Go ทุกประการ — <code>s1</code> เปลี่ยนตาม เพราะทั้งสองภาษาใช้หลักการแชร์หน่วยความจำเดียวกัน</button>
+    <button class="opt">TypeScript จะฟ้อง error ตอน compile เพราะ <code>s2</code> ประกาศด้วย <code>const</code> จึงเขียนทับช่องไม่ได้</button>
+    <button class="opt">เหมือน Go แต่เฉพาะตอนที่ข้างใน array เป็นชนิดพื้นฐานอย่าง <code>string</code> หรือ <code>number</code> เท่านั้น</button>
+    <button class="opt"><code>s1</code> ไม่ขยับเลย เพราะ <code>slice</code> ก๊อป array ออกมาเป็นก้อนใหม่ — แต่ถ้าข้างในเป็น object การแก้ข้างใน object ยังไปโดนของเดิม</button>
+  </div>
+  <div class="explain">
+    <p>
+      ผมรันเทียบสองภาษาบนเครื่องเดียวกัน:
+      <br>· Go (<code>go1.26.5</code>): <code>s1 = [Alice BOB Carol Dave]</code> — <strong>โดนแก้</strong>
+      <br>· TypeScript (<code>node v24.14.0</code>): <code>s1 = [ 'Alice', 'Bob', 'Carol', 'Dave' ]</code> — <strong>ไม่ขยับ</strong>
+      <br>และเคส object: <code>part[0].name = "ALICE"</code> ทำให้ <code>teamObj[0]</code> เปลี่ยนตาม
+      พร้อม <code>part[0] === teamObj[0]</code> ได้ <code>true</code>
+      <br>ตัวเลือกที่ 1 ผิด — เป็นความเข้าใจที่ยกจาก Go มาตรง ๆ ซึ่งเป็นกับดักหลักของบทนี้
+      <br>ตัวเลือกที่ 2 ผิด — <code>const</code> ห้ามแค่ชี้ไปที่ array ก้อนใหม่ ไม่ได้ห้ามแก้ช่องข้างใน (โค้ดนี้ผ่าน <code>tsc --strict</code>)
+      <br>ตัวเลือกที่ 3 ผิดกลับด้าน — string/number คือกรณีที่<strong>ปลอดภัย</strong> ส่วน object คือกรณีที่ยังแชร์กัน
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> slice ของ TypeScript ก๊อปกล่องออกมาใหม่ (ไม่เหมือน Go ที่แชร์) แต่ก๊อปแค่ชั้นเดียว — ของในกล่องยังเป็นชิ้นเดิม</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. อยากได้ "ทุกตัวยกเว้นตัวสุดท้าย" จาก <code>string</code> ที่ไม่รู้ความยาวล่วงหน้า — เขียนยังไงสั้นที่สุดและไม่พัง?</p>
+  <div class="opts">
+    <button class="opt"><code>s.slice(0, -1)</code> — เลขติดลบแปลว่านับถอยหลังจากท้าย จึงหยุดก่อนถึงตัวสุดท้ายพอดี</button>
+    <button class="opt"><code>s.slice(-1)</code> — เครื่องหมายลบสั่งให้ตัดตัวท้ายทิ้งแล้วคืนส่วนที่เหลือมาให้</button>
+    <button class="opt"><code>s.splice(0, s.length - 1)</code> — ควักตั้งแต่ต้นจนถึงก่อนตัวสุดท้ายออกมาใช้</button>
+    <button class="opt"><code>s.slice(s.length, 0)</code> — ใส่ความยาวไว้หน้าแล้วให้มันไล่ย้อนกลับมาที่ศูนย์</button>
+  </div>
+  <div class="explain">
+    <p>
+      ผลรันจริง: <code>"Hello World".slice(-5, -1)</code> ได้ <code>"Worl"</code> — ยืนยันว่าเลขลบตัวหลังคือ "หยุดก่อนถึงตัวท้าย"
+      <br>ตัวเลือกที่ 2 ผิด — <code>slice(-1)</code> คือ "เอา 1 ตัวสุดท้าย" ได้ตรงข้ามกับที่ต้องการ
+      (ทดสอบแล้ว: <code>slice(-5)</code> ได้ <code>"World"</code> ไม่ใช่ <code>"Hello "</code>)
+      <br>ตัวเลือกที่ 3 ผิด — string ไม่มี <code>splice</code> เลย tsc ฟ้อง
+      <code>TS2551: Property 'splice' does not exist on type 'string'. Did you mean 'slice'?</code>
+      <br>ตัวเลือกที่ 4 ผิด — เลขหน้ามากกว่าเลขหลังได้ข้อความว่างเสมอ ไม่มีการไล่ย้อน
+      (ทดสอบแล้ว: <code>slice(6, 2)</code> ได้ <code>""</code>)
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> <code>slice(0, -1)</code> = ตัดตัวท้ายทิ้ง · <code>slice(-1)</code> = เอาแต่ตัวท้าย — สองอันนี้ตรงข้ามกัน อย่าสลับ</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">10 · ภารกิจ</h2>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — เขียนฟังก์ชันจัดรายชื่อ แล้วเขียนเทสพิสูจน์ว่าของเดิมไม่โดนแก้</span>
+  <p>
+    เป้าหมายคือฟังก์ชันที่รับ string ดิบจากช่องกรอกของผู้ใช้ แล้วคืนข้อความสรุปสั้น ๆ
+    เช่นรับ <code>"Alice, Bob ,Carol,  Dave"</code> แล้วคืน <code>"Alice · Bob · Carol และอีก 1 คน"</code>
+    <br>ทำในโฟลเดอร์เปล่า ๆ ที่ไหนก็ได้ ขอแค่มี <code>tsc</code> กับ <code>node</code>
+  </p>
+  <ol>
+    <li><strong>สร้างไฟล์ <code>summary.ts</code></strong> แล้วเขียนฟังก์ชัน
+        <code>summarize(raw: string, max: number): string</code>
+        <br>ข้างในให้ทำตามลำดับนี้: <code>split(",")</code> → <code>map(n =&gt; n.trim())</code>
+        → <code>filter(n =&gt; n !== "")</code> → <code>slice(0, max)</code> → <code>join(" · ")</code>
+        <br>ถ้ามีคนเกิน <code>max</code> ให้ต่อท้ายว่า <code>" และอีก N คน"</code>
+        โดย <code>N</code> คำนวณจากจำนวนหลัง <code>filter</code> ลบด้วย <code>max</code></li>
+    <li><strong>ตรวจ type ก่อนรัน:</strong> <code>tsc --noEmit --strict summary.ts</code>
+        <br>ต้องได้ผลเงียบ ๆ ไม่มีข้อความอะไรออกมา ถ้ามี error ให้แก้จนหมดก่อนไปข้อถัดไป</li>
+    <li><strong>ลองใส่กับดักดูว่า tsc จับได้จริงไหม:</strong> เปลี่ยน <code>slice</code> เป็น <code>splice</code>
+        ในบรรทัดที่ทำงานกับ array แล้วรัน <code>tsc --noEmit --strict</code> ซ้ำ
+        <br><strong>คุณจะพบว่ามันไม่ฟ้องเลย</strong> เพราะ array มี <code>splice</code> จริง —
+        นี่คือเหตุผลที่ข้อถัดไปจำเป็น แล้วค่อยเปลี่ยนกลับเป็น <code>slice</code></li>
+    <li><strong>เขียนเทสพิสูจน์ว่าของเดิมไม่โดนแก้</strong> — สร้าง <code>summary.test.ts</code>
+        แล้วใช้ test runner ที่ Node มีมาให้ในตัว (<code>import { test } from "node:test"</code>
+        และ <code>import assert from "node:assert/strict"</code>) เขียนอย่างน้อย 4 เคส:
+        <ul>
+          <li>เคสปกติ 4 ชื่อ <code>max</code> เป็น 3 → ต้องได้ <code>"Alice · Bob · Carol และอีก 1 คน"</code></li>
+          <li>เคสมีคอมมาเกินท้ายข้อความ <code>"Alice,Bob,"</code> → ต้องได้ <code>"Alice · Bob"</code>
+              (ข้อนี้พิสูจน์ว่า <code>filter</code> ทำงาน — ถ้าลืมใส่จะได้จุดคั่นลอย ๆ ท้ายข้อความ)</li>
+          <li>เคสข้อความว่าง <code>""</code> → ต้องได้ <code>""</code></li>
+          <li><strong>เคสสำคัญที่สุด:</strong> ประกาศ <code>const raw = "Alice, Bob ,Carol,  Dave"</code>
+              เก็บสำเนาความยาวไว้ เรียก <code>summarize(raw, 2)</code> แล้ว
+              <code>assert.equal(raw, "Alice, Bob ,Carol,  Dave")</code>
+              <br>ข้อนี้คือข้อที่จะแดงทันทีถ้าคุณเผลอใช้ <code>splice</code> ในข้อ 3 แล้วลืมเปลี่ยนกลับ</li>
+        </ul></li>
+    <li><strong>รันเทสจริง:</strong> คอมไพล์ด้วย
+        <code>tsc --target es2022 --module nodenext --moduleResolution nodenext summary.ts summary.test.ts</code>
+        แล้ว <code>node --test</code>
+        <br>ต้องเห็นบรรทัด <code>fail 0</code> และเลขหลัง <code>pass</code> เท่ากับจำนวนเทสที่คุณเขียน ถึงจะถือว่าผ่าน</li>
+  </ol>
+  <button class="reveal">ดูใบ้ ถ้าติดข้อ 4</button>
+  <div class="answer">
+    <p>
+      เคสที่ 4 หลายคนเขียนแล้วมันผ่านตลอดแม้จะใช้ <code>splice</code> — เพราะเผลอส่ง array ที่สร้างใหม่เข้าไปแทนที่จะส่ง <code>raw</code>
+      <br>จุดที่ต้องระวัง: <code>raw</code> เป็น <code>string</code> ซึ่งแก้ไม่ได้อยู่แล้ว ดังนั้นเทสจะไม่มีวันแดง
+      <strong>ถ้าเทียบแค่ตัว <code>raw</code></strong>
+      <br>ให้เพิ่มอีกเทสหนึ่งที่รับ <strong>array</strong> เข้าไปตรง ๆ แทน:
+      เขียนฟังก์ชันคู่แฝด <code>summarizeList(names: string[], max: number): string</code>
+      ที่ข้างในใช้ <code>slice</code> แล้วเทสว่า <code>names.length</code> ก่อนเรียกกับหลังเรียกเท่ากัน
+      <br>ตอนนี้แหละที่การสลับเป็น <code>splice</code> จะทำให้เทสแดงจริง — และนั่นคือสิ่งที่ภารกิจนี้อยากให้คุณเห็นกับตา
+    </p>
+    <p style="margin-bottom:0">
+      ติดตรงไหนถามกลับมาได้เลย — โดยเฉพาะถ้า <code>node --test</code> หาไฟล์เทสไม่เจอ
+      (ปกติเป็นเพราะชื่อไฟล์ที่คอมไพล์ออกมาไม่ได้ลงท้ายด้วย <code>.test.js</code>)
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">11 · สรุปสั้น ๆ</h2>
+
+<ul>
+  <li><code>join</code> = array → string · ตัวในวงเล็บคือ<strong>ตัวคั่นระหว่างชิ้น</strong> · <code>join()</code> เปล่า ๆ ได้คอมมา ไม่ใช่ไม่มีอะไร</li>
+  <li><code>split</code> = string → array · หา delimiter ไม่เจอไม่ error แต่คืน array ยาว 1 · <code>split()</code> เปล่า ๆ tsc ฟ้อง <code>TS2554</code></li>
+  <li><code>split("")</code> แบ่งตามหน่วยในหน่วยความจำ <strong>ไม่ใช่ตามที่ตาเห็น</strong> — <code>"กิน"</code> ได้ 3 ชิ้น</li>
+  <li><code>slice(เริ่ม, ก่อนถึง)</code> ใช้ได้ทั้ง string และ array · ความยาวผลลัพธ์ = เลขหลัง − เลขหน้า · เลขติดลบ = นับจากท้าย</li>
+  <li><code>slice</code> <strong>ไม่แตะของเดิม</strong> · <code>splice</code> <strong>แก้ของเดิมและคืนของที่ลบ</strong> · string ไม่มี <code>splice</code></li>
+  <li><strong>slice ของ Go แชร์ความจำ · slice ของ TypeScript ก๊อปใหม่</strong> — แต่ก๊อปชั้นเดียว object ข้างในยังแชร์กัน</li>
+</ul>
+
+<p>
+  บทหน้า (67) จะเป็น <code>map</code> · <code>filter</code> · <code>reduce</code>
+  ซึ่งอยู่กลุ่ม "ไม่แตะของเดิม" เหมือน <code>slice</code> ทั้งหมด —
+  คำว่า <strong>immutable</strong> ที่ติดป้ายไว้ในบทนี้จะกลับมาเป็นตัวเอกของบทนั้น
+</p>
+
+<p>
+  <strong>ตรงไหนที่อ่านแล้วยังไม่เห็นภาพ ถามกลับมาได้เลย</strong> —
+  โดยเฉพาะเรื่อง Go เทียบ TypeScript ในหัวข้อ 5 ซึ่งเป็นจุดที่คนเรียน Go มาก่อนสะดุดกันเกือบทุกคน
+</p>
+
+<nav class="nav">
+  <a href="./0065-typing-functions.html">← บทเรียน 65 · ใส่ type ให้ฟังก์ชัน</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet TypeScript</a>
+  <a href="./0067-map-filter-reduce.html">บทเรียน 67 → map, filter, reduce</a>
+</nav>
+
+<h2 id="sn-sec-12">อ้างอิง</h2>
+
+<ul class="sources">
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/slice">MDN — <code>Array.prototype.slice()</code></a> —
+      <strong>อ่านหัวข้อ <em>Parameters</em> ให้จบ</strong> จะเจอประโยคที่อธิบายเลขติดลบไว้ตรง ๆ
+      และประโยคที่บอกว่ามันเป็น <em>shallow copy</em> ซึ่งคือกล่องเตือนในหัวข้อ 5 ของบทนี้</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/splice">MDN — <code>Array.prototype.splice()</code></a> —
+      <strong>ดูเฉพาะหัวข้อ <em>Return value</em></strong> สองบรรทัด
+      จะเห็นว่ามันคืน "array ของสิ่งที่ถูกลบ" ไม่ใช่ array ที่เหลือ —
+      ต้นเหตุของบั๊กในควิซข้อ 2</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/split">MDN — <code>String.prototype.split()</code></a> —
+      <strong>อ่านย่อหน้า <em>Description</em> เรื่อง empty string</strong>
+      ที่อธิบายว่าทำไม <code>"".split(",")</code> กับ <code>"".split("")</code> ให้ผลไม่เท่ากัน
+      และคำเตือนเรื่อง surrogate pair ที่ทำให้ emoji แตกเป็นหลายชิ้น</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/join">MDN — <code>Array.prototype.join()</code></a> —
+      <strong>อ่านสองประโยคแรกของ <em>Description</em></strong>
+      ที่บอกว่า <code>null</code> และ <code>undefined</code> จะกลายเป็นข้อความว่าง —
+      คือที่มาของ <code>a---b</code> ในหัวข้อ 2</li>
+  <li><a href="https://go.dev/blog/slices-intro">Go Blog — Go Slices: usage and internals</a> —
+      <strong>อ่านหัวข้อ <em>Slice internals</em> ย่อหน้าเดียว</strong> เพื่อยืนยันด้วยตาตัวเองว่า
+      slice ของ Go คือ pointer ที่ชี้ไป array ก้อนเดิม — คนละเรื่องกับ <code>slice</code> ของ TypeScript
+      ที่ก๊อปออกมาใหม่</li>
+  <li><a href="https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#arrays">TypeScript Handbook — Everyday Types: Arrays</a> —
+      <strong>อ่านย่อหน้าสั้น ๆ ตรงหัวข้อ Arrays</strong> เพื่อดูว่า <code>string[]</code>
+      กับ <code>Array&lt;string&gt;</code> เป็นของอย่างเดียวกัน ต่างกันแค่วิธีเขียน</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -43,8 +43,24 @@
   var summary = document.querySelector('.progress-summary');
   var fill = document.querySelector('.progress-fill');
 
+  /* ตัวนับแยกฝั่ง (FRONT / BACK) — ป้ายไหนมี data-progress-track="<ชื่อฝั่ง>"
+     จะนับเฉพาะแถวที่ data-track ตรงกัน · ถ้าหน้าไหนไม่มีป้ายนี้ก็ไม่มีอะไรเกิดขึ้น */
+  var trackBoxes = Array.prototype.slice.call(
+    document.querySelectorAll('[data-progress-track]')
+  ).map(function (box) {
+    var name = box.getAttribute('data-progress-track');
+    return {
+      box: box,
+      rows: rows.filter(function (r) { return r.getAttribute('data-track') === name; })
+    };
+  });
+
+  function countDone(list) {
+    return list.filter(function (r) { return state[r.getAttribute('data-id')]; }).length;
+  }
+
   function paint() {
-    var done = rows.filter(function (r) { return state[r.getAttribute('data-id')]; }).length;
+    var done = countDone(rows);
 
     rows.forEach(function (r) {
       r.classList.toggle('is-done', !!state[r.getAttribute('data-id')]);
@@ -56,6 +72,11 @@
     if (fill) {
       fill.style.width = (rows.length ? (done / rows.length) * 100 : 0) + '%';
     }
+
+    trackBoxes.forEach(function (t) {
+      if (!t.rows.length) return;
+      t.box.textContent = 'ทำแล้ว ' + countDone(t.rows) + ' / ' + t.rows.length + ' บท';
+    });
   }
 
   rows.forEach(function (row) {

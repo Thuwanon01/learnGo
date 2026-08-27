@@ -1,10 +1,22 @@
-# คอร์ส Go — บทเรียนที่ทำแบบฝึกหัดได้จริง
+# คอร์ส PEA DevPool — บทเรียนที่ทำแบบฝึกหัดได้จริง
 
 สรุปจากสไลด์คอร์ส **PEA DevPool — Enterprise Go Engineering with AI Integration**
-เรียบเรียงใหม่เป็นเว็บบทเรียนภาษาไทย 27 บท ที่มี predict-the-output, quiz
+เรียบเรียงใหม่เป็นเว็บบทเรียนภาษาไทย **68 บท** ที่มี predict-the-output, quiz
 ที่ให้ feedback ทันที และภารกิจให้ลงมือเขียนโค้ดทุกบท
 
-**ตัวอย่างโค้ดทุกอันถูกรันจริงบน Go 1.26 ก่อนเผยแพร่** — ระหว่างทำเจอจุดที่สไลด์ผิด 11 จุด
+แบ่งเป็นสองฝั่ง:
+
+| ฝั่ง | เนื้อหา | บท |
+|---|---|---|
+| **BACK** | Go — พื้นฐานภาษา · testing · concurrency · database · REST API ด้วย Gin · Keycloak | 01–55 |
+| **FRONT** | HTML/CSS · Functional Programming with TypeScript | 56–68 |
+
+ฝั่ง BACK แบ่งตามวันที่เรียน (Day 1–9) · ฝั่ง FRONT แบ่งตามชื่อไฟล์สไลด์
+เพราะอาจารย์ไม่ได้กำกับวันมาให้
+
+**ตัวอย่างทุกอันถูกรันจริงก่อนเผยแพร่** — Go 1.26 · TypeScript ตรวจด้วย `tsc --strict` ·
+HTML/CSS มีกล่อง "ผลลัพธ์จริง" ที่เรนเดอร์ให้ดูข้างโค้ด
+ระหว่างทำเจอจุดที่สไลด์ผิด 11 จุด
 บันทึกไว้ใน [learning record 0002](learning-records/0002-course-slides-have-errors.md)
 
 ## เว็บไซต์
@@ -15,8 +27,10 @@
 | เส้นทาง | คืออะไร |
 |---|---|
 | `index.html` | สารบัญทุกบท + แถบความคืบหน้า |
-| `day-N/lessons/NNNN-slug.html` | บทเรียน (เลขบทต่อเนื่องข้ามวัน) |
+| `day-N/lessons/NNNN-slug.html` | บทเรียนฝั่ง BACK (เลขบทต่อเนื่องข้ามวัน) |
 | `day-N/reference/cheatsheet.html` | สรุปของวันนั้น พิมพ์ลงกระดาษได้ |
+| `fe-<slug>/lessons/NNNN-slug.html` | บทเรียนฝั่ง FRONT (เลขบทต่อเนื่องจากฝั่ง BACK) |
+| `fe-<slug>/reference/cheatsheet.html` | สรุปของกลุ่มนั้น |
 | `docs.html` | ตัวอ่านเอกสาร `.md` ทั้งหมดในรีโป |
 | `assets/` | CSS + JS ที่ทุกหน้าใช้ร่วมกัน |
 
@@ -56,15 +70,19 @@ python3 -m http.server 8000
 
 คะแนน quiz ในแต่ละบทไม่ถูกบันทึก ตั้งใจให้ตอบใหม่ได้ทุกครั้งที่กลับมาทบทวน
 
-## เพิ่มวันใหม่
+## เพิ่มสไลด์ชุดใหม่
 
-1. สร้าง `day-N/lessons/` และ `day-N/reference/`
+1. สไลด์กำกับวันมา → สร้าง `day-N/lessons/` + `day-N/reference/`
+   ถ้าไม่ได้กำกับวัน → `fe-<slug>/lessons/` + `fe-<slug>/reference/` (slug จากชื่อสไลด์)
 2. เขียนบทเรียนต่อจากเลขล่าสุด (`NNNN-slug.html`) — คัดลอกโครงจากบทที่มีอยู่
    ทุกบทต้องมี quiz 4 ข้อ, predict อย่างน้อย 1, ภารกิจ 1, แหล่งอ้างอิง, scorebar, nav
-3. เพิ่ม `day-N/reference/cheatsheet.html`
-4. เพิ่ม `<section class="day">` ในสารบัญ `index.html` พร้อม `<li class="lesson" data-id="NNNN">`
+3. เพิ่ม `cheatsheet.html` ของกลุ่มนั้น
+4. เพิ่ม `<section class="day">` ในสารบัญ `index.html` พร้อม
+   `<li class="lesson" data-id="NNNN" data-track="back|front">`
 5. แก้เลขรวมในแถบความคืบหน้าของ `index.html`
-6. ต่อ nav ของบทสุดท้ายวันก่อนหน้าให้ชี้มาบทแรกของวันใหม่
+6. ต่อ nav ของบทสุดท้ายกลุ่มก่อนหน้าให้ชี้มาบทแรกของกลุ่มใหม่
+7. เพิ่มกลุ่มใหม่ลง `DAYS`/`FRONT` ใน `assets/nav.js` แล้วรัน
+   `python3 tools/add-heading-ids.py` ตามด้วย `python3 tools/build-search-index.py`
 
 ปุ่ม "ทำบทนี้เสร็จแล้ว" ไม่ต้องเขียนเพิ่ม — `assets/quiz.js` อ่านเลขบทจากชื่อไฟล์แล้วแทรกให้เอง
 

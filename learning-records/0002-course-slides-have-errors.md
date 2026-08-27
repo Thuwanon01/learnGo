@@ -83,6 +83,24 @@
 → **ผลตรวจจาก agent ต้องเอามาเทียบกับสไลด์เองทุกครั้งก่อนบันทึก**
 ทั้ง 5 จุดข้างบนผมรันซ้ำด้วยมือเองก่อนใส่ตาราง
 
+## สไลด์ฝั่ง Frontend (27 ส.ค. 2026)
+
+สไลด์สองไฟล์นี้ไม่ได้กำกับวันมา จึงอ้างด้วย**ชื่อไฟล์ + เลขหน้า**
+ทุกจุดข้างล่างนี้ **ผมเปิดรูปสไลด์ดูเองและรันซ้ำเองด้วย
+`tsc 7.0.2` / `node v24.14.0`** ก่อนบันทึก ไม่ได้เชื่อรายงานของ agent ตรง ๆ
+
+| สไลด์ | หน้า | สไลด์เขียน | ผลรันจริง |
+|---|---|---|---|
+| Functional Programming with TypeScript | 28 (Parameters) — บล็อกบน | `const sum = (num1: number = 0, num2?: number): number => { return num1 + num2 }` ยกมาเป็นตัวอย่าง optional parameter ที่ถูกต้อง | **คอมไพล์ไม่ผ่าน** — `p28a.ts(2,17): error TS18048: 'num2' is possibly 'undefined'.` · `num2?` ทำให้ type เป็น `number \| undefined` จะเอาไปบวกต้องเช็คก่อน · **กับดักนี้ดีเกินกว่าจะทิ้ง** เอามาเป็นแกนของบท 65 แทน |
+| Functional Programming with TypeScript | 28 (Parameters) — บล็อกล่าง | `const sum = (...num: number[]): number => { return numbers.reduce(...) }` | **คอมไพล์ไม่ผ่าน 3 error** — `TS2552: Cannot find name 'numbers'. Did you mean 'Number'?` + `TS7006` อีกสองอัน · พารามิเตอร์ชื่อ `num` แต่ body เรียก `numbers` |
+| Functional Programming with TypeScript | 32 (Slice) | หัวข้อเขียนว่า "Returns a **new array** with a portion of the original" | ตัวอย่างในหน้าเดียวกันคือ `const errorMessages: string = "Hello World"` ซึ่งเป็น **string ไม่ใช่ array** · รันจริง: `slice(2,6)` ได้ `"llo "` และ `Array.isArray(...)` = **false** · ค่าที่ได้ถูกต้องตามคอมเมนต์ แต่คำว่า "new array" ผิด และชื่อตัวแปรพหูพจน์ยิ่งทำให้เข้าใจว่าเป็น array |
+| Functional Programming with TypeScript | 48 (Transform Element — หน้า recap) | คอมเมนต์คั่นหัวข้อเขียนว่า `/** ===== SPLICE ===== */` | โค้ดใต้มันเรียก `errorMessages.slice(2, 6)` และ `.slice(2)` ซึ่งเป็นคนละเมธอดและ**พฤติกรรมตรงข้ามกัน** (`splice` แก้ของเดิม · `slice` ไม่แก้) · หน้า 32 ที่เป็นหน้าเต็มของหัวข้อนี้ตั้งชื่อว่า "Slice" ถูกแล้ว ผิดเฉพาะหน้า recap |
+| Functional Programming with TypeScript | 17 (Type Assertions) | กล่อง ⚠️ Warning เขียนว่า "Asserting a sub-type that doesn't fit" ราวกับว่า TypeScript จะเตือนให้ | **`tsc --strict` เงียบสนิท exit 0** ไม่มีแม้แต่ warning · assert object ที่ใส่ field ไม่ครบไปเป็น type ที่มี field มากกว่า เป็นสิ่งที่ TypeScript **อนุญาตโดยตั้งใจ** · ของจริงพังตอนรัน: `TypeError: Cannot read properties of undefined (reading 'length')` · หลักการที่สไลด์เตือนถูก แต่คนที่รอให้ compiler ฟ้องจะไม่มีวันได้ฟ้อง |
+
+**สิ่งที่ควรจำจากชุดนี้:** สไลด์ฝั่ง Frontend **ไม่มีจุดผิดเชิงแนวคิดเลย** —
+ที่ผิดคือ**โค้ดตัวอย่างที่ไม่ได้เอาไปรัน** กับ **ป้ายกำกับที่ค้างมาจากหน้าอื่น**
+รูปแบบเดียวกับที่เจอในสไลด์ฝั่ง Go ทุกวัน
+
 **Implications:**
 - เวลาสอนสไลด์วันอื่น (Day 1, 2 และวันที่จะมาถึง) ต้องตรวจแบบเดียวกัน
   อย่าถ่ายทอดสไลด์ตรง ๆ

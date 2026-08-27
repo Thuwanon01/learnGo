@@ -101,8 +101,56 @@
     ]}
   ];
 
-  /* path ของ cheat sheet เดาได้จากเลขวัน จึงไม่ต้องเก็บซ้ำใน DATA */
-  function sheetFile(day) { return 'day-' + day + '/reference/cheatsheet.html'; }
+  /* ------------------------------------------------------------------------
+     ฝั่ง Frontend — สไลด์ของอาจารย์ไม่ได้กำกับวันที่มา จึงจัดกลุ่มตาม "ชื่อไฟล์สไลด์"
+     ไม่ใช่ตามวันเหมือนฝั่ง Backend
+     ---------------------------------------------------------------------- */
+  var FRONT = [
+    { key: 'fe-html-css', btn: 'HTML & CSS', where: 'HTML & CSS',
+      sheetLabel: 'Cheat sheet HTML & CSS', d: 101, lessons: [
+      { n: '56', f: 'fe-html-css/lessons/0056-how-the-web-works.html', t: 'เว็บทำงานยังไง — HTML, CSS, JS แบ่งหน้าที่กัน' },
+      { n: '57', f: 'fe-html-css/lessons/0057-html-common-tags.html', t: 'แท็กที่ใช้จริงทุกวัน' },
+      { n: '58', f: 'fe-html-css/lessons/0058-html-forms.html', t: 'ฟอร์ม: form, input, label, button' },
+      { n: '59', f: 'fe-html-css/lessons/0059-css-selectors.html', t: 'CSS Selector: tag, class, id' },
+      { n: '60', f: 'fe-html-css/lessons/0060-css-box-and-spacing.html', t: 'กล่องกับระยะห่าง: padding, margin, border' },
+      { n: '61', f: 'fe-html-css/lessons/0061-css-flexbox.html', t: 'Flexbox: จัดของในกล่อง' },
+      { n: '62', f: 'fe-html-css/lessons/0062-css-states.html', t: 'State: hover, focus, active, disabled' }
+    ]},
+    { key: 'fe-ts-fp', btn: 'TypeScript', where: 'TypeScript',
+      sheetLabel: 'Cheat sheet TypeScript', d: 102, lessons: [
+      { n: '63', f: 'fe-ts-fp/lessons/0063-typescript-core-types.html', t: 'TypeScript คืออะไร และ type พื้นฐาน' },
+      { n: '64', f: 'fe-ts-fp/lessons/0064-interface-vs-type.html', t: 'interface กับ type + any ที่ฆ่า type safety' },
+      { n: '65', f: 'fe-ts-fp/lessons/0065-typing-functions.html', t: 'ใส่ type ให้ฟังก์ชัน' },
+      { n: '66', f: 'fe-ts-fp/lessons/0066-string-array-transform.html', t: 'แปลงข้อมูล: join, split, slice' },
+      { n: '67', f: 'fe-ts-fp/lessons/0067-map-filter-reduce.html', t: 'map, filter, reduce' },
+      { n: '68', f: 'fe-ts-fp/lessons/0068-fp-workshop.html', t: 'โจทย์ 4 ข้อจากสไลด์' }
+    ]}
+  ];
+
+  /* ------------------------------------------------------------------------
+     รวมสองฝั่งให้เป็นรูปทรงเดียวกัน แล้วโค้ดข้างล่างจะได้ไม่ต้องรู้ว่ามาจากไหน
+     "group" = ปุ่มหนึ่งปุ่มบนแถบ (ฝั่ง Backend = หนึ่งวัน · ฝั่ง Frontend = หนึ่งสไลด์)
+     ---------------------------------------------------------------------- */
+  function group(o) {
+    return {
+      key: o.key, btn: o.btn, where: o.where, d: o.d,
+      sheet: o.key + '/reference/cheatsheet.html',
+      sheetLabel: o.sheetLabel,
+      lessons: o.lessons,
+      track: null            // เติมทีหลังตอนประกอบ TRACKS
+    };
+  }
+
+  var TRACKS = [
+    { id: 'back', label: 'BACK', title: 'ฝั่ง Backend — Go', groups: DAYS.map(function (d) {
+        return group({ key: 'day-' + d.day, btn: 'Day ' + d.day, where: 'Day ' + d.day,
+                       sheetLabel: 'Cheat sheet Day ' + d.day, d: d.day, lessons: d.lessons });
+      }) },
+    { id: 'front', label: 'FRONT', title: 'ฝั่ง Frontend — HTML, CSS, TypeScript',
+      groups: FRONT.map(group) }
+  ];
+
+  TRACKS.forEach(function (t) { t.groups.forEach(function (g) { g.track = t; }); });
 
   /* ==========================================================================
      ส่วนที่ 2 · CSS — เขียนเป็น template string แล้วยัดเป็น <style> ลง <head>
@@ -364,6 +412,58 @@ body { padding-top: 0; }
 .sn-chip.sn-chip-sheet { border-style: dashed; }
 
 /* ---------- ปุ่มเมนูจอแคบ ---------- */
+/* ---------- ตัวสลับฝั่ง BACK / FRONT ----------
+   ทำเป็น segmented control (ปุ่มติดกันในกรอบเดียว) เพราะมันสื่อว่า
+   "เลือกได้อันเดียว" โดยไม่ต้องเขียนอธิบาย ต่างจากปุ่มกลุ่มที่อยู่ถัดไป
+   ซึ่งเป็นเมนูกางลง — ผู้ใช้จะได้ไม่สับสนว่าสองแถวนี้ทำงานคนละแบบ */
+.sn-tracks {
+  display: inline-flex;
+  gap: 0.15rem;
+  flex: 0 0 auto;
+  padding: 0.12rem;
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+}
+.sn-track {
+  font-size: 0.73rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  padding: 0.26rem 0.5rem;
+}
+/* ฝั่งที่เลือกอยู่ต้องดูต่างจากปุ่มกลุ่มที่ "หน้าปัจจุบัน" (.sn-btn.sn-on)
+   ไม่งั้นบนแถบเดียวกันจะมีสองอย่างหน้าตาเหมือนกันแต่ความหมายคนละเรื่อง
+   → ฝั่งที่เลือก = พื้นทึบ · หน้าปัจจุบัน = ขีดเส้นใต้ */
+.sn-track.sn-on {
+  background: var(--accent);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: none;
+}
+.sn-track.sn-on:hover { background: var(--accent-dk); color: #ffffff; border-color: transparent; }
+
+/* .sn-daysgrp เป็นแค่ "ถุง" ที่ห่อปุ่มของฝั่งหนึ่งไว้ให้ซ่อนทั้งชุดได้
+   display:contents ทำให้ปุ่มข้างในยังเป็นลูกของ .sn-days ในเชิง layout เหมือนเดิม
+   ⚠️ ต้องเขียน [hidden] แยกด้วย เพราะ display:contents ทับกฎ display:none ของ UA */
+.sn-daysgrp { display: contents; }
+.sn-daysgrp[hidden] { display: none; }
+.sn-mtrackgrp[hidden] { display: none; }
+
+/* ตัวสลับฝั่งฉบับในเมนู ☰ — เต็มความกว้าง กดง่ายด้วยนิ้ว */
+.sn-mtracks {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  border: 0;
+}
+.sn-mtracks .sn-track {
+  flex: 1 1 0;
+  justify-content: center;
+  min-height: 2.5rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--rule);
+}
+
 .sn-burger { display: none; }
 /* ปุ่ม ☰ ต้องเป็น position:static (ไม่เหมือน .sn-item ตัวอื่น) เพื่อ "สละสิทธิ์"
    การเป็นกล่องอ้างอิงของแผงที่กางออกมา แผงจะได้ไปยึดกับ .sn-in ที่กว้างเต็มแถบแทน
@@ -397,15 +497,23 @@ body { padding-top: 0; }
 .sn-mgroup[hidden] { display: none; }
 .sn-mgroup { padding-left: 0.6rem; border-left: 2px solid var(--rule); margin: 0 0 0.4rem 0.5rem; }
 
-@media (max-width: 767px) {
-  /* จอแคบ: ยุบปุ่ม 9 วันเหลือปุ่มเดียว ไม่งั้นแถวบนจะล้นจอแน่นอน */
+/* เส้นแบ่งอยู่ที่ 1100px ไม่ใช่ 768px เพราะแถบบนต้องใส่ให้ครบสี่อย่าง:
+   🏠 + ตัวสลับฝั่ง (~110px) + ปุ่มกลุ่มของฝั่ง BACK 9 ปุ่ม (~700px) + ช่องค้นหา (12rem)
+   รวมแล้วเกิน 960px ที่จอ 1000px มีให้ → ต่ำกว่า 1100px จึงยุบเป็นปุ่ม ☰ ทั้งหมด
+   (ค่านี้ต้องตรงกับ MQ_NARROW ในโค้ดช่องค้นหา ไม่งั้น 🔍 กับ ☰ จะโผล่คนละจังหวะ) */
+@media (max-width: 1099px) {
   .sn-days { display: none; }
+  .sn-tracks { display: none; }
   .sn-burger { display: inline-flex; }
+}
+
+@media (max-width: 767px) {
   .sn-bar { gap: 0.3rem; }
   .sn-root { font-size: 0.86rem; }
 
-  /* ป้าย "Day N" ห้ามซ่อน — จอแคบเป็นจอเดียวที่ไม่เห็นปุ่ม Day 1..9 แล้ว
-     ถ้าซ่อนป้ายด้วยจะไม่เหลืออะไรบอกเลยว่าอยู่วันไหน แค่ย่อขนาดก็พอ
+  /* ป้ายบอกกลุ่ม (เช่น "Day 6" / "HTML & CSS") ห้ามซ่อน — ต่ำกว่า 1100px
+     ปุ่มกลุ่มบนแถบถูกยุบเข้าเมนู ☰ ไปแล้ว ถ้าซ่อนป้ายนี้ด้วยจะไม่เหลืออะไร
+     บอกเลยว่ากำลังอยู่กลุ่มไหน แค่ย่อขนาดก็พอ
      (flex:0 0 auto + .sn-chips ที่ min-width:0 ทำให้ป้ายไม่ดันหน้าให้ล้นแนวนอน) */
   .sn-where { font-size: 0.68rem; letter-spacing: 0; }
 
@@ -600,7 +708,7 @@ body { padding-top: 0; }
 .sn-sretry:hover { border-color: var(--accent); }
 .sn-sretry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-@media (max-width: 999px) {
+@media (max-width: 1099px) {
   .sn-sbtn { display: inline-flex; }
   /* สละสิทธิ์การเป็นกล่องอ้างอิง เพื่อให้ .sn-sbox ไปยึด .sn-in แทน (ท่าเดียวกับ ☰)
      และคืน flex-basis เป็น auto ด้วย ไม่งั้นปุ่ม 🔍 จะจองที่ไว้ 12rem ทั้งที่กว้างจริง 32px */
@@ -721,22 +829,25 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
      เหตุผลเดียวกับ findBase(): หน้า 404 ที่ถูกเสิร์ฟจาก path ปลอมจะได้ไม่หลงคิดว่า
      ตัวเองเป็นบทเรียน (เทียบไม่ตรงสักอัน → ไม่มีแถวสอง ซึ่งถูกต้อง) */
   function locate() {
-    for (var i = 0; i < DAYS.length; i++) {
-      var d = DAYS[i];
-      for (var j = 0; j < d.lessons.length; j++) {
-        if (isHere(d.lessons[j].f)) return { day: d, lesson: d.lessons[j] };
+    for (var t = 0; t < TRACKS.length; t++) {
+      var gs = TRACKS[t].groups;
+      for (var i = 0; i < gs.length; i++) {
+        var g = gs[i];
+        for (var j = 0; j < g.lessons.length; j++) {
+          if (isHere(g.lessons[j].f)) return { track: TRACKS[t], group: g, lesson: g.lessons[j] };
+        }
+        if (isHere(g.sheet)) return { track: TRACKS[t], group: g, lesson: null, sheet: true };
       }
-      if (d.sheet && isHere(sheetFile(d.day))) return { day: d, lesson: null, sheet: true };
     }
     return null;
   }
 
   var WHERE = locate();
 
-  /* แผงรายการบทของหนึ่งวัน ใช้ทั้งเมนูจอกว้างและเมนูจอแคบ */
-  function dayList(d) {
+  /* แผงรายการบทของหนึ่งกลุ่ม ใช้ทั้งเมนูจอกว้างและเมนูจอแคบ */
+  function dayList(g) {
     var box = document.createDocumentFragment();
-    d.lessons.forEach(function (ls) {
+    g.lessons.forEach(function (ls) {
       var a = el('a', 'sn-link');
       a.href = url(ls.f);
       a.appendChild(el('span', 'sn-num', ls.n));
@@ -744,14 +855,12 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
       if (isHere(ls.f)) a.setAttribute('aria-current', 'page');
       box.appendChild(a);
     });
-    if (d.sheet) {
-      var s = el('a', 'sn-link sn-sheet');
-      s.href = url(sheetFile(d.day));
-      s.appendChild(el('span', 'sn-num', '📄'));
-      s.appendChild(el('span', 'sn-t', 'Cheat sheet Day ' + d.day));
-      if (isHere(sheetFile(d.day))) s.setAttribute('aria-current', 'page');
-      box.appendChild(s);
-    }
+    var sh = el('a', 'sn-link sn-sheet');
+    sh.href = url(g.sheet);
+    sh.appendChild(el('span', 'sn-num', '📄'));
+    sh.appendChild(el('span', 'sn-t', g.sheetLabel));
+    if (isHere(g.sheet)) sh.setAttribute('aria-current', 'page');
+    box.appendChild(sh);
     return box;
   }
 
@@ -847,55 +956,135 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
   if (isHere('index.html')) home.setAttribute('aria-current', 'page');
   bar.appendChild(home);
 
-  /* -- กลาง (จอกว้าง): ปุ่ม Day 1..9 พร้อม dropdown -- */
+  /* ==========================================================================
+     -- กลาง: สลับฝั่ง BACK / FRONT แล้วค่อยเลือกกลุ่ม --
+
+     ทำไมสร้างแถวของ "ทั้งสองฝั่ง" ไว้พร้อมกันแล้วซ่อนอันที่ไม่ได้ใช้
+     แทนที่จะสร้างใหม่ทุกครั้งที่กดสลับ: เพราะ makeToggle() ลงทะเบียนคู่
+     {btn, panel} ไว้ในอาเรย์ toggles เพื่อบังคับ "เปิดได้ทีละเมนู"
+     ถ้ารื้อ DOM ทิ้งแล้วสร้างใหม่ อาเรย์นั้นจะเหลือ node ที่หลุดจากหน้าไปแล้ว
+     ค่าใช้จ่ายของการสร้างทิ้งไว้คือปุ่มไม่กี่สิบปุ่ม ซึ่งถูกกว่าบั๊กแบบนั้นมาก
+     ====================================================================== */
+
+  var TRACK_KEY = 'go-course-track-v1';
+
+  /* อยู่หน้าไหนก็ใช้ฝั่งนั้น · ถ้าไม่ได้อยู่หน้าบทเรียน (index/docs/404)
+     ค่อยใช้ฝั่งที่เลือกไว้ล่าสุด · ถ้ายังไม่เคยเลือกเลย เริ่มที่ BACK */
+  function initialTrack() {
+    if (WHERE) return WHERE.track;
+    try {
+      var saved = localStorage.getItem(TRACK_KEY);
+      for (var i = 0; i < TRACKS.length; i++) {
+        if (TRACKS[i].id === saved) return TRACKS[i];
+      }
+    } catch (e) { /* private mode — ใช้ค่าเริ่มต้น */ }
+    return TRACKS[0];
+  }
+
+  var ACTIVE = initialTrack();
+  var trackBtns = [];    // {t, btn}
+  var trackPanes = [];   // {t, wide, narrow}
+
+  function paintTrack() {
+    trackBtns.forEach(function (p) {
+      var on = p.t === ACTIVE;
+      p.btn.classList.toggle('sn-on', on);
+      p.btn.setAttribute('aria-pressed', String(on));
+    });
+    trackPanes.forEach(function (p) {
+      p.wide.hidden = p.t !== ACTIVE;
+      p.narrow.hidden = p.t !== ACTIVE;
+    });
+  }
+
+  function switchTrack(t) {
+    ACTIVE = t;
+    try { localStorage.setItem(TRACK_KEY, t.id); } catch (e) { /* ไม่จำก็ยังใช้ได้ */ }
+    closeMenus();
+    paintTrack();
+  }
+
+  /* ปุ่มสลับฝั่ง — สร้างสองชุด (แถบบนจอกว้าง / ในเมนู ☰ จอแคบ) ใช้ state เดียวกัน */
+  function trackSwitch(cls) {
+    var box = el('div', cls);
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'เลือกฝั่งที่จะเรียน');
+    TRACKS.forEach(function (t) {
+      var b = el('button', 'sn-btn sn-track', t.label);
+      b.type = 'button';
+      b.title = t.title;
+      b.addEventListener('click', function () { switchTrack(t); });
+      trackBtns.push({ t: t, btn: b });
+      box.appendChild(b);
+    });
+    return box;
+  }
+
+  bar.appendChild(trackSwitch('sn-tracks'));
+
+  /* -- จอกว้าง: ปุ่มของแต่ละกลุ่ม พร้อม dropdown -- */
   var days = el('div', 'sn-days');
-  DAYS.forEach(function (d) {
-    var item = el('div', 'sn-item');
-    var btn = el('button', 'sn-btn', 'Day ' + d.day);
-    var panel = el('div', 'sn-panel');
-    panel.appendChild(dayList(d));
-    if (WHERE && WHERE.day === d) btn.classList.add('sn-on');
-    makeToggle(btn, panel, 'บทเรียน Day ' + d.day);
-    item.appendChild(btn);
-    item.appendChild(panel);
-    days.appendChild(item);
+  var wideOf = {};
+  TRACKS.forEach(function (t) {
+    var wrap = el('div', 'sn-daysgrp');
+    t.groups.forEach(function (g) {
+      var item = el('div', 'sn-item');
+      var btn = el('button', 'sn-btn', g.btn);
+      var panel = el('div', 'sn-panel');
+      panel.appendChild(dayList(g));
+      if (WHERE && WHERE.group === g) btn.classList.add('sn-on');
+      makeToggle(btn, panel, 'บทเรียน ' + g.where);
+      item.appendChild(btn);
+      item.appendChild(panel);
+      wrap.appendChild(item);
+    });
+    wideOf[t.id] = wrap;
+    days.appendChild(wrap);
   });
   bar.appendChild(days);
 
-  /* -- กลาง (จอแคบ): ปุ่มเดียว กางออกมาเป็นรายการวันแบบพับได้ -- */
+  /* -- จอแคบ: ปุ่มเดียว กางออกมาเป็นรายการกลุ่มแบบพับได้ -- */
   var mItem = el('div', 'sn-item sn-burger');
   var mBtn = el('button', 'sn-btn', '☰ เมนู');
   var mPanel = el('div', 'sn-panel sn-mpanel');
-  DAYS.forEach(function (d) {
-    var head = el('button', 'sn-mday');
-    head.type = 'button';
-    head.appendChild(el('span', null, 'Day ' + d.day + ' · ' + d.lessons.length + ' บท'));
-    var caret = el('span', 'sn-caret', '▾');
-    head.appendChild(caret);
-    var group = el('div', 'sn-mgroup');
-    group.id = 'sn-mgroup-' + d.day;
-    group.setAttribute('role', 'group');
-    group.setAttribute('aria-label', 'บทเรียน Day ' + d.day);
-    group.appendChild(dayList(d));
-    // วันที่กำลังเรียนอยู่ ให้กางไว้ตั้งแต่แรก จะได้ไม่ต้องกดซ้ำ
-    var openNow = !!(WHERE && WHERE.day === d);
-    group.hidden = !openNow;
-    head.setAttribute('aria-controls', group.id);
-    head.setAttribute('aria-expanded', String(openNow));
-    caret.textContent = openNow ? '▴' : '▾';
-    head.addEventListener('click', function () {
-      var isOpen = !group.hidden;
-      group.hidden = isOpen;
-      head.setAttribute('aria-expanded', String(!isOpen));
-      caret.textContent = isOpen ? '▾' : '▴';
+  mPanel.appendChild(trackSwitch('sn-mtracks'));
+  TRACKS.forEach(function (t) {
+    var wrap = el('div', 'sn-mtrackgrp');
+    t.groups.forEach(function (g) {
+      var head = el('button', 'sn-mday');
+      head.type = 'button';
+      head.appendChild(el('span', null, g.btn + ' · ' + g.lessons.length + ' บท'));
+      var caret = el('span', 'sn-caret', '▾');
+      head.appendChild(caret);
+      var box = el('div', 'sn-mgroup');
+      box.id = 'sn-mgroup-' + g.key;
+      box.setAttribute('role', 'group');
+      box.setAttribute('aria-label', 'บทเรียน ' + g.where);
+      box.appendChild(dayList(g));
+      // กลุ่มที่กำลังเรียนอยู่ ให้กางไว้ตั้งแต่แรก จะได้ไม่ต้องกดซ้ำ
+      var openNow = !!(WHERE && WHERE.group === g);
+      box.hidden = !openNow;
+      head.setAttribute('aria-controls', box.id);
+      head.setAttribute('aria-expanded', String(openNow));
+      caret.textContent = openNow ? '▴' : '▾';
+      head.addEventListener('click', function () {
+        var isOpen = !box.hidden;
+        box.hidden = isOpen;
+        head.setAttribute('aria-expanded', String(!isOpen));
+        caret.textContent = isOpen ? '▾' : '▴';
+      });
+      wrap.appendChild(head);
+      wrap.appendChild(box);
     });
-    mPanel.appendChild(head);
-    mPanel.appendChild(group);
+    trackPanes.push({ t: t, wide: wideOf[t.id], narrow: wrap });
+    mPanel.appendChild(wrap);
   });
-  makeToggle(mBtn, mPanel, 'เลือกวันและบทเรียน');
+  makeToggle(mBtn, mPanel, 'เลือกฝั่ง กลุ่ม และบทเรียน');
   mItem.appendChild(mBtn);
   mItem.appendChild(mPanel);
   bar.appendChild(mItem);
+
+  paintTrack();
 
   /* ==========================================================================
      ส่วนที่ 4.5 · ช่องค้นหา — ศัพท์ · หัวข้อ · บทเรียน · โค้ด
@@ -995,7 +1184,7 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
   var ENTRIES = [];
   var HEAD_AT = {};             // "pageIdx#anchor" -> ข้อความหัวข้อที่อยู่ตรงนั้น
   var idxState = 'idle';        // idle → loading → ready | error
-  var CUR_DAY = WHERE ? WHERE.day.day : 0;
+  var CUR_DAY = WHERE ? WHERE.group.d : 0;
 
   /* แปลง index ดิบให้พร้อมค้น: คิด normalized key ไว้ล่วงหน้าครั้งเดียว
      (ไฟล์ไม่ได้เก็บ key มาให้ เพราะเก็บแล้วไฟล์บวมกว่า 100 KB ขณะที่คิดเองใช้ไม่กี่ ms) */
@@ -1168,7 +1357,7 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
   /* ---- โหมดจอแคบ/จอกว้าง ----
      ใช้ matchMedia ให้ตรงกับ breakpoint ใน CSS เป๊ะ ๆ จะได้ไม่มีช่วงที่ CSS บอกว่า
      "ซ่อนปุ่ม" แต่ JS ยังคิดว่าจอแคบอยู่ */
-  var MQ_NARROW = window.matchMedia ? window.matchMedia('(max-width: 999px)') : null;
+  var MQ_NARROW = window.matchMedia ? window.matchMedia('(max-width: 1099px)') : null;
   function isNarrow() { return MQ_NARROW ? MQ_NARROW.matches : window.innerWidth <= 999; }
   var boxOpen = false;      // จอแคบเท่านั้นที่ใช้ตัวแปรนี้ จอกว้างกล่องโผล่ตลอด
 
@@ -1305,9 +1494,16 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
     if (to < text.length) node.appendChild(document.createTextNode(text.slice(to)));
   }
 
-  /* "อยู่บทไหน วันไหน" — cheat sheet ไม่มีเลขบท (builder ไม่ใส่ n มาให้) */
+  /* ป้ายกลุ่มจากเลข d ที่ builder ใส่มาให้ (ฝั่ง BACK = เลขวัน · ฝั่ง FRONT = 101, 102)
+     ⚠️ ห้ามเขียน 'Day ' + pg.d ตรง ๆ ไม่งั้นผลค้นหาฝั่ง Frontend จะขึ้นว่า "Day 101" */
+  var GROUP_BY_D = {};
+  TRACKS.forEach(function (t) {
+    t.groups.forEach(function (g) { GROUP_BY_D[g.d] = g.where; });
+  });
+
+  /* "อยู่บทไหน กลุ่มไหน" — cheat sheet ไม่มีเลขบท (builder ไม่ใส่ n มาให้) */
   function whereText(pg, withTitle) {
-    var s = 'Day ' + pg.d;
+    var s = GROUP_BY_D[pg.d] || ('Day ' + pg.d);
     s += pg.n ? ' · บท ' + pg.n : ' · Cheat sheet';
     /* แถวชนิด "บทเรียน" มีชื่อบทเป็นหัวแถวอยู่แล้ว ต่อท้ายอีกก็ซ้ำตัวเองสองบรรทัดติด */
     return withTitle === false ? s : s + ' — ' + pg.t;
@@ -1598,17 +1794,17 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
      แถวสอง — โผล่เฉพาะหน้าที่อยู่ใน day-N/ (บทเรียน + cheat sheet)
      ====================================================================== */
   if (WHERE) {
-    var d = WHERE.day;
+    var d = WHERE.group;
     var sub = el('div', 'sn-sub');
     var inSub = el('div', 'sn-in');
     var subin = el('div', 'sn-subin');
     inSub.appendChild(subin);
     sub.appendChild(inSub);
 
-    subin.appendChild(el('span', 'sn-where', 'Day ' + d.day));
+    subin.appendChild(el('span', 'sn-where', d.where));
 
     var chips = el('div', 'sn-chips');
-    chips.setAttribute('aria-label', 'บทเรียนใน Day ' + d.day);
+    chips.setAttribute('aria-label', 'บทเรียนใน ' + d.where);
     var activeChip = null;
     d.lessons.forEach(function (ls) {
       var c = el('a', 'sn-chip', ls.n);
@@ -1617,12 +1813,10 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
       if (isHere(ls.f)) { c.setAttribute('aria-current', 'page'); activeChip = c; }
       chips.appendChild(c);
     });
-    if (d.sheet) {
-      var cs = el('a', 'sn-chip sn-chip-sheet', '📄 Cheat sheet');
-      cs.href = url(sheetFile(d.day));
-      if (isHere(sheetFile(d.day))) { cs.setAttribute('aria-current', 'page'); activeChip = cs; }
-      chips.appendChild(cs);
-    }
+    var cs = el('a', 'sn-chip sn-chip-sheet', '📄 Cheat sheet');
+    cs.href = url(d.sheet);
+    if (isHere(d.sheet)) { cs.setAttribute('aria-current', 'page'); activeChip = cs; }
+    chips.appendChild(cs);
     subin.appendChild(chips);
 
     /* dropdown "ในบทนี้" — ลิสต์ <h2> ของหน้านั้นเอง

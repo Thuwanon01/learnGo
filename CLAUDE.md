@@ -7,7 +7,15 @@
 
 เว็บบทเรียนภาษาไทย **static ล้วน ไม่มี build step ไม่มี dependency**
 เรียบเรียงจากสไลด์คอร์ส PEA DevPool — Enterprise Go Engineering with AI Integration
-ตอนนี้มี **55 บท / 9 วัน** · deploy จริงบน Vercel ให้เพื่อนร่วมคอร์สใช้
+ตอนนี้มี **68 บท** แบ่งเป็นสองฝั่ง · deploy จริงบน Vercel ให้เพื่อนร่วมคอร์สใช้
+
+| ฝั่ง | เนื้อหา | โฟลเดอร์ | บท |
+|---|---|---|---|
+| **BACK** | Go — พื้นฐาน · testing · concurrency · database · Gin · Keycloak | `day-1/` … `day-9/` | 01–55 |
+| **FRONT** | HTML/CSS · Functional Programming with TypeScript | `fe-html-css/` · `fe-ts-fp/` | 56–68 |
+
+**ฝั่ง FRONT แบ่งกลุ่มตามชื่อไฟล์สไลด์ ไม่ใช่ตามวัน** เพราะอาจารย์ไม่ได้กำกับวันมาให้ ·
+**เลขบทต่อเนื่องกันทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง** (เลขบทคือคีย์ของ localStorage)
 รีโปนี้เป็น **teaching workspace ของ skill `/teach`** (โครง MISSION / RESOURCES /
 learning-records / lessons / reference / assets / NOTES)
 
@@ -59,12 +67,17 @@ learning-records / lessons / reference / assets / NOTES)
 ## เช็คลิสต์เพิ่มวันใหม่ (ฉบับย่อ)
 
 ```
-1  mkdir -p day-N/lessons day-N/reference
-2  เขียนบทต่อจากเลขล่าสุด (ตอนนี้จบที่ 0055) + cheat sheet ของวัน
-3  index.html      → section วันใหม่ + data-id + เลขรวม + การ์ด .upcoming
-4  บทสุดท้ายวันก่อน → แก้ nav ให้ชี้มาบทแรกวันใหม่
-5  assets/nav.js   → เพิ่มลง DATA  ⚠️ ลืมแล้วไม่มีอะไรฟ้อง แค่ไม่โผล่ในเมนู
+1  สไลด์กำกับวันมา → mkdir -p day-N/lessons day-N/reference
+   ไม่ได้กำกับวัน  → mkdir -p fe-<slug>/lessons fe-<slug>/reference   (slug จากชื่อสไลด์)
+2  เขียนบทต่อจากเลขล่าสุด (ตอนนี้จบที่ 0068) + cheat sheet ของกลุ่ม
+3  index.html      → section กลุ่มใหม่ + data-id + data-track + เลขรวม
+4  บทสุดท้ายของกลุ่มก่อน → แก้ nav ให้ชี้มาบทแรกของกลุ่มใหม่
+5  assets/nav.js   → เพิ่มลง DAYS (ฝั่ง back) หรือ FRONT (ฝั่ง front)
+                     ⚠️ ลืมแล้วไม่มีอะไรฟ้อง แค่ไม่โผล่ในเมนู
+                     กลุ่มใหม่ฝั่ง front ต้องแจกเลข d แล้วใส่ FE_GROUP_ID ใน
+                     tools/build-search-index.py ให้ตรงกันด้วย
 6  ทุกหน้าใหม่     → <script src="../../assets/nav.js" defer></script>
+                     (บท HTML/CSS เพิ่ม assets/demo.js ด้วยถ้าใช้กล่อง .demo)
 7  python3 tools/add-heading-ids.py
    python3 tools/build-search-index.py     # ตามลำดับนี้เท่านั้น
 8  ตรวจลิงก์ + layout + git status --porcelain | grep '^??'
@@ -80,6 +93,8 @@ learning-records / lessons / reference / assets / NOTES)
 python3 tools/build-search-index.py --check   # ตรวจว่าคลังคำตรงกับไฟล์จริง
 python3 -m http.server 8000                   # docs.html เปิดด้วย file:// ไม่ได้ (CORS)
 pdftotext -layout from_teacher/<file>.pdf -   # อ่านสไลด์เป็นข้อความ
+pdftoppm -jpeg -r 100 <file>.pdf <out>/p      # สไลด์ที่เป็นภาพ ต้องแปลงเป็นรูปก่อนอ่าน
+tsc --noEmit --strict <file>.ts               # ตรวจตัวอย่าง TypeScript (มี tsc 7 + node 24)
 ```
 
 ## กับดักที่เสียเวลาที่สุด (ย่อจาก NOTES.md)
@@ -89,8 +104,10 @@ pdftotext -layout from_teacher/<file>.pdf -   # อ่านสไลด์เ�
 - **`id` หัวข้อนับตามตำแหน่ง** — แทรก `<h2>` กลางบทเก่าแล้วเลขจะเลื่อนทั้งหมด
   สคริปต์จะ `exit 1` ไม่เขียนทับเงียบ ๆ · ต้องสั่ง `--renumber` เอง
 - **`404.html` ต้องใช้ `/assets/...` แบบ root-absolute** เพราะ Vercel เสิร์ฟจาก URL ไหนก็ได้
-- **คีย์ `localStorage` ตัวเดียว `go-course-progress-v1`** ใช้ทั้ง `progress.js` และ `quiz.js`
-  — แก้ที่ไหนต้องแก้ทั้งสองที่
+- **คีย์ `localStorage` `go-course-progress-v1`** ใช้ทั้ง `progress.js` และ `quiz.js`
+  — แก้ที่ไหนต้องแก้ทั้งสองที่ · (อีกคีย์คือ `go-course-track-v1` ของ `nav.js` ล้วน ๆ)
+- **กล่อง `.demo` ต้องติดคลาส `is-live` ก่อน `appendChild`** ไม่งั้น iframe ถูกใส่ตอนแม่
+  ยังเป็น `display:none` → กว้าง 0 → วัดความสูงได้เป็นค่ามหาศาล
 - **ห้าม `innerHTML` ในส่วนค้นหาของ `nav.js`** ข้อความในคลังมาจาก HTML ของบทเรียน
 - **ผลตรวจจาก subagent เชื่อทันทีไม่ได้** — มันผิดได้สองทาง ทั้งรายงานว่าผิดทั้งที่ถูก
   และดัดผลให้ตรงกับคำถามใน brief · **brief ที่เราเขียนเองก็ผิดได้** ต้องเขียนกำกับเสมอว่า

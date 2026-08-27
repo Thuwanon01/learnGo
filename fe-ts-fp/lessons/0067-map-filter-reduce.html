@@ -1,0 +1,903 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 67 — map, filter, reduce — สามตัวที่ใช้ทุกวัน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 67 · Frontend · Functional Programming with TypeScript</p>
+  <h1>map, filter, reduce — สามตัวที่ใช้ทุกวัน</h1>
+  <p class="meta">~20 นาที · ควรผ่าน <a href="./0066-string-array-transform.html">บทเรียน 66</a> (แปลงข้อมูล) มาก่อน ·
+    ถ้าเคยเขียน <code>for</code> ใน Go มาแล้วจะอ่านบทนี้สบายมาก</p>
+  <p class="standfirst">
+    ถ้าคุณจำอะไรจากกลุ่มบท Functional Programming ได้แค่บทเดียว <strong>ให้เป็นบทนี้</strong>
+    <br>สามคำนี้ — <code>map</code> · <code>filter</code> · <code>reduce</code> — คือสิ่งที่คุณจะพิมพ์แทบทุกวัน
+    ตอนเอาข้อมูลจาก API มาแสดงบนหน้าเว็บ
+    <br>ทั้งสามตัวทำงานบน array และ<strong>ไม่แก้ของเดิมสักตัวเดียว</strong> มันคืน array ก้อนใหม่ให้เสมอ
+    ซึ่งเป็นเหตุผลที่คนเรียกสไตล์นี้ว่า <em>functional</em>
+    <br>บทนี้จะพาไล่ทีละตัว ต่อกันเป็น chain แล้วรัน<strong>กับดัก 3 อัน</strong>ให้ดูของจริง
+    รวมถึงอันที่ TypeScript <strong>ไม่เตือนเลย</strong> แล้วไประเบิดตอนโปรแกรมทำงานจริง
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้ (รันวันที่ 27 สิงหาคม 2026)</strong></p>
+  <pre style="margin:0.5rem 0"><code>tsc  Version 7.0.2      <span class="c"># จาก tsc -v</span>
+node v24.14.0           <span class="c"># จาก node --version</span></code></pre>
+  <p style="margin-bottom:0">
+    ทุกกล่องที่เขียนว่า "ได้ผลว่า…" ในบทนี้มาจากการรันจริงสองคำสั่งนี้:
+    <br><code>tsc --noEmit --strict ไฟล์.ts</code> — ตรวจ type
+    <br><code>tsc --target es2022 --module nodenext --moduleResolution nodenext ไฟล์.ts &amp;&amp; node ไฟล์.js</code> — ดูค่าจริง
+    <br>ข้อความ error ทุกอันก็อปมาจาก <code>tsc</code> ตัวจริง ทั้งเลข <code>TSxxxx</code> และตัวหนังสือ
+    <strong>ไม่ได้พิมพ์เอง</strong> — คุณ copy โค้ดไปรันซ้ำได้เลย
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · เริ่มจาก for loop ที่คุณคุ้นอยู่แล้ว</h2>
+
+<p>
+  สมมติมีรายการออเดอร์ แล้วอยากรู้ว่า<strong>ยอดรวมของออเดอร์ที่จ่ายเงินแล้ว</strong>เป็นเท่าไหร่
+  <br>ถ้าเขียนแบบที่คุณเขียนใน Go มา 9 วัน โครงจะเหมือน Go เป๊ะ ต่างแค่ชื่อ type
+</p>
+
+<p>ข้อมูลตั้งต้นที่ใช้ทั้งบทนี้ — <strong>ก็อปไปวางไว้บนสุดของไฟล์แล้วรันตามได้เลย</strong>:</p>
+
+<pre><code><span class="k">interface</span> <span class="n">Order</span> {
+  id: <span class="n">number</span>;
+  status: <span class="n">string</span>;
+  amount: <span class="n">number</span>;
+}
+
+<span class="k">const</span> orders: <span class="n">Order</span>[] = [
+  { id: <span class="n">1</span>, status: <span class="s">"paid"</span>,      amount: <span class="n">250</span> },
+  { id: <span class="n">2</span>, status: <span class="s">"pending"</span>,   amount: <span class="n">120</span> },
+  { id: <span class="n">3</span>, status: <span class="s">"paid"</span>,      amount: <span class="n">150</span> },
+  { id: <span class="n">4</span>, status: <span class="s">"cancelled"</span>, amount: <span class="n">80</span> },
+];</code></pre>
+
+<p>แล้วโค้ดที่คำนวณยอดรวมของออเดอร์ที่จ่ายแล้ว:</p>
+
+<pre><code><span class="k">let</span> totalLoop = <span class="n">0</span>;
+<span class="k">for</span> (<span class="k">const</span> o <span class="k">of</span> orders) {
+  <span class="k">if</span> (o.status === <span class="s">"paid"</span>) {
+    totalLoop = totalLoop + o.amount;
+  }
+}</code></pre>
+
+<p>
+  อ่านออกทันทีใช่ไหม — แต่สังเกตว่ามันทำ <strong>3 เรื่องปนกันอยู่ในก้อนเดียว</strong>:
+  คัดว่าเอาอันไหน · หยิบเอาเฉพาะตัวเลข · แล้วบวกสะสม
+  <br>ถ้าใครมาอ่านโค้ดนี้ทีหลัง เขาต้องอ่านครบทั้ง 5 บรรทัดก่อนถึงจะรู้ว่ามันคำนวณอะไร
+</p>
+
+<p>
+  สามตัวในบทนี้คือการ<strong>แยก 3 เรื่องนั้นออกจากกัน</strong> ให้แต่ละเรื่องมีชื่อของตัวเอง:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>อยากทำอะไร</th><th>ใช้ตัวไหน</th><th>ได้อะไรกลับมา</th></tr></thead>
+  <tbody>
+    <tr><td>แปลงของทุกชิ้นเป็นของใหม่</td><td><code>map</code></td><td>array ใหม่ <strong>ยาวเท่าเดิม</strong></td></tr>
+    <tr><td>คัดเอาเฉพาะชิ้นที่เข้าเงื่อนไข</td><td><code>filter</code></td><td>array ใหม่ <strong>สั้นลงหรือเท่าเดิม</strong></td></tr>
+    <tr><td>ยุบทั้งกองให้เหลือค่าเดียว</td><td><code>reduce</code></td><td><strong>ค่าเดียว</strong> (จะเป็นอะไรก็ได้)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-2">2 · <code>map</code> — แปลงทีละชิ้น ได้กองใหม่ที่ยาวเท่าเดิม</h2>
+
+<p>
+  <code>map</code> แปลว่า "เดินไปทีละชิ้น ทำอะไรกับมันสักอย่าง แล้วเอาผลไปเรียงในกองใหม่"
+  <br>กองเก่ามีกี่ชิ้น กองใหม่ก็มีเท่านั้นชิ้น <strong>เสมอ</strong> — ไม่มีทางหายและไม่มีทางเพิ่ม
+</p>
+
+<pre><code><span class="k">const</span> numbers: <span class="n">number</span>[] = [<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>, <span class="n">4</span>, <span class="n">5</span>];
+<span class="k">const</span> doubleNumber = numbers.<span class="f">map</span>((n) =&gt; n * <span class="n">2</span>);
+<span class="f">console</span>.<span class="f">log</span>(doubleNumber);
+<span class="f">console</span>.<span class="f">log</span>(numbers);
+
+<span class="k">interface</span> <span class="n">User</span> {
+  id: <span class="n">number</span>;
+  name: <span class="n">string</span>;
+}
+
+<span class="k">const</span> users: <span class="n">User</span>[] = [
+  { id: <span class="n">1</span>, name: <span class="s">"Joey"</span> },
+  { id: <span class="n">2</span>, name: <span class="s">"Sara"</span> },
+];
+
+<span class="k">const</span> names = users.<span class="f">map</span>((user) =&gt; user.name);
+<span class="f">console</span>.<span class="f">log</span>(names);</code></pre>
+
+<p>ผลรันจริง:</p>
+
+<pre><code>[ 2, 4, 6, 8, 10 ]
+[ 1, 2, 3, 4, 5 ]
+[ 'Joey', 'Sara' ]</code></pre>
+
+<p>
+  บรรทัดที่สองสำคัญกว่าที่คิด — <code>numbers</code> <strong>ยังเป็น <code>[1, 2, 3, 4, 5]</code> เหมือนเดิมทุกตัว</strong>
+  <br>ส่วนบรรทัดสุดท้ายคือท่าที่คุณจะใช้บ่อยที่สุดในชีวิตจริง:
+  ได้ array ของ object ก้อนใหญ่จาก API มา แล้ว<strong>ดึงออกมาเฉพาะช่องที่จะเอาไปแสดง</strong>
+</p>
+
+<p>
+  สังเกตด้วยว่า <strong>type เปลี่ยนไปได้</strong> — <code>users</code> เป็น <code>User[]</code>
+  แต่ <code>names</code> กลายเป็น <code>string[]</code> โดยที่เราไม่ต้องเขียน type กำกับเลย
+  TypeScript อ่านจากสิ่งที่ callback คืนให้เอง
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ร้านถ่ายเอกสาร</span>
+  <p>
+    คุณเดินเข้าร้านถ่ายเอกสารพร้อมเอกสาร <strong>5 แผ่น</strong> แล้วบอกว่า "ขยาย 200% ให้หน่อย"
+    <br>สิ่งที่ได้กลับมาคือ <strong>ซองใหม่ที่มีสำเนา 5 แผ่น</strong> (ไม่ใช่ 4 ไม่ใช่ 6)
+    และ<strong>ต้นฉบับ 5 แผ่นเดิมก็คืนมาครบ ไม่มีรอยอะไรเลย</strong>
+  </p>
+  <p>
+    "ขยาย 200%" คือ callback · เอกสาร 5 แผ่น คือ array เดิม · ซองสำเนา คือ array ใหม่ที่ <code>map</code> คืนให้
+    <br>ร้านไม่ได้ไปเขียนทับต้นฉบับของคุณ — <strong>นี่คือหัวใจของคำว่า functional</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ที่ร้านจริง ถ้าคุณสั่งไม่ชัด พนักงานจะเงยหน้าถามก่อน
+    แต่ <code>map</code> <strong>ไม่ถาม</strong> — ถ้า callback ของคุณไม่ได้คืนอะไรกลับไป
+    มันก็ยินดีคืนซองที่มีกระดาษเปล่า 5 แผ่นให้คุณอย่างสุภาพ แล้วไม่บ่นสักคำ
+    (กับดักข้อ 2 ในหัวข้อ 7 คืออันนี้เป๊ะ ๆ)
+  </p>
+</div>
+
+<h2 id="sn-sec-3">3 · <code>filter</code> — คัดออก ได้กองใหม่ที่สั้นลง</h2>
+
+<p>
+  <code>filter</code> ก็เดินทีละชิ้นเหมือนกัน แต่ callback ของมัน<strong>ไม่ได้ตอบว่า "แปลงเป็นอะไร"</strong>
+  มันตอบว่า <strong>"เอาชิ้นนี้ไหม เอา/ไม่เอา"</strong>
+  <br>ชิ้นไหนตอบว่าเอา ก็ถูกหยิบใส่กองใหม่ <strong>ทั้งชิ้นแบบเดิม ไม่ถูกแปลงอะไรเลย</strong>
+</p>
+
+<pre><code><span class="k">const</span> examScores: <span class="n">number</span>[] = [<span class="n">45</span>, <span class="n">72</span>, <span class="n">88</span>, <span class="n">55</span>, <span class="n">91</span>];
+<span class="k">const</span> passing = examScores.<span class="f">filter</span>((score: <span class="n">number</span>) =&gt; score &gt;= <span class="n">60</span>);
+<span class="f">console</span>.<span class="f">log</span>(passing);
+<span class="f">console</span>.<span class="f">log</span>(examScores);</code></pre>
+
+<p>ผลรันจริง:</p>
+
+<pre><code>[ 72, 88, 91 ]
+[ 45, 72, 88, 55, 91 ]</code></pre>
+
+<p>
+  <strong>type ไม่เปลี่ยน</strong> — เข้าไป <code>number[]</code> ออกมาก็ <code>number[]</code>
+  ต่างกันแค่จำนวนชิ้น นี่คือความต่างที่ชัดที่สุดระหว่าง <code>filter</code> กับ <code>map</code>
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ตะแกรงร่อนทราย กับ เครื่องบดกาแฟ</span>
+  <p>
+    เอาทรายหนึ่งกำมือเทลง<strong>ตะแกรง</strong> — เม็ดที่เล็กพอจะลอดลงไปอยู่ในถาดล่าง
+    เม็ดที่ใหญ่ค้างอยู่บนตะแกรง
+    <br>เม็ดทรายที่ลอดลงไป <strong>ยังเป็นเม็ดทรายเม็ดเดิมทุกประการ</strong> ไม่ได้ถูกบด ไม่ได้ถูกย้อมสี
+    ตะแกรง<strong>คัด</strong> อย่างเดียว
+  </p>
+  <p>
+    ส่วน <code>map</code> คือ<strong>เครื่องบดกาแฟ</strong> — เมล็ดเข้าไปกี่เม็ด ผงออกมาเท่าเดิม
+    แต่<strong>สภาพเปลี่ยนไปแล้ว</strong>
+    <br>ตะแกรง = <code>filter</code> (จำนวนเปลี่ยน สภาพเดิม) · เครื่องบด = <code>map</code> (จำนวนเดิม สภาพเปลี่ยน)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ตะแกรงจริงทำให้ทรายกองเดิม<strong>หายไป</strong>
+    เม็ดที่ร่อนแล้วอยู่คนละถาด กองเดิมไม่เหลือแล้ว
+    <br>แต่ <code>filter</code> <strong>ไม่ได้ย้ายของ มัน "ลอก" ของที่ผ่านเงื่อนไขไปกองใหม่</strong> —
+    <code>examScores</code> ยังมีครบ 5 ตัวเหมือนตอนแรก คุณจึงเอาไปใช้ต่อได้อีกกี่รอบก็ได้
+    (ดูบรรทัดที่สองของผลรันข้างบน)
+  </p>
+</div>
+
+<h2 id="sn-sec-4">4 · <code>reduce</code> — ยุบทั้งกองให้เหลือค่าเดียว</h2>
+
+<p>
+  <code>reduce</code> คือตัวที่คนกลัวที่สุด เพราะมันรับ <strong>สองอย่าง</strong> ไม่ใช่อย่างเดียว:
+</p>
+
+<ul>
+  <li><strong>callback</strong> ที่รับ 2 พารามิเตอร์ — ค่าที่สะสมมาถึงตอนนี้ กับ ชิ้นที่กำลังเดินถึง</li>
+  <li><strong>ค่าเริ่มต้น</strong> — ตัวที่บอกว่า "ก่อนเดินชิ้นแรก ค่าสะสมคืออะไร" (คือ <code>0</code> ในตัวอย่างล่าง)</li>
+</ul>
+
+<pre><code><span class="k">const</span> cart = [
+  { item: <span class="s">"Book"</span>, price: <span class="n">15</span> },
+  { item: <span class="s">"Pen"</span>, price: <span class="n">3</span> },
+  { item: <span class="s">"Bag"</span>, price: <span class="n">40</span> },
+];
+
+<span class="k">const</span> total = cart.<span class="f">reduce</span>((sum, product) =&gt; sum + product.price, <span class="n">0</span>);
+<span class="f">console</span>.<span class="f">log</span>(total);</code></pre>
+
+<p>ผลรันจริง: <code>58</code></p>
+
+<p>ลองไล่ในหัวทีละรอบ จะเห็นว่ามันไม่มีอะไรลึกลับเลย:</p>
+
+<div class="diagram">
+เริ่มต้น              sum = 0
+รอบ 1  Book  (15)     sum = 0  + 15 = 15
+รอบ 2  Pen   (3)      sum = 15 + 3  = 18
+รอบ 3  Bag   (40)     sum = 18 + 40 = 58
+                                     ────
+คืนออกมา                              58
+</div>
+
+<p>
+  และค่าที่สะสมไม่จำเป็นต้องเป็นตัวเลข — <strong>จะเป็นอะไรก็ได้</strong>
+  ตัวอย่างในสไลด์คือการจัดกลุ่มคำตามตัวอักษรตัวแรก โดยให้ค่าสะสมเป็น <strong>object</strong>:
+</p>
+
+<pre><code><span class="k">const</span> words = [<span class="s">"apple"</span>, <span class="s">"ant"</span>, <span class="s">"banana"</span>, <span class="s">"avocado"</span>, <span class="s">"blueberry"</span>];
+
+<span class="k">const</span> grouped = words.<span class="f">reduce</span>&lt;<span class="n">Record</span>&lt;<span class="n">string</span>, <span class="n">string</span>[]&gt;&gt;((acc, word) =&gt; {
+  <span class="k">const</span> letter = word[<span class="n">0</span>];
+  acc[letter] = acc[letter] ? [...acc[letter], word] : [word];
+  <span class="k">return</span> acc;
+}, {});
+<span class="f">console</span>.<span class="f">log</span>(grouped);</code></pre>
+
+<p>ผลรันจริง:</p>
+
+<pre><code>{ a: [ 'apple', 'ant', 'avocado' ], b: [ 'banana', 'blueberry' ] }</code></pre>
+
+<p>
+  ตรง <code>reduce&lt;Record&lt;string, string[]&gt;&gt;</code> คือการ<strong>บอก type ให้ TypeScript ตรง ๆ</strong>
+  ว่าค่าสะสมจะหน้าตาแบบไหน — จำเป็นมาก และเดี๋ยวหัวข้อ 7 จะรันให้ดูว่าถ้าไม่บอกจะเจออะไร
+  <br>(<code>Record&lt;string, string[]&gt;</code> อ่านว่า "object ที่ key เป็น string และ value เป็น array ของ string")
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — พนักงานคิดเงินหน้าเคาน์เตอร์</span>
+  <p>
+    ของในตะกร้าถูกหยิบผ่านเครื่องสแกนทีละชิ้น พนักงานมีเครื่องคิดเลขอยู่ในมือ
+    <br>ก่อนเริ่ม เขา<strong>กดเคลียร์ให้เป็น 0 ก่อน</strong> — นั่นคือ <strong>ค่าเริ่มต้น</strong>
+    <br>ทุกชิ้นที่ผ่านเครื่องสแกน เขาบวกเข้าไปในเครื่องคิดเลข — นั่นคือ <strong>callback</strong>
+    <br>ของหมดตะกร้า ตัวเลขบนหน้าจอคือคำตอบ — นั่นคือสิ่งที่ <code>reduce</code> คืนให้
+  </p>
+  <p>
+    ถ้าเขา<strong>ลืมกดเคลียร์</strong> ยอดของลูกค้าคนก่อนจะติดค้างอยู่ แล้วลูกค้าคุณจ่ายเกิน
+    <br>นี่คือเหตุผลที่เกือบทุกครั้งคุณควรใส่ค่าเริ่มต้นให้ <code>reduce</code> เสมอ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงถ้าลืมกดเคลียร์แล้วตะกร้าว่างเปล่า
+    เขาก็แค่คิดเงิน 0 บาทแล้วให้ลูกค้าเดินออกไป
+    <br>แต่ <code>reduce</code> ที่<strong>ไม่ใส่ค่าเริ่มต้นแล้วเจอ array ว่าง</strong> —
+    มัน<strong>โยน error ใส่หน้าคุณแล้วโปรแกรมตายทันที</strong> ไม่มีค่าอะไรคืนให้เลย
+    <br>ที่แสบคือ TypeScript <strong>ไม่เตือนสักคำ</strong> ตอนคุณคอมไพล์ — หัวข้อ 7 มีของจริงให้ดู
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>callback</dt>
+    <dd>ฟังก์ชันที่เรา<strong>ส่งเข้าไปให้ฟังก์ชันอื่นเรียกแทนเรา</strong> — ก้อน <code>(n) =&gt; n * 2</code>
+        ที่ยัดใส่ <code>map</code> นั่นแหละคือ callback ·
+        <strong>ถาม senior ได้ว่า “callback ตัวนี้ถูกเรียกกี่ครั้ง และมันได้อะไรส่งเข้ามาบ้าง”</strong>
+        คำถามนี้แก้ปัญหาได้เกินครึ่งของ bug ที่เกิดกับสามตัวนี้</dd>
+    <dt>higher-order function</dt>
+    <dd>ฟังก์ชันที่<strong>รับฟังก์ชันเป็นพารามิเตอร์</strong> (หรือคืนฟังก์ชันออกมา) —
+        <code>map</code> · <code>filter</code> · <code>reduce</code> เป็นแบบนี้ทั้งสามตัว ·
+        <strong>พิมพ์บอก AI ได้ว่า “refactor this loop into higher-order array functions”</strong>
+        จะได้โค้ดที่ตรงกว่าบอกว่า “ทำให้สั้นลงหน่อย”</dd>
+    <dt>accumulator · initial value</dt>
+    <dd>พารามิเตอร์ตัวแรกของ callback ใน <code>reduce</code> (ค่าที่สะสมมา) และค่าที่ใส่ไว้หลัง callback
+        (จุดตั้งต้น) · ในโค้ดนิยมตั้งชื่อว่า <code>acc</code> ·
+        <strong>ถาม senior ได้ว่า “accumulator ของ reduce ตัวนี้ควรเป็น type อะไร”</strong> —
+        เป็นคำถามที่ตอบแล้วโค้ดเขียนต่อได้เลย</dd>
+    <dt>predicate</dt>
+    <dd>ฟังก์ชันที่<strong>ตอบได้แค่จริงหรือเท็จ</strong> — callback ของ <code>filter</code> คือ predicate ·
+        <strong>พูดว่า “predicate ของ filter ตัวนี้ผิด” จะตรงกว่า “ตรงนี้กรองไม่ถูก”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 · ต่อกันเป็น chain — จุดที่มันเริ่มคุ้ม</h2>
+
+<p>
+  เพราะ <code>map</code> กับ <code>filter</code> <strong>คืน array ออกมา</strong>
+  คุณจึงเรียกตัวถัดไปต่อท้ายได้ทันที ไม่ต้องพักไว้ในตัวแปรกลางทาง
+  <br>กลับไปที่โจทย์ในหัวข้อ 1 — "ยอดรวมของออเดอร์ที่จ่ายเงินแล้ว" — เขียนสองแบบเทียบกัน:
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>for loop (แบบที่คุ้นจาก Go)</h4>
+<pre><code><span class="k">let</span> totalLoop = <span class="n">0</span>;
+<span class="k">for</span> (<span class="k">const</span> o <span class="k">of</span> orders) {
+  <span class="k">if</span> (o.status === <span class="s">"paid"</span>) {
+    totalLoop = totalLoop + o.amount;
+  }
+}</code></pre>
+    <p>ต้องอ่านครบ 5 บรรทัดก่อนถึงจะรู้ว่ามันคำนวณอะไร</p>
+  </div>
+  <div class="side">
+    <h4>chain</h4>
+<pre><code><span class="k">const</span> totalPaid = orders
+  .<span class="f">filter</span>((o) =&gt; o.status === <span class="s">"paid"</span>)
+  .<span class="f">map</span>((o) =&gt; o.amount)
+  .<span class="f">reduce</span>((sum, amount) =&gt; sum + amount, <span class="n">0</span>);</code></pre>
+    <p>อ่านจากบนลงล่างได้เป็นประโยค: คัดที่จ่ายแล้ว → เอาเฉพาะยอด → บวกรวม</p>
+  </div>
+</div>
+
+<p>
+  เอา <code>orders</code> ก้อนเดิมจากหัวข้อ 1 (4 ออเดอร์ · จ่ายแล้ว 250 กับ 150) มารันทั้งสองแบบในไฟล์เดียวกัน
+  แล้ว <code>console.log</code> ออกมาทั้งคู่ ได้ผลจริงว่า:
+</p>
+
+<pre><code>400
+400
+4
+{ id: 1, status: 'paid', amount: 250 }</code></pre>
+
+<p>
+  สองบรรทัดแรกคือคำตอบของสองวิธี — <strong>ตรงกัน</strong>
+  <br>บรรทัดที่ 3 กับ 4 คือ <code>orders.length</code> และ <code>orders[0]</code> ที่ผมพิมพ์ออกมาหลังคำนวณเสร็จ:
+  <strong>ยังครบ 4 ชิ้น และชิ้นแรกยังเป็นก้อนเดิมทุกช่อง</strong>
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ chain ไม่ได้แปลว่าเร็วกว่า</span>
+  <p style="margin-bottom:0">
+    <code>for</code> เดินผ่านข้อมูล <strong>1 รอบ</strong> · chain 3 ชั้นเดิน <strong>3 รอบ</strong>
+    และสร้าง array กลางทางเพิ่มมา 2 ก้อน
+    <br>กับข้อมูลหลักร้อยหลักพันชิ้นบนหน้าเว็บ คุณ<strong>วัดความต่างไม่ได้เลย</strong> —
+    ให้เลือกอันที่คนอ่านรู้เรื่องกว่า
+    <br>แต่ถ้าวันไหนเจอข้อมูลหลักแสนชิ้นแล้ววัดได้จริงว่าช้า ค่อยเปลี่ยนกลับเป็น <code>for</code>
+    แล้ว<strong>เขียน comment บอกไว้ว่าเปลี่ยนเพราะวัดมาแล้ว</strong> ไม่ใช่เพราะเดา
+  </p>
+</div>
+
+<h2 id="sn-sec-6">6 · ทำไมถึงเรียกว่า functional</h2>
+
+<p>
+  คำว่า <em>functional</em> ในบริบทนี้ไม่ได้แปลว่า "ใช้ฟังก์ชันเยอะ"
+  มันแปลว่า <strong>"ทำงานแบบฟังก์ชันคณิตศาสตร์"</strong> คือ
+  <strong>รับของเข้า → คืนของใหม่ออกมา → ไม่ไปยุ่งกับของที่รับเข้ามา</strong>
+</p>
+
+<p>พิสูจน์ด้วยการรันจริง:</p>
+
+<pre><code><span class="k">const</span> scores = [<span class="n">45</span>, <span class="n">72</span>, <span class="n">88</span>];
+
+<span class="k">const</span> passing = scores.<span class="f">filter</span>((s) =&gt; s &gt;= <span class="n">60</span>);
+<span class="k">const</span> bonus = scores.<span class="f">map</span>((s) =&gt; s + <span class="n">5</span>);
+
+<span class="f">console</span>.<span class="f">log</span>(scores);
+<span class="f">console</span>.<span class="f">log</span>(passing);
+<span class="f">console</span>.<span class="f">log</span>(bonus);
+<span class="f">console</span>.<span class="f">log</span>(scores === passing);
+
+<span class="k">const</span> sorted = scores.<span class="f">sort</span>((a, b) =&gt; b - a);   <span class="c">// ตัวนี้ไม่ functional!</span>
+<span class="f">console</span>.<span class="f">log</span>(scores);
+<span class="f">console</span>.<span class="f">log</span>(scores === sorted);</code></pre>
+
+<p>ผลรันจริง:</p>
+
+<pre><code>[ 45, 72, 88 ]
+[ 72, 88 ]
+[ 50, 77, 93 ]
+false
+[ 88, 72, 45 ]
+true</code></pre>
+
+<p>
+  สามบรรทัดแรก: ใช้ <code>scores</code> ไปแล้วสองรอบ <strong>มันยังเป็น <code>[45, 72, 88]</code> เท่าเดิม</strong>
+  <br>บรรทัดที่ 4: <code>scores === passing</code> ได้ <code>false</code> — แปลว่าเป็น
+  <strong>คนละก้อนในหน่วยความจำจริง ๆ</strong> ไม่ใช่แค่หน้าตาเหมือนกัน
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ <code>sort()</code> ไม่ใช่พวกเดียวกับสามตัวนี้ — มันแก้ของเดิม</span>
+  <p style="margin-bottom:0">
+    ดูสองบรรทัดสุดท้ายของผลรัน: หลังเรียก <code>scores.sort(...)</code> แล้ว
+    <code>scores</code> <strong>กลายเป็น <code>[88, 72, 45]</code> ไปเลย</strong>
+    และ <code>scores === sorted</code> ได้ <code>true</code> — แปลว่ามันคืน<strong>ก้อนเดิม</strong>กลับมา
+    ไม่ได้สร้างใหม่
+    <br>ทั้งที่หน้าตาการเรียกเหมือนกับ <code>map</code> / <code>filter</code> เป๊ะ ๆ
+    <br>bug ยอดฮิตของมือใหม่คือ <code>sort</code> รายการเพื่อโชว์ผลลัพธ์ แล้ว<strong>ข้อมูลต้นทางเรียงใหม่ไปด้วย</strong>
+    ทำให้หน้าอื่นที่ใช้ข้อมูลก้อนเดียวกันเพี้ยนตาม · ถ้าไม่อยากให้แก้ของเดิม ให้ใช้
+    <code>[...scores].sort(...)</code> หรือ <code>scores.toSorted(...)</code>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>immutable</dt>
+    <dd>"ไม่ถูกแก้" — ข้อมูลที่พอสร้างแล้วไม่มีใครไปเปลี่ยนมันอีก · <code>map</code> กับ <code>filter</code>
+        ปฏิบัติต่อ array ต้นทางแบบ immutable ·
+        <strong>พิมพ์บอก AI ได้ว่า “keep this array immutable — return a new array instead of mutating it”</strong></dd>
+    <dt>mutate · in-place</dt>
+    <dd>"แก้ของเดิมตรงนั้นเลย" — <code>sort</code> · <code>push</code> · <code>splice</code> เป็นแบบนี้ ·
+        <strong>ถาม senior ได้ว่า “method นี้ mutate ของเดิมไหม”</strong> ก่อนใช้ method ที่ไม่คุ้น
+        จะประหยัดเวลาไล่ bug ได้เยอะมาก</dd>
+    <dt>side effect</dt>
+    <dd>ผลข้างเคียงที่เกิดนอกเหนือจากค่าที่คืนกลับมา เช่น ไปแก้ตัวแปรข้างนอก · ยิง API · เขียนไฟล์ ·
+        <strong>พูดว่า “callback ตัวนี้มี side effect” จะสื่อกว่า “มันไปแก้ของข้างนอก”</strong></dd>
+    <dt>method chaining</dt>
+    <dd>การเรียก method ต่อกันเป็นสายเพราะแต่ละตัวคืนของที่เรียกตัวถัดไปได้ ·
+        <strong>พิมพ์บอก AI ได้ว่า “chain filter → map → reduce instead of using intermediate variables”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">7 · กับดัก 3 อัน ที่ต้องรันถึงจะเห็น</h2>
+
+<h3 id="sn-sub-1">7.1 · <code>reduce</code> ที่ไม่ใส่ค่าเริ่มต้น เจอ array ว่าง = โปรแกรมตาย</h3>
+
+<p>
+  <code>reduce</code> ใส่ค่าเริ่มต้น<strong>หรือไม่ใส่ก็ได้</strong> — ถ้าไม่ใส่
+  มันจะหยิบชิ้นแรกของ array มาเป็นค่าเริ่มต้นให้เอง ซึ่งฟังดูฉลาดดี
+  <br>จนกระทั่งวันที่ array นั้นว่าง (เช่น API คืน <code>[]</code> มาเพราะผู้ใช้ยังไม่มีข้อมูล)
+</p>
+
+<div class="predict">
+<pre><code><span class="k">const</span> prices: <span class="n">number</span>[] = [];
+<span class="k">const</span> total = prices.<span class="f">reduce</span>((sum, p) =&gt; sum + p);
+<span class="f">console</span>.<span class="f">log</span>(total);</code></pre>
+  <p class="ask">คิดว่ารันแล้วได้อะไร? และ <code>tsc --noEmit --strict</code> จะบ่นไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong><code>tsc --noEmit --strict</code> ผ่านฉลุย</strong> — exit code เป็น <code>0</code> ไม่มี error สักบรรทัด</p>
+    <p>แต่พอ <code>node</code> รันจริง:</p>
+    <pre><code>TypeError: Reduce of empty array with no initial value
+    at Array.reduce (&lt;anonymous&gt;)
+    at Object.&lt;anonymous&gt; (/…/t1-reduce-empty.js:4:22)
+    …
+Node.js v24.14.0</code></pre>
+    <p style="margin-bottom:0">
+      โปรแกรม<strong>ตายทันที</strong> exit code <code>1</code>
+      <br>แก้ง่ายมาก — ใส่ <code>, 0</code> ต่อท้าย:
+      <br><code>prices.reduce((sum, p) =&gt; sum + p, <strong>0</strong>)</code> → รันแล้วได้ <code>0</code> เรียบร้อย
+      ไม่ตาย
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ นี่คือประเภท bug ที่แย่ที่สุด</span>
+  <p style="margin-bottom:0">
+    <code>tsc</code> เขียว · เทสที่คุณเขียนด้วยข้อมูลจำลอง 3 ชิ้นก็เขียว · deploy ขึ้นไปแล้วสวยงาม
+    <br>แล้ววันที่ <strong>ผู้ใช้คนแรกที่เพิ่งสมัครใหม่</strong> เปิดหน้าตะกร้าที่ยังว่างเปล่า — จอขาว
+    <br>บทเรียนคือ: <strong>ทุกครั้งที่พิมพ์ <code>.reduce(</code> ให้ใส่ค่าเริ่มต้นไปเลยเป็นนิสัย</strong>
+    ไม่ต้องรอให้มีเหตุผล · ต้นทุนของการใส่คือตัวอักษร 3 ตัว ต้นทุนของการไม่ใส่คือหน้าเว็บพัง
+  </p>
+</div>
+
+<h3 id="sn-sub-2">7.2 · <code>map</code> ที่ลืม <code>return</code> = ได้ <code>undefined</code> เต็ม array</h3>
+
+<p>
+  arrow function เขียนได้สองแบบ และ<strong>ความหมายไม่เหมือนกัน</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียนแบบ</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>(n) =&gt; n * 2</code></td><td>ไม่มีปีกกา → <strong>คืนค่าให้อัตโนมัติ</strong></td></tr>
+    <tr><td><code>(n) =&gt; { n * 2; }</code></td><td>มีปีกกา → เป็นบล็อกโค้ด <strong>ต้องเขียน <code>return</code> เอง</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="predict">
+<pre><code><span class="k">const</span> numbers = [<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>];
+
+<span class="k">const</span> doubled = numbers.<span class="f">map</span>((n) =&gt; {
+  n * <span class="n">2</span>;
+});
+
+<span class="f">console</span>.<span class="f">log</span>(doubled);</code></pre>
+  <p class="ask">คิดว่าได้อะไร? และ <code>tsc --noEmit --strict</code> จะจับได้ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong><code>tsc --noEmit --strict</code> ผ่าน</strong> — exit code <code>0</code> ไม่บ่นเลยแม้แต่คำเดียว</p>
+    <p>รันจริงได้:</p>
+    <pre><code>[ undefined, undefined, undefined ]</code></pre>
+    <p>
+      เพราะ callback ไม่ได้ <code>return</code> อะไร มันจึงคืน <code>undefined</code> ทุกรอบ
+      และ <code>map</code> ก็เก็บ <code>undefined</code> ทั้งสามตัวเรียงไว้ให้อย่างซื่อสัตย์
+      <br>type ของ <code>doubled</code> ตอนนี้คือ <code>void[]</code> ไม่ใช่ <code>number[]</code>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>TypeScript จะเริ่มบ่นก็ต่อเมื่อคุณเอาผลลัพธ์ไปใช้ต่อ</strong> —
+      เติมบรรทัด <code>const big = doubled.filter((n) =&gt; n &gt; 2);</code> เข้าไปแล้วรัน <code>tsc</code> อีกรอบ ได้ error จริงว่า:
+      <br><code>error TS2365: Operator '&gt;' cannot be applied to types 'void' and 'number'.</code>
+      <br>ถ้าเจอคำว่า <code>'void'</code> โผล่มาใน error message ทั้งที่คุณไม่เคยพิมพ์คำนี้ —
+      <strong>ให้ไปหาปีกกาที่ลืม <code>return</code> ก่อนเลย</strong> ใช่เกือบทุกครั้ง
+    </p>
+  </div>
+</div>
+
+<h3 id="sn-sub-3">7.3 · type ที่ <code>reduce</code> เดาให้ มาจาก<strong>ค่าเริ่มต้น</strong> ไม่ใช่จาก callback</h3>
+
+<p>
+  นี่คือประโยคเดียวที่ต้องจำจากหัวข้อนี้:
+  <strong>ค่าเริ่มต้นเป็น type อะไร TypeScript จะบังคับให้ทั้งสายเป็น type นั้น</strong>
+  <br>ไม่ใช่ดูจากสิ่งที่ callback คืนออกมา · ผลที่ตามมามีสองแบบ และแบบที่<strong>ไม่ error</strong> อันตรายกว่า
+</p>
+
+<p><strong>แบบที่ 1 — ใส่ค่าเริ่มต้นผิด type แล้ว TypeScript ไม่บ่นเลย</strong></p>
+
+<div class="predict">
+<pre><code><span class="k">const</span> prices = [<span class="n">15</span>, <span class="n">3</span>, <span class="n">40</span>];
+
+<span class="k">const</span> total = prices.<span class="f">reduce</span>((sum, price) =&gt; sum + price, <span class="s">""</span>);
+
+<span class="f">console</span>.<span class="f">log</span>(total);</code></pre>
+  <p class="ask">ตั้งใจจะบวกเลข แต่พิมพ์ <code>""</code> แทน <code>0</code> — <code>tsc</code> จะจับได้ไหม แล้วได้ค่าอะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>
+      <strong><code>tsc --noEmit --strict</code> ผ่าน exit code <code>0</code></strong> ไม่มี error
+      <br>รันจริงได้:
+    </p>
+    <pre><code>15340 string</code></pre>
+    <p style="margin-bottom:0">
+      (บรรทัดนี้คือ <code>console.log(total, typeof total)</code> — ค่าคือ <code>"15340"</code> และ type คือ <code>string</code>)
+      <br>เกิดอะไรขึ้น: ค่าเริ่มต้นเป็น <code>string</code> → TypeScript สรุปว่า <code>sum</code> เป็น <code>string</code>
+      → <code>sum + price</code> กลายเป็นการ<strong>ต่อสตริง</strong> ซึ่งเป็นการเขียนที่ถูกกฎหมายทุกประการ
+      <br><code>"" + 15 + 3 + 40</code> = <code>"15340"</code> · ไม่มีใครผิด ไม่มีใครบ่น
+      <br><strong>ยอดรวมของคุณกลายเป็นการเอาราคาทุกชิ้นมาต่อกันเป็นข้อความ</strong> แล้วมันจะไปโผล่บนหน้าเว็บอย่างนั้นเลย
+    </p>
+  </div>
+</div>
+
+<p><strong>แบบที่ 2 — ผิดคนละทาง คราวนี้ <code>tsc</code> จับได้ แต่ error อ่านยาก</strong></p>
+
+<pre><code><span class="k">const</span> names = [<span class="s">"Joey"</span>, <span class="s">"Sara"</span>, <span class="s">"Ann"</span>];
+
+<span class="k">const</span> joined = names.<span class="f">reduce</span>((acc, name) =&gt; acc + name + <span class="s">","</span>, <span class="n">0</span>);</code></pre>
+
+<p>ผลจริงจาก <code>tsc --noEmit --strict</code>:</p>
+
+<pre><code>t3c-init-num.ts(3,44): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Type 'string' is not assignable to type 'number'.</code></pre>
+
+<p>
+  error นี้<strong>ชี้ไปที่ตำแหน่ง callback</strong> (คอลัมน์ 44) ทั้งที่<strong>ตัวที่พิมพ์ผิดคือ <code>0</code> ตรงท้ายบรรทัด</strong>
+  <br>คนที่ไม่รู้กฎข้อนี้จะนั่งแก้ callback วนไปมาอยู่นาน ทั้งที่แก้จริงคือเปลี่ยน <code>0</code> เป็น <code>""</code>
+  <br>พอเห็น <code>TS2769 No overload matches this call</code> บน <code>reduce</code> เมื่อไหร่ —
+  <strong>ให้ไปดูค่าเริ่มต้นก่อนเสมอ</strong>
+</p>
+
+<p>
+  แล้วเคสในหัวข้อ 4 ที่ต้องเขียน <code>reduce&lt;Record&lt;string, string[]&gt;&gt;</code> ล่ะ?
+  ถ้าตัดออกแล้วปล่อยค่าเริ่มต้นเป็น <code>{}</code> เฉย ๆ <code>tsc</code> ตอบแบบนี้จริง ๆ:
+</p>
+
+<pre><code>t3b-empty-obj.ts(5,3): error TS7053: Element implicitly has an 'any' type because
+  expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+t3b-empty-obj.ts(5,17): error TS7053: Element implicitly has an 'any' type because
+  expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+t3b-empty-obj.ts(5,35): error TS7053: Element implicitly has an 'any' type because
+  expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.</code></pre>
+
+<p>
+  ข้อความเดียวกันเป๊ะ <strong>ขึ้นมา 3 ก้อน</strong> เพราะบรรทัดที่ 5 เขียน <code>acc[letter]</code> ไว้ 3 ที่
+  (คอลัมน์ 3 · 17 · 35) และ <code>tsc</code> บ่นทีละที่ — <strong>ไม่ใช่ 3 ปัญหา แต่เป็นปัญหาเดียวที่นับซ้ำ</strong>
+  <br>นี่คือนิสัยของ <code>tsc</code> ที่ควรรู้ไว้: ตัวเลขจำนวน error ที่ขึ้นมา<strong>ไม่เท่ากับจำนวนจุดที่ต้องแก้</strong>
+  ให้ดูว่าข้อความซ้ำกันไหมก่อนตกใจ
+</p>
+
+<p>
+  แปลเป็นภาษาคน: <strong>"คุณให้ค่าเริ่มต้นเป็น object เปล่า ๆ ผมเลยคิดว่ามันไม่มี key อะไรเลย
+  พอคุณจะเขียน key ลงไป ผมไม่รู้ว่ามันควรเป็นอะไร"</strong>
+  <br>ทางแก้คือบอก type ให้มันตรง ๆ ผ่าน <code>reduce&lt;…&gt;</code> อย่างที่สไลด์เขียนไว้ นั่นเอง
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>compile-time error · runtime error</dt>
+    <dd>อันแรกคือที่ <code>tsc</code> จับได้ก่อนโปรแกรมทำงาน · อันหลังคือที่ระเบิดตอนโปรแกรมทำงานอยู่จริง
+        (กับดักข้อ 7.1 คืออันหลัง) ·
+        <strong>ถาม senior ได้ว่า “เคสนี้ TypeScript จับให้ตอน compile หรือรอไประเบิดตอน runtime”</strong>
+        คำถามนี้แยกได้ว่าปัญหาไหนต้องเขียนเทสไว้ ปัญหาไหนปล่อยให้ compiler ดูแล</dd>
+    <dt>type inference</dt>
+    <dd>การที่ TypeScript <strong>เดา type ให้เองโดยไม่ต้องเขียนกำกับ</strong> ·
+        <code>users.map((u) =&gt; u.name)</code> ได้ <code>string[]</code> มาจากตัวนี้ ·
+        และเคส <code>reduce</code> ที่ค่าเริ่มต้นเป็น <code>""</code> ก็คือ inference ที่ทำงานถูกต้อง
+        แต่เดาจากข้อมูลที่เราให้ผิด ·
+        <strong>พิมพ์บอก AI ได้ว่า “what type does TypeScript infer for this variable and why”</strong></dd>
+    <dt>overload</dt>
+    <dd>ฟังก์ชันตัวเดียวที่มี "หน้าตาการเรียก" ได้หลายแบบ — <code>reduce</code> มีทั้งแบบใส่ค่าเริ่มต้นและไม่ใส่
+        จึงเป็น overload · เวลาที่ทุกแบบไม่เข้าเลย <code>tsc</code> จะขึ้นว่า
+        <code>TS2769 No overload matches this call</code> ·
+        <strong>เห็น error นี้เมื่อไหร่ ให้ไล่ดูพารามิเตอร์ทีละตัว</strong> อย่าเชื่อตำแหน่งที่มันชี้อย่างเดียว</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">8 · แล้วเมื่อไหร่ <code>for</code> ยังดีกว่า</h2>
+
+<p>
+  บทนี้ไม่ได้จะบอกว่า <code>for</code> เป็นของโบราณ — มันมีที่ที่มันชนะชัด ๆ อยู่:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สถานการณ์</th><th>เลือก</th><th>เพราะ</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>แปลงทุกชิ้น · คัดบางชิ้น · รวมเป็นค่าเดียว</td>
+      <td><code>map</code>/<code>filter</code>/<code>reduce</code></td>
+      <td>ชื่อ method บอกเจตนาตั้งแต่คำแรก ไม่ต้องอ่านข้างในก็รู้</td>
+    </tr>
+    <tr>
+      <td>ต้อง <code>break</code> ออกกลางคัน (เจอตัวแรกที่ใช่แล้วพอ)</td>
+      <td><code>for</code> · หรือ <code>find</code> / <code>some</code></td>
+      <td>สามตัวนี้<strong>หยุดกลางทางไม่ได้</strong> เดินจนจบเสมอ</td>
+    </tr>
+    <tr>
+      <td>เดินสอง array พร้อมกันด้วย index เดียวกัน</td>
+      <td><code>for</code></td>
+      <td>เขียนตรงไปตรงมากว่าและอ่านง่ายกว่ามาก</td>
+    </tr>
+    <tr>
+      <td>callback ต้อง <code>await</code> ทีละชิ้นตามลำดับ</td>
+      <td><code>for…of</code></td>
+      <td><code>map</code> กับ <code>async</code> จะได้ array ของ Promise ไม่ใช่ค่าจริง</td>
+    </tr>
+    <tr>
+      <td>ข้อมูลหลักแสนชิ้น <strong>และวัดแล้วว่าช้าจริง</strong></td>
+      <td><code>for</code></td>
+      <td>เดินรอบเดียว ไม่สร้าง array กลางทาง — แต่ต้องวัดก่อน ไม่ใช่เดา</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  เกณฑ์ตัดสินง่าย ๆ ที่ใช้ได้เกือบทุกครั้ง:
+  <strong>ถ้าอธิบายสิ่งที่กำลังทำเป็นประโยคเดียวได้ ("เอาชื่อของทุกคน") ให้ใช้ chain ·
+  ถ้าอธิบายไม่ได้โดยไม่พูดคำว่า "แล้วก็" ให้ใช้ <code>for</code></strong>
+</p>
+
+<h2 id="sn-sec-9">9 · แล้วถ้าของที่มีเป็น object ไม่ใช่ array?</h2>
+
+<p>
+  ปัญหาคือ <code>map</code> · <code>filter</code> · <code>reduce</code> <strong>เป็นของ array เท่านั้น</strong>
+  <br>ถ้าในมือคุณเป็น object ก้อนเดียว มันไม่มี <code>.map</code> ให้เรียก — ต้อง<strong>แปลงเป็น array ก่อน</strong>
+  ซึ่งมีสามท่ามาตรฐาน:
+</p>
+
+<pre><code><span class="k">const</span> config = { host: <span class="s">"localhost"</span>, port: <span class="n">3000</span> };
+
+<span class="f">console</span>.<span class="f">log</span>(<span class="n">Object</span>.<span class="f">keys</span>(config));
+<span class="f">console</span>.<span class="f">log</span>(<span class="n">Object</span>.<span class="f">values</span>(config));
+<span class="f">console</span>.<span class="f">log</span>(<span class="n">Object</span>.<span class="f">entries</span>(config));</code></pre>
+
+<p>ผลรันจริง:</p>
+
+<pre><code>[ 'host', 'port' ]
+[ 'localhost', 3000 ]
+[ [ 'host', 'localhost' ], [ 'port', 3000 ] ]</code></pre>
+
+<p>
+  สังเกตบรรทัดสุดท้าย — <code>Object.entries</code> คืน <strong>array ของ array คู่</strong>
+  โดยตัวแรกคือ key ตัวที่สองคือ value
+  <br>พอมันเป็น array แล้ว <strong>ทุกอย่างในบทนี้ใช้ได้ทันที</strong>:
+</p>
+
+<pre><code><span class="k">const</span> stock = { apple: <span class="n">4</span>, banana: <span class="n">0</span>, cherry: <span class="n">12</span> };
+
+<span class="k">const</span> inStock = <span class="n">Object</span>.<span class="f">entries</span>(stock)
+  .<span class="f">filter</span>(([, count]) =&gt; count &gt; <span class="n">0</span>)
+  .<span class="f">map</span>(([name]) =&gt; name);
+
+<span class="f">console</span>.<span class="f">log</span>(inStock);</code></pre>
+
+<p>ผลรันจริง: <code>[ 'apple', 'cherry' ]</code></p>
+
+<p>
+  ตรง <code>([, count])</code> คือการ<strong>แกะคู่ออกมาตั้งชื่อ</strong> — ช่องแรกเว้นว่างไว้แปลว่า
+  "ไม่ใช้ key ตัวนี้" ส่วน <code>([name])</code> คือหยิบเฉพาะช่องแรก
+  <br>ถ้าอ่านแล้วงง เขียนยาวก็ได้ ผลเหมือนกันเป๊ะ:
+  <code>.filter((pair) =&gt; pair[1] &gt; 0).map((pair) =&gt; pair[0])</code>
+</p>
+
+<div class="task">
+  <h3 id="sn-sub-4">🛠 ภารกิจ — เขียนแล้วพิสูจน์ด้วยเทส ไม่ใช่แค่ดูผลลัพธ์แล้วพอใจ</h3>
+  <p>
+    สร้างไฟล์ <code>practice.ts</code> ในโฟลเดอร์ว่าง ๆ แล้วทำตามลำดับนี้ ห้ามข้ามข้อ 4:
+  </p>
+  <ol>
+    <li>
+      ประกาศข้อมูลนี้ไว้บนสุด:
+      <br><code>const scores: number[] = [45, 72, 88, 55, 91];</code>
+    </li>
+    <li>
+      เขียน chain หนึ่งบรรทัดที่ตอบว่า <strong>"คะแนนเฉลี่ยของคนที่สอบผ่าน (≥ 60)"</strong>
+      โดยใช้ <code>filter</code> + <code>reduce</code> · ห้ามใช้ <code>for</code>
+      <br>(คำใบ้: <code>reduce</code> ให้ผลรวม ส่วนจำนวนคนเอาจาก <code>.length</code> ของ array ที่ <code>filter</code> คืนมา)
+    </li>
+    <li>
+      ก็อปกล่องนี้ไปวางบนสุดของไฟล์ แล้วใช้มันเช็คคำตอบ — นี่คือ<strong>เทสของคุณ</strong>
+      (เขียนเองล้วน ไม่ต้อง <code>npm install</code> อะไร):
+<pre><code><span class="k">function</span> <span class="f">check</span>(name: <span class="n">string</span>, got: <span class="n">unknown</span>, want: <span class="n">unknown</span>): <span class="n">void</span> {
+  <span class="k">const</span> g = <span class="n">JSON</span>.<span class="f">stringify</span>(got);
+  <span class="k">const</span> w = <span class="n">JSON</span>.<span class="f">stringify</span>(want);
+  <span class="f">console</span>.<span class="f">log</span>(g === w ? <span class="s">`PASS ${name}`</span> : <span class="s">`FAIL ${name}: got ${g} want ${w}`</span>);
+}</code></pre>
+    </li>
+    <li>
+      <strong>เขียนเทสให้ครบ 3 ข้อ</strong> — ข้อที่สามคือข้อที่คนข้ามแล้วเสียใจทีหลัง:
+      <br>① ค่าเฉลี่ยที่ได้ ตรงกับที่คำนวณด้วยมือ
+      <br>② <code>scores</code> <strong>ยังเป็น <code>[45, 72, 88, 55, 91]</code> ครบ 5 ตัวเหมือนเดิม</strong> หลังคำนวณเสร็จ
+      <br>③ <strong>เปลี่ยน <code>scores</code> เป็น <code>[]</code> แล้วรันใหม่</strong> — โปรแกรมต้องไม่ตาย
+      และต้องตอบค่าที่คุณ<strong>ตั้งใจ</strong>ให้มันตอบ (จะเป็น <code>0</code> ก็ได้ ขอแค่คุณเลือกเอง ไม่ใช่ปล่อยให้บังเอิญ)
+    </li>
+    <li>
+      รันสองคำสั่งนี้แล้วต้องผ่านทั้งคู่:
+      <br><code>tsc --noEmit --strict practice.ts</code>
+      <br><code>tsc --target es2022 --module nodenext --moduleResolution nodenext practice.ts &amp;&amp; node practice.js</code>
+    </li>
+  </ol>
+  <p>
+    ตัวอย่างผลรันของกล่อง <code>check</code> ที่ผมทดสอบไว้แล้ว (จงใจให้ข้อสุดท้ายพัง เพื่อพิสูจน์ว่าเทสจับได้จริง
+    ไม่ใช่พิมพ์ <code>PASS</code> ออกมาทุกกรณี):
+  </p>
+  <button class="reveal">ดูผลรันจริงของกล่อง check</button>
+  <div class="answer">
+<pre><code>PASS filter คัดคนสอบผ่าน
+PASS ของเดิมไม่ถูกแก้
+FAIL ตั้งใจให้พัง: got [72,88,91] want [72,88]</code></pre>
+    <p style="margin-bottom:0">
+      เทสที่ไม่เคยเห็นมันขึ้น <code>FAIL</code> เลย คือเทสที่คุณ<strong>ยังไม่รู้ว่ามันทำงานหรือเปล่า</strong> —
+      ลองทำให้มันพังหนึ่งครั้งเสมอ ก่อนจะเชื่อว่ามันผ่าน
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. <code>const total = prices.reduce((sum, p) =&gt; sum + p);</code> โดยที่ <code>prices</code> เป็น <code>number[]</code> ที่ตอนนั้นว่างเปล่า — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt"><code>tsc --strict</code> ฟ้อง error ตั้งแต่คอมไพล์ เพราะไม่ได้ใส่ค่าเริ่มต้นให้ <code>reduce</code></button>
+    <button class="opt">คอมไพล์ผ่านและรันผ่าน ได้ค่า <code>0</code> เพราะ array ว่างก็คือผลรวมเป็นศูนย์อยู่แล้ว</button>
+    <button class="opt">คอมไพล์ผ่านเงียบ ๆ แต่พอรันจริงโปรแกรมตายด้วย <code>TypeError: Reduce of empty array with no initial value</code></button>
+    <button class="opt">คอมไพล์ผ่านและรันผ่าน ได้ค่า <code>undefined</code> ซึ่งเช็คด้วย <code>if</code> ทีหลังได้</button>
+  </div>
+  <div class="explain">
+    <p>ผมรันจริงทั้งสองขั้น: <code>tsc --noEmit --strict</code> ได้ <strong>exit code 0 ไม่มี error</strong>
+    แล้ว <code>node</code> ตายด้วย <code>TypeError: Reduce of empty array with no initial value</code> exit code <code>1</code>
+    <br>ตัวเลือกที่ 1 คือสิ่งที่<strong>เราอยากให้เกิด</strong> แต่ไม่เกิด — เพราะ type signature ของ <code>reduce</code>
+    อนุญาตให้ไม่ใส่ค่าเริ่มต้นได้ตามสเปกของภาษา TypeScript จึงไม่มีเหตุผลให้บ่น
+    <br>ตัวเลือกที่ 2 กับ 4 ตั้งอยู่บนความเชื่อว่า "ว่างเปล่าแล้วมันคงคืนค่าอะไรสักอย่างให้" —
+    ทั้งคู่ผิด เพราะเมื่อไม่มีค่าเริ่มต้นและไม่มีสมาชิกให้หยิบ <strong>มันไม่มีอะไรจะคืน</strong> จึงเลือกโยน error แทน
+    <br><strong>จุดที่ต้องจำ:</strong> ทุกครั้งที่พิมพ์ <code>.reduce(</code> ให้ใส่ค่าเริ่มต้นเป็นนิสัย —
+    ต้นทุนคือตัวอักษร 3 ตัว ส่วนต้นทุนของการไม่ใส่คือหน้าเว็บพังในวันที่ข้อมูลว่าง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. <code>const doubled = numbers.map((n) =&gt; { n * 2; });</code> โดย <code>numbers</code> คือ <code>[1, 2, 3]</code> — <code>doubled</code> คืออะไร?</p>
+  <div class="opts">
+    <button class="opt">ได้ <code>[2, 4, 6]</code> ตามปกติ เพราะ arrow function คืนค่าบรรทัดสุดท้ายให้อัตโนมัติ</button>
+    <button class="opt">ได้ <code>[undefined, undefined, undefined]</code> และ <code>tsc --strict</code> ไม่บ่นเลยจนกว่าจะเอาไปใช้ต่อ</button>
+    <button class="opt">ได้ array ว่าง <code>[]</code> เพราะ callback ไม่ได้คืนอะไรมาให้เก็บสักตัว</button>
+    <button class="opt"><code>tsc --strict</code> ฟ้อง error ทันทีว่า callback ของ <code>map</code> ต้องมี <code>return</code></button>
+  </div>
+  <div class="explain">
+    <p>รันจริงได้ <code>[ undefined, undefined, undefined ]</code> และ <code>tsc --noEmit --strict</code> <strong>exit code 0</strong>
+    <br>ตัวเลือกที่ 1 คือความเข้าใจผิดเรื่อง arrow function — การคืนค่าอัตโนมัติเกิดเฉพาะตอน
+    <strong>ไม่มีปีกกา</strong> เท่านั้น พอใส่ <code>{ }</code> มันกลายเป็นบล็อกโค้ดที่ต้องเขียน <code>return</code> เอง
+    <br>ตัวเลือกที่ 3 ผิดตรงจำนวน — <code>map</code> คืน array ที่<strong>ยาวเท่าต้นฉบับเสมอ</strong>
+    ไม่มีทางได้ <code>[]</code> จาก array 3 ชิ้น (ตัวที่ทำให้สั้นลงได้คือ <code>filter</code>)
+    <br>ตัวเลือกที่ 4 ผิดเพราะ <code>void</code> เป็น return type ที่ถูกกฎหมาย — TypeScript เพิ่งมาบ่นตอนเอาไปใช้ต่อ
+    ด้วย <code>error TS2365: Operator '&gt;' cannot be applied to types 'void' and 'number'.</code>
+    <br><strong>จุดที่ต้องจำ:</strong> เห็นคำว่า <code>'void'</code> ใน error message ทั้งที่ไม่เคยพิมพ์คำนี้เอง
+    ให้ไปหาปีกกาที่ลืม <code>return</code> ก่อนเลย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">3. <code>const total = prices.reduce((sum, price) =&gt; sum + price, "");</code> โดย <code>prices</code> คือ <code>[15, 3, 40]</code> — ผลเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt"><code>tsc --strict</code> ฟ้อง <code>TS2769</code> ว่าค่าเริ่มต้นเป็น <code>string</code> แต่ array เป็น <code>number[]</code></button>
+    <button class="opt">คอมไพล์ผ่าน รันได้ <code>58</code> เพราะ JavaScript แปลง <code>""</code> เป็น <code>0</code> ให้เองตอนบวก</button>
+    <button class="opt">รันแล้วได้ <code>NaN</code> เพราะเอาสตริงว่างมาบวกกับตัวเลขไม่ได้ ผลจึงไม่ใช่ตัวเลข</button>
+    <button class="opt">คอมไพล์ผ่านโดยไม่มี error เลย และรันได้ค่า <code>"15340"</code> ซึ่งเป็น <code>string</code></button>
+  </div>
+  <div class="explain">
+    <p><code>tsc --noEmit --strict</code> ได้ <strong>exit code 0</strong> และ <code>console.log(total, typeof total)</code>
+    รันจริงได้ <code>15340 string</code>
+    <br>เหตุผล: ค่าเริ่มต้นเป็น <code>string</code> → TypeScript สรุปว่า <code>sum</code> เป็น <code>string</code>
+    → <code>sum + price</code> คือการ<strong>ต่อสตริง</strong> ซึ่งถูกกฎหมายทุกประการ ไม่มีอะไรให้บ่น
+    <br>ตัวเลือกที่ 1 คือกับดักตัวจริง เพราะมันคือสิ่งที่ควรเกิดตามสัญชาตญาณ — <code>TS2769</code> เกิดจริง
+    แต่กับกรณี<strong>กลับด้าน</strong> (ใส่ <code>0</code> ให้ callback ที่คืน <code>string</code>) ไม่ใช่กรณีนี้
+    <br>ตัวเลือกที่ 2 กับ 3 เดาว่าจะมีการแปลง type ระหว่างทาง — JavaScript ไม่ได้ทำอย่างนั้น
+    เมื่อฝั่งซ้ายของ <code>+</code> เป็น <code>string</code> มันเลือกต่อสตริงเสมอ ไม่ใช่บวกเลขและไม่ใช่ <code>NaN</code>
+    <br><strong>จุดที่ต้องจำ:</strong> type ของ <code>reduce</code> มาจาก<strong>ค่าเริ่มต้น</strong> ไม่ใช่จากสิ่งที่ callback คืน
+    เจอผลลัพธ์แปลก ๆ จาก <code>reduce</code> เมื่อไหร่ ให้อ่านตัวสุดท้ายหลังเครื่องหมายจุลภาคก่อน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. งานคือ "หาออเดอร์แรกที่ยอดเกิน 1000 แล้วหยุดค้นทันที" ในรายการที่มีเป็นแสนแถว — ควรใช้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ใช้ <code>find</code> หรือ <code>for</code> เพราะ <code>map</code>/<code>filter</code>/<code>reduce</code> หยุดกลางทางไม่ได้</button>
+    <button class="opt">ใช้ <code>filter</code> แล้วหยิบ <code>[0]</code> เพราะมันฉลาดพอที่จะหยุดเองเมื่อเจอตัวแรก</button>
+    <button class="opt">ใช้ <code>map</code> แล้ว <code>return</code> ออกจาก callback ทันทีที่เจอ ซึ่งจะจบ loop ให้เลย</button>
+    <button class="opt">ใช้ <code>reduce</code> แล้วโยน error ออกจาก callback เพื่อบังคับให้หยุด เป็นวิธีมาตรฐาน</button>
+  </div>
+  <div class="explain">
+    <p>สามตัวในบทนี้ <strong>เดินจนจบ array เสมอ ไม่มีทางหยุดกลางคัน</strong> — นี่คือข้อจำกัดที่แลกมากับความอ่านง่าย
+    <br>ตัวเลือกที่ 2 ผิดตรงคำว่า "ฉลาดพอที่จะหยุดเอง" — <code>filter</code> เดินครบทุกแถวเสมอ
+    แล้วค่อยคืน array ของทุกตัวที่ผ่าน แสนแถวก็เดินแสนรอบ ทั้งที่คำตอบอาจอยู่แถวที่ 3
+    <br>ตัวเลือกที่ 3 สับสนระหว่าง <code>return</code> ของ callback กับ <code>break</code> ของ loop —
+    <code>return</code> ใน callback แค่จบ<strong>รอบนั้นรอบเดียว</strong> แล้ว <code>map</code> ก็เรียกรอบถัดไปต่อ
+    <br>ตัวเลือกที่ 4 หยุดได้จริงทางเทคนิค แต่<strong>ไม่ใช่วิธีมาตรฐานแน่นอน</strong> —
+    ใช้ error เป็นเครื่องมือควบคุมการไหลของโปรแกรม ทำให้คนอ่านโค้ดต่อแยกไม่ออกว่าอันไหนคือ bug จริง
+    <br><strong>จุดที่ต้องจำ:</strong> "หยุดกลางทางได้ไหม" คือคำถามแรกที่ควรถามก่อนเลือกระหว่าง chain กับ <code>for</code> —
+    ถ้าต้องหยุด ให้ใช้ <code>find</code> · <code>some</code> · <code>every</code> หรือ <code>for</code> ไปเลย</p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>💬 ติดตรงไหนถามได้</strong> — ถ้ารันตามในบทแล้วได้ผลไม่ตรงกับที่เขียนไว้
+    ให้ส่งมาทั้ง<strong>โค้ดที่รัน</strong> · <strong>คำสั่งที่ใช้</strong> · และ<strong>ข้อความที่ขึ้นเต็ม ๆ</strong>
+    <br>สามอย่างนี้ครบเมื่อไหร่ ตอบได้เกือบทุกครั้งโดยไม่ต้องถามกลับ
+    <br>และคำถามที่คุ้มที่สุดที่ถามได้กับบทนี้คือ <em>"เคสนี้ควรใช้ chain หรือ <code>for</code> ดี"</em> —
+    เพราะมันไม่มีคำตอบเดียว มันขึ้นกับว่าใครจะมาอ่านโค้ดคุณต่อ
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0066-string-array-transform.html">← บทเรียน 66 · แปลงข้อมูล</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet TypeScript</a>
+  <a href="./0068-fp-workshop.html">บทเรียน 68 → โจทย์ 4 ข้อ</a>
+</nav>
+
+<h2 id="sn-sec-11">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map">MDN — <code>Array.prototype.map()</code></a> —
+      <strong>อ่านหัวข้อ <em>Parameters</em></strong> ให้เห็นว่า callback ได้รับ <strong>3 อย่าง</strong>
+      (<code>element</code> · <code>index</code> · <code>array</code>) ไม่ใช่อย่างเดียว —
+      นี่คือเหตุผลที่ <code>["1","2","3"].map(parseInt)</code> ได้ <code>[1, NaN, NaN]</code> (ผมรันแล้ว ได้อย่างนั้นจริง)</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter">MDN — <code>Array.prototype.filter()</code></a> —
+      <strong>อ่านหัวข้อ <em>Description</em> ย่อหน้าแรก</strong> ที่บอกว่ามันคืน <em>shallow copy</em> —
+      คำนี้อธิบายว่าทำไม array ต้นทางถึงไม่ถูกแตะ</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce">MDN — <code>Array.prototype.reduce()</code></a> —
+      <strong>อ่านหัวข้อ <em>Exceptions</em></strong> ซึ่งเขียนไว้ตรง ๆ ว่า <code>TypeError</code>
+      จะถูกโยนเมื่อ array ว่างและไม่มีค่าเริ่มต้น · แล้วอ่าน <em>Description</em> ต่อเพื่อดูว่า
+      ถ้าไม่ใส่ค่าเริ่มต้น มันหยิบสมาชิกตัวแรกมาใช้แทนยังไง</li>
+  <li><a href="https://www.typescriptlang.org/docs/handbook/2/functions.html">TypeScript Handbook — More on Functions</a> —
+      <strong>อ่านหัวข้อ <em>Function Type Expressions</em> และ <em>Generic Functions</em></strong>
+      เพื่อเข้าใจว่าทำไมถึงเขียน <code>reduce&lt;Record&lt;string, string[]&gt;&gt;</code> ได้ และมันไปบอกอะไรกับ compiler</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/entries">MDN — <code>Object.entries()</code></a> —
+      <strong>อ่าน <em>Description</em> ประโยคแรก</strong> ที่บอกว่ามันคืน array ของคู่ <code>[key, value]</code>
+      แล้วดูตัวอย่างท้ายหน้าที่ใช้ร่วมกับ <code>for…of</code> — เทียบกับท่า chain ในหัวข้อ 9 ของบทนี้ว่าอันไหนอ่านง่ายกว่าสำหรับคุณ</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort">MDN — <code>Array.prototype.sort()</code></a> —
+      <strong>อ่านประโยคแรกของ <em>Description</em></strong> ที่บอกว่ามันเรียง <em>in place</em>
+      แล้วเลื่อนไปดู <code>toSorted()</code> ในตารางท้ายหน้า — คือเวอร์ชันที่ไม่แก้ของเดิม</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

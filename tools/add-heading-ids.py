@@ -56,6 +56,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ใช้ backreference \1 กันจับข้าม level และ re.S เพราะหัวข้อบางอันขึ้นบรรทัดใหม่ได้
 HEADING = re.compile(r'<h([23])((?:\s[^>]*)?)>(.*?)</h\1>', re.S)
 HAS_ID = re.compile(r'\bid\s*=', re.I)
+# เนื้อใน <template> ไม่ได้อยู่ใน document จริง — nav.js มองไม่เห็นด้วย querySelectorAll
+# ถ้าแปะ id ให้หัวข้อในนั้น เลขจะเดินไม่ตรงกับที่ nav.js นับจากหน้าจริง
+TEMPLATE = re.compile(r'<template\b[^>]*>.*?</template>', re.S | re.I)
 TAGS = re.compile(r'<[^>]+>')
 # id ที่สคริปต์นี้เป็นคนแจกเอง — ตัวเดียวที่ --renumber มีสิทธิ์ลบทิ้ง
 OWN_ID = re.compile(r'\s+id\s*=\s*(["\'])sn-(?:sec|sub)-\d+\1', re.I)
@@ -65,16 +68,34 @@ ANY_ID = re.compile(r'<[a-zA-Z][^>]*?\sid\s*=\s*["\']([^"\']+)["\'][^>]*>')
 PREFIX = {'2': 'sn-sec-', '3': 'sn-sub-'}
 
 
+# โฟลเดอร์ที่ถือว่าเป็น "กลุ่มบทเรียน"
+#   day-N  = ฝั่ง Backend (สไลด์กำกับวันมาให้)
+#   fe-*   = ฝั่ง Frontend (สไลด์ไม่ได้กำกับวัน จึงตั้งชื่อตามสไลด์)
+GROUP_DIR = re.compile(r'(?:day-\d+|fe-[a-z0-9-]+)$')
+
+
 def target_files():
-    """บทเรียน 55 + cheat sheet 9 = 64 ไฟล์ เรียงคงที่เพื่อให้รายงานซ้ำได้"""
+    """บทเรียนทุกบท + cheat sheet ทุกใบ เรียงคงที่เพื่อให้รายงานซ้ำได้
+
+    เรียงฝั่ง Backend (day-1..day-N) ก่อน แล้วต่อด้วยฝั่ง Frontend (fe-*)
+    เพราะเลขบทเรียนต่อเนื่องกันแบบนั้น
+    """
+    dirs = [d for d in os.listdir(ROOT) if GROUP_DIR.fullmatch(d)]
+
+    def order(d):
+        # day-9 ต้องมาก่อน day-10 → เรียงด้วยเลข ไม่ใช่ตัวอักษร
+        if d.startswith('day-'):
+            return (0, int(d.split('-')[1]), '')
+        return (1, 0, d)
+
     out = []
-    for day in sorted(d for d in os.listdir(ROOT) if re.fullmatch(r'day-\d+', d)):
-        les = os.path.join(ROOT, day, 'lessons')
+    for group in sorted(dirs, key=order):
+        les = os.path.join(ROOT, group, 'lessons')
         if os.path.isdir(les):
             for f in sorted(os.listdir(les)):
                 if f.endswith('.html'):
                     out.append(os.path.join(les, f))
-        sheet = os.path.join(ROOT, day, 'reference', 'cheatsheet.html')
+        sheet = os.path.join(ROOT, group, 'reference', 'cheatsheet.html')
         if os.path.isfile(sheet):
             out.append(sheet)
     return out
@@ -104,12 +125,24 @@ def process(src, renumber=False):
         new_id = PREFIX[lvl] + str(counter[lvl])
         return '<h%s id="%s"%s>%s</h%s>' % (lvl, new_id, attrs, body, lvl)
 
-    return HEADING.sub(repl, src), stats
+    # เดินทีละช่วง: ช่วงที่อยู่นอก <template> เท่านั้นที่ถูกแปะ id
+    # ตัวนับเดินต่อเนื่องข้ามช่วง จึงได้เลขเดียวกับที่ nav.js นับจาก document จริง
+    out, pos = [], 0
+    for m in TEMPLATE.finditer(src):
+        out.append(HEADING.sub(repl, src[pos:m.start()]))
+        out.append(m.group(0))            # เนื้อใน template ปล่อยไว้ทั้งก้อน
+        pos = m.end()
+    out.append(HEADING.sub(repl, src[pos:]))
+    return ''.join(out), stats
 
 
 def heading_ids(src):
-    """คืนรายการ id ของ <h2>/<h3> ตามลำดับ document (ไว้ตรวจว่าซ้ำกันไหม)"""
+    """คืนรายการ id ของ <h2>/<h3> ตามลำดับ document (ไว้ตรวจว่าซ้ำกันไหม)
+
+    ข้ามเนื้อใน <template> ด้วยเหตุผลเดียวกับใน process()
+    """
     out = []
+    src = TEMPLATE.sub('', src)
     for m in HEADING.finditer(src):
         mid = ANY_ID.match('<h%s%s>' % (m.group(1), m.group(2)))
         if mid:
