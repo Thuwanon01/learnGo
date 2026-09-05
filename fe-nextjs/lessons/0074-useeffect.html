@@ -1,0 +1,961 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 74 — useEffect — สั่งให้ทำอะไรบางอย่างหลังหน้าวาดเสร็จ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 74 · Frontend · Next.js</p>
+  <h1>useEffect — สั่งให้ทำอะไรบางอย่างหลังหน้าวาดเสร็จ</h1>
+  <p class="meta">~25 นาที · ต้องผ่าน <a href="./0073-usestate.html">บทเรียน 73</a> (<code>useState</code>) มาก่อน ·
+    ถ้าจำ <code>defer</code> จาก <a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a> ได้ จะอ่านหัวข้อ cleanup สบายขึ้นมาก</p>
+  <p class="standfirst">
+    <code>useState</code> ทำให้ component <strong>จำอะไรได้</strong> · <code>useEffect</code> ทำให้ component
+    <strong>ไปยุ่งกับโลกข้างนอกได้</strong> — ยิงขอข้อมูลจาก API · ตั้งนาฬิกา · เปิด WebSocket
+    <br>มันคือ hook ที่<strong>คนพังมากที่สุด</strong> เพราะหน้าตามันดูเหมือนแค่ "โค้ดที่รันตอนเปิดหน้า"
+    แต่จริง ๆ มันรัน<strong>หลังการวาดทุกครั้งที่ของใน dependency array เปลี่ยน</strong> ซึ่งไม่ใช่เรื่องเดียวกันเลย
+    <br>บทนี้จะรัน<strong>กับดัก 4 อัน</strong>ให้ดูของจริงในเบราว์เซอร์ รวมถึงอันที่ทำให้คนตกใจที่สุด —
+    ใส่ <code>[]</code> ว่างแล้ว<strong>ยังรันสองครั้ง</strong> — และอันที่<strong>โค้ดในสไลด์เองก็ติด</strong>
+    ตอนเอามาวางใน Next.js
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้ (รันวันที่ 5 กันยายน 2026)</strong></p>
+  <pre style="margin:0.5rem 0"><code>next        16.3.4   <span class="c"># Turbopack</span>
+react       19.2.8
+react-dom   19.2.8
+typescript  5.9.3    <span class="c"># จาก npx tsc -v ในโปรเจกต์</span>
+node        v24.14.0</code></pre>
+  <p style="margin-bottom:0">
+    ทุกกล่องที่เขียนว่า "ได้ผลว่า…" ในบทนี้มาจากของสี่อย่างนี้:
+    <br><code>npx next build</code> — ข้อความ error ก็อปมาจาก Turbopack ตัวจริง
+    <br><code>npx next dev</code> + <strong>console ของเบราว์เซอร์จริง</strong> — บรรทัด log ทุกบรรทัดในบทนี้ถ่ายมาจากที่นั่น
+    <br><code>npx next start</code> — ใช้เทียบว่า production ต่างจาก dev ยังไง
+    <br><code>npx eslint</code> — ใช้ config ที่ <code>create-next-app</code> แถมมาให้ ไม่ได้เพิ่มกฎเอง
+    <br>โค้ดทุกก้อนอยู่ในโปรเจกต์เดียวกันจริง ๆ · <code>npx tsc --noEmit</code> ผ่านหมด
+    ยกเว้นก้อนที่<strong>ตั้งใจให้พัง</strong> ซึ่งจะเขียนกำกับไว้ทุกครั้ง
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · useEffect ทำอะไร</h2>
+
+<p>
+  ลองนึกถึงลำดับที่เกิดขึ้นจริงเวลาหน้าเว็บ React แสดงผลหนึ่งครั้ง — สไลด์วาดไว้เป็นสามขั้น:
+</p>
+
+<div class="diagram">
+<pre style="margin:0"><code>  React     ┌──────────────────┐
+            │   Renders JSX    │   เอา state + props มาคำนวณว่าหน้าตาควรเป็นยังไง
+            └────────┬─────────┘
+                     ▼
+  Browser   ┌──────────────────┐
+            │  Render Screen   │   เบราว์เซอร์วาดจริงลงจอ ผู้ใช้เห็นแล้วตอนนี้
+            └────────┬─────────┘
+                     ▼
+  Then      ┌──────────────────┐
+            │  Effect trigger  │   &lt;-- useEffect ทำงานตรงนี้ หลังผู้ใช้เห็นหน้าแล้ว
+            └──────────────────┘</code></pre>
+</div>
+
+<p>
+  จุดสำคัญคือคำว่า <strong>"หลัง"</strong> — โค้ดใน <code>useEffect</code> ไม่ได้รันตอนกำลังคำนวณหน้าตา
+  แต่รัน<strong>หลังจากเบราว์เซอร์วาดเสร็จแล้ว</strong>
+  <br>นั่นแปลว่าคุณเอาไปทำอะไรที่ "ช้าหน่อยก็ไม่เป็นไร ผู้ใช้เห็นหน้าไปก่อนแล้ว" ได้ เช่นยิง API
+</p>
+
+<p>โครงของมันมีแค่นี้ — สองส่วนที่ต้องส่งเข้าไป:</p>
+
+<pre><code><span class="f">useEffect</span>(() =&gt; {
+  <span class="c">// setup — โค้ดที่อยากให้ทำ</span>
+}, [dependencies]);</code></pre>
+
+<p>
+  ก้อนแรกคือ<strong>ฟังก์ชัน</strong> · ก้อนที่สองคือ<strong>อาร์เรย์</strong>
+  <br>อาร์เรย์ตัวนั้นแหละคือของที่ทำให้คนพัง — มันคือคำตอบของคำถาม
+  <strong>"ให้รันใหม่ตอนไหน"</strong> ไม่ใช่ "ให้ส่งค่าอะไรเข้าไป"
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ป้ายฝากเวรกับ รปภ.</span>
+  <p>
+    คุณเขียนโน้ตวางไว้ที่โต๊ะ รปภ. ว่า <strong>"เวรกลางคืน ช่วยเปิดไฟหน้าตึกให้ด้วย"</strong>
+    แล้วกลับบ้าน — คุณไม่ได้เปิดไฟเอง คุณแค่<strong>ฝากคำสั่งไว้</strong>
+    <br>โน้ตแผ่นนั้นมีอีกบรรทัดข้างล่างเขียนว่า <strong>"ทำใหม่ทุกครั้งที่เปลี่ยนกะ"</strong> —
+    นั่นคือ dependency array
+    <br>ถ้าบรรทัดนั้นเขียนว่า "ทำครั้งเดียวพอ" ก็คือ <code>[]</code> ว่าง ·
+    ถ้าเขียนว่า "ทำใหม่ทุกครั้งที่ห้องประชุมเปลี่ยน" ก็คือ <code>[roomId]</code>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> รปภ. อ่านโน้ตแล้วใช้วิจารณญาณได้ ถ้าคุณเขียนกำกวมเขาจะโทรถาม
+    <br>แต่ React <strong>ไม่ถามอะไรทั้งนั้น</strong> — มันเอา dependency array ไป<strong>เทียบทีละช่อง</strong>
+    ด้วย <code>Object.is</code> ตรง ๆ ช่องไหนไม่เหมือนรอบก่อนก็รันใหม่ จบ
+    <br>และมันไม่รู้ด้วยว่าโค้ดข้างในคุณ<em>ใช้</em>ตัวแปรอะไรบ้าง — คุณเป็นคนบอกเอง
+    <strong>บอกผิดก็รันผิด โดยไม่มีใครทัก</strong> (ยกเว้น ESLint ซึ่งเดี๋ยวเราจะเปิดดูในหัวข้อ 8)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์สองคำที่ต้องได้ก่อนไปต่อ</span>
+  <dl>
+    <dt>effect · side effect</dt>
+    <dd>งานที่ไป<strong>ยุ่งกับของนอกตัว component</strong> — ยิง network · แตะ DOM · ตั้ง timer ·
+        เขียน <code>localStorage</code> · ตรงข้ามกับการคำนวณค่าเพื่อ return ออกไปเฉย ๆ ·
+        <strong>ถาม senior ได้ว่า "อันนี้เป็น effect จริงไหม หรือคำนวณตอน render ไปเลยก็ได้"</strong>
+        คำถามนี้ตัด <code>useEffect</code> ที่ไม่จำเป็นออกได้เยอะมาก</dd>
+    <dt>dependency array · exhaustive deps</dt>
+    <dd>อาร์เรย์ตัวที่สองของ <code>useEffect</code> · คำว่า <em>exhaustive</em> แปลว่า "ครบถ้วน" —
+        คือกฎที่ว่า<strong>ทุกค่าที่ effect อ่าน ต้องอยู่ในอาร์เรย์</strong> ·
+        <strong>พิมพ์บอก AI ได้ว่า "fix the exhaustive-deps warning without disabling the rule"</strong>
+        ถ้าไม่เติมท่อนหลัง มันชอบแก้ด้วยการใส่ <code>// eslint-disable-next-line</code> ซึ่งคือการซุกปัญหา</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">2 · ก่อนอื่น — ไม่มี <code>'use client'</code> คือจบตั้งแต่ build</h2>
+
+<p>
+  ใน App Router ของ Next.js ทุกไฟล์เป็น <strong>Server Component</strong> โดยปริยาย
+  แปลว่ามันรันบนเซิร์ฟเวอร์แล้วส่ง HTML ที่เสร็จแล้วมาให้เบราว์เซอร์
+  <br>ของบนเซิร์ฟเวอร์ไม่มี "หลังหน้าวาดเสร็จ" ให้รอ — <code>useEffect</code> จึงใช้ในนั้นไม่ได้
+</p>
+
+<div class="predict">
+  <pre><code><span class="c">// app/t74/broken/page.tsx  — สังเกตว่าไม่มี 'use client' บรรทัดบนสุด</span>
+<span class="k">import</span> { useEffect, useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export</span> <span class="k">default</span> <span class="k">function</span> <span class="f">Page</span>() {
+  <span class="k">const</span> [msg, setMsg] = <span class="f">useState</span>(<span class="s">'ยังไม่ทำงาน'</span>);
+
+  <span class="f">useEffect</span>(() =&gt; {
+    <span class="f">setMsg</span>(<span class="s">'effect ทำงานแล้ว'</span>);
+  }, []);
+
+  <span class="k">return</span> &lt;p&gt;{msg}&lt;/p&gt;;
+}</code></pre>
+  <p class="ask">สั่ง <code>npx next build</code> แล้วคิดว่าได้อะไร — ผ่านแล้วค่อยไปพังตอนเปิดหน้า หรือพังตั้งแต่ build?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>พังตั้งแต่ build</strong> และพัง <strong>2 error</strong> ไม่ใช่อันเดียว — อันหนึ่งของ <code>useEffect</code> อีกอันของ <code>useState</code>:</p>
+    <pre><code>&gt; Build error occurred
+Error: Turbopack build failed with 2 errors:
+./app/t74/broken/page.tsx:2:10
+Error: You're importing a module that depends on `useEffect` into a React
+Server Component module. This API is only available in Client Components.
+To fix, mark the file (or its parent) with the `"use client"` directive.
+    Learn more: https://nextjs.org/docs/app/api-reference/directives/use-client
+  1 | // app/t74/broken/page.tsx  — สังเกตว่าไม่มี 'use client' บรรทัดบนสุด
+&gt; 2 | import { useEffect, useState } from 'react';
+    |          ^^^^^^^^^
+  3 |
+  4 | export default function Page() {
+  5 |   const [msg, setMsg] = useState('ยังไม่ทำงาน');
+
+Ecmascript file had an error</code></pre>
+    <p style="margin:0.5rem 0 0.75rem">
+      (บรรทัด <code>Error: You're importing…</code> ของจริงเป็นบรรทัดเดียวยาว ๆ ผมตัดขึ้นบรรทัดใหม่ให้อ่านง่าย
+      นอกนั้นก๊อปมาตามตัว · error อันที่สองหน้าตาเหมือนกันเป๊ะ เปลี่ยนแค่ <code>useEffect</code> เป็น
+      <code>useState</code> และตำแหน่งเป็น <code>2:21</code>)
+    </p>
+    <p style="margin-bottom:0">
+      อ่าน error ตัวนี้ให้ชิน เพราะคุณจะเจอมันบ่อยมากในสองสัปดาห์แรก
+      <br>สังเกตคำว่า <strong>"importing a module that depends on"</strong> — มันไม่ได้บ่นว่าคุณ<em>เรียก</em> hook
+      แต่บ่นว่าคุณ <strong>import</strong> มันเข้ามาในไฟล์ฝั่งเซิร์ฟเวอร์ · แค่ import ทิ้งไว้เฉย ๆ ก็พังแล้ว
+      <br><strong>วิธีแก้คือเติม <code>'use client'</code> เป็นบรรทัดแรกสุดของไฟล์</strong> (ก่อน <code>import</code> ทุกตัว)
+      หรือย้ายส่วนที่ใช้ hook ออกไปเป็น component ลูกที่มี <code>'use client'</code> แล้วให้หน้าเรียกใช้
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ท่ามาตรฐานที่ใช้ทั้งบทนี้:</strong> หน้าเว็บ (<code>app/…/page.tsx</code>) ปล่อยเป็น Server Component ไว้
+    แล้วแยกเฉพาะชิ้นที่ต้องใช้ hook ออกไปเป็นไฟล์ใน <code>components/</code> ที่ขึ้นต้นด้วย <code>'use client'</code>
+    <br>ทำแบบนี้แล้ว JavaScript ที่ต้องส่งไปเบราว์เซอร์จะน้อยลง เพราะส่งไปแค่ชิ้นที่ต้องใช้จริง
+  </p>
+</div>
+
+<h2 id="sn-sec-3">3 · dependency array — สามแบบ และมันต่างกันจริง</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียนแบบ</th><th>รันตอนไหน</th><th>ใช้ตอนไหน</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>useEffect(fn)</code><br>(ไม่ใส่อาร์เรย์เลย)</td>
+      <td><strong>หลังการวาดทุกครั้ง</strong> ไม่ว่าอะไรจะเปลี่ยน</td>
+      <td>เกือบไม่มี — และเป็นกับดักอันดับหนึ่ง (หัวข้อ 4)</td>
+    </tr>
+    <tr>
+      <td><code>useEffect(fn, [])</code></td>
+      <td>หลังการวาด<strong>ครั้งแรก</strong>ครั้งเดียว<br>(แต่ใน dev รันสองครั้ง — หัวข้อ 5)</td>
+      <td>ตั้งค่าครั้งเดียวจบ เช่นเปิด connection ตอนเข้าหน้า</td>
+    </tr>
+    <tr>
+      <td><code>useEffect(fn, [a, b])</code></td>
+      <td>ครั้งแรก + ทุกครั้งที่ <code>a</code> หรือ <code>b</code> <strong>เปลี่ยนค่า</strong></td>
+      <td>ส่วนใหญ่ใช้อันนี้ — "ข้อมูลเปลี่ยน ให้ไปโหลดใหม่"</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ตัวอย่างในสไลด์คือห้องแชท — เปลี่ยนห้องเมื่อไหร่ ต้อง<strong>ตัดสายห้องเก่าแล้วต่อสายห้องใหม่</strong>
+  <br>นี่คือไฟล์ที่ผมรันจริง (<code>components/t74/ChatRoom.tsx</code>) ตัด <code>createConnection</code> ปลอมออกให้ดูเฉพาะส่วนสำคัญ:
+</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useEffect, useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export</span> <span class="k">default</span> <span class="k">function</span> <span class="f">ChatRoom</span>() {
+  <span class="k">const</span> [roomId, setRoomId] = <span class="f">useState</span>(<span class="s">'general'</span>);
+  <span class="k">const</span> serverUrl = <span class="s">'https://localhost:1234'</span>;
+
+  <span class="f">useEffect</span>(() =&gt; {
+    <span class="k">const</span> connection = <span class="f">createConnection</span>(serverUrl, roomId);  <span class="c">// setup</span>
+    connection.<span class="f">connect</span>();
+    <span class="k">return</span> () =&gt; connection.<span class="f">disconnect</span>();                    <span class="c">// cleanup</span>
+  }, [serverUrl, roomId]);                                  <span class="c">// dependencies</span>
+
+  <span class="k">return</span> (
+    &lt;div&gt;
+      &lt;p&gt;ห้องปัจจุบัน: {roomId}&lt;/p&gt;
+      &lt;button onClick={() =&gt; <span class="f">setRoomId</span>(<span class="s">'random'</span>)}&gt;ย้ายไปห้อง random&lt;/button&gt;
+      &lt;button onClick={() =&gt; <span class="f">setRoomId</span>(<span class="s">'support'</span>)}&gt;ย้ายไปห้อง support&lt;/button&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+<p>
+  เปิดหน้านี้ด้วย <code>npx next dev</code> แล้วกดปุ่มสองปุ่มตามลำดับ · นี่คือ console จริง
+  <strong>ครบทุกบรรทัดของเรา ไม่ได้ตัดอะไรออกเลย</strong>
+  (ตัดออกแค่สองบรรทัดที่ Next.js กับ React ขึ้นให้ทุกหน้าอยู่แล้ว คือ
+  <code>Download the React DevTools…</code> กับ <code>[HMR] connected</code>):
+</p>
+
+<pre><code>✅ เชื่อมต่อห้อง general ที่ https://localhost:1234
+❌ ตัดการเชื่อมต่อห้อง general
+✅ เชื่อมต่อห้อง general ที่ https://localhost:1234
+❌ ตัดการเชื่อมต่อห้อง general
+✅ เชื่อมต่อห้อง random ที่ https://localhost:1234
+❌ ตัดการเชื่อมต่อห้อง random
+✅ เชื่อมต่อห้อง support ที่ https://localhost:1234</code></pre>
+
+<p>
+  มีสองเรื่องซ่อนอยู่ในผลนี้ และทั้งสองเรื่องคือหัวข้อถัดไป:
+</p>
+
+<ul>
+  <li><strong>สามบรรทัดแรก</strong> เกิดตอนเปิดหน้าเฉย ๆ ยังไม่ได้กดอะไรเลย —
+      ต่อ ตัด แล้วต่อใหม่ · นั่นคือ Strict Mode ในโหมด dev (หัวข้อ 5)</li>
+  <li><strong>ทุกครั้งที่ย้ายห้อง มี ❌ ของห้องเก่ามาก่อน ✅ ของห้องใหม่เสมอ</strong> —
+      แปลว่า cleanup <strong>ไม่ได้รันแค่ตอนออกจากหน้า</strong> อย่างที่สไลด์เขียน
+      แต่รันก่อนการรันรอบใหม่ทุกรอบด้วย (หัวข้อ 6)</li>
+</ul>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>สไลด์หน้า 41 เขียนไว้ไม่ครบ</strong> — สไลด์บอกว่า cleanup
+    <em>"runs one final time after your component is removed from the page (unmounts)"</em>
+    <br>ผลรันข้างบนแย้งไปแล้ว: ตอนกดย้ายห้อง component <strong>ยังอยู่บนหน้าดี ๆ</strong>
+    แต่ cleanup ก็รัน เพราะ dependency เปลี่ยน
+    <br>ประโยคที่ถูกกว่าคือ: <strong>"cleanup รันก่อน setup รอบถัดไปเสมอ และรันอีกครั้งตอน component หายไปจากหน้า"</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-4">4 · กับดัก 1 — ลืม dependency array แล้วมี setState ข้างใน</h2>
+
+<p>
+  อันนี้คือกับดักที่มือใหม่ตกกันแทบทุกคน เพราะโค้ดมัน<strong>อ่านดูสมเหตุสมผลมาก</strong>:
+</p>
+
+<div class="predict">
+  <pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useEffect, useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export</span> <span class="k">default</span> <span class="k">function</span> <span class="f">NoDeps</span>() {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(<span class="n">0</span>);
+
+  <span class="f">useEffect</span>(() =&gt; {
+    <span class="f">console</span>.<span class="f">log</span>(<span class="s">'[NoDeps] effect ทำงาน count ='</span>, count);
+    <span class="f">setCount</span>(count + <span class="n">1</span>);
+  });                       <span class="c">// &lt;-- ลืมใส่ [] ตรงนี้</span>
+
+  <span class="k">return</span> &lt;p&gt;count = {count}&lt;/p&gt;;
+}</code></pre>
+  <p class="ask">เปิดหน้านี้ทิ้งไว้ <strong>3 วินาที</strong> คิดว่า <code>count</code> จะขึ้นไปถึงเท่าไหร่?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>
+      ผมเปิดหน้าจริงแล้วอ่านค่าบนจอตอน 3 วินาทีพอดี ได้ <strong><code>count = 7439</code></strong>
+      และมันยังวิ่งต่อไปเรื่อย ๆ ไม่หยุด
+      <br>(รันซ้ำอีกรอบแล้วปล่อยนานกว่านั้น เห็นตัวเลขทะลุ <strong>12,000</strong> ไปแล้ว —
+      ตัวเลขไม่เท่ากันทุกครั้ง เพราะขึ้นกับความเร็วเครื่อง แต่<strong>ระดับหมื่นภายในไม่กี่วินาที</strong> คือของแน่นอน)
+    </p>
+    <p>React ก็ด่าออกมาใน console ด้วย ข้อความเต็ม ๆ ตามนี้:</p>
+    <pre><code>Maximum update depth exceeded. This can happen when a component calls
+setState inside useEffect, but useEffect either doesn't have a dependency
+array, or one of the dependencies changes on every render.</code></pre>
+    <p style="margin-bottom:0">
+      <strong>วงจรที่เกิดขึ้นคือ:</strong> วาดเสร็จ → effect รัน → <code>setCount</code> → state เปลี่ยน →
+      ต้องวาดใหม่ → วาดเสร็จ → effect รันอีก → … วนอย่างนี้เร็วที่สุดเท่าที่เครื่องจะทำได้
+      <br>สังเกตว่า React <strong>ไม่ได้หยุดให้</strong> — มันแค่ log error แล้วปล่อยวนต่อ
+      พัดลมโน้ตบุ๊กจะดังขึ้นภายในไม่กี่วินาที
+    </p>
+  </div>
+</div>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>✗ ไม่มีอาร์เรย์ = "รันทุกครั้ง"</h4>
+    <pre><code><span class="f">useEffect</span>(() =&gt; {
+  <span class="f">setCount</span>(count + <span class="n">1</span>);
+});</code></pre>
+    <p>วนไม่รู้จบทันที เพราะตัวมันเองเป็นคนทำให้ต้องวาดใหม่</p>
+  </div>
+  <div class="side good">
+    <h4>✓ ใส่ <code>[]</code> = "ครั้งแรกครั้งเดียว"</h4>
+    <pre><code><span class="f">useEffect</span>(() =&gt; {
+  <span class="f">setCount</span>(count + <span class="n">1</span>);
+}, []);</code></pre>
+    <p>หยุดวนแล้ว — แต่<strong>ยังไม่ใช่โค้ดที่ดี</strong> เดี๋ยวหัวข้อ 8 จะบอกว่าทำไม</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">โค้ดชุดไหนต่อไปนี้ <strong>ไม่</strong> ทำให้เกิดการวนไม่รู้จบ ทั้งที่ไม่ได้ใส่ dependency array?</p>
+  <div class="opts">
+    <button class="opt">effect ที่เรียก <code>setCount(count + 1)</code> โดยไม่ใส่อาร์เรย์ที่สอง</button>
+    <button class="opt">effect ที่แค่ <code>console.log(count)</code> เฉย ๆ ไม่ได้เรียก setState อะไรเลย</button>
+    <button class="opt">effect ที่เรียก <code>setUser({ ...user })</code> สร้าง object ใหม่ทุกรอบ</button>
+    <button class="opt">effect ที่เรียก <code>setItems([...items])</code> คัด array ใหม่ทุกรอบ</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบ <strong>ตัวเลือกที่ 2</strong> — ตัวจุดชนวนวงจรคือ<strong>การเปลี่ยน state</strong> ไม่ใช่การไม่ใส่อาร์เรย์
+      <br>ไม่ใส่อาร์เรย์ แปลว่า "รันหลังการวาดทุกครั้ง" · ถ้าข้างในไม่มีอะไรทำให้ต้องวาดใหม่
+      มันก็รันแค่ครั้งเดียว แล้วเงียบไป — เปลืองนิดหน่อยแต่ไม่ระเบิด
+      <br>ตัวเลือกที่ 1 คือเคสในกล่องข้างบน วนแน่นอน
+      <br>ตัวเลือกที่ 3 และ 4 วนเหมือนกัน และ<strong>ร้ายกว่า</strong>ด้วยซ้ำ เพราะต่อให้ใส่
+      <code>[user]</code> หรือ <code>[items]</code> ไปก็ยังวนอยู่ดี — React เทียบ dependency ด้วย
+      <code>Object.is</code> ซึ่งดู<strong>ตัวตนของ object</strong> ไม่ได้ดูเนื้อข้างใน ·
+      object ใหม่ทุกรอบ = ไม่เท่าเดิมทุกรอบ = รันใหม่ทุกรอบ
+      <br><strong>จุดที่ต้องจำ:</strong> เจอ error "Maximum update depth exceeded" เมื่อไหร่
+      ให้ไปมองสองที่เท่านั้น — <em>ข้างในมี setState ไหม</em> และ <em>dependency ตัวไหนเป็นของใหม่ทุกรอบ</em>
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">5 · กับดัก 2 — ใส่ <code>[]</code> แล้วมันยังรันสองครั้ง</h2>
+
+<p>
+  อันนี้คือเรื่องที่ทำให้คนเสียเวลาไล่หาสาเหตุเป็นชั่วโมง เพราะมัน<strong>ไม่ใช่บั๊ก</strong>
+  แต่หน้าตาเหมือนบั๊กทุกอย่าง
+  <br>ลองอันง่ายที่สุด — effect ที่ทำแค่ <code>console.log</code> แล้วใส่ <code>[]</code> ปิดท้าย:
+</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useEffect, useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export</span> <span class="k">default</span> <span class="k">function</span> <span class="f">RunsOnce</span>() {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(<span class="n">0</span>);
+
+  <span class="f">useEffect</span>(() =&gt; {
+    <span class="f">console</span>.<span class="f">log</span>(<span class="s">'[RunsOnce] effect ทำงาน'</span>);
+  }, []);
+
+  <span class="k">return</span> &lt;button onClick={() =&gt; <span class="f">setCount</span>(count + <span class="n">1</span>)}&gt;กดแล้ว {count} ครั้ง&lt;/button&gt;;
+}</code></pre>
+
+<p>
+  console จริงตอนเปิดหน้าด้วย <code>npx next dev</code> — ยังไม่ได้กดปุ่มเลยสักครั้ง
+  (หน้านี้มี <code>Clock</code> จากหัวข้อ 6 วางอยู่ด้วย จะได้เห็น cleanup ไปพร้อมกัน ·
+  ตัด <code>Download the React DevTools…</code> กับ <code>[HMR] connected</code> ออก):
+</p>
+
+<pre><code>[Clock] setup: ตั้ง setInterval
+[RunsOnce] effect ทำงาน
+[Clock] cleanup: clearInterval 10
+[Clock] setup: ตั้ง setInterval
+[RunsOnce] effect ทำงาน</code></pre>
+
+<p>
+  <code>[RunsOnce] effect ทำงาน</code> ขึ้นมา<strong>สองครั้ง</strong> ทั้งที่ใส่ <code>[]</code> ไว้แล้ว
+  <br>และของ <code>Clock</code> ยิ่งชัด — <strong>setup → cleanup → setup</strong> ครบชุด
+</p>
+
+<div class="note">
+  <p><strong>ทำไมถึงเป็นแบบนั้น</strong></p>
+  <p style="margin-bottom:0">
+    Next.js เปิด <strong>React Strict Mode</strong> ให้ในโหมด dev โดยไม่ต้องตั้งค่าอะไร ·
+    Strict Mode จงใจ <strong>mount → unmount → mount</strong> component ของคุณหนึ่งรอบ
+    เพื่อ<strong>ตรวจว่า cleanup ของคุณเขียนถูกไหม</strong>
+    <br>ถ้าเขียนถูก รันสองรอบแล้วผลจะเหมือนรันรอบเดียว (ต่อ-ตัด-ต่อ = สุดท้ายก็ต่ออยู่เส้นเดียว)
+    <br>ถ้าเขียนผิด — เช่นลืม cleanup — คุณจะได้ของค้างสองชุดตั้งแต่วินาทีแรก
+    <strong>Strict Mode ไม่ได้สร้างบั๊กให้คุณ มันทำให้บั๊กที่มีอยู่แล้วโผล่มาให้เห็นเร็วขึ้น</strong>
+  </p>
+</div>
+
+<div class="predict">
+  <pre><code><span class="c"># build เป็น production แล้วเปิดด้วย next start</span>
+npx next build
+npx next start -p 3074</code></pre>
+  <p class="ask">เปิดหน้าเดิมบน production build คิดว่า <code>[RunsOnce] effect ทำงาน</code> จะขึ้นกี่ครั้ง?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ครั้งเดียว</strong> — นี่คือ console จริงจาก <code>next start</code> ตัดเอาเฉพาะบรรทัดของเรา:</p>
+    <pre><code>[Clock] setup: ตั้ง setInterval
+[RunsOnce] effect ทำงาน</code></pre>
+    <p style="margin-bottom:0">
+      ไม่มี cleanup แทรกกลาง ไม่มีรอบสอง · <strong>การรันสองครั้งเป็นเรื่องของโหมด dev เท่านั้น</strong>
+      ผู้ใช้จริงบนเว็บที่ deploy แล้วไม่เจอ
+      <br><strong>แต่ห้ามใช้ข้อนี้เป็นข้ออ้างที่จะไม่เขียน cleanup</strong> — ถ้ารันสองครั้งแล้วพัง
+      แปลว่าโค้ดคุณพังอยู่แล้ว แค่ยังไม่มีใครกดจนเจอ
+      <br>(ถ้าอยากตรวจซ้ำเอง: ต้อง <code>npx next build</code> ให้เสร็จก่อน แล้วค่อย <code>npx next start</code>
+      เพราะ <code>next start</code> เสิร์ฟของที่ build ไว้แล้วเท่านั้น)
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-6">6 · cleanup — ญาติของ <code>defer</code> ที่คุณเรียนไปแล้ว</h2>
+
+<p>
+  ตอนเรียน Go คุณเจอท่านี้มาแล้วใน <a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a>:
+  <strong>เปิดของอะไรไว้ ให้เขียนคำสั่งปิดไว้ติดกันเลย</strong> จะได้ไม่ลืม
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>Go — <code>defer</code></h4>
+    <pre><code>f, err := os.<span class="f">Open</span>(<span class="s">"data.txt"</span>)
+<span class="k">if</span> err != <span class="k">nil</span> {
+    <span class="k">return</span> err
+}
+<span class="k">defer</span> f.<span class="f">Close</span>()</code></pre>
+    <p>เปิดไฟล์แล้วสั่งปิดไว้เลย · ปิดจริงตอนออกจากฟังก์ชัน</p>
+  </div>
+  <div class="side good">
+    <h4>React — <code>return</code> ใน effect</h4>
+    <pre><code><span class="f">useEffect</span>(() =&gt; {
+  <span class="k">const</span> id = <span class="f">setInterval</span>(tick, <span class="n">1000</span>);
+  <span class="k">return</span> () =&gt; <span class="f">clearInterval</span>(id);
+}, []);</code></pre>
+    <p>ตั้งนาฬิกาแล้วสั่งเลิกไว้เลย · เลิกจริงตอนไหน — อ่านตารางข้างล่าง</p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — เช่าห้องซ้อมดนตรี</span>
+  <p>
+    เข้าห้องซ้อม = setup (เปิดแอร์ เสียบปลั๊ก ตั้งไมค์) · ออกจากห้อง = cleanup (ถอดปลั๊ก ปิดแอร์ คืนกุญแจ)
+    <br>ถ้าคุณออกโดยไม่ถอดปลั๊ก ห้องก็ยังกินไฟอยู่ ทั้งที่ไม่มีใครอยู่ในนั้นแล้ว —
+    นั่นคือ timer ที่ค้างอยู่หลัง component หายไปจากหน้า
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> <code>defer</code> ของ Go ทำงาน<strong>ครั้งเดียวจบ</strong>
+    ตอนฟังก์ชันจบ และเวลานั้น<strong>คาดเดาได้แน่นอน</strong> — อ่านโค้ดแล้วรู้เลย
+    <br>ส่วน cleanup ของ React <strong>ทำงานหลายครั้งได้</strong> และ<strong>คุณไม่ได้เป็นคนกำหนดเวลา</strong> —
+    React เรียกมันทุกครั้งที่ dependency เปลี่ยน (ตัดก่อน ต่อใหม่) และเรียกอีกทีตอน component ออกจากหน้า
+    <br>อีกอย่างที่ต่างคือ <code>defer</code> ผูกกับ<strong>ฟังก์ชันหนึ่งครั้งที่ถูกเรียก</strong>
+    แต่ cleanup ผูกกับ<strong>รอบชีวิตของ component บนหน้าจอ</strong> ซึ่งยาวกว่าและถูกขัดจังหวะได้ตลอด
+  </p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เหตุการณ์</th><th>cleanup รันไหม</th><th>เห็นได้จากผลรันในหัวข้อไหน</th></tr></thead>
+  <tbody>
+    <tr><td>dependency เปลี่ยนค่า</td><td><strong>รัน</strong> ก่อน setup รอบใหม่</td><td>หัวข้อ 3 — ❌ ห้องเก่า มาก่อน ✅ ห้องใหม่เสมอ</td></tr>
+    <tr><td>component ถูกเอาออกจากหน้า</td><td><strong>รัน</strong> เป็นครั้งสุดท้าย</td><td>หัวข้อ 6 — การทดลอง 8 timer ข้างล่าง</td></tr>
+    <tr><td>โหมด dev เปิดหน้าครั้งแรก</td><td><strong>รัน</strong> (Strict Mode)</td><td>หัวข้อ 5 — setup → cleanup → setup</td></tr>
+    <tr><td>state อื่นเปลี่ยน แต่ไม่ได้อยู่ใน dependency</td><td><strong>ไม่รัน</strong></td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-1">กับดัก 3 — ลืม cleanup แล้ว timer ค้าง</h3>
+
+<p>
+  ผมทำสองอันมาวางเทียบกัน ต่างกัน<strong>บรรทัดเดียว</strong> คือมี <code>return</code> หรือไม่มี:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>✗ ลืม cleanup</h4>
+    <pre><code><span class="f">useEffect</span>(() =&gt; {
+  <span class="k">const</span> id = <span class="f">setInterval</span>(() =&gt; {
+    ticks = ticks + <span class="n">1</span>;
+    <span class="f">console</span>.<span class="f">log</span>(<span class="s">'[Leaky] tick!'</span>, ticks);
+  }, <span class="n">1000</span>);
+  <span class="c">// ลืม return cleanup</span>
+}, []);</code></pre>
+  </div>
+  <div class="side good">
+    <h4>✓ มี cleanup</h4>
+    <pre><code><span class="f">useEffect</span>(() =&gt; {
+  <span class="k">const</span> id = <span class="f">setInterval</span>(() =&gt; {
+    ticks = ticks + <span class="n">1</span>;
+    <span class="f">console</span>.<span class="f">log</span>(<span class="s">'[Tidy] tick!'</span>, ticks);
+  }, <span class="n">1000</span>);
+  <span class="k">return</span> () =&gt; <span class="f">clearInterval</span>(id);
+}, []);</code></pre>
+  </div>
+</div>
+
+<p>
+  วิธีทดลอง: เอา component ตัวนี้ใส่-ถอดออกจากหน้าสลับกัน <strong>8 ครั้ง</strong>
+  แล้วปิดท้ายด้วยการ<strong>ถอดออก</strong> (บนหน้าไม่เหลือมันแล้ว)
+  <br>จากนั้นนับว่าใน 3 วินาทีถัดมา มี tick กี่ครั้ง — ตัวเลขนี้อ่านมาจาก console จริง:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ตัวไหน</th><th>อยู่บนหน้าตอนวัดไหม</th><th>tick ใน 3 วินาที</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td>✗ ลืม cleanup</td><td><strong>ไม่อยู่แล้ว</strong></td><td><strong>24 ครั้ง</strong></td><td>มี timer ค้างอยู่ <strong>8 ตัว</strong> (24 ÷ 3 วินาที)</td></tr>
+    <tr><td>✓ มี cleanup</td><td><strong>ไม่อยู่แล้ว</strong></td><td><strong>0 ครั้ง</strong></td><td>เก็บกวาดครบ ไม่เหลืออะไรเลย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทำไมถึงได้ <strong>8 ตัว</strong> ทั้งที่กดใส่-ถอดแค่ 8 ครั้ง (= ใส่จริง 4 ครั้ง)?
+  <br>เพราะ<strong>Strict Mode ในหัวข้อ 5 นั่นแหละ</strong> — ใส่หนึ่งครั้ง effect รันสองรอบ = ได้ timer สองตัว ·
+  ใส่ 4 ครั้ง = 8 ตัว ตรงเป๊ะ
+  <br>กับดักสองอันนี้<strong>ทบกัน</strong> และนี่คือเหตุผลที่ Strict Mode มีอยู่: ถ้าคุณเขียน cleanup ถูก
+  ตัวเลขจะเป็น 0 ไม่ว่าจะรันกี่รอบ
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>ของที่ต้องมี cleanup เกือบ 100%:</strong> <code>setInterval</code> · <code>setTimeout</code> ·
+    <code>addEventListener</code> · WebSocket · <code>subscribe()</code> ของ library ต่าง ๆ
+    <br>สังเกตว่าทุกตัวคือ "ของที่<strong>สมัคร</strong>ไว้แล้วมันจะทำงานต่อไปเรื่อย ๆ จนกว่าจะยกเลิก"
+    <br>ถ้า effect ของคุณสร้างของแบบนี้แล้ว<strong>ไม่มี <code>return</code></strong> ให้ถือว่าผิดไว้ก่อน
+  </p>
+</div>
+
+<h2 id="sn-sec-7">7 · กับดัก 4 — โค้ดนาฬิกาในสไลด์ พังทันทีที่วางลง Next.js</h2>
+
+<p>
+  สไลด์หน้า 42 ให้ตัวอย่างนาฬิกาไว้แบบนี้ (แปลงเป็นไฟล์เต็มพร้อม <code>'use client'</code> แล้ว):
+</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useEffect, useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export</span> <span class="k">default</span> <span class="k">function</span> <span class="f">Clock</span>() {
+  <span class="k">const</span> [now, setNow] = <span class="f">useState</span>(<span class="k">new</span> <span class="n">Date</span>());
+
+  <span class="f">useEffect</span>(() =&gt; {
+    <span class="k">const</span> id = <span class="f">setInterval</span>(() =&gt; <span class="f">setNow</span>(<span class="k">new</span> <span class="n">Date</span>()), <span class="n">1000</span>);
+    <span class="k">return</span> () =&gt; <span class="f">clearInterval</span>(id);
+  }, []);
+
+  <span class="k">return</span> &lt;time&gt;{now.<span class="f">toLocaleTimeString</span>()}&lt;/time&gt;;
+}</code></pre>
+
+<p>
+  effect เขียนถูกทุกอย่าง — มี <code>[]</code> · มี cleanup · <code>npx tsc --noEmit</code> ผ่าน ·
+  <code>npx next build</code> ผ่าน
+  <br>แต่พอเปิดหน้าจริง <strong>Next.js เด้ง error overlay สีแดง</strong> ขึ้นมา นี่คือข้อความจริงที่ได้:
+</p>
+
+<pre><code>Recoverable Error
+Hydration failed because the server rendered text didn't match the client.
+As a result this tree will be regenerated on the client.
+This can happen if a SSR-ed Client Component used:
+
+- A server/client branch `if (typeof window !== 'undefined')`.
+- Variable input such as `Date.now()` or `Math.random()` which changes
+  each time it's called.
+- Date formatting in a user's locale which doesn't match the server.
+...
+
++ Client
+- Server
+
+  &lt;Clock&gt;
+    &lt;time&gt;
++     3:39:24 PM
+-     3:39:23 PM
+
+components/t74/Clock.tsx (17:10) @ Clock</code></pre>
+
+<p>
+  อ่านสองบรรทัดล่างสุดก็จบเรื่อง — <strong>เซิร์ฟเวอร์เขียน <code>3:39:23 PM</code> · เบราว์เซอร์คำนวณได้ <code>3:39:24 PM</code></strong>
+  <br>สาเหตุ: <code>'use client'</code> <strong>ไม่ได้แปลว่า "รันแค่บนเบราว์เซอร์"</strong> ·
+  Next.js ยัง render component นี้บนเซิร์ฟเวอร์หนึ่งรอบเพื่อทำ HTML ตั้งต้น
+  แล้วเบราว์เซอร์ค่อยมา "รับช่วงต่อ" (คำว่า <em>hydration</em>)
+  <br>ค่าตั้งต้นของ <code>useState</code> จึงถูกคำนวณ<strong>สองที่ คนละเวลา</strong> — <code>new Date()</code> ให้คนละค่าแน่นอน
+</p>
+
+<div class="warn">
+  <p><strong>ระวัง — ในโหมด dev บั๊กตัวนี้ "งอแง" ไม่ได้โผล่ทุกครั้ง</strong></p>
+  <p style="margin-bottom:0">
+    <code>next dev</code> render หน้าใหม่ทุกครั้งที่มีคนขอ · error จะโผล่ก็ต่อเมื่อ
+    <strong>วินาทีเปลี่ยนพอดี</strong>ในช่วงระหว่างที่เซิร์ฟเวอร์ทำ HTML กับตอนที่เบราว์เซอร์ hydrate เสร็จ
+    ซึ่งเป็นช่วงสั้นมาก · ผมลองเปิดซ้ำ <strong>12 รอบ ได้ error แค่ 1 รอบ</strong>
+    <br>แปลว่าถ้าคุณลองแล้วไม่เห็นอะไร <strong>ยังไม่ได้แปลว่าโค้ดถูก</strong> — ให้กดรีเฟรชรัว ๆ หลาย ๆ รอบ
+    <br>ตรงข้ามกับ production: <code>npx next build</code> <strong>prerender หน้านี้ตั้งแต่ตอน build</strong>
+    (ในผลของ build จะเห็น <code>○ (Static)</code> อยู่หน้าชื่อ route) เวลาใน HTML จึงค้างอยู่ที่เวลาตอน build
+    ไม่มีทางตรงกับเวลาบนเครื่องผู้ใช้เลย · ผมลอง <code>next start</code> <strong>3 รอบ ได้ error ทั้ง 3 รอบ</strong>
+    <br>นี่คือกับดักซ้อนกับดัก: <strong>บั๊กที่โผล่ยากตอน dev แต่โผล่ทุกครั้งของจริง</strong>
+  </p>
+</div>
+
+<div class="win">
+  <p><strong>วิธีแก้ที่ผมรันแล้วได้ผล</strong> — อย่าให้ค่าตั้งต้นมาจากเวลา ให้เริ่มจาก <code>null</code>
+    แล้วปล่อยให้ effect เป็นคนใส่ค่าจริงหลังหน้าวาดเสร็จ:</p>
+  <pre style="margin:0.5rem 0"><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useEffect, useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export</span> <span class="k">default</span> <span class="k">function</span> <span class="f">ClockSafe</span>() {
+  <span class="k">const</span> [now, setNow] = <span class="f">useState</span>&lt;<span class="n">string</span> | <span class="k">null</span>&gt;(<span class="k">null</span>);
+
+  <span class="f">useEffect</span>(() =&gt; {
+    <span class="k">const</span> id = <span class="f">setInterval</span>(() =&gt; <span class="f">setNow</span>(<span class="k">new</span> <span class="n">Date</span>().<span class="f">toLocaleTimeString</span>()), <span class="n">1000</span>);
+    <span class="k">return</span> () =&gt; <span class="f">clearInterval</span>(id);
+  }, []);
+
+  <span class="k">return</span> &lt;time&gt;{now ?? <span class="s">'--:--:--'</span>}&lt;/time&gt;;
+}</code></pre>
+  <p style="margin-bottom:0">
+    เซิร์ฟเวอร์กับเบราว์เซอร์ตอนเริ่มต้นได้ <code>--:--:--</code> เหมือนกันเป๊ะ → ไม่มีอะไรให้ mismatch
+    <br>เปิดหน้าจริงสองรอบแล้ว console เหลือแค่ข้อความของ HMR กับ React DevTools ไม่มี error สักบรรทัด ·
+    <code>npx eslint</code> ก็ผ่านสะอาด
+    <br>ราคาที่จ่ายคือ<strong>วินาทีแรกจะเห็น <code>--:--:--</code></strong> ก่อนตัวเลขจะขึ้น — ยอมรับได้ และซื่อสัตย์กับความจริง
+    เพราะเซิร์ฟเวอร์ไม่มีทางรู้เวลาบนเครื่องผู้ใช้อยู่แล้ว
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>บน production build อาการเดียวกันหน้าตาต่างไป</strong> — ไม่มี overlay สีแดงพร้อมคำอธิบายให้
+    เหลือแค่บรรทัดเดียวใน console ว่า <code>Minified React error #418</code> พร้อมลิงก์ไปเปิดอ่านเอง
+    <br>นี่คือเหตุผลที่<strong>ต้องไล่ error ให้หมดตั้งแต่ตอน dev</strong> — ของแบบนี้พอขึ้น production แล้วอ่านยากขึ้นมาก
+  </p>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ไฟล์มี <code>'use client'</code> อยู่บรรทัดแรกเรียบร้อย แล้วทำไม <code>useState(new Date())</code> ถึงยังทำให้เกิด hydration mismatch ได้อีก?</p>
+  <div class="opts">
+    <button class="opt">เพราะ <code>'use client'</code> บอกแค่ว่าไฟล์นี้ต้องมี JS ฝั่งเบราว์เซอร์ ไม่ได้ห้ามเซิร์ฟเวอร์ render มันเพื่อทำ HTML ตั้งต้น</button>
+    <button class="opt">เพราะวาง <code>'use client'</code> ผิดที่ ต้องย้ายไปไว้ใต้บรรทัด <code>import</code> ทุกตัวถึงจะมีผลกับทั้งไฟล์</button>
+    <button class="opt">เพราะ <code>useState</code> รับค่าตั้งต้นเป็น object ไม่ได้ ต้องแปลงเป็น string หรือ number ก่อนเสมอ</button>
+    <button class="opt">เพราะลืม dependency array ทำให้ effect วนรันซ้ำ จนค่าบนจอไม่ทันตรงกับ HTML ที่เซิร์ฟเวอร์ส่งมา</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบ <strong>ตัวเลือกที่ 1</strong> — <code>'use client'</code> แปลว่า "ชิ้นนี้ต้องส่ง JavaScript ไปให้เบราว์เซอร์ด้วย"
+      <strong>ไม่ได้แปลว่า "ห้ามรันบนเซิร์ฟเวอร์"</strong> · Next.js ยัง render มันบนเซิร์ฟเวอร์หนึ่งรอบเพื่อทำ HTML ตั้งต้น
+      ค่าตั้งต้นจึงถูกคำนวณสองที่ คนละเวลา
+      <br>ตัวเลือกที่ 2 ผิดตรงข้ามเลย — <code>'use client'</code> ต้องอยู่<strong>บนสุดก่อน <code>import</code></strong>
+      ถ้าย้ายลงไปใต้ import มันจะไม่ทำงาน แล้วคุณจะได้ build error ของหัวข้อ 2 แทน
+      <br>ตัวเลือกที่ 3 มั่ว — <code>useState</code> รับค่าอะไรก็ได้ รวมทั้ง object · เก็บ <code>Date</code> ไม่ผิดกฎอะไร
+      ที่ผิดคือ<strong>ค่าตั้งต้นที่คำนวณใหม่ทุกครั้ง</strong>
+      <br>ตัวเลือกที่ 4 เอากับดักหัวข้อ 4 มาปนมั่ว — โค้ดนาฬิกาชุดนี้ใส่ <code>[]</code> ไว้ครบและมี cleanup
+      ไม่มีการวนซ้ำเลย
+      <br><strong>จุดที่ต้องจำ:</strong> เจอคำว่า <em>hydration</em> เมื่อไหร่ ให้ถามตัวเองข้อเดียวว่า
+      <em>"ค่านี้เซิร์ฟเวอร์กับเบราว์เซอร์คำนวณแล้วได้เท่ากันไหม"</em>
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-8">8 · ESLint ของ Next 16 ดักให้แล้ว ก่อนคุณจะทันได้รัน</h2>
+
+<p>
+  ทั้งหมดที่ผ่านมา ผมรันจนเจอเอง — แต่จริง ๆ แล้ว config ที่ <code>create-next-app</code> แถมมาให้
+  <strong>จับได้ตั้งแต่ยังไม่รัน</strong> · นี่คือผลจริงของ <code>npx eslint components/t74</code>:
+</p>
+
+<pre><code>components/t74/LeakyTimer.tsx
+  9:11  warning  'id' is assigned a value but never used
+                 @typescript-eslint/no-unused-vars
+
+components/t74/MissingDep.tsx
+  9:6   warning  React Hook useEffect has a missing dependency: 'userId'.
+                 Either include it or remove the dependency array
+                 react-hooks/exhaustive-deps
+
+components/t74/NoDeps.tsx
+  8:3   warning  React Hook useEffect contains a call to 'setCount'. Without a
+                 list of dependencies, this can lead to an infinite chain of
+                 updates. To fix this, pass [count] as a second argument to the
+                 useEffect Hook
+                 react-hooks/exhaustive-deps
+  10:5  error    Error: Calling setState synchronously within an effect can
+                 trigger cascading renders
+                 react-hooks/set-state-in-effect
+
+✖ 4 problems (1 error, 3 warnings)</code></pre>
+
+<p>
+  อ่านสี่อันนี้ให้ดี — มันคือกับดักทั้งหมดในบทนี้ พูดออกมาเป็นภาษาอังกฤษก่อนที่คุณจะเสียเวลาไล่หา
+  <br>อันแรกน่าสนใจที่สุด: มันไม่ได้รู้เรื่อง React เลย มันแค่บอกว่า
+  <strong>"คุณสร้างตัวแปร <code>id</code> ขึ้นมาแล้วไม่ได้ใช้"</strong> — ซึ่งแปลว่าคุณลืม <code>clearInterval(id)</code> พอดี
+  <br>และสังเกตบรรทัดสุดท้าย: <strong>1 error</strong> ปนมากับ warning ด้วย · ตัวนั้นคือกฎใหม่ในกล่องข้างล่าง
+</p>
+
+<div class="warn">
+  <p><strong>กฎใหม่ที่คุณจะเจอแน่ และมันเป็น error ไม่ใช่ warning</strong></p>
+  <p style="margin-bottom:0">
+    ใน Next 16 + React 19 มีกฎชื่อ <code>react-hooks/set-state-in-effect</code> ที่<strong>ห้ามเรียก setState
+    ตรง ๆ ในตัว effect</strong> · นี่คือข้อความเต็มที่ผมได้ตอนลองเขียนนาฬิกาที่<strong>ใส่เวลาทันที
+    ในบรรทัดแรกของ effect</strong> แล้วค่อยตั้ง <code>setInterval</code> ต่อ:
+  </p>
+  <pre style="margin:0.5rem 0"><code>components/t74/ClockSync.tsx
+  9:5  error  Error: Calling setState synchronously within an effect can
+              trigger cascading renders
+...
+Calling setState synchronously within an effect body causes cascading
+renders that can hurt performance, and is not recommended.
+(https://react.dev/learn/you-might-not-need-an-effect).
+
+components/t74/ClockSync.tsx:9:5
+   7 |
+   8 |   useEffect(() =&gt; {
+&gt;  9 |     setNow(new Date().toLocaleTimeString());
+     |     ^^^^^^ Avoid calling setState() directly within an effect
+  10 |     const id = setInterval(() =&gt; setNow(new Date().toLocaleTimeString()), 1000);
+  11 |     return () =&gt; clearInterval(id);
+  12 |   }, []);  react-hooks/set-state-in-effect
+
+✖ 1 problem (1 error, 0 warnings)</code></pre>
+  <p style="margin-bottom:0">
+    สังเกตคำว่า <strong>synchronously</strong> — เรียก <code>setNow</code> ข้างใน callback ของ
+    <code>setInterval</code> <strong>ไม่โดน</strong> (นั่นคือ "ของข้างนอกเปลี่ยน แล้วเราค่อยบอก React")
+    แต่เรียกใน<strong>บรรทัดแรกของ effect เลย</strong> <strong>โดน</strong>
+    <br>ผมลองแล้วจริง: นาฬิกาที่ตั้งค่าเวลาทันทีในบรรทัดแรกของ effect ติด error ตัวนี้ ·
+    พอตัดบรรทัดนั้นออกเหลือแต่ <code>setInterval</code> ก็ผ่านสะอาด
+  </p>
+</div>
+
+<p>
+  ลิงก์ที่อยู่ในข้อความ error — <em>"You Might Not Need an Effect"</em> — คือคำใบ้ที่ทีม React
+  พยายามบอกมาหลายปีแล้ว: <strong>useEffect ถูกใช้ผิดที่บ่อยกว่าใช้ถูกที่</strong>
+  <br>ตารางข้างล่างคือเส้นแบ่ง ถ้าจำได้ตารางเดียวก็คุ้มทั้งบท:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สิ่งที่อยากทำ</th><th>ใช้ useEffect?</th><th>ทำไม</th></tr></thead>
+  <tbody>
+    <tr><td>ตั้ง <code>setInterval</code> / <code>setTimeout</code></td><td>✅ ใช่</td><td>เป็นของนอก React ต้องมีคนไปสั่งเปิดและสั่งปิด</td></tr>
+    <tr><td>เปิด WebSocket / subscribe</td><td>✅ ใช่</td><td>เหตุผลเดียวกัน และเป็นตัวอย่างในสไลด์</td></tr>
+    <tr><td><code>addEventListener</code> ที่ <code>window</code></td><td>✅ ใช่</td><td>DOM คือโลกนอก React</td></tr>
+    <tr><td>คำนวณยอดรวมจาก state ที่มีอยู่แล้ว</td><td>❌ ไม่</td><td>คำนวณตอน render ไปเลย ไม่ต้องเก็บเป็น state ซ้ำ</td></tr>
+    <tr><td>อัปเดต state ตอนผู้ใช้กดปุ่ม</td><td>❌ ไม่</td><td>ทำใน event handler ของปุ่มนั้น ตรงกว่าและอ่านง่ายกว่า</td></tr>
+    <tr><td>โหลดข้อมูลมาแสดงบนหน้า</td><td>⚠️ ได้ แต่ไม่ใช่ทางแรก</td><td>ใน App Router ให้ดึงใน Server Component แทน จะไม่ต้องส่ง JS ไปเบราว์เซอร์เลย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไปในหัวข้อ 5–8</span>
+  <dl>
+    <dt>cleanup function</dt>
+    <dd>ฟังก์ชันที่ <code>return</code> ออกมาจาก effect · React เก็บไว้แล้วเรียกให้ก่อน setup รอบถัดไป
+        และตอน component ออกจากหน้า ·
+        <strong>ถาม senior ได้ว่า "effect นี้ต้องมี cleanup ไหม"</strong>
+        ทุกครั้งที่ effect สร้างของที่ทำงานต่อเนื่อง</dd>
+    <dt>mount · unmount</dt>
+    <dd>"ถูกใส่เข้าหน้า" กับ "ถูกเอาออกจากหน้า" · Strict Mode ในโหมด dev จงใจทำ
+        mount → unmount → mount เพื่อทดสอบ cleanup ของคุณ ·
+        <strong>คำนี้ใช้คุยกับ senior ได้ตรง ๆ ว่า "มันรันตอน mount หรือทุก render"</strong></dd>
+    <dt>hydration · hydration mismatch</dt>
+    <dd>ขั้นตอนที่เบราว์เซอร์เอา JavaScript มา "รับช่วงต่อ" HTML ที่เซิร์ฟเวอร์ส่งมา ·
+        ถ้าสองฝั่งคำนวณได้ไม่ตรงกันเรียกว่า mismatch ·
+        <strong>พิมพ์บอก AI ได้ว่า "this component causes a hydration mismatch because of Date — fix it"</strong>
+        คำว่า hydration ทำให้มันตอบตรงจุดกว่าบอกว่า "หน้าเว็บขึ้น error แดง"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9">9 · สรุปเป็นภาพเดียว</h2>
+
+<div class="diagram">
+<pre style="margin:0"><code>เปิดหน้าครั้งแรก
+   └─ วาดจอเสร็จ ──&gt; setup รัน          (dev: setup → cleanup → setup)
+
+dependency เปลี่ยน
+   └─ วาดจอเสร็จ ──&gt; cleanup ของรอบเก่า ──&gt; setup รอบใหม่
+
+component ออกจากหน้า
+   └────────────&gt; cleanup รันครั้งสุดท้าย   (ไม่มี setup ตามมาแล้ว)
+
+ไม่ใส่ dependency array
+   └─ วาดจอเสร็จ ──&gt; setup รัน ──&gt; ถ้ามี setState ──&gt; วาดใหม่ ──&gt; วนกลับไปข้อบน ♾️</code></pre>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">component หนึ่งมี <code>useEffect(fn, [userId])</code> · ผู้ใช้เปลี่ยน <code>userId</code> จาก <code>"a"</code> เป็น <code>"b"</code> ลำดับที่เกิดขึ้นคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">setup ของ <code>"b"</code> รันก่อน แล้ว cleanup ของ <code>"a"</code> ค่อยตามมาทีหลัง</button>
+    <button class="opt">setup ของ <code>"b"</code> รันอย่างเดียว ส่วน cleanup ของ <code>"a"</code> รอไว้ตอนออกจากหน้า</button>
+    <button class="opt">cleanup ของ <code>"a"</code> รันก่อน แล้ว setup ของ <code>"b"</code> จึงรันตามมา</button>
+    <button class="opt">ไม่มีอะไรรันเลย เพราะ <code>useEffect</code> ที่มี dependency รันแค่ครั้งแรกครั้งเดียว</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบ <strong>ตัวเลือกที่ 3</strong> — และนี่ไม่ใช่การเดา ผมรันแล้วดู console จริงในหัวข้อ 3:
+      ทุกครั้งที่ย้ายห้อง <code>❌ ตัดการเชื่อมต่อห้อง random</code> ขึ้นมาก่อน
+      <code>✅ เชื่อมต่อห้อง support</code> เสมอ ไม่มีสลับ
+      <br>ตัวเลือกที่ 1 กลับลำดับ ซึ่งถ้าเป็นแบบนั้นจริงคุณจะได้ connection สองเส้นซ้อนกันชั่วขณะ
+      <br>ตัวเลือกที่ 2 คือสิ่งที่สไลด์หน้า 41 เขียนไว้ (บอกว่า cleanup รันตอน unmount) —
+      <strong>ไม่ครบ</strong> ผลรันแย้งไปแล้ว
+      <br>ตัวเลือกที่ 4 สับสนระหว่าง <code>[userId]</code> กับ <code>[]</code> ว่าง ·
+      <code>[]</code> ว่างต่างหากที่แปลว่าครั้งเดียว
+      <br><strong>จุดที่ต้องจำ:</strong> ให้อ่าน dependency array ว่า
+      <em>"ถ้าค่าพวกนี้เปลี่ยน ให้เลิกของเก่าแล้วเริ่มใหม่"</em> ไม่ใช่แค่ <em>"ให้รันอีกที"</em>
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">คุณเปิดหน้าใน <code>npx next dev</code> แล้วเห็น log ของ effect ขึ้นสองครั้ง ควรทำอะไรต่อ?</p>
+  <div class="opts">
+    <button class="opt">ปล่อยไว้ แต่เช็คว่า cleanup ของ effect นี้เขียนครบ เพราะสองครั้งคืออาการปกติของโหมด dev</button>
+    <button class="opt">เอา <code>'use client'</code> ออก เพราะการรันสองครั้งเกิดจาก component ถูก render สองฝั่ง</button>
+    <button class="opt">ใส่ตัวแปรนอก component ไว้กันไม่ให้ effect ทำงานรอบที่สอง แล้วปัญหาจะหายไป</button>
+    <button class="opt">ปิด Strict Mode ใน <code>next.config.ts</code> ทิ้งไปเลย จะได้ไม่ต้องเจออีก</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบ <strong>ตัวเลือกที่ 1</strong> — การรันสองครั้งใน dev คือ<strong>เครื่องมือตรวจ ไม่ใช่บั๊ก</strong>
+      ผมพิสูจน์แล้วในหัวข้อ 5 ว่า production build รันครั้งเดียว
+      <br>ตัวเลือกที่ 2 เข้าใจผิดคนละเรื่อง — เอา <code>'use client'</code> ออกจะได้ build error ทันที
+      ตามที่เห็นในหัวข้อ 2 ไม่ใช่ effect รันครั้งเดียว
+      <br>ตัวเลือกที่ 3 คือการเอาเทปมาปิดไฟเตือนบนแผงหน้าปัด — อาการหาย ปัญหาอยู่ ·
+      แถมท่านี้ยังพังเวลา component ถูกเปิดพร้อมกันหลายตัว เพราะตัวแปรนอก component มีก้อนเดียวใช้ร่วมกันทุกตัว
+      <br>ตัวเลือกที่ 4 ปิดได้จริงทางเทคนิค แต่แลกด้วยการปิดตาข่ายที่จะเตือนคุณเรื่อง cleanup ทั้งโปรเจกต์
+      <br><strong>จุดที่ต้องจำ:</strong> "รันสองครั้งแล้วพัง" ไม่ใช่ปัญหาของ Strict Mode
+      แต่แปลว่า effect ของคุณ<strong>ไม่ทนต่อการรันซ้ำ</strong> ซึ่งวันหนึ่งผู้ใช้จริงจะทำให้มันรันซ้ำจนได้
+    </p>
+  </div>
+</div>
+
+<div class="task">
+  <h3 id="sn-sub-2">🛠 ภารกิจ — พังให้เห็นกับตาก่อน แล้วค่อยแก้</h3>
+  <p>
+    ทำในโปรเจกต์ Next.js ของคุณเอง (ถ้ายังไม่มี: <code>npx create-next-app@latest</code>) ·
+    <strong>ห้ามข้ามข้อ 2</strong> เพราะข้อ 2 คือทั้งหมดของบทนี้:
+  </p>
+  <ol>
+    <li>
+      สร้าง <code>components/Ticker.tsx</code> ที่มี <code>'use client'</code> บรรทัดแรก ·
+      ข้างในมี state <code>seconds</code> เริ่มที่ <code>0</code> และ effect ที่ตั้ง
+      <code>setInterval</code> ให้บวกทีละ 1 ทุกวินาที · <strong>ตั้งใจไม่ใส่ cleanup</strong>
+      แล้วเอาไปแสดงในหน้าที่มีปุ่มซ่อน/แสดงมันได้
+    </li>
+    <li>
+      กด "แสดง แล้วซ่อน" สลับกัน <strong>5 รอบ</strong> (= ใส่มันเข้าหน้า 5 ครั้ง)
+      แล้ว<strong>ปิดท้ายด้วยการซ่อน</strong> · เปิด console ไว้ตลอด แล้วจดว่าตอนซ่อนอยู่
+      ยังมี log ไหลอยู่ไหม และไหลถี่ขึ้นแค่ไหนเทียบกับตอนแรก
+    </li>
+    <li>
+      เติม <code>return () =&gt; clearInterval(id);</code> แล้วทำข้อ 2 ซ้ำ · เทียบตัวเลข
+    </li>
+    <li>
+      รัน <code>npx eslint components/Ticker.tsx</code> ทั้งก่อนและหลังแก้ ·
+      ดูว่ามันเตือนอะไรตอนที่ยังไม่มี cleanup
+    </li>
+    <li>
+      โบนัส: เปลี่ยนค่าตั้งต้นเป็น <code>useState(new Date())</code> แล้วเอาไปแสดงบนหน้า ·
+      ดูว่าเจอ hydration error แบบหัวข้อ 7 ไหม แล้วแก้ให้หายด้วยวิธีในกล่องสีเขียว
+    </li>
+  </ol>
+  <button class="reveal">ดูว่าควรได้อะไร</button>
+  <div class="answer">
+    <p>
+      <strong>ข้อ 2</strong> — log ต้องยังไหลอยู่ทั้งที่ซ่อนไปแล้ว และ<strong>ไหลถี่ขึ้นเรื่อย ๆ</strong>
+      ทุกครั้งที่กดแสดงใหม่ · ในการทดลองของผม กด 8 ครั้งได้ timer ค้าง 8 ตัว (24 tick ใน 3 วินาที)
+      <br>ถ้าของคุณได้ 10 ตัวจาก 5 ครั้ง ก็ถูกแล้ว — Strict Mode คูณสองให้
+    </p>
+    <p>
+      <strong>ข้อ 3</strong> — ต้องได้ <strong>0</strong> เป๊ะ ๆ ไม่ใช่ "น้อยลง" · ถ้ายังเหลือแม้แต่ตัวเดียว
+      แปลว่า cleanup ยังไม่ครบทุกเส้นทาง
+    </p>
+    <p style="margin-bottom:0">
+      <strong>ข้อ 4</strong> — ตอนยังไม่มี cleanup ควรได้อย่างน้อย
+      <code>'id' is assigned a value but never used</code> ·
+      ถ้า effect ของคุณเรียก setState ตรง ๆ ในบรรทัดแรกด้วย จะได้
+      <code>react-hooks/set-state-in-effect</code> เป็น <strong>error</strong> เพิ่มมาอีกอัน —
+      อ่านลิงก์ <em>You Might Not Need an Effect</em> ที่มันแปะมาให้ด้วย คุ้มมาก
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>💬 ติดตรงไหนถามได้</strong> — ถ้ารันตามในบทแล้วได้ผลไม่ตรงกับที่เขียนไว้
+    ให้ส่งมาทั้ง<strong>ไฟล์ component เต็ม ๆ</strong> · <strong>คำสั่งที่ใช้รัน</strong> ·
+    และ<strong>ข้อความใน console ทั้งก้อน</strong>
+    <br>เรื่อง <code>useEffect</code> เกือบทุกคำถามตอบได้จากสามอย่างนี้ เพราะคำตอบมักอยู่ที่
+    <em>dependency array เขียนว่าอะไร</em> กับ <em>มี <code>return</code> หรือเปล่า</em>
+    <br>และคำถามที่คุ้มที่สุดสำหรับบทนี้คือ <em>"อันนี้ต้องใช้ useEffect จริงไหม"</em> —
+    ถามก่อนเขียนทุกครั้ง คุณจะเขียน useEffect น้อยลงมาก และนั่นคือเรื่องดี
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0073-usestate.html">← บทเรียน 73 · useState</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Next.js</a>
+  <a href="./0075-usememo-usecallback.html">บทเรียน 75 → useMemo และ useCallback</a>
+</nav>
+
+<h2 id="sn-sec-10">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://react.dev/reference/react/useEffect">React — <code>useEffect</code></a> —
+      <strong>อ่านหัวข้อ <em>Parameters</em> ให้จบ</strong> โดยเฉพาะประโยคที่บอกว่า React จะเทียบ dependency
+      ด้วย <code>Object.is</code> · นี่คือคำอธิบายว่าทำไมใส่ object หรือ array เป็น dependency แล้ว effect ถึงรันทุกรอบ</li>
+  <li><a href="https://react.dev/learn/synchronizing-with-effects">React — Synchronizing with Effects</a> —
+      <strong>อ่านหัวข้อ <em>How to handle the Effect firing twice in development?</em></strong>
+      ซึ่งตอบกับดักในหัวข้อ 5 ของบทนี้ตรง ๆ · ทีม React เขียนไว้ชัดว่าวิธีแก้ที่ถูกคือ
+      "ทำให้ effect ทนการรันซ้ำ" ไม่ใช่ "หาทางไม่ให้มันรันซ้ำ"</li>
+  <li><a href="https://react.dev/learn/you-might-not-need-an-effect">React — You Might Not Need an Effect</a> —
+      หน้าเดียวกับที่ ESLint แปะลิงก์มาให้ในข้อความ error ·
+      <strong>อ่านหัวข้อ <em>Updating state based on props or state</em></strong> ก่อนเป็นอันแรก
+      เพราะเป็นเคสที่มือใหม่เขียน <code>useEffect</code> ผิดบ่อยที่สุด</li>
+  <li><a href="https://react.dev/reference/react/useEffect#connecting-to-an-external-system">React — Connecting to an external system</a> —
+      ตัวอย่าง <code>ChatRoom</code> ตัวเดียวกับในสไลด์หน้า 41 ·
+      <strong>ดูปุ่ม <em>Show more</em> ที่มีตัวอย่างครบทั้ง connection · event listener · animation</strong>
+      แล้วสังเกตว่าทุกตัวมี <code>return</code> ไม่มียกเว้น</li>
+  <li><a href="https://nextjs.org/docs/app/api-reference/directives/use-client">Next.js — <code>'use client'</code></a> —
+      หน้าเดียวกับที่ลิงก์อยู่ใน build error ในหัวข้อ 2 ·
+      <strong>อ่านหัวข้อ <em>How &quot;use client&quot; works</em></strong> ให้เห็นว่าคำสั่งนี้แบ่งโปรเจกต์เป็นสองฝั่งยังไง
+      และทำไม Client Component ถึงยังถูก render บนเซิร์ฟเวอร์อยู่ดี (คำตอบของกับดักในหัวข้อ 7)</li>
+  <li><a href="https://nextjs.org/docs/messages/react-hydration-error">Next.js — Text content does not match server-rendered HTML</a> —
+      หน้าเดียวกับที่ error overlay ลิงก์มาให้ ·
+      <strong>อ่านตาราง <em>Common causes</em></strong> แล้วจะเห็นว่า <code>Date</code> กับ <code>Math.random()</code>
+      อยู่บรรทัดต้น ๆ · ท้ายหน้ามีท่า <code>suppressHydrationWarning</code> ให้ด้วย
+      — อ่านให้รู้ว่ามีอยู่ แต่อย่าเพิ่งใช้ก่อนที่จะแก้ที่ต้นเหตุ</li>
+  <li><a href="https://react.dev/reference/react/StrictMode">React — <code>&lt;StrictMode&gt;</code></a> —
+      <strong>อ่านหัวข้อ <em>Fixing bugs found by re-running Effects in development</em></strong>
+      ซึ่งอธิบายว่าการรันซ้ำเป็นการทดสอบอะไร · Next.js เปิดตัวนี้ให้ในโหมด dev อยู่แล้ว
+      คุณไม่ต้องไปใส่เอง</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

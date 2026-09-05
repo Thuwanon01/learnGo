@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 73 — useState — ทำให้หน้าเว็บจำค่าได้และวาดใหม่เอง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 73 · Frontend · Next.js</p>
+  <h1>useState — ทำให้หน้าเว็บจำค่าได้และวาดใหม่เอง</h1>
+  <p class="meta">~22 นาที · ควรผ่าน <a href="./0071-first-component-and-props.html">บทเรียน 71</a> (component + props)
+    และ <a href="./0072-tailwindcss.html">บทเรียน 72</a> (Tailwind) มาก่อน ·
+    บทนี้ยาวกว่าปกติเพราะมี<strong>กับดัก 4 อัน</strong>ที่ต้องรันให้เห็นกับตา</p>
+  <p class="standfirst">
+    จนถึงบทที่แล้ว หน้าเว็บของคุณ<strong>ตายสนิท</strong> — วาดครั้งเดียวจบ กดปุ่มแล้วไม่มีอะไรเกิดขึ้น
+    <br>บทนี้คือบทที่หน้าเว็บเริ่ม<strong>จำค่าได้</strong> และ<strong>วาดตัวเองใหม่</strong>เมื่อค่านั้นเปลี่ยน
+    ซึ่ง React เรียกความสามารถนี้ว่า <em>state</em>
+    <br>และบทนี้ยังเป็น<strong>บทแรกของทั้งกลุ่ม Next.js ที่คุณจะเจอ error ตอน build</strong>
+    ถ้าลืมพิมพ์ข้อความสั้น ๆ บรรทัดเดียว — เราจะทำให้มันพังให้ดูก่อน แล้วค่อยเฉลย
+    <br>กับดักทั้งหมดในบทนี้ <strong>ผมกดปุ่มจริงในเบราว์เซอร์แล้วก็อปผลออกมา</strong> ไม่ได้เล่าจากความจำ
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้ (รันวันที่ 5 กันยายน 2026)</strong></p>
+  <pre style="margin:0.5rem 0"><code>next        16.3.4   <span class="c"># Turbopack (ตัว build ปริยายของ Next 16)</span>
+react       19.2.8
+react-dom   19.2.8
+typescript  5
+node        v24.14.0</code></pre>
+  <p style="margin-bottom:0">
+    ทุกกล่องที่เขียนว่า "ได้ผลว่า…" ในบทนี้มาจากสามคำสั่งนี้ในโปรเจกต์ Next.js จริง:
+    <br><code>npx next build</code> — ข้อความ error ทุกตัวก็อปมาจากตรงนี้ ทั้งบรรทัดและลูกศรชี้
+    <br><code>npx tsc --noEmit</code> — ตรวจ type อย่างเดียว (จะเห็นว่ามันจับ error ของบทนี้<strong>ไม่ได้</strong> ซึ่งสำคัญมาก)
+    <br><code>npx next start</code> แล้ว<strong>กดปุ่มจริงในเบราว์เซอร์</strong> — ตัวเลขบนจอกับข้อความใน console
+    ก็อปมาจากการกดจริงทีละครั้ง
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · ปัญหาก่อน: หน้าเว็บที่กดแล้วไม่มีอะไรเกิดขึ้น</h2>
+
+<p>
+  ลองคิดถึงของที่ง่ายที่สุดในโลก — ปุ่มนับเลข กดทีนึงเลขเพิ่มทีนึง
+  <br>ถ้าคุณเพิ่งเขียน Go มา 9 วัน สมองจะสั่งให้เขียนแบบนี้ทันที: ประกาศตัวแปร แล้วบวกมันตอนกด
+</p>
+
+<pre><code><span class="c">// components/PlainVar.tsx</span>
+<span class="s">'use client'</span>;
+
+<span class="k">export default function</span> <span class="f">PlainVar</span>() {
+  <span class="k">let</span> count = <span class="n">0</span>;
+
+  <span class="k">return</span> (
+    &lt;button
+      onClick={() =&gt; {
+        count = count + <span class="n">1</span>;
+        console.<span class="f">log</span>(<span class="s">'[PlainVar] count in memory ='</span>, count);
+      }}
+    &gt;
+      Plain: {count}
+    &lt;/button&gt;
+  );
+}</code></pre>
+
+<div class="predict">
+  <pre><code><span class="c">// กดปุ่มนี้ 3 ครั้งติดกัน</span>
+<span class="c">// 1) ตัวเลขบนหน้าจอจะเป็นเท่าไหร่?</span>
+<span class="c">// 2) แล้วใน console จะพิมพ์อะไรออกมา?</span></code></pre>
+  <p class="ask">คิดว่าได้อะไร? (คำถามนี้มีสองคำตอบ และมัน<strong>ไม่ตรงกัน</strong>)</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผมกดจริง 3 ครั้ง แล้วอ่านข้อความบนปุ่มหลังกดแต่ละครั้ง — <strong>บนจอไม่ขยับเลย</strong>:</p>
+    <pre><code>start          -&gt; Plain: 0
+plain click 1  -&gt; Plain: 0
+plain click 2  -&gt; Plain: 0
+plain click 3  -&gt; Plain: 0</code></pre>
+    <p>แต่ใน console ของเบราว์เซอร์ (ก็อปมาจริง) <strong>ตัวแปรเพิ่มขึ้นทุกครั้ง</strong>:</p>
+    <pre><code>[log] [PlainVar] count in memory = 1
+[log] [PlainVar] count in memory = 2
+[log] [PlainVar] count in memory = 3</code></pre>
+    <p style="margin-bottom:0">
+      นี่คือหัวใจของทั้งบท: <strong>ตัวแปรเปลี่ยนค่าได้ แต่ไม่มีใครไปบอกหน้าจอ</strong>
+      <br>React วาดหน้าจอด้วยการ<strong>เรียกฟังก์ชัน <code>PlainVar()</code></strong> แล้วเอาผลไปแปะ ·
+      ตราบใดที่ไม่มีใครสั่งให้เรียกใหม่ ภาพบนจอก็ค้างอยู่ที่รอบแรกตลอดไป
+      <br>แถมยังแย่กว่านั้น: ถ้าวันหนึ่ง React เรียกฟังก์ชันนี้ใหม่ด้วยเหตุอื่น
+      บรรทัด <code>let count = 0</code> จะทำงานอีกรอบ แล้วค่าที่บวกไว้ก็<strong>หายเกลี้ยง</strong>
+    </p>
+  </div>
+</div>
+
+<p>
+  สรุปว่าเราต้องการของที่ทำสองอย่างพร้อมกัน ซึ่งตัวแปรธรรมดาทำไม่ได้:
+</p>
+
+<ol>
+  <li><strong>จำค่าข้ามการวาด</strong> — วาดใหม่กี่รอบก็ยังจำได้ว่าตอนนี้เลขคือเท่าไหร่</li>
+  <li><strong>สั่งวาดใหม่</strong> — พอค่าเปลี่ยน ต้องมีใครไปเคาะ React ว่า "เรียกฟังก์ชันนี้ใหม่ที"</li>
+</ol>
+
+<p>ของชิ้นนั้นชื่อ <strong>state</strong> และประตูเข้าถึงมันชื่อ <code>useState()</code></p>
+
+<div class="analogy">
+  <span class="label">🧠 เทียบให้เห็นภาพ — state คือกระดานคะแนนหน้าสนาม ไม่ใช่กระดาษทดในกระเป๋า</span>
+  <p>
+    <code>let count</code> คือ<strong>กระดาษทดในกระเป๋าคุณ</strong> คุณขีดเพิ่มได้เรื่อย ๆ
+    แต่คนดูทั้งสนามไม่เห็นอะไรเลย และพอเปลี่ยนกะ คนใหม่มาก็หยิบกระดาษเปล่าใบใหม่มาเริ่มที่ 0
+    <br><strong>state คือกระดานคะแนนหน้าสนาม</strong> — พอคุณกดเปลี่ยนเลขบนกระดาน
+    ทุกคนที่มองอยู่เห็นพร้อมกันทันที และเลขยังอยู่ตรงนั้นแม้คุณจะเดินออกไปแล้วกลับมาใหม่
+    <br><strong>ที่ไม่เหมือนกัน:</strong> กระดานคะแนนจริงเปลี่ยนเลขทันทีที่กด แต่ <code>setCount()</code>
+    <strong>ไม่</strong>เปลี่ยนค่าให้ทันทีในบรรทัดถัดไป — มันแค่<em>สั่งจอง</em>ให้เปลี่ยนในรอบวาดถัดไป
+    (หัวข้อ 6 จะรันให้ดูว่ามันเจ็บยังไง) · และกระดานคะแนนมีอันเดียวทั้งสนาม
+    แต่ state เป็น<strong>ของใครของมันต่อ component แต่ละตัวที่ถูกวาง</strong>
+    วาง <code>&lt;Counter /&gt;</code> สามอัน ก็ได้เลขสามชุดที่ไม่ยุ่งกัน
+  </p>
+</div>
+
+<h2 id="sn-sec-2">2 · ก่อนแตะ useState ต้องรู้จัก 'use client' ก่อน (ไม่งั้น build พัง)</h2>
+
+<p>
+  ตรงนี้คือจุดที่คนเรียน Next.js สะดุดกันเกือบทุกคน และสไลด์ไม่ได้พูดถึงเลย
+  <br>ใน App Router ที่คุณเรียนมาตั้งแต่บท 70 <strong>ทุกไฟล์ใต้ <code>app/</code>
+  ถือเป็น Server Component โดยปริยาย</strong> — มันถูกรันบนเซิร์ฟเวอร์ แปลงเป็น HTML แล้วส่งไปให้เบราว์เซอร์
+  <br>ซึ่งบนเซิร์ฟเวอร์<strong>ไม่มีการกดปุ่ม ไม่มี event ไม่มีอะไรให้จำ</strong> → hook อย่าง
+  <code>useState</code> จึงเรียกในนั้นไม่ได้
+</p>
+
+<div class="predict">
+  <pre><code><span class="c">// app/t73/broken/page.tsx  — สังเกตว่า "ไม่มี" บรรทัด 'use client'</span>
+<span class="k">import</span> { useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export default function</span> <span class="f">BrokenCounter</span>() {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(<span class="n">0</span>);
+
+  <span class="k">return</span> (
+    &lt;button onClick={() =&gt; <span class="f">setCount</span>(count + <span class="n">1</span>)}&gt;
+      Count is {count}
+    &lt;/button&gt;
+  );
+}</code></pre>
+  <p class="ask">รัน <code>npx tsc --noEmit</code> แล้วรัน <code>npx next build</code> — แต่ละอันได้อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong><code>npx tsc --noEmit</code> — เงียบสนิท ผ่านฉลุย</strong> (exit code 0 ไม่มีข้อความอะไรเลย)
+      เพราะในสายตา TypeScript โค้ดนี้ถูกต้องทุกประการ</p>
+    <p><strong><code>npx next build</code> — พัง</strong> ข้อความเต็ม ๆ ที่ได้จริง:</p>
+    <pre><code>▲ Next.js 16.3.4 (Turbopack)
+
+  Creating an optimized production build ...
+
+&gt; Build error occurred
+Error: Turbopack build failed with 1 error:
+./app/t73/broken/page.tsx:1:10
+Error: You're importing a module that depends on `useState` into a
+React Server Component module. This API is only available in Client
+Components. To fix, mark the file (or its parent) with the
+`"use client"` directive.
+    Learn more: https://nextjs.org/docs/app/api-reference/directives/use-client
+&gt; 1 | import { useState } from 'react';
+    |          ^^^^^^^^
+  2 |
+  3 | export default function BrokenCounter() {
+  4 |   const [count, setCount] = useState(0);</code></pre>
+    <p style="margin-bottom:0">
+      อ่านให้ออกทีละท่อน: <em>"importing a module that depends on <code>useState</code>
+      into a React Server Component module"</em> = คุณเอาของที่ต้องใช้ <code>useState</code>
+      ไปใส่ไฟล์ที่ถือเป็นฝั่งเซิร์ฟเวอร์ · <em>"only available in Client Components"</em>
+      = ของชิ้นนี้มีให้ใช้แค่ฝั่งเบราว์เซอร์ · <em>"mark the file … with the <code>"use client"</code>
+      directive"</em> = วิธีแก้อยู่ในบรรทัดนี้แล้ว
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p><strong>⚠️ จุดที่ต้องจำให้ขึ้นใจ: <code>tsc</code> จับ error ตัวนี้ไม่ได้</strong></p>
+  <p style="margin-bottom:0">
+    ผมรัน <code>npx tsc --noEmit</code> กับไฟล์ที่ลืม <code>'use client'</code> แล้ว
+    <strong>มันไม่ด่าอะไรเลยสักคำ</strong> — เพราะเส้นแบ่ง server/client เป็นกฎของ
+    <strong>Next.js</strong> ไม่ใช่กฎของ TypeScript
+    <br>แปลว่า VS Code จะไม่ขีดเส้นแดงให้คุณ และมันจะไปโผล่ตอน build เท่านั้น
+    <br><strong>อย่าเชื่อว่า "ไม่มีเส้นแดง = โค้ดใช้ได้"</strong> ในโปรเจกต์ Next.js
+  </p>
+</div>
+
+<p>วิธีแก้คือเติมบรรทัดเดียวไว้<strong>บนสุดของไฟล์</strong> เหนือ <code>import</code> ทุกบรรทัด:</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ วางผิดที่ — ยัง build ไม่ผ่าน</h4>
+<pre><code><span class="k">import</span> { useState } <span class="k">from</span> <span class="s">'react'</span>;
+<span class="s">'use client'</span>;
+
+<span class="k">export default function</span> <span class="f">LateDirective</span>() {
+  <span class="k">const</span> [n, setN] = <span class="f">useState</span>(<span class="n">0</span>);
+  <span class="k">return</span> &lt;button onClick={() =&gt; <span class="f">setN</span>(n + <span class="n">1</span>)}&gt;Late: {n}&lt;/button&gt;;
+}</code></pre>
+    <p>ผลรันจริงได้ <strong>2 error พร้อมกัน</strong> อันแรกคือ
+      <code>The "use client" directive must be placed before other expressions.</code></p>
+  </div>
+  <div class="side good">
+    <h4>✅ บรรทัดแรกสุดของไฟล์ — build ผ่าน</h4>
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export default function</span> <span class="f">Counter</span>() {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(<span class="n">0</span>);
+  <span class="k">return</span> &lt;button onClick={() =&gt; <span class="f">setCount</span>(count + <span class="n">1</span>)}&gt;State: {count}&lt;/button&gt;;
+}</code></pre>
+    <p><code>npx next build</code> ได้ <code>✓ Compiled successfully</code>
+      แล้ว route <code>/t73</code> ขึ้นเป็น <code>○ (Static)</code></p>
+  </div>
+</div>
+
+<p>ข้อความ error เต็ม ๆ ของฝั่งซ้าย ก็อปมาจริงจาก <code>npx next build</code>:</p>
+
+<pre><code>Error: Turbopack build failed with 2 errors:
+./app/t73/late/page.tsx:2:1
+Error: The "use client" directive must be placed before other expressions.
+Move it to the top of the file to resolve this issue.
+  1 | import { useState } from 'react';
+&gt; 2 | 'use client';
+    | ^^^^^^^^^^^^^
+  3 |
+  4 | export default function LateDirective() {
+  5 |   const [n, setN] = useState(0);</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ ข่าวดี: ติดครั้งเดียวคุ้มทั้งกิ่ง</strong> — พอไฟล์ไหนติด <code>'use client'</code> แล้ว
+    component ที่ไฟล์นั้น <code>import</code> เข้ามาก็กลายเป็นฝั่ง client ตามไปด้วย
+    <br>ในตัวอย่างของบทนี้ ผมทำแบบที่ใช้กันจริงในโปรเจกต์: <strong><code>app/t73/page.tsx</code>
+    ยังเป็น Server Component ธรรมดาไม่ต้องติดอะไร</strong> แล้วให้ component เล็ก ๆ ใต้
+    <code>components/t73/</code> ติด <code>'use client'</code> ของใครของมัน
+    <br>ทำแบบนี้ JavaScript ที่ส่งไปเบราว์เซอร์จะน้อยกว่าการเหมาติดไว้บนสุดทั้งหน้า
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยกับ senior หรือ AI ได้เลย</span>
+  <dl>
+    <dt>Server Component</dt>
+    <dd>component ที่รันบนเซิร์ฟเวอร์แล้วส่งผลลัพธ์เป็น HTML ไปให้เบราว์เซอร์ ·
+      ใน App Router ทุกไฟล์เป็นแบบนี้โดยปริยาย ·
+      <em>พิมพ์บอก AI ได้ว่า</em> "ไฟล์นี้เป็น Server Component แต่ผมต้องใช้ useState ควรแยก component ไหนออกมาเป็น client?"</dd>
+    <dt>Client Component / <code>'use client'</code> directive</dt>
+    <dd>ไฟล์ที่ประกาศบรรทัดแรกว่า <code>'use client'</code> → โค้ดถูกส่งไปรันในเบราว์เซอร์ด้วย
+      จึงใช้ hook และ event ได้ ·
+      <em>ถาม senior ได้ว่า</em> "ตรงนี้ควรติด <code>'use client'</code> ที่ไฟล์ page เลย หรือแยกเป็น component เล็ก ๆ ดี?"</dd>
+    <dt>directive</dt>
+    <dd>สตริงเปล่า ๆ ที่วางไว้บนสุดของไฟล์แล้วมีความหมายพิเศษกับตัว build (ญาติของ <code>'use strict'</code> ใน JavaScript)
+      · คำสำคัญเวลาค้นหา error คือประโยค <code>must be placed before other expressions</code></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">3 · useState() — หน้าตาและวิธีอ่านมัน</h2>
+
+<p>สไลด์เขียนไว้บรรทัดเดียว และมันคือทั้งหมดที่ต้องจำ:</p>
+
+<pre><code><span class="k">const</span> [state, setState] = <span class="f">useState</span>(initialState);</code></pre>
+
+<p>อ่านจากขวาไปซ้าย จะเข้าใจง่ายที่สุด:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ชิ้นส่วน</th><th>สไลด์เรียกว่า</th><th>มันคืออะไรจริง ๆ</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>initialState</code></td><td>Initial state</td>
+      <td>ค่าตั้งต้น · ใช้<strong>เฉพาะรอบวาดแรกสุด</strong> รอบต่อ ๆ ไป React ไม่สนใจค่านี้แล้ว</td>
+    </tr>
+    <tr>
+      <td><code>state</code></td><td>Current state</td>
+      <td>ค่าปัจจุบัน <strong>ของรอบวาดนี้</strong> · อ่านอย่างเดียว ห้ามเขียนทับตรง ๆ</td>
+    </tr>
+    <tr>
+      <td><code>setState</code></td><td>Set function</td>
+      <td>ฟังก์ชันที่ใช้<strong>ขอ</strong>ให้เปลี่ยนค่า แล้ว React จะวาด component นี้ใหม่ให้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  วงเล็บก้ามปู <code>[state, setState]</code> ไม่ใช่ไวยากรณ์พิเศษของ React —
+  มันคือ <strong>array destructuring</strong> ตัวเดียวกับที่คุณใช้ในบท TypeScript
+  <br><code>useState</code> คืน array ยาว 2 ช่องเสมอ: ช่อง 0 คือค่า · ช่อง 1 คือฟังก์ชันเซ็ตค่า
+  แล้วเราตั้งชื่อสองช่องนั้นเองในบรรทัดเดียว
+</p>
+
+<pre><code><span class="c">// สองบรรทัดนี้ทำงานเหมือนกันเป๊ะ</span>
+<span class="k">const</span> [count, setCount] = <span class="f">useState</span>(<span class="n">0</span>);
+
+<span class="k">const</span> pair = <span class="f">useState</span>(<span class="n">0</span>);
+<span class="k">const</span> count = pair[<span class="n">0</span>];
+<span class="k">const</span> setCount = pair[<span class="n">1</span>];   <span class="c">// แค่ยาวกว่าและไม่มีใครเขียนแบบนี้</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>🧷 ธรรมเนียมการตั้งชื่อ:</strong> ชื่อช่องที่สองให้ขึ้นต้นด้วย <code>set</code> +
+    ชื่อช่องแรกขึ้นต้นตัวใหญ่เสมอ — <code>[count, setCount]</code> · <code>[name, setName]</code> ·
+    <code>[isOpen, setIsOpen]</code>
+    <br>ไม่ใช่กฎที่บังคับด้วยเครื่อง แต่ทุกโปรเจกต์ทำแบบนี้ ผิดธรรมเนียมแล้วคนอ่านสะดุด
+  </p>
+</div>
+
+<p>
+  อีกเรื่องที่ได้ฟรีเพราะเราเขียน TypeScript: <strong>type ของ state ถูกเดาจากค่าตั้งต้น</strong>
+  <br><code>useState(0)</code> → <code>count</code> เป็น <code>number</code> และ <code>setCount</code>
+  รับได้แค่ <code>number</code> · ลองยัดสตริงเข้าไปแล้วรัน <code>npx tsc --noEmit</code> ได้ผลจริงว่า:
+</p>
+
+<pre><code>components/t73/TypeSlip.tsx(7,42): error TS2345: Argument of type 'string'
+is not assignable to parameter of type 'SetStateAction&lt;number&gt;'.</code></pre>
+
+<p>
+  <code>SetStateAction&lt;number&gt;</code> ในข้อความนั้นแปลว่า "สิ่งที่ <code>setCount</code> รับได้"
+  ซึ่งมีสองแบบ: <strong>ตัวเลขตรง ๆ</strong> หรือ <strong>ฟังก์ชันที่รับเลขเก่าแล้วคืนเลขใหม่</strong>
+  — แบบที่สองคือพระเอกของหัวข้อ 6 จำชื่อนี้ไว้ก่อน
+</p>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยกับ senior หรือ AI ได้เลย</span>
+  <dl>
+    <dt>state</dt>
+    <dd>ค่าที่ component จำไว้ข้ามการวาด และเมื่อเปลี่ยนแล้วทำให้หน้าจอวาดใหม่ ·
+      <em>ถาม senior ได้ว่า</em> "ค่านี้ควรเป็น state หรือคำนวณสด ๆ จากของที่มีอยู่แล้วดีกว่า?"</dd>
+    <dt>hook</dt>
+    <dd>ฟังก์ชันของ React ที่ชื่อขึ้นต้นด้วย <code>use</code> และเรียกได้เฉพาะบนสุดของ component ·
+      <code>useState</code> คือตัวแรกที่คุณเจอ บทหน้าจะเจอ <code>useEffect</code> ·
+      <em>ค้นหาได้ด้วยคำว่า</em> "Rules of Hooks"</dd>
+    <dt>initial state</dt>
+    <dd>ค่าที่ส่งเข้า <code>useState(...)</code> · ใช้เฉพาะรอบวาดแรก ·
+      <em>พิมพ์บอก AI ได้ว่า</em> "ค่าตั้งต้นของ state นี้มาจาก props แต่พอ props เปลี่ยนแล้ว state ไม่ตาม ทำไม?"
+      (เป็นคำถามคลาสสิกที่เกิดจากการเข้าใจคำนี้ผิด)</dd>
+    <dt>array destructuring</dt>
+    <dd>ไวยากรณ์ <code>const [a, b] = someArray</code> ของ JavaScript/TypeScript ที่ใช้ตั้งชื่อสมาชิกในบรรทัดเดียว ·
+      ไม่ใช่ของ React — ถ้าอ่านบรรทัด <code>useState</code> ไม่ออก ให้ทวนเรื่องนี้ก่อน</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · เซ็ตค่าแล้วเกิดอะไรขึ้น — วงจรที่ต้องเห็นในหัว</h2>
+
+<p>
+  สไลด์วาดเป็นวงกลม 6 ขั้น หัวใจของมันคือประโยคเดียว:
+  <strong>เรียก set function → React เรียกฟังก์ชัน component นั้นใหม่ทั้งตัว → เอาผลไปแปะบนจอ</strong>
+</p>
+
+<div class="diagram"><pre>  คุณกดปุ่ม
+      │
+      ▼
+  setCount(1)                    ← คุณเขียนเอง
+      │
+      ▼
+  React จดไว้ว่า "count รอบหน้า = 1"
+      │
+      ▼
+  React เรียก Counter() ใหม่ทั้งฟังก์ชัน       ← "re-render"
+  (คราวนี้ useState(0) คืน count = 1 ให้)
+      │
+      ▼
+  ได้ JSX ก้อนใหม่ → React เทียบกับของเดิม
+      │
+      ▼
+  แก้เฉพาะจุดที่ต่างบนหน้าจอจริง               ← "commit"
+      │
+      └──► ค่าใหม่กลายเป็นค่าตั้งต้นของรอบถัดไป (วนกลับขึ้นบน)</pre></div>
+
+<p>
+  ประโยคที่สไลด์หน้า <em>useState()</em> เขียนไว้ตรงนี้สำคัญมาก:
+  <em>"When the value updates, React will re-run the function and re-render."</em>
+  <br>คำว่า <strong>re-run the function</strong> แปลตรงตัวว่า <strong>โค้ดทุกบรรทัดใน component นั้นถูกรันใหม่</strong>
+  รวมถึงบรรทัด <code>useState(0)</code> ด้วย — แต่คราวนี้ React ไม่ได้คืน 0 ให้ มันคืนค่าที่จดไว้
+</p>
+
+<p>ผมพิสูจน์ด้วยการวาง <code>console.log</code> ไว้<strong>นอก</strong> event handler แล้วกดปุ่ม 1 ครั้ง:</p>
+
+<pre><code><span class="c">// ก่อนกด (ตอนหน้าเว็บโหลดเสร็จ)</span>
+[log] render with name = Taylor
+
+<span class="c">// หลังกด 1 ครั้ง — ฟังก์ชันถูกเรียกใหม่จริง ๆ</span>
+[log] render with name = Robin</code></pre>
+
+<div class="analogy">
+  <span class="label">🧠 เทียบให้เห็นภาพ — re-render คือถ่ายรูปใหม่ ไม่ใช่ลบรอยดินสอ</span>
+  <p>
+    ถ้าคุณเขียนรายงานด้วยดินสอ แล้วอยากแก้เลข คุณจะ<strong>ลบแล้วเขียนทับ</strong> — นั่นคือวิธีของ
+    <code>let count = count + 1</code>
+    <br>React ไม่ทำแบบนั้น มัน<strong>ถ่ายรูปใหม่ทั้งหน้า</strong>จากข้อมูลชุดใหม่ แล้วเอาสองรูปมาทาบกัน
+    ว่าตรงไหนต่าง แล้วแก้เฉพาะตรงนั้นบนจอ
+    <br><strong>ที่ไม่เหมือนกัน:</strong> การถ่ายรูปใหม่ในชีวิตจริงแพงมาก แต่ React "ถ่าย" ในหน่วยความจำ
+    ซึ่งถูกจนถ่ายทุกครั้งที่กดปุ่มได้สบาย ๆ · และรูปเก่า<strong>ไม่ได้หายไปไหน</strong> —
+    ค่าในรูปเก่ายังถูกใช้ต่อโดยโค้ดที่กำลังรันค้างอยู่ ซึ่งเป็นต้นตอของกับดักสองอันถัดไปพอดี
+  </p>
+</div>
+
+<h2 id="sn-sec-5">5 · กับดัก 1: setCount(count + 1) สามครั้งติด ได้ +1 ไม่ใช่ +3</h2>
+
+<p>นี่คือกับดักที่เจอบ่อยที่สุดในโค้ดของมือใหม่ และมันไม่พังแบบมี error ให้เห็น — มันแค่<strong>ได้เลขผิด</strong></p>
+
+<div class="predict">
+  <pre><code><span class="s">'use client'</span>;
+<span class="k">import</span> { useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export default function</span> <span class="f">TripleStale</span>() {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(<span class="n">0</span>);
+
+  <span class="k">const</span> <span class="f">addThree</span> = () =&gt; {
+    <span class="f">setCount</span>(count + <span class="n">1</span>);
+    <span class="f">setCount</span>(count + <span class="n">1</span>);
+    <span class="f">setCount</span>(count + <span class="n">1</span>);
+  };
+
+  <span class="k">return</span> &lt;button onClick={addThree}&gt;Stale: {count}&lt;/button&gt;;
+}</code></pre>
+  <p class="ask">กดปุ่มนี้ 1 ครั้ง แล้ว 2 ครั้ง จะเห็นเลขอะไรบนจอ?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจากการกดจริง:</p>
+    <pre><code>start          -&gt; Stale: 0
+stale click 1  -&gt; Stale: 1     <span class="c">// ไม่ใช่ 3</span>
+stale click 2  -&gt; Stale: 2     <span class="c">// ไม่ใช่ 6</span></code></pre>
+    <p style="margin-bottom:0">
+      <strong>ได้ครั้งละ +1 ทั้งที่สั่ง <code>setCount</code> ถึงสามครั้ง</strong>
+      <br>เพราะในรอบวาดนั้น <code>count</code> เป็นค่านิ่ง ๆ ค่าเดียวคือ <code>0</code>
+      ทั้งสามบรรทัดจึงแปลได้ว่า <code>setCount(0 + 1)</code> · <code>setCount(0 + 1)</code> ·
+      <code>setCount(0 + 1)</code> — สั่งค่าเดิมสามหน ผลลัพธ์ก็คือ 1
+    </p>
+  </div>
+</div>
+
+<p>
+  ทางแก้คือส่ง<strong>ฟังก์ชัน</strong>ให้ <code>setCount</code> แทนที่จะส่งค่า
+  <br>ฟังก์ชันนั้นรับ "ค่าล่าสุดที่คิวรู้" เข้ามา แล้วคืนค่าใหม่ — React จะเอาแต่ละคิวมาต่อกันตามลำดับ
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ ส่งค่า — อ่าน count ของรอบเก่า</h4>
+<pre><code><span class="f">setCount</span>(count + <span class="n">1</span>);
+<span class="f">setCount</span>(count + <span class="n">1</span>);
+<span class="f">setCount</span>(count + <span class="n">1</span>);</code></pre>
+    <p>กด 1 ครั้งได้ <code>Stale: 1</code> · กด 2 ครั้งได้ <code>Stale: 2</code></p>
+  </div>
+  <div class="side good">
+    <h4>✅ ส่งฟังก์ชัน — รับค่าล่าสุดเข้ามา</h4>
+<pre><code><span class="f">setCount</span>((c) =&gt; c + <span class="n">1</span>);
+<span class="f">setCount</span>((c) =&gt; c + <span class="n">1</span>);
+<span class="f">setCount</span>((c) =&gt; c + <span class="n">1</span>);</code></pre>
+    <p>กด 1 ครั้งได้ <code>Updater: 3</code> · กด 2 ครั้งได้ <code>Updater: 6</code></p>
+  </div>
+</div>
+
+<p>ผลรันจริงของทั้งสองปุ่ม กดสลับกันในหน้าเดียวกัน:</p>
+
+<pre><code>stale click 1    -&gt; Stale: 1
+stale click 2    -&gt; Stale: 2
+updater click 1  -&gt; Updater: 3
+updater click 2  -&gt; Updater: 6</code></pre>
+
+<div class="warn">
+  <p><strong>⚠️ อย่าเหมาเปลี่ยนทุกที่เป็น <code>(c) =&gt; c + 1</code> เพราะกลัวผิด</strong></p>
+  <p style="margin-bottom:0">
+    ใช้แบบส่งฟังก์ชัน<strong>เมื่อค่าใหม่คำนวณจากค่าเก่า</strong> — บวก ลบ สลับ true/false
+    ต่อท้าย array
+    <br>ถ้าค่าใหม่ไม่เกี่ยวกับค่าเก่าเลย เช่น <code>setName('Robin')</code> หรือ
+    <code>setCount(0)</code> ตอนกดปุ่มรีเซ็ต — เขียนส่งค่าตรง ๆ อ่านง่ายกว่ามาก
+    <br>สังเกตว่าโค้ดในสไลด์หน้า <em>State of Counter</em> ก็ใช้แบบส่งฟังก์ชัน
+    (<code>setCount((count) =&gt; count + 1)</code>) เพราะเป็นการบวกจากค่าเก่าพอดี
+  </p>
+</div>
+
+<h2 id="sn-sec-6">6 · กับดัก 2: เซ็ตแล้วบรรทัดถัดไปยังเห็นค่าเก่า</h2>
+
+<p>สไลด์หน้า <em>useState() Pitfall</em> เขียนเตือนไว้ตรง ๆ ว่า
+  <em>"Calling the set function does NOT change the current state in the already executing code"</em>
+  — เรามารันดูว่ามันจริงแค่ไหน</p>
+
+<div class="predict">
+  <pre><code><span class="s">'use client'</span>;
+<span class="k">import</span> { useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export default function</span> <span class="f">LogAfterSet</span>() {
+  <span class="k">const</span> [name, setName] = <span class="f">useState</span>(<span class="s">'Taylor'</span>);
+
+  <span class="k">const</span> <span class="f">handleClick</span> = () =&gt; {
+    <span class="f">setName</span>(<span class="s">'Robin'</span>);
+    console.<span class="f">log</span>(<span class="s">'name right after setName ='</span>, name);
+  };
+
+  console.<span class="f">log</span>(<span class="s">'render with name ='</span>, name);
+
+  <span class="k">return</span> &lt;button onClick={handleClick}&gt;Name: {name}&lt;/button&gt;;
+}</code></pre>
+  <p class="ask">กด 1 ครั้ง — console จะพิมพ์อะไรบ้าง เรียงยังไง? และปุ่มจะเขียนว่าอะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>console จริงหลังกด 1 ครั้ง (ก็อปมาตามลำดับที่ออกมาจริง):</p>
+    <pre><code>[log] name right after setName = Taylor
+[log] render with name = Robin</code></pre>
+    <p>และข้อความบนปุ่มเปลี่ยนเป็น <code>Name: Robin</code> เรียบร้อย</p>
+    <p style="margin-bottom:0">
+      อ่านสองบรรทัดนี้ให้ขาด: บรรทัดใน <code>handleClick</code> ยังเห็น <code>Taylor</code>
+      <strong>ทั้งที่เพิ่งสั่ง <code>setName('Robin')</code> ไปหนึ่งบรรทัดก่อนหน้า</strong>
+      <br>แล้ว <code>Robin</code> ถึงโผล่ในบรรทัดที่รันตอน<strong>วาดรอบใหม่</strong>
+      <br>เพราะ <code>name</code> ในรอบวาดนี้เป็นค่าที่ถูกล็อกไว้แล้วตั้งแต่ตอน React เรียกฟังก์ชัน —
+      <code>setName</code> ไม่ได้ไปแก้ตัวแปรตัวนั้น มันแค่ขอให้มี<strong>รอบวาดใหม่</strong>ที่ค่าเป็น Robin
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🧠 เทียบให้เห็นภาพ — set function คือส่งใบคำร้อง ไม่ใช่แก้เอกสารในมือ</span>
+  <p>
+    ตอน React เรียกฟังก์ชัน component มันยื่น<strong>เอกสารสำเนา</strong>ที่พิมพ์ค่าปัจจุบันไว้แล้วให้คุณถือ
+    <br><code>setName('Robin')</code> คือคุณ<strong>ส่งใบคำร้องเข้าไปที่ออฟฟิศ</strong>ว่าขอเปลี่ยนชื่อ
+    — สำเนาที่คุณถืออยู่ในมือ<strong>ยังพิมพ์ว่า Taylor เหมือนเดิม</strong> เพราะออฟฟิศไม่ได้วิ่งมาแก้กระดาษในมือคุณ
+    เดี๋ยวเขาจะพิมพ์<strong>สำเนาใบใหม่</strong>มาให้ตอนรอบหน้า
+    <br><strong>ที่ไม่เหมือนกัน:</strong> ใบคำร้องจริงต้องรอเป็นวัน แต่ของ React เสร็จภายในเสี้ยววินาที
+    เร็วจนคุณเห็นเลขเปลี่ยนทันทีที่ปล่อยนิ้ว · และถ้าส่งใบคำร้องหลายใบในคลิกเดียว
+    ออฟฟิศจะ<strong>รวบทำทีเดียว</strong> (batching) ไม่ได้ทำทีละใบแล้ววาดจอทีละรอบ —
+    ซึ่งเป็นเหตุผลเดียวกับที่หัวข้อ 5 ได้ +1 ไม่ใช่ +3
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยกับ senior หรือ AI ได้เลย</span>
+  <dl>
+    <dt>re-render</dt>
+    <dd>การที่ React เรียกฟังก์ชัน component ใหม่ทั้งตัวเพราะ state (หรือ props) เปลี่ยน ·
+      <em>ถาม senior ได้ว่า</em> "component นี้ re-render บ่อยเกินไปไหม ตรงไหนที่ควรย้าย state ลงไปข้างล่าง?"</dd>
+    <dt>state ของรอบวาด (snapshot) / stale state</dt>
+    <dd>ค่าที่ถูกล็อกไว้ตั้งแต่ต้นรอบวาด · ถ้าโค้ดไปอ่านค่าเก่าแล้วคำนวณผิด ฝรั่งเรียกอาการนั้นว่า
+      <em>stale state</em> ·
+      <em>พิมพ์บอก AI ได้ว่า</em> "ปุ่มนี้บวกทีละ 1 ทั้งที่เรียก setCount สามครั้ง น่าจะเป็น stale state ช่วยดูให้หน่อย"</dd>
+    <dt>updater function</dt>
+    <dd>รูปแบบ <code>setCount((c) =&gt; c + 1)</code> ที่ส่งฟังก์ชันเข้าไปแทนค่า ·
+      คือคำตอบมาตรฐานของอาการ stale state ·
+      <em>ค้นหาได้ด้วยคำว่า</em> "React updater function form of setState"</dd>
+    <dt>batching</dt>
+    <dd>การที่ React รวบ <code>setState</code> หลายครั้งในเหตุการณ์เดียวไว้วาดจอรอบเดียว ·
+      เป็นเหตุผลที่กดปุ่มทีเดียวแล้วหน้าไม่กระพริบสามรอบ</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">7 · state หลายตัวในหนึ่ง component</h2>
+
+<p>
+  เรียก <code>useState</code> กี่ครั้งก็ได้ในหนึ่ง component แต่ละครั้งได้กล่องเก็บค่า<strong>คนละใบ</strong>
+  ไม่ยุ่งกัน — ตรงตามที่สไลด์หน้า <em>useState() Usage</em> แสดงไว้
+</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export default function</span> <span class="f">Profile</span>() {
+  <span class="k">const</span> [age, setAge] = <span class="f">useState</span>(<span class="n">10</span>);
+  <span class="k">const</span> [name, setName] = <span class="f">useState</span>(<span class="s">'Taylor'</span>);
+
+  <span class="k">return</span> (
+    &lt;div&gt;
+      &lt;button onClick={() =&gt; <span class="f">setAge</span>(age + <span class="n">1</span>)}&gt;Age: {age}&lt;/button&gt;
+      &lt;button onClick={() =&gt; <span class="f">setName</span>(<span class="s">'Robin'</span>)}&gt;Who: {name}&lt;/button&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+<p>กดจริงสลับกัน ได้ผลว่าอีกตัวไม่ถูกแตะเลย:</p>
+
+<pre><code>start                -&gt; Age: 10 | Who: Taylor
+after age click      -&gt; Age: 11 | Who: Taylor
+after age click 2    -&gt; Age: 12 | Who: Taylor
+after name click     -&gt; Age: 12 | Who: Robin</code></pre>
+
+<div class="note">
+  <p><strong>🧷 แล้ว React รู้ได้ยังไงว่า <code>useState</code> ตัวไหนคือตัวไหน?</strong></p>
+  <p style="margin-bottom:0">
+    มันจำด้วย<strong>ลำดับการเรียก</strong> — ตัวแรกคือช่อง 1 ตัวที่สองคือช่อง 2 ทุกรอบวาดต้องเรียงเหมือนเดิมเป๊ะ
+    <br>นี่คือเหตุผลของกฎที่คุณจะเจอในบทถัดไป: <strong>ห้ามเรียก hook ใน <code>if</code> หรือใน loop</strong>
+    เพราะบางรอบเรียก 2 ตัว บางรอบเรียก 1 ตัว แล้วช่องจะเลื่อนกันมั่ว
+    <br>บทนี้ยังไม่ลงรายละเอียด แค่จำไว้ว่า <strong><code>useState</code> ต้องอยู่บนสุดของ component เสมอ</strong>
+  </p>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ เกร็ดที่เห็นจากผลรันจริง</strong> — ตอน <code>npx next build</code> ผมเห็นบรรทัดนี้โผล่มาระหว่างสร้างหน้า:
+    <br><code>render with name = Taylor</code> (มาจาก <code>console.log</code> ใน <code>LogAfterSet</code>)
+    <br>แปลว่า Client Component <strong>ก็ถูกรันบนเซิร์ฟเวอร์หนึ่งรอบ</strong>เหมือนกัน เพื่อสร้าง HTML ชุดแรก
+    ส่งไปให้เบราว์เซอร์เห็นภาพเร็ว ๆ ก่อน แล้ว JavaScript ค่อยตามไปทำให้มันกดได้
+    <br>คำว่า <code>'use client'</code> จึงไม่ได้แปลว่า "รันเฉพาะบนเบราว์เซอร์" แต่แปลว่า
+    "<strong>ส่งโค้ดนี้ไปเบราว์เซอร์ด้วย</strong>" — ต่างกันนิดเดียวแต่คนละเรื่อง
+  </p>
+</div>
+
+<h2 id="sn-sec-8">8 · ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ไฟล์ที่เรียก <code>useState</code> โดยไม่มี <code>'use client'</code> ทำให้ <code>next build</code> พัง เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">เพราะ TypeScript ไม่รู้จัก <code>useState</code> ต้อง import จาก <code>next/react</code> แทน</button>
+    <button class="opt">เพราะไฟล์ใต้ <code>app/</code> ถือเป็น Server Component โดยปริยาย ซึ่งเรียก hook ไม่ได้</button>
+    <button class="opt">เพราะ Turbopack ยังไม่รองรับ hook ต้องสั่งให้กลับไปใช้ webpack ก่อน</button>
+    <button class="opt">เพราะชื่อฟังก์ชัน component ต้องขึ้นต้นด้วยตัวพิมพ์ใหญ่ ไม่งั้น hook ใช้ไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · ข้อความ error จริงเขียนว่า
+      <em>"You're importing a module that depends on <code>useState</code> into a React Server Component module.
+      This API is only available in Client Components."</em>
+      <br>และสังเกตว่า <code>npx tsc --noEmit</code> กับไฟล์เดียวกันนี้<strong>ผ่านเงียบ ๆ</strong>
+      เพราะเส้นแบ่ง server/client เป็นกฎของ Next.js ไม่ใช่ของ TypeScript</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">component มี <code>count</code> เป็น 0 อยู่ แล้ว handler เรียก <code>setCount(count + 1)</code> ติดกันสามบรรทัด · กดหนึ่งครั้งได้เลขอะไร?</p>
+  <div class="opts">
+    <button class="opt">0 เพราะ React มองว่าสั่งซ้ำสามครั้งจึงยกเลิกทั้งชุดทิ้ง</button>
+    <button class="opt">1 เพราะทั้งสามบรรทัดอ่าน <code>count</code> ตัวเดียวกันของรอบวาดนี้ซึ่งเป็น 0</button>
+    <button class="opt">3 เพราะ <code>setCount</code> เปลี่ยนค่าให้ทันทีทีละบรรทัดตามลำดับ</button>
+    <button class="opt">3 เพราะ React เรียกฟังก์ชัน component ใหม่ทุกครั้งที่เจอ <code>setCount</code></button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · ผลกดจริงคือ <code>Stale: 1</code> แล้วกดอีกครั้งได้ <code>Stale: 2</code>
+      <br>ทั้งสามบรรทัดแปลได้เป็น <code>setCount(0 + 1)</code> เหมือนกันหมด
+      <br>ถ้าอยากได้ +3 ต้องเขียน <code>setCount((c) =&gt; c + 1)</code> ซึ่งกดจริงแล้วได้
+      <code>Updater: 3</code> และ <code>Updater: 6</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ใน handler เขียน <code>setName('Robin')</code> แล้วบรรทัดถัดไปเขียน <code>console.log(name)</code> · console พิมพ์อะไร?</p>
+  <div class="opts">
+    <button class="opt">Robin เพราะ <code>setName</code> เขียนทับค่าให้ทันทีตั้งแต่บรรทัดที่เรียก</button>
+    <button class="opt">Taylor เพราะ <code>name</code> ของรอบวาดนี้ถูกล็อกค่าไว้แล้วตั้งแต่ต้นรอบ</button>
+    <button class="opt">undefined เพราะ <code>setName</code> ล้างค่าเดิมทิ้งก่อนแล้วค่อยใส่ค่าใหม่</button>
+    <button class="opt">พิมพ์สองบรรทัดทั้ง Taylor และ Robin เพราะ React วาดซ้ำให้อัตโนมัติ</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · console จริงได้
+      <code>name right after setName = Taylor</code> ก่อน แล้วบรรทัดที่รันตอนวาดรอบใหม่ถึงได้
+      <code>render with name = Robin</code>
+      <br>ตรงกับกล่อง <em>Warning</em> ในสไลด์หน้า <em>useState() Pitfall</em> ที่บอกว่า set function
+      มีผลตั้งแต่ <em>next render</em> เป็นต้นไปเท่านั้น</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ควรวาง <code>'use client'</code> ตรงไหน?</p>
+  <div class="opts">
+    <button class="opt">บรรทัดแรกสุดของไฟล์ที่เรียก hook — ต้องอยู่เหนือ <code>import</code> ทุกบรรทัด</button>
+    <button class="opt">ตรงไหนก็ได้ในไฟล์นั้น ขอแค่มีข้อความนี้อยู่ในไฟล์ก็พอ</button>
+    <button class="opt">ใน <code>next.config.ts</code> ครั้งเดียว แล้วมีผลกับทั้งโปรเจกต์เลย</button>
+    <button class="opt">บรรทัดแรกของ <code>app/layout.tsx</code> ไฟล์เดียว แล้วทุกหน้าได้ตาม</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 1 ถูก · ผมลองวางไว้<strong>ใต้</strong> <code>import</code> แล้ว build ได้ error จริงว่า
+      <code>The "use client" directive must be placed before other expressions. Move it to the top of the file to resolve this issue.</code>
+      (แถมได้ error ตัวเดิมของหัวข้อ 2 พ่วงมาด้วย รวมเป็น 2 error)
+      <br>ส่วนตัวเลือกที่ 4 ทำได้จริงแต่<strong>ไม่ควรทำ</strong> เพราะจะลากทั้งหน้าไปเป็น client
+      แล้วส่ง JavaScript ไปเบราว์เซอร์เกินจำเป็น</p>
+  </div>
+</div>
+
+<div class="task">
+  <span class="label">🛠️ ภารกิจ — ทำให้ build พังให้ได้ 2 แบบ แล้วเขียนไฟล์พิสูจน์ว่าตัวนับของคุณบวกถูก</span>
+  <p>
+    เป้าหมายไม่ใช่ก๊อปโค้ดในบทนี้ไปวางแล้วรันผ่าน — เป้าหมายคือ
+    <strong>สั่งให้มันพังในแบบที่คุณเลือกได้ อ่าน error ออก แล้วพิสูจน์ผลลัพธ์ด้วยเครื่อง ไม่ใช่ด้วยตา</strong>
+  </p>
+  <ol>
+    <li><strong>ตั้งโครง:</strong> ในโปรเจกต์ Next.js ของคุณ สร้าง <code>app/counter/page.tsx</code>
+      แล้ว <code>npx next build</code> ให้ผ่านหนึ่งรอบก่อน จะได้รู้ว่าจุดตั้งต้นไม่พัง</li>
+    <li><strong>พังแบบที่ 1 — ลืม <code>'use client'</code>:</strong> เขียนปุ่มนับเลขด้วย <code>useState</code>
+      โดย<strong>ไม่</strong>ใส่ directive แล้วรัน <code>npx tsc --noEmit</code> ก่อน จากนั้นรัน <code>npx next build</code>
+      <br><strong>จดผลของทั้งสองคำสั่ง</strong> — ต้องเห็นด้วยตาว่า <code>tsc</code> เงียบ แต่ <code>next build</code> ด่า</li>
+    <li><strong>พังแบบที่ 2 — วาง directive ผิดที่:</strong> ย้าย <code>'use client'</code>
+      ไปไว้<strong>ใต้</strong>บรรทัด <code>import</code> แล้ว build อีกครั้ง
+      <br>จดว่าคราวนี้ได้ error <strong>กี่อัน</strong> และอันแรกเขียนว่าอะไร</li>
+    <li><strong>ทำให้กับดัก +1 เกิดกับตัวเอง:</strong> เขียนปุ่มที่เรียก <code>setCount(count + 1)</code>
+      สามบรรทัดติด กด 2 ครั้ง แล้ว<strong>จดเลขที่เห็นจริงบนจอ</strong>
+      <br>แล้วแก้เป็น <code>setCount((c) =&gt; c + 1)</code> กด 2 ครั้งใหม่ · <strong>ตัวเลขต้องต่างกัน</strong>
+      ถ้าได้เท่ากันแปลว่าแก้ไม่ติด ให้เช็คว่าเซฟไฟล์แล้วหรือยัง</li>
+    <li><strong>เขียนไฟล์พิสูจน์ (ข้อที่ห้ามข้าม):</strong> แยกตรรกะการบวกออกมาเป็นฟังก์ชันธรรมดา
+      ที่<strong>ไม่มี React ปน</strong> เช่น <code>lib/counter.ts</code>:
+      <br><code>export const addThree = (c: number) =&gt; c + 1 + 1 + 1;</code>
+      <br>แล้วให้ component เรียก <code>setCount(addThree)</code> แทน
+      <br>จากนั้นเขียน <code>check.ts</code> ที่ตรวจแบบนี้อย่างน้อย 4 เคส (รวมเคส 0 และเคสเลขติดลบ):
+      <br><code>if (addThree(0) !== 3) { throw new Error("เคส 0 พัง"); }</code>
+      <br>คอมไพล์แล้วรันด้วย <code>node</code>
+      <br><strong>เกณฑ์ผ่าน: รันแล้วเงียบสนิท และ <code>echo $?</code> ได้ <code>0</code> ·
+        และ <code>npx next build</code> ยังผ่าน</strong>
+      <br>ถ้าได้ <code>1</code> แปลว่า<strong>ค่าที่คุณคาดไว้ผิด ไม่ใช่โปรแกรมผิด</strong> — กลับไปอ่านหัวข้อ 5 ใหม่</li>
+  </ol>
+  <button class="reveal">ดูเกณฑ์ตรวจตัวเอง</button>
+  <div class="answer">
+    <p>ถ้าทำครบ คุณควรตอบสี่คำถามนี้ได้โดยไม่ต้องเปิดบทเรียน:</p>
+    <ul>
+      <li>ทำไม <code>tsc</code> ถึงไม่จับ error ของ <code>'use client'</code> ให้ — <em>เพราะเป็นกฎของ Next.js ไม่ใช่ของ TypeScript</em></li>
+      <li>ทำไม <code>setCount(count + 1)</code> สามครั้งได้ +1 — <em>เพราะ <code>count</code> ของรอบวาดนั้นเป็นค่านิ่งค่าเดียว</em></li>
+      <li>ทำไมแยกตรรกะออกมาเป็นฟังก์ชันธรรมดาแล้วเทสง่ายขึ้น — <em>เพราะไม่ต้องมีเบราว์เซอร์ ไม่ต้องมี React ก็รันมันได้</em></li>
+      <li>ควรติด <code>'use client'</code> ที่ไฟล์ไหน ถ้าอยากส่ง JavaScript ไปเบราว์เซอร์ให้น้อยที่สุด —
+        <em>ที่ component เล็กที่สุดที่ต้องใช้ hook จริง ๆ ไม่ใช่ที่ layout</em></li>
+    </ul>
+    <p style="margin-bottom:0">
+      ติดตรงไหน <strong>ถามกลับมาได้เลย</strong> — เอา error ทั้งก้อนมาวางพร้อมบอกว่าคุณคาดว่าจะได้อะไร
+      แล้วได้อะไรแทน จะตอบได้ตรงจุดกว่าถามว่า "ทำไมมันไม่ทำงาน" เยอะมาก
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">9 · สรุปสั้น ๆ ก่อนไปบทหน้า</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>คำถาม</th><th>คำตอบที่พิสูจน์แล้วในบทนี้</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>ทำไมแก้ <code>let count</code> แล้วจอไม่เปลี่ยน</td>
+        <td>ตัวแปรเปลี่ยนจริง (console เห็น 1 2 3) แต่ไม่มีใครสั่งให้ React วาดใหม่ จอเลยค้างที่ 0</td></tr>
+    <tr><td><code>useState</code> คืนอะไร</td>
+        <td>array 2 ช่อง — ค่าปัจจุบันของรอบวาดนี้ กับฟังก์ชันขอเปลี่ยนค่า</td></tr>
+    <tr><td>ลืม <code>'use client'</code> จะรู้ได้ยังไง</td>
+        <td>รู้ตอน <code>next build</code> เท่านั้น · <code>tsc</code> ผ่านเงียบ ๆ ไม่เตือนเลย</td></tr>
+    <tr><td><code>setCount(count+1)</code> สามครั้ง</td>
+        <td>ได้ +1 (<code>Stale: 1</code> แล้ว <code>2</code>) · ต้องใช้ <code>(c) =&gt; c + 1</code> ถึงได้ +3</td></tr>
+    <tr><td>อ่าน state ต่อจาก set ในบรรทัดถัดไป</td>
+        <td>ได้ค่าเก่าเสมอ — <code>Taylor</code> ทั้งที่เพิ่งสั่ง <code>setName('Robin')</code></td></tr>
+    <tr><td>มี state หลายตัวได้ไหม</td>
+        <td>ได้ ไม่จำกัด แต่ละตัวแยกกันสนิท · แต่ต้องเรียกบนสุดของ component ตามลำดับเดิมทุกรอบ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  บทหน้าจะเจอ hook ตัวที่สอง — <code>useEffect</code> — ซึ่งเอาไว้สั่งให้ทำอะไรบางอย่าง
+  <strong>หลัง</strong>หน้าวาดเสร็จ และมันมีกับดักหนักกว่าบทนี้อีก โดยเฉพาะการวนไม่รู้จบ
+  ที่เกิดจากการเรียก <code>setState</code> ผิดที่ — ซึ่งจะเข้าใจได้ก็ต่อเมื่อคุณเข้าใจวงจร re-render ของบทนี้แล้ว
+</p>
+
+<nav class="nav">
+  <a href="./0072-tailwindcss.html">← บทเรียน 72 · Tailwind CSS</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Next.js</a>
+  <a href="./0074-useeffect.html">บทเรียน 74 → useEffect</a>
+</nav>
+
+<h2 id="sn-sec-10">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://react.dev/reference/react/useState">React — <code>useState</code> reference</a> —
+      <strong>อ่านหัวข้อ <em>Caveats</em> ของ <code>set</code> function</strong> ที่เขียนไว้ตรง ๆ ว่า
+      มันไม่เปลี่ยนค่าในโค้ดที่กำลังรันอยู่ · แล้วเลื่อนลงไปอ่าน
+      <em>"I've updated the state, but logging gives me the old value"</em> ในหัวข้อ
+      <em>Troubleshooting</em> — คืออาการเป๊ะ ๆ ของหัวข้อ 6 ในบทนี้</li>
+  <li><a href="https://react.dev/learn/state-as-a-snapshot">React — State as a Snapshot</a> —
+      <strong>อ่านหัวข้อ <em>Rendering takes a snapshot in time</em></strong>
+      ซึ่งอธิบายว่าทำไม <code>count</code> ในหนึ่งรอบวาดถึงเป็นค่านิ่ง ๆ ค่าเดียว
+      นี่คือรากของกับดักทั้งสองอันในบทนี้</li>
+  <li><a href="https://react.dev/learn/queueing-a-series-of-state-updates">React — Queueing a Series of State Updates</a> —
+      <strong>อ่านหัวข้อ <em>React batches state updates</em> ต่อด้วย
+      <em>Updating the same state multiple times before the next render</em></strong>
+      แล้วดูตารางไล่คิวทีละบรรทัด จะเห็นชัดว่าทำไม <code>setNumber(number + 1)</code> สามครั้งถึงได้ +1
+      แต่ <code>setNumber(n =&gt; n + 1)</code> ได้ +3</li>
+  <li><a href="https://nextjs.org/docs/app/api-reference/directives/use-client">Next.js — <code>'use client'</code> directive</a> —
+      <strong>ลิงก์นี้ Next.js พิมพ์ให้เองในข้อความ error ตอน build</strong> ·
+      อ่านหัวข้อ <em>Reference</em> ที่บอกว่าต้องวางบรรทัดบนสุด แล้วอ่านต่อเรื่อง
+      <em>How <code>'use client'</code> works</em> เพื่อดูว่าทำไมติดที่ไฟล์เดียวแล้วกิ่งที่ import ต่อกลายเป็น client ตามไปด้วย</li>
+  <li><a href="https://react.dev/learn/render-and-commit">React — Render and Commit</a> —
+      <strong>อ่านสามขั้น <em>Trigger → Render → Commit</em></strong> ให้จบ
+      แล้วเทียบกับแผนภาพในหัวข้อ 4 ของบทนี้ · จะได้เห็นว่าคำว่า "re-render" ในบทสนทนาจริง
+      มักหมายถึงแค่ขั้นที่สอง ไม่ได้แปลว่าหน้าจอถูกวาดใหม่ทั้งหน้า</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

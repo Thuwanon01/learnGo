@@ -234,6 +234,46 @@
   ใช้กับ: บท 67 · **อ่านหัวข้อ "Exceptions"** — เป็นที่เดียวที่บอกตรง ๆ ว่า
   array ว่าง + ไม่ใส่ค่าเริ่มต้น = `TypeError`
 
+## Frontend — Next.js และ React hooks (บทเรียน 69–78)
+
+ทุกลิงก์ในหัวข้อนี้ตรวจแล้วว่าได้ HTTP 200 เมื่อ 5 ก.ย. 2026
+เวอร์ชันที่ใช้ตรวจบทเรียน: **next 16.3.4 · react 19.2.8 · tailwindcss 4 · node v24.14.0**
+
+### Next.js (ทางการ)
+
+- [Project structure](https://nextjs.org/docs/app/getting-started/project-structure)
+  ใช้กับ: บท 70 · **อ่านหัวข้อ "Top-level folders" และ "Routing files"**
+  จะเห็นว่าชื่อไฟล์อย่าง `page.tsx` / `layout.tsx` เป็นชื่อที่ framework จองไว้ ไม่ใช่ชื่อที่เราตั้งเอง
+
+- [Server and Client Components](https://nextjs.org/docs/app/getting-started/server-and-client-components)
+  ใช้กับ: บท 73 เป็นต้นไป · **หัวข้อที่ต้องอ่านคือ "When to use Server and Client Components"**
+  เป็นตารางที่ตอบคำถาม "ต้องใส่ `'use client'` ไหม" ได้เร็วที่สุด
+
+- [`'use client'` directive](https://nextjs.org/docs/app/api-reference/directives/use-client)
+  ใช้กับ: บท 73 · อ่านเพื่อดูว่ามันไม่ได้แปลว่า "รันเฉพาะบนเบราว์เซอร์"
+
+### React hooks (ทางการ — ทีม React เขียนเอง)
+
+- [`useState`](https://react.dev/reference/react/useState) — บท 73 ·
+  **อ่านหัวข้อ "I've updated the state, but logging gives me the old value"**
+  ซึ่งเป็นคำถามแรกที่ทุกคนถาม
+- [`useEffect`](https://react.dev/reference/react/useEffect) — บท 74 ·
+  **อ่าน "My Effect runs twice when the component mounts"** เพื่อเข้าใจ Strict Mode
+- [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect) — บท 74 ·
+  อ่านก่อนเขียน `useEffect` ทุกครั้ง ส่วนใหญ่ไม่ต้องใช้
+- [`useMemo`](https://react.dev/reference/react/useMemo) · [`useCallback`](https://react.dev/reference/react/useCallback)
+  — บท 75 · **อ่านหัวข้อ "Should you add useMemo everywhere?"** คำตอบคือไม่
+- [`useContext`](https://react.dev/reference/react/useContext) — บท 76 ·
+  อ่าน "Before you use context" ก่อน มีทางอื่นที่ง่ายกว่าอยู่
+- [Reusing Logic with Custom Hooks](https://react.dev/learn/reusing-logic-with-custom-hooks) — บท 77 ·
+  **อ่าน "Custom Hooks let you share stateful logic, not state itself"** ซึ่งคือกฎข้อที่คนเข้าใจผิดบ่อยที่สุด
+
+### อื่น ๆ
+
+- [Tailwind — Styling with utility classes](https://tailwindcss.com/docs/styling-with-utility-classes) — บท 72
+- [Mantine Hooks](https://mantine.dev/hooks/package/) — บท 77 · สไลด์แนะนำเอง ·
+  เอาไว้ดูว่า custom hook ที่คนอื่นเขียนไว้แล้วหน้าตาเป็นยังไง
+
 ## Wisdom (Communities)
 
 - [r/golang](https://www.reddit.com/r/golang/)

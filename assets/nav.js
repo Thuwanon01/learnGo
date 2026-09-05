@@ -124,6 +124,19 @@
       { n: '66', f: 'fe-ts-fp/lessons/0066-string-array-transform.html', t: 'แปลงข้อมูล: join, split, slice' },
       { n: '67', f: 'fe-ts-fp/lessons/0067-map-filter-reduce.html', t: 'map, filter, reduce' },
       { n: '68', f: 'fe-ts-fp/lessons/0068-fp-workshop.html', t: 'โจทย์ 4 ข้อจากสไลด์' }
+    ]},
+    { key: 'fe-nextjs', btn: 'Next.js', where: 'Next.js',
+      sheetLabel: 'Cheat sheet Next.js', d: 103, lessons: [
+      { n: '69', f: 'fe-nextjs/lessons/0069-nextjs-intro.html', t: 'Next.js คืออะไร และทำไมไม่ใช่ React เปล่า ๆ' },
+      { n: '70', f: 'fe-nextjs/lessons/0070-nextjs-setup-and-folders.html', t: 'ติดตั้ง และอ่านโครงโฟลเดอร์ให้ออก' },
+      { n: '71', f: 'fe-nextjs/lessons/0071-first-component-and-props.html', t: 'component แรก และ props' },
+      { n: '72', f: 'fe-nextjs/lessons/0072-tailwindcss.html', t: 'Tailwind CSS: เขียน CSS โดยไม่ต้องตั้งชื่อ class' },
+      { n: '73', f: 'fe-nextjs/lessons/0073-usestate.html', t: 'useState: ทำให้หน้าเว็บจำค่าได้' },
+      { n: '74', f: 'fe-nextjs/lessons/0074-useeffect.html', t: 'useEffect: ทำอะไรหลังหน้าวาดเสร็จ' },
+      { n: '75', f: 'fe-nextjs/lessons/0075-usememo-usecallback.html', t: 'useMemo และ useCallback' },
+      { n: '76', f: 'fe-nextjs/lessons/0076-usecontext.html', t: 'useContext: ส่งค่าข้ามหลายชั้น' },
+      { n: '77', f: 'fe-nextjs/lessons/0077-custom-hooks.html', t: 'custom hooks และกฎ 4 ข้อ' },
+      { n: '78', f: 'fe-nextjs/lessons/0078-nextjs-workshop.html', t: 'โจทย์ Customer Search' }
     ]}
   ];
 

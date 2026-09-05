@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 75 — useMemo และ useCallback — จำผลลัพธ์ไว้ ไม่ต้องคิดใหม่ทุกครั้ง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 75 · Frontend · Next.js</p>
+  <h1>useMemo และ useCallback — จำผลลัพธ์ไว้ ไม่ต้องคิดใหม่ทุกครั้ง</h1>
+  <p class="meta">~25 นาที · ต้องผ่านบท 73 (useState) และ 74 (useEffect) มาก่อน · บทนี้ยาวกว่าปกติเพราะสองในสามของเนื้อหาคือ "เมื่อไหร่ที่<em>ไม่</em>ควรใช้"</p>
+  <p class="standfirst">
+    สองตัวนี้เป็น hook ที่ถูกใส่ผิดที่บ่อยที่สุดในโค้ด React ทั้งโลก
+    เพราะชื่อมันฟังดูเหมือน "ปุ่มเร่งความเร็ว" ที่ใส่แล้วดีขึ้นเสมอ — ซึ่งไม่จริง
+    <br>ความจริงคือมันต่างกันแค่<strong>เรื่องเดียว</strong>: <code>useMemo</code> <strong>จำค่า</strong>
+    ส่วน <code>useCallback</code> <strong>จำฟังก์ชัน</strong> · จบแค่นั้น ที่เหลือเหมือนกันหมด
+    <br>และความจริงข้อที่สองที่แสบกว่า: <strong><code>useCallback</code> ที่ใส่ไว้เฉย ๆ โดยที่ลูกไม่ได้ห่อ
+    <code>React.memo</code> คือโค้ดที่ไม่ทำอะไรเลย</strong> นอกจากทำให้ไฟล์ยาวขึ้น
+    <br>บทนี้จะไม่บอกให้เชื่อ — จะ<strong>เปิด console นับจำนวนครั้งที่ลูกถูกวาดใหม่ให้ดูกับตา</strong>
+    ทั้งแบบใส่และไม่ใส่
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code>next          <span class="c">16.3.4 (Turbopack)</span>
+react / react-dom  <span class="c">19.2.8</span>
+typescript    <span class="c">5</span>
+node          <span class="c">v24.14.0</span>
+<span class="c"># คำสั่งที่ใช้:</span>
+npx tsc --noEmit          <span class="c"># ไม่มี error (ไม่พิมพ์อะไรออกมาเลย)</span>
+npx eslint app components  <span class="c"># เอาคำเตือน react-hooks มาโชว์</span>
+npx next build            <span class="c"># ✓ Compiled successfully (เวลาที่โชว์ต่างกันทุกรอบ ไม่ต้องเทียบตัวเลข)</span>
+npx next dev -p 375       <span class="c"># แล้วกดปุ่มจริงในเบราว์เซอร์ อ่าน console</span></code></pre>
+  <p style="margin-bottom:0">
+    ทุกบรรทัด <code>console.log</code> · ทุกตัวเลข · และ error ทุกก้อนในบทนี้
+    <strong>ก็อปมาจากผลรันจริงบนเครื่องผม</strong> ไม่ได้พิมพ์จากความจำ
+    <br>โค้ดทุกก้อนที่บอกว่าเป็น "ไฟล์" ผ่าน <code>npx tsc --noEmit</code> และ <code>npx next build</code> จริงทั้งหมด
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · ก่อนอื่น: React วาดใหม่ทั้งตัว ทุกครั้งที่ state เปลี่ยน</h2>
+
+<p>
+  นี่คือรากของทั้งบท ถ้าข้อนี้ไม่แน่น อีกสิบหัวข้อข้างล่างจะกลายเป็นการท่องจำทันที
+</p>
+
+<p>
+  ตอนคุณกด <code>setCount(1)</code> ในบท 73 สิ่งที่ React ทำคือ
+  <strong>เรียกฟังก์ชัน component ของคุณใหม่ทั้งฟังก์ชัน ตั้งแต่บรรทัดแรกถึงบรรทัดสุดท้าย</strong>
+  <br>ไม่ได้แก้เฉพาะตัวเลขบนจอ · ไม่ได้ "อัปเดตแค่ส่วนที่เปลี่ยน" ในระดับโค้ด
+  — โค้ดในตัว component ถูกรันซ้ำหมด
+</p>
+
+<p>แปลว่าทุกบรรทัดแบบนี้ ถูกทำใหม่ทุกครั้งที่วาด:</p>
+
+<pre><code><span class="k">function</span> <span class="f">TodoList</span>({ todos, tab }) {
+  <span class="k">const</span> visible = <span class="f">filterTodos</span>(todos, tab);   <span class="c">// ← คำนวณใหม่ทุกครั้ง</span>
+  <span class="k">const</span> <span class="f">handleClick</span> = () =&gt; {};             <span class="c">// ← สร้างฟังก์ชันก้อนใหม่ทุกครั้ง</span>
+  <span class="c">// ...</span>
+}</code></pre>
+
+<p>
+  ปกติไม่เป็นไร เพราะงานพวกนี้เร็วมาก · แต่มันเริ่มเป็นเรื่องเมื่อ
+</p>
+<ul>
+  <li><code>filterTodos</code> ทำงานกับข้อมูลหลักหมื่นแถว → ช้าจนรู้สึกได้</li>
+  <li>ค่าที่คำนวณได้ถูกส่งเป็น <strong>prop ให้ลูก</strong> → ลูกเห็น "ของใหม่" ทุกครั้งเลยวาดใหม่ตาม</li>
+</ul>
+
+<p>
+  <code>useMemo</code> กับ <code>useCallback</code> เกิดมาเพื่อสองเคสนี้ <strong>เท่านั้น</strong>
+</p>
+
+<h2 id="sn-sec-2">2 · useMemo — จำ "ค่า" ที่คำนวณได้</h2>
+
+<p>สไลด์หน้า 44 เขียนไว้สั้นมากว่า <em>"Cache the result of a calculation between re-renders"</em> — แปลตรงตัวคือ <strong>เก็บผลลัพธ์ของการคำนวณไว้ใช้ข้ามการวาด</strong></p>
+
+<pre><code><span class="k">const</span> cachedValue = <span class="f">useMemo</span>(() =&gt; {
+  <span class="c">// calculate value</span>
+}, [dependencies])</code></pre>
+
+<p>สไลด์หน้า 45 แยกชิ้นส่วนไว้ 3 อย่าง ซึ่งตรงกับของจริงทุกตัว:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ชิ้นส่วน</th><th>สไลด์เรียกว่า</th><th>พูดแบบภาษาคน</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>cachedValue</code></td>
+      <td>Value</td>
+      <td>ผลลัพธ์ที่ได้จากการ<strong>เรียก</strong>ฟังก์ชันคำนวณ — ไม่ใช่ตัวฟังก์ชัน</td>
+    </tr>
+    <tr>
+      <td><code>() =&gt; {…}</code></td>
+      <td>Calculation Function</td>
+      <td>ฟังก์ชันที่<strong>ไม่รับอาร์กิวเมนต์</strong> และ<strong>ต้อง <code>return</code> ค่าออกมา</strong></td>
+    </tr>
+    <tr>
+      <td><code>[dependencies]</code></td>
+      <td>Dependencies</td>
+      <td>ค่าทุกตัวในตัว component ที่<strong>ถูกใช้ข้างในการคำนวณ</strong> ต้องใส่ให้ครบ</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>ตัวอย่างของสไลด์หน้า 45–46 คือ <code>TodoList</code>:</p>
+
+<pre><code><span class="k">const</span> <span class="f">TodoList</span> = ({ todos, tab }) =&gt; {
+  <span class="k">const</span> visibleTodos = <span class="f">useMemo</span>(() =&gt; {
+    <span class="k">return</span> <span class="f">filterTodos</span>(todos, tab);
+  }, [todos, tab]);
+
+  <span class="k">return</span> (
+    &lt;ul&gt;
+      {visibleTodos.<span class="f">map</span>(todo =&gt; &lt;li key={todo.id}&gt;{todo.text}&lt;/li&gt;)}
+    &lt;/ul&gt;
+  );
+};</code></pre>
+
+<p>
+  แผนภาพหน้า 46 สรุปลำดับไว้ว่า <strong>Tab changed → Recalculate function → Re-render</strong>
+  <br>อ่านให้ดี — มันบอกว่า "คำนวณใหม่" เกิดขึ้น<strong>เฉพาะตอน dependency เปลี่ยน</strong>
+  ส่วน "วาดใหม่" เกิดได้บ่อยกว่านั้นเยอะ
+</p>
+
+<h3 id="sn-sub-1">ของจริง: กดปุ่มที่ไม่เกี่ยวข้อง แล้วดูว่ามันคำนวณใหม่ไหม</h3>
+
+<p>ผมสร้างไฟล์นี้ในโปรเจกต์ Next.js จริง (<code>components/MemoDemo.tsx</code>) แล้วรัน:</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useMemo, useState } <span class="k">from</span> <span class="s">'react'</span>;
+<span class="k">import</span> { bump } <span class="k">from</span> <span class="s">'./counter'</span>;   <span class="c">// ตัวนับเล็ก ๆ ที่ผมเขียนเอง</span>
+
+<span class="k">function</span> <span class="f">slowSum</span>(n: <span class="n">number</span>): <span class="n">number</span> {
+  <span class="f">console</span>.<span class="f">log</span>(<span class="s">`[คำนวณ] รอบที่ ${<span class="f">bump</span>(<span class="s">'calc'</span>)} · n=${n}`</span>);
+  <span class="k">let</span> total = <span class="n">0</span>;
+  <span class="k">for</span> (<span class="k">let</span> i = <span class="n">0</span>; i &lt; n; i += <span class="n">1</span>) total += i;
+  <span class="k">return</span> total;
+}
+
+<span class="k">export default function</span> <span class="f">MemoDemo</span>() {
+  <span class="k">const</span> [n, setN] = <span class="f">useState</span>(<span class="n">1000</span>);
+  <span class="k">const</span> [tick, setTick] = <span class="f">useState</span>(<span class="n">0</span>);
+
+  <span class="k">const</span> sum = <span class="f">useMemo</span>(() =&gt; <span class="f">slowSum</span>(n), [n]);   <span class="c">// ผูกไว้กับ n ตัวเดียว</span>
+
+  <span class="k">return</span> (
+    &lt;div&gt;
+      &lt;p&gt;sum={sum} tick={tick}&lt;/p&gt;
+      &lt;button onClick={() =&gt; <span class="f">setN</span>(v =&gt; v + <span class="n">1000</span>)}&gt;เปลี่ยน n&lt;/button&gt;
+      &lt;button onClick={() =&gt; <span class="f">setTick</span>(v =&gt; v + <span class="n">1</span>)}&gt;tick +1&lt;/button&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+<p>เปิดหน้าเว็บ แล้วกดปุ่มตามลำดับนี้ · นี่คือ console จริง (ผมแทรกบรรทัด <code>#####</code> ไว้เองเพื่อคั่นจังหวะ):</p>
+
+<pre><code>[คำนวณ] รอบที่ 1 · n=1000
+[คำนวณ] รอบที่ 2 · n=1000
+##### B · กด tick +1 (state ที่ไม่เกี่ยวกับ n) #####
+##### C · กด เปลี่ยน n #####
+[คำนวณ] รอบที่ 3 · n=2000
+[คำนวณ] รอบที่ 4 · n=2000</code></pre>
+
+<p>
+  ระหว่างบรรทัด B กับ C <strong>ว่างเปล่า</strong> — กด <code>tick +1</code> แล้ว component ถูกวาดใหม่จริง
+  (ตัวเลข <code>tick</code> บนจอเปลี่ยนเป็น 1) แต่ <code>slowSum</code> <strong>ไม่ถูกเรียกเลย</strong>
+  เพราะ <code>n</code> ยังเป็น 1000 เท่าเดิม
+  <br>พอกด "เปลี่ยน n" เท่านั้นแหละ มันถึงคำนวณใหม่ — และค่าที่ได้บนจอคือ <code>sum=1999000</code> ซึ่งคือผลรวม 0 ถึง 1999 จริง ๆ
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>ทำไม log ขึ้นซ้ำสองบรรทัดทุกครั้ง?</strong> ไม่ใช่บั๊กของคุณ —
+    ตอน <code>next dev</code> Next เปิด <strong>React Strict Mode</strong> ไว้ให้
+    ซึ่งจงใจเรียกฟังก์ชัน component <strong>สองรอบ</strong> เพื่อจับโค้ดที่มีผลข้างเคียงแอบแฝง
+    <br>ตอน <code>next build</code> ผมเห็น log ขึ้น<strong>รอบเดียว</strong> ในเทอร์มินัล
+    <br>ดังนั้นเวลาอ่าน console ในโหมด dev <strong>ให้ดู "เพิ่มขึ้นหรือไม่เพิ่ม" ไม่ใช่ตัวเลขดิบ</strong>
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🎯 เทียบให้เห็นภาพ</span>
+  <p>
+    <code>useMemo</code> คือ<strong>กระดาษทดที่จดคำตอบข้อยากไว้</strong>
+    <br>ครูให้ทำโจทย์เดิมซ้ำ ๆ ทั้งคาบ — ครั้งแรกคุณคิดจริง แล้วจดคำตอบไว้ข้างโจทย์
+    ครั้งต่อ ๆ ไปคุณแค่เหลือบดูว่า "โจทย์ยังเป็นตัวเลขชุดเดิมไหม" ถ้าใช่ก็ลอกคำตอบเดิมส่งเลย
+    <br>"ตัวเลขชุดเดิมไหม" นั่นแหละคือ <code>[dependencies]</code>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> กระดาษทดจริงเก็บคำตอบได้หลายข้อพร้อมกัน
+    แต่ <code>useMemo</code> <strong>เก็บได้ค่าเดียว คือค่าล่าสุดเท่านั้น</strong>
+    <br>ถ้า dependency วิ่งกลับไปกลับมา <code>n=1000</code> → <code>n=2000</code> → <code>n=1000</code>
+    มันจะ<strong>คำนวณใหม่ทั้งสามครั้ง</strong> ไม่ได้จำค่าของ 1000 ไว้รอ —
+    ใครคิดว่ามันเป็นตารางแคชย้อนหลังได้ จะประหลาดใจตอนโปรไฟล์
+  </p>
+</div>
+
+<h2 id="sn-sec-3">3 · useCallback — จำ "ฟังก์ชัน" ไม่ใช่ค่า</h2>
+
+<p>
+  สไลด์หน้า 48 เขียนว่า <em>"Caches a function definition between component re-renders"</em>
+  <br>สังเกตคำว่า <em>definition</em> — มัน<strong>ไม่เรียก</strong>ฟังก์ชันของคุณ มันแค่<strong>เก็บก้อนฟังก์ชันนั้นไว้</strong>
+</p>
+
+<pre><code><span class="k">const</span> cachedFn = <span class="f">useCallback</span>(() =&gt; {
+  <span class="c">// function</span>
+}, [dependencies])</code></pre>
+
+<p>ตัวอย่างของสไลด์หน้า 49–50:</p>
+
+<pre><code><span class="k">const</span> <span class="f">ProductPage</span> = ({ productId, referrer }) =&gt; {
+  <span class="k">const</span> handleSubmit = <span class="f">useCallback</span>(
+    (orderDetails) =&gt; {
+      <span class="f">post</span>(<span class="s">`/product/${productId}/buy`</span>, { referrer, orderDetails });
+    },
+    [productId, referrer],
+  );
+
+  <span class="k">return</span> &lt;ShippingForm onSubmit={handleSubmit} /&gt;;
+};</code></pre>
+
+<p>
+  ต่างจาก <code>useMemo</code> ตรงที่ฟังก์ชันข้างในนี้ <strong>รับอาร์กิวเมนต์ได้</strong>
+  (<code>orderDetails</code>) เพราะมันคือฟังก์ชันที่จะถูกเรียก<em>ทีหลัง</em> ตอนคนกดปุ่ม
+  ไม่ใช่ฟังก์ชันที่ React เรียกให้ตอนนี้
+</p>
+
+<h3 id="sn-sub-2">ทำไมต้อง "จำฟังก์ชัน" ในเมื่อโค้ดข้างในเหมือนเดิมทุกครั้ง</h3>
+
+<p>
+  เพราะ JavaScript ตัดสินว่าฟังก์ชันสองก้อน "เท่ากัน" หรือไม่
+  จาก<strong>ว่ามันเป็นก้อนเดียวกันในหน่วยความจำหรือเปล่า</strong> ไม่ใช่จากเนื้อโค้ดข้างใน
+  <br>เขียน <code>() =&gt; {}</code> สองครั้ง = ได้ของสองก้อนที่ไม่เท่ากัน แม้จะพิมพ์เหมือนกันเป๊ะ
+</p>
+
+<p>ตัวช่วยก่อน — <code>seeFn</code> เก็บก้อนฟังก์ชันลง <code>Set</code> แล้วคืนจำนวนก้อนที่ไม่ซ้ำกัน
+(<code>Set</code> ตัดของซ้ำด้วยกฎเดียวกับ <code>===</code> พอดี) · อยู่ใน <code>components/counter.ts</code> ไฟล์เดียวกับ <code>bump</code>:</p>
+
+<pre><code><span class="k">const</span> seen = <span class="k">new</span> <span class="f">Map</span>&lt;<span class="n">string</span>, <span class="n">Set</span>&lt;<span class="n">unknown</span>&gt;&gt;();
+
+<span class="k">export function</span> <span class="f">seeFn</span>(label: <span class="n">string</span>, fn: <span class="n">unknown</span>): <span class="n">number</span> {
+  <span class="k">let</span> s = seen.<span class="f">get</span>(label);
+  <span class="k">if</span> (!s) {
+    s = <span class="k">new</span> <span class="f">Set</span>&lt;<span class="n">unknown</span>&gt;();
+    seen.<span class="f">set</span>(label, s);
+  }
+  s.<span class="f">add</span>(fn);
+  <span class="k">return</span> s.size;
+}</code></pre>
+
+<p>แล้วไฟล์ที่ใช้พิสูจน์จริง (<code>components/IdentityDemo.tsx</code>):</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useCallback, useMemo, useState } <span class="k">from</span> <span class="s">'react'</span>;
+<span class="k">import</span> { seeFn } <span class="k">from</span> <span class="s">'./counter'</span>;
+
+<span class="k">export default function</span> <span class="f">IdentityDemo</span>() {
+  <span class="k">const</span> [tick, setTick] = <span class="f">useState</span>(<span class="n">0</span>);
+
+  <span class="k">const</span> plain   = () =&gt; {};                        <span class="c">// ไม่ห่ออะไรเลย</span>
+  <span class="k">const</span> cached  = <span class="f">useCallback</span>(() =&gt; {}, []);        <span class="c">// ห่อด้วย useCallback</span>
+  <span class="k">const</span> viaMemo = <span class="f">useMemo</span>(() =&gt; () =&gt; {}, []);     <span class="c">// ห่อด้วย useMemo แต่คืนฟังก์ชัน</span>
+
+  <span class="f">console</span>.<span class="f">log</span>(
+    <span class="s">`[Identity] tick=${tick}`</span> +
+    <span class="s">` · plain มีก้อนที่ไม่ซ้ำกัน ${<span class="f">seeFn</span>(<span class="s">'plain'</span>, plain)} ก้อน`</span> +
+    <span class="s">` · cached มีก้อนที่ไม่ซ้ำกัน ${<span class="f">seeFn</span>(<span class="s">'cached'</span>, cached)} ก้อน`</span> +
+    <span class="s">` · viaMemo มีก้อนที่ไม่ซ้ำกัน ${<span class="f">seeFn</span>(<span class="s">'viaMemo'</span>, viaMemo)} ก้อน`</span>,
+  );
+
+  <span class="k">return</span> &lt;button onClick={() =&gt; <span class="f">setTick</span>(v =&gt; v + <span class="n">1</span>)}&gt;identity tick +1&lt;/button&gt;;
+}</code></pre>
+
+<p>โหลดหน้าใหม่ แล้วกดปุ่มสองครั้ง · console จริง:</p>
+
+<pre><code>[Identity] tick=0 · plain มีก้อนที่ไม่ซ้ำกัน 1 ก้อน · cached มีก้อนที่ไม่ซ้ำกัน 1 ก้อน · viaMemo มีก้อนที่ไม่ซ้ำกัน 1 ก้อน
+[Identity] tick=0 · plain มีก้อนที่ไม่ซ้ำกัน 2 ก้อน · cached มีก้อนที่ไม่ซ้ำกัน 1 ก้อน · viaMemo มีก้อนที่ไม่ซ้ำกัน 1 ก้อน
+[Identity] tick=1 · plain มีก้อนที่ไม่ซ้ำกัน 3 ก้อน · cached มีก้อนที่ไม่ซ้ำกัน 1 ก้อน · viaMemo มีก้อนที่ไม่ซ้ำกัน 1 ก้อน
+[Identity] tick=1 · plain มีก้อนที่ไม่ซ้ำกัน 4 ก้อน · cached มีก้อนที่ไม่ซ้ำกัน 1 ก้อน · viaMemo มีก้อนที่ไม่ซ้ำกัน 1 ก้อน
+[Identity] tick=2 · plain มีก้อนที่ไม่ซ้ำกัน 5 ก้อน · cached มีก้อนที่ไม่ซ้ำกัน 1 ก้อน · viaMemo มีก้อนที่ไม่ซ้ำกัน 1 ก้อน
+[Identity] tick=2 · plain มีก้อนที่ไม่ซ้ำกัน 6 ก้อน · cached มีก้อนที่ไม่ซ้ำกัน 1 ก้อน · viaMemo มีก้อนที่ไม่ซ้ำกัน 1 ก้อน</code></pre>
+
+<p>อ่านสามคอลัมน์นี้ให้ครบ:</p>
+<ul>
+  <li><code>plain</code> เพิ่มขึ้นเรื่อย ๆ <strong>1 → 6</strong> — ทุกครั้งที่วาด ได้ฟังก์ชันก้อนใหม่จริง ๆ</li>
+  <li><code>cached</code> ค้างที่ <strong>1</strong> ตลอด — <code>useCallback</code> คืนก้อนเดิมให้ทุกครั้ง</li>
+  <li><code>viaMemo</code> ก็ค้างที่ <strong>1</strong> เหมือนกัน — พิสูจน์ว่า
+      <code>useCallback(fn, deps)</code> ทำงานเหมือน <code>useMemo(() =&gt; fn, deps)</code> เป๊ะ
+      (เอกสาร React เขียนไว้อย่างนั้น และผมรันแล้วเป็นอย่างนั้นจริง)</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🎯 เทียบให้เห็นภาพ</span>
+  <p>
+    ลูกที่ห่อ <code>React.memo</code> ก็เหมือน<strong>ยามหน้าตึกที่จำได้แค่ "เลขกล่องพัสดุ"</strong>
+    <br>ทุกครั้งที่คุณเดินมาส่งของ ยามจะดูเลขกล่อง ถ้าเลขเดิมเขาก็โบกมือให้ผ่าน ไม่ต้องยกเข้าไปใหม่
+    <br>ปัญหาคือคุณ<strong>เปลี่ยนกล่องใหม่ทุกเช้า</strong> ทั้งที่ของข้างในชิ้นเดิม —
+    ยามเลยเห็นเลขไม่ซ้ำสักวัน แล้วสั่งยกเข้าไปใหม่ทุกวัน
+    <br><code>useCallback</code> คือการ<strong>ใช้กล่องใบเดิมซ้ำ</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ยามจริงเปิดกล่องดูข้างในได้ถ้าอยากตรวจ
+    แต่ JavaScript <strong>เปิดดูไม่ได้เลย</strong> — มันไม่มีวิธีถามว่า "ฟังก์ชันสองก้อนนี้ทำงานเหมือนกันไหม"
+    ทำได้แค่ถามว่า "เป็นก้อนเดียวกันหรือเปล่า"
+    <br>เพราะฉะนั้นอย่าคิดว่า React "ฉลาดพอจะรู้ว่าโค้ดเหมือนเดิม" — มันไม่รู้ และไม่มีวันรู้
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>memoization</dt>
+    <dd>เทคนิค "จำผลลัพธ์ของอินพุตชุดเดิมไว้ ไม่คำนวณซ้ำ" — เป็นที่มาของชื่อ <code>useMemo</code>
+        และ <code>React.memo</code> ·
+        <strong>ถาม senior ได้ว่า "ตรงนี้ควร memoize ไหม หรือปล่อยให้คำนวณใหม่ไปเลยก็ได้"</strong>
+        คำถามนี้จะได้คำตอบตรงกว่าถามว่า "ทำยังไงให้เร็วขึ้น"</dd>
+    <dt>re-render (วาดใหม่)</dt>
+    <dd>การที่ React เรียกฟังก์ชัน component ของคุณใหม่ทั้งฟังก์ชัน ·
+        <strong>คนละเรื่องกับการที่หน้าจอเปลี่ยนจริง</strong> — วาดใหม่แล้วผลออกมาเหมือนเดิม
+        React ก็ไม่แตะ DOM เลย ·
+        <strong>พิมพ์บอก AI ได้ว่า "why does this component re-render when X changes"</strong>
+        จะได้คำตอบที่ตรงจุดกว่าบอกว่า "หน้าเว็บกระตุก"</dd>
+    <dt>referential equality (การเท่ากันโดยอ้างอิง)</dt>
+    <dd>กฎที่ว่า object · array · function สองก้อนจะ "เท่ากัน" ก็ต่อเมื่อเป็น<strong>ก้อนเดียวกัน</strong>
+        ไม่ใช่ "หน้าตาเหมือนกัน" · ผมรัน <code>node -e 'console.log((()=&gt;{}) === (()=&gt;{}))'</code>
+        ได้ <code>false</code> จริง ·
+        <strong>ถาม senior ได้ว่า "prop ตัวนี้เสีย referential equality ทุก render ใช่ไหม"</strong> —
+        เป็นประโยคที่บอกอาการได้ครบในบรรทัดเดียว</dd>
+    <dt>dependency array</dt>
+    <dd>อาร์เรย์ตัวหลังใน <code>useMemo</code> / <code>useCallback</code> / <code>useEffect</code>
+        ที่บอก React ว่า "ถ้าค่าพวกนี้เปลี่ยน ให้ทำใหม่" ·
+        <strong>พิมพ์บอก AI ได้ว่า "check my dependency arrays for missing deps"</strong>
+        แล้วเทียบกับที่ <code>eslint</code> บอก อย่าเชื่อฝ่ายเดียว</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · ตารางเทียบสองตัว — จุดที่ต่างกันมีจุดเดียว</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th><code>useMemo</code></th><th><code>useCallback</code></th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>จำอะไร</strong></td>
+      <td><strong>ค่า</strong> (ผลลัพธ์ของการคำนวณ)</td>
+      <td><strong>ฟังก์ชัน</strong> (ตัวก้อนโค้ด)</td>
+    </tr>
+    <tr>
+      <td>React เรียกฟังก์ชันที่ส่งให้ไหม</td>
+      <td><strong>เรียก</strong> แล้วเก็บ <em>ผลลัพธ์</em> ไว้</td>
+      <td><strong>ไม่เรียก</strong> เก็บ <em>ตัวฟังก์ชัน</em> ไว้เฉย ๆ</td>
+    </tr>
+    <tr>
+      <td>ฟังก์ชันที่ส่งให้รับอาร์กิวเมนต์ได้ไหม</td>
+      <td>ไม่ได้ — ต้องเป็น <code>() =&gt; …</code> เปล่า ๆ</td>
+      <td>ได้ — <code>(orderDetails) =&gt; …</code> ก็ได้</td>
+    </tr>
+    <tr>
+      <td>ได้อะไรกลับมา</td>
+      <td>ค่าที่ <code>return</code> ออกมา</td>
+      <td>ฟังก์ชันก้อนเดิม</td>
+    </tr>
+    <tr>
+      <td>เคสที่ใช้บ่อยที่สุด</td>
+      <td>คำนวณหนัก · หรือทำ object/array ให้คงตัวเพื่อส่งเป็น prop</td>
+      <td>ส่งฟังก์ชันเป็น prop ให้ลูกที่ห่อ <code>React.memo</code> · หรือใส่ใน dependency ของ <code>useEffect</code></td>
+    </tr>
+    <tr>
+      <td>เขียนแทนกันได้ไหม</td>
+      <td colspan="2"><code>useCallback(fn, deps)</code> = <code>useMemo(() =&gt; fn, deps)</code> — ผมรันพิสูจน์แล้วในหัวข้อ 3</td>
+    </tr>
+    <tr>
+      <td>dependency array</td>
+      <td colspan="2">เหมือนกันทุกอย่าง · เทียบทีละช่องด้วยกฎ referential equality</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="diagram">
+<pre>useMemo
+  ส่งเข้าไป  :  () =&gt; filterTodos(todos, tab)     ← ฟังก์ชันที่ "คืนค่า"
+  React ทำ   :  เรียกมัน แล้วเก็บผลไว้
+  ได้กลับมา  :  [{id:1}, {id:2}]                  ← ★ ค่า ★
+
+useCallback
+  ส่งเข้าไป  :  (o) =&gt; post(url, o)               ← ฟังก์ชันที่จะใช้ทีหลัง
+  React ทำ   :  ไม่เรียก · เก็บก้อนนี้ไว้เฉย ๆ
+  ได้กลับมา  :  (o) =&gt; post(url, o)               ← ★ ฟังก์ชัน ★ ก้อนเดิมเป๊ะ</pre>
+</div>
+
+<h2 id="sn-sec-5">5 · กับดักที่ 1 — useCallback ที่ลูกไม่ได้ห่อ React.memo คือโค้ดที่ไม่ทำอะไรเลย</h2>
+
+<p>
+  นี่คือความเข้าใจผิดที่แพงที่สุดของบทนี้ และเป็นเหตุผลที่โค้ดจำนวนมากเต็มไปด้วย
+  <code>useCallback</code> โดยไม่ได้เร็วขึ้นแม้แต่นิดเดียว
+</p>
+
+<p>
+  <code>useCallback</code> ทำได้อย่างเดียวคือ<strong>ทำให้ prop ที่ส่งลงไปเป็นก้อนเดิม</strong>
+  <br>แต่ <strong>ลูกจะสนใจว่า prop เป็นก้อนเดิมหรือไม่ ก็ต่อเมื่อมันถูกห่อด้วย <code>React.memo</code></strong>
+  <br>ลูกธรรมดา ๆ ที่ไม่ได้ห่อ จะ<strong>วาดใหม่ทุกครั้งที่พ่อวาดใหม่ ไม่ว่า prop จะเปลี่ยนหรือไม่</strong>
+</p>
+
+<p>ไฟล์ที่ผมใช้พิสูจน์ (<code>components/CallbackDemo.tsx</code>) — ลูกสองตัว ต่างกันแค่ห่อกับไม่ห่อ:</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { memo, useCallback, useState } <span class="k">from</span> <span class="s">'react'</span>;
+<span class="k">import</span> { bump } <span class="k">from</span> <span class="s">'./counter'</span>;
+
+<span class="c">// ลูกคนที่ 1 — ไม่ห่ออะไรเลย</span>
+<span class="k">function</span> <span class="f">ChildPlain</span>({ onPing }: { onPing: () =&gt; <span class="n">void</span> }) {
+  <span class="f">console</span>.<span class="f">log</span>(<span class="s">`[ChildPlain] วาดใหม่ครั้งที่ ${<span class="f">bump</span>(<span class="s">'plain'</span>)}`</span>);
+  <span class="k">return</span> &lt;button onClick={onPing}&gt;ChildPlain&lt;/button&gt;;
+}
+
+<span class="c">// ลูกคนที่ 2 — ห่อด้วย React.memo</span>
+<span class="k">const</span> ChildMemo = <span class="f">memo</span>(<span class="k">function</span> <span class="f">ChildMemoInner</span>({ onPing }: { onPing: () =&gt; <span class="n">void</span> }) {
+  <span class="f">console</span>.<span class="f">log</span>(<span class="s">`[ChildMemo] วาดใหม่ครั้งที่ ${<span class="f">bump</span>(<span class="s">'memo'</span>)}`</span>);
+  <span class="k">return</span> &lt;button onClick={onPing}&gt;ChildMemo&lt;/button&gt;;
+});
+
+<span class="k">export default function</span> <span class="f">CallbackDemo</span>() {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(<span class="n">0</span>);
+  <span class="k">const</span> onPing = <span class="f">useCallback</span>(() =&gt; {}, []);   <span class="c">// ← ก้อนเดิมตลอด</span>
+
+  <span class="f">console</span>.<span class="f">log</span>(<span class="s">`[Parent] วาดใหม่ count=${count}`</span>);
+
+  <span class="k">return</span> (
+    &lt;div&gt;
+      &lt;button onClick={() =&gt; <span class="f">setCount</span>(c =&gt; c + <span class="n">1</span>)}&gt;+1 (count = {count})&lt;/button&gt;
+      &lt;ChildPlain onPing={onPing} /&gt;
+      &lt;ChildMemo  onPing={onPing} /&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+<div class="predict">
+  <p class="ask">
+    ก่อนดูผล — <code>onPing</code> ถูกห่อด้วย <code>useCallback(…, [])</code> แปลว่าเป็นก้อนเดิมตลอดแน่นอน
+    <br>ถ้ากดปุ่ม <strong>+1 สองครั้ง</strong> (พ่อวาดใหม่ 2 รอบ)
+    <strong><code>ChildPlain</code> กับ <code>ChildMemo</code> จะขึ้น log กี่บรรทัดต่อคน?</strong>
+  </p>
+  <button class="reveal">เฉลย (console จริง)</button>
+  <div class="answer">
+<pre><code>[Parent] วาดใหม่ count=0
+[Parent] วาดใหม่ count=0
+[ChildPlain] วาดใหม่ครั้งที่ 1
+[ChildPlain] วาดใหม่ครั้งที่ 2
+[ChildMemo] วาดใหม่ครั้งที่ 1
+[ChildMemo] วาดใหม่ครั้งที่ 2
+##### A · กด +1 ของ CallbackDemo สองครั้ง #####
+[Parent] วาดใหม่ count=1
+[Parent] วาดใหม่ count=1
+[ChildPlain] วาดใหม่ครั้งที่ 3
+[ChildPlain] วาดใหม่ครั้งที่ 4
+[Parent] วาดใหม่ count=2
+[Parent] วาดใหม่ count=2
+[ChildPlain] วาดใหม่ครั้งที่ 5
+[ChildPlain] วาดใหม่ครั้งที่ 6</code></pre>
+    <p>
+      <strong><code>ChildMemo</code> ไม่โผล่อีกเลยหลังบรรทัด <code>#####</code></strong> —
+      ค้างอยู่ที่ครั้งที่ 2 ตั้งแต่ตอนโหลดหน้า
+      <br>ส่วน <code>ChildPlain</code> ไต่ต่อไป 3 · 4 · 5 · 6 <strong>ทั้งที่ prop ที่มันได้รับเป็นก้อนเดิมเป๊ะ</strong>
+    </p>
+    <p style="margin-bottom:0">
+      แปลตรง ๆ ว่า: <strong><code>useCallback</code> ตัวนั้นไม่ได้ช่วย <code>ChildPlain</code> เลยแม้แต่นิดเดียว</strong>
+      มันช่วยเฉพาะ <code>ChildMemo</code>
+      <br>ถ้าในโค้ดคุณไม่มี <code>React.memo</code> อยู่เลยสักตัว แล้วคุณใส่ <code>useCallback</code> ไว้ทั่วไฟล์ —
+      คุณกำลังจ่ายค่าเขียนโค้ดเพิ่มโดยไม่ได้อะไรกลับมา
+      <br>(บรรทัด <code>#####</code> ผมพิมพ์ใส่ console เองเพื่อคั่นจังหวะ ไม่ได้มาจาก React)
+    </p>
+  </div>
+</div>
+
+<div class="warn">
+  <p><strong>สองอย่างนี้ต้องมาคู่กัน ไม่งั้นไม่เกิดผล</strong></p>
+  <div class="compare">
+    <div class="side bad">
+      <p><strong>❌ ใส่ข้างเดียว = ไม่เกิดอะไร</strong></p>
+<pre><code><span class="k">const</span> onPing = <span class="f">useCallback</span>(fn, []);
+<span class="c">// ...</span>
+&lt;ChildPlain onPing={onPing} /&gt;
+<span class="c">// ChildPlain ไม่ได้ห่อ memo</span>
+<span class="c">// → วาดใหม่ทุกครั้งอยู่ดี</span></code></pre>
+    </div>
+    <div class="side good">
+      <p><strong>✅ ใส่ครบทั้งคู่ = ลูกหยุดวาด</strong></p>
+<pre><code><span class="k">const</span> onPing = <span class="f">useCallback</span>(fn, []);
+<span class="k">const</span> ChildMemo = <span class="f">memo</span>(Child);
+<span class="c">// ...</span>
+&lt;ChildMemo onPing={onPing} /&gt;
+<span class="c">// → ข้ามการวาดได้จริง</span></code></pre>
+    </div>
+  </div>
+  <p style="margin-bottom:0">
+    และกลับกัน — ห่อ <code>React.memo</code> แต่ส่ง <code>onPing</code> ที่<strong>ไม่ได้</strong>ห่อ
+    <code>useCallback</code> ลงไป ก็ไม่เกิดผลเหมือนกัน เพราะ prop เป็นก้อนใหม่ทุกครั้ง
+    <br><strong>ต้องครบทั้งสองฝั่ง มิฉะนั้นได้ศูนย์</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-6">6 · กับดักที่ 2 — dependency array ผิด แล้วได้ค่าเก่าค้าง</h2>
+
+<p>
+  กับดักข้อ 1 ทำให้โค้ดไม่เร็วขึ้น (น่ารำคาญแต่ไม่พัง)
+  <br>ข้อนี้<strong>ทำให้ตัวเลขบนหน้าเว็บผิด</strong> ซึ่งแย่กว่ากันเยอะ และหายากกว่าเยอะ
+</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useMemo, useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export default function</span> <span class="f">StaleDemo</span>() {
+  <span class="k">const</span> [a, setA] = <span class="f">useState</span>(<span class="n">1</span>);
+  <span class="k">const</span> [b, setB] = <span class="f">useState</span>(<span class="n">1</span>);
+
+  <span class="k">const</span> bad  = <span class="f">useMemo</span>(() =&gt; a + b, [a]);      <span class="c">// ใช้ b แต่ไม่ได้ใส่ b</span>
+  <span class="k">const</span> good = <span class="f">useMemo</span>(() =&gt; a + b, [a, b]);   <span class="c">// ใส่ครบ</span>
+
+  <span class="k">return</span> (
+    &lt;div&gt;
+      &lt;p&gt;a={a} b={b} bad={bad} good={good}&lt;/p&gt;
+      &lt;button onClick={() =&gt; <span class="f">setA</span>(v =&gt; v + <span class="n">1</span>)}&gt;a +1&lt;/button&gt;
+      &lt;button onClick={() =&gt; <span class="f">setB</span>(v =&gt; v + <span class="n">1</span>)}&gt;b +1&lt;/button&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+<div class="predict">
+  <p class="ask">
+    เริ่มที่ <code>a=1 b=1</code> · กด <code>b +1</code> สองครั้ง แล้วค่อยกด <code>a +1</code> หนึ่งครั้ง
+    <br><strong><code>bad</code> กับ <code>good</code> จะแสดงเลขอะไรในแต่ละจังหวะ?</strong>
+    (ระวังจังหวะสุดท้าย มันไม่ตรงกับที่คนส่วนใหญ่เดา)
+  </p>
+  <button class="reveal">เฉลย (ค่าที่อ่านจากหน้าเว็บจริง)</button>
+  <div class="answer">
+<pre><code>เริ่มต้น          : a=1 b=1 bad=2 good=2
+กด b +1           : a=1 b=2 bad=2 good=3
+กด b +1 อีกครั้ง  : a=1 b=3 bad=2 good=4
+กด a +1           : a=2 b=3 bad=5 good=5</code></pre>
+    <p>
+      สองจังหวะกลาง <code>bad</code> <strong>ค้างอยู่ที่ 2</strong> ทั้งที่ <code>b</code> ขยับไปถึง 3 แล้ว —
+      เพราะ <code>[a]</code> ไม่เปลี่ยน React จึงคืนค่าที่จำไว้ให้ ไม่เรียกฟังก์ชันคำนวณเลย
+    </p>
+    <p style="margin-bottom:0">
+      จังหวะสุดท้ายคือส่วนที่โหดที่สุด: พอ <code>a</code> ขยับ <code>bad</code> <strong>กระโดดจาก 2 ไป 5</strong>
+      ข้ามค่า 3 กับ 4 ไปเลย
+      <br>บนหน้าเว็บจริง อาการนี้จะออกมาเป็น "ตัวเลขไม่อัปเดต แล้วอยู่ดี ๆ ก็เด้งไปค่าที่ถูก"
+      ซึ่ง<strong>สืบยากมาก</strong> เพราะตอนคุณเปิดดู มันมักจะถูกไปแล้ว
+    </p>
+  </div>
+</div>
+
+<h3 id="sn-sub-3">ข่าวดี: มีเครื่องมือฟ้องให้ฟรี ๆ อยู่แล้ว</h3>
+
+<p>
+  ผมรัน <code>npx eslint</code> กับไฟล์ทั้งโฟลเดอร์ ได้ผลนี้ตรง ๆ
+  (โปรเจกต์ที่ <code>create-next-app</code> สร้างมี <code>eslint-config-next</code> ติดมาให้แล้ว):
+</p>
+
+<pre><code>components/StaleDemo.tsx
+  9:37  warning  React Hook useMemo has a missing dependency: 'b'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+✖ 1 problem (0 errors, 1 warning)</code></pre>
+
+<p>
+  <code>9:37</code> คือ <strong>บรรทัดที่ 9 ตัวอักษรที่ 37</strong> ของไฟล์ข้างบน —
+  ชี้ตรงไปที่ <code>[a]</code> ไม่ใช่ที่ <code>useMemo</code> · มันบอกตำแหน่งของ
+  <strong>อาร์เรย์ที่ใส่ไม่ครบ</strong> ให้เลย ไม่ต้องเดา
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    มันเป็นแค่ <strong><code>warning</code> ไม่ใช่ <code>error</code></strong>
+    แปลว่า <code>npx next build</code> ยัง<strong>ผ่าน</strong> และเว็บยัง deploy ขึ้นได้ทั้งที่โค้ดผิด
+    <br>กฎที่ผมใช้กับตัวเอง: <strong>เจอ <code>react-hooks/exhaustive-deps</code> เมื่อไหร่ ให้ถือว่ามันคือ error</strong>
+    <br>ถ้าจะไม่ใส่ dependency ตัวนั้นจริง ๆ ต้องเขียนคอมเมนต์บอกเหตุผลไว้ให้คนต่อไปอ่าน
+    ไม่ใช่ปิดปาก eslint แล้วเดินหนี
+  </p>
+</div>
+
+<h2 id="sn-sec-7">7 · กับดักที่ 3 — ใส่ให้ทุกอย่างแล้วช้าลง</h2>
+
+<p>
+  ความรู้สึกแรกของทุกคนหลังอ่านสองหัวข้อบนคือ "งั้นใส่มันทุกที่เลยดีกว่า ปลอดภัยไว้ก่อน"
+  <br><strong>อย่าทำ</strong> และเหตุผลไม่ใช่เรื่องสไตล์ แต่เป็นเรื่องต้นทุนที่มีอยู่จริง
+</p>
+
+<p><code>useMemo</code> หนึ่งบรรทัด ทำให้เกิดงานพวกนี้ <strong>ทุกครั้งที่วาด แม้ตอนที่มันคืนค่าเก่า</strong>:</p>
+
+<ol>
+  <li>สร้าง<strong>ก้อนฟังก์ชันใหม่</strong>ที่ส่งเข้าไป — ข้อนี้ผมพิสูจน์แล้วในหัวข้อ 3
+      (คอลัมน์ <code>plain</code> ที่ไต่จาก 1 ถึง 6) · <code>useMemo</code> แค่<em>ไม่เรียก</em>มัน แต่มัน<em>ถูกสร้าง</em>ไปแล้ว</li>
+  <li>สร้าง<strong>อาร์เรย์ dependency ใหม่</strong> — <code>[a, b]</code> คืออาร์เรย์ก้อนใหม่ทุกครั้ง</li>
+  <li><strong>เทียบทีละช่อง</strong>กับของรอบก่อน</li>
+  <li><strong>จองที่เก็บค่าเก่าไว้</strong>ตลอดอายุของ component</li>
+</ol>
+
+<p>
+  ถ้าการคำนวณข้างในเป็นแค่ <code>a + b</code> — งานสี่ข้อข้างบน<strong>แพงกว่าการบวกเลขเอง</strong>
+  แถมยังบวกภาระให้คนอ่านโค้ดอีกต่างหาก
+</p>
+
+<div class="warn">
+  <p><strong>ลำดับที่ควรทำ (เรียงจากบนลงล่าง อย่าข้ามขั้น)</strong></p>
+  <ol>
+    <li><strong>เขียนแบบไม่ใส่ก่อนเสมอ</strong> — โค้ดที่อ่านง่ายชนะโค้ดที่ "อาจจะเร็วกว่า"</li>
+    <li>เจอปัญหาจริง (หน้าสะดุด · พิมพ์แล้วช้า) แล้วค่อยเปิดดู</li>
+    <li>วัดก่อนแก้ — ใช้ React DevTools Profiler หรือ <code>console.log</code> นับรอบแบบในบทนี้</li>
+    <li>รู้แล้วว่าใครคือตัวปัญหา ค่อยใส่ <code>useMemo</code> / <code>useCallback</code> + <code>React.memo</code> ตรงจุดนั้น</li>
+    <li><strong>วัดซ้ำ</strong> ว่าดีขึ้นจริง ถ้าไม่ดีขึ้น <strong>ให้ถอดออก</strong></li>
+  </ol>
+  <p style="margin-bottom:0">
+    ข้อ 5 คือข้อที่คนข้ามมากที่สุด · โค้ดที่ใส่ไว้แล้วไม่มีใครกล้าถอดออก
+    คือหนี้ที่กองเพิ่มขึ้นทุกสัปดาห์
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>มีข้อยกเว้นข้อเดียวที่ควรใส่ตั้งแต่ต้น</strong> — เวลาค่านั้นเป็น
+    <strong>object หรือ array ที่ต้องส่งเป็น prop ให้ component ที่ห่อ <code>React.memo</code></strong>
+    หรือ<strong>ต้องใส่ใน dependency array ของ <code>useEffect</code></strong>
+    <br>สองกรณีนี้ไม่ได้ทำเพื่อ "ความเร็ว" แต่ทำเพื่อ <strong>ความถูกต้อง</strong> —
+    ไม่ใส่แล้ว <code>useEffect</code> จะยิงทุกรอบไม่หยุด (บท 74 มีตัวอย่างลูปไม่รู้จบให้ดูแล้ว)
+  </p>
+</div>
+
+<h2 id="sn-sec-8">8 · เรื่องที่สไลด์ไม่ได้บอก — 'use client' กับ hook สองตัวนี้</h2>
+
+<p>
+  ใน App Router ของ Next.js ทุกไฟล์ใน <code>app/</code> เป็น <strong>Server Component</strong> โดยปริยาย
+  จนกว่าคุณจะเขียน <code>'use client'</code> ไว้บรรทัดบนสุด
+  <br>ตำราส่วนใหญ่จะสรุปสั้น ๆ ว่า "ใช้ hook = ต้องใส่ <code>'use client'</code>"
+  — ผมลองจริงแล้ว<strong>ไม่ตรงทั้งหมด</strong> จึงเขียนตามที่รันได้จริง
+</p>
+
+<h3 id="sn-sub-4">ผลรันจริงที่ 1 — useMemo ล้วน ๆ ไม่ error</h3>
+
+<p>ไฟล์นี้ <strong>ไม่มี</strong> <code>'use client'</code>:</p>
+
+<pre><code><span class="c">// app/t75/oops/page.tsx</span>
+<span class="k">import</span> { useMemo } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export default function</span> <span class="f">Page</span>() {
+  <span class="k">const</span> total = <span class="f">useMemo</span>(() =&gt; <span class="n">1</span> + <span class="n">1</span>, []);
+  <span class="k">return</span> &lt;p&gt;total = {total}&lt;/p&gt;;
+}</code></pre>
+
+<pre><code>$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:PORT/t75/oops
+200
+
+$ curl -s http://localhost:PORT/t75/oops | (ตัดแท็กออก)
+Create Next App total = 2
+
+$ npx next build
+├ ○ /t75/oops          ← ○ (Static) prerendered as static content</code></pre>
+
+<p>
+  ผ่านฉลุย ไม่มี error สักตัว · เหตุผลอยู่ในตัว React เอง —
+  ผมเปิดดูรายการที่ build ฝั่ง server ของ React 19.2.8 ส่งออกมา:
+</p>
+
+<pre><code>$ node -e "console.log(Object.keys(require('./node_modules/react/cjs/react.react-server.development.js')).sort().join(' '))"
+
+Children Fragment Profiler StrictMode Suspense
+__SERVER_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE cache cacheSignal
+captureOwnerStack cloneElement createElement createRef forwardRef isValidElement
+lazy memo use useCallback useDebugValue useId useMemo version</code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    ต้องเขียนพาธเป็น <code>./node_modules/react/cjs/…</code> เท่านั้น ·
+    ถ้าเขียนสั้นว่า <code>require('react/cjs/…')</code> จะได้
+    <code>Error [ERR_PACKAGE_PATH_NOT_EXPORTED]</code> เพราะ <code>package.json</code> ของ React
+    ไม่ได้เปิดพาธย่อยนี้ให้เรียกผ่านชื่อแพ็กเกจ · (ผลข้างบนคือบรรทัดเดียวยาว ๆ
+    ผมตัดขึ้นบรรทัดใหม่เองให้อ่านง่าย ไม่ได้ตัดคำไหนทิ้ง)
+  </p>
+</div>
+
+<p>
+  <code>useCallback</code> กับ <code>useMemo</code> <strong>อยู่ในรายการ</strong>
+  ส่วน <code>useState</code> · <code>useEffect</code> <strong>ไม่อยู่</strong>
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>แต่ "ใช้ได้" ไม่เท่ากับ "ควรใช้"</strong>
+    <br>Server Component ถูกวาด<strong>ครั้งเดียวต่อหนึ่ง request</strong> แล้วจบ — ไม่มี re-render
+    <br>ในเมื่อทั้ง <code>useMemo</code> และ <code>useCallback</code> มีไว้ "จำข้ามการวาดรอบถัดไป"
+    และมันไม่มีรอบถัดไป → <strong>ใส่ไปก็ไม่ได้อะไร นอกจากทำให้คนอ่านเข้าใจผิดว่าไฟล์นี้เป็น client</strong>
+  </p>
+</div>
+
+<h3 id="sn-sub-5">ผลรันจริงที่ 2 — พอเติม useState เข้าไป พังทันที</h3>
+
+<p>ไฟล์เดิม เติม <code>useState</code> หนึ่งบรรทัด ยังไม่ใส่ <code>'use client'</code>:</p>
+
+<pre><code><span class="k">import</span> { useMemo, useState } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export default function</span> <span class="f">Page</span>() {
+  <span class="k">const</span> [n] = <span class="f">useState</span>(<span class="n">2</span>);
+  <span class="k">const</span> total = <span class="f">useMemo</span>(() =&gt; n + <span class="n">1</span>, [n]);
+  <span class="k">return</span> &lt;p&gt;total = {total}&lt;/p&gt;;
+}</code></pre>
+
+<p>เปิดหน้านั้นได้ HTTP 500 พร้อมข้อความนี้ (ก็อปมาทั้งดุ้น):</p>
+
+<pre><code>./app/t75/oops2/page.tsx:1:19
+Error: You're importing a module that depends on `useState` into a React Server
+Component module. This API is only available in Client Components. To fix, mark
+the file (or its parent) with the `"use client"` directive.
+    Learn more: https://nextjs.org/docs/app/api-reference/directives/use-client
+&gt; 1 | import { useMemo, useState } from 'react';
+    |                   ^^^^^^^^
+  2 |
+  3 | export default function Page() {
+  4 |   const [n] = useState(2);
+
+Ecmascript file had an error</code></pre>
+
+<p>
+  ดูตำแหน่งลูกศร <code>^^^^^^^^</code> ให้ดี — มันชี้ที่ <strong><code>useState</code></strong>
+  ไม่ได้ชี้ที่ <code>useMemo</code> ที่อยู่ข้าง ๆ กัน
+  <br>นี่คือหลักฐานตรง ๆ ว่าตัวที่ผิดกฎคือ <code>useState</code> ตัวเดียว
+</p>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>สรุปให้ใช้ได้จริง:</strong> ในทางปฏิบัติคุณจะเจอ <code>useMemo</code>/<code>useCallback</code>
+    คู่กับ <code>useState</code> เสมอ (ไม่มี state ก็ไม่มีการวาดใหม่ให้ต้องจำ)
+    <br>เพราะฉะนั้น <strong>ไฟล์ไหนมีสองตัวนี้ ให้ใส่ <code>'use client'</code> ไปเลย</strong> —
+    ถูกในทางปฏิบัติเกือบร้อยเปอร์เซ็นต์
+    <br>แต่ตอนนี้คุณรู้ด้วยว่า<em>ทำไม</em> ไม่ใช่แค่ท่องว่า "hook ต้องใส่ use client"
+  </p>
+</div>
+
+<h2 id="sn-sec-9">9 · แล้ว React Compiler ที่เขาว่ากันล่ะ</h2>
+
+<p>
+  คุณจะได้ยินคนพูดบ่อยมากว่า "React 19 มี compiler แล้ว ไม่ต้องเขียน <code>useMemo</code> เองอีกต่อไป"
+  <br>ผมไม่เดา — เปิดไฟล์คอนฟิกของโปรเจกต์นี้มากางเลย:
+</p>
+
+<pre><code><span class="c">// next.config.ts — ทั้งไฟล์ ไม่ได้ตัดอะไรออก</span>
+<span class="k">import type</span> { NextConfig } <span class="k">from</span> <span class="s">"next"</span>;
+
+<span class="k">const</span> nextConfig: NextConfig = {
+  <span class="c">/* config options here */</span>
+};
+
+<span class="k">export default</span> nextConfig;</code></pre>
+
+<pre><code>$ ls node_modules | grep -i react-compiler
+(ไม่มีอะไรออกมา — ไม่ได้ติดตั้ง)</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ในโปรเจกต์ที่ <code>create-next-app</code> สร้างมาแบบมาตรฐาน React Compiler ไม่ได้เปิดไว้</strong>
+    (ไม่มีบรรทัด <code>reactCompiler</code> ใน <code>next.config.ts</code> และไม่มีแพ็กเกจของมันใน <code>node_modules</code>)
+    <br>แปลว่า <strong><code>useMemo</code> กับ <code>useCallback</code> ยังจำเป็นอยู่ในโปรเจกต์นี้ ต้องเขียนเอง</strong>
+    <br>วิธีเช็คในโปรเจกต์ของคุณเอง: เปิด <code>next.config.ts</code> หาคำว่า <code>reactCompiler</code>
+    ถ้าไม่เจอ = ยังไม่เปิด · <strong>อย่าเชื่อคำบอกเล่า ให้เปิดไฟล์ดู</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>Server Component / Client Component</dt>
+    <dd>ไฟล์ที่ React วาดบน server แล้วส่ง HTML มา (ค่าเริ่มต้นของ App Router)
+        กับไฟล์ที่ถูกส่งไปทำงานในเบราว์เซอร์ด้วย (ต้องมี <code>'use client'</code>) ·
+        <strong>ถาม senior ได้ว่า "component นี้ควรเป็น client หรือ server"</strong>
+        แล้วเสริมว่า "มันต้องมี state ไหม" — เกณฑ์ตัดสินอยู่ตรงนั้น</dd>
+    <dt>stale value (ค่าเก่าค้าง)</dt>
+    <dd>อาการที่หน้าจอโชว์ค่าที่คำนวณจากข้อมูลรอบก่อน เพราะ dependency ไม่ครบ ·
+        <strong>พิมพ์บอก AI ได้ว่า "I'm getting a stale value from this useMemo, check my deps"</strong>
+        แล้วแปะโค้ดไปทั้งก้อน — คำนี้ทำให้คำถามแม่นขึ้นมาก</dd>
+    <dt>React.memo</dt>
+    <dd>ฟังก์ชันที่<strong>ห่อ component</strong> (คนละอย่างกับ <code>useMemo</code> ที่เป็น hook)
+        เพื่อบอกว่า "ถ้า prop ทุกตัวเป็นก้อนเดิม ไม่ต้องวาดใหม่" ·
+        <strong>ถาม senior ได้ว่า "ตรงนี้ควรห่อ React.memo หรือย้าย state ลงไปให้ลึกกว่านี้แทน"</strong> —
+        ทางเลือกที่สองมักจะดีกว่าและไม่มีใครนึกถึง</dd>
+    <dt>React Compiler</dt>
+    <dd>ตัวแปลงโค้ดที่ใส่ memoization ให้อัตโนมัติตอน build เพื่อให้ไม่ต้องเขียนสองตัวนี้เอง ·
+        <strong>ถาม senior ได้ว่า "โปรเจกต์เราเปิด React Compiler ไว้หรือยัง"</strong> —
+        ถ้ายัง ก็แปลว่ายังต้องเขียนมือ</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-10">10 · ภารกิจ — พิสูจน์ด้วยตัวนับ ไม่ใช่ด้วยความรู้สึก</h2>
+
+<div class="task">
+  <h3 id="sn-sub-6">🛠 ทำให้ลูกหยุดวาดใหม่ให้ได้ แล้วพิสูจน์ว่ามันหยุดจริง</h3>
+  <p>
+    สร้างโปรเจกต์ใหม่ด้วย <code>npx create-next-app@latest</code>
+    (หรือใช้ของบท 70 ที่มีอยู่แล้วก็ได้) แล้วทำตามลำดับ · <strong>ห้ามข้ามข้อ 4 กับ 6</strong>
+  </p>
+  <ol>
+    <li>
+      สร้าง <code>components/RenderCount.tsx</code> — ตัวนับที่ใช้ได้ทุกที่ ไม่ต้องลงแพ็กเกจอะไร:
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">const</span> counts = <span class="k">new</span> <span class="f">Map</span>&lt;<span class="n">string</span>, <span class="n">number</span>&gt;();
+
+<span class="k">export function</span> <span class="f">bump</span>(label: <span class="n">string</span>): <span class="n">number</span> {
+  <span class="k">const</span> n = (counts.<span class="f">get</span>(label) ?? <span class="n">0</span>) + <span class="n">1</span>;
+  counts.<span class="f">set</span>(label, n);
+  <span class="k">return</span> n;
+}</code></pre>
+    </li>
+    <li>
+      สร้างพ่อที่มี <code>useState</code> หนึ่งตัว (ปุ่ม +1) และลูกหนึ่งตัวที่รับ prop เป็นฟังก์ชัน
+      <br>ใส่ <code>console.log(`ลูกวาดครั้งที่ ${bump('child')}`)</code> ไว้บรรทัดแรกของลูก
+    </li>
+    <li>
+      กด +1 สามครั้ง <strong>จดเลขที่ได้ไว้</strong> — นี่คือ "ก่อนแก้" ของคุณ
+      (ในโหมด dev อย่าลืมว่า Strict Mode ทำให้เลขเดินทีละ 2)
+    </li>
+    <li>
+      <strong>ใส่ <code>useCallback</code> อย่างเดียวก่อน แล้วกด +1 สามครั้งใหม่</strong>
+      <br>คุณ<strong>ต้องได้เลขชุดเดิมเป๊ะ</strong> — ถ้าได้เลขน้อยลง แปลว่ามีอย่างอื่นเปลี่ยนไปด้วย ให้ย้อนกลับไปหา
+      <br>ข้อนี้คือข้อที่สอนว่า "ใส่ข้างเดียวไม่พอ" ด้วยมือคุณเอง ไม่ใช่ด้วยคำพูดของผม
+    </li>
+    <li>
+      ห่อลูกด้วย <code>memo()</code> เพิ่ม แล้วกด +1 สามครั้ง — คราวนี้เลขต้อง<strong>หยุดนิ่ง</strong>
+    </li>
+    <li>
+      <strong>เขียนเทสพิสูจน์</strong> — อย่าจบแค่ "เห็นแล้วว่านิ่ง" · เพิ่มโค้ดนี้ในลูก
+      แล้วตั้งค่าที่คาดหวังเอง:
+<pre><code><span class="k">const</span> n = <span class="f">bump</span>(<span class="s">'child'</span>);
+<span class="k">const</span> want = <span class="n">2</span>;   <span class="c">// จำนวนครั้งที่ "ควร" วาด (dev = 2 เพราะ Strict Mode)</span>
+<span class="f">console</span>.<span class="f">log</span>(n &lt;= want
+  ? <span class="s">`PASS ลูกวาด ${n} ครั้ง (ไม่เกิน ${want})`</span>
+  : <span class="s">`FAIL ลูกวาด ${n} ครั้ง แต่ควรไม่เกิน ${want}`</span>);</code></pre>
+      แล้ว <strong>ทำให้มันขึ้น <code>FAIL</code> ให้ได้หนึ่งครั้ง</strong> ด้วยการถอด <code>memo()</code> ออกชั่วคราว
+      <br>เทสที่ไม่เคยเห็นมันขึ้น <code>FAIL</code> คือเทสที่คุณยังไม่รู้ว่ามันทำงานหรือเปล่า
+    </li>
+    <li>
+      ปิดท้ายด้วยสองคำสั่งนี้ ต้องผ่านทั้งคู่:
+      <br><code>npx tsc --noEmit</code>
+      <br><code>npx next build</code>
+      <br>แล้วรัน <code>npx eslint app components</code> ดูว่ามี <code>react-hooks/exhaustive-deps</code> โผล่ไหม
+    </li>
+  </ol>
+  <button class="reveal">ดูผลรันจริงของผม (ข้อ 4 กับ 5)</button>
+  <div class="answer">
+<pre><code><span class="c">// ข้อ 4 — ใส่ useCallback อย่างเดียว ลูกไม่ได้ห่อ memo</span>
+##### A · กด +1 ของ CallbackDemo สองครั้ง #####
+[ChildPlain] วาดใหม่ครั้งที่ 3
+[ChildPlain] วาดใหม่ครั้งที่ 4
+[ChildPlain] วาดใหม่ครั้งที่ 5
+[ChildPlain] วาดใหม่ครั้งที่ 6      ← ยังเดินอยู่
+
+<span class="c">// ข้อ 5 — ลูกอีกตัวที่ห่อ memo ในหน้าเดียวกัน กดปุ่มเดียวกัน</span>
+[ChildMemo] วาดใหม่ครั้งที่ 1
+[ChildMemo] วาดใหม่ครั้งที่ 2       ← หยุดตั้งแต่ตอนโหลดหน้า ไม่ขยับอีกเลย</code></pre>
+    <p style="margin-bottom:0">
+      ถ้าของคุณข้อ 4 แล้วเลข<strong>หยุดเดิน</strong> ทั้งที่ยังไม่ได้ห่อ <code>memo</code> —
+      แปลว่าลูกของคุณอาจไม่ได้รับ prop จากพ่อจริง ๆ หรือพ่อไม่ได้วาดใหม่
+      <br>ให้ <code>console.log</code> ที่พ่อด้วยหนึ่งบรรทัด แล้วดูว่าพ่อขยับไหม
+      — <strong>ไล่จากบนลงล่างเสมอ</strong>
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ข้อไหนอธิบาย "ความต่างระหว่าง <code>useMemo</code> กับ <code>useCallback</code>" ได้ตรงที่สุด?</p>
+  <div class="opts">
+    <button class="opt"><code>useMemo</code> ใช้กับข้อมูลหนัก ๆ ส่วน <code>useCallback</code> ใช้กับข้อมูลเบา ๆ ที่คำนวณเร็ว</button>
+    <button class="opt"><code>useMemo</code> เรียกฟังก์ชันแล้วเก็บ<em>ผลลัพธ์</em> ส่วน <code>useCallback</code> ไม่เรียก แต่เก็บ<em>ตัวฟังก์ชัน</em></button>
+    <button class="opt"><code>useMemo</code> ทำงานฝั่ง server เท่านั้น ส่วน <code>useCallback</code> ทำงานได้เฉพาะฝั่ง client</button>
+    <button class="opt"><code>useMemo</code> ต้องมี dependency array เสมอ ส่วน <code>useCallback</code> จะใส่หรือไม่ใส่ก็ได้</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบตัวเลือกที่ 2 · <strong>ต่างกันแค่ "จำค่า" กับ "จำฟังก์ชัน"</strong> จบแค่นั้นจริง ๆ
+      ถึงขนาดที่ <code>useCallback(fn, deps)</code> เขียนเป็น <code>useMemo(() =&gt; fn, deps)</code> แล้วได้ผลเหมือนกันเป๊ะ —
+      ผมรันพิสูจน์ไว้ในหัวข้อ 3 แล้ว (คอลัมน์ <code>viaMemo</code> ค้างที่ 1 ก้อนเท่ากับ <code>cached</code>)
+    </p>
+    <p style="margin-bottom:0">
+      ตัวเลือกที่ 1 ผิดเพราะไม่เกี่ยวกับความหนักเบาของงาน ·
+      ตัวเลือกที่ 3 ผิดสองชั้น — ทั้งคู่ใช้ได้ทั้งสองฝั่ง (ผมเปิด export ของ React ฝั่ง server ให้ดูในหัวข้อ 8) ·
+      ตัวเลือกที่ 4 ผิดเพราะทั้งคู่รับ dependency array เหมือนกันทุกประการ
+      <br><strong>จุดที่ต้องจำ:</strong> <code>useMemo</code> จำ<strong>ค่า</strong>
+      <code>useCallback</code> จำ<strong>ฟังก์ชัน</strong> — ต่างกันแค่นี้จุดเดียว
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">2. พ่อมี <code>const onPing = useCallback(() =&gt; {}, [])</code> แล้วส่งให้ลูกที่<strong>ไม่ได้</strong>ห่อ <code>React.memo</code> · กดปุ่มให้พ่อวาดใหม่ 2 รอบ ลูกจะเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">ลูกไม่วาดใหม่เลย เพราะ prop ที่มันได้รับเป็นฟังก์ชันก้อนเดิมทุกครั้ง</button>
+    <button class="opt">ลูกวาดใหม่รอบแรกรอบเดียว จากนั้น React จะจำผลไว้ให้เองโดยอัตโนมัติ</button>
+    <button class="opt">ลูกวาดใหม่ทั้งสองรอบ เพราะลูกที่ไม่ได้ห่อจะวาดตามพ่อเสมอ ไม่สนใจ prop</button>
+    <button class="opt">Next.js จะขึ้น warning ตอน build ว่าใส่ <code>useCallback</code> โดยลืมห่อ <code>React.memo</code></button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบตัวเลือกที่ 3 · console จริงในหัวข้อ 5 แสดงชัดว่า <code>ChildPlain</code> ไต่ต่อไป
+      3 · 4 · 5 · 6 หลังกดปุ่มสองครั้ง <strong>ทั้งที่ <code>onPing</code> เป็นก้อนเดิมเป๊ะ</strong>
+      ส่วน <code>ChildMemo</code> ในหน้าเดียวกันหยุดนิ่งที่ 2
+    </p>
+    <p style="margin-bottom:0">
+      ตัวเลือกที่ 1 คือความเข้าใจผิดที่บทนี้ตั้งใจมาแก้โดยตรง ·
+      ตัวเลือกที่ 2 ผิดเพราะ React ไม่ได้จำอะไรให้เองเลยถ้าคุณไม่สั่ง ·
+      ตัวเลือกที่ 4 ผิด — ผมรัน <code>npx next build</code> แล้ว<strong>ผ่านเงียบ ๆ</strong>
+      ไม่มีใครเตือนสักคำ นี่แหละคือเหตุผลที่โค้ดแบบนี้อยู่รอดในโปรเจกต์จริงได้นานเป็นปี
+      <br><strong>จุดที่ต้องจำ:</strong> <code>useCallback</code> ที่ไม่มี <code>React.memo</code>
+      รออยู่ปลายทาง คือโค้ดที่ไม่ทำอะไรเลย
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. <code>const bad = useMemo(() =&gt; a + b, [a]);</code> โดยเริ่มที่ <code>a=1 b=1</code> · กด <code>b +1</code> สองครั้ง (จน <code>b=3</code>) แล้วกด <code>a +1</code> หนึ่งครั้ง · <code>bad</code> จะเป็นเท่าไหร่ในแต่ละจังหวะ?</p>
+  <div class="opts">
+    <button class="opt">2 → 2 → 2 แล้วกระโดดเป็น 5 ตอน <code>a</code> เปลี่ยน (ข้ามค่า 3 กับ 4 ไปเลย)</button>
+    <button class="opt">2 → 3 → 4 แล้วเป็น 5 เหมือนกับตัวที่ใส่ dependency ครบทุกประการ</button>
+    <button class="opt">2 → 2 → 2 แล้วยังคงเป็น 2 ต่อไป เพราะค่าถูกล็อกไว้ตั้งแต่รอบแรกแล้ว</button>
+    <button class="opt">React จะโยน error ตอนรัน เพราะตรวจพบว่า <code>b</code> ถูกใช้แต่ไม่อยู่ใน array</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบตัวเลือกที่ 1 · ค่าที่อ่านจากหน้าเว็บจริงคือ
+      <code>bad=2</code> → <code>bad=2</code> → <code>bad=2</code> → <code>bad=5</code>
+      <br>ตอน <code>a</code> เปลี่ยน React ถึงเรียกฟังก์ชันคำนวณใหม่ แล้วมันไปหยิบ <code>b</code> ตัวล่าสุด (3) มาบวก
+      จึงได้ <code>2 + 3 = 5</code> ทันที <strong>โดยไม่เคยผ่าน 3 กับ 4 เลย</strong>
+    </p>
+    <p style="margin-bottom:0">
+      ตัวเลือกที่ 2 ผิดเพราะนั่นคือพฤติกรรมของ <code>good</code> ที่ใส่ <code>[a, b]</code> ครบ —
+      ถ้า <code>bad</code> เดินตามนั้นได้ก็แปลว่า dependency array ไม่มีความหมายอะไรเลย ·
+      ตัวเลือกที่ 3 ผิดตรงที่มันไม่ได้ "ล็อกถาวร" — พอ <code>[a]</code> ขยับเมื่อไหร่ก็คำนวณใหม่ทันที ·
+      ตัวเลือกที่ 4 ผิด — ไม่มี error ตอนรันเลย มีแค่ <code>warning</code> ของ eslint
+      (<code>react-hooks/exhaustive-deps</code>) และ <code>npx next build</code> ก็ยัง<strong>ผ่าน</strong>
+      <br><strong>จุดที่ต้องจำ:</strong> dependency ขาดไม่ได้ทำให้โปรแกรมพัง แต่ทำให้<strong>ตัวเลขผิดเงียบ ๆ</strong>
+      แล้วเด้งกลับมาถูกเองตอนที่ dependency ตัวอื่นขยับ
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. ไฟล์ <code>app/page.tsx</code> ที่<strong>ไม่มี</strong> <code>'use client'</code> แล้วเรียก <code>useMemo</code> อย่างเดียว (ไม่มี <code>useState</code>) — เกิดอะไรขึ้นตอนเปิดหน้านั้น?</p>
+  <div class="opts">
+    <button class="opt">พังทันที ขึ้น error ว่า hook ทุกตัวใช้ได้เฉพาะใน Client Component เท่านั้น</button>
+    <button class="opt">หน้าเว็บโหลดผ่าน แต่ Next.js เติม <code>'use client'</code> ให้เองเงียบ ๆ ตอน build</button>
+    <button class="opt">ผ่านตอน dev แต่ <code>npx next build</code> จะหยุดพร้อม error ก่อน deploy ขึ้นจริง</button>
+    <button class="opt">ผ่านปกติทั้ง dev และ build เพราะ <code>useMemo</code> อยู่ในชุด hook ฝั่ง server ด้วย แต่ใส่ไปก็ไม่ได้ประโยชน์</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบตัวเลือกที่ 4 · ผมรันแล้วได้ <code>HTTP 200</code> · หน้าแสดง <code>total = 2</code> ปกติ
+      และ <code>npx next build</code> ยังทำเป็นหน้า static (<code>○</code>) ให้ด้วยซ้ำ
+      <br>เพราะ build ฝั่ง server ของ React 19.2.8 มี <code>useMemo</code> · <code>useCallback</code> · <code>useId</code>
+      อยู่ในรายการ export จริง (ผมเปิดดูมาให้แล้วในหัวข้อ 8) — ที่ไม่มีคือ <code>useState</code> กับ <code>useEffect</code>
+    </p>
+    <p style="margin-bottom:0">
+      แต่ <strong>ไม่มีประโยชน์</strong> เพราะ Server Component วาดครั้งเดียวต่อ request ไม่มีรอบถัดไปให้จำ ·
+      ตัวเลือกที่ 1 ผิดเพราะเหมารวมว่า "hook ทุกตัว" ·
+      ตัวเลือกที่ 2 ผิด — Next ไม่เคยเติม directive ให้ใครทั้งนั้น ·
+      ตัวเลือกที่ 3 ผิดเพราะ build ผ่านฉลุย · <strong>ตัวที่พังคือ <code>useState</code> เท่านั้น</strong>
+      และ error ก็ชี้ลูกศรไปที่คำว่า <code>useState</code> ตรง ๆ
+      <br><strong>จุดที่ต้องจำ:</strong> เส้นแบ่ง server/client ไม่ได้ขีดที่คำว่า "hook"
+      แต่ขีดที่ "ต้องจำอะไรข้ามการวาดไหม" — <code>useState</code> ต้อง ส่วน <code>useMemo</code> ไม่ต้อง
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>💬 ติดตรงไหนถามได้</strong> — ถ้ารันตามในบทแล้วได้ผลไม่ตรงกับที่เขียนไว้
+    ให้ส่งมาสามอย่าง: <strong>โค้ดที่รัน</strong> · <strong>คำสั่งที่ใช้</strong> ·
+    และ <strong>console ทั้งก้อน</strong> (อย่าตัดให้เหลือบรรทัดเดียว — ลำดับของ log คือเบาะแสหลัก)
+    <br>และคำถามที่คุ้มที่สุดที่ถามได้กับบทนี้คือ
+    <em>"ตรงนี้ควรใส่ <code>useMemo</code> หรือควรย้าย state ลงไปให้ลึกกว่านี้แทน"</em> —
+    เพราะคำตอบที่ถูกบ่อยที่สุดคือ "ย้าย state" ไม่ใช่ "ใส่ memo"
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0074-useeffect.html">← บทเรียน 74 · useEffect</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Next.js</a>
+  <a href="./0076-usecontext.html">บทเรียน 76 → useContext</a>
+</nav>
+
+<h2 id="sn-sec-12">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://react.dev/reference/react/useMemo">React — <code>useMemo</code></a> —
+      <strong>อ่านหัวข้อ <em>Should you add useMemo everywhere?</em></strong>
+      ซึ่งเป็นหัวข้อที่ทีม React เขียนเองเพื่อบอกว่า <em>อย่า</em> · แล้วเลื่อนต่อไปที่
+      <em>Troubleshooting → My calculation runs twice on every re-render</em>
+      ถ้าอยากรู้ที่มาของ log ซ้ำสองบรรทัดที่เห็นในบทนี้</li>
+  <li><a href="https://react.dev/reference/react/useCallback">React — <code>useCallback</code></a> —
+      <strong>อ่านหัวข้อ <em>Skipping re-rendering of components</em> ให้จบ</strong>
+      เพราะมันเขียนตรง ๆ ว่าต้องใช้คู่กับ <code>memo</code> ถึงจะเกิดผล —
+      ตรงกับที่ console ในหัวข้อ 5 ของบทนี้แสดง · ในหน้าเดียวกันมีบรรทัดที่บอกว่า
+      <code>useCallback(fn, deps)</code> เท่ากับ <code>useMemo(() =&gt; fn, deps)</code></li>
+  <li><a href="https://react.dev/reference/react/memo">React — <code>memo</code></a> —
+      <strong>อ่านหัวข้อ <em>Caveats</em></strong> ที่เตือนว่ามันไม่ได้การันตีว่าจะไม่วาดใหม่
+      (React ยังมีสิทธิ์วาดใหม่ได้ในบางกรณี) — เป็นเหตุผลที่ห้ามใช้ <code>memo</code>
+      แทนการแก้ตรรกะที่ผิด</li>
+  <li><a href="https://nextjs.org/docs/app/api-reference/directives/use-client">Next.js — <code>'use client'</code></a> —
+      ลิงก์นี้คือลิงก์เดียวกับที่โผล่ใน error ที่ผมก็อปมาในหัวข้อ 8 ·
+      <strong>อ่านย่อหน้าแรกที่อธิบายว่ามันขีดเส้นแบ่ง server/client ตรงไหน</strong>
+      แล้วดูตัวอย่างที่บอกว่า directive ต้องอยู่<strong>บรรทัดบนสุดของไฟล์</strong> เหนือ <code>import</code> ทุกตัว</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/is">MDN — <code>Object.is()</code></a> —
+      <strong>อ่านตาราง <em>Description</em></strong> · นี่คือฟังก์ชันที่ React ใช้เทียบ dependency ทีละช่อง
+      ลองสังเกตว่ามันไม่มีทางบอกได้ว่า object สองก้อน "หน้าตาเหมือนกัน" — บอกได้แค่ "เป็นก้อนเดียวกัน"</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 77 — custom hooks: เอา logic ที่ใช้ซ้ำออกมาเป็นของตัวเอง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 77 · Frontend · Next.js</p>
+  <h1>custom hooks — เอา logic ที่ใช้ซ้ำออกมาเป็นของตัวเอง</h1>
+  <p class="meta">~20 นาที · ควรผ่าน <a href="./0076-usecontext.html">บทเรียน 76</a> (useContext) มาก่อน</p>
+  <p class="standfirst">
+    สไลด์หน้า 60–64 บอกว่า custom hook คือการ <em>extract and reuse stateful logic</em>
+    แล้วให้กฎมา 4 ข้อ
+    <br>สามข้อแรกอ่านแล้วเข้าใจได้ทันที แต่<strong>ข้อที่ 4 คือข้อที่มือใหม่เข้าใจผิดกันเกือบทุกคน</strong> —
+    "เรียก hook ตัวเดียวกันสองที่ แล้วมันแชร์ค่ากันไหม?"
+    <br>บทนี้ไม่ตอบด้วยคำอธิบายอย่างเดียว แต่<strong>เอาผลรันจริงมาวางให้ดู</strong>
+    ทั้งตัวเลขบนหน้าจอ ข้อความที่ eslint ฟ้อง และ error ที่ React โยนออกมาตอนคุณแหกกฎ
+    <br>จบบทนี้คุณจะมี <code>useDebounce</code> ที่ใช้ได้จริงหนึ่งตัว — ซึ่งจะได้ใช้ต่อในบท 78 พอดี
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+<pre style="margin:0.5rem 0"><code>next                16.3.4      <span class="c"># จาก npx next --version</span>
+react / react-dom   19.2.8      <span class="c"># จาก package.json ของโปรเจกต์จริง</span>
+node                v24.14.0    <span class="c"># จาก node --version</span>
+eslint 9 + eslint-config-next 16.3.4</code></pre>
+  <p style="margin-bottom:0">
+    ทุกก้อนโค้ดในบทนี้ถูกวางไว้จริงในโปรเจกต์ Next.js ตัวเป็น ๆ แล้ว
+    <br>ผ่าน <code>npx next build</code> (ซึ่งรัน TypeScript ให้ด้วย) และ <code>npx tsc --noEmit</code> จริง
+    <br><strong>ตัวเลขบนหน้าจอกับข้อความ error ทุกบรรทัด ก็อปมาจากเบราว์เซอร์กับ terminal จริง</strong>
+    ไม่ได้เขียนจากความจำ
+  </p>
+</div>
+
+<h2 id="sn-sec-1">ปัญหาที่ทำให้ custom hook เกิดขึ้น</h2>
+
+<p>
+  สมมติหน้าเว็บคุณมีสองที่ที่ต้องนับเลข — กล่องซ้ายกับกล่องขวา
+  <br>ถ้ายังไม่รู้จัก custom hook คุณจะเขียนแบบนี้ คือ<strong>ก็อป <code>useState</code> กับฟังก์ชัน <code>inc</code> ไปวางซ้ำ</strong>
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <p><strong>❌ ก็อป logic ไปวางซ้ำ</strong></p>
+<pre><code><span class="k">function</span> <span class="f">BoxA</span>() {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(<span class="n">0</span>);
+  <span class="k">const</span> inc = () =&gt; <span class="f">setCount</span>((c) =&gt; c + <span class="n">1</span>);
+  <span class="c">// …JSX…</span>
+}
+
+<span class="k">function</span> <span class="f">BoxB</span>() {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(<span class="n">0</span>);
+  <span class="k">const</span> inc = () =&gt; <span class="f">setCount</span>((c) =&gt; c + <span class="n">1</span>);
+  <span class="c">// …JSX…</span>
+}</code></pre>
+    <p>วันที่ลูกค้าขอ "ห้ามเกิน 10" คุณต้องไล่แก้ทุกที่ที่ก็อปไว้ · ลืมที่เดียว = บั๊กที่หาไม่เจอ</p>
+  </div>
+  <div class="side good">
+    <p><strong>✅ ดึง logic ออกมาเป็น custom hook</strong></p>
+<pre><code><span class="c">// components/t77/useCounter.ts</span>
+<span class="k">import</span> { useState } <span class="k">from</span> <span class="s">"react"</span>;
+
+<span class="k">export function</span> <span class="f">useCounter</span>(start = <span class="n">0</span>) {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(start);
+  <span class="k">const</span> inc = () =&gt; <span class="f">setCount</span>((c) =&gt; c + <span class="n">1</span>);
+  <span class="k">return</span> { count, inc };
+}
+
+<span class="c">// ใช้:</span>
+<span class="k">const</span> { count, inc } = <span class="f">useCounter</span>(<span class="n">0</span>);</code></pre>
+    <p>แก้กฎที่เดียว มีผลทุกที่ที่เรียก · และ component เหลือแต่เรื่อง "หน้าตา" ล้วน ๆ</p>
+  </div>
+</div>
+
+<p>
+  นี่คือทั้งหมดที่สไลด์หน้า 61 พูด: <em>"Enables to extract and reuse stateful component logic across multiple parts of application"</em>
+  <br>คำสำคัญคือ <strong>stateful</strong> — ถ้า logic ที่จะดึงออกมาไม่ได้ยุ่งกับ state หรือ side effect เลย
+  <strong>มันคือฟังก์ชันธรรมดา ไม่ใช่ hook</strong> (เดี๋ยวจะเห็นว่าเรื่องนี้สำคัญกว่าที่คิด ในกฎข้อ 2)
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — สูตรทำกาแฟที่แปะไว้หลังเคาน์เตอร์</span>
+  <p>
+    ร้านกาแฟมีเครื่องชง 2 เครื่อง บาริสต้า 2 คน
+    <br>เมื่อก่อนแต่ละคน<strong>จำสูตรเอง</strong> วันที่เจ้าของสั่งลดน้ำตาล ต้องไปบอกทีละคน ลืมคนหนึ่ง = รสชาติเพี้ยน
+    <br>วันนี้เจ้าของ<strong>เขียนสูตรลงกระดาษแผ่นเดียว แปะไว้หลังเคาน์เตอร์</strong> ทั้งสองคนอ่านแผ่นเดียวกัน
+    แก้สูตรที่แผ่นนั้นที่เดียว ทั้งร้านเปลี่ยนพร้อมกัน — กระดาษแผ่นนั้นคือ custom hook
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> อ่านสูตรแผ่นเดียวกัน แต่<strong>แก้วกาแฟไม่ใช่แก้วเดียวกัน</strong>
+    บาริสต้า A ชงไป 3 แก้ว ไม่ได้แปลว่า B ก็ชงไป 3 แก้ว
+    <br>คนอ่านมักหยุดที่ "ใช้ของร่วมกัน" แล้วเผลอสรุปว่า "ค่าก็ร่วมกัน" — <strong>ผิด</strong> และนั่นคือกฎข้อ 4 ที่จะพิสูจน์กันด้านล่าง
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>custom hook</dt>
+    <dd>ฟังก์ชัน JavaScript ธรรมดา ๆ ที่<strong>ชื่อขึ้นต้นด้วย <code>use</code> และข้างในเรียก hook ของ React</strong>
+        — ไม่มี API พิเศษ ไม่มี <code>import</code> อะไรเพิ่ม เขียน <code>function</code> ธรรมดาแล้วจบ ·
+        <strong>ถาม senior ได้ว่า “logic ก้อนนี้ควรดึงออกเป็น custom hook หรือเป็นฟังก์ชันธรรมดาดี”</strong>
+        คำถามนี้จะได้คำตอบว่าก้อนนั้นมี state จริงไหม</dd>
+    <dt>stateful logic</dt>
+    <dd>โค้ดที่<strong>จำอะไรบางอย่างข้ามการวาดหน้าจอ</strong> (มี <code>useState</code> / <code>useEffect</code> / <code>useRef</code> อยู่ข้างใน)
+        ต่างจากฟังก์ชันคำนวณล้วน ๆ ที่ใส่อะไรเข้าไปก็ได้ค่าเดิมออกมาเสมอ ·
+        <strong>พิมพ์บอก AI ได้ว่า “extract this stateful logic into a custom hook”</strong>
+        จะได้ผลตรงกว่าบอกว่า “ทำให้โค้ดสั้นลงหน่อย”</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">กฎ 4 ข้อ ตามสไลด์หน้า 62</h2>
+
+<p>
+  สไลด์หน้า 62 ขึ้นหัวว่า <strong>Core Rules</strong> แล้วให้มา 4 บรรทัด · ผมแปลไว้ในตารางนี้
+  พร้อมช่อง "ใครเป็นคนจับได้" ซึ่งสไลด์ไม่ได้บอก แต่<strong>เป็นช่องที่ทำให้คุณ debug เป็น</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>กฎในสไลด์</th><th>แปลเป็นภาษาคน</th><th>ใครจับได้ (ผมทดลองแล้ว)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Start with “use”</strong><br><em>name must begin with “use”</em></td>
+      <td>ชื่อฟังก์ชันต้องขึ้นต้นด้วย <code>use</code></td>
+      <td><strong>eslint</strong> ฟ้องตอนตรวจ · React ตอนรัน<strong>ไม่สนใจชื่อ</strong>เลย</td>
+    </tr>
+    <tr>
+      <td><strong>Call other hooks</strong><br><em>must call at least one built-in React Hook</em></td>
+      <td>ข้างในต้องเรียก hook ของ React อย่างน้อยหนึ่งตัว</td>
+      <td><strong>ไม่มีใครฟ้อง</strong> — แต่ถ้าไม่ทำ คุณจะโดน eslint ฟ้องผิด ๆ ทีหลัง</td>
+    </tr>
+    <tr>
+      <td><strong>Top-level execution</strong><br><em>follow the regular rules of hooks</em></td>
+      <td>ห้ามเรียกใน <code>if</code> / loop / หลัง <code>return</code></td>
+      <td><strong>ทั้ง eslint และ React ตอนรัน</strong> — React โยน error จนหน้าพัง</td>
+    </tr>
+    <tr>
+      <td><strong>Independent state</strong><br><em>it gets its own completely isolated state</em></td>
+      <td>ทุกที่ที่เรียก ได้ state ของตัวเอง ไม่แชร์กัน</td>
+      <td><strong>ไม่มีใครฟ้อง</strong> — เพราะมันไม่ใช่ error แต่เป็น<strong>วิธีที่มันทำงาน</strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ สองข้อที่ "ไม่มีใครฟ้อง" คือสองข้อที่กินเวลาคุณมากที่สุด</span>
+  <p style="margin-bottom:0">
+    ข้อ 1 กับข้อ 3 มีเครื่องมือคอยตะโกนใส่คุณ ผิดปุ๊บรู้ปั๊บ
+    <br>ข้อ 2 กับข้อ 4 <strong>ผิดแล้วเงียบ</strong> โปรแกรมรันได้ ไม่มีสีแดง แต่พฤติกรรมไม่ใช่อย่างที่คุณคิด
+    <br>เวลาไล่บั๊กเรื่อง hook ให้เริ่มสงสัยสองข้อนี้ก่อนเสมอ
+  </p>
+</div>
+
+<h2 id="sn-sec-3">กฎ 1 · ชื่อต้องขึ้นต้นด้วย use — เพราะเครื่องมืออ่านแค่ชื่อ</h2>
+
+<p>
+  คำถามที่ควรถามคือ <strong>"ถ้าไม่ตั้งชื่อว่า use แล้วมันพังตรงไหน?"</strong>
+  <br>ผมเขียนฟังก์ชันเดียวกันเป๊ะ ๆ แต่ตั้งชื่อว่า <code>getCounter</code> แล้วรัน eslint ดู
+</p>
+
+<pre><code><span class="c">// components/t77/getCounter.ts — เหมือน useCounter ทุกอย่าง ต่างแค่ชื่อ</span>
+<span class="k">import</span> { useState } <span class="k">from</span> <span class="s">"react"</span>;
+
+<span class="k">export function</span> <span class="f">getCounter</span>(start: <span class="n">number</span> = <span class="n">0</span>) {
+  <span class="k">const</span> [count, setCount] = <span class="f">useState</span>(start);
+  <span class="k">const</span> inc = () =&gt; <span class="f">setCount</span>((c) =&gt; c + <span class="n">1</span>);
+  <span class="k">return</span> { count, inc };
+}</code></pre>
+
+<div class="predict">
+  <pre><code>$ npx eslint components/t77/getCounter.ts</code></pre>
+  <p class="ask">คิดว่า eslint จะเงียบ หรือจะฟ้อง? ถ้าฟ้อง มันจะพูดว่าอะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>components/t77/getCounter.ts
+  5:29  error  React Hook "useState" is called in function "getCounter" that is
+               neither a React function component nor a custom React Hook function.
+               React component names must start with an uppercase letter.
+               React Hook names must start with the word "use"
+               react-hooks/rules-of-hooks
+
+✖ 1 problem (1 error, 0 warnings)</code></pre>
+    <p style="margin-bottom:0">
+      อ่านประโยคสุดท้ายให้ดี: <strong>“React Hook names must start with the word &quot;use&quot;”</strong>
+      <br>eslint ไม่ได้วิเคราะห์ว่าโค้ดคุณทำอะไร มัน<strong>อ่านชื่อ</strong> แล้วตัดสินว่าอันไหนคือ hook อันไหนไม่ใช่
+      <br>(ผมขึ้นบรรทัดใหม่ให้อ่านง่ายเฉย ๆ ของจริง eslint พิมพ์มาเป็นบรรทัดเดียวยาว)
+    </p>
+  </div>
+</div>
+
+<p>
+  แล้วถ้าดื้อ ไม่เปลี่ยนชื่อ ปล่อยให้ eslint แดงไว้แบบนั้นล่ะ?
+  <br><strong>โค้ดยังรันได้ปกติ</strong> — ผมกดใช้จริงในเบราว์เซอร์แล้ว มันนับเลขได้ไม่มีปัญหา
+  React ตอนรันไม่เคยดูชื่อฟังก์ชันคุณเลย
+</p>
+
+<div class="win">
+  <span class="label">✅ สรุปกฎข้อ 1 แบบที่เอาไปใช้ได้</span>
+  <p style="margin-bottom:0">
+    การตั้งชื่อ <code>use</code> ไม่ได้ทำให้ฟังก์ชัน "กลายเป็น hook"
+    <br>มันคือ<strong>การยกมือบอกเครื่องมือว่า "ฟังก์ชันนี้เป็น hook นะ ช่วยเฝ้าให้ด้วย"</strong>
+    <br>ไม่ยกมือ = eslint เฝ้าให้ไม่ได้ = คุณแหกกฎข้อ 3 ได้ตามสบายโดยไม่มีใครเตือน (เดี๋ยวจะเห็นตัวอย่าง)
+  </p>
+</div>
+
+<h2 id="sn-sec-4">กฎ 2 · ต้องเรียก hook ของ React อย่างน้อยหนึ่งตัว</h2>
+
+<p>
+  กฎข้อนี้อ่านแล้วงงที่สุด เพราะฟังดูเหมือนข้อบังคับที่ไม่มีเหตุผล
+  <br>ผมเลยลองแหกดู: เขียนฟังก์ชันชื่อ <code>useFormatBaht</code> ที่<strong>ไม่ได้เรียก hook อะไรเลย</strong>
+  แล้วเอาไปเรียกใน <code>if</code>
+</p>
+
+<pre><code><span class="c">// components/t77/useFormatBaht.ts — ชื่อขึ้นต้นด้วย use แต่ข้างในไม่มี hook เลย</span>
+<span class="k">export function</span> <span class="f">useFormatBaht</span>(n: <span class="n">number</span>) {
+  <span class="k">return</span> n.<span class="f">toLocaleString</span>(<span class="s">"th-TH"</span>) + <span class="s">" บาท"</span>;
+}
+
+<span class="c">// app/t77/rule2/page.tsx (ตัดมาเฉพาะส่วนสำคัญ · ไฟล์เต็มมี "use client" กับ useState อยู่ข้างบน)</span>
+<span class="k">if</span> (show) {
+  <span class="f">console</span>.<span class="f">log</span>(<span class="f">useFormatBaht</span>(<span class="n">1200</span>));   <span class="c">// เรียกใน if</span>
+}</code></pre>
+
+<p>โค้ดนี้<strong>รันได้ปกติ</strong> — มันเป็นฟังก์ชันคำนวณธรรมดา ไม่มี state ให้เรียงลำดับ React ไม่เดือดร้อนอะไร แต่ eslint บอกว่า:</p>
+
+<pre><code>app/t77/rule2/page.tsx
+  11:17  error  React Hook "useFormatBaht" is called conditionally. React Hooks must be
+                called in the exact same order in every component render
+                react-hooks/rules-of-hooks
+
+✖ 1 problem (1 error, 0 warnings)</code></pre>
+
+<p>
+  นี่คือ <strong>error ปลอม</strong> · โค้ดไม่ได้ผิดเลย แต่ eslint ตัดสินจากชื่ออย่างเดียว (กฎข้อ 1)
+  พอเห็น <code>use</code> ก็สรุปทันทีว่าเป็น hook แล้วบังคับกฎ top-level ใส่
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — เสื้อกาวน์ในโรงพยาบาล</span>
+  <p>
+    ใส่เสื้อกาวน์เดินในโรงพยาบาล คนจะเข้ามาถามเรื่องคนไข้ พยาบาลจะส่งชาร์ตให้
+    <br>ถ้าคุณเป็นหมอจริง — ดี ระบบทำงานถูก
+    <br>ถ้าคุณเป็นช่างแอร์ที่ดันหยิบเสื้อกาวน์มาใส่ — คุณจะโดนถามเรื่องที่คุณไม่เกี่ยวทั้งวัน
+    และมี<strong>กฎของหมอมาบังคับใช้กับคุณโดยที่คุณไม่ได้เป็นหมอ</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ช่างแอร์ใส่เสื้อกาวน์อาจทำให้คนไข้ตายได้ แต่ฟังก์ชันที่ชื่อ <code>use</code>
+    ผิด ๆ <strong>ไม่ทำให้โปรแกรมพัง</strong> · มันแค่ทำให้ eslint แดงเป็นข้อ ๆ จนคุณเริ่มชิน
+    แล้ววันที่มันแดงเพราะเรื่องจริง คุณก็มองข้ามไปด้วย — <strong>ความเสียหายคือคุณเลิกเชื่อเครื่องมือ</strong>
+  </p>
+</div>
+
+<div class="win">
+  <span class="label">✅ สรุปกฎข้อ 2 แบบที่เอาไปใช้ได้</span>
+  <p style="margin-bottom:0">
+    กฎข้อนี้ไม่ใช่ข้อบังคับทางเทคนิค แต่เป็น<strong>ข้อตกลงเรื่องการตั้งชื่อ</strong>
+    <br><strong>ถ้าฟังก์ชันไม่มี <code>useState</code> / <code>useEffect</code> / <code>useRef</code> หรือ hook ตัวอื่นอยู่ข้างใน ห้ามตั้งชื่อว่า <code>use…</code></strong>
+    ตั้งชื่อว่า <code>formatBaht</code> ไปเลย แล้วเรียกที่ไหนก็ได้ตามใจ
+  </p>
+</div>
+
+<h2 id="sn-sec-5">กฎ 3 · เรียกที่ระดับบนสุดเท่านั้น — ข้อนี้ React ฟ้องเอง</h2>
+
+<p>
+  ทีนี้ลองของจริง: เอา <code>useCounter</code> (ซึ่งมี <code>useState</code> อยู่ข้างในจริง ๆ) ไปเรียกใน <code>if</code>
+</p>
+
+<pre><code><span class="c">// app/t77/rule3/page.tsx</span>
+<span class="s">"use client"</span>;
+
+<span class="k">import</span> { useState } <span class="k">from</span> <span class="s">"react"</span>;
+<span class="k">import</span> { useCounter } <span class="k">from</span> <span class="s">"@/components/t77/useCounter"</span>;
+
+<span class="k">export default function</span> <span class="f">Page</span>() {
+  <span class="k">const</span> [show, setShow] = <span class="f">useState</span>(<span class="k">false</span>);
+
+  <span class="k">if</span> (show) {
+    <span class="k">const</span> { count } = <span class="f">useCounter</span>(<span class="n">0</span>);   <span class="c">// ❌ hook ใน if</span>
+    <span class="f">console</span>.<span class="f">log</span>(count);
+  }
+
+  <span class="k">return</span> (
+    &lt;main&gt;
+      &lt;button onClick={() =&gt; <span class="f">setShow</span>(<span class="k">true</span>)}&gt;show&lt;/button&gt;
+    &lt;/main&gt;
+  );
+}</code></pre>
+
+<div class="predict">
+  <p style="margin-top:0">
+    เปิดหน้านี้ครั้งแรก <code>show</code> เป็น <code>false</code> → หน้าโหลดขึ้นมาปกติ ปุ่มโผล่ ไม่มี error
+    <br>แล้วผม<strong>กดปุ่ม show หนึ่งครั้ง</strong>
+  </p>
+  <p class="ask">คิดว่าเกิดอะไรขึ้น?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>หน้าพังทันที ขึ้นกล่องแดงของ Next.js ว่า <strong>“This page couldn’t load”</strong> · ใน console มีสองข้อความ:</p>
+<pre><code>React has detected a change in the order of Hooks called by Page. This will lead to
+bugs and errors if not fixed. For more information, read the Rules of Hooks:
+https://react.dev/link/rules-of-hooks
+
+   Previous render            Next render
+   ------------------------------------------------------
+1. useState                   useState
+2. undefined                  useState
+   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error: Rendered more hooks than during the previous render.</code></pre>
+    <p style="margin-bottom:0">
+      ตารางนั้นคือของขวัญ: มันบอกตรง ๆ ว่ารอบก่อนเรียก hook ไป <strong>1 ตัว</strong>
+      รอบนี้เรียก <strong>2 ตัว</strong> และตัวที่ 2 ของรอบก่อนคือ <code>undefined</code> (แปลว่าไม่มี)
+      <br>เจอ error หน้าตานี้เมื่อไหร่ ให้ไปหา <code>if</code> / <code>for</code> / <code>return</code> ที่คร่อม hook อยู่ทันที
+    </p>
+  </div>
+</div>
+
+<p>
+  eslint ก็จับได้ตั้งแต่ก่อนรัน — <strong>ข้อความคนละอันกับกฎข้อ 1 นะ อ่านให้ออกว่าอันไหนคืออันไหน</strong>
+</p>
+
+<pre><code>app/t77/rule3/page.tsx
+  11:23  error  React Hook "useCounter" is called conditionally. React Hooks must be
+                called in the exact same order in every component render
+                react-hooks/rules-of-hooks</code></pre>
+
+<h3 id="sn-sub-1">กับดัก: ถ้าตั้งชื่อผิดกฎข้อ 1 eslint จะเฝ้ากฎข้อ 3 ให้ไม่ได้</h3>
+
+<p>
+  ผมเอาโค้ดชุดเดิมเป๊ะ ๆ แต่เปลี่ยนไปเรียก <code>getCounter</code> (ชื่อไม่ขึ้นต้นด้วย <code>use</code>) ใน <code>if</code> แทน
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th><code>useCounter</code> ใน <code>if</code></th><th><code>getCounter</code> ใน <code>if</code></th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>eslint ตรงจุดที่<strong>เรียก</strong></td>
+      <td>❌ ฟ้อง <code>called conditionally</code></td>
+      <td><strong>เงียบสนิท</strong></td>
+    </tr>
+    <tr>
+      <td>React ตอนกดปุ่ม</td>
+      <td>💥 <code>Rendered more hooks than during the previous render.</code></td>
+      <td>💥 <code>Rendered more hooks than during the previous render.</code> <strong>(เหมือนกันเป๊ะ)</strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทั้งสองแบบพังเหมือนกันตอนรัน — ต่างกันแค่<strong>แบบซ้ายพังตั้งแต่ตอนตรวจ แบบขวาพังตอนผู้ใช้กดปุ่ม</strong>
+  <br>นี่คือคำตอบว่าทำไมกฎข้อ 1 (ตั้งชื่อ <code>use</code>) ถึงต้องมาก่อนกฎข้อ 3
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ <code>npx next lint</code> ใช้ไม่ได้แล้วใน Next 16</span>
+  <p>
+    ถ้าคุณเคยเห็นคำสั่ง <code>next lint</code> ในบทความเก่า ๆ — <strong>Next 16.3.4 ไม่มีคำสั่งนี้แล้ว</strong>
+    ผมรันดูจริง ได้แบบนี้ (มันเอาคำว่า <code>lint</code> ไปเข้าใจว่าเป็นชื่อโฟลเดอร์):
+  </p>
+<pre style="margin-bottom:0.5rem"><code>$ npx next lint
+Invalid project directory provided, no such directory: /…/next-sandbox/lint</code></pre>
+  <p style="margin-bottom:0">
+    ของจริงที่ต้องใช้คือเรียก <code>eslint</code> ตรง ๆ:
+    <code>npx eslint app components</code> หรือ <code>npm run lint</code>
+    (ใน <code>package.json</code> ที่ <code>create-next-app</code> สร้างให้ สคริปต์ <code>lint</code> คือ <code>"eslint"</code> เฉย ๆ)
+  </p>
+</div>
+
+<h2 id="sn-sec-6">กฎ 4 · เรียกสองที่ = ได้ state คนละก้อน (ข้อที่เข้าใจผิดกันมากที่สุด)</h2>
+
+<p>
+  มาถึงข้อที่สำคัญที่สุดของบทนี้
+  <br>คำถามที่เกือบทุกคนตอบผิดครั้งแรกคือ: <strong>"กระดาษสูตรมีแผ่นเดียว แล้วตัวเลขล่ะ มีก้อนเดียวไหม?"</strong>
+  <br>ผมเลยทำหน้าจริงขึ้นมา — <code>Box</code> ตัวเดียว เรียก <code>useCounter(0)</code> ข้างใน แล้วเอาไปวางสองครั้ง
+</p>
+
+<pre><code><span class="c">// app/t77/page.tsx</span>
+<span class="s">"use client"</span>;
+
+<span class="k">import</span> { useCounter } <span class="k">from</span> <span class="s">"@/components/t77/useCounter"</span>;
+
+<span class="k">function</span> <span class="f">Box</span>({ label }: { label: <span class="n">string</span> }) {
+  <span class="k">const</span> { count, inc } = <span class="f">useCounter</span>(<span class="n">0</span>);
+  <span class="k">return</span> (
+    &lt;p&gt;
+      &lt;span&gt;{label}&lt;/span&gt; = &lt;b&gt;{count}&lt;/b&gt;{<span class="s">" "</span>}
+      &lt;button onClick={inc}&gt;+1&lt;/button&gt;
+    &lt;/p&gt;
+  );
+}
+
+<span class="k">export default function</span> <span class="f">Page</span>() {
+  <span class="k">return</span> (
+    &lt;main&gt;
+      &lt;Box label=<span class="s">"A"</span> /&gt;
+      &lt;Box label=<span class="s">"B"</span> /&gt;
+    &lt;/main&gt;
+  );
+}</code></pre>
+
+<div class="predict">
+  <pre><code>เปิดหน้า → กดปุ่ม +1 ของ A สามครั้ง → กดปุ่ม +1 ของ B หนึ่งครั้ง</code></pre>
+  <p class="ask">คิดว่าบนจอจะขึ้นตัวเลขอะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผมกดจริงในเบราว์เซอร์ (dev server ของ Next 16.3.4) แล้วอ่านข้อความบนหน้าออกมาได้ตรง ๆ ว่า:</p>
+<pre><code>t77 — useCounter สองที่
+
+A = 3 +1
+
+B = 1 +1</code></pre>
+    <p style="margin-bottom:0">
+      <strong>A = 3 · B = 1</strong> — ไม่ใช่ 4 ทั้งคู่ และไม่ใช่ 3 ทั้งคู่
+      <br>ถึงจะเรียก <code>useCounter</code> ตัวเดียวกัน โค้ดบรรทัดเดียวกัน แต่<strong>ตัวเลขเดินแยกกันสนิท</strong>
+    </p>
+  </div>
+</div>
+
+<div class="diagram">
+<pre>          &lt;Box label="A" /&gt;                    &lt;Box label="B" /&gt;
+      ┌──────────────────────────┐        ┌──────────────────────────┐
+      │  useCounter(0)           │        │  useCounter(0)           │
+      │    └─ useState  →  [ 3 ] │        │    └─ useState  →  [ 1 ] │
+      └──────────────────────────┘        └──────────────────────────┘
+                   ▲                                   ▲
+                   └───────────┬───────────────────────┘
+                               │
+              โค้ดใช้ร่วมกัน (ไฟล์ useCounter.ts มีแผ่นเดียว)
+              แต่ช่องเก็บค่าแยกกัน
+
+   React ผูก state ไว้กับ "ตำแหน่งของ component ในต้นไม้"
+   ไม่ได้ผูกไว้กับ "ฟังก์ชัน useCounter"
+   → วาง Box กี่ตัว ก็ได้ช่องเก็บค่าเท่านั้นตัว</pre>
+</div>
+
+<p>
+  ประโยคสุดท้ายในกล่องคือหัวใจ · <code>useState</code> ไม่ได้เก็บค่าไว้ในตัวฟังก์ชัน
+  มันไป<strong>จองช่องไว้กับ component ที่กำลังวาดอยู่ ณ ตอนนั้น</strong>
+  <br>เพราะฉะนั้นคำถาม "เรียกสองที่แชร์กันไหม" จึงตอบได้เลยว่า <strong>ไม่</strong> ตราบใดที่มันอยู่คนละ component
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — แบบฟอร์มใบลา</span>
+  <p>
+    บริษัทมีแบบฟอร์มใบลา<strong>แบบเดียว</strong> วางไว้ที่ชั้นวางหน้าห้องบุคคล
+    <br>คุณหยิบมาหนึ่งใบเขียนชื่อตัวเอง เพื่อนหยิบมาอีกใบเขียนชื่อเพื่อน
+    <br><strong>แบบฟอร์มแบบเดียวกัน แต่ใบที่กรอกแล้วคนละใบ</strong> — คุณลา 3 วัน ไม่ได้แปลว่าเพื่อนลา 3 วันด้วย
+    <br>ชั้นวาง = ไฟล์ <code>useCounter.ts</code> · ใบที่กรอกแล้ว = state ของแต่ละ component
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ใบลาที่กรอกแล้วอยู่กับ<em>คน</em> แต่ state อยู่กับ<em>ตำแหน่งใน component tree</em>
+    <br>ถ้า React ถอด <code>&lt;Box&gt;</code> ตัวนั้นออกจากหน้าจอ (unmount) <strong>ค่าที่กรอกไว้หายทันที</strong> ไม่มีใครเก็บให้
+    <br>เทียบง่าย ๆ คือใบลาโดนฉีกทิ้งทุกครั้งที่คุณเดินออกจากตึก
+  </p>
+</div>
+
+<div class="win">
+  <span class="label">✅ แล้วถ้าอยากให้แชร์กันจริง ๆ ล่ะ?</span>
+  <p style="margin-bottom:0">
+    custom hook <strong>ไม่ใช่เครื่องมือแชร์ค่า</strong> มันคือเครื่องมือแชร์ <em>วิธีทำ</em>
+    <br>อยากให้หลาย component เห็นค่าเดียวกัน ต้องยก state ขึ้นไปไว้ที่พ่อแม่ร่วม แล้วส่งลงมาเป็น prop
+    หรือใช้ <a href="./0076-usecontext.html"><code>useContext</code> ที่เพิ่งเรียนไปในบท 76</a>
+    <br>ท่ามาตรฐานคือ <strong>ใช้ทั้งคู่</strong> — <code>Context</code> เก็บค่ากลาง แล้วห่อการอ่านค่านั้นไว้ใน custom hook ชื่อ <code>useXxx</code>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>rules of hooks</dt>
+    <dd>ชุดกฎที่ React บังคับว่า hook ต้องถูกเรียก<strong>จำนวนเท่าเดิมและลำดับเดิมทุกครั้งที่วาดใหม่</strong>
+        เพราะ React จำ state ด้วย "ลำดับที่ถูกเรียก" ไม่ใช่ด้วยชื่อตัวแปร ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ผมต้องเรียก hook แบบมีเงื่อนไข ควรแยกเป็น component ย่อยไหม”</strong>
+        (คำตอบส่วนใหญ่คือ “ใช่” — แยก component คือทางออกมาตรฐานของปัญหานี้)</dd>
+    <dt>isolated state / per-instance state</dt>
+    <dd>state ที่<strong>เป็นของแต่ละที่ที่เรียก ไม่ปนกัน</strong> — คือกฎข้อ 4 ที่พิสูจน์ไปข้างบน ·
+        <strong>พิมพ์บอก AI ได้ว่า “does this custom hook share state between components, or is it per-instance?”</strong>
+        ถ้าคำตอบที่ได้บอกว่า “shared” ให้สงสัยไว้ก่อนว่า AI ตอบผิด</dd>
+    <dt>unmount</dt>
+    <dd>จังหวะที่ React <strong>ถอด component ออกจากหน้าจอ</strong> · ตอนนั้น state ทุกก้อนของมันหายหมด
+        และ cleanup ของ <code>useEffect</code> จะถูกเรียก ·
+        <strong>ถาม senior ได้ว่า “ค่านี้ต้องอยู่รอดตอน unmount ไหม”</strong>
+        ถ้าต้องอยู่รอด แปลว่าที่เก็บมันไม่ควรอยู่ใน component ตัวนั้น</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">เขียน custom hook ที่ใช้ได้จริงหนึ่งตัว — useDebounce</h2>
+
+<p>
+  สไลด์หน้า 61 ยกตัวอย่างการใช้งานมา 9 แบบ · อันที่ 6 คือ <strong>Debounce / Throttle</strong>
+  พร้อมโค้ดบรรทัดเดียวว่า <code>const debouncedValue = useDebounce(value, 500);</code>
+  <br>เราจะเขียนตัวนี้กันจริง ๆ เพราะ<strong>บท 78 (โจทย์ Customer Search) ต้องใช้พอดี</strong>
+</p>
+
+<p>
+  ปัญหาที่มันแก้: ช่องค้นหา ถ้ายิง API ทุกตัวอักษรที่พิมพ์ พิมพ์ 5 ตัวก็ยิง 5 ครั้ง
+  <br>สิ่งที่เราอยากได้คือ <strong>"รอให้เขาหยุดพิมพ์ก่อนสักครึ่งวินาที ค่อยยิงครั้งเดียว"</strong>
+</p>
+
+<pre><code><span class="c">// components/t77/useDebounce.ts</span>
+<span class="k">import</span> { useEffect, useState } <span class="k">from</span> <span class="s">"react"</span>;
+
+<span class="k">export function</span> <span class="f">useDebounce</span>&lt;<span class="n">T</span>&gt;(value: <span class="n">T</span>, delay: <span class="n">number</span>): <span class="n">T</span> {
+  <span class="k">const</span> [debounced, setDebounced] = <span class="f">useState</span>(value);
+
+  <span class="f">useEffect</span>(() =&gt; {
+    <span class="k">const</span> id = <span class="f">setTimeout</span>(() =&gt; <span class="f">setDebounced</span>(value), delay);
+    <span class="k">return</span> () =&gt; <span class="f">clearTimeout</span>(id);   <span class="c">// ← บรรทัดนี้คือทั้งหมดของ debounce</span>
+  }, [value, delay]);
+
+  <span class="k">return</span> debounced;
+}</code></pre>
+
+<p>
+  กลไกอยู่ที่บรรทัด <code>clearTimeout</code> · ทุกครั้งที่ <code>value</code> เปลี่ยน
+  React จะ<strong>เรียก cleanup ของรอบก่อนทิ้งก่อน</strong> แล้วค่อยรัน effect รอบใหม่
+  <br>แปลว่า <strong>timer ที่ตั้งไว้เมื่อกี๊โดนยกเลิกเสมอ</strong> — จะมี timer รอดชีวิตได้ก็ต่อเมื่อ 500ms ผ่านไปโดยไม่มีใครพิมพ์อะไรเพิ่ม
+</p>
+
+<p>ผมเอาไปใช้จริงในหน้าเทส แล้วใส่ <code>console.log</code> ไว้สองจุดเพื่อนับ:</p>
+
+<pre><code><span class="c">// app/t77/debounce/page.tsx (ตัดมาเฉพาะส่วนสำคัญ)</span>
+<span class="k">const</span> [text, setText] = <span class="f">useState</span>(<span class="s">""</span>);
+<span class="k">const</span> debounced = <span class="f">useDebounce</span>(text, <span class="n">500</span>);
+
+<span class="f">useEffect</span>(() =&gt; {
+  <span class="k">if</span> (text === <span class="s">""</span>) <span class="k">return</span>;
+  <span class="f">console</span>.<span class="f">log</span>(<span class="s">"RAW:"</span>, text);        <span class="c">// นับทุกตัวอักษรที่พิมพ์</span>
+}, [text]);
+
+<span class="f">useEffect</span>(() =&gt; {
+  <span class="k">if</span> (debounced === <span class="s">""</span>) <span class="k">return</span>;
+  <span class="f">console</span>.<span class="f">log</span>(<span class="s">"SEARCH:"</span>, debounced);  <span class="c">// นับ "ครั้งที่จะยิง API จริง"</span>
+}, [debounced]);</code></pre>
+
+<div class="predict">
+  <pre><code>พิมพ์คำว่า  s → o → l → a → r  รวดเดียว (5 ปุ่ม)
+แล้วรอ 2 วินาที แล้วเปิด console ดู</code></pre>
+  <p class="ask">คิดว่าจะเห็น <code>RAW:</code> กี่บรรทัด และ <code>SEARCH:</code> กี่บรรทัด?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผมกดปุ่มทีละตัวจริง ๆ ในเบราว์เซอร์ แล้วอ่าน console ออกมาได้ตรง ๆ ว่า:</p>
+<pre><code>RAW: s
+RAW: so
+RAW: sol
+RAW: sola
+RAW: solar
+SEARCH: solar</code></pre>
+    <p style="margin-bottom:0">
+      <strong>RAW 5 บรรทัด · SEARCH 1 บรรทัด</strong>
+      <br>คือถ้าเป็นช่องค้นหาจริง คุณเพิ่งลดจำนวน request จาก 5 เหลือ 1 ด้วย hook 10 บรรทัด
+      <br>และระหว่างที่พิมพ์อยู่ ผมเช็คค่าบนหน้าจอทันทีหลังพิมพ์เสร็จ ได้ว่า
+      <code>ที่พิมพ์ = solar</code> แต่ <code>หลังหน่วง = </code> (ยังว่าง) · อีกวินาทีเดียวมันถึงตามมาเป็น <code>solar</code>
+    </p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>debounce</dt>
+    <dd><strong>“รอให้เงียบก่อนค่อยทำ”</strong> — มีเหตุการณ์รัว ๆ เข้ามา แต่เราลงมือแค่ครั้งเดียวหลังจากที่มันหยุดรัวแล้ว
+        (ต่างจาก <em>throttle</em> ที่แปลว่า “ทำได้ไม่เกินนาทีละครั้ง” คือทำระหว่างทางด้วย) ·
+        <strong>ถาม senior ได้ว่า “ช่องนี้ควร debounce หรือ throttle”</strong>
+        ช่องค้นหามักตอบว่า debounce ส่วนการ scroll มักตอบว่า throttle</dd>
+    <dt>cleanup function</dt>
+    <dd>ฟังก์ชันที่ <code>useEffect</code> <strong>คืนออกมา</strong> เพื่อบอก React ว่า “ตอนเลิกใช้ ให้เก็บกวาดแบบนี้”
+        · React เรียกมัน<strong>ก่อน</strong>รัน effect รอบถัดไป และตอน component ถูก unmount ·
+        <strong>พิมพ์บอก AI ได้ว่า “this effect needs a cleanup function to cancel the pending timer”</strong></dd>
+    <dt>generic (<code>&lt;T&gt;</code>)</dt>
+    <dd>ช่องว่างของ type ที่เติมทีหลัง — <code>useDebounce&lt;T&gt;(value: T, …): T</code> แปลว่า
+        “ใส่ type ไหนเข้ามาก็คืน type นั้นกลับไป” ทำให้ hook ตัวเดียวใช้ได้กับทั้ง <code>string</code> และ <code>number</code>
+        โดยไม่เสีย type safety (เรื่องนี้เจอมาแล้วในบท 65) ·
+        <strong>ถาม senior ได้ว่า “hook ตัวนี้ควรเป็น generic ไหม หรือ fix type ไปเลยดีกว่า”</strong></dd>
+  </dl>
+</div>
+
+<div class="warn">
+  <span class="label">⚠️ ระวังเวลาก็อป <code>useUser</code> จากสไลด์หน้า 62 ไปใช้</span>
+  <p>
+    โค้ดในสกรีนช็อตหน้า 62 เขียนว่า <code>useState(null)</code> เฉย ๆ
+    <br>ผมก็อปมาทั้งดุ้น <strong>มันผ่าน <code>tsc</code> และผ่าน eslint ไม่มีปัญหา</strong> — จนกระทั่งเอาไปใช้:
+  </p>
+<pre style="margin-bottom:0.5rem"><code><span class="k">const</span> user = <span class="f">useUser</span>();
+<span class="k">return</span> &lt;p&gt;{user?.name}&lt;/p&gt;;
+
+<span class="c">// $ npx tsc --noEmit</span>
+<span class="c">// app/t77/slide/page.tsx(7,20): error TS2339:</span>
+<span class="c">//   Property 'name' does not exist on type 'never'.</span></code></pre>
+  <p style="margin-bottom:0">
+    เพราะ <code>useState(null)</code> ทำให้ TypeScript สรุปว่า <code>user</code> เป็น <code>null</code> ตลอดกาล
+    พอเขียน <code>user?.</code> มันเลยเหลือ type เป็น <code>never</code>
+    <br>ที่ถูกคือบอก type ให้ชัด: <code>useState&lt;User | null&gt;(null)</code> —
+    ผมแก้แบบนี้แล้ว <code>npx tsc --noEmit</code> ผ่านสะอาด
+    <br>สไลด์ไม่ผิดหรอก เขาเขียน <code>.ts</code> โชว์แนวคิด แต่<strong>พอเอามาต่อของจริงแล้วมันไปไม่รอด</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-8">ไม่ต้องเขียนเองทุกตัว — useHooks กับ Mantine</h2>
+
+<p>
+  สไลด์หน้า 63–64 ปิดท้ายด้วยของสำเร็จรูปสองเจ้า ซึ่งเป็นสองเจ้าที่คนใช้กันจริงในงาน
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>เจ้าไหน</th><th>เป็นอะไร</th><th>ติดตั้ง</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="https://usehooks.com/">useHooks</a></td>
+      <td>ชุด hook สำเร็จรูปจากทีม ui.dev · มีทั้ง <code>useDebounce</code>, <code>useLocalStorage</code>,
+          <code>useMediaQuery</code>, <code>useCopyToClipboard</code>, <code>useWindowSize</code></td>
+      <td><code>npm i @uidotdev/usehooks</code></td>
+    </tr>
+    <tr>
+      <td><a href="https://mantine.dev/hooks/package/">Mantine Hooks</a></td>
+      <td>ชุด hook ของ Mantine · สไลด์ระบุว่ามีเกิน 70 ตัว · ใช้ได้แม้ไม่ได้ใช้ component ของ Mantine
+          เพราะแพ็กเกจนี้ไม่พึ่งอะไรนอกจาก React</td>
+      <td><code>npm i @mantine/hooks</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>📌 บทนี้ไม่ได้ลง sandbox สองตัวนี้ให้</strong> — ผมไม่ได้ติดตั้งมันในโปรเจกต์ทดสอบ
+    เพราะฉะนั้นข้อมูลในตารางนี้มาจาก<strong>หน้าเว็บของเขาตามที่สไลด์ถ่ายมา ไม่ใช่ผลรันของผม</strong>
+    <br>ก่อนใช้ในงานจริง ให้เปิดหน้า docs ของเวอร์ชันที่คุณจะติดตั้งเสมอ
+    <br><strong>แต่ก่อนจะไปหยิบของสำเร็จรูป ให้เขียน <code>useDebounce</code> เองสักครั้งก่อน</strong> —
+    10 บรรทัดข้างบนคือสิ่งที่ทำให้คุณอ่าน source ของไลบรารีพวกนี้ออก แทนที่จะได้แค่ก็อปมาใช้แล้วภาวนา
+  </p>
+</div>
+
+<div class="task">
+  <h3 id="sn-sub-2">🛠 ภารกิจ — เขียน useToggle แล้วพิสูจน์ทั้งสองข้อ ห้ามข้ามข้อ 4</h3>
+  <p>
+    สไลด์หน้า 61 ช่องที่ 5 (UI State &amp; Interaction) ยกตัวอย่าง
+    <code>const [isOpen, open, close, toggle] = useToggle(false);</code> — เราจะเขียนตัวนี้กัน
+  </p>
+  <ol>
+    <li>
+      สร้างไฟล์ <code>components/useToggle.ts</code> ในโปรเจกต์ Next.js ของคุณ
+      แล้วเขียน hook ที่รับค่าเริ่มต้นเป็น <code>boolean</code> และคืน
+      <code>{ isOpen, open, close, toggle }</code> ออกมา
+      <br><strong>สังเกตว่าเราคืนเป็น object ไม่ใช่ array อย่างในสไลด์</strong> —
+      คืน array แล้วคนเรียกต้องจำ<em>ลำดับ</em> ให้ถูก (สลับ <code>open</code> กับ <code>close</code> ก็ไม่มีใครฟ้อง)
+      ส่วนคืน object คนเรียกจำแค่<em>ชื่อ</em> · ถ้าอยากได้แบบสไลด์เป๊ะ ๆ ให้ <code>return [isOpen, open, close, toggle] as const;</code> แทน
+    </li>
+    <li>
+      สร้าง component <code>Panel</code> ที่ใช้ <code>useToggle(false)</code>
+      แล้วมีปุ่มสลับกับข้อความที่โผล่/หายตามค่า · <strong>อย่าลืม <code>"use client"</code> บรรทัดบนสุดของไฟล์ page</strong>
+    </li>
+    <li>
+      <strong>วาง <code>&lt;Panel /&gt;</code> ลงในหน้าเดียวกันสองอัน</strong>
+    </li>
+    <li>
+      <strong>พิสูจน์กฎข้อ 4 ด้วยตาตัวเอง</strong> — เปิดอันบน ปล่อยอันล่างปิดไว้
+      <br>ถ้าอันล่างเปิดตามด้วย แปลว่าคุณเผลอยก state ไปไว้ที่ <code>Page</code> แล้วส่งลงมาเป็น prop
+      (ซึ่งเป็นคนละเรื่องกับ custom hook) — กลับไปดูว่า <code>useToggle</code> ถูกเรียกที่ไหน
+    </li>
+    <li>
+      <strong>พิสูจน์กฎข้อ 3 ด้วยการทำให้มันพัง</strong> — ย้ายบรรทัด <code>useToggle(false)</code>
+      เข้าไปอยู่ใน <code>if</code> สักอัน แล้วรัน <code>npx eslint app components</code>
+      <br>ก็อปข้อความที่ eslint ฟ้องมาเทียบกับข้อความในบทนี้ ว่าเหมือนกันไหม
+      <br>แล้วรัน dev server กดปุ่มจนหน้าพัง เพื่อดู error ของ React ด้วยตาตัวเอง <strong>แล้วค่อยแก้กลับ</strong>
+    </li>
+    <li>
+      ปิดท้ายด้วย <code>npx tsc --noEmit</code> ต้องไม่มี error เหลือ
+    </li>
+  </ol>
+  <p class="ask">ข้อ 5 คือข้อที่คนข้ามบ่อยที่สุด — แต่เป็นข้อเดียวที่ทำให้คุณจำ error หน้าตานั้นได้ตอนเจอของจริงตอนตีสอง</p>
+  <button class="reveal">คำใบ้ของข้อ 1</button>
+  <div class="answer">
+<pre><code><span class="k">import</span> { useCallback, useState } <span class="k">from</span> <span class="s">"react"</span>;
+
+<span class="k">export function</span> <span class="f">useToggle</span>(initial = <span class="k">false</span>) {
+  <span class="k">const</span> [isOpen, setIsOpen] = <span class="f">useState</span>(initial);
+  <span class="k">const</span> open   = <span class="f">useCallback</span>(() =&gt; <span class="f">setIsOpen</span>(<span class="k">true</span>), []);
+  <span class="k">const</span> close  = <span class="f">useCallback</span>(() =&gt; <span class="f">setIsOpen</span>(<span class="k">false</span>), []);
+  <span class="k">const</span> toggle = <span class="f">useCallback</span>(() =&gt; <span class="f">setIsOpen</span>((v) =&gt; !v), []);
+  <span class="k">return</span> { isOpen, open, close, toggle };
+}</code></pre>
+    <p style="margin-bottom:0">
+      ใช้ <code>useCallback</code> เพื่อให้ฟังก์ชันสามตัวนี้เป็นก้อนเดิมทุกรอบ —
+      เผื่อคุณส่งมันลงไปให้ลูกที่ห่อด้วย <code>React.memo</code> (ตามที่คุยกันไว้ในบท 75)
+      <br>ในโปรเจกต์นี้ React เป็นเวอร์ชัน 19 และ <code>next.config.ts</code> <strong>ไม่ได้เปิด React Compiler ไว้</strong>
+      (ผมเปิดไฟล์ดูแล้ว ข้างก้อน <code>nextConfig</code> ว่างเปล่า มีแต่คอมเมนต์ <code>/* config options here */</code>)
+      → <code>useCallback</code> ยังต้องเขียนเองอยู่ ไม่มีใครใส่ให้
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">ทบทวนด้วยคำถาม</h2>
+
+<div class="quiz" data-answer="0">
+  <p class="q">หน้าหนึ่งวาง <code>&lt;Box /&gt;</code> สองอัน ทั้งคู่เรียก <code>useCounter(0)</code> ข้างในเหมือนกัน · กด +1 ที่อันแรกสามครั้ง อันที่สองไม่แตะเลย จะเห็นอะไรบนจอ?</p>
+  <div class="opts">
+    <button class="opt">อันแรก 3 อันที่สอง 0 เพราะแต่ละที่ที่เรียกได้ state เป็นของตัวเอง</button>
+    <button class="opt">อันแรก 3 อันที่สอง 3 เพราะทั้งคู่ใช้ hook ตัวเดียวกันจึงแชร์ค่ากัน</button>
+    <button class="opt">อันแรก 3 อันที่สอง 3 เพราะ useState ข้างในถูกประกาศไว้ครั้งเดียว</button>
+    <button class="opt">อันแรก 0 อันที่สอง 0 เพราะ custom hook ไม่ได้เก็บ state ให้เลย</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · ผมรันจริงในบทนี้แล้วได้ <strong>A = 3 · B = 1</strong> (กด B ไปหนึ่งครั้ง)
+      ยืนยันว่าแยกกันจริง
+      <br>ตัวเลือกที่ 2 กับ 3 คือความเข้าใจผิดที่พบบ่อยที่สุด — สับสนระหว่าง "ใช้โค้ดร่วมกัน" กับ "ใช้ค่าร่วมกัน"
+      <code>useState</code> จองช่องเก็บค่าไว้กับ<strong>ตำแหน่งของ component ในต้นไม้</strong> ไม่ใช่กับตัวฟังก์ชัน
+      <br>ตัวเลือกที่ 4 ผิดเพราะ hook เก็บ state ให้แน่นอน แค่เก็บแยกกันคนละก้อน
+      <br>อยากให้แชร์ค่ากันจริง ๆ ต้องยก state ขึ้นไปไว้ที่พ่อแม่ร่วม หรือใช้ <code>useContext</code>
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ทำไมชื่อ custom hook ต้องขึ้นต้นด้วย <code>use</code>?</p>
+  <div class="opts">
+    <button class="opt">เพราะ React ตรวจชื่อตอนรัน ถ้าไม่ขึ้นต้นด้วย use จะโยน error ออกมาทันที</button>
+    <button class="opt">เพราะเครื่องมือตรวจโค้ด (eslint) ใช้ชื่อเป็นตัวตัดสินว่าอันไหนคือ hook</button>
+    <button class="opt">เพราะ Next.js ต้องใช้ชื่อไปสร้าง route ให้อัตโนมัติตอน build</button>
+    <button class="opt">เพราะ TypeScript จะสรุป type ของค่าที่คืนออกมาไม่ได้ถ้าชื่อไม่ขึ้นต้นด้วย use</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · ในบทนี้ผมเปลี่ยนชื่อเป็น <code>getCounter</code> แล้ว eslint ฟ้องตรง ๆ ว่า
+      <em>“React Hook names must start with the word &quot;use&quot;”</em>
+      <br>ตัวเลือกที่ 1 ผิด — ผมปล่อยชื่อผิดไว้แล้วรันจริง <strong>โปรแกรมทำงานได้ปกติ</strong>
+      React ตอนรันไม่ได้ดูชื่อฟังก์ชันเลย มันนับแค่ "ลำดับที่ hook ถูกเรียก"
+      <br>และนั่นแหละคืออันตราย: ชื่อผิด = eslint เฝ้าให้ไม่ได้ = คุณเรียก hook ใน <code>if</code> ได้โดยไม่มีใครเตือน
+      แล้วไปพังตอนผู้ใช้กดปุ่มแทน
+      <br>ตัวเลือกที่ 3 กับ 4 ไม่มีอะไรเกี่ยวกับความจริงเลย
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ฟังก์ชันชื่อ <code>useFormatBaht(n)</code> ที่ข้างในไม่ได้เรียก hook ของ React สักตัว ถ้าเอาไปเรียกใน <code>if</code> จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">รันได้ปกติ และ eslint ก็เงียบ เพราะมันไม่ได้เรียก hook ตัวไหนจริง ๆ</button>
+    <button class="opt">รันไม่ได้ React จะโยน Rendered more hooks than during the previous render</button>
+    <button class="opt">รันได้ปกติ แต่ eslint ฟ้องว่า called conditionally เพราะมันตัดสินจากชื่อ</button>
+    <button class="opt">รันไม่ได้ตั้งแต่ next build เพราะ TypeScript ไม่ยอมให้เรียกฟังก์ชันใน if</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · ผมทดลองจริงแล้วได้ <code>React Hook "useFormatBaht" is called conditionally.</code>
+      ทั้งที่โค้ดไม่ได้ผิดอะไรเลย
+      <br>ตัวเลือกที่ 1 ผิดครึ่งเดียว — รันได้จริง แต่ eslint ไม่เงียบ เพราะมันตัดสินจาก<strong>ชื่อ</strong> ไม่ได้อ่านข้างใน
+      <br>ตัวเลือกที่ 2 ผิด — React ไม่พัง เพราะไม่มี <code>useState</code> ให้เรียงลำดับสักตัว
+      <br>ตัวเลือกที่ 4 ผิด — TypeScript ไม่มีความเห็นเรื่องนี้เลย
+      <br><strong>นี่คือเหตุผลที่กฎข้อ 2 มีอยู่:</strong> ถ้าฟังก์ชันไม่มี hook อยู่ข้างใน ห้ามตั้งชื่อว่า <code>use…</code>
+      ไม่งั้นคุณจะได้ error ปลอมจนเลิกเชื่อ eslint
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ใช้ <code>useDebounce(text, 500)</code> แล้วพิมพ์รวดเดียว 5 ตัวอักษร · <code>useEffect</code> ที่ผูกกับค่าหลังหน่วงจะทำงานกี่ครั้ง?</p>
+  <div class="opts">
+    <button class="opt">5 ครั้ง เพราะ useEffect ผูกกับค่าที่เปลี่ยนใหม่ทุกครั้งที่กดปุ่ม</button>
+    <button class="opt">1 ครั้ง เพราะ cleanup ยกเลิก timer ของรอบก่อนทุกครั้งที่ค่าเปลี่ยน</button>
+    <button class="opt">0 ครั้ง เพราะ setTimeout ทุกอันโดน clearTimeout ยกเลิกไปหมดแล้ว</button>
+    <button class="opt">2 ครั้ง เพราะ React 19 จะรวบ effect ที่ซ้ำกันให้เหลือครึ่งหนึ่ง</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · ผมพิมพ์ <code>s o l a r</code> ทีละปุ่มจริง แล้วอ่าน console ได้
+      <code>RAW:</code> <strong>5 บรรทัด</strong> แต่ <code>SEARCH:</code> <strong>1 บรรทัด</strong>
+      <br>ตัวเลือกที่ 1 คือสิ่งที่จะเกิดถ้า<strong>ไม่</strong>ใช้ debounce — และคือจำนวน request ที่เราพยายามลดอยู่
+      <br>ตัวเลือกที่ 3 ผิด เพราะ timer ตัวสุดท้ายไม่มีใครมายกเลิก (ไม่มีการพิมพ์เพิ่มแล้ว) มันเลยรอดไปทำงานหลัง 500ms
+      <br>ตัวเลือกที่ 4 ไม่มีจริง React ไม่รวบ effect ให้ใคร
+      <br>ถ้าลบบรรทัด <code>return () =&gt; clearTimeout(id)</code> ทิ้ง คำตอบจะกลายเป็นข้อ 1 ทันที — cleanup คือทั้งหมดของ debounce
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">อ่านต่อตรงไหน</h2>
+
+<ul class="sources">
+  <li><a href="https://react.dev/learn/reusing-logic-with-custom-hooks">React Docs — Reusing Logic with Custom Hooks</a> —
+      <strong>อ่านหัวข้อ <em>Custom Hooks share stateful logic, not state itself</em></strong>
+      ซึ่งเป็นหัวข้อที่ตอบกฎข้อ 4 โดยตรง · ในนั้นมีประโยคที่เขาเน้นไว้ว่า hook แต่ละครั้งที่เรียกเป็นอิสระต่อกันโดยสิ้นเชิง
+      — เทียบกับผลรัน <code>A = 3 · B = 1</code> ในบทนี้ว่าตรงกันไหม</li>
+  <li><a href="https://react.dev/reference/rules/rules-of-hooks">React Docs — Rules of Hooks</a> —
+      <strong>อ่านหัวข้อ <em>Only call Hooks at the top level</em></strong> ที่ไล่รายการไว้ครบว่าห้ามเรียกใน
+      <code>if</code> · loop · <code>try/catch</code> · หลัง <code>return</code> · และในฟังก์ชันที่ไม่ใช่ component
+      (ลิงก์นี้คือลิงก์เดียวกับที่ React พิมพ์ใน error ตอนหน้าพัง)</li>
+  <li><a href="https://react.dev/reference/react/useEffect">React Docs — <code>useEffect</code></a> —
+      <strong>อ่านหัวข้อ <em>Parameters</em> ตรงคำอธิบายของ cleanup function</strong>
+      ที่บอกว่า React เรียก cleanup ของรอบก่อน<strong>ก่อน</strong>รัน effect รอบใหม่เสมอ —
+      ประโยคนั้นคือคำอธิบายว่าทำไม <code>useDebounce</code> 10 บรรทัดถึงทำงานได้</li>
+  <li><a href="https://usehooks.com/">useHooks (ui.dev)</a> —
+      <strong>เปิดหน้า <code>useDebounce</code> ของเขา</strong> แล้วเทียบกับตัวที่เราเขียนในบทนี้บรรทัดต่อบรรทัด
+      ดูว่าเขาเพิ่มอะไรมาบ้าง และคุณต้องการมันไหม</li>
+  <li><a href="https://mantine.dev/hooks/package/">Mantine Hooks</a> —
+      <strong>ไล่รายชื่อในแถบซ้ายสัก 1 นาที</strong> (<code>use-click-outside</code>, <code>use-hotkeys</code>,
+      <code>use-media-query</code>, <code>use-local-storage</code>) เพื่อให้รู้ว่ามีอะไรให้หยิบบ้าง
+      จะได้ไม่เขียนของที่มีคนเขียนไว้ดีแล้ว</li>
+</ul>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>💬 ติดตรงไหนถามได้เลย</strong> — โดยเฉพาะสามคำถามนี้ ที่ถามกันบ่อยมากหลังบทนี้:
+    <br>“แล้วถ้าผมอยากให้ Panel สองอันเปิดพร้อมกัน ต้องทำยังไง” ·
+    “<code>useDebounce</code> กับ <code>setTimeout</code> เฉย ๆ ต่างกันตรงไหน” ·
+    “custom hook ควรคืน object หรือ array ดี”
+    <br>ถามมาได้ทุกข้อ ไม่ต้องรอให้ทำภารกิจเสร็จก่อน
+  </p>
+</div>
+
+</main>
+
+<nav class="nav">
+  <a href="./0076-usecontext.html">← บทเรียน 76 · useContext</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Next.js</a>
+  <a href="./0078-nextjs-workshop.html">บทเรียน 78 → โจทย์ Customer Search</a>
+</nav>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

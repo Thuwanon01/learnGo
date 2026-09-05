@@ -7,12 +7,12 @@
 
 เว็บบทเรียนภาษาไทย **static ล้วน ไม่มี build step ไม่มี dependency**
 เรียบเรียงจากสไลด์คอร์ส PEA DevPool — Enterprise Go Engineering with AI Integration
-ตอนนี้มี **68 บท** แบ่งเป็นสองฝั่ง · deploy จริงบน Vercel ให้เพื่อนร่วมคอร์สใช้
+ตอนนี้มี **78 บท** แบ่งเป็นสองฝั่ง · deploy จริงบน Vercel ให้เพื่อนร่วมคอร์สใช้
 
 | ฝั่ง | เนื้อหา | โฟลเดอร์ | บท |
 |---|---|---|---|
 | **BACK** | Go — พื้นฐาน · testing · concurrency · database · Gin · Keycloak | `day-1/` … `day-9/` | 01–55 |
-| **FRONT** | HTML/CSS · Functional Programming with TypeScript | `fe-html-css/` · `fe-ts-fp/` | 56–68 |
+| **FRONT** | HTML/CSS · Functional Programming with TypeScript · Next.js | `fe-html-css/` · `fe-ts-fp/` · `fe-nextjs/` | 56–78 |
 
 **ฝั่ง FRONT แบ่งกลุ่มตามชื่อไฟล์สไลด์ ไม่ใช่ตามวัน** เพราะอาจารย์ไม่ได้กำกับวันมาให้ ·
 **เลขบทต่อเนื่องกันทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง** (เลขบทคือคีย์ของ localStorage)
@@ -69,7 +69,7 @@ learning-records / lessons / reference / assets / NOTES)
 ```
 1  สไลด์กำกับวันมา → mkdir -p day-N/lessons day-N/reference
    ไม่ได้กำกับวัน  → mkdir -p fe-<slug>/lessons fe-<slug>/reference   (slug จากชื่อสไลด์)
-2  เขียนบทต่อจากเลขล่าสุด (ตอนนี้จบที่ 0068) + cheat sheet ของกลุ่ม
+2  เขียนบทต่อจากเลขล่าสุด (ตอนนี้จบที่ 0078) + cheat sheet ของกลุ่ม
 3  index.html      → section กลุ่มใหม่ + data-id + data-track + เลขรวม
 4  บทสุดท้ายของกลุ่มก่อน → แก้ nav ให้ชี้มาบทแรกของกลุ่มใหม่
 5  assets/nav.js   → เพิ่มลง DAYS (ฝั่ง back) หรือ FRONT (ฝั่ง front)

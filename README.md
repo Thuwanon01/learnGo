@@ -1,7 +1,7 @@
 # คอร์ส PEA DevPool — บทเรียนที่ทำแบบฝึกหัดได้จริง
 
 สรุปจากสไลด์คอร์ส **PEA DevPool — Enterprise Go Engineering with AI Integration**
-เรียบเรียงใหม่เป็นเว็บบทเรียนภาษาไทย **68 บท** ที่มี predict-the-output, quiz
+เรียบเรียงใหม่เป็นเว็บบทเรียนภาษาไทย **78 บท** ที่มี predict-the-output, quiz
 ที่ให้ feedback ทันที และภารกิจให้ลงมือเขียนโค้ดทุกบท
 
 แบ่งเป็นสองฝั่ง:
@@ -9,7 +9,7 @@
 | ฝั่ง | เนื้อหา | บท |
 |---|---|---|
 | **BACK** | Go — พื้นฐานภาษา · testing · concurrency · database · REST API ด้วย Gin · Keycloak | 01–55 |
-| **FRONT** | HTML/CSS · Functional Programming with TypeScript | 56–68 |
+| **FRONT** | HTML/CSS · Functional Programming with TypeScript · Next.js | 56–78 |
 
 ฝั่ง BACK แบ่งตามวันที่เรียน (Day 1–9) · ฝั่ง FRONT แบ่งตามชื่อไฟล์สไลด์
 เพราะอาจารย์ไม่ได้กำกับวันมาให้

@@ -30,7 +30,7 @@ assets/md.js                  ← markdown → HTML ใช้โดย docs.html
 assets/demo.js                ← กล่อง "ผลลัพธ์จริง" ของบท HTML/CSS (iframe srcdoc)
 day-N/lessons/NNNN-slug.html  ← ฝั่ง BACK (Go) · บท 01-55 · แบ่งตามวัน
 day-N/reference/cheatsheet.html
-fe-<slug>/lessons/NNNN-slug.html  ← ฝั่ง FRONT · บท 56-68 · แบ่งตามชื่อไฟล์สไลด์
+fe-<slug>/lessons/NNNN-slug.html  ← ฝั่ง FRONT · บท 56-78 · แบ่งตามชื่อไฟล์สไลด์
 fe-<slug>/reference/cheatsheet.html
         ↑ เลขบทต่อเนื่องกันทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง (เลขบท = คีย์ localStorage)
 vercel.json  .gitignore  robots.txt  README.md   ← สำหรับ deploy
@@ -44,7 +44,7 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
 โดย `<slug>` มาจากชื่อสไลด์ · **ห้ามตั้งวันเอง** จะไปชนกับวันจริงที่ส่งมาทีหลัง
 
 1. `mkdir -p <กลุ่ม>/lessons <กลุ่ม>/reference`
-2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0068) — **เลขต่อเนื่องทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง**
+2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0078) — **เลขต่อเนื่องทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง**
    เพราะ `quiz.js` ใช้เลขสี่หลักจากชื่อไฟล์เป็นคีย์ `localStorage`
 3. เขียน `<กลุ่ม>/reference/cheatsheet.html` ครอบคลุมสไลด์ทั้งชุด
 4. เพิ่ม `<section class="day">` ใน `index.html` (ในบล็อก `#back` หรือ `#front` ให้ถูกฝั่ง)
@@ -374,6 +374,56 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
   ตอนกล่องได้ความกว้างจริง · **ทดสอบตัวตรวจด้วยการปิดการ์ดออกก่อนเชื่อว่าแก้แล้ว**
 - **id ซ้ำข้าม `<template>` ไม่ใช่บั๊ก** — แต่ละ template ไปอยู่คนละ iframe = คนละ document
   ตัวตรวจต้องนับ id แยกต่อ template ไม่งั้นจะร้องผิดทุกบทที่มีฟอร์มสองตัวอย่าง
+
+### ⚠️ ไฟล์ใน scratchpad หายกลางรอบ workflow (เจอ 5 ก.ย. 2026)
+
+รอบทำบท Next.js เขียน brief ไว้ที่ `scratchpad/BRIEF.md` แล้วให้ agent ทั้ง 20 ตัวอ่าน
+**กลางรอบไฟล์นั้นหายไปจาก scratchpad** (พร้อมกับ `verify.py` และ `mksweep.py`)
+agent ที่เริ่มทีหลังจึงอ่านเกณฑ์ไม่ได้ · ผลที่เห็น: บท 74 ได้ quiz 3 ข้อ (เกณฑ์คือ 4)
+และ jargon น้อยกว่า analogy · บท 76 ไม่มีกล่องภารกิจเลย
+
+**กันไว้ยังไง:**
+- **ตรวจว่าไฟล์ brief ยังอยู่** ก่อนยิง workflow รอบถัดไป และหลังจบทุกเฟส
+- ถ้าจะให้ชัวร์กว่านั้น ให้ **ฝัง checklist ลงใน prompt ของ agent ตรง ๆ** ไม่ใช่แค่ชี้ไปที่ไฟล์
+  (prompt อยู่ในสคริปต์ workflow ซึ่งถูกเซฟไว้ในโปรเจกต์ ไม่หาย)
+- อาการที่บอกว่าเกิดเรื่องนี้: **บทที่เขียนทีหลังคุณภาพต่ำกว่าบทแรก ๆ อย่างเป็นระบบ**
+  ไม่ใช่สุ่ม ๆ
+
+### ⚠️ `overflow-wrap` ที่ `code{}` ไม่พอ — `<dt>` ของ `.jargon` ก็ต้องมี (เจอ 5 ก.ย. 2026)
+
+sweep ที่ 380px เจอบท 71 มี `scrollWidth` 452 เกิน `clientWidth` 380 อยู่ 72px
+ไล่หาแล้ว**ไม่ใช่ element** — เป็น **text node** ในกล่อง `.jargon`:
+`React.ButtonHTMLAttributes<HTMLButtonElement>` ที่ไม่มีจุดให้ตัดบรรทัดเลย
+
+`lesson.css` มี `overflow-wrap: anywhere` ที่ `code{}` อยู่แล้ว (พร้อมคอมเมนต์อธิบายบั๊กชุดนี้)
+แต่ `.jargon dt` ใส่ `font-family: var(--font-code)` เองโดยไม่ได้ห่อ `<code>` จึงไม่ได้กฎนั้น
+→ เติม `overflow-wrap: anywhere` ที่ `.jargon dt` แล้ว sweep กลับเป็น 0
+
+**วิธีไล่หาเวลาเจอ `scrollWidth` เกินแต่ไม่มี element ไหนล้น:**
+เดิน `TreeWalker(SHOW_TEXT)` แล้ววัด `Range.getClientRects()` ของแต่ละ text node
+ข้ามอันที่มีบรรพบุรุษ `overflow-x != visible` — ตัวการมักเป็นคำยาวคำเดียวที่ตัดบรรทัดไม่ได้
+
+### ⚠️ agent สั่ง pkill กว้างเกินไป ปิด dev server ของผู้ใช้ (เจอ 5 ก.ย. 2026)
+
+agent ตรวจบท 76 เก็บกวาดด้วย `pkill -f "next-server"` → ปิด `next dev` ของโปรเจกต์
+`wongnok-web` ของผู้ใช้ที่รันมา 2 ชม. 49 นาที ไปด้วย · agent รายงานเองตามตรง
+และ workflow ตีธง `Blocked by classifier` ให้
+
+**กฎที่ต้องเขียนใน brief ทุกครั้งที่ให้ agent เปิด process:**
+- ปิดด้วย **PID ที่จดไว้ตอนเปิด** เท่านั้น
+- ถ้าต้องใช้ pattern ให้ผูกกับ **path ของ sandbox ตัวเอง** ห้ามใช้ชื่อโปรแกรมลอย ๆ
+- **ห้ามฆ่า process ที่อยู่นอกโฟลเดอร์ตัวเอง** — เครื่องนี้มีงานจริงของผู้ใช้รันอยู่
+
+### ⚠️ sandbox ที่ใช้ร่วมกัน ทำให้ build ของคนอื่นพังตามไปด้วย (เจอ 5 ก.ย. 2026)
+
+รอบ Next.js เตรียม `create-next-app` ไว้ชุดเดียวให้ agent 10 ตัวใช้ร่วมกัน
+โดยแบ่งโฟลเดอร์กันคนละ `app/tNN/` — **แต่ `next build` มัน build ทั้งโปรเจกต์**
+ตอนผมทดสอบเอง ได้ error จากไฟล์ที่ agent บท 78 กำลังเขียนค้างอยู่ ทั้งที่ไม่เกี่ยวกับโค้ดผม
+
+- ข้อความ error บอก path ชัด (`./components/t78/CustomerList.tsx`) จึงพอแยกออกว่าของใคร
+- **แต่เสี่ยงที่ agent จะไปแก้ของที่ไม่ได้พัง** หรือสรุปว่าโค้ดตัวเองผิด
+- **ครั้งหน้า: ก็อป sandbox ให้ agent คนละชุด** (`cp -R` แล้ว symlink `node_modules`)
+  หรือสั่งให้ตรวจแบบ scope แคบแทน `next build` ทั้งโปรเจกต์
 
 ### ⚠️ hook ของ rtk กลืน output ของ `npx tsc` (เจอ 27 ส.ค. 2026)
 

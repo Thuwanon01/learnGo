@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 76 — useContext — ส่งค่าข้ามหลายชั้นโดยไม่ต้องส่งต่อทีละชั้น</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 76 · Frontend · Next.js</p>
+  <h1>useContext — ส่งค่าข้ามหลายชั้นโดยไม่ต้องส่งต่อทีละชั้น</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="./0075-usememo-usecallback.html">บทเรียน 75</a>
+    (<code>useMemo</code> / <code>useCallback</code>) มาก่อน เพราะกับดักข้อที่ 2 ของบทนี้ต่อยอดจากบทนั้นตรง ๆ</p>
+  <p class="standfirst">
+    บทนี้เริ่มจาก<strong>ปัญหาก่อน ไม่ใช่เครื่องมือก่อน</strong>
+    <br>เราจะเขียนโค้ดที่ส่งค่าตัวเดียวผ่าน component 3 ชั้นให้ดูจริง ๆ ก่อน
+    ให้เห็นว่ามันน่ารำคาญตรงไหน แล้วค่อยเอา <code>useContext</code> เข้ามาแทน
+    <br>แล้วจะลง<strong>กับดัก 4 อัน</strong>ที่มือใหม่เจอกันหมด — ลืมครอบ Provider ·
+    ใส่ <code>value</code> เป็น object ก้อนใหม่ทุกรอบจนลูกวาดใหม่ทั้งกอง ·
+    ลืม <code>'use client'</code> ที่ไฟล์ context ·
+    และการเข้าใจผิดว่า context เอาไปแทน state management ได้ทุกกรณี
+    <br><strong>error ทุกก้อนในบทนี้ก็อปมาจากหน้าจอจริง</strong> ไม่ได้พิมพ์เอง
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้ (รันวันที่ 5 กันยายน 2026)</strong></p>
+  <pre style="margin:0.5rem 0"><code>next        16.3.4        <span class="c"># จาก npx next --version</span>
+react       19.2.8        <span class="c"># จาก package.json ของโปรเจกต์</span>
+react-dom   19.2.8
+typescript  5.9.3         <span class="c"># จาก npx tsc --version</span>
+node        v24.14.0      <span class="c"># จาก node --version</span></code></pre>
+  <p style="margin-bottom:0">
+    โปรเจกต์ทดสอบสร้างด้วย <code>npx create-next-app@latest --ts --tailwind --eslint --app --no-src-dir</code>
+    (App Router · Turbopack) โค้ดทุกไฟล์อยู่ใต้ <code>app/t76/</code> และ <code>components/t76/</code>
+    <br>ผลลัพธ์ที่โชว์มาจาก 3 ทาง: <code>npx tsc --noEmit</code> · <code>npx next build</code> ·
+    และ log ของ <code>npx next dev</code> ตอน <code>curl</code> เข้าไปที่หน้าจริง
+    <br>ส่วนตัวเลข "วาดใหม่กี่รอบ" ในหัวข้อ 6 มาจาก <code>console.log</code> ในเบราว์เซอร์จริง กดปุ่มจริง
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · ปัญหาก่อน — ส่ง prop ผ่าน 3 ชั้นให้ดูของจริง</h2>
+
+<p>
+  สมมติหน้าเว็บมีข้อมูลผู้ใช้อยู่บนสุด แล้วคนที่<strong>ต้องใช้จริง ๆ</strong> คือป้ายชื่อเล็ก ๆ ที่อยู่ลึกสุด
+  <br>โครงเป็นแบบนี้:
+</p>
+
+<div class="diagram">DrillingPage             ← user อยู่ตรงนี้
+   └─ Sidebar            ← ไม่ได้ใช้ user เลย แต่ต้องรับแล้วส่งต่อ
+        └─ Menu          ← ไม่ได้ใช้ user เลย แต่ต้องรับแล้วส่งต่อ
+             └─ UserBadge   ← คนที่ใช้จริง</div>
+
+<p>
+  ไฟล์จริงที่ผมรัน — <code>app/t76/drilling/page.tsx</code>
+  (เป็น Server Component ล้วน ไม่มี hook เลย ไม่ต้องใส่ <code>'use client'</code>):
+</p>
+
+<pre><code><span class="k">type</span> <span class="n">User</span> = { name: <span class="n">string</span>; role: <span class="n">string</span> };
+
+<span class="k">function</span> <span class="f">UserBadge</span>({ user }: { user: <span class="n">User</span> }) {
+  <span class="k">return</span> (
+    &lt;span&gt;
+      {user.name} ({user.role})
+    &lt;/span&gt;
+  );
+}
+
+<span class="k">function</span> <span class="f">Menu</span>({ user }: { user: <span class="n">User</span> }) {          <span class="c">// ไม่ได้ใช้ user เลย</span>
+  <span class="k">return</span> (
+    &lt;nav&gt;
+      &lt;UserBadge user={user} /&gt;
+    &lt;/nav&gt;
+  );
+}
+
+<span class="k">function</span> <span class="f">Sidebar</span>({ user }: { user: <span class="n">User</span> }) {       <span class="c">// ก็ไม่ได้ใช้ user เลย</span>
+  <span class="k">return</span> (
+    &lt;aside&gt;
+      &lt;Menu user={user} /&gt;
+    &lt;/aside&gt;
+  );
+}
+
+<span class="k">export default function</span> <span class="f">DrillingPage</span>() {
+  <span class="k">const</span> user: <span class="n">User</span> = { name: <span class="s">'สมชาย'</span>, role: <span class="s">'admin'</span> };
+  <span class="k">return</span> (
+    &lt;main&gt;
+      &lt;h1&gt;prop drilling&lt;/h1&gt;
+      &lt;Sidebar user={user} /&gt;
+    &lt;/main&gt;
+  );
+}</code></pre>
+
+<p>อันนี้<strong>ทำงานได้จริง ไม่ได้พัง</strong> — ผมรัน dev server แล้ว <code>curl</code> เข้าไปดู:</p>
+
+<pre><code><span class="c">$ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:376/t76/drilling</span>
+200
+
+<span class="c"># ใน log ของ next dev</span>
+ GET /t76/drilling 200 in 79ms (next.js: 67ms, application-code: 12ms)</code></pre>
+
+<p>
+  ปัญหาไม่ใช่ "มันพัง" — ปัญหาคือ <code>Sidebar</code> กับ <code>Menu</code>
+  <strong>ถูกบังคับให้รู้จัก <code>user</code> ทั้งที่ไม่ได้ใช้</strong>
+  <br>ลองนึกว่าวันหนึ่งเราอยากส่ง <code>theme</code> ลงไปด้วย ต้องไปแก้กี่ไฟล์? — แก้ทั้ง 4 ไฟล์
+  ทั้งที่คนใช้จริงมีคนเดียว
+  <br>แล้วถ้าโครงลึก 6 ชั้น มี 12 component ที่แค่ "ส่งผ่าน"? นั่นแหละที่เรียกว่า <em>prop drilling</em>
+</p>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อเสียที่<strong>แท้จริง</strong>ของโค้ดข้างบนคืออะไร</p>
+  <div class="opts">
+    <button class="opt">มันช้า เพราะ prop ต้องเดินทางผ่าน component หลายชั้นกว่าจะถึงปลายทาง</button>
+    <button class="opt">มันพัง เพราะ React ไม่ยอมให้ส่ง object เป็น prop ข้ามเกินสองชั้น</button>
+    <button class="opt">component กลางถูกผูกกับข้อมูลที่ไม่ได้ใช้ ทำให้แก้ทีหลังต้องไล่แก้ทุกชั้น</button>
+    <button class="opt">TypeScript จะเตือน error ทันทีเมื่อ prop ถูกส่งต่อโดยไม่ถูกใช้ในไฟล์นั้น</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบตัวเลือกที่ 3 · ตัวเลือกที่ 1 ผิดเพราะการส่ง prop ต่อกันไม่ได้ทำให้ช้าจนวัดได้
+      มันแค่<strong>เขียนแล้วรำคาญ และแก้ทีหลังยาก</strong> ·
+      ตัวเลือกที่ 2 กับ 4 ไม่จริงเลย — โค้ดข้างบน<strong>รันผ่าน HTTP 200</strong> และ
+      <code>npx tsc --noEmit</code> ก็ผ่านสะอาด ไม่มีใครเตือนอะไรทั้งนั้น
+      <br>ประเด็นคือ <strong>compiler ไม่เตือนเรื่องนี้ให้</strong> เราต้องเห็นเอง
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-2">2 · useContext แก้ปัญหานี้ยังไง</h2>
+
+<p>
+  แนวคิดคือ แทนที่จะ<strong>ส่ง</strong>ค่าลงไปทีละชั้น เรา<strong>วางค่าไว้ที่ชั้นบน</strong>
+  แล้วให้คนข้างล่าง<strong>เอื้อมขึ้นมาหยิบเอง</strong>
+  <br>ทำ 3 ขั้น:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ขั้น</th><th>เขียนว่า</th><th>ทำอะไร</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1 · สร้างช่อง</td>
+      <td><code>createContext(ค่าเริ่มต้น)</code></td>
+      <td>สร้าง "ช่องทาง" ขึ้นมาหนึ่งช่อง · ค่าที่ใส่ตรงนี้จะถูกใช้<strong>ก็ต่อเมื่อไม่มี Provider ครอบอยู่</strong></td>
+    </tr>
+    <tr>
+      <td>2 · ใส่ค่าลงช่อง</td>
+      <td><code>&lt;MyContext value={…}&gt;</code></td>
+      <td>ครอบ subtree ที่อยากให้เห็นค่านี้ · ทุกอย่างที่อยู่ข้างในเอื้อมมาหยิบได้หมด</td>
+    </tr>
+    <tr>
+      <td>3 · หยิบค่าออกมา</td>
+      <td><code>useContext(MyContext)</code></td>
+      <td>เรียกจาก component ไหนก็ได้ที่อยู่ใต้ Provider · ไม่ต้องมี prop ใด ๆ</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  จุดที่คนมักเข้าใจผิดตั้งแต่แรก: <strong><code>useContext</code> ไม่ได้มองหา "Provider ที่ไหนก็ได้ในโปรแกรม"</strong>
+  มันไต่ขึ้นไปตามต้นไม้ของ component จากจุดที่เรียก แล้วหยุดที่ <strong>Provider ตัวที่ใกล้ที่สุดที่อยู่เหนือมัน</strong>
+  <br>สไลด์หน้า 55 เขียนเรื่องนี้ไว้ตรง ๆ ว่า <em>"Always look for the closest provider above the component that calls"</em>
+  และเตือนต่อว่า <em>"Does not consider providers in the component that calls"</em> —
+  แปลว่า <strong>ถ้าคุณ return Provider ออกไปจาก component เดียวกับที่เรียก <code>useContext</code>
+  ตัวมันเองจะไม่เห็นค่านั้น</strong> เพราะ Provider ตัวนั้นอยู่ "ใต้" มัน ไม่ได้อยู่ "เหนือ" มัน
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับของจริง</span>
+  <p>
+    <code>createContext</code> เหมือน<strong>ติดตั้งท่อน้ำเส้นหนึ่งในตึก</strong> ·
+    <code>&lt;Provider value={…}&gt;</code> เหมือน<strong>เปิดวาล์วปล่อยน้ำเข้าท่อที่ชั้นหนึ่ง</strong> ·
+    <code>useContext</code> เหมือน<strong>ก๊อกน้ำในห้อง</strong> เปิดก๊อกแล้วน้ำมาเลย
+    ไม่ต้องให้คนชั้น 2 กับชั้น 3 หิ้วถังส่งต่อกันลงมา
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> น้ำในตึกจริงไหลลงมาจากถังบนดาดฟ้าเสมอ ไม่ว่าห้องคุณจะอยู่ชั้นไหน
+    แต่ context ไม่ใช่ — มันหยิบจาก<strong>วาล์วตัวที่ใกล้ที่สุดที่อยู่เหนือห้องคุณ</strong>
+    ถ้าชั้น 5 มีวาล์วของตัวเองอีกอัน ห้องชั้น 6 จะได้น้ำจากวาล์วชั้น 5 ไม่ใช่ของชั้น 1
+    <br>และที่ต่างชัดกว่านั้น: ถ้า<strong>ไม่มีวาล์วเลยสักตัว</strong> ก๊อกน้ำจริงจะแค่ไม่มีน้ำไหลเฉย ๆ
+    แต่ <code>useContext</code> จะคืน<strong>ค่าเริ่มต้นที่ใส่ไว้ตอน <code>createContext</code></strong>
+    ซึ่ง "ดูเหมือนใช้ได้" — และนั่นคือกับดักที่อันตรายที่สุดของบทนี้ (หัวข้อ 5)
+  </p>
+</div>
+
+<h2 id="sn-sec-3">3 · เขียน context ของตัวเองแบบที่ใช้จริงในโปรเจกต์</h2>
+
+<p>
+  สไลด์หน้า 54 แสดงท่ามาตรฐานไว้แล้ว: <strong>รวม context · Provider · และ hook สำหรับหยิบค่า ไว้ในไฟล์เดียว</strong>
+  แล้วให้ที่อื่น import ไปใช้
+  <br>นี่คือไฟล์จริงที่ผมรัน <code>components/t76/theme.tsx</code> —
+  <strong>สังเกตบรรทัดแรก <code>'use client'</code></strong> เดี๋ยวหัวข้อ 7 จะพิสูจน์ให้ดูว่าถ้าไม่ใส่จะเจออะไร:
+</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { createContext, useContext, useMemo, useState, <span class="k">type</span> <span class="n">ReactNode</span> } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">export type</span> <span class="n">Theme</span> = { mode: <span class="s">'light'</span> | <span class="s">'dark'</span>; accent: <span class="n">string</span> };
+
+<span class="k">type</span> <span class="n">ThemeBox</span> = { theme: <span class="n">Theme</span>; toggle: () =&gt; <span class="k">void</span> };
+
+<span class="c">// ค่าเริ่มต้นเป็น undefined โดยตั้งใจ — เพื่อให้ "ลืมครอบ Provider" กลายเป็น error ที่อ่านออก</span>
+<span class="k">const</span> ThemeContext = <span class="f">createContext</span>&lt;<span class="n">ThemeBox</span> | <span class="k">undefined</span>&gt;(<span class="k">undefined</span>);
+
+<span class="k">export function</span> <span class="f">ThemeProvider</span>({ children }: { children: <span class="n">ReactNode</span> }) {
+  <span class="k">const</span> [theme, setTheme] = <span class="f">useState</span>&lt;<span class="n">Theme</span>&gt;({ mode: <span class="s">'dark'</span>, accent: <span class="s">'#c8b89a'</span> });
+
+  <span class="c">// ห่อด้วย useMemo — เหตุผลอยู่ในหัวข้อ 6 และมีผลรันจริงยืนยัน</span>
+  <span class="k">const</span> value = <span class="f">useMemo</span>&lt;<span class="n">ThemeBox</span>&gt;(
+    () =&gt; ({
+      theme,
+      toggle: () =&gt;
+        <span class="f">setTheme</span>((t) =&gt; ({ ...t, mode: t.mode === <span class="s">'dark'</span> ? <span class="s">'light'</span> : <span class="s">'dark'</span> })),
+    }),
+    [theme],
+  );
+
+  <span class="k">return</span> &lt;ThemeContext value={value}&gt;{children}&lt;/ThemeContext&gt;;
+}
+
+<span class="k">export function</span> <span class="f">useTheme</span>(): <span class="n">ThemeBox</span> {
+  <span class="k">const</span> ctx = <span class="f">useContext</span>(ThemeContext);
+  <span class="k">if</span> (!ctx) <span class="k">throw new</span> <span class="f">Error</span>(<span class="s">'useTheme ต้องเรียกใต้ &lt;ThemeProvider&gt; เท่านั้น'</span>);
+  <span class="k">return</span> ctx;
+}</code></pre>
+
+<p>คนที่ใช้ค่าไม่ต้องรู้อะไรเลยนอกจากชื่อ hook — <code>components/t76/badge.tsx</code>:</p>
+
+<pre><code><span class="s">'use client'</span>;
+
+<span class="k">import</span> { useTheme } <span class="k">from</span> <span class="s">'./theme'</span>;
+
+<span class="k">export function</span> <span class="f">UserBadge</span>() {
+  <span class="k">const</span> { theme, toggle } = <span class="f">useTheme</span>();      <span class="c">// ไม่มี prop สักตัว</span>
+  <span class="k">return</span> (
+    &lt;span&gt;
+      โหมดตอนนี้: {theme.mode} / {theme.accent}{<span class="s">' '</span>}
+      &lt;button onClick={toggle}&gt;สลับ&lt;/button&gt;
+    &lt;/span&gt;
+  );
+}</code></pre>
+
+<p>
+  แล้วชั้นกลาง — <code>app/t76/page.tsx</code> — <strong>สะอาดขึ้นทันที</strong>
+  เพราะ <code>Sidebar</code> กับ <code>Menu</code> ไม่ต้องรับ prop อะไรอีกแล้ว:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>ก่อน — ส่งต่อทีละชั้น</h4>
+    <pre><code><span class="k">function</span> <span class="f">Sidebar</span>({ user }: { user: <span class="n">User</span> }) {
+  <span class="k">return</span> &lt;aside&gt;&lt;Menu user={user} /&gt;&lt;/aside&gt;;
+}
+
+<span class="k">function</span> <span class="f">Menu</span>({ user }: { user: <span class="n">User</span> }) {
+  <span class="k">return</span> &lt;nav&gt;&lt;UserBadge user={user} /&gt;&lt;/nav&gt;;
+}</code></pre>
+    <p>เพิ่มค่าใหม่หนึ่งตัว = แก้ทุกชั้นที่ค่าเดินผ่าน</p>
+  </div>
+  <div class="side good">
+    <h4>หลัง — ครอบ Provider ชั้นเดียว</h4>
+    <pre><code><span class="k">function</span> <span class="f">Sidebar</span>() {
+  <span class="k">return</span> &lt;aside&gt;&lt;Menu /&gt;&lt;/aside&gt;;
+}
+
+<span class="k">function</span> <span class="f">Menu</span>() {
+  <span class="k">return</span> &lt;nav&gt;&lt;UserBadge /&gt;&lt;/nav&gt;;
+}</code></pre>
+    <p>เพิ่มค่าใหม่ = แก้แค่ไฟล์ context กับคนที่ใช้จริง</p>
+  </div>
+</div>
+
+<pre><code><span class="k">import</span> { ThemeProvider } <span class="k">from</span> <span class="s">'@/components/t76/theme'</span>;
+<span class="k">import</span> { UserBadge } <span class="k">from</span> <span class="s">'@/components/t76/badge'</span>;
+
+<span class="k">function</span> <span class="f">Menu</span>()    { <span class="k">return</span> &lt;nav&gt;&lt;UserBadge /&gt;&lt;/nav&gt;; }
+<span class="k">function</span> <span class="f">Sidebar</span>() { <span class="k">return</span> &lt;aside&gt;&lt;Menu /&gt;&lt;/aside&gt;; }
+
+<span class="k">export default function</span> <span class="f">T76Page</span>() {
+  <span class="k">return</span> (
+    &lt;ThemeProvider&gt;
+      &lt;main&gt;
+        &lt;h1&gt;useContext&lt;/h1&gt;
+        &lt;Sidebar /&gt;
+      &lt;/main&gt;
+    &lt;/ThemeProvider&gt;
+  );
+}</code></pre>
+
+<p>ผลรันจริงของหน้านี้ — ผ่านทั้ง type check และ build:</p>
+
+<pre><code><span class="c">$ npx tsc --noEmit</span>
+<span class="c"># ไม่มี output = ผ่าน (exit code 0)</span>
+
+<span class="c">$ npx next build</span>
+  ▲ Next.js 16.3.4 (Turbopack)
+✓ Running next.config.ts took 10ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 3.0s
+  Running TypeScript ...
+  Finished TypeScript in 775ms ...
+  Collecting page data using 9 workers ...
+✓ Generating static pages using 9 workers (8/8) in 83ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /t76
+├ ○ /t76/both-forms
+├ ○ /t76/drilling
+├ ƒ /t76/no-guard
+├ ƒ /t76/no-provider
+├ ○ /t76/rerender
+└ ƒ /t76/slide-style
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand</code></pre>
+
+<p>
+  <code>/t76/both-forms</code> คือหน้าทดลองของหัวข้อ 4 · ส่วนสามหน้าที่ขึ้น <code>ƒ</code>
+  คือหน้ากับดักของหัวข้อ 5 ที่ผม<strong>ตั้งใจใส่ <code>export const dynamic = 'force-dynamic'</code></strong> ไว้
+  <br>ถ้าไม่ใส่ Next.js จะพยายาม prerender หน้าที่ตั้งใจให้ <code>throw</code> ตั้งแต่ตอน build แล้ว
+  <strong><code>next build</code> จะพังทั้งโปรเจกต์</strong> ทั้งที่หน้าอื่นเขียนถูกหมด
+</p>
+
+<div class="jargon">
+  <span class="label">ติดป้ายศัพท์ — เอาไปคุยกับ senior หรือถาม AI ได้</span>
+  <dl>
+    <dt>prop drilling</dt>
+    <dd>อาการที่ต้องส่ง prop ผ่าน component หลายชั้นทั้งที่ชั้นกลางไม่ได้ใช้
+        · เป็นคำที่ใช้เวลาอธิบายว่า "ทำไมถึงต้องเอา context เข้ามา"</dd>
+    <dt>Provider</dt>
+    <dd>component ที่ครอบ subtree แล้วกำหนดว่าค่าของ context นี้ในบริเวณนั้นคืออะไร
+        · ใน React 19 เขียนได้สองแบบ (หัวข้อ 4)</dd>
+    <dt>consumer</dt>
+    <dd>component ที่เรียก <code>useContext</code> เพื่อหยิบค่า · คำนี้สำคัญตอนพูดเรื่อง re-render
+        เพราะ "ของที่วาดใหม่เมื่อ context เปลี่ยน" คือ consumer ทุกตัว ไม่ใช่ทุก component</dd>
+    <dt>custom hook</dt>
+    <dd>ฟังก์ชันที่ขึ้นต้นด้วย <code>use</code> และเรียก hook ตัวอื่นข้างใน — <code>useTheme</code> ในบทนี้คือตัวอย่าง
+        · บทหน้า (77) ว่าด้วยเรื่องนี้เต็ม ๆ</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · Provider มีสองหน้าตา และสไลด์ใช้คนละแบบกันเอง</h2>
+
+<p>
+  สไลด์หน้า 53 เขียน <code>&lt;ThemeContext value="dark"&gt;</code> (ไม่มี <code>.Provider</code>)
+  แต่หน้า 54 เขียน <code>&lt;ThemeContext.Provider value={{ ...theme }}&gt;</code>
+  <br>ไม่ใช่ว่าหน้าใดหน้าหนึ่งพิมพ์ผิด — <strong>ทั้งสองแบบใช้ได้จริงใน React 19</strong>
+  แบบสั้นเป็นของใหม่ที่ React 19 เพิ่มเข้ามา ส่วน <code>.Provider</code> เป็นของเดิม
+</p>
+
+<p>ผมเขียนทั้งสองแบบไว้ในหน้าเดียวกันแล้วรันจริง:</p>
+
+<pre><code><span class="k">const</span> Ctx = <span class="f">createContext</span>(<span class="s">'default'</span>);
+
+&lt;Ctx.Provider value=<span class="s">"แบบเก่า .Provider"</span>&gt;
+  &lt;Read tag=<span class="s">"old"</span> /&gt;
+&lt;/Ctx.Provider&gt;
+
+&lt;Ctx value=<span class="s">"แบบใหม่ React 19"</span>&gt;
+  &lt;Read tag=<span class="s">"new"</span> /&gt;
+&lt;/Ctx&gt;</code></pre>
+
+<p>ผลที่ได้จาก HTML ที่ server ส่งกลับมาจริง:</p>
+
+<pre><code><span class="c">$ curl -s -o /dev/null -w 'HTTP %{http_code}\n' http://localhost:376/t76/both-forms</span>
+HTTP 200
+
+<span class="c"># ดึงเนื้อใน &lt;p&gt; ออกมา</span>
+'old: แบบเก่า .Provider'
+'new: แบบใหม่ React 19'</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ทั้งคู่ทำงาน และใน react 19.2.8 ตัวนี้ผมไม่เห็น warning ขึ้นในคอนโซลเบราว์เซอร์เลยสักอัน</strong>
+    <br>ดังนั้นโค้ดเก่าที่ใช้ <code>.Provider</code> ยังใช้ได้อยู่ ไม่ต้องรีบไล่แก้
+    <br>แต่ถ้าเขียนใหม่ ผมแนะนำแบบสั้น <code>&lt;Ctx value={…}&gt;</code> เพราะสั้นกว่าและเป็นทิศทางที่ React เดินไป
+  </p>
+</div>
+
+<div class="predict">
+  <pre><code><span class="k">const</span> Ctx = <span class="f">createContext</span>(<span class="s">'A'</span>);
+
+<span class="k">function</span> <span class="f">Leaf</span>() { <span class="k">return</span> &lt;p&gt;{<span class="f">useContext</span>(Ctx)}&lt;/p&gt;; }
+
+<span class="k">function</span> <span class="f">App</span>() {
+  <span class="k">return</span> (
+    &lt;Ctx value=<span class="s">"B"</span>&gt;
+      &lt;Ctx value=<span class="s">"C"</span>&gt;
+        &lt;Leaf /&gt;
+      &lt;/Ctx&gt;
+    &lt;/Ctx&gt;
+  );
+}</code></pre>
+  <p class="ask">หน้าจอจะขึ้นตัวอักษรอะไร — A, B หรือ C?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>
+      ได้ <strong>C</strong> เพราะ <code>useContext</code> หยุดที่ <strong>Provider ตัวที่ใกล้ที่สุดที่อยู่เหนือ <code>Leaf</code></strong>
+      ซึ่งคือตัวที่ใส่ <code>"C"</code> · ตัว <code>"B"</code> อยู่สูงกว่าจึงถูก "บัง" ·
+      ส่วน <code>"A"</code> เป็นค่าเริ่มต้นตอน <code>createContext</code> จะถูกใช้<strong>ก็ต่อเมื่อไม่มี Provider เลย</strong>
+      <br>ประโยชน์จริงของการซ้อน Provider: ทั้งเว็บใช้ธีมสว่าง แต่กล่อง preview อันเดียวอยากให้เป็นธีมมืด —
+      ก็แค่ครอบ Provider อีกชั้นตรงนั้น ไม่ต้องแก้อะไรข้างนอก
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">5 · กับดัก 1 — ลืมครอบ Provider (นี่คืออันที่เจอบ่อยที่สุด)</h2>
+
+<p>
+  ผมทำหน้า <code>app/t76/no-provider/page.tsx</code> ที่เรียก <code>&lt;UserBadge /&gt;</code> ตรง ๆ
+  <strong>โดยไม่ครอบ <code>&lt;ThemeProvider&gt;</code></strong> แล้ว <code>curl</code> เข้าไป — ได้ <strong>HTTP 500</strong>
+  และ log ของ <code>next dev</code> ขึ้นแบบนี้ (ก็อปมาทั้งดุ้น):
+</p>
+
+<pre><code>⨯ Error: useTheme ต้องเรียกใต้ &lt;ThemeProvider&gt; เท่านั้น
+    at useTheme (components/t76/theme.tsx:30:19)
+    at UserBadge (components/t76/badge.tsx:6:37)
+  28 | export function useTheme(): ThemeBox {
+  29 |   const ctx = useContext(ThemeContext);
+&gt; 30 |   if (!ctx) throw new Error('useTheme ต้องเรียกใต้ &lt;ThemeProvider&gt; เท่านั้น');
+     |                   ^
+  31 |   return ctx;
+  32 | }
+  33 | {
+  digest: '914102247'
+}
+ GET /t76/no-provider 500 in 143ms (next.js: 114ms, application-code: 28ms)</code></pre>
+
+<p>
+  เลข <code>30</code> คือบรรทัดใน <code>theme.tsx</code> ที่โชว์ไว้ในหัวข้อ 3 <strong>นับทั้งไฟล์รวมคอมเมนต์</strong>
+  — ถ้าคุณลบคอมเมนต์สองบรรทัดนั้นออก เลขจะเลื่อนเป็น 28 แต่ยังชี้ที่บรรทัด <code>throw</code> เหมือนเดิม
+  <br>เวลาอ่าน error ให้ดูที่<strong>บรรทัดที่มีลูกศร <code>&gt;</code></strong> ไม่ใช่จำเลขบรรทัด
+</p>
+
+<p>
+  <strong>error นี้อ่านออกเพราะเราเขียน guard ไว้เอง</strong> ทีนี้ลองดูว่าถ้าไม่เขียน guard จะเป็นยังไง —
+  ผมทำอีกไฟล์ที่หยิบค่ามาใช้ตรง ๆ:
+</p>
+
+<pre><code><span class="k">export const</span> RawThemeContext = <span class="f">createContext</span>&lt;<span class="n">Theme</span> | <span class="k">undefined</span>&gt;(<span class="k">undefined</span>);
+
+<span class="k">export function</span> <span class="f">RawBadge</span>() {
+  <span class="k">const</span> { mode } = <span class="f">useContext</span>(RawThemeContext)!;   <span class="c">// ! คือบอก TS ว่า "เชื่อฉัน ไม่ undefined หรอก"</span>
+  <span class="k">return</span> &lt;span&gt;โหมด: {mode}&lt;/span&gt;;
+}</code></pre>
+
+<p><code>npx tsc --noEmit</code> <strong>ผ่านฉลุย</strong> เพราะเราใส่ <code>!</code> ปิดปาก compiler ไว้ · แล้วพอรันจริง:</p>
+
+<pre><code>⨯ TypeError: Cannot destructure property 'mode' of '{imported module ...
+   .../vendored/ssr/react.js}.useContext(...)' as it is undefined.
+    at RawBadge (components/t76/theme-raw.tsx:10:11)
+   8 |
+   9 | export function RawBadge() {
+&gt; 10 |   const { mode } = useContext(RawThemeContext)!;
+     |           ^
+  11 |   return &lt;span&gt;โหมด: {mode}&lt;/span&gt;;
+  12 | }
+ GET /t76/no-guard 500 in 121ms (next.js: 82ms, application-code: 39ms)</code></pre>
+
+<p>
+  พังเหมือนกัน แต่ข้อความไม่ได้บอกว่า "ลืมครอบ Provider" เลยสักคำ —
+  ต้องอ่านออกเองว่า <code>useContext(...)</code> คืน <code>undefined</code> แปลว่าอะไร
+  <br>นี่คือเหตุผลที่<strong>ท่ามาตรฐานคือเขียน hook ครอบพร้อม guard เสมอ</strong> อย่าให้ที่อื่นเรียก
+  <code>useContext</code> ตรง ๆ
+</p>
+
+<h3 id="sn-sub-1">จุดที่สไลด์หน้า 54 พลาด และผมรันพิสูจน์แล้ว</h3>
+
+<p>โค้ดในสไลด์หน้า 54 เขียนไว้แบบนี้ (คัดมาเฉพาะบรรทัดที่เกี่ยวข้อง):</p>
+
+<pre><code><span class="k">const</span> ThemeContext = <span class="f">createContext</span>(<span class="s">"light"</span>);          <span class="c">// ค่าเริ่มต้นเป็น string</span>
+
+<span class="k">export const</span> ThemeProvider = () =&gt; {                    <span class="c">// ไม่ได้รับ children</span>
+  <span class="k">const</span> [theme, setTheme] = <span class="f">useState</span>({ mode: <span class="s">"dark"</span>, palette: { primary: [], secondary: [] } });
+
+  <span class="k">return</span> (
+    &lt;ThemeContext.Provider value={{ ...theme }}&gt;
+      {children}                                       <span class="c">// แต่ใช้ children</span>
+    &lt;/ThemeContext.Provider&gt;
+  );
+};
+
+<span class="k">export const</span> useTheme = () =&gt; {
+  <span class="k">const</span> context = <span class="f">useContext</span>(ThemeContext);
+  <span class="k">if</span> (!context) <span class="k">throw new</span> <span class="f">Error</span>(<span class="s">'useTheme must be used within ThemeProvider'</span>);
+  <span class="k">return</span> context;
+};</code></pre>
+
+<p>ผมก็อปโค้ดนี้มาทั้งดุ้นแล้วรัน <code>npx tsc --noEmit</code> ได้ error 2 อัน:</p>
+
+<pre><code>slide54/theme.tsx(14,28): error TS2322: Type '{ mode: string; palette: { primary: never[]; secondary: never[]; }; }'
+                          is not assignable to type 'string'.
+slide54/theme.tsx(15,8):  error TS2304: Cannot find name 'children'.</code></pre>
+
+<div class="warn">
+  <p><strong>⚠️ สไลด์หน้า 54 มีปัญหา 3 อย่าง — สองอันแรก compiler จับได้ อันที่สาม<u>ไม่มีใครจับให้</u></strong></p>
+  <p>
+    <strong>1. <code>TS2304: Cannot find name 'children'</code></strong> —
+    <code>ThemeProvider = () =&gt; {</code> ไม่ได้รับ parameter อะไรเลย แล้วไปใช้ <code>{children}</code>
+    · แก้โดยเขียนเป็น <code>({ children }: { children: ReactNode }) =&gt; {</code>
+  </p>
+  <p>
+    <strong>2. <code>TS2322</code></strong> — <code>createContext("light")</code> ทำให้ TypeScript สรุปว่าช่องนี้เก็บ
+    <code>string</code> แต่ Provider ส่ง object ลงไป · แก้โดยประกาศ type ให้ชัด เช่น
+    <code>createContext&lt;ThemeBox | undefined&gt;(undefined)</code>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>3. อันตรายที่สุด: guard <code>if (!context)</code> ในสไลด์<u>ไม่มีวันทำงาน</u></strong> —
+    เพราะค่าเริ่มต้นคือ <code>"light"</code> ซึ่งเป็น string ที่<strong>ไม่ว่าง แปลว่า truthy</strong>
+    ต่อให้ลืมครอบ Provider จริง ๆ <code>!context</code> ก็เป็น <code>false</code> ตลอด ไม่มีการโยน error
+    · ดูผลรันข้างล่าง
+  </p>
+</div>
+
+<p>
+  ผมทำหน้า <code>app/t76/slide-style/page.tsx</code> ที่ใช้ <code>createContext('light')</code> แบบสไลด์
+  แล้วเรียกใช้ <strong>โดยไม่ครอบ Provider เลย</strong> — เดาก่อนว่าจะได้อะไร:
+</p>
+
+<div class="predict">
+  <pre><code><span class="k">const</span> ThemeContext = <span class="f">createContext</span>(<span class="s">'light'</span>);
+
+<span class="k">export const</span> useTheme = () =&gt; {
+  <span class="k">const</span> context = <span class="f">useContext</span>(ThemeContext);
+  <span class="k">if</span> (!context) <span class="k">throw new</span> <span class="f">Error</span>(<span class="s">'useTheme must be used within ThemeProvider'</span>);
+  <span class="k">return</span> context;
+};
+
+<span class="c">// หน้าเว็บเรียก &lt;SlideBadge /&gt; ที่ใช้ useTheme() โดยไม่มี Provider ครอบเลย</span></code></pre>
+  <p class="ask">จะได้ HTTP 500 พร้อม error "must be used within ThemeProvider" หรือได้อย่างอื่น?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ได้ HTTP 200 หน้าขึ้นปกติ ไม่มี error สักตัว</strong> — ผลรันจริง:</p>
+    <pre><code><span class="c">$ curl -s -o /tmp/ss.html -w 'HTTP %{http_code}\n' http://localhost:376/t76/slide-style</span>
+HTTP 200
+
+<span class="c"># เนื้อในหน้าเว็บ</span>
+theme = [light]
+
+<span class="c"># log ของ next dev — ไม่มีบรรทัด error เลย</span>
+ GET /t76/slide-style 200 in 96ms (next.js: 72ms, application-code: 24ms)</code></pre>
+    <p style="margin-bottom:0">
+      guard ที่เขียนไว้<strong>ไม่ทำงาน</strong> เพราะ <code>"light"</code> เป็น truthy
+      · component ได้ค่า <code>"light"</code> ไปใช้แล้วดูเหมือนทุกอย่างปกติ
+      <br>อันนี้แย่กว่าพัง — <strong>พังเราแก้ได้ทันที แต่ "ดูเหมือนถูก" จะไปโผล่เป็นบั๊กตอน production
+      ว่าทำไมธีมไม่เปลี่ยนตาม</strong>
+      <br>ทางแก้: ตั้งค่าเริ่มต้นเป็น <code>undefined</code> แล้วบอก type ให้ชัด
+      <code>createContext&lt;ThemeBox | undefined&gt;(undefined)</code> — <code>undefined</code> เป็น falsy
+      guard ถึงจะทำงาน (พิสูจน์แล้วในผลรันบนสุดของหัวข้อนี้)
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ทำไม <code>createContext(undefined)</code> ถึงปลอดภัยกว่า <code>createContext("light")</code> ในทางปฏิบัติ</p>
+  <div class="opts">
+    <button class="opt"><code>undefined</code> ทำให้ React ข้ามการหา Provider ไปเลย เลยเร็วกว่าเวลามีหลายชั้น</button>
+    <button class="opt">มันทำให้ "ลืมครอบ Provider" กลายเป็น error ทันที แทนที่จะได้ค่าปลอมที่ดูเหมือนใช้ได้</button>
+    <button class="opt">TypeScript บังคับให้ต้องใส่ <code>useMemo</code> รอบ value เสมอเมื่อค่าเริ่มต้นเป็น undefined</button>
+    <button class="opt"><code>undefined</code> ทำให้ Provider ส่งค่าเป็น object ได้ ส่วน string จะส่งได้แค่ข้อความ</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบตัวเลือกที่ 2 · ประเด็นทั้งหมดคือ <strong>เปลี่ยนความผิดพลาดที่เงียบ ให้กลายเป็นความผิดพลาดที่ส่งเสียง</strong>
+      · เราพิสูจน์ทั้งสองฝั่งด้วยผลรันจริงแล้ว: ค่าเริ่มต้น <code>"light"</code> ได้ HTTP 200 กับข้อความ
+      <code>theme = [light]</code> ส่วนค่าเริ่มต้น <code>undefined</code> + guard ได้ HTTP 500 พร้อมชื่อไฟล์และเลขบรรทัด
+      <br>ตัวเลือกที่ 1 ไม่จริง (React ยังไต่หา Provider เหมือนเดิม) · ตัวเลือกที่ 3 ไม่จริง
+      (<code>tsc</code> ไม่เคยบังคับเรื่อง <code>useMemo</code>) · ตัวเลือกที่ 4 ไม่จริง
+      Provider ส่ง object ได้อยู่แล้วถ้าประกาศ type ให้ตรง
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-6">6 · กับดัก 2 — <code>value</code> เป็น object literal ทำให้ลูกทุกตัววาดใหม่</h2>
+
+<p>
+  บทที่ 75 พูดเรื่อง "ค่าเดิมแต่กล่องใหม่" ไปแล้ว กับดักนี้คือเรื่องเดียวกันเป๊ะ แค่ย้ายมาอยู่บน Provider
+  <br>ทุกครั้งที่ component แม่วาดใหม่ บรรทัด <code>value={{ n }}</code> จะ<strong>สร้าง object ก้อนใหม่</strong>
+  · React เทียบค่า context ด้วย <code>Object.is</code> ก้อนใหม่จึง "ไม่เท่า" ก้อนเดิมเสมอ
+  ทั้งที่ข้างในเหมือนกันทุกตัวอักษร → <strong>consumer ทุกตัววาดใหม่หมด</strong>
+</p>
+
+<p>
+  ผมทำหน้าทดลอง <code>app/t76/rerender/page.tsx</code> ที่มี context สองช่องเทียบกัน
+  ลูกทั้งสองตัวห่อด้วย <code>memo</code> เหมือนกัน และค่า <code>n</code> <strong>ไม่เคยเปลี่ยนเลย</strong> (เป็น 1 ตลอด)
+  · ปุ่มที่กดแค่เปลี่ยน <code>tick</code> ซึ่งไม่เกี่ยวกับ context เลย:
+</p>
+
+<pre><code><span class="k">const</span> LiteralCtx = <span class="f">createContext</span>&lt;<span class="n">Box</span>&gt;({ n: <span class="n">0</span> });
+<span class="k">const</span> MemoCtx    = <span class="f">createContext</span>&lt;<span class="n">Box</span>&gt;({ n: <span class="n">0</span> });
+
+<span class="k">const</span> LiteralChild = <span class="f">memo</span>(<span class="k">function</span> <span class="f">LiteralChild</span>() {
+  <span class="k">const</span> v = <span class="f">useContext</span>(LiteralCtx);
+  literalRenders += <span class="n">1</span>;
+  console.<span class="f">log</span>(<span class="s">'[t76] LiteralChild render #'</span> + literalRenders + <span class="s">' n='</span> + v.n);
+  <span class="k">return</span> &lt;p&gt;literal: {v.n}&lt;/p&gt;;
+});
+<span class="c">// MemoChild เขียนเหมือนกันทุกอย่าง ต่างแค่อ่านจาก MemoCtx</span>
+
+<span class="k">export default function</span> <span class="f">RerenderPage</span>() {
+  <span class="k">const</span> [tick, setTick] = <span class="f">useState</span>(<span class="n">0</span>);
+  <span class="k">const</span> n = <span class="n">1</span>;                                    <span class="c">// ค่าไม่เคยเปลี่ยนเลย</span>
+  <span class="k">const</span> memoValue = <span class="f">useMemo</span>&lt;<span class="n">Box</span>&gt;(() =&gt; ({ n }), [n]);
+
+  <span class="k">return</span> (
+    &lt;main&gt;
+      &lt;button onClick={() =&gt; <span class="f">setTick</span>((t) =&gt; t + <span class="n">1</span>)}&gt;tick = {tick}&lt;/button&gt;
+
+      &lt;LiteralCtx value={{ n }}&gt;          <span class="c">{/* object ก้อนใหม่ทุกรอบ */}</span>
+        &lt;LiteralChild /&gt;
+      &lt;/LiteralCtx&gt;
+
+      &lt;MemoCtx value={memoValue}&gt;         <span class="c">{/* ก้อนเดิมตราบใดที่ n ไม่เปลี่ยน */}</span>
+        &lt;MemoChild /&gt;
+      &lt;/MemoCtx&gt;
+    &lt;/main&gt;
+  );
+}</code></pre>
+
+<div class="predict">
+  <p class="ask">
+    กดปุ่ม 2 ครั้ง (<code>tick</code> 0 → 1 → 2) ทั้งที่ <code>n</code> ไม่เปลี่ยนเลย —
+    <code>LiteralChild</code> กับ <code>MemoChild</code> ตัวไหนจะวาดใหม่บ้าง?
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>
+      <strong><code>LiteralChild</code> วาดใหม่ทุกครั้ง · <code>MemoChild</code> ไม่วาดใหม่เลยสักครั้ง</strong>
+      <br>นี่คือคอนโซลจริงจากเบราว์เซอร์หลังกดปุ่มสองที (ก็อปมาทั้งดุ้น):
+    </p>
+    <pre><code>[t76] Parent render, tick=1
+[t76] Parent render, tick=1
+[t76] LiteralChild render #3 n=1
+[t76] LiteralChild render #4 n=1
+[t76] Parent render, tick=2
+[t76] Parent render, tick=2
+[t76] LiteralChild render #5 n=1
+[t76] LiteralChild render #6 n=1</code></pre>
+    <p style="margin-bottom:0">
+      <strong>ไม่มีบรรทัดของ <code>MemoChild</code> โผล่มาเลย</strong> — มันค้างอยู่ที่ render #2 ตั้งแต่ตอนโหลดหน้า
+      <br>สังเกตว่าทุกบรรทัดขึ้นซ้ำสองรอบ — อันนั้นคือ <strong>Strict Mode ของ React ตอน dev</strong>
+      ที่ตั้งใจเรียก component สองรอบเพื่อจับ side effect ไม่ใช่บั๊ก และไม่เกิดตอน production
+      <br>สังเกตอีกอย่าง: <code>n=1</code> เท่าเดิมทุกบรรทัด — <strong>ค่าไม่เคยเปลี่ยน แต่ก็ยังวาดใหม่</strong>
+      เพราะสิ่งที่เปลี่ยนคือ<strong>ตัวกล่อง ไม่ใช่ค่าในกล่อง</strong>
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">เทียบกับของจริง</span>
+  <p>
+    <code>memo</code> เหมือน<strong>ยามหน้าตึกที่จำหน้าคนได้</strong> — ถ้ามาคนเดิม ยามไม่ต้องเช็คบัตรใหม่
+    <br>แต่ React ไม่ได้จำ "หน้าคน" มันจำ<strong>เลขบัตรประชาชนของกล่องที่ถือมา</strong>
+    · <code>value={{ n: 1 }}</code> คือการเอาของเดิมใส่กล่องใหม่ที่มีเลขใหม่ทุกครั้ง
+    ยามเลยต้องเช็คใหม่ทุกรอบ ทั้งที่ของข้างในเหมือนเดิมเป๊ะ
+    · <code>useMemo</code> คือการ<strong>ใช้กล่องใบเดิมซ้ำ</strong> ตราบใดที่ของข้างในยังเหมือนเดิม
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ยามจริงเช็คบัตรช้าและเสียเวลา แต่ React วาด component ใหม่นั้น
+    <strong>เร็วมากจนส่วนใหญ่ไม่มีใครรู้สึก</strong>
+    <br>อย่าเอาไปเข้าใจว่า "ลืม <code>useMemo</code> = เว็บช้า" — มันจะกลายเป็นปัญหาก็ต่อเมื่อ
+    consumer มีเยอะ หรือแต่ละตัววาดแล้วหนัก (เช่น กราฟ ตารางยาว ๆ)
+    <br>และที่สำคัญ: <strong>ตัวเลข render ในคอนโซลข้างบนไม่ได้แปลว่าเว็บช้าลงจริง</strong>
+    มันแค่ยืนยันว่า "วาดใหม่จริง" ถ้าจะบอกว่าช้าต้องวัดเวลาจริงอีกที
+  </p>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>สรุปกฎที่จำง่าย:</strong> ถ้า <code>value</code> ของ Provider เป็น <strong>object หรือ array หรือ function</strong>
+    ให้ห่อด้วย <code>useMemo</code> / <code>useCallback</code>
+    · ถ้าเป็น <strong>string · number · boolean</strong> เช่น <code>value="dark"</code> ในสไลด์หน้า 53
+    <strong>ไม่ต้องห่อ</strong> เพราะค่าพวกนี้เทียบกันด้วยค่าตรง ๆ อยู่แล้ว
+    <br>และย้ำจากบทที่ 75: React ในโปรเจกต์นี้เป็น 19.2.8 · <code>next.config.ts</code> ไม่ได้เปิด React Compiler ไว้
+    (ข้างในมีแค่คอมเมนต์ <code>/* config options here */</code>) — <strong><code>useMemo</code> จึงยังจำเป็นอยู่ ไม่มีใครทำให้ฟรี</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-7">7 · กับดัก 3 — Provider ต้องเป็น client component</h2>
+
+<p>
+  App Router ถือว่าทุกไฟล์เป็น <strong>Server Component</strong> จนกว่าจะเขียน <code>'use client'</code>
+  · และ <code>createContext</code> กับ <code>useContext</code> เป็นของฝั่ง client ล้วน ๆ
+  <br>ผมลองทำหน้าที่ลืมใส่ <code>'use client'</code> แล้วเรียกดู:
+</p>
+
+<pre><code><span class="c">// app/t76/server-hook/page.tsx — ไม่มี 'use client'</span>
+<span class="k">import</span> { createContext, useContext } <span class="k">from</span> <span class="s">'react'</span>;
+
+<span class="k">const</span> ThemeContext = <span class="f">createContext</span>(<span class="s">'light'</span>);
+
+<span class="k">export default function</span> <span class="f">ServerHookPage</span>() {
+  <span class="k">const</span> theme = <span class="f">useContext</span>(ThemeContext);
+  <span class="k">return</span> &lt;p&gt;{theme}&lt;/p&gt;;
+}</code></pre>
+
+<p>ผลรันจริง — <strong>HTTP 500</strong> พร้อมข้อความนี้:</p>
+
+<pre><code>⨯ ./app/t76/server-hook/page.tsx:1:10
+Error: You're importing a module that depends on `createContext` into a
+React Server Component module. This API is only available in Client Components.
+To fix, mark the file (or its parent) with the `"use client"` directive.
+    Learn more: https://nextjs.org/docs/app/api-reference/directives/use-client
+&gt; 1 | import { createContext, useContext } from 'react';
+    |          ^^^^^^^^^^^^^
+  2 |
+  3 | const ThemeContext = createContext('light');
+  4 |
+
+Ecmascript file had an error
+
+ GET /t76/server-hook 500 in 385ms (next.js: 341ms, application-code: 44ms)</code></pre>
+
+<div class="warn">
+  <p><strong>⚠️ ผลข้างเคียงที่ผมไม่ได้คาดไว้ และเจอตอนรันจริง</strong></p>
+  <p style="margin-bottom:0">
+    ตอนไฟล์นั้นยังอยู่ในโปรเจกต์ <strong>หน้าอื่นที่ไม่เกี่ยวกันเลยก็พังไปด้วย</strong> —
+    ผม <code>curl</code> ไป <code>/t76/rerender</code> ได้ HTTP 500 กลับมา ทั้งที่หน้านั้นเขียนถูกทุกอย่าง
+    เพราะมันเป็น <strong>compile error ของทั้งแอป ไม่ใช่ runtime error ของหน้าเดียว</strong>
+    <br>พอลบไฟล์นั้นทิ้ง <code>/t76/rerender</code> กลับมา 200 ทันที
+    <br><strong>บทเรียนที่ใช้ได้จริง:</strong> ถ้า <code>next dev</code> พังทั้งเว็บพร้อมกันหมด
+    อย่าเพิ่งไล่แก้หน้าที่กำลังเปิดอยู่ — ให้ไปอ่านบรรทัดแรกของ error ว่ามันชี้ไปที่<strong>ไฟล์ไหน</strong>
+  </p>
+</div>
+
+<p>
+  <strong>ทางแก้ที่ถูกต้องไม่ใช่การใส่ <code>'use client'</code> ที่หน้าเว็บ</strong> —
+  ให้ใส่ที่<strong>ไฟล์ context</strong> แล้วหน้าเว็บ (ซึ่งยังเป็น Server Component) import Provider มาครอบได้ตามปกติ
+  <br>ดูที่ <code>app/t76/page.tsx</code> ในหัวข้อ 3 — ไฟล์นั้น<strong>ไม่มี <code>'use client'</code> เลย</strong>
+  แต่ครอบ <code>&lt;ThemeProvider&gt;</code> ได้ และ build ผ่านเป็น static (<code>○ /t76</code> ในตารางผลลัพธ์)
+  <br>เหตุผล: Server Component ส่ง <strong>Client Component ไปเป็น <code>children</code></strong> ได้
+  สิ่งที่ห้ามคือการ<strong>เรียก hook เอง</strong>ในไฟล์ที่เป็น server
+</p>
+
+<div class="quiz" data-answer="0">
+  <p class="q">
+    <code>app/t76/page.tsx</code> ในหัวข้อ 3 <strong>ไม่มี <code>'use client'</code> สักบรรทัด</strong>
+    แต่ครอบ <code>&lt;ThemeProvider&gt;</code> ได้ และ build ออกมาเป็น static (<code>○ /t76</code> ในตาราง) —
+    เพราะอะไร
+  </p>
+  <div class="opts">
+    <button class="opt">ไฟล์นี้แค่ <em>import</em> Provider ที่ประกาศ <code>'use client'</code> ไว้ในไฟล์ของตัวเองมาวางเป็นแท็ก แล้วส่ง JSX เข้าไปเป็น <code>children</code> · ตัวมันเองไม่ได้เรียก hook</button>
+    <button class="opt">Next.js เติม <code>'use client'</code> ให้อัตโนมัติเมื่อตรวจเจอว่าไฟล์นั้นใช้ context</button>
+    <button class="opt">เพราะ <code>ThemeProvider</code> ถูก export แบบ named export ซึ่ง Next.js ถือว่าเป็นฝั่ง client เสมอ</button>
+    <button class="opt">เพราะหน้านี้ไม่มี <code>useState</code> — <code>useContext</code> เฉย ๆ เรียกใน Server Component ได้อยู่แล้ว</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบตัวเลือกที่ 1 · เส้นแบ่ง server/client อยู่ที่ <strong>"ไฟล์ไหนเรียก hook"</strong>
+      ไม่ใช่ "ไฟล์ไหนมี Provider อยู่ในหน้าจอ"
+      <br>ตัวเลือกที่ 2 ไม่จริง — หัวข้อ 7 พิสูจน์แล้วว่าถ้าไฟล์ server แตะ <code>createContext</code> เอง
+      มันพังทันที ไม่มีใครเติมให้
+      <br>ตัวเลือกที่ 3 ไม่จริง วิธี export ไม่เกี่ยวอะไรเลย · ตัวเลือกที่ 4 ก็ไม่จริง
+      <code>useContext</code> เป็น hook เหมือนกัน เรียกฝั่ง server ไม่ได้
+      <br><strong>ผลที่ได้จริงจากการทำแบบนี้:</strong> หน้าเว็บยังเป็น static ได้ (ไม่เสีย performance)
+      แต่กล่อง Provider กับ <code>&lt;UserBadge /&gt;</code> ข้างในกลายเป็น client — <strong>ได้ทั้งสองอย่าง</strong>
+      นี่คือเหตุผลที่คู่มือ Next.js บอกให้วาง <code>'use client'</code> ให้<strong>ลึกที่สุดเท่าที่ทำได้</strong>
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-8">8 · กับดัก 4 — context ไม่ใช่ตัวแทนของ redux</h2>
+
+<p>
+  พอเห็นว่า "ส่งค่าไปทั้งเว็บได้โดยไม่ต้องส่ง prop" คนมักสรุปทันทีว่า
+  "งั้นเอา context เก็บ state ทั้งแอปเลยสิ ไม่ต้องใช้ Redux / Zustand แล้ว" — <strong>อันนี้ต้องระวัง</strong>
+</p>
+
+<p>
+  จากผลรันในหัวข้อ 6 เราเห็นแล้วว่า <strong>เมื่อค่าใน context เปลี่ยน consumer ทุกตัววาดใหม่หมด
+  ไม่มีการเลือกเฉพาะคนที่ใช้ field ที่เปลี่ยน</strong>
+  <br>ถ้าเอา state ทั้งแอปยัดใส่ context ก้อนเดียว การกดปุ่มเปลี่ยนแค่ชื่อผู้ใช้
+  ก็จะทำให้ทุกหน้าจอที่แตะ context นั้นวาดใหม่พร้อมกันหมด
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ลักษณะของข้อมูล</th><th>เหมาะกับ context ไหม</th><th>เพราะอะไร</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>ธีม · ภาษา · ข้อมูลผู้ใช้ที่ล็อกอินอยู่</td>
+      <td>เหมาะมาก</td>
+      <td>เปลี่ยนนาน ๆ ที และเปลี่ยนทีก็ตั้งใจให้ทั้งหน้าเปลี่ยนตามอยู่แล้ว</td>
+    </tr>
+    <tr>
+      <td>ค่าที่ตั้งครั้งเดียวตอนเปิดแอป เช่น base URL ของ API</td>
+      <td>เหมาะมาก</td>
+      <td>ไม่เปลี่ยนเลย จึงไม่มีปัญหา re-render ตั้งแต่แรก</td>
+    </tr>
+    <tr>
+      <td>ค่าในฟอร์มที่พิมพ์อยู่ · ตำแหน่งเมาส์ · ค่าที่เปลี่ยนถี่มาก</td>
+      <td>ไม่เหมาะ</td>
+      <td>เปลี่ยนทุกการพิมพ์หนึ่งตัวอักษร แล้วลากทั้ง subtree ให้วาดใหม่ตาม</td>
+    </tr>
+    <tr>
+      <td>state ทั้งแอปที่มีหลายสิบ field ปนกัน</td>
+      <td>ไม่เหมาะ</td>
+      <td>context เลือกไม่ได้ว่าใครสนใจ field ไหน · เครื่องมืออย่าง Redux / Zustand ทำเรื่องนี้ได้</td>
+    </tr>
+    <tr>
+      <td>ข้อมูลที่ดึงมาจาก API แล้วต้อง cache · refetch · จัดการ loading</td>
+      <td>ไม่เหมาะ</td>
+      <td>context เก็บค่าได้อย่างเดียว ไม่มีเรื่อง cache หรือ retry ให้ · งานนี้เป็นของ data-fetching library</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  วิธีคิดที่ใช้ตัดสินใจได้จริง: <strong>context แก้ปัญหา "ส่งค่ายังไง" ไม่ได้แก้ปัญหา "จัดการ state ยังไง"</strong>
+  <br>ถ้าปัญหาของคุณคือ prop drilling → context ตอบโจทย์เลย
+  · ถ้าปัญหาคือ state ซับซ้อน มีหลายคนแก้ หลายที่ฟัง อยากได้ devtools ย้อนดูได้ → นั่นคนละปัญหา
+</p>
+
+<div class="jargon">
+  <span class="label">ติดป้ายศัพท์ — ชุดที่ 2</span>
+  <dl>
+    <dt>referential equality</dt>
+    <dd>การเทียบว่า "เป็นวัตถุก้อนเดียวกันไหม" ไม่ใช่ "ข้างในเหมือนกันไหม" ·
+        React ใช้เกณฑ์นี้ (ผ่าน <code>Object.is</code>) ตัดสินว่าค่า context เปลี่ยนหรือยัง —
+        นี่คือรากของกับดักหัวข้อ 6</dd>
+    <dt>Server Component / Client Component</dt>
+    <dd>ใน App Router ทุกไฟล์เป็น Server Component จนกว่าจะเขียน <code>'use client'</code> บรรทัดบนสุด ·
+        hook ทุกตัวรวมถึง <code>useContext</code> ใช้ได้เฉพาะฝั่ง client</dd>
+    <dt>Strict Mode</dt>
+    <dd>โหมดของ React ตอน dev ที่ตั้งใจเรียก component สองรอบเพื่อจับ side effect ที่ไม่ควรมี ·
+        เป็นเหตุผลที่ log ในหัวข้อ 6 ขึ้นซ้ำสองบรรทัด และไม่เกิดตอน production</dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">
+    ทีมมีหน้า dashboard ที่ช่องค้นหาอัปเดตทุกตัวอักษรที่พิมพ์ และมีการ์ดสถิติ 30 ใบที่วาดกราฟใบละอัน
+    · เพื่อนเสนอให้เอาข้อความในช่องค้นหาไปเก็บใน context ที่ครอบทั้งหน้า — ควรตอบว่าอะไร
+  </p>
+  <div class="opts">
+    <button class="opt">ทำได้เลย เพราะ <code>memo</code> ที่ครอบการ์ดจะกันไม่ให้การ์ดวาดใหม่ตามอยู่แล้ว</button>
+    <button class="opt">ทำได้เลย ขอแค่ห่อ <code>value</code> ด้วย <code>useMemo</code> ก็จะไม่มีใครวาดใหม่</button>
+    <button class="opt">ห้ามทำเด็ดขาด เพราะ context ออกแบบมาให้เก็บได้แค่ค่าที่ไม่เปลี่ยนหลังเปิดแอปแล้ว</button>
+    <button class="opt">ทำได้แต่ต้องดูก่อนว่าการ์ดอ่าน context นั้นไหม ถ้าอ่าน มันจะวาดใหม่ทุกตัวอักษรที่พิมพ์</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตอบตัวเลือกที่ 4 · ตัวเลือกที่ 1 ผิดตรงจุดสำคัญ — ผลรันในหัวข้อ 6 แสดงชัดว่า
+      <strong><code>memo</code> กันไม่อยู่</strong> ถ้า component นั้นเป็น consumer ของ context ที่เปลี่ยน
+      (<code>LiteralChild</code> ห่อ <code>memo</code> ไว้แต่ก็ยังวาดใหม่ #3–#6)
+      <br>ตัวเลือกที่ 2 ผิดเพราะ <code>useMemo</code> ช่วยแค่ตอน "ค่าไม่ได้เปลี่ยนจริง" —
+      แต่ข้อความค้นหา<strong>เปลี่ยนจริงทุกตัวอักษร</strong> ก้อนใหม่จึงถูกสร้างอยู่ดี
+      <br>ตัวเลือกที่ 3 แรงเกินไป context เก็บค่าที่เปลี่ยนได้ (ธีมในบทนี้ก็เปลี่ยนได้ด้วยปุ่ม) —
+      เกณฑ์จริงคือ<strong>เปลี่ยนถี่แค่ไหน และมีคนฟังกี่คน</strong> ซึ่งคือสิ่งที่ตัวเลือกที่ 4 บอกให้ไปดูก่อน
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">9 · สรุปเป็นเช็คลิสต์ที่เอาไปใช้ได้เลย</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ขั้นตอน</th><th>ทำอะไร</th><th>ถ้าลืมจะเจออะไร (ของจริงจากบทนี้)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>สร้างไฟล์ context แล้วใส่ <code>'use client'</code> บรรทัดบนสุด</td>
+      <td><code>You're importing a module that depends on `createContext` into a React Server Component module.</code> — และ<strong>พังทั้งเว็บ</strong> ไม่ใช่แค่หน้าเดียว</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>ประกาศ type ให้ชัด ค่าเริ่มต้นเป็น <code>undefined</code></td>
+      <td>ถ้าใส่ค่าเริ่มต้นแบบ <code>"light"</code> → หน้าขึ้น <strong>HTTP 200 พร้อมค่าปลอม</strong> ไม่มีใครเตือน</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>เขียน custom hook ที่มี <code>if (!ctx) throw</code> แล้วให้ทุกคนเรียกผ่านตัวนี้</td>
+      <td>ถ้าเรียก <code>useContext</code> ตรง ๆ จะได้ <code>TypeError: Cannot destructure property … as it is undefined</code> ที่ไม่บอกว่าลืมอะไร</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>รับ <code>children</code> ใน Provider ให้ครบ</td>
+      <td><code>TS2304: Cannot find name 'children'</code> — สไลด์หน้า 54 พลาดข้อนี้</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>ถ้า <code>value</code> เป็น object / array / function ให้ห่อ <code>useMemo</code></td>
+      <td>consumer วาดใหม่ทุกครั้งที่แม่วาด แม้ค่าไม่เปลี่ยน (<code>LiteralChild render #3…#6</code>)</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>ครอบ Provider ให้อยู่<strong>เหนือ</strong>คนที่จะใช้ ไม่ใช่ในไฟล์เดียวกับที่เรียก hook</td>
+      <td>ได้ค่าเริ่มต้นแทนค่าจริง — สไลด์หน้า 55 เตือนเรื่องนี้ไว้ตรง ๆ</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>ถ้าจำได้แค่ประโยคเดียวจากบทนี้ ให้จำอันนี้:</strong>
+    <br><em>context ไม่ได้ทำให้ค่าเดินทางเร็วขึ้น มันแค่ทำให้เราไม่ต้องเขียนทางเดินเอง —
+    และค่าที่ผิดจะเงียบกว่าค่าที่ไม่มี</em>
+  </p>
+</div>
+
+<div class="task">
+  <h3 id="sn-sub-2">🛠 ภารกิจ — ทำให้ "ค่าปลอมเงียบ ๆ" กลายเป็น error ที่ส่งเสียง</h3>
+  <p>
+    ทำในโปรเจกต์ Next.js ของคุณเอง (ยังไม่มี: <code>npx create-next-app@latest</code>) ·
+    <strong>ข้อ 2 กับ 3 คือหัวใจของบทนี้ ห้ามข้าม</strong> เพราะมันคือการเห็นกับตาว่า
+    "พัง" กับ "ดูเหมือนใช้ได้" ต่างกันยังไง
+  </p>
+  <ol>
+    <li>
+      สร้าง <code>components/ThemeCtx.tsx</code> · บรรทัดแรก <code>'use client'</code> ·
+      ข้างในทำ <strong>แบบสไลด์หน้า 54 ก่อน</strong> คือ <code>createContext('light')</code>
+      แล้วเขียน hook <code>useTheme()</code> ที่มี <code>if (!context) throw new Error(...)</code>
+      · แล้วทำ component เล็ก ๆ ที่โชว์ค่าที่ได้ออกมาบนหน้าจอ
+    </li>
+    <li>
+      ทำหน้าที่เรียก component นั้น <strong>โดยไม่ครอบ Provider เลย</strong> ·
+      รัน <code>npx next dev</code> แล้วเปิดดู · <strong>จดว่าได้ HTTP อะไร และหน้าจอขึ้นข้อความว่าอะไร</strong>
+      (guard ที่คุณเพิ่งเขียนทำงานไหม?)
+    </li>
+    <li>
+      แก้บรรทัดเดียว: เปลี่ยนเป็น
+      <code>createContext&lt;{ mode: string } | undefined&gt;(undefined)</code>
+      · โหลดหน้าเดิมซ้ำ · <strong>จดว่าเปลี่ยนไปยังไง</strong> แล้วเทียบกับข้อ 2
+    </li>
+    <li>
+      ครอบ Provider ให้ถูกต้อง แล้วรัน <code>npx next build</code> ·
+      ดูตาราง <code>Route (app)</code> ว่าหน้าของคุณขึ้น <code>○</code> หรือ <code>ƒ</code>
+      · ลอง<strong>ถอด Provider ออกอีกครั้งแล้ว build ใหม่</strong> — คราวนี้ build จะเป็นยังไง
+    </li>
+    <li>
+      <strong>ลบ <code>'use client'</code> ออกจากไฟล์ context</strong> โดยที่ <code>page.tsx</code>
+      ยังเป็น Server Component เหมือนเดิม แล้วโหลดหน้าใหม่ ·
+      <strong>เปิดหน้าอื่นที่ไม่เกี่ยวข้องกันเลยดูด้วย</strong>
+      <br>แล้วลองอีกท่า: เติม <code>'use client'</code> ไว้ที่ <code>page.tsx</code> แทน
+      (ไฟล์ context ยังไม่มี) — คราวนี้ผลต่างไปไหม?
+    </li>
+    <li>
+      โบนัส: ทำหน้าแบบหัวข้อ 6 · ปุ่มที่เปลี่ยน state ที่<strong>ไม่เกี่ยวกับ context</strong> ·
+      ลูกห่อ <code>memo</code> · Provider ตัวหนึ่งใช้ <code>value={{ n }}</code>
+      อีกตัวใช้ <code>useMemo</code> · กดปุ่ม 2 ที แล้วนับ log
+    </li>
+  </ol>
+  <button class="reveal">ดูว่าควรได้อะไร</button>
+  <div class="answer">
+    <p>
+      <strong>ข้อ 2</strong> — ต้องได้ <strong>HTTP 200</strong> และหน้าขึ้นค่า <code>light</code> ตามปกติ
+      <strong>ไม่มี error สักตัว</strong> · guard ที่คุณเขียน<strong>ไม่ทำงาน</strong>
+      เพราะ <code>"light"</code> เป็น truthy · ถ้าคุณได้ 500 แปลว่าเผลอใส่ค่าเริ่มต้นเป็น
+      <code>undefined</code> หรือ <code>""</code> ไปแล้ว ให้ย้อนกลับไปทำข้อ 1 ให้ตรง
+    </p>
+    <p>
+      <strong>ข้อ 3</strong> — คราวนี้ต้องได้ <strong>HTTP 500</strong> พร้อมข้อความที่<u>คุณเขียนเอง</u>
+      และ code frame ที่ชี้ชื่อไฟล์กับเลขบรรทัดของ <code>throw</code> · นี่คือความต่างทั้งหมด:
+      <strong>บรรทัดเดียวเปลี่ยนบั๊กเงียบให้กลายเป็นบั๊กที่บอกทางแก้</strong>
+    </p>
+    <p>
+      <strong>ข้อ 4</strong> — ครอบถูกแล้วควรได้ <code>○</code> (static) · พอถอด Provider ออกแล้ว build ใหม่
+      จะไม่ใช่แค่ "หน้านั้นพัง" แต่ <strong><code>next build</code> ล้มทั้งโปรเจกต์</strong> ·
+      ในเครื่องผมได้
+      <code>Error occurred prerendering page "/t76/no-provider"</code> ตามด้วย
+      <code>Export encountered an error … exiting the build</code> และ
+      <code>⨯ Next.js build worker exited with code: 1</code>
+      <br>ทางออกตอนอยากเก็บหน้าพังไว้ดูคือใส่ <code>export const dynamic = 'force-dynamic'</code>
+      (นั่นคือเหตุผลที่หน้ากับดักในบทนี้ขึ้น <code>ƒ</code> ในตาราง)
+    </p>
+    <p>
+      <strong>ข้อ 5 ท่าแรก</strong> — ต้องพังแบบหัวข้อ 7 คือ
+      <code>You're importing a module that depends on `createContext` into a React Server Component module</code>
+      · และ<strong>หน้าที่ไม่เกี่ยวข้องเลยก็ต้องพังไปด้วย</strong> เพราะเป็น compile error ของทั้งแอป
+      ไม่ใช่ของหน้าเดียว · ในเครื่องผม <code>/t76</code> กับ <code>/t76/drilling</code> ได้ 500 พร้อมกันทั้งคู่
+      <br>คราวนี้ error จะแถม <strong><code>Import traces:</code></strong> มาให้ด้วย ซึ่งไล่ให้ดูเลยว่า
+      <code>./components/…/theme.tsx</code> ถูกลากเข้ามาผ่าน <code>./app/…/page.tsx</code> —
+      อ่านตรงนี้แล้วรู้ทันทีว่าต้องไปใส่ <code>'use client'</code> ที่ไฟล์ไหน
+    </p>
+    <p>
+      <strong>ข้อ 5 ท่าที่สอง</strong> — <strong>กลับมาได้ HTTP 200 ทำงานปกติ</strong>
+      เพราะพอ <code>page.tsx</code> ประกาศ <code>'use client'</code> ทุกอย่างที่มัน import
+      ก็ถูกนับเป็นฝั่ง client ไปด้วย · <strong>แต่นี่ไม่ใช่ท่าที่ควรใช้</strong> —
+      คุณเพิ่งลากทั้งหน้าไปเป็น client เพื่อแก้ปัญหาของไฟล์เดียว
+      · ที่ถูกคือใส่ <code>'use client'</code> ที่ไฟล์ context แล้วปล่อยให้หน้าเป็น server ต่อไป
+      <br>บทเรียนของข้อนี้: <em>"มันหายพัง" ไม่ได้แปลว่า "แก้ถูกที่"</em>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>ข้อ 6</strong> — ตัวที่ใช้ <code>value={{ n }}</code> ต้องมี log โผล่ทุกครั้งที่กด
+      ส่วนตัวที่ใช้ <code>useMemo</code> ต้อง<strong>เงียบสนิท</strong> ·
+      ถ้าเลข render ของคุณ<strong>ขึ้นทีละ 2</strong> ไม่ใช่ทีละ 1 นั่นคือ Strict Mode ตอน dev
+      ไม่ใช่บั๊ก · และถ้า<strong>ทั้งคู่</strong>เงียบ แปลว่าปุ่มของคุณไม่ได้ทำให้ component แม่วาดใหม่จริง
+      ลองเช็คว่า <code>setState</code> อยู่ในแม่ตัวเดียวกับ Provider หรือเปล่า
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>หมายเหตุเรื่องวิธีตรวจ (เขียนไว้ให้ตรวจสอบซ้ำได้):</strong>
+    ตอนผมรัน มี dev server ตัวอื่นจองโฟลเดอร์ทดสอบอยู่แล้ว และ Next.js ไม่ยอมให้เปิด
+    <code>next dev</code> ซ้อนกันสองตัวในโฟลเดอร์เดียว (<code>Another next dev server is already running.</code>)
+    · ผมจึงคัดลอกโปรเจกต์ทั้งชุดไปอีกโฟลเดอร์หนึ่งโดยใช้ <code>node_modules</code> · <code>package.json</code> ·
+    <code>tsconfig.json</code> · <code>next.config.ts</code> ชุดเดียวกันเป๊ะ แล้วรันที่พอร์ต 376
+    <br>เวอร์ชันทุกตัวจึงเท่ากับที่แจ้งไว้ในกล่องบนสุดของหน้า และคุณรันซ้ำเองได้ด้วยโค้ดที่โชว์ไว้ทั้งหมด
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0075-usememo-usecallback.html">← บทเรียน 75 · useMemo และ useCallback</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Next.js</a>
+  <a href="./0077-custom-hooks.html">บทเรียน 77 → custom hooks</a>
+</nav>
+
+<h2 id="sn-sec-10">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://react.dev/reference/react/useContext">React — <code>useContext</code></a> —
+      <strong>อ่านหัวข้อ <em>Caveats</em></strong> ที่เขียนไว้ตรง ๆ ว่า Provider ที่ return จาก component เดียวกัน
+      จะ<strong>ไม่ถูกมองเห็น</strong>โดย <code>useContext</code> ใน component นั้น
+      (ตรงกับที่สไลด์หน้า 55 เตือน) แล้วอ่านหัวข้อ
+      <em>Optimizing re-renders when passing objects and functions</em> ต่อ ซึ่งเป็นเรื่องเดียวกับหัวข้อ 6 ของบทนี้</li>
+  <li><a href="https://react.dev/reference/react/createContext">React — <code>createContext</code></a> —
+      <strong>อ่านย่อหน้าที่อธิบาย parameter <code>defaultValue</code></strong> ที่บอกว่าค่านี้ถูกใช้
+      "ก็ต่อเมื่อไม่มี Provider ที่ตรงกันอยู่เหนือขึ้นไป" — และดูตัวอย่างที่เขาแนะนำให้ใส่ค่าที่
+      <em>"never changes"</em> · เทียบกับผลรันในหัวข้อ 5 ว่าทำไมค่าเริ่มต้นที่เป็น truthy ถึงอันตราย</li>
+  <li><a href="https://react.dev/learn/passing-data-deeply-with-context">React — Passing Data Deeply with Context</a> —
+      <strong>อ่านหัวข้อ <em>Before you use context</em></strong> ที่เขาแนะนำให้ลอง 2 ทางก่อน
+      (ส่ง prop ตรง ๆ · หรือส่ง JSX ไปเป็น <code>children</code>) แล้วค่อยใช้ context —
+      เป็นคำตอบเดียวกับหัวข้อ 8 ของบทนี้ในเรื่อง "context ไม่ใช่ยาครอบจักรวาล"</li>
+  <li><a href="https://nextjs.org/docs/app/api-reference/directives/use-client">Next.js — <code>use client</code> directive</a> —
+      ลิงก์นี้คือลิงก์ที่<strong>ตัว error เองแนะนำให้ไปอ่าน</strong> (ดูข้อความ error ในหัวข้อ 7) ·
+      <strong>อ่านหัวข้อที่ว่าด้วยการวาง <code>'use client'</code> ให้ลึกที่สุดเท่าที่ทำได้</strong>
+      เพื่อเข้าใจว่าทำไมเราถึงใส่ที่ไฟล์ context ไม่ใช่ที่ <code>page.tsx</code></li>
+  <li><a href="https://react.dev/reference/react/memo">React — <code>memo</code></a> —
+      <strong>อ่านหัวข้อ <em>Caveats</em> ข้อที่พูดถึง context</strong> ซึ่งระบุว่า <code>memo</code>
+      ไม่กันการ re-render ที่เกิดจาก context ที่ component นั้น subscribe อยู่ —
+      นี่คือคำอธิบายอย่างเป็นทางการของสิ่งที่คอนโซลในหัวข้อ 6 แสดงให้เห็น</li>
+  <li><a href="https://react.dev/reference/react/StrictMode">React — <code>StrictMode</code></a> —
+      <strong>อ่านหัวข้อ <em>Fixing bugs found by double rendering in development</em></strong>
+      เพื่อเข้าใจว่าทำไม log ในหัวข้อ 6 ถึงขึ้นซ้ำสองบรรทัดทุกครั้ง และทำไมมันไม่ใช่บั๊ก</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>
