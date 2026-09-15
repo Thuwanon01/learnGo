@@ -1,0 +1,950 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 87 — Agentic Workflow 5 ขั้น — Explore · Plan · Code · Evaluate · Commit</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 87 · Frontend · Agentic Workflow</p>
+  <h1>Agentic Workflow 5 ขั้น — Explore · Plan · Code · Evaluate · Commit</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="./0086-claude-code-setup.html">บท 86</a> (ติดตั้ง Claude Code) และเคยสร้างแอป Next.js + shadcn ในบท 79–85 มาก่อน</p>
+  <p class="standfirst">
+    ตอนเขียน Go คุณมีนิสัยหนึ่งที่ติดตัวมาโดยไม่รู้ตัว: แก้โค้ดเสร็จ → <code>go build</code> → <code>go vet</code> → <code>go test</code> → ผ่านหมดค่อย <code>git commit</code>
+    <br>บทนี้คือเรื่องเดียวกันนั้นแหละ แต่<strong>ขยายให้ครบวง</strong>และ<strong>ตั้งชื่อให้ทุกขั้น</strong>
+    เพื่อให้คุณสั่งงาน AI agent ได้เป็นขั้นเป็นตอน —
+    และที่สำคัญกว่า คือ<strong>รู้ว่าตอนนี้ agent กำลังอยู่ขั้นไหน แล้วมันข้ามขั้นไหนไป</strong>
+    <br>ตามสไลด์หน้า 11–18 · เราจะเดินครบ 5 ขั้นกับงานเล็ก ๆ งานเดียว คือ
+    <strong>เพิ่มปุ่มสีเขียว <code>variant="success"</code> ให้ Button ของ shadcn</strong>
+    โดยขั้น Evaluate กับ Commit รันจริงทุกคำสั่ง รวมถึงรอบที่<strong>ไม่ผ่าน</strong>ด้วย
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code>Next.js     16.3.5 (Turbopack)   <span class="c"># npx next --version → Next.js v16.3.5</span>
+react       19.2.8
+typescript  5.9.3
+eslint      9.39.5
+tailwindcss 4.3.3
+node        v24.14.0
+git         2.51.0</code></pre>
+  <p style="margin-bottom:0">
+    โปรเจกต์ที่ใช้ตรวจสร้างด้วย <code>create-next-app</code> + <code>shadcn init</code> (preset ที่ใช้ <code>@base-ui/react</code>)
+    + <code>shadcn add button card badge skeleton</code> — หน้าตาเดียวกับที่ทำในบท 79–85
+    <br><strong>ทุกคำสั่งและทุก output ในบทนี้ก็อปมาจากหน้าจอจริง</strong> ·
+    ส่วน “แผน” ในขั้น Plan เป็นแผนที่<strong>ผมเขียนเอง</strong>ก่อนลงมือ ไม่ใช่คำตอบของ AI —
+    บทนี้<strong>ไม่ได้รัน Claude Code สักครั้ง</strong> เพราะผลของ AI ไม่ซ้ำกันทุกรอบ
+    เอามาโชว์เป็น “ผลรัน” ไม่ได้ · สิ่งที่บทนี้สอนคือ<strong>ขั้นตอน</strong> ซึ่งคุณเดินเองได้ และตรวจ agent ได้
+  </p>
+</div>
+
+<h2 id="sn-sec-1">Agentic workflow คืออะไร</h2>
+
+<p>สไลด์หน้า 12 นิยามไว้ประโยคเดียว:</p>
+
+<div class="diagram">An AI-driven process where autonomous systems use reasoning,
+planning, and tool use to execute multi-step tasks dynamically</div>
+
+<p>
+  แปลเป็นภาษาคน: <strong>ให้ AI ทำงานหลายขั้นต่อกันเองได้</strong> —
+  ไม่ใช่ถามหนึ่งคำ ตอบหนึ่งก้อน แล้วคุณเอาไปก็อปวางเอง
+  <br>แต่เป็น AI ที่<strong>คิด</strong> (reasoning) · <strong>วางแผน</strong> (planning) ·
+  <strong>หยิบเครื่องมือมาใช้เอง</strong> (tool use — เปิดไฟล์ · ค้นโค้ด · รันคำสั่งใน terminal)
+  แล้ว<strong>ปรับตัวตามผลที่ได้</strong> (dynamically — รันแล้ว error ก็อ่าน error แล้วแก้ต่อ)
+</p>
+
+<p>
+  สไลด์หน้าเดียวกันวาดขั้นตอนนั้นไว้เป็น 5 กล่องเรียงกัน เริ่มจากคำขอของผู้ใช้
+  (ตัวอย่างในสไลด์คือ <code>"Add dark mode to the app"</code>) แล้วมีเส้นประย้อนกลับจากขั้นที่ 4:
+</p>
+
+<div class="diagram">USER REQUEST  "Add dark mode to the app"
+      │
+      ▼
+┌───────────┐   ┌────────┐   ┌────────┐   ┌────────────┐   ┌──────────┐
+│ 1 EXPLORE │──▶│ 2 PLAN │──▶│ 3 CODE │──▶│ 4 EVAL     │──▶│ 5 COMMIT │
+└───────────┘   └────────┘   └────────┘   └────────────┘   └──────────┘
+                    ▲            ▲              │                ▲
+                    │            │     EVALUATION PASSED?        │
+                    │            │              ├───── YES ──────┘
+                    │            └───── NO ─────┤
+                    └────────────────── NO ─────┘
+                           "Return to the appropriate step and iterate"</div>
+
+<p>
+  <strong>เส้นล่างสุดคือหัวใจของทั้งบท</strong> — Evaluate ไม่ผ่าน ห้ามเดินหน้าไป Commit
+  ต้องย้อนกลับไปแก้ แล้ว<strong>ตรวจใหม่ทั้งชุด</strong> วนจนกว่าจะผ่าน
+</p>
+
+<p>
+  ภาพในสไลด์หน้า 12 มีหัวเรื่องว่า <em>“AGENTIC WORKFLOW by Claude Code”</em> พร้อมคำโปรยว่า
+  <em>“Claude Code works like an agent that understands your goal, thinks, acts, and delivers production-ready changes.”</em>
+  — Claude Code ทำงานเหมือน agent ที่เข้าใจเป้าหมาย คิด ลงมือ แล้วส่งงานที่พร้อมใช้จริง
+  · แต่ละกล่องมีคำสรุปสั้น ๆ ใต้ชื่อขั้น (ถอดตามจริง):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ขั้น</th><th>คำสรุปใต้ชื่อกล่อง</th><th>แปล</th></tr></thead>
+  <tbody>
+    <tr><td>1 EXPLORE</td><td><em>Understand the codebase and context</em></td><td>เข้าใจโค้ดและบริบท</td></tr>
+    <tr><td>2 PLAN</td><td><em>Break down the task and create a plan</em></td><td>แตกงานแล้ววางแผน</td></tr>
+    <tr><td>3 CODE</td><td><em>Implement the plan</em></td><td>ลงมือตามแผน</td></tr>
+    <tr><td>4 EVAL</td><td><em>Evaluate the changes and results</em></td><td>ประเมินสิ่งที่เปลี่ยนและผลลัพธ์</td></tr>
+    <tr><td>5 COMMIT</td><td><em>Deliver clean, reviewable changes</em></td><td>ส่งงานที่สะอาด รีวิวได้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แถวล่างของภาพชื่อ <em>WHY THIS WORKS</em> สรุปว่าทำไมห้าขั้นนี้ได้ผล:
+  <em>Context First</em> (Understand deeply before changing anything) ·
+  <em>Planned Execution</em> (Reduce mistakes by thinking ahead) ·
+  <em>Iterative Improvement</em> (Continuously refine until it's right) ·
+  <em>Quality Focused</em> (Evaluation ensures reliability and maintainability) ·
+  <em>Transparent &amp; Reviewable</em> (Clear plan, clean diff, meaningful commits)
+  <br>และปิดท้ายว่า <em>“Explore → Plan → Code → Eval → Commit — Claude Code follows this agentic workflow to ship better software, faster.”</em>
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ สไลด์สองหน้าพูดเรื่องลูปไม่ตรงกันนิดเดียว — แต่สำคัญ</span>
+  <p style="margin-bottom:0">
+    <strong>สไลด์หน้า 17</strong> เขียนว่า <em>“If FAILURES here should be loop back to Code”</em> — ย้อนไป Code
+    <br><strong>สไลด์หน้า 12</strong> (ภาพ diagram) ลากเส้นประ NO ไป<strong>สองที่</strong> คือกล่อง Plan และกล่อง Code
+    พร้อมคำว่า <em>“Return to the appropriate step and iterate”</em>
+    <br>สองหน้านี้ไม่ได้ขัดกัน หน้า 17 พูดถึงกรณีที่พบบ่อยที่สุด (โค้ดผิด → แก้โค้ด)
+    ส่วนหน้า 12 ครอบกรณีที่<strong>แผนผิดตั้งแต่ต้น</strong>ด้วย — แก้โค้ดกี่รอบก็ไม่ผ่าน เพราะทางที่เลือกไม่ถูก ต้องกลับไปวางแผนใหม่
+    <br>ในบทนี้ผมยึดแบบหน้า 12 เพราะครบกว่า
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🔧 เทียบกับของจริง</span>
+  <p>
+    นึกถึง<strong>ช่างซ่อมบ้านที่ดี</strong> ที่คุณเรียกมาเพราะ “ก๊อกในครัวน้ำหยด”
+    <br>ช่างดีจะไม่ถอดก๊อกทันที — เขา<strong>เดินดูก่อน</strong> (ท่อเป็นแบบไหน ยี่ห้ออะไร วาล์วปิดน้ำอยู่ตรงไหน) →
+    <strong>บอกคุณก่อนว่าจะทำอะไร</strong> (“เปลี่ยนซีลยาง ไม่ต้องเปลี่ยนทั้งก๊อก ค่าของ 80 บาท”) →
+    <strong>ลงมือตามที่บอก</strong> → <strong>เปิดน้ำทดสอบ</strong> ดูว่ายังหยดไหม ตรงอื่นรั่วเพิ่มไหม →
+    ผ่านแล้วค่อย<strong>เขียนใบงานส่งมอบ</strong>ว่าทำอะไรไป
+    <br>ห้าขั้นนั้นคือ Explore · Plan · Code · Evaluate · Commit เป๊ะ ๆ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ช่างจริงเปิดน้ำแล้ว<em>เห็นด้วยตา</em>ทันทีว่ายังหยดไหม
+    แต่โค้ด “ดูเหมือนเสร็จ” ได้ทั้งที่ยังพัง — ปุ่มขึ้นจอสวยแต่ type ผิด · build ผ่านแต่ไม่ตรงโจทย์
+    <br>และช่างจริงเหนื่อยเป็น จึงไม่อยากทำซ้ำ · agent ไม่เหนื่อย จึง<strong>พร้อมจะเดินต่อเรื่อย ๆ แม้ทางผิด</strong>
+    ถ้าไม่มีขั้นตรวจที่ให้ผล “ผ่าน/ไม่ผ่าน” แบบชัด ๆ มันจะหยุดตอนที่<em>คิดว่า</em>เสร็จ ไม่ใช่ตอนที่<em>เสร็จจริง</em>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>agent / agentic</dt>
+    <dd>ระบบ AI ที่ไม่ได้แค่ตอบข้อความ แต่<strong>ลงมือทำหลายขั้นเอง</strong> ตัดสินใจเองว่าขั้นต่อไปคืออะไร ·
+        Claude Code คือ coding agent — มันเปิดไฟล์ รันคำสั่ง แก้โค้ดในเครื่องคุณได้ ·
+        <strong>ถาม senior ได้ว่า “งานนี้ให้ agent ทำทั้งวงได้ไหม หรือควรคุมทีละขั้น”</strong></dd>
+    <dt>tool use</dt>
+    <dd>การที่ AI เรียกใช้เครื่องมือภายนอก เช่น อ่านไฟล์ · ค้นโค้ด · รัน <code>npx tsc</code> ·
+        นี่คือสิ่งที่ทำให้ agent “เห็นผลจริง” ได้ ไม่ต้องเดา ·
+        <strong>พิมพ์บอก AI ได้ว่า “run the type-check yourself and show me the output”</strong></dd>
+    <dt>feedback loop / iterate</dt>
+    <dd>วงจร “ทำ → ตรวจ → เอาผลตรวจมาแก้ → ตรวจใหม่” · คำว่า <em>iterate</em> ในสไลด์หมายถึงการวนรอบนี้ ·
+        <strong>ประโยคที่ใช้บ่อย: “iterate until tsc, eslint and next build all pass”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">ขั้น 1 · Explore — เก็บบริบทก่อนแตะอะไร</h2>
+
+<p>สไลด์หน้า 14 มีสามข้อ (ถอดตามจริง):</p>
+
+<ul>
+  <li><em>“Like a researcher, gather context before touching anything.”</em> — ทำตัวเป็นนักวิจัย เก็บบริบทก่อนแตะอะไรทั้งนั้น</li>
+  <li><em>“Read the relevant files, search the codebase, understand existing patterns, conventions, and dependencies.”</em> — อ่านไฟล์ที่เกี่ยว ค้นทั้งโปรเจกต์ ทำความเข้าใจแพตเทิร์น ธรรมเนียมการเขียน และของที่พึ่งพากันอยู่</li>
+  <li><em>“The goal is a mental model of what exists and how it works, not writing code yet.”</em> — เป้าหมายคือ<strong>ภาพในหัว</strong>ว่ามีอะไรอยู่แล้วและมันทำงานยังไง <strong>ยังไม่ใช่การเขียนโค้ด</strong></li>
+</ul>
+
+<p>
+  diagram หน้า 12 แตกเป็นรายการงานย่อย: <em>Read README and docs · Explore project structure ·
+  Search for relevant files and code · Understand existing patterns and conventions · Review tests and configs</em>
+  · เป้าหมาย: <em>Build a mental model of the project.</em>
+</p>
+
+<h3 id="sn-sub-1">ลองกับงานจริง: “เพิ่มปุ่มสีเขียวสำหรับสถานะสำเร็จ”</h3>
+
+<p>
+  ก่อนแก้อะไร ผมเปิดโปรเจกต์ดูสี่คำถาม — Button อยู่ไหน · variant ที่มีอยู่แล้วเขียนแบบไหน ·
+  สีมาจากไหน · มีใครใช้ Button อยู่แล้วบ้าง (จะได้รู้ว่าแก้แล้วกระทบใคร):
+</p>
+
+<pre><code><span class="c">$ ls components/ui</span>
+badge.tsx
+button.tsx
+card.tsx
+skeleton.tsx
+
+<span class="c">$ grep -n "variant" components/ui/button.tsx</span>
+8:    variants: {
+9:      variant: {
+36:      variant: "default",
+44:  variant = "default",
+51:      className={cn(buttonVariants({ variant, size, className }))}
+
+<span class="c">$ grep -n "destructive" app/globals.css</span>
+29:  --color-destructive: var(--destructive);
+66:  --destructive: oklch(0.577 0.245 27.325);
+101:  --destructive: oklch(0.704 0.191 22.216);
+
+<span class="c">$ grep -rn "components/ui/button" app components; echo "rc=$?"</span>
+rc=1</code></pre>
+
+<p>สี่บรรทัดคำสั่งนี้ให้ภาพในหัวครบพอจะวางแผนได้:</p>
+
+<ul>
+  <li><strong>variant ของ Button เป็นรายการใน <code>cva(...)</code></strong> — มี
+      <code>default · outline · secondary · ghost · destructive · link</code>
+      แต่ละตัวคือสตริง class ของ Tailwind · แปลว่าเพิ่ม variant = เพิ่มหนึ่งบรรทัดในรายการนี้</li>
+  <li><strong>สีไม่ได้เขียนตรง ๆ</strong> เช่น <code>bg-red-600</code> แต่ใช้ชื่อสี (token) อย่าง
+      <code>bg-destructive</code> ซึ่งไปโยงกับตัวแปร CSS ใน <code>app/globals.css</code>
+      <strong>สองชุด</strong> — บรรทัด 66 สำหรับโหมดสว่าง · บรรทัด 101 สำหรับโหมดมืด
+      · นี่คือ <strong>convention</strong> ของโปรเจกต์ ถ้าเราเขียน <code>bg-green-600</code> ตรง ๆ โค้ดก็ทำงาน แต่จะผิดธรรมเนียม และโหมดมืดจะไม่เปลี่ยนสีตาม</li>
+  <li><strong><code>rc=1</code></strong> ของ <code>grep</code> แปลว่า<strong>ไม่เจอเลย</strong> —
+      ยังไม่มีไฟล์ไหน import Button · เพิ่ม variant ใหม่จึงไม่มีทางทำหน้าเดิมพัง</li>
+</ul>
+
+<p>
+  และอีกสองไฟล์ที่ควรเปิดในขั้นนี้เสมอ: <code>package.json</code> (สคริปต์ที่มีคือ
+  <code>dev · build · start · lint</code> — <strong>ไม่มี <code>test</code></strong>
+  ขั้น Evaluate จึงต้องพึ่ง type-check · lint · build) และ <code>AGENTS.md</code> ที่
+  <code>create-next-app</code> รุ่นนี้สร้างมาให้ ซึ่งเขียนเตือน agent ไว้ตรง ๆ ว่า
+  <em>“This is NOT the Next.js you know”</em> ให้ไปอ่านเอกสารใน <code>node_modules/next/dist/docs/</code> ก่อนเขียนโค้ด
+  — ไฟล์นี้มีไว้ให้ agent อ่านในขั้น Explore โดยเฉพาะ
+</p>
+
+<div class="predict">
+  <pre><code><span class="c"># คำขอตัวอย่างในสไลด์หน้า 12</span>
+"Add dark mode to the app"
+
+<span class="c"># ถ้า agent ข้าม Explore แล้วเริ่มเขียนโค้ดทันที ...</span></code></pre>
+  <p class="ask">ในโปรเจกต์ shadcn แบบเดียวกับบท 79–85 — agent ที่ไม่ Explore จะพลาดอะไรไป?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผมรัน Explore จริงบนโปรเจกต์นั้น:</p>
+    <pre><code><span class="c">$ grep -n "dark" app/globals.css</span>
+5:@custom-variant dark (&amp;:is(.dark *));
+86:.dark {
+
+<span class="c">$ grep -c "dark:" components/ui/button.tsx</span>
+4
+
+<span class="c">$ grep -rn "next-themes" package.json; echo "rc=$?"</span>
+rc=1</code></pre>
+    <p>
+      <strong>โปรเจกต์นี้มี dark mode อยู่แล้วครึ่งทาง</strong> — <code>globals.css</code> มีชุดสีโหมดมืดทั้งก้อน
+      (บรรทัด 86 <code>.dark { ... }</code>) และ Button มี class <code>dark:</code> อยู่ 4 บรรทัด
+      <br>ที่<strong>ยังไม่มี</strong>คือตัวสลับโหมด (ไม่มีแพ็กเกจอย่าง <code>next-themes</code>) และไม่มีใครใส่ class <code>dark</code> ให้ <code>&lt;html&gt;</code>
+    </p>
+    <p style="margin-bottom:0">
+      agent ที่ข้าม Explore มีโอกาสสูงที่จะ<strong>เขียนระบบสีโหมดมืดขึ้นใหม่ทั้งชุด</strong>
+      ซ้อนกับของเดิม — โค้ดอาจ build ผ่านด้วย แต่ตอนนี้โปรเจกต์มีสองระบบที่ตีกันเอง
+      <br>ส่วน agent ที่ Explore ก่อนจะรู้ว่างานจริงเล็กกว่าที่คิดมาก:
+      <strong>“ทำปุ่มสลับ แล้วใส่/ถอด class <code>dark</code> ที่ <code>&lt;html&gt;</code>”</strong>
+      · คำขอเดียวกัน แต่งานคนละขนาด — รู้ได้จากการอ่านเท่านั้น
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-3">ขั้น 2 · Plan — ตัดสินใจก่อนลงมือ และให้คนรีวิวได้</h2>
+
+<p>สไลด์หน้า 15 (ถอดตามจริง):</p>
+
+<ul>
+  <li><em>“Decide the approach before implementing.”</em> — เลือกวิธีให้ได้ก่อนลงมือ</li>
+  <li><em>“Break the task into steps, identify which files change, and anticipate edge cases and trade-offs.”</em> —
+      แตกงานเป็นขั้น · ระบุว่าไฟล์ไหนจะเปลี่ยน · คาดการณ์ edge case และสิ่งที่ต้องแลก</li>
+  <li><em>“A good plan is reviewable by someone who can catch a bad direction before written code.”</em> —
+      แผนที่ดีคือแผนที่<strong>คนอื่นอ่านแล้วจับได้ว่าไปผิดทาง ตั้งแต่ก่อนมีโค้ดสักบรรทัด</strong></li>
+</ul>
+
+<p>
+  diagram หน้า 12: <em>Identify what needs to be changed · Determine affected files and dependencies ·
+  Consider edge cases and impacts · Create a step-by-step implementation plan</em>
+  · เป้าหมาย: <em>Have a clear, safe plan before writing code.</em>
+</p>
+
+<p>นี่คือแผนที่ผมเขียนจริงก่อนแตะโค้ด (เขียนเอง ไม่ใช่ output ของ AI):</p>
+
+<div class="diagram">งาน: เพิ่ม Button variant "success" (ปุ่มเขียว สถานะสำเร็จ)
+
+ขั้นตอน
+  1. app/globals.css         เพิ่ม token --success / --success-foreground
+                             ทั้งโหมดสว่าง (:root) และโหมดมืด (.dark)
+                             แล้วโยง --color-success ใน @theme inline
+                             (ตาม convention เดียวกับ --destructive)
+  2. components/ui/button.tsx เพิ่มบรรทัด success ใน variants
+                             หน้าตาแบบเดียวกับ default: พื้นทึบ + hover จางลง
+  3. app/page.tsx            ใช้ &lt;Button variant="success"&gt; หนึ่งปุ่มเพื่อทดสอบ
+
+ไฟล์ที่เปลี่ยน: 3 ไฟล์ · ไม่แตะ size · ไม่แตะ variant เดิม
+
+edge case / trade-off
+  - โหมดมืดต้องอ่านออก → สีตัวอักษรโหมดมืดใช้สีเข้ม (ตรงข้ามกับโหมดสว่าง)
+  - ทางเลือกที่ตัดทิ้ง: เขียน bg-green-600 ตรง ๆ ใน button.tsx
+    เร็วกว่า 1 ไฟล์ แต่ผิด convention และโหมดมืดไม่เปลี่ยนสี
+
+ตรวจยังไงว่าเสร็จ
+  npx tsc --noEmit · npx eslint . · npx next build ผ่านหมด
+  เปิดหน้าเว็บจริงแล้วเห็น class bg-success บนปุ่ม</div>
+
+<p>
+  สังเกตว่าแผนนี้<strong>สั้นพอให้คนอ่านจบในหนึ่งนาที</strong> และมีจุดที่ reviewer แย้งได้จริง —
+  เช่น senior อาจบอกว่า “ไม่ต้องทำโหมดมืดตอนนี้ ทีมยังไม่เปิดใช้” ซึ่งจะตัดงานไปครึ่งหนึ่ง
+  <strong>ตั้งแต่ก่อนมีโค้ด</strong> — นี่คือความหมายของ <em>reviewable</em> ในสไลด์
+</p>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>เอกสารทางการของ Claude Code พูดเรื่องเดียวกันนี้ไว้</strong> ในหัวข้อ
+    <em>Explore first, then plan, then code</em> — แนะนำให้ใช้ <strong>plan mode</strong>
+    (กด <code>Shift+Tab</code> จนแถบสถานะขึ้น <code>⏸ plan mode on</code>) ซึ่ง agent จะอ่านไฟล์และเสนอแผนได้
+    แต่<strong>แก้ไฟล์ไม่ได้</strong>จนกว่าคุณจะอนุมัติ
+    <br>และเอกสารเดียวกันก็เตือนไว้ด้วยว่า ถ้างานเล็กจน<strong>อธิบาย diff ได้ในประโยคเดียว</strong>
+    (แก้คำผิด · เพิ่ม log หนึ่งบรรทัด) ข้ามการวางแผนได้ — แผนมีต้นทุน ใช้เมื่อไม่แน่ใจวิธี หรือแก้หลายไฟล์
+  </p>
+</div>
+
+<h2 id="sn-sec-4">ขั้น 3 · Code — ทำตามแผน ไม่ด้นสด</h2>
+
+<p>สไลด์หน้า 16 (ถอดตามจริง):</p>
+
+<ul>
+  <li><em>“Execute the plan”</em> — ลงมือตามแผน</li>
+  <li><em>“Edits by following the conventions found during explore step”</em> — แก้โค้ดตามธรรมเนียมที่เจอตอน Explore</li>
+  <li><em>“Implement what was planned rather than improvising a new scope mid-stream.”</em> —
+      ทำสิ่งที่วางแผนไว้ <strong>ไม่ด้นขอบเขตงานใหม่ขึ้นมากลางทาง</strong></li>
+</ul>
+
+<p>
+  diagram หน้า 12: <em>Write or edit code · Create / update components or files · Run tests and linters ·
+  Fix issues and iterate · Refactor if needed</em> · เป้าหมาย: <em>Working code that implements the plan.</em>
+</p>
+
+<p>นี่คือ diff จริงของสองไฟล์หลัก (ไฟล์ที่สาม <code>globals.css</code> เพิ่ม token 6 บรรทัดตามแผน):</p>
+
+<pre><code><span class="c">$ git diff components/ui/button.tsx app/page.tsx</span>
+diff --git a/app/page.tsx b/app/page.tsx
+index c887311..6d5057b 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -1,4 +1,5 @@
+ import Image from "next/image";
+<span class="s">+import { Button } from "@/components/ui/button";</span>
+
+ export default function Home() {
+   return (
+@@ -54,6 +55,7 @@ export default function Home() {
+             /&gt;
+             Deploy Now
+           &lt;/a&gt;
+<span class="s">+          &lt;Button variant="success"&gt;บันทึกแล้ว&lt;/Button&gt;</span>
+           &lt;a
+             className="flex h-12 w-full items-center ... md:w-[158px]"
+             href="https://nextjs.org/docs?utm_source=create-next-app&amp;..."
+diff --git a/components/ui/button.tsx b/components/ui/button.tsx
+index 997e0c7..e4aebd8 100644
+--- a/components/ui/button.tsx
++++ b/components/ui/button.tsx
+@@ -16,6 +16,7 @@ const buttonVariants = cva(
+           "hover:bg-muted hover:text-foreground aria-expanded:bg-muted ...",
+         destructive:
+           "bg-destructive/10 text-destructive hover:bg-destructive/20 ...",
+<span class="s">+        success: "bg-success text-success-foreground hover:bg-success/80",</span>
+         link: "text-primary underline-offset-4 hover:underline",
+       },
+       size: {</code></pre>
+
+<p style="font-size:0.9em">
+  (บรรทัดบริบทที่เป็นสตริง class ยาว ๆ สี่บรรทัด ผมตัดกลางบรรทัดเป็น <code>...</code> ให้พอดีจอ ·
+  บรรทัดที่ขึ้นต้นด้วย <code>+</code> ไม่ได้ตัดสักตัวอักษร)
+</p>
+
+<p>
+  <strong>บรรทัดที่เพิ่มจริงมีแค่ 9 บรรทัด ใน 3 ไฟล์ ตรงกับแผน</strong> ·
+  สิ่งที่<em>ไม่ได้</em>ทำก็สำคัญพอกัน: หน้า <code>page.tsx</code> ของ <code>create-next-app</code>
+  ยังมีข้อความ “To get started, edit the page.tsx file” อยู่ ชวนให้ลบทิ้งมาก —
+  <strong>แต่มันไม่อยู่ในแผน</strong> ถ้าลบในรอบนี้ diff จะบวมเป็นหลายสิบบรรทัด แล้วคนรีวิวจะหาบรรทัดสำคัญไม่เจอ
+  <br>เจอของที่อยากแก้ระหว่างทาง → <strong>จดไว้เป็นงานถัดไป</strong> ไม่ใช่ยัดเข้ามาในงานนี้
+</p>
+
+<h2 id="sn-sec-5">ขั้น 4 · Evaluate — ตรวจว่าถูกจริง ไม่ใช่ดูเหมือนถูก</h2>
+
+<p>สไลด์หน้า 17 (ถอดตามจริง):</p>
+
+<ul>
+  <li><em>“Verify the work is <strong>CORRECT</strong> — Run tests, lint, type-check, execute the code, and review the diff.”</em></li>
+  <li><em>“If <strong>FAILURES</strong> here should be loop back to Code”</em></li>
+</ul>
+
+<div class="warn">
+  <span class="label">⚠️ Warning: (จากสไลด์หน้า 17)</span>
+  <p style="margin-bottom:0">
+    <em>“Should check the original requirements.”</em>
+    <br>— ต้องย้อนกลับไปเทียบกับ<strong>โจทย์ตั้งต้น</strong>ด้วย · เครื่องมือทุกตัวผ่านหมด ไม่ได้แปลว่าทำ<strong>สิ่งที่ถูกขอ</strong>
+  </p>
+</div>
+
+<p>
+  diagram หน้า 12: <em>Run tests · Check linting / types · Validate requirements · Review edge cases ·
+  Ensure no regressions · Assess quality</em> · เป้าหมาย: <em>High-quality, reliable changes.</em>
+</p>
+
+<h3 id="sn-sub-2">รอบที่ 1 — ไม่ผ่าน</h3>
+
+<p>
+  ในรอบแรกผม<strong>จงใจพิมพ์ผิด</strong> <code>variant="sucess"</code> (ขาด <code>c</code> ตัวหนึ่ง)
+  เพื่อดูว่าเครื่องมือแต่ละตัวจับได้ไหม
+  (diff ในขั้น Code ข้างบนคือฉบับ<em>หลังแก้</em>ในรอบที่ 2 แล้ว · รอบนี้ต่างกันแค่ตัวอักษรนั้นตัวเดียว) — ผลจริง:
+</p>
+
+<pre><code><span class="c">$ npx tsc --noEmit; echo "rc=$?"</span>
+app/layout.tsx(20,50): error TS2304: Cannot find name 'LayoutProps'.
+app/page.tsx(58,19): error TS2820: Type '"sucess"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | "success" | null | undefined'. Did you mean '"success"'?
+rc=2
+
+<span class="c">$ npx eslint .; echo "rc=$?"</span>
+rc=0</code></pre>
+
+<p>สองเรื่องในผลนี้ที่ต้องหยุดอ่าน:</p>
+
+<ul>
+  <li><strong><code>eslint</code> ผ่าน (<code>rc=0</code>) ทั้งที่โค้ดผิด</strong> — linter ดู “สไตล์และแพตเทิร์นอันตราย”
+      ไม่ได้ตรวจ type · ถ้าตรวจแค่ lint แล้วเชื่อ คุณจะ commit ตัวพิมพ์ผิดนี้ไปเลย
+      <strong>นี่คือเหตุผลที่สไลด์ใส่ lint กับ type-check แยกกันเป็นสองอย่าง</strong></li>
+  <li><strong>error บรรทัดแรก (<code>LayoutProps</code>) ไม่ได้มาจากที่เราแก้</strong> —
+      <code>LayoutProps</code> เป็น type ที่ Next.js สร้างให้ไว้ในโฟลเดอร์ <code>.next/types/</code>
+      ตอนรัน <code>next dev</code> / <code>next build</code> · โปรเจกต์ที่เพิ่ง clone มาและยังไม่เคยรันจะยังไม่มีโฟลเดอร์นี้
+      · สร้างได้โดยไม่ต้อง build ทั้งโปรเจกต์:</li>
+</ul>
+
+<pre><code><span class="c">$ npx next typegen</span>
+Generating route types...
+✓ Types generated successfully
+
+<span class="c">$ npx tsc --noEmit; echo "rc=$?"</span>
+app/page.tsx(58,19): error TS2820: Type '"sucess"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | "success" | null | undefined'. Did you mean '"success"'?
+rc=2</code></pre>
+
+<p>
+  ตอนนี้เหลือ error ที่เป็นของเราจริง ๆ ตัวเดียว — และ TypeScript <strong>บอกคำตอบมาให้เลย</strong>
+  (<code>Did you mean '"success"'?</code>) เพราะ <code>cva</code> สร้าง type ของ <code>variant</code>
+  จากรายการที่เราเขียนใน <code>button.tsx</code> · ลองดูว่า <code>next build</code> พูดว่าอะไร:
+</p>
+
+<pre><code><span class="c">$ npx next build</span>
+▲ Next.js 16.3.5 (Turbopack)
+✓ Running next.config.ts took 12ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 3.0s
+  Running TypeScript ...
+app/page.tsx(58,19): error TS2820: Type '"sucess"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | "success" | null | undefined'. Did you mean '"success"'?
+Failed to type check.
+</code></pre>
+
+<p>
+  สังเกตบรรทัด <strong><code>✓ Compiled successfully</code></strong> ที่ขึ้นเครื่องหมายถูก<em>ก่อน</em>จะพังตอน
+  <code>Running TypeScript</code> — ใครอ่านแค่สองบรรทัดแรกแล้วหันไปทำอย่างอื่น จะเข้าใจผิดว่าผ่าน
+  · <strong>อ่านจนบรรทัดสุดท้ายเสมอ</strong> หรือดู exit code
+</p>
+
+<p>
+  <strong>ผลรวมรอบที่ 1: ไม่ผ่าน → ย้อนกลับไป Code</strong> (ตามสไลด์หน้า 17)
+  · กรณีนี้แผนไม่ได้ผิด แค่พิมพ์ผิด จึงไม่ต้องย้อนไปไกลถึง Plan
+</p>
+
+<h3 id="sn-sub-3">รอบที่ 2 — แก้แล้ว ตรวจใหม่ทั้งชุด</h3>
+
+<p>แก้ <code>sucess</code> → <code>success</code> แล้วรัน<strong>ทุกตัว</strong>ใหม่ (ไม่ใช่รันแค่ตัวที่เคยพัง):</p>
+
+<pre><code><span class="c">$ npx tsc --noEmit; echo "rc=$?"</span>
+rc=0
+
+<span class="c">$ npx eslint .; echo "rc=$?"</span>
+rc=0
+
+<span class="c">$ npx next build</span>
+▲ Next.js 16.3.5 (Turbopack)
+✓ Running next.config.ts took 16ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 1043ms
+  Running TypeScript ...
+  Finished TypeScript in 1078ms ...
+  Collecting page data using 5 workers ...
+  Generating static pages using 5 workers (0/4) ...
+  Generating static pages using 5 workers (1/4)
+  Generating static pages using 5 workers (2/4)
+  Generating static pages using 5 workers (3/4)
+✓ Generating static pages using 5 workers (4/4) in 377ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+└ ○ /_not-found
+
+
+○  (Static)  prerendered as static content</code></pre>
+
+<p>
+  เครื่องมือผ่านหมด แต่สไลด์บอกให้ <em>“execute the code”</em> ด้วย — เปิด <code>npx next dev -p 387</code>
+  แล้วดู HTML ที่หน้าเว็บส่งออกมาจริง:
+</p>
+
+<pre><code><span class="c">$ curl -s http://localhost:387/ | grep -o '&lt;button[^&gt;]*&gt;บันทึกแล้ว&lt;/button&gt;'</span>
+&lt;button type="button" tabindex="0" data-slot="button" class="group/button inline-flex ... <span class="c">(ตัดคลาสพื้นฐานยาว ๆ ตรงกลางออก)</span> ... bg-success text-success-foreground hover:bg-success/80 h-8 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2"&gt;บันทึกแล้ว&lt;/button&gt;
+
+<span class="c">$ grep -rho '\.bg-success[^{]*{[^}]*}' .next/static</span>
+.bg-success{background-color:var(--success)}</code></pre>
+
+<p>
+  บรรทัดแรกยืนยันว่าปุ่มได้ class <code>bg-success</code> จริง ·
+  บรรทัดที่สองยืนยันว่า Tailwind <strong>สร้าง CSS ของ class นี้ออกมาจริง</strong> และมันชี้ไปที่ token
+  <code>--success</code> ที่เราเพิ่ม — ถ้าลืมเพิ่ม token ใน <code>globals.css</code>
+  class จะอยู่บนปุ่มแต่ปุ่มไม่มีสี และ <code>tsc</code> / <code>eslint</code> / <code>build</code> ไม่มีตัวไหนฟ้องเลย
+  — ผมลองจริงแล้ว โดยคืน <code>globals.css</code> เป็นฉบับก่อนแก้ (ไม่มี token) แต่คง <code>button.tsx</code> ไว้:
+</p>
+
+<pre><code><span class="c">$ npx tsc --noEmit; echo "tsc rc=$?"</span>
+tsc rc=0
+<span class="c">$ npx eslint .; echo "eslint rc=$?"</span>
+eslint rc=0
+<span class="c">$ npx next build &gt; b.log 2&gt;&amp;1; echo "build rc=$?"</span>
+build rc=0
+<span class="c">$ grep -rho '\.bg-success[^{]*{[^}]*}' .next/static; echo "grep rc=$?"</span>
+grep rc=1</code></pre>
+
+<p>
+  ผ่านครบสามด่าน แต่ <strong>CSS ของ <code>bg-success</code> ไม่ถูกสร้างเลย</strong> (<code>grep rc=1</code> = ไม่เจอ)
+  — นี่คือเหตุผลที่สไลด์ใส่ <em>“execute the code”</em> ไว้ในรายการ ไม่ใช่แค่ lint กับ type-check
+</p>
+
+<p>
+  <strong>ขั้นสุดท้ายของ Evaluate: ย้อนดูโจทย์ตั้งต้น</strong> (คำเตือนหน้า 17) —
+  โจทย์คือ “ปุ่มสีเขียวสำหรับสถานะสำเร็จ” · มี variant <code>success</code> ✓ ·
+  ใช้ token ตามแผน ✓ · ทำงานทั้งโหมดสว่างและมืด ✓ · ไม่แตะ variant เดิม ✓ · diff 9 บรรทัดใน 3 ไฟล์ตามแผน ✓
+  → <strong>ผ่าน ไป Commit ได้</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">🧾 เทียบกับของจริง</span>
+  <p>
+    Evaluate เหมือน<strong>ตรวจของก่อนส่งพัสดุ</strong> — ชั่งน้ำหนักผ่าน (build ผ่าน) ·
+    กล่องไม่บุบ (lint ผ่าน) · ที่อยู่เขียนถูกรูปแบบ (type ผ่าน)
+    <br>แต่ถ้าไม่เปิดดูว่า<strong>ของในกล่องคือของที่ลูกค้าสั่ง</strong> คุณอาจส่งเสื้อไซซ์ M ไปให้คนที่สั่งไซซ์ L
+    อย่างเรียบร้อยสวยงามผ่านทุกด่าน — นั่นคือคำเตือน <em>“check the original requirements”</em>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ด่านตรวจพัสดุแต่ละด่าน<em>ดูของคนละอย่างชัดเจน</em> คนตรวจรู้ตัวว่าตัวเองไม่ได้ดูอะไร
+    <br>แต่เครื่องมือตรวจโค้ดไม่บอกว่ามัน<strong>ไม่ได้ดู</strong>อะไร — <code>eslint</code> ตอบ <code>rc=0</code>
+    ด้วยหน้าตาเดียวกันทั้งตอนที่โค้ดถูกและตอนที่ type ผิด (เห็นกับตาในรอบที่ 1)
+    · คุณต้องรู้เองว่าแต่ละตัวครอบคลุมอะไร ถึงจะรู้ว่าต้องรันครบชุด
+  </p>
+</div>
+
+<h3 id="sn-sub-4">เชื่อมกับตอนเขียน Go</h3>
+
+<p>คุณทำขั้น Evaluate มาตลอด 9 วันแล้ว แค่ชื่อเครื่องมือเปลี่ยน:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ตรวจอะไร</th><th>ฝั่ง Go (วัน 1–9)</th><th>ฝั่ง Next.js (โปรเจกต์นี้)</th><th>ต่างกันตรงไหน</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>type ถูกไหม</td>
+      <td><code>go build</code></td>
+      <td><code>npx tsc --noEmit</code></td>
+      <td>Go คอมไพล์ไม่ผ่าน = ไม่มีไฟล์ให้รัน · TypeScript แยก “ตรวจ type” ออกจาก “รัน” ได้ ต้องสั่งตรวจเอง</td>
+    </tr>
+    <tr>
+      <td>แพตเทิร์นอันตราย / สไตล์</td>
+      <td><code>go vet</code></td>
+      <td><code>npx eslint .</code></td>
+      <td>เหมือนกันตรงที่<strong>ไม่ได้ตรวจ type</strong> · eslint ของ Next มีกฎ React ด้วย เช่นลืม <code>key</code></td>
+    </tr>
+    <tr>
+      <td>ประกอบทั้งโปรเจกต์ได้จริง</td>
+      <td><code>go build ./...</code></td>
+      <td><code>npx next build</code></td>
+      <td><code>next build</code> รัน TypeScript ให้ในตัว และสร้างหน้า static ด้วย · ช้ากว่า <code>tsc</code> มาก</td>
+    </tr>
+    <tr>
+      <td>พฤติกรรมถูกไหม</td>
+      <td><code>go test ./...</code></td>
+      <td><strong>ยังไม่มี</strong> — <code>package.json</code> ไม่มีสคริปต์ <code>test</code></td>
+      <td>ในโปรเจกต์นี้ “รันจริงแล้วดูผล” (<code>next dev</code> + <code>curl</code>) คือสิ่งที่ใกล้ test ที่สุด</td>
+    </tr>
+    <tr>
+      <td>ดูว่าแก้อะไรไปบ้าง</td>
+      <td><code>git diff</code></td>
+      <td><code>git diff</code></td>
+      <td>เหมือนกันทุกตัวอักษร</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-6">ขั้น 5 · Commit — บันทึกงาน หลังตรวจผ่านเท่านั้น</h2>
+
+<p>สไลด์หน้า 18 (ถอดตามจริง):</p>
+
+<ul>
+  <li><em>“Write a clear commit message describing the change, and record the work.”</em> — เขียนข้อความ commit ที่ชัด บอกว่าเปลี่ยนอะไร แล้วบันทึกงานไว้</li>
+</ul>
+
+<div class="warn">
+  <span class="label">⚠️ Warning: (จากสไลด์หน้า 18)</span>
+  <p style="margin-bottom:0">
+    <em>“Only reached after Eval passes.”</em> — มาถึงขั้นนี้ได้<strong>หลัง Eval ผ่านแล้วเท่านั้น</strong>
+  </p>
+</div>
+
+<p>
+  diagram หน้า 12: <em>Review the changes (diff) · Write a meaningful commit message · Commit the changes ·
+  (Optional) Open a Pull Request · Summarize what was done</em> · เป้าหมาย: <em>A clean commit ready for review and merge.</em>
+</p>
+
+<pre><code><span class="c">$ git diff --stat</span>
+ app/globals.css          | 6 ++++++
+ app/page.tsx             | 2 ++
+ components/ui/button.tsx | 1 +
+ 3 files changed, 9 insertions(+)
+
+<span class="c">$ git add app/globals.css app/page.tsx components/ui/button.tsx</span>
+<span class="c">$ git commit -m "feat(button): add success variant" -m "- add --success / --success-foreground tokens (light + dark) in globals.css
+- add success variant to buttonVariants, same shape as default
+- use &lt;Button variant=\"success\"&gt; on home page
+
+checked: tsc --noEmit, eslint ., next build"</span>
+[main a09e653] feat(button): add success variant
+ 3 files changed, 9 insertions(+)
+
+<span class="c">$ git log --oneline -3</span>
+a09e653 feat(button): add success variant
+2b21702 base
+3f8a92e Initial commit from Create Next App</code></pre>
+
+<p style="font-size:0.9em">
+  (เลข commit อย่าง <code>a09e653</code> คำนวณจากเนื้อหา + ชื่อคน + <strong>เวลาที่ commit</strong> —
+  ทำแบบเดียวกันเป๊ะในเครื่องคุณจะได้เลขอื่น ไม่ใช่เรื่องผิด)
+</p>
+
+<p>สามอย่างที่ทำให้ commit นี้ “clean” ตามสไลด์:</p>
+
+<ul>
+  <li><strong><code>git diff --stat</code> ก่อน <code>add</code></strong> — ตัวเลข 3 ไฟล์ 9 บรรทัดตรงกับแผน
+      ถ้าเห็นไฟล์ที่ไม่อยู่ในแผนโผล่มา (เช่น <code>package-lock.json</code> เปลี่ยนทั้งที่ไม่ได้ลงแพ็กเกจ) ให้หยุดถามก่อน</li>
+  <li><strong><code>git add</code> ระบุชื่อไฟล์</strong> ไม่ใช่ <code>git add .</code> — คุมได้ว่า commit มีแค่สิ่งที่ตั้งใจ</li>
+  <li><strong>ข้อความสองชั้น</strong>: บรรทัดแรกสั้น บอก<em>อะไร</em> (อ่านใน <code>git log --oneline</code> รู้เรื่อง) ·
+      ย่อหน้าล่างบอก<em>รายละเอียด</em>และ<em>ตรวจด้วยอะไร</em> — ตรงกับ “Summarize what was done” ในสไลด์</li>
+</ul>
+
+<div class="predict">
+  <pre><code><span class="c"># ต่อจากเฉลยภารกิจท้ายบท (ที่หน้าแรกมี &lt;Badge variant="success"&gt; แล้ว)</span>
+<span class="c"># แยก branch ไปลองข้าม Evaluate — จงใจพิมพ์ badge variant ผิดเป็น "sucess"</span>
+<span class="c"># แล้ว commit ทันทีโดยไม่รัน tsc ก่อน</span>
+$ git commit -am "feat: use success badge"</code></pre>
+  <p class="ask">git จะยอม commit ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง:</p>
+    <pre><code>[skip-eval abe7082] feat: use success badge
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+<span class="c">$ npx tsc --noEmit; echo "rc=$?"</span>
+app/page.tsx(60,18): error TS2820: Type '"sucess"' is not assignable to type '"link" | "default" | "outline" | "secondary" | "ghost" | "destructive" | "success" | null | undefined'. Did you mean '"success"'?
+rc=2</code></pre>
+    <p style="margin-bottom:0">
+      <strong>git รับไปเฉย ๆ ไม่มีคำเตือนสักคำ</strong> — git เก็บ “ไฟล์หน้าตาแบบนี้” ไม่ได้สนว่าโค้ดถูกหรือผิด
+      <br>คำเตือน <em>“Only reached after Eval passes”</em> ในสไลด์จึง<strong>ไม่มีเครื่องมือไหนบังคับให้</strong>
+      (ถ้าไม่ได้ตั้ง hook หรือ CI ไว้) — มันเป็นวินัยของคุณหรือของ agent ล้วน ๆ
+      <br>และ commit พัง ๆ ที่หลุดเข้าไปแล้ว คนที่ <code>git pull</code> ต่อจากคุณจะได้โปรเจกต์ที่ build ไม่ผ่านทันที
+    </p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์สำหรับขั้น Evaluate และ Commit</span>
+  <dl>
+    <dt>type-check / lint</dt>
+    <dd><em>type-check</em> ตรวจว่าค่าแต่ละตัวมีชนิดตรงกับที่ประกาศ (<code>tsc</code>) ·
+        <em>lint</em> ตรวจแพตเทิร์นอันตรายและสไตล์ (<code>eslint</code>) · คนละเรื่องกัน ผ่านอันหนึ่งไม่ได้แปลว่าผ่านอีกอัน ·
+        <strong>พิมพ์บอก AI ได้ว่า “run both tsc --noEmit and eslint, lint passing is not enough”</strong></dd>
+    <dt>exit code (<code>rc</code>)</dt>
+    <dd>ตัวเลขที่คำสั่งคืนตอนจบ · <code>0</code> = สำเร็จ · ไม่ใช่ 0 = มีปัญหา ·
+        <code>tsc</code> กับ <code>eslint</code> ที่ผ่านจะไม่พิมพ์อะไรเลย จึงต้อง <code>echo "rc=$?"</code> ดูเอง ·
+        agent ก็อ่านตัวเลขนี้เพื่อตัดสินใจว่าจะวนกลับไป Code หรือไปต่อ</dd>
+    <dt>regression</dt>
+    <dd>ของที่<strong>เคยทำงานได้</strong> แล้วพังเพราะงานใหม่ของเรา · diagram หน้า 12 เขียนว่า <em>Ensure no regressions</em> ·
+        ขั้น Explore ที่ <code>grep</code> หาคนใช้ Button อยู่ ก็คือการประเมินความเสี่ยงเรื่องนี้ล่วงหน้า ·
+        <strong>ถาม senior ได้ว่า “แก้ตรงนี้แล้วมีหน้าไหนเสี่ยง regression บ้าง”</strong></dd>
+    <dt>scope creep</dt>
+    <dd>งานที่ค่อย ๆ บวมเกินที่ตกลงกันไว้ทีละนิด — สิ่งที่สไลด์หน้า 16 เรียกว่า <em>improvising a new scope mid-stream</em> ·
+        <strong>บอก AI ได้ว่า “stick to the plan, list anything else you notice as follow-ups instead of doing it”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">ข้ามขั้นนี้แล้วเกิดอะไร</h2>
+
+<p>ตารางสรุปจากตัวอย่างในบทนี้ — ทุกช่องมาจากสิ่งที่เห็นจริงข้างบน:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ข้ามขั้น</th><th>อาการที่จะเจอ</th><th>เห็นในบทนี้ตรงไหน</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>1 · Explore</strong></td>
+      <td>ทำของที่มีอยู่แล้วซ้ำ · เขียนผิด convention ของโปรเจกต์ · แก้แล้วกระทบไฟล์ที่ไม่รู้ว่ามีคนใช้</td>
+      <td>“Add dark mode” — โปรเจกต์มีชุดสีโหมดมืดอยู่แล้ว · ถ้าไม่เจอ <code>--destructive</code> จะเขียน <code>bg-green-600</code> ตรง ๆ แล้วโหมดมืดไม่เปลี่ยนสี</td>
+    </tr>
+    <tr>
+      <td><strong>2 · Plan</strong></td>
+      <td>ไม่มีใครจับทางผิดได้จนโค้ดเสร็จแล้ว · ไม่มีเกณฑ์ว่า “เสร็จ” คืออะไร ขั้น Evaluate จึงไม่รู้จะเทียบกับอะไร</td>
+      <td>แผนระบุ 3 ไฟล์ + วิธีตรวจ — ทำให้ตอน <code>git diff --stat</code> รู้ทันทีว่า 3 ไฟล์ 9 บรรทัด “ตรงแผน”</td>
+    </tr>
+    <tr>
+      <td><strong>3 · Code ตามแผน</strong><br>(ด้นสดแทน)</td>
+      <td>diff บวม คนรีวิวหาบรรทัดสำคัญไม่เจอ · ถ้าพังก็ไม่รู้ว่าพังเพราะส่วนไหน</td>
+      <td>ข้อความ “To get started…” ใน <code>page.tsx</code> ที่ชวนลบ แต่ไม่อยู่ในแผน</td>
+    </tr>
+    <tr>
+      <td><strong>4 · Evaluate</strong></td>
+      <td>commit ของพังเข้า history · คนถัดไป pull แล้ว build ไม่ผ่าน</td>
+      <td>branch <code>skip-eval</code> — git รับ <code>"sucess"</code> ไปเฉย ๆ แต่ <code>tsc</code> ได้ <code>rc=2</code></td>
+    </tr>
+    <tr>
+      <td><strong>4 · Evaluate</strong><br>(ตรวจไม่ครบชุด)</td>
+      <td>เชื่อเครื่องมือตัวเดียวที่ไม่ได้ครอบเรื่องนั้น</td>
+      <td><code>eslint</code> ได้ <code>rc=0</code> ทั้งที่ type ผิด · <code>next build</code> ขึ้น <code>✓ Compiled successfully</code> ก่อนพัง</td>
+    </tr>
+    <tr>
+      <td><strong>5 · Commit</strong></td>
+      <td>งานดีแต่ไม่มีบันทึก · ย้อนกลับไม่ได้ · คนอื่นไม่รู้ว่าเปลี่ยนอะไรและตรวจด้วยอะไร</td>
+      <td>ย่อหน้า <code>checked: tsc --noEmit, eslint ., next build</code> ในข้อความ commit</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-8">ภารกิจ — เดินครบ 5 ขั้นด้วยตัวเอง</h2>
+
+<div class="task">
+  <h3 id="sn-sub-5">🎯 เพิ่ม variant <code>success</code> ให้ Badge</h3>
+  <p>ต่อจาก commit <code>feat(button): add success variant</code> ข้างบน ในโปรเจกต์ของคุณเอง (บท 79–85) ·
+     ทำทีละขั้น และ<strong>จดสิ่งที่ได้ของแต่ละขั้นลงกระดาษก่อนไปขั้นถัดไป</strong>:</p>
+  <ol>
+    <li><strong>Explore</strong> — Badge อยู่ไฟล์ไหน · variant ที่คล้ายกันที่สุดเขียนยังไง · token <code>--success</code> มีอยู่แล้วหรือยัง · มีใครใช้ Badge อยู่ไหม</li>
+    <li><strong>Plan</strong> — เขียนแผนไม่เกิน 10 บรรทัด: ไฟล์ที่เปลี่ยน · หน้าตาแบบไหน (พื้นทึบหรือพื้นจาง) · ตรวจยังไงว่าเสร็จ</li>
+    <li><strong>Code</strong> — ทำตามแผน ห้ามแตะอะไรนอกแผน</li>
+    <li><strong>Evaluate</strong> — รัน <code>tsc --noEmit</code> · <code>eslint .</code> · <code>next build</code> ครบทั้งสาม แล้วเทียบกับแผน</li>
+    <li><strong>Commit</strong> — <code>git diff --stat</code> ก่อน แล้ว commit พร้อมข้อความที่บอกว่าตรวจด้วยอะไร</li>
+  </ol>
+  <p>ถ้าใช้ Claude Code ทำ ให้สั่งทีละขั้นแล้ว<strong>อ่านสิ่งที่มันทำก่อนอนุญาตขั้นถัดไป</strong> — เป้าหมายคือคุณต้องบอกได้ทุกจุดว่ามันอยู่ขั้นไหน</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>Explore</strong> — ผลจริงบนโปรเจกต์เดียวกัน (หลัง commit ของ Button):</p>
+    <pre><code><span class="c">$ grep -rn "components/ui/badge" app components; echo "rc=$?"</span>
+rc=1</code></pre>
+    <p>
+      ยังไม่มีใครใช้ Badge → ไม่เสี่ยง regression · เปิด <code>components/ui/badge.tsx</code> จะเห็นว่าโครงเหมือน Button
+      (<code>cva</code> + รายการ variants) และ variant <code>destructive</code> ของ Badge เป็นแบบ<strong>พื้นจาง</strong>
+      (<code>bg-destructive/10 text-destructive</code>) ไม่ใช่พื้นทึบ · token <code>--success</code> มีแล้วจาก commit ก่อน
+    </p>
+    <p><strong>Plan</strong> — 2 ไฟล์: เพิ่ม <code>success</code> ใน <code>badge.tsx</code> แบบพื้นจางตามแพตเทิร์น <code>destructive</code> ของ Badge ·
+       ใช้ <code>&lt;Badge variant="success"&gt;</code> ใน <code>page.tsx</code> หนึ่งจุด · <strong>ไม่เพิ่ม token ใหม่</strong> (ใช้ของเดิม)</p>
+    <p><strong>Code</strong> — บรรทัดที่เพิ่มใน <code>badge.tsx</code>:</p>
+    <pre><code>        success:
+          <span class="s">"bg-success/10 text-success dark:bg-success/20 [a]:hover:bg-success/20"</span>,</code></pre>
+    <p><strong>Evaluate + Commit</strong> — ผลจริง:</p>
+    <pre><code><span class="c">$ git grep -n "success" -- app components</span>
+app/globals.css:30:  --color-success: var(--success);
+app/globals.css:31:  --color-success-foreground: var(--success-foreground);
+app/globals.css:69:  --success: oklch(0.527 0.154 150.069);
+app/globals.css:70:  --success-foreground: oklch(0.985 0 0);
+app/globals.css:106:  --success: oklch(0.723 0.219 149.579);
+app/globals.css:107:  --success-foreground: oklch(0.205 0 0);
+app/page.tsx:59:          &lt;Button variant="success"&gt;บันทึกแล้ว&lt;/Button&gt;
+app/page.tsx:60:          &lt;Badge variant="success"&gt;ชำระแล้ว&lt;/Badge&gt;
+components/ui/badge.tsx:16:        success:
+components/ui/badge.tsx:17:          "bg-success/10 text-success dark:bg-success/20 [a]:hover:bg-success/20",
+components/ui/button.tsx:19:        success: "bg-success text-success-foreground hover:bg-success/80",
+
+<span class="c">$ npx tsc --noEmit; echo "rc=$?"</span>
+rc=0
+
+<span class="c">$ npx eslint .; echo "rc=$?"</span>
+rc=0
+
+<span class="c">$ npx next build</span>
+<span class="c">... (ส่วนต้นเหมือนรอบก่อน)</span>
+Route (app)
+┌ ○ /
+└ ○ /_not-found
+
+
+○  (Static)  prerendered as static content
+
+<span class="c">$ git diff --stat</span>
+ app/page.tsx            | 2 ++
+ components/ui/badge.tsx | 2 ++
+ 2 files changed, 4 insertions(+)
+
+<span class="c">$ git commit -am "feat(badge): add success variant using --success token"</span>
+[main fc006e0] feat(badge): add success variant using --success token
+ 2 files changed, 4 insertions(+)</code></pre>
+    <p style="margin-bottom:0">
+      <strong>จุดตรวจตัวเอง:</strong> ถ้า diff ของคุณมี <code>globals.css</code> ด้วย แปลว่าขั้น Explore
+      ไม่เจอว่า token มีอยู่แล้ว แล้วเพิ่มซ้ำ · ถ้าคุณเลือกพื้นทึบแบบ Button ก็ไม่ผิด แต่
+      <strong>ต้องเป็นการตัดสินใจที่เขียนไว้ในแผน</strong> ไม่ใช่เพราะก็อปบรรทัดจาก Button มาเฉย ๆ
+      <br>(<code>git commit -am</code> ใช้ได้ในกรณีนี้เพราะ <code>diff --stat</code> เพิ่งยืนยันว่ามีแค่ 2 ไฟล์ที่ตั้งใจ ·
+      ถ้ายังไม่ได้ดู ใช้ <code>git add</code> ระบุชื่อไฟล์ปลอดภัยกว่า)
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">ลองตอบดู</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">โจทย์คือ “ปุ่มสีเขียวบนหน้ายืนยันการชำระเงิน” · agent เพิ่ม variant แล้ววางปุ่มไว้หน้าแรก · <code>tsc</code> · <code>eslint</code> · <code>next build</code> ผ่านหมด — ความผิดพลาดนี้ควรถูกจับได้ที่ไหน?</p>
+  <div class="opts">
+    <button class="opt">ขั้น Explore เพราะ agent ต้องอ่านทุกไฟล์ในโปรเจกต์ให้ครบก่อนเริ่มงาน</button>
+    <button class="opt">ขั้น Commit เพราะตอนเขียนข้อความ commit จะเห็นเองว่าวางปุ่มผิดหน้า</button>
+    <button class="opt">ขั้น Evaluate ตอนย้อนเทียบกับโจทย์ตั้งต้น ตามคำเตือนในสไลด์หน้า 17</button>
+    <button class="opt">จับไม่ได้เลย เพราะเครื่องมือตรวจทุกตัวผ่านหมดแล้วถือว่างานถูกต้อง</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · สไลด์หน้า 17 เขียนคำเตือนไว้ตรง ๆ ว่า <em>“Should check the original requirements.”</em>
+      และ diagram หน้า 12 ใส่ <em>Validate requirements</em> ไว้ในขั้น Eval
+      <br>ตัวเลือกที่ 4 ผิด เพราะเครื่องมือตรวจแค่ว่าโค้ด<em>ถูกหลักภาษา</em> ไม่รู้ว่าโจทย์ขออะไร — ในบทนี้เราเห็นแล้วว่า
+      class บนปุ่มถูกแต่ถ้าลืม token ปุ่มก็ไม่มีสี และไม่มีเครื่องมือไหนฟ้อง ·
+      ตัวเลือกที่ 1 ผิดเพราะ Explore อ่าน<em>ไฟล์ที่เกี่ยว</em> ไม่ใช่ทุกไฟล์ และมันเกิดก่อนมีโค้ด จึงจับความผิดของโค้ดไม่ได้ ·
+      ตัวเลือกที่ 2 ผิดเพราะสไลด์หน้า 18 บอกว่า Commit <em>“Only reached after Eval passes”</em> — ถึงตอนนั้นควรตรวจเสร็จแล้ว
+      <br><strong>จุดที่ต้องจำ:</strong> เครื่องมือผ่าน = โค้ดถูกหลัก · ตรงโจทย์หรือเปล่า ต้องเปิดโจทย์เทียบเอง
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ในรอบที่ 1 ที่จงใจพิมพ์ <code>variant="sucess"</code> ผิด — คำสั่งไหน<strong>ไม่ฟ้อง</strong>อะไรเลย?</p>
+  <div class="opts">
+    <button class="opt"><code>npx tsc --noEmit</code> เพราะ TypeScript ไม่ตรวจค่าที่เป็นสตริงใน JSX</button>
+    <button class="opt"><code>npx eslint .</code> เพราะ linter ตรวจแพตเทิร์นและสไตล์ ไม่ได้ตรวจชนิดของค่า</button>
+    <button class="opt"><code>npx next build</code> เพราะมันขึ้นว่า Compiled successfully แล้วจบการทำงาน</button>
+    <button class="opt">ไม่มีเลย ทั้งสามคำสั่งฟ้อง error เดียวกันพร้อมกันหมดทุกตัว</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · ผลจริงคือ <code>npx eslint .</code> ได้ <code>rc=0</code> ไม่พิมพ์อะไรเลย
+      <br>ตัวเลือกที่ 1 ผิด — <code>tsc</code> จับได้พร้อมบอก <code>Did you mean '"success"'?</code> เพราะ
+      <code>cva</code> ทำให้ <code>variant</code> มี type เป็นรายการสตริงที่แน่นอน ไม่ใช่ <code>string</code> อะไรก็ได้ ·
+      ตัวเลือกที่ 3 ผิด — <code>next build</code> ขึ้น <code>✓ Compiled successfully</code> จริง แต่<strong>ยังไม่จบ</strong>
+      มันไปพังต่อที่ <code>Running TypeScript</code> แล้วจบด้วย <code>Failed to type check.</code> ·
+      ตัวเลือกที่ 4 ผิดเพราะ eslint ไม่ฟ้อง
+      <br><strong>จุดที่ต้องจำ:</strong> lint กับ type-check คนละเรื่อง — เหมือน <code>go vet</code> กับ <code>go build</code> · รันครบชุดทุกครั้ง
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">Evaluate ไม่ผ่านเพราะ <code>tsc</code> ฟ้องว่าพิมพ์ชื่อ variant ผิด · แผนเดิมยังถูกต้องทุกข้อ — ขั้นต่อไปที่ถูกคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">ย้อนกลับไป Code แก้ตัวที่พิมพ์ผิด แล้วรัน Evaluate ใหม่ครบทุกคำสั่งอีกรอบ</button>
+    <button class="opt">ย้อนกลับไป Explore เริ่มทำความเข้าใจโปรเจกต์ใหม่ทั้งหมดตั้งแต่ต้น</button>
+    <button class="opt">commit ไปก่อนแล้วค่อยแก้ใน commit ถัดไป เพราะเป็นแค่ตัวพิมพ์ผิดตัวเดียว</button>
+    <button class="opt">แก้ตัวที่พิมพ์ผิดแล้วรันเฉพาะ <code>tsc</code> ซ้ำ ตัวอื่นเคยผ่านแล้วไม่ต้องรัน</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · สไลด์หน้า 17: <em>“If FAILURES here should be loop back to Code”</em> และแผนยังถูก จึงไม่ต้องย้อนไปถึง Plan
+      (diagram หน้า 12 ให้ย้อนไป <em>“the appropriate step”</em> ซึ่งกรณีนี้คือ Code)
+      <br>ตัวเลือกที่ 2 ผิดเพราะย้อนไกลเกินเหตุ ปัญหาไม่ได้อยู่ที่ความเข้าใจโปรเจกต์ ·
+      ตัวเลือกที่ 3 ผิดตรง ๆ กับคำเตือนหน้า 18 <em>“Only reached after Eval passes”</em> — และเราเห็นแล้วว่า git ไม่ห้ามให้ ·
+      ตัวเลือกที่ 4 ฟังดูประหยัดเวลา แต่การแก้รอบใหม่อาจทำอย่างอื่นพังได้ (เช่นแก้แล้วเผลอลบ import) ต้องตรวจครบชุดใหม่
+      <br><strong>จุดที่ต้องจำ:</strong> ไม่ผ่าน → กลับไปขั้นที่ต้นเหตุอยู่ → แก้ → <strong>ตรวจใหม่ทั้งชุด</strong>
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ระหว่างเพิ่ม variant <code>success</code> ตามแผน agent เห็นว่าหน้าแรกยังเป็นหน้าตัวอย่างของ <code>create-next-app</code> เลยเขียนหน้าแรกใหม่ทั้งหน้าให้สวยขึ้นด้วย — ผิดหลักข้อไหน?</p>
+  <div class="opts">
+    <button class="opt">ผิดหลัก Explore เพราะ agent ควรอ่านหน้าแรกให้ละเอียดกว่านี้ก่อนตัดสินใจแก้</button>
+    <button class="opt">ไม่ผิดอะไร เพราะหน้าแรกดีขึ้นจริงและ build ยังคงผ่านเหมือนเดิมทุกอย่าง</button>
+    <button class="opt">ผิดหลัก Commit เพราะควรแยกเป็นสอง commit ส่วนตัวงานนั้นทำได้ตามปกติ</button>
+    <button class="opt">ผิดหลัก Code เพราะด้นขอบเขตงานใหม่กลางทาง แทนที่จะทำเฉพาะสิ่งที่วางแผนไว้</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · สไลด์หน้า 16: <em>“Implement what was planned rather than improvising a new scope mid-stream.”</em>
+      <br>ตัวเลือกที่ 2 ผิดเพราะ “build ผ่าน” ไม่ได้แปลว่าควรทำ — diff จาก 9 บรรทัดจะบวมเป็นหลายสิบ คนรีวิวไม่ได้ขอ และหาบรรทัดสำคัญไม่เจอ ·
+      ตัวเลือกที่ 3 แยก commit ได้จริง แต่แก้ปลายเหตุ งานนั้น<strong>ไม่ควรเกิดขึ้นในรอบนี้ตั้งแต่แรก</strong> เพราะไม่ผ่านการวางแผนและรีวิว ·
+      ตัวเลือกที่ 1 ผิดเพราะปัญหาไม่ใช่อ่านไม่พอ แต่คือทำเกินที่ตกลง
+      <br><strong>จุดที่ต้องจำ:</strong> เจอของที่อยากแก้ระหว่างทาง → จดเป็นงานถัดไป · ไม่ยัดเข้างานปัจจุบัน
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">ถามกลับได้เลย</h2>
+
+<p>
+  ถ้าคุณลองให้ Claude Code ทำงานแล้ว<strong>บอกไม่ได้ว่ามันอยู่ขั้นไหน</strong> — เอาสิ่งที่มันพิมพ์ออกมาทั้งก้อนมาคุยได้
+  เราจะไล่ด้วยกันว่าตรงไหนคือ Explore ตรงไหนมันข้าม Plan ไป และมันรันตรวจครบชุดจริงหรือแค่<em>บอกว่า</em>ตรวจแล้ว
+  <br>หรือถ้า <code>tsc</code> ฟ้อง error ที่ไม่ได้มาจากโค้ดที่คุณแก้ (แบบ <code>LayoutProps</code> ในบทนี้) ก็เอาข้อความมาได้เลย
+</p>
+
+<nav class="nav">
+  <a href="./0086-claude-code-setup.html">← บทเรียน 86 · Claude Code</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Agentic Workflow</a>
+  <a href="./0088-prompting-basics.html">บทเรียน 88 → prompt ที่ดี (1)</a>
+</nav>
+
+<h2 id="sn-sec-11">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://code.claude.com/docs/en/best-practices">Claude Code — Best practices</a> —
+      <strong>อ่านหัวข้อ <em>Explore first, then plan, then code</em></strong> (4 ขั้น Explore · Plan · Implement · Commit พร้อม prompt ตัวอย่างของแต่ละขั้น
+      และกล่องที่บอกว่าเมื่อไหร่ควรข้ามการวางแผน) · แล้วอ่าน <strong><em>Give Claude a way to verify its work</em></strong>
+      ซึ่งอธิบายว่าทำไม agent ต้องมีคำสั่งตรวจที่ให้ผลผ่าน/ไม่ผ่าน — ตรงกับขั้น Evaluate ของสไลด์
+      (สังเกตว่าเอกสารทางการรวมการตรวจไว้ในขั้น Implement ส่วนสไลด์แยกออกมาเป็นขั้นของตัวเอง)</li>
+  <li><a href="https://code.claude.com/docs/en/common-workflows">Claude Code — Common workflows</a> —
+      <strong>อ่านหัวข้อ <em>Plan before editing</em></strong> สำหรับวิธีเปิด plan mode
+      และ <strong><em>Understand new codebases</em></strong> สำหรับตัวอย่างคำถามที่ใช้ในขั้น Explore</li>
+  <li><a href="https://www.anthropic.com/engineering/building-effective-agents">Anthropic — Building effective agents</a> —
+      <strong>อ่านหัวข้อ <em>What are agents?</em></strong> เทียบกับนิยามในสไลด์หน้า 12
+      และ <strong><em>Workflow: Evaluator-optimizer</em></strong> ซึ่งคือลูป “ทำ → ประเมิน → แก้” แบบเดียวกับเส้น Evaluate→Code</li>
+  <li><a href="https://nextjs.org/docs/app/api-reference/cli/next">Next.js — <code>next</code> CLI</a> —
+      <strong>อ่านส่วนของคำสั่ง <code>next typegen</code></strong> ที่ใช้แก้ error <code>LayoutProps</code> ในบทนี้
+      และ <code>next build</code> ที่รัน type-check ให้ในตัว</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

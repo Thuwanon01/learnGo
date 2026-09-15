@@ -30,7 +30,7 @@ assets/md.js                  ← markdown → HTML ใช้โดย docs.html
 assets/demo.js                ← กล่อง "ผลลัพธ์จริง" ของบท HTML/CSS (iframe srcdoc)
 day-N/lessons/NNNN-slug.html  ← ฝั่ง BACK (Go) · บท 01-55 · แบ่งตามวัน
 day-N/reference/cheatsheet.html
-fe-<slug>/lessons/NNNN-slug.html  ← ฝั่ง FRONT · บท 56-78 · แบ่งตามชื่อไฟล์สไลด์
+fe-<slug>/lessons/NNNN-slug.html  ← ฝั่ง FRONT · บท 56-89 · แบ่งตามชื่อไฟล์สไลด์
 fe-<slug>/reference/cheatsheet.html
         ↑ เลขบทต่อเนื่องกันทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง (เลขบท = คีย์ localStorage)
 vercel.json  .gitignore  robots.txt  README.md   ← สำหรับ deploy
@@ -44,7 +44,7 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
 โดย `<slug>` มาจากชื่อสไลด์ · **ห้ามตั้งวันเอง** จะไปชนกับวันจริงที่ส่งมาทีหลัง
 
 1. `mkdir -p <กลุ่ม>/lessons <กลุ่ม>/reference`
-2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0078) — **เลขต่อเนื่องทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง**
+2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0089) — **เลขต่อเนื่องทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง**
    เพราะ `quiz.js` ใช้เลขสี่หลักจากชื่อไฟล์เป็นคีย์ `localStorage`
 3. เขียน `<กลุ่ม>/reference/cheatsheet.html` ครอบคลุมสไลด์ทั้งชุด
 4. เพิ่ม `<section class="day">` ใน `index.html` (ในบล็อก `#back` หรือ `#front` ให้ถูกฝั่ง)
@@ -438,6 +438,32 @@ auditor ของบท 64 รายงานว่า `npx tsc --version` ค�
 - **กฎ:** ก่อนเอา output ของเครื่องมือใด ๆ ไปใส่บทเรียน ให้ยืนยันด้วยคำสั่งที่
   **รู้ว่าต้องได้อะไร** (เช่น `--version`) ก่อนหนึ่งครั้ง · ถ้าได้ข้อความแปลก ๆ
   ให้เรียกซ้ำผ่าน `rtk proxy`
+
+### sandbox ต่อ agent ด้วย APFS clone — แก้ปัญหา sandbox ร่วมกัน (15 ก.ย. 2026)
+
+รอบ 0014 agent ใช้ sandbox Next.js ชุดเดียวกัน แล้ว build ของคนหนึ่งพังเพราะไฟล์ของอีกคน
+รอบนี้เตรียม `app-base` ไว้ชุดเดียว (create-next-app + `shadcn init -d` + commit "base")
+แล้วให้ agent ทุกตัว `cp -Rc app-base sb/<ชื่อ>` เป็นของตัวเอง
+
+- **`cp -Rc` บน APFS ใช้ ~5 วินาทีและไม่กินที่เพิ่ม** (node_modules 581 MB) — clone แบบ copy-on-write
+- **symlink `node_modules` ใช้ไม่ได้** — Turbopack ฟ้อง `Symlink [project]/node_modules is invalid,
+  it points out of the filesystem root` (ลองแล้ว)
+- ผล: agent 22 ตัวรันพร้อมกันไม่มีใครทำ build ของใครพัง
+
+### ของที่ต่างจากสไลด์เพราะเวอร์ชัน (เจอ 15 ก.ย. 2026)
+
+- **shadcn 4.21 ไม่ได้ใช้ `clsx` + `tailwind-merge` แล้ว** — `lib/utils.ts` เหลือแค่
+  `export { cn } from "cn"` และ `components/ui/*.tsx` import `cn` จากแพ็กเกจ `cn` ตรง ๆ
+  (สไลด์หน้า 15 ยังเป็น `@/lib/utils`) · อย่าเขียน cheat sheet ว่า `cn = twMerge(clsx(...))`
+- **preset `-d` ของ shadcn = base-nova ใช้ `@base-ui/react`** (ไม่ใช่ Radix) ตรงกับสไลด์
+- **โปรเจกต์ create-next-app 16 ที่ยังไม่เคย build/dev: `npx tsc --noEmit` ฟ้อง TS2304 `LayoutProps`**
+  จนกว่าจะรัน `npx next typegen` (หรือ build ครั้งแรก) — ถ้าบทไหนโชว์ tsc ผ่าน ต้องรัน typegen ก่อน
+- `npm shadcn@latest add button` (สไลด์หน้า 14) → `Unknown command: "shadcn@latest"` · ที่ถูกคือ `npx`
+
+### ⚠️ พอร์ตใน spec ของ workflow ต่อสตริงผิด (15 ก.ย. 2026)
+
+สคริปต์เขียน `พอร์ต 4${L.n}` ตั้งใจให้ได้ 4079 แต่ได้ `479` (เลขบทไม่มีเลข 0 นำหน้า)
+ไม่พังเพราะ macOS ยอมให้ user ธรรมดาเปิดพอร์ต < 1024 · ครั้งหน้าใช้ `4000 + L.n`
 
 ### Navbar สองฝั่ง (เพิ่ม 27 ส.ค. 2026)
 

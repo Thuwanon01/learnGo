@@ -274,6 +274,37 @@
 - [Mantine Hooks](https://mantine.dev/hooks/package/) — บท 77 · สไลด์แนะนำเอง ·
   เอาไว้ดูว่า custom hook ที่คนอื่นเขียนไว้แล้วหน้าตาเป็นยังไง
 
+## Frontend — สร้างแอปแรกด้วย Next.js (บทเรียน 79–85)
+
+ทุกลิงก์เปิดยืนยันแล้วว่าใช้ได้ (15 ก.ย. 2026) · เวอร์ชันที่บทเรียนตรวจ: next 16.3.5 ·
+shadcn 4.21.0 · tailwindcss 4.3.3 · class-variance-authority 0.7.1
+
+- [Next.js — Project Structure](https://nextjs.org/docs/app/getting-started/project-structure) — บท 79 ·
+  หัวข้อ Private folders (`_folder`) และ Colocation
+- [shadcn/ui — Introduction](https://ui.shadcn.com/docs) · [CLI](https://ui.shadcn.com/docs/cli) ·
+  [components.json](https://ui.shadcn.com/docs/components-json) — บท 80 · อ่านว่าทำไมมันไม่ใช่ component library แบบ npm
+- [shadcn/ui — Theming](https://ui.shadcn.com/docs/theming) และ
+  [Tailwind — Theme variables](https://tailwindcss.com/docs/theme) — บท 81 · สองชั้น `:root` กับ `@theme inline`
+- [cva — Variants](https://cva.style/docs/getting-started/variants) ·
+  [cva — TypeScript](https://cva.style/docs/getting-started/typescript) — บท 82
+- [Next.js — Link](https://nextjs.org/docs/app/api-reference/components/link) ·
+  [usePathname](https://nextjs.org/docs/app/api-reference/functions/use-pathname) — บท 83
+- [React — Conditional Rendering](https://react.dev/learn/conditional-rendering) — บท 84 · 4 สถานะของหน้า
+- [React — Rendering Lists](https://react.dev/learn/rendering-lists) ·
+  [Preserving and Resetting State](https://react.dev/learn/preserving-and-resetting-state) — บท 85 · ทำไม key จาก index เป็นบั๊ก
+
+## Agentic Workflow กับ Claude Code (บทเรียน 86–89)
+
+เอกสารทางการของ Anthropic เท่านั้น · เปิดยืนยันแล้ว (15 ก.ย. 2026)
+
+- [Claude Code — Use Claude Code in VS Code](https://code.claude.com/docs/en/vs-code) ·
+  [Permission modes](https://code.claude.com/docs/en/permission-modes) — บท 86
+- [Claude Code — Best practices](https://code.claude.com/docs/en/best-practices) — บท 87–89 ·
+  ฉบับทางการใช้ 4 ขั้น (Explore · Plan · Implement · Commit) ส่วนสไลด์แยก Evaluate ออกมาเป็นขั้นที่ 5
+- [Anthropic — Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) — บท 87
+- [Claude Docs — Prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices) — บท 88–89
+- [Claude Docs — Use XML tags](https://docs.claude.com/en/docs/build-with-claude/prompt-engineering/use-xml-tags) — บท 89
+
 ## Wisdom (Communities)
 
 - [r/golang](https://www.reddit.com/r/golang/)
@@ -291,6 +322,6 @@
 ## Gaps
 
 - ยังไม่มีแหล่งอ้างอิงภาษาไทยที่คุณภาพสูงพอสำหรับเรื่อง memory model
-- ยังไม่ได้หาแหล่งสำหรับส่วน "AI Integration" ของคอร์ส (อยู่นอก scope ตอนนี้)
+- ส่วน "AI Integration" ของคอร์สมีแหล่งฝั่ง Agentic Workflow แล้ว (บท 86–89) · ฝั่งเรียก AI จากโค้ด Go ยังไม่มี
 - ยังไม่มีหนังสือ — ถ้าเรียนต่อเนื่อง แนะนำหา *Learning Go* (Jon Bodner,
   O'Reilly) มาประกอบ แต่ยังไม่ได้ตรวจสอบเนื้อหาเอง จึงยังไม่ใส่ในลิสต์หลัก

@@ -324,6 +324,8 @@ FE_GROUP_ID = {
     "fe-html-css": 101,
     "fe-ts-fp": 102,
     "fe-nextjs": 103,
+    "fe-nextjs-app": 104,
+    "fe-agentic": 105,
 }
 
 

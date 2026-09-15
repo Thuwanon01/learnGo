@@ -1,0 +1,894 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 82 — Button หลายหน้าตาในที่เดียว — variants ด้วย CVA</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 82 · Frontend · Next.js App</p>
+  <h1>Button หลายหน้าตาในที่เดียว — variants ด้วย CVA</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="./0081-design-tokens.html">บทเรียน 81</a> (Design Tokens) และ
+    <a href="../../fe-nextjs/lessons/0071-first-component-and-props.html">บทเรียน 71</a> (component และ props) มาก่อน</p>
+  <p class="standfirst">
+    เปิดหน้า Component Library ของ Wongnok (สไลด์หน้า 28) แล้วนับปุ่มดู —
+    สีม่วงทึบ · ขอบม่วง · ขอบแดง · ส้ม · จาง · มีวงกลมหมุน · และมีสามขนาด
+    <br>ทั้งหมดนี้<strong>เป็น component ตัวเดียวกัน</strong> ชื่อ <code>Button</code>
+    ต่างกันแค่ props ที่ส่งเข้าไป
+    <br>บทนี้จะเริ่มจาก<strong>ปัญหาก่อน</strong>: เขียน className ด้วย ternary ซ้อนกันให้เห็นว่ามันรกและ<strong>พังเงียบ ๆ ได้ยังไง</strong>
+    (ผมรันแล้วเจอบั๊กจริง) · จากนั้นเปลี่ยนมาใช้ <code>cva()</code> ที่สไลด์หน้า 31–32 แนะนำ
+    แล้ว<strong>เรียก <code>buttonVariants()</code> จริงใน node</strong> ให้เห็น string class ที่ออกมาทุกกรณี ·
+    ปิดท้ายด้วยการให้ TypeScript ฟ้องเมื่อส่ง variant ผิด และ loading state ที่กดซ้ำไม่ได้
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code><span class="c"># เวอร์ชันจริงใน node_modules ของโปรเจกต์ที่ใช้ตรวจ</span>
+next                      16.3.5
+react                     19.2.8
+typescript                5.9.3
+tailwindcss               4.3.3
+class-variance-authority  0.7.1
+@base-ui/react            1.8.0
+shadcn                    4.21.0
+node                      v24.14.0
+
+<span class="c"># npx next build</span>
+▲ Next.js 16.3.5 (Turbopack)
+✓ Compiled successfully in 5.1s
+  Running TypeScript ...
+  Finished TypeScript in 1052ms ...
+✓ Generating static pages using 6 workers (5/5) in 331ms</code></pre>
+  <p style="margin-bottom:0">
+    โปรเจกต์ตั้งต้นคือ <code>create-next-app</code> + <code>npx shadcn init -d</code> (preset <code>base-nova</code>) +
+    <code>shadcn add button</code> ·
+    <br>· string class ทุกบรรทัดที่ขึ้นว่า <strong>"ผลรันจริง"</strong> ได้จากการรันไฟล์ <code>.mts</code> ด้วย <code>node</code> 24 ที่ import <code>buttonVariants</code> ตัวจริงเข้ามาเรียก
+    <br>· error <code>TS2322</code> ทุกบรรทัดก็อปมาจาก <code>npx tsc --noEmit</code>
+    <br>· HTML ในหัวข้อ 6 ได้จาก <code>npx next start</code> แล้ว <code>curl</code> หน้า <code>/buttons</code>
+    <br>· ผลรัน node ผมใส่ <code>JSON.stringify</code> ครอบไว้ จะได้เห็นว่ามีช่องว่างเกินหรือเปล่า
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · วิเคราะห์ปุ่มก่อนเขียนโค้ด — ปุ่มหนึ่งปุ่มมีกี่ "แกน"</h2>
+
+<p>
+  สไลด์หน้า 28 เป็นหน้า Component Library ของ Wongnok UI ·
+  หัวข้อ Button เขียนกำกับว่า <strong>"6 variants · 3 sizes"</strong>
+  และมีโค้ดตัวอย่างการใช้งานแปะไว้ใต้ภาพ:
+</p>
+
+<pre><code><span class="c">// สไลด์หน้า 28–29 (กล่องโค้ดใต้ภาพปุ่ม)</span>
+&lt;<span class="n">Button</span>&gt;Browse Recipes&lt;/<span class="n">Button</span>&gt;
+&lt;<span class="n">Button</span> variant=<span class="s">"outline"</span>&gt;Share Your Recipe&lt;/<span class="n">Button</span>&gt;
+&lt;<span class="n">Button</span> variant=<span class="s">"ghost"</span>&gt;Cancel&lt;/<span class="n">Button</span>&gt;
+&lt;<span class="n">Button</span> variant=<span class="s">"destructive-outline"</span>&gt;Delete recipe&lt;/<span class="n">Button</span>&gt;
+&lt;<span class="n">Button</span> variant=<span class="s">"accent"</span> size=<span class="s">"lg"</span>&gt;Sign in&lt;/<span class="n">Button</span>&gt;
+&lt;<span class="n">Button</span> disabled&gt;Disabled&lt;/<span class="n">Button</span>&gt;
+&lt;<span class="n">Button</span> loading&gt;Saving…&lt;/<span class="n">Button</span>&gt;</code></pre>
+
+<p>
+  หน้า 29 ไล่ชื่อ variant ในแบบนั้นไว้ (default · outlined · ghost · destructive-outline · accent) ·
+  แต่พอถึงหน้า 30 สไลด์หัวข้อ <strong>"CRAFT VERSION"</strong> — แบบที่เราจะสร้างเองในคอร์สนี้ —
+  <strong>แยกปุ่มออกเป็น 4 แกนที่เป็นอิสระต่อกัน</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>แกน</th><th>ค่าที่เป็นไปได้ (สไลด์หน้า 30)</th><th>ตอบคำถามว่า</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Variants</strong></td><td><code>contained</code> / <code>outlined</code></td><td>ทาสีทึบทั้งปุ่ม หรือแค่ขอบ</td></tr>
+    <tr><td><strong>Colors</strong></td><td><code>primary</code> / <code>accent</code> / <code>error</code> / <code>gray</code></td><td>ใช้สีไหน (ม่วง · ส้ม · แดง · เทา)</td></tr>
+    <tr><td><strong>Sizes</strong></td><td><code>sm</code> 34px / <code>md</code> 40px / <code>lg</code> 48px</td><td>สูงเท่าไหร่ (ตัวเลขจากป้ายในภาพ)</td></tr>
+    <tr><td><strong>State</strong></td><td>disabled / loading</td><td>ตอนนี้กดได้หรือยัง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทำไมต้องแยกเป็นแกน? ลองนับดู: <strong>2 × 4 × 3 = 24 หน้าตา</strong> (ยังไม่รวม state)
+  <br>ถ้าตั้งชื่อ variant เป็นก้อนเดียวแบบหน้า 28 (<code>destructive-outline</code>) ทุกครั้งที่อยากได้ปุ่มแบบใหม่
+  ต้องคิดชื่อใหม่ · อยากได้ "ขอบส้ม" ก็ต้องเพิ่ม <code>accent-outline</code> อีกชื่อ ·
+  แต่ถ้าแยกแกน <code>variant="outlined" color="accent"</code> <strong>ได้มาฟรีโดยไม่ต้องเพิ่มอะไร</strong>
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ชื่อในสไลด์ไม่ตรงกันเองสองจุด — อย่าก็อปปนกัน</strong>
+    <br>1. หน้า 29 รายการด้านซ้ายเขียน <code>outlined</code> แต่กล่องโค้ดด้านขวาเขียน <code>variant="outline"</code> (ไม่มี d)
+    <br>2. ชื่อชุดหน้า 28–29 (<code>outline</code>, <code>ghost</code>, <code>destructive-outline</code>) คือชุดสไตล์ shadcn ·
+    ส่วนหน้า 30–32 ใช้ชุด craft version (<code>contained</code>/<code>outlined</code> + <code>color</code>)
+    <br>บทนี้<strong>ยึดชุดหน้า 30–32</strong> เพราะเป็นชุดที่โค้ด <code>compoundVariants</code> หน้า 32 ใช้ ·
+    หัวข้อ 5 จะให้ดูว่าถ้าเผลอส่ง <code>variant="ghost"</code> แบบหน้า 28 เข้าไป TypeScript ว่ายังไง
+  </p>
+</div>
+
+<h2 id="sn-sec-2">2 · ปัญหา — เขียน className ด้วย ternary ซ้อนกัน</h2>
+
+<p>
+  ถ้ายังไม่รู้จักเครื่องมืออะไรเลย คนส่วนใหญ่จะเขียนฟังก์ชันคืน className แบบนี้
+  (ต่อยอดจาก <code>getVariantStyles</code> ใน <a href="../../fe-nextjs/lessons/0071-first-component-and-props.html">บทเรียน 71</a>)
+  · class ที่ใช้เป็นชื่อ token จาก <a href="./0081-design-tokens.html">บทเรียน 81</a> (<code>bg-primary</code>, <code>bg-accent</code> …)
+  ส่วน <code>error</code> ผมผูกกับ token <code>destructive</code> และ <code>gray</code> ผูกกับ <code>muted</code> ที่ shadcn สร้างไว้ให้:
+</p>
+
+<pre><code><span class="c">// components/Bases/naive-button-class.ts — วิธีเก่าที่แย่ (tsc ผ่าน)</span>
+<span class="k">type</span> <span class="n">Variant</span> = <span class="s">"contained"</span> | <span class="s">"outlined"</span>;
+<span class="k">type</span> <span class="n">Color</span> = <span class="s">"primary"</span> | <span class="s">"accent"</span> | <span class="s">"error"</span> | <span class="s">"gray"</span>;
+<span class="k">type</span> <span class="n">Size</span> = <span class="s">"sm"</span> | <span class="s">"md"</span> | <span class="s">"lg"</span>;
+
+<span class="k">export function</span> <span class="f">getButtonClass</span>(
+  variant: <span class="n">Variant</span> = <span class="s">"contained"</span>,
+  color: <span class="n">Color</span> = <span class="s">"primary"</span>,
+  size: <span class="n">Size</span> = <span class="s">"md"</span>,
+  disabled = <span class="k">false</span>,
+) {
+  <span class="k">return</span> (
+    <span class="s">"inline-flex items-center justify-center rounded-md font-medium "</span> +
+    (size === <span class="s">"sm"</span> ? <span class="s">"h-8.5 px-3 text-sm"</span> : size === <span class="s">"lg"</span> ? <span class="s">"h-12 px-6 text-base"</span> : <span class="s">"h-10 px-4 text-sm"</span>) +
+    <span class="s">" "</span> +
+    (variant === <span class="s">"contained"</span>
+      ? color === <span class="s">"primary"</span>
+        ? <span class="s">"bg-primary text-primary-foreground hover:bg-primary/90"</span>
+        : color === <span class="s">"accent"</span>
+          ? <span class="s">"bg-accent text-accent-foreground hover:bg-accent/90"</span>
+          : color === <span class="s">"error"</span>
+            ? <span class="s">"bg-destructive text-white hover:bg-destructive/90"</span>
+            : <span class="s">"bg-muted text-foreground hover:bg-muted/80"</span>
+      : <span class="s">"border-2 bg-transparent"</span> +
+        (color === <span class="s">"primary"</span>
+          ? <span class="s">"border-primary text-primary"</span>
+          : color === <span class="s">"accent"</span>
+            ? <span class="s">"border-accent text-accent"</span>
+            : color === <span class="s">"error"</span>
+              ? <span class="s">"border-destructive text-destructive"</span>
+              : <span class="s">"border-border text-foreground"</span>)) +
+    (disabled ? <span class="s">" opacity-50 pointer-events-none"</span> : <span class="s">""</span>)
+  );
+}</code></pre>
+
+<p>
+  แค่ 4 แกนก็ซ้อนกันลึก 4 ชั้นแล้ว · อ่านแล้วตอบไม่ได้ทันทีว่า "ปุ่มขอบแดงขนาดเล็กได้ class อะไร"
+  ต้องไล่วงเล็บทีละชั้น · และที่แย่กว่าความรกคือ<strong>มันพังได้โดยไม่มีใครฟ้อง</strong>
+</p>
+
+<div class="predict">
+  <p>ไฟล์ข้างบน <code>npx tsc --noEmit</code> ผ่าน (exit 0) · ทีนี้เรียกสองครั้งใน node:</p>
+  <pre><code><span class="k">import</span> { getButtonClass } <span class="k">from</span> <span class="s">"../components/Bases/naive-button-class.ts"</span>;
+console.<span class="f">log</span>(<span class="f">getButtonClass</span>());
+console.<span class="f">log</span>(<span class="f">getButtonClass</span>(<span class="s">"outlined"</span>, <span class="s">"error"</span>, <span class="s">"sm"</span>));</code></pre>
+  <p class="ask">บรรทัดที่สองจะได้ปุ่มขอบแดงหน้าตาถูกต้องไหม? ลองไล่วงเล็บดูก่อนกดเฉลย</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ผลรันจริง</strong> (<code>node scratch/naive.mts</code>):</p>
+<pre><code>inline-flex items-center justify-center rounded-md font-medium h-10 px-4 text-sm bg-primary text-primary-foreground hover:bg-primary/90
+inline-flex items-center justify-center rounded-md font-medium h-8.5 px-3 text-sm border-2 <strong>bg-transparentborder-destructive</strong> text-destructive</code></pre>
+    <p>
+      บรรทัดแรกถูก แต่บรรทัดที่สอง <strong>สอง class ติดกันเป็นคำเดียว</strong>:
+      <code>bg-transparentborder-destructive</code> · สาเหตุคือ <code>"border-2 bg-transparent"</code>
+      ลืมเว้นวรรคท้าย string ก่อน <code>+</code>
+    </p>
+    <p style="margin-bottom:0">
+      ผลคือ Tailwind ไม่รู้จักชื่อนี้ ปุ่มจะ<strong>ไม่มีสีขอบแดงและพื้นไม่โปร่ง</strong> ·
+      TypeScript ไม่ฟ้องเพราะมันเป็น string ที่ถูกต้องตาม type ทุกประการ ·
+      และบั๊กโผล่<strong>เฉพาะ 4 ใน 24 หน้าตา</strong> (ทุกปุ่มที่เป็น outlined) —
+      ถ้าหน้าที่คุณเทสมีแต่ปุ่มทึบ คุณจะไม่มีวันเห็น
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — สั่งกาแฟด้วยคำอธิบายยาว ๆ กับเมนูแบบเลือกช่อง</span>
+  <p>
+    ternary ซ้อนเหมือนบาริสต้าที่จำสูตรเป็นประโยคยาว ๆ:
+    "ถ้าร้อน ถ้าแก้วเล็ก ถ้าหวานน้อย ก็ทำแบบนี้ ไม่งั้นถ้าแก้วใหญ่…" ·
+    เพิ่มตัวเลือกนมโอ๊ตเข้ามาทีเดียว ต้องแก้ทุกกิ่งของประโยค
+    <br><code>cva()</code> คือ<strong>ใบสั่งแบบติ๊กช่อง</strong>: ช่องอุณหภูมิ · ช่องขนาด · ช่องความหวาน ·
+    แต่ละช่องมีสูตรของตัวเองแยกกัน แล้วบาริสต้าเอามาต่อกันตามลำดับ
+    <br>ส่วนกรณีพิเศษ เช่น "เย็น <strong>และ</strong> แก้วใหญ่ ให้ใส่น้ำแข็งเพิ่ม" เขียนเป็นกฎแยกอีกบรรทัด ·
+    นั่นคือ <code>compoundVariants</code>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> บาริสต้าจริงเห็นใบสั่งที่ติ๊ก "ร้อน + ปั่น" ก็จะทักว่าทำไม่ได้ ·
+    แต่ <code>cva()</code> <strong>ไม่ตรวจอะไรตอนรันเลย</strong> — มันแค่เอา string มาต่อกัน ·
+    ถ้าคุณส่งค่าที่ไม่มีในเมนู มันก็แค่ไม่ต่ออะไรให้เงียบ ๆ ·
+    คนที่ทักจริงคือ <strong>TypeScript ตอน compile</strong> (หัวข้อ 5) ไม่ใช่ cva
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>variant (ในความหมายของ design system)</dt>
+    <dd>หน้าตาแบบหนึ่งของ component เดียวกัน · ในบทนี้ใช้คำนี้สองระดับ: ชื่อ<strong>แกน</strong> <code>variant</code>
+        (contained/outlined) และคำรวม ๆ ว่า "variants" ที่หมายถึงทุกแกน ·
+        <strong>ถาม senior ได้ว่า “ปุ่มในทีมนี้แยกแกนยังไง variant กับ color แยกกันหรือรวมเป็นชื่อเดียว”</strong></dd>
+    <dt>combinatorial explosion</dt>
+    <dd>จำนวนกรณีที่พุ่งขึ้นแบบคูณเมื่อเพิ่มแกน (2 × 4 × 3 = 24) ·
+        เป็นเหตุผลที่ไม่ควรตั้งชื่อ variant แบบรวมก้อน ·
+        <strong>พิมพ์บอก AI ได้ว่า “split this button's variants into independent axes to avoid combinatorial explosion”</strong></dd>
+    <dt>class string concatenation bug</dt>
+    <dd>บั๊กจากการต่อ string class ด้วย <code>+</code> หรือ template literal แล้วช่องว่างหาย/เกิน หรือได้คำว่า <code>undefined</code> ·
+        TypeScript จับไม่ได้ · <strong>ถาม senior ได้ว่า “ทีมนี้ใช้อะไรรวม className — cn, clsx หรือ cva”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">3 · <code>cva()</code> — เมนูแบบติ๊กช่อง</h2>
+
+<p>
+  สไลด์หน้า 31 แนะนำ <strong>Class Variance Authority (CVA)</strong> ว่าเป็นไลบรารีที่
+  "จัดการ variant ของ UI แบบ type-safe โดยที่คุณไม่ต้องต่อชื่อ class เอง" ·
+  ไม่ต้องติดตั้งเพิ่ม เพราะ <code>shadcn init</code> ใส่ <code>class-variance-authority</code> ลง <code>package.json</code> ไว้ให้แล้ว
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ชื่อเต็มในสไลด์หน้า 31 สะกดต่างจากชื่อแพ็กเกจจริง</strong> — หัวสไลด์เขียน "Class <strong>Variant</strong> Authority" ·
+    แต่ชื่อแพ็กเกจที่ติดตั้งอยู่จริงคือ <code>class-<strong>variance</strong>-authority</code> (บรรทัด <code>import</code> ในสไลด์หน้า 15 ก็สะกดแบบนี้) ·
+    เวลาค้นเอกสารหรือพิมพ์ <code>import</code> ให้ใช้ <code>variance</code>
+  </p>
+</div>
+
+<p>
+  <code>cva()</code> รับของสองก้อน:
+</p>
+<ol>
+  <li><strong>class ฐาน</strong> — ของที่ทุกปุ่มต้องมีเสมอ ไม่ว่าจะเลือกอะไร</li>
+  <li><strong>config</strong> — มีสามช่องหลัก: <code>variants</code> (เมนูแต่ละแกน) ·
+    <code>compoundVariants</code> (กฎพิเศษเมื่อหลายแกนตรงพร้อมกัน) ·
+    <code>defaultVariants</code> (ค่าที่ใช้เมื่อไม่ได้ส่งมา)</li>
+</ol>
+<p>
+  แล้วมันคืน<strong>ฟังก์ชัน</strong>กลับมา — เรียกฟังก์ชันนั้นพร้อมตัวเลือก ได้ string class ออกมา ·
+  นี่คือไฟล์เดียวกับหัวข้อ 2 เขียนใหม่ด้วย cva:
+</p>
+
+<pre><code><span class="c">// components/Bases/button-variants.ts</span>
+<span class="k">import</span> { cva, <span class="k">type</span> <span class="n">VariantProps</span> } <span class="k">from</span> <span class="s">"class-variance-authority"</span>;
+
+<span class="k">export const</span> <span class="f">buttonVariants</span> = <span class="f">cva</span>(
+  <span class="s">"inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50"</span>,
+  {
+    variants: {
+      variant: {
+        contained: <span class="s">""</span>,
+        outlined: <span class="s">"border-2 bg-transparent"</span>,
+      },
+      color: {
+        primary: <span class="s">""</span>,
+        accent: <span class="s">""</span>,
+        error: <span class="s">""</span>,
+        gray: <span class="s">""</span>,
+      },
+      size: {
+        sm: <span class="s">"h-8.5 px-3 text-sm"</span>,
+        md: <span class="s">"h-10 px-4 text-sm"</span>,
+        lg: <span class="s">"h-12 px-6 text-base"</span>,
+      },
+    },
+    compoundVariants: [
+      { variant: <span class="s">"contained"</span>, color: <span class="s">"primary"</span>, className: <span class="s">"bg-primary text-primary-foreground hover:bg-primary/90"</span> },
+      { variant: <span class="s">"contained"</span>, color: <span class="s">"accent"</span>,  className: <span class="s">"bg-accent text-accent-foreground hover:bg-accent/90"</span> },
+      { variant: <span class="s">"contained"</span>, color: <span class="s">"error"</span>,   className: <span class="s">"bg-destructive text-white hover:bg-destructive/90"</span> },
+      { variant: <span class="s">"contained"</span>, color: <span class="s">"gray"</span>,    className: <span class="s">"bg-muted text-foreground hover:bg-muted/80"</span> },
+      { variant: <span class="s">"outlined"</span>,  color: <span class="s">"primary"</span>, className: <span class="s">"border-primary text-primary hover:bg-primary/10"</span> },
+      { variant: <span class="s">"outlined"</span>,  color: <span class="s">"accent"</span>,  className: <span class="s">"border-accent text-accent hover:bg-accent/10"</span> },
+      { variant: <span class="s">"outlined"</span>,  color: <span class="s">"error"</span>,   className: <span class="s">"border-destructive text-destructive hover:bg-destructive/10"</span> },
+      { variant: <span class="s">"outlined"</span>,  color: <span class="s">"gray"</span>,    className: <span class="s">"border-border text-foreground hover:bg-muted"</span> },
+    ],
+    defaultVariants: {
+      variant: <span class="s">"contained"</span>,
+      color: <span class="s">"primary"</span>,
+      size: <span class="s">"md"</span>,
+    },
+  },
+);
+
+<span class="k">export type</span> <span class="n">ButtonVariantProps</span> = <span class="n">VariantProps</span>&lt;<span class="k">typeof</span> buttonVariants&gt;;</code></pre>
+
+<p>สามจุดที่ควรสังเกต:</p>
+<ul>
+  <li>
+    <strong>ค่าใน <code>color</code> เป็น string ว่างทั้งหมด</strong> — เพราะสีอย่างเดียวไม่พอจะรู้ว่าต้องใช้ class อะไร
+    (ทึบใช้ <code>bg-primary</code> · ขอบใช้ <code>border-primary</code>) ·
+    ต้องรู้ทั้ง variant <strong>และ</strong> color พร้อมกัน → จึงไปอยู่ใน <code>compoundVariants</code> ·
+    ที่ต้องประกาศช่องว่างไว้ก็เพื่อให้ cva (และ TypeScript) รู้ว่ามีค่า <code>primary</code>/<code>accent</code>/… อยู่ในเมนู
+  </li>
+  <li>
+    <strong>ขนาดใช้ <code>h-8.5</code> / <code>h-10</code> / <code>h-12</code></strong> ให้ตรงป้าย 34 / 40 / 48px ในสไลด์หน้า 30 ·
+    Tailwind v4 คำนวณจาก <code>--spacing</code> คูณตัวเลข · ผมเปิดไฟล์ CSS ที่ build ออกมาจริงแล้วเจอ
+    <code>.h-8\.5{height:calc(var(--spacing) * 8.5)}</code> และ <code>--spacing:.25rem</code>
+    → 0.25rem × 8.5 = 2.125rem = <strong>34px</strong> (เมื่อ font-size ของ root เป็น 16px) — ไม่ต้องใช้ <code>h-[34px]</code>
+  </li>
+  <li>
+    <strong>disabled ไม่ต้องมีแกนของตัวเอง</strong> — class ฐานมี <code>disabled:opacity-50 disabled:pointer-events-none</code>
+    อยู่แล้ว · ใส่ attribute <code>disabled</code> บนแท็กเมื่อไหร่ Tailwind จางให้เอง
+    (ต่างจาก ternary ในหัวข้อ 2 ที่ต้องส่ง boolean มาต่อ string เอง)
+  </li>
+</ul>
+
+<p><strong>ผลรันจริง</strong> — เรียก <code>buttonVariants</code> ตัวข้างบนใน node:</p>
+
+<pre><code>buttonVariants()
+  "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 h-10 px-4 text-sm bg-primary text-primary-foreground hover:bg-primary/90"
+buttonVariants({ variant: "contained", color: "accent" })
+  "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 h-10 px-4 text-sm bg-accent text-accent-foreground hover:bg-accent/90"
+buttonVariants({ variant: "outlined" })
+  "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 border-2 bg-transparent h-10 px-4 text-sm border-primary text-primary hover:bg-primary/10"
+buttonVariants({ variant: "outlined", color: "error", size: "sm" })
+  "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 border-2 bg-transparent h-8.5 px-3 text-sm border-destructive text-destructive hover:bg-destructive/10"</code></pre>
+
+<p>
+  อ่านผลออกมาได้สามเรื่อง:
+  <br>1. <strong>ลำดับคงที่เสมอ</strong>: class ฐาน → variant → color → size → compoundVariants ต่อท้ายสุด
+  <br>2. <strong>string ว่างไม่ทิ้งช่องว่างซ้อน</strong> — ไม่มี <code>"  "</code> สองช่องสักที่ (ผมครอบ <code>JSON.stringify</code> ไว้ดูแล้ว)
+  <br>3. เคสเดียวกับที่ ternary พังในหัวข้อ 2 (<code>outlined + error + sm</code>) ตอนนี้ได้ <code>bg-transparent h-8.5 … border-destructive</code> <strong>แยกคำถูกต้อง</strong>
+</p>
+
+<h2 id="sn-sec-4">4 · <code>compoundVariants</code> และ <code>defaultVariants</code> — พิสูจน์ว่าต่อท้าย "เมื่อครบเงื่อนไขเท่านั้น"</h2>
+
+<p>
+  สไลด์หน้า 32 นิยามไว้ประโยคเดียว: <strong>"variants ที่มีผลเมื่อเงื่อนไขของ variant อื่นหลายตัวเป็นจริงพร้อมกัน"</strong>
+  และแปะโค้ดไว้ 12 บรรทัด — ถอดมาตามจริงทุกตัวอักษร:
+</p>
+
+<pre><code><span class="c">// สไลด์หน้า 32 บรรทัด 1–12</span>
+compoundVariants: [
+  {
+    variant: <span class="s">"contained"</span>,
+    color: <span class="s">"primary"</span>,
+    className: <span class="s">"bg-primary text-primary-foreground hover:bg-primary/90"</span>,
+  },
+  {
+    variant: <span class="s">"contained"</span>,
+    color: <span class="s">"accent"</span>,
+    className: <span class="s">"bg-accent text-accent-foreground hover:bg-accent/90"</span>,
+  },
+],</code></pre>
+
+<p>
+  สไลด์ให้มาแค่ท่อนนี้ (ไม่มีส่วน <code>variants</code> และมีแค่สองกฎ) ·
+  เพื่อพิสูจน์พฤติกรรมให้ชัด ผมห่อมันด้วย <code>cva</code> ที่<strong>เล็กที่สุด</strong> —
+  class ฐานเป็นคำว่า <code>btn</code> คำเดียว · มีแค่แกน <code>variant</code> กับ <code>color</code> ·
+  และ<strong>ใช้ compoundVariants แค่สองกฎตามสไลด์เป๊ะ</strong>:
+</p>
+
+<pre><code><span class="k">const</span> <span class="f">buttonVariants</span> = <span class="f">cva</span>(<span class="s">"btn"</span>, {
+  variants: {
+    variant: { contained: <span class="s">""</span>, outlined: <span class="s">"border-2"</span> },
+    color: { primary: <span class="s">""</span>, accent: <span class="s">""</span>, error: <span class="s">""</span>, gray: <span class="s">""</span> },
+  },
+  compoundVariants: [ <span class="c">/* สองกฎของสไลด์หน้า 32 */</span> ],
+  defaultVariants: { variant: <span class="s">"contained"</span>, color: <span class="s">"primary"</span> },
+});</code></pre>
+
+<div class="predict">
+  <p>เรียกหกแบบนี้ ทายว่าบรรทัดไหน<strong>ได้</strong> class <code>bg-…</code> ต่อท้าย บรรทัดไหน<strong>ไม่ได้</strong>:</p>
+  <pre><code>buttonVariants({ variant: <span class="s">"contained"</span>, color: <span class="s">"primary"</span> })
+buttonVariants({ variant: <span class="s">"outlined"</span>,  color: <span class="s">"primary"</span> })
+buttonVariants({ variant: <span class="s">"contained"</span>, color: <span class="s">"error"</span> })
+buttonVariants({ color: <span class="s">"accent"</span> })
+buttonVariants({ variant: <span class="k">undefined</span> })
+buttonVariants({ variant: <span class="k">null</span> })</code></pre>
+  <p class="ask">สองบรรทัดสุดท้ายต่างกันแค่ <code>undefined</code> กับ <code>null</code> — ได้ผลเหมือนกันไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ผลรันจริง</strong> (<code>node scratch/slide32.mts</code>):</p>
+<pre><code>{ variant: "contained", color: "primary" }   → "btn bg-primary text-primary-foreground hover:bg-primary/90"
+{ variant: "outlined",  color: "primary" }   → "btn border-2"
+{ variant: "contained", color: "error" }     → "btn"
+{ color: "accent" }                          → "btn bg-accent text-accent-foreground hover:bg-accent/90"
+{ variant: undefined }                       → "btn bg-primary text-primary-foreground hover:bg-primary/90"
+{ variant: null }                            → "btn"</code></pre>
+    <ul>
+      <li><strong>บรรทัด 1</strong> ครบทั้งสองเงื่อนไข → ต่อท้าย</li>
+      <li><strong>บรรทัด 2</strong> color ตรง แต่ variant ไม่ตรง → <strong>ไม่ต่อ</strong> ได้แค่ <code>border-2</code> ของแกน variant เอง
+          (ปุ่มขอบที่ไม่มีสีขอบ — ถึงต้องมีกฎ outlined อีกสี่ข้อในไฟล์เต็มของหัวข้อ 3)</li>
+      <li><strong>บรรทัด 3</strong> ไม่มีกฎไหนเขียนถึง <code>contained + error</code> → ได้แค่ <code>btn</code> เปล่า ๆ <strong>ไม่มี error ไม่มีเตือน</strong></li>
+      <li><strong>บรรทัด 4</strong> ไม่ได้ส่ง variant แต่ <code>defaultVariants</code> เติม <code>contained</code> ให้
+          → <strong>ค่า default นับเป็นเงื่อนไขของ compound ด้วย</strong> → ต่อท้าย</li>
+      <li><strong>บรรทัด 5</strong> <code>undefined</code> = "ไม่ได้ส่ง" → ใช้ default ทั้งสองแกน → ต่อท้าย</li>
+      <li><strong>บรรทัด 6</strong> <code>null</code> = "ตั้งใจไม่เอาค่าใดเลย" → cva <strong>ไม่ใช้ default</strong> ของแกนนั้น
+          → ไม่ครบเงื่อนไข → ได้ <code>btn</code> เปล่า</li>
+    </ul>
+    <p style="margin-bottom:0">
+      ข้อสุดท้ายนี่คือกับดัก: <code>undefined</code> กับ <code>null</code> <strong>ไม่เท่ากันใน cva</strong> ·
+      ถ้าข้อมูลมาจาก API ที่ส่ง <code>null</code> มา ปุ่มจะเสียสีเงียบ ๆ
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — โปรโมชันร้านอาหาร</span>
+  <p>
+    <code>variants</code> คือราคาปกติของแต่ละอย่าง: ข้าวหนึ่งจาน · น้ำหนึ่งแก้ว — สั่งอะไรก็จ่ายอันนั้น ·
+    <code>compoundVariants</code> คือ<strong>โปรโมชัน "สั่งข้าวมันไก่ <em>คู่กับ</em> น้ำซุป ได้ไข่ต้มฟรี"</strong> —
+    ต้องสั่งครบทั้งสองอย่างถึงจะได้ไข่ สั่งอย่างเดียวไม่ได้
+    <br><code>defaultVariants</code> คือ "ถ้าไม่บอกขนาด ร้านให้จานธรรมดา" · และถ้าจานธรรมดาเข้าเงื่อนไขโปร ก็ได้ไข่ด้วย
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงได้ของแถม "เพิ่ม" จากของเดิม ·
+    แต่ compound class <strong>ไม่ได้ลบ class ของแกนอื่นออก</strong> — มันแค่ต่อท้าย ·
+    ถ้า compound ใส่ <code>border-3</code> แต่แกน variant ใส่ <code>border-2</code> ไว้แล้ว string จะมี<strong>ทั้งสองตัว</strong> ·
+    ตัวที่ตัดสินให้ว่าอันไหนชนะคือ <code>cn()</code> ในหัวข้อ 6 ไม่ใช่ cva
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>cva (Class Variance Authority)</dt>
+    <dd>ไลบรารีเล็ก ๆ ที่รับ "เมนู class" แล้วคืนฟังก์ชันสร้าง string class ·
+        <strong>ไม่ได้สร้าง CSS เอง</strong> Tailwind ยังเป็นคนสร้าง CSS ·
+        <strong>พิมพ์บอก AI ได้ว่า “refactor this className ternary into a cva() with variants and defaultVariants”</strong></dd>
+    <dt>compoundVariants</dt>
+    <dd>รายการกฎที่ต่อ class ท้ายสุด<strong>เฉพาะเมื่อทุกเงื่อนไขในกฎตรงพร้อมกัน</strong> (รวมค่าจาก default) ·
+        <strong>ถาม senior ได้ว่า “สีของปุ่มขึ้นกับ variant ด้วย ควรใส่ใน compoundVariants หรือแยก component”</strong></dd>
+    <dt>defaultVariants</dt>
+    <dd>ค่าที่ใช้เมื่อแกนนั้นเป็น <code>undefined</code> · <strong>ส่ง <code>null</code> = ปิด default ของแกนนั้น</strong> ·
+        ตรงกับ design token ของทีมคือ "ปุ่มปกติหน้าตาเป็นยังไง"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 · <code>VariantProps</code> — ให้ TypeScript ฟ้องเมื่อส่ง variant ผิด</h2>
+
+<p>
+  บรรทัดสุดท้ายของไฟล์ในหัวข้อ 3:
+</p>
+<pre><code><span class="k">export type</span> <span class="n">ButtonVariantProps</span> = <span class="n">VariantProps</span>&lt;<span class="k">typeof</span> buttonVariants&gt;;</code></pre>
+<p>
+  อ่านเป็นภาษาคน: <strong>"ไปอ่านเมนูใน <code>buttonVariants</code> แล้วสร้าง type ของ props ให้เอง"</strong> ·
+  ไม่ต้องเขียน <code>type Variant = "contained" | "outlined"</code> ซ้ำเหมือนหัวข้อ 2 ·
+  เพิ่มค่าในเมนูเมื่อไหร่ type เปลี่ยนตามทันที ·
+  จากนั้นเอาไปบวกกับ props ของปุ่ม HTML ด้วย <code>&amp;</code> แบบที่เรียนใน
+  <a href="../../fe-nextjs/lessons/0071-first-component-and-props.html">บทเรียน 71</a>:
+</p>
+
+<pre><code><span class="c">// components/Bases/Button.tsx</span>
+<span class="k">import</span> { Loader2Icon } <span class="k">from</span> <span class="s">"lucide-react"</span>;
+<span class="k">import</span> { cn } <span class="k">from</span> <span class="s">"@/lib/utils"</span>;
+<span class="k">import</span> { buttonVariants, <span class="k">type</span> <span class="n">ButtonVariantProps</span> } <span class="k">from</span> <span class="s">"./button-variants"</span>;
+
+<span class="k">export type</span> <span class="n">ButtonProps</span> = <span class="n">React.ButtonHTMLAttributes</span>&lt;<span class="n">HTMLButtonElement</span>&gt; &amp;
+  <span class="n">ButtonVariantProps</span> &amp; {
+    loading?: <span class="n">boolean</span>;
+  };
+
+<span class="k">const</span> <span class="f">Button</span> = (props: <span class="n">ButtonProps</span>) =&gt; {
+  <span class="k">const</span> {
+    variant,
+    color,
+    size,
+    loading = <span class="k">false</span>,
+    disabled,
+    className,
+    children,
+    ...restProps
+  } = props;
+
+  <span class="k">return</span> (
+    &lt;<span class="n">button</span>
+      className={<span class="f">cn</span>(<span class="f">buttonVariants</span>({ variant, color, size }), className)}
+      disabled={disabled || loading}
+      aria-busy={loading || <span class="k">undefined</span>}
+      {...restProps}
+    &gt;
+      {loading &amp;&amp; &lt;<span class="n">Loader2Icon</span> className=<span class="s">"size-4 animate-spin"</span> aria-hidden=<span class="s">"true"</span> /&gt;}
+      {children}
+    &lt;/<span class="n">button</span>&gt;
+  );
+};
+
+<span class="k">export default</span> Button;</code></pre>
+
+<p>
+  สังเกตว่า <code>variant</code> · <code>color</code> · <code>size</code> · <code>loading</code>
+  <strong>ถูกดึงออกก่อน</strong>ทุกตัว ไม่ปล่อยให้ตกลงไปใน <code>restProps</code> —
+  กับดักเดียวกับบทเรียน 71 หัวข้อ 6 ที่ของไหลไปโผล่บน DOM
+</p>
+
+<div class="predict">
+  <p>ทีนี้ลองก็อปชื่อ variant จากกล่องโค้ดสไลด์หน้า 28 มาใช้กับ Button ของเรา แล้วส่งค่าผิดอีกสองแบบ:</p>
+  <pre><code><span class="c">// app/buttons/bad.tsx</span>
+<span class="k">import</span> Button <span class="k">from</span> <span class="s">"@/components/Bases/Button"</span>;
+
+<span class="k">export function</span> <span class="f">Bad</span>() {
+  <span class="k">return</span> (
+    &lt;&gt;
+      &lt;<span class="n">Button</span> variant=<span class="s">"ghost"</span>&gt;Cancel&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> color=<span class="s">"red"</span>&gt;Delete&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> size=<span class="s">"xl"</span>&gt;Sign in&lt;/<span class="n">Button</span>&gt;
+    &lt;/&gt;
+  );
+}</code></pre>
+  <p class="ask">รัน <code>npx tsc --noEmit</code> — ฟ้องกี่บรรทัด? และ type ที่ขึ้นใน error ของ <code>color</code> จะหน้าตาเหมือนของ <code>variant</code> กับ <code>size</code> ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ผลรันจริง</strong>:</p>
+<pre><code>app/buttons/bad.tsx(6,15): error TS2322: Type '"ghost"' is not assignable to type '"contained" | "outlined" | null | undefined'.
+app/buttons/bad.tsx(7,15): error TS2322: Type '"red"' is not assignable to type '"primary" | "accent" | "error" | "gray" | undefined'.
+app/buttons/bad.tsx(8,15): error TS2322: Type '"xl"' is not assignable to type '"sm" | "md" | "lg" | null | undefined'.</code></pre>
+    <p>
+      ฟ้อง<strong>ครบทั้งสามบรรทัด</strong> (exit code 2) และบอกชัดว่าค่าที่ถูกมีอะไรบ้าง —
+      <strong>ไม่ต้องไปเปิดไฟล์ <code>button-variants.ts</code> ดูเลย</strong> · editor ก็ขึ้นขีดแดงให้ตั้งแต่ตอนพิมพ์
+    </p>
+    <p>
+      แต่สังเกตให้ดี: type ของ <code>variant</code> และ <code>size</code> มี <code>null</code> (ตรงกับหัวข้อ 4 ที่ cva รับ <code>null</code>) ·
+      ส่วน <code>color</code> <strong>ไม่มี <code>null</code></strong> ·
+      สาเหตุคือ <code>React.ButtonHTMLAttributes</code> มี attribute ชื่อ <code>color?: string</code> อยู่แล้ว (มาจาก HTML เก่า) ·
+      พอเอามา <code>&amp;</code> กัน TypeScript ต้องหาค่าที่ถูกทั้งสองฝั่ง → <code>null</code> ไม่ใช่ <code>string</code> เลยถูกตัดทิ้ง
+    </p>
+    <p style="margin-bottom:0">
+      ผลข้างเคียงที่ดี: ส่ง <code>color={null}</code> ไม่ได้ ·
+      ผลข้างเคียงที่ต้องระวัง: ถ้าลืมดึง <code>color</code> ออกจาก props มันจะ<strong>ผ่าน type</strong> แล้วไหลไปเป็น
+      attribute <code>color="primary"</code> บน <code>&lt;button&gt;</code> จริง
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-6">6 · ใช้งานจริงบนหน้าเว็บ — loading state และ <code>cn()</code></h2>
+
+<p>สร้างหน้า <code>app/buttons/page.tsx</code> วางปุ่มแบบเดียวกับสไลด์หน้า 29–30:</p>
+
+<pre><code><span class="k">import</span> Button <span class="k">from</span> <span class="s">"@/components/Bases/Button"</span>;
+
+<span class="k">export default function</span> <span class="f">ButtonsPage</span>() {
+  <span class="k">return</span> (
+    &lt;<span class="n">main</span> className=<span class="s">"flex flex-wrap items-center gap-3 p-8"</span>&gt;
+      &lt;<span class="n">Button</span>&gt;Browse Recipes&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> variant=<span class="s">"outlined"</span>&gt;Share Your Recipe&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> variant=<span class="s">"outlined"</span> color=<span class="s">"error"</span>&gt;Delete recipe&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> color=<span class="s">"accent"</span> size=<span class="s">"lg"</span>&gt;Sign in&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> disabled&gt;Disabled&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> loading&gt;Saving...&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> size=<span class="s">"sm"</span>&gt;sm · 34px&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> size=<span class="s">"md"</span>&gt;md · 40px&lt;/<span class="n">Button</span>&gt;
+      &lt;<span class="n">Button</span> size=<span class="s">"lg"</span>&gt;lg · 48px&lt;/<span class="n">Button</span>&gt;
+    &lt;/<span class="n">main</span>&gt;
+  );
+}</code></pre>
+
+<p>
+  <code>npx next build</code> ผ่าน · เปิด <code>npx next start</code> แล้ว <code>curl</code> หน้า <code>/buttons</code>
+  ตัดมาเฉพาะปุ่ม disabled กับ loading (<strong>ผลรันจริง</strong>):
+</p>
+
+<pre><code>&lt;button class="inline-flex … h-10 px-4 text-sm bg-primary text-primary-foreground hover:bg-primary/90" disabled=""&gt;Disabled&lt;/button&gt;
+
+&lt;button class="inline-flex … h-10 px-4 text-sm bg-primary text-primary-foreground hover:bg-primary/90" disabled="" aria-busy="true"&gt;&lt;svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-loader-circle lucide-loader-2 size-4 animate-spin" aria-hidden="true"&gt;&lt;path d="M21 12a9 9 0 1 1-6.219-8.56"&gt;&lt;/path&gt;&lt;/svg&gt;Saving...&lt;/button&gt;</code></pre>
+<p style="font-size:0.9em">(<code>…</code> คือ class ฐานที่ยาวเหมือนกันทุกปุ่ม ผมตัดออกให้อ่านง่าย ส่วนอื่นไม่ได้แก้)</p>
+
+<p>
+  loading state ในสไลด์หน้า 30 มี<strong>สองหน้าที่</strong> ไม่ใช่แค่วงกลมหมุน:
+</p>
+<ul>
+  <li><strong>ห้ามกดซ้ำ</strong> — <code>disabled={disabled || loading}</code> ทำให้ปุ่มได้ attribute <code>disabled</code> จริง ·
+      เบราว์เซอร์ไม่ยิง click ให้ปุ่มที่ disabled → ผู้ใช้ที่ใจร้อนกด "บันทึก" สามครั้งจะไม่ส่งสูตรอาหารซ้ำสามรอบ ·
+      และได้ความจางจาก <code>disabled:opacity-50</code> มาฟรี (ในภาพสไลด์ปุ่ม Saving… ก็จางกว่าปุ่มปกติ)</li>
+  <li><strong>บอกว่ากำลังทำงาน</strong> — spinner (<code>Loader2Icon</code> จาก <code>lucide-react</code> ที่ shadcn ติดตั้งไว้ + <code>animate-spin</code>) สำหรับตา ·
+      <code>aria-busy="true"</code> สำหรับโปรแกรมอ่านหน้าจอ · ส่วน <code>aria-hidden</code> บน svg กันไม่ให้มันอ่านไอคอนออกเสียง</li>
+</ul>
+<p>
+  เขียน <code>aria-busy={loading || undefined}</code> ไม่ใช่ <code>={loading}</code> เพราะอยากให้ปุ่มปกติ<strong>ไม่มี attribute นี้เลย</strong> ·
+  ใน HTML ข้างบนปุ่ม Disabled ก็ไม่มี <code>aria-busy</code> จริง
+</p>
+
+<h3 id="sn-sub-1">ทำไม className ของคนใช้ต้องผ่าน <code>cn()</code></h3>
+
+<p>
+  สมมติหน้าไหนอยากได้ปุ่มเล็กแต่สูงพิเศษ เลยส่ง <code>className="h-12 bg-accent"</code> เข้ามา ·
+  class ใหม่ชนกับของเดิม (<code>h-8.5</code>, <code>bg-primary</code>) · ผมรันเทียบสามวิธี (<strong>ผลรันจริง</strong>):
+</p>
+
+<pre><code>ต่อ string เฉย ๆ:
+  "inline-flex … disabled:opacity-50 <strong>h-8.5</strong> px-3 text-sm <strong>bg-primary</strong> text-primary-foreground hover:bg-primary/90 <strong>h-12 bg-accent</strong>"
+ผ่าน cn():
+  "inline-flex … disabled:opacity-50 px-3 text-sm text-primary-foreground hover:bg-primary/90 <strong>h-12 bg-accent</strong>"
+cva รับ className เอง (ไม่ผ่าน cn):
+  "inline-flex … disabled:opacity-50 <strong>h-8.5</strong> px-3 text-sm <strong>bg-primary</strong> text-primary-foreground hover:bg-primary/90 <strong>h-12 bg-accent</strong>"</code></pre>
+
+<p>
+  แบบแรกกับแบบที่สามมี<strong>ทั้ง <code>h-8.5</code> และ <code>h-12</code></strong> อยู่ด้วยกัน ·
+  อันไหนชนะขึ้นกับว่า Tailwind เขียน rule ไหนไว้ทีหลังในไฟล์ CSS —
+  <strong>ไม่ใช่ลำดับใน attribute <code>class</code></strong> · ทายผลไม่ได้จากการอ่านโค้ด ·
+  <code>cn()</code> รู้ว่า <code>h-8.5</code> กับ <code>h-12</code> เป็นเรื่องเดียวกัน จึง<strong>ลบตัวเก่าทิ้ง เก็บตัวที่มาทีหลัง</strong>
+</p>
+
+<h2 id="sn-sec-7">7 · เทียบกับ <code>button.tsx</code> ที่ shadcn สร้างให้ — ท่าเดียวกันเป๊ะ</h2>
+
+<p>
+  สไลด์หน้า 15 เปิด <code>components/ui/button.tsx</code> ที่ได้จาก <code>shadcn add button</code> ·
+  ตอนนั้นอาจยังอ่านไม่ออก ตอนนี้อ่านออกแล้ว · นี่คือไฟล์จริงบนเครื่องที่ใช้ตรวจ ตัดเหลือโครง
+  (<code>…</code> คือ class ยาว ๆ ที่ตัดออก):
+</p>
+
+<pre><code><span class="c">// components/ui/button.tsx — สร้างโดย shadcn 4.21.0 (preset base-nova)</span>
+<span class="k">import</span> { Button <span class="k">as</span> ButtonPrimitive } <span class="k">from</span> <span class="s">"@base-ui/react/button"</span>
+<span class="k">import</span> { cva, <span class="k">type</span> <span class="n">VariantProps</span> } <span class="k">from</span> <span class="s">"class-variance-authority"</span>
+<span class="k">import</span> { cn } <span class="k">from</span> <span class="s">"cn"</span>
+
+<span class="k">const</span> <span class="f">buttonVariants</span> = <span class="f">cva</span>(
+  <span class="s">"group/button inline-flex shrink-0 items-center justify-center rounded-lg … disabled:pointer-events-none disabled:opacity-50 …"</span>,
+  {
+    variants: {
+      variant: {
+        default: <span class="s">"bg-primary text-primary-foreground hover:bg-primary/80"</span>,
+        outline: <span class="s">"…"</span>, secondary: <span class="s">"…"</span>, ghost: <span class="s">"…"</span>, destructive: <span class="s">"…"</span>,
+        link: <span class="s">"text-primary underline-offset-4 hover:underline"</span>,
+      },
+      size: {
+        default: <span class="s">"h-8 gap-1.5 px-2.5 …"</span>, xs: <span class="s">"h-6 …"</span>, sm: <span class="s">"h-7 …"</span>, lg: <span class="s">"h-9 …"</span>,
+        icon: <span class="s">"size-8"</span>, <span class="s">"icon-xs"</span>: <span class="s">"…"</span>, <span class="s">"icon-sm"</span>: <span class="s">"…"</span>, <span class="s">"icon-lg"</span>: <span class="s">"size-9"</span>,
+      },
+    },
+    defaultVariants: {
+      variant: <span class="s">"default"</span>,
+      size: <span class="s">"default"</span>,
+    },
+  }
+)
+
+<span class="k">function</span> <span class="f">Button</span>({
+  className,
+  variant = <span class="s">"default"</span>,
+  size = <span class="s">"default"</span>,
+  ...props
+}: <span class="n">ButtonPrimitive.Props</span> &amp; <span class="n">VariantProps</span>&lt;<span class="k">typeof</span> buttonVariants&gt;) {
+  <span class="k">return</span> (
+    &lt;<span class="n">ButtonPrimitive</span>
+      data-slot=<span class="s">"button"</span>
+      className={<span class="f">cn</span>(<span class="f">buttonVariants</span>({ variant, size, className }))}
+      {...props}
+    /&gt;
+  )
+}
+
+<span class="k">export</span> { Button, buttonVariants }</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>เรื่อง</th><th>Button ของเรา</th><th>shadcn <code>button.tsx</code></th></tr>
+  </thead>
+  <tbody>
+    <tr><td>สร้าง class ด้วย</td><td><code>cva(ฐาน, { variants, compoundVariants, defaultVariants })</code></td><td><code>cva</code> เหมือนกัน · <strong>ไม่มี compoundVariants</strong> เพราะรวมสีไว้ในชื่อ variant แล้ว (<code>destructive</code>)</td></tr>
+    <tr><td>type ของ props</td><td><code>ButtonHTMLAttributes &amp; VariantProps&lt;typeof buttonVariants&gt;</code></td><td><code>ButtonPrimitive.Props &amp; VariantProps&lt;typeof buttonVariants&gt;</code> — ใช้ปุ่มของ <code>@base-ui/react</code> แทนแท็ก HTML</td></tr>
+    <tr><td>รวม className</td><td><code>cn(buttonVariants({…}), className)</code></td><td><code>cn(buttonVariants({ variant, size, className }))</code> — ส่ง className ให้ cva ต่อท้ายก่อน แล้ว cn ค่อยจัดการชนกัน · ผลลัพธ์เท่ากัน</td></tr>
+    <tr><td>แกน</td><td>variant × color × size (2 × 4 × 3)</td><td>variant × size (6 × 8) · ขนาดปกติ <code>h-8</code> = 32px ไม่ใช่ 40px ของ Wongnok</td></tr>
+    <tr><td>export</td><td><code>export default Button</code></td><td>export ทั้ง <code>Button</code> และ <code>buttonVariants</code> — ให้เอา class ปุ่มไปแปะบน <code>&lt;a&gt;</code> ได้ด้วย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ไฟล์ที่คุณได้อาจไม่ตรงภาพสไลด์หน้า 15 ทุกตัวอักษร</strong> — ภาพในสไลด์ class ฐานเป็น <code>rounded-4xl</code>
+    และบรรทัดที่ 4 เป็น <code>import { cn } from "@/lib/utils"</code> ·
+    แต่ <code>shadcn</code> 4.21.0 บนเครื่องที่ตรวจสร้าง <code>rounded-lg</code> และ <code>import { cn } from "cn"</code>
+    (แพ็กเกจ <code>cn</code> 0.3.0 ที่คำอธิบายในแพ็กเกจบอกว่าเป็นตัวแทน <code>clsx</code> + <code>tailwind-merge</code>) ·
+    ส่วน <code>lib/utils.ts</code> เหลือแค่บรรทัดเดียว <code>export { cn } from "cn"</code> —
+    <strong>import จากทางไหนก็ได้ <code>cn</code> ตัวเดียวกัน</strong> ·
+    ท่า <code>cva</code> + <code>VariantProps</code> ซึ่งเป็นเรื่องของบทนี้<strong>เหมือนกันทุกประการ</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-8">8 · ทบทวน</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ใช้ <code>cva</code> แบบ<strong>ย่อ</strong>ในหัวข้อ 4 (มี compoundVariants แค่สองกฎตามสไลด์หน้า 32) · เรียก <code>buttonVariants({ variant: "outlined", color: "primary" })</code> ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>"btn border-2 bg-primary text-primary-foreground hover:bg-primary/90"</code></button>
+    <button class="opt"><code>"btn bg-primary text-primary-foreground hover:bg-primary/90"</code></button>
+    <button class="opt"><code>"btn border-2"</code> — ไม่มี class สีเลย</button>
+    <button class="opt">โยน error ตอนรัน เพราะไม่มีกฎสำหรับคู่นี้</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · ผลรันจริงคือ <code>"btn border-2"</code> — กฎทั้งสองข้อในสไลด์ต้องการ <code>variant: "contained"</code>
+      แต่เราส่ง <code>outlined</code> → ไม่ครบเงื่อนไข → ไม่ต่อ
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิดเพราะคิดว่าแค่ <code>color</code> ตรงก็พอ · compound ต้อง<strong>ตรงทุกช่อง</strong>ในกฎ ·
+      ตัวเลือกที่ 2 ผิดสองชั้น: ทั้งต่อ class ที่ไม่ควรต่อ และทำ <code>border-2</code> ของแกน variant หาย ·
+      ตัวเลือกที่ 4 ผิดเพราะ cva ไม่เคยโยน error เรื่องนี้ ไม่มีกฎที่ตรงก็แค่ไม่ต่อ
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> compoundVariants ต่อท้ายเมื่อ<strong>ทุกเงื่อนไขตรง</strong>เท่านั้น · ไม่มีกฎ = ไม่มี class = ไม่มีคำเตือน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">API ส่งข้อมูลปุ่มมาเป็น <code>{ variant: null }</code> แล้วเราส่งต่อเข้า <code>buttonVariants</code> แบบย่อในหัวข้อ 4 · ได้ผลต่างจาก <code>{ variant: undefined }</code> ไหม?</p>
+  <div class="opts">
+    <button class="opt">เหมือนกัน — cva มองทั้งสองค่าเป็น "ไม่ได้ส่ง" แล้วใช้ defaultVariants</button>
+    <button class="opt">ต่างกัน — <code>null</code> ปิด default ของแกนนั้น compound ไม่ครบ ได้แค่ <code>"btn"</code></button>
+    <button class="opt">ต่างกัน — <code>null</code> ทำให้ cva ต่อคำว่า <code>"null"</code> เข้าไปใน string class</button>
+    <button class="opt">เหมือนกัน — แต่ TypeScript ฟ้อง <code>TS2322</code> ว่า <code>variant</code> รับ <code>null</code> ไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · ผลรันจริง: <code>{ variant: undefined }</code> ได้ <code>"btn bg-primary …"</code>
+      แต่ <code>{ variant: null }</code> ได้ <code>"btn"</code> เปล่า
+    </p>
+    <p>
+      ตัวเลือกที่ 1 คือสิ่งที่คนส่วนใหญ่เดา แต่ผลรันไม่ได้เป็นแบบนั้น ·
+      ตัวเลือกที่ 3 ผิดเพราะ string ที่ได้ไม่มีคำว่า <code>null</code> (ปัญหาคำขยะแบบนี้เป็นของ template literal ในบทเรียน 71 ไม่ใช่ของ cva) ·
+      ตัวเลือกที่ 4 ผิดเพราะ error ในหัวข้อ 5 แสดงว่า type ของ <code>variant</code> คือ <code>"contained" | "outlined" | null | undefined</code> — <strong>รับ null ได้</strong>
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> ใน cva <code>undefined</code> = "ใช้ค่า default" · <code>null</code> = "ไม่เอาค่าไหนเลย"</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">Button ของเราเขียน <code>disabled={disabled || loading}</code> · ถ้าเปลี่ยนเป็นแค่แสดง spinner ตอน <code>loading</code> แต่<strong>ไม่ใส่ disabled</strong> จะเสียอะไร?</p>
+  <div class="opts">
+    <button class="opt">spinner จะไม่หมุน เพราะ <code>animate-spin</code> ทำงานเฉพาะในปุ่มที่ disabled</button>
+    <button class="opt"><code>npx tsc --noEmit</code> จะฟ้อง เพราะ <code>loading</code> ต้องใช้คู่กับ <code>disabled</code></button>
+    <button class="opt">cva จะไม่ต่อ class <code>disabled:opacity-50</code> เพราะแกน disabled ไม่ถูกเลือก</button>
+    <button class="opt">ปุ่มยังกดได้ระหว่างรอ ผู้ใช้กดซ้ำจะส่งคำขอซ้ำ และปุ่มไม่จางลงด้วย</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · attribute <code>disabled</code> เป็นตัวที่ทำให้เบราว์เซอร์ไม่ส่ง click ·
+      และ <code>disabled:opacity-50</code> ใน class ฐานจะทำงานก็ต่อเมื่อแท็กมี attribute นั้นจริง
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิดเพราะ <code>animate-spin</code> ไม่ขึ้นกับสถานะปุ่ม ·
+      ตัวเลือกที่ 2 ผิดเพราะ <code>loading?: boolean</code> เป็นแค่ช่อง optional ไม่ได้ผูกกับอะไร tsc ผ่าน ·
+      ตัวเลือกที่ 3 ผิดเพราะ Button ของเรา<strong>ไม่มีแกน disabled ใน cva</strong> — <code>disabled:opacity-50</code> อยู่ใน class ฐาน<strong>ทุกปุ่ม</strong>ตลอด (ดูผลรันในหัวข้อ 3)
+      มันแค่มีผลเมื่อ attribute มา
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> loading state = disabled (กันกดซ้ำ) + spinner (บอกว่ากำลังทำ) — ต้องมีทั้งคู่</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">เรียก <code>cn(buttonVariants({ size: "sm" }), "h-12")</code> · class ความสูงใน string ผลลัพธ์เหลืออะไร?</p>
+  <div class="opts">
+    <button class="opt">เหลือแค่ <code>h-12</code> — <code>cn</code> ลบ <code>h-8.5</code> ที่ชนกันทิ้ง</button>
+    <button class="opt">เหลือแค่ <code>h-8.5</code> — ค่าจาก cva ถือเป็นค่าหลักเสมอ</button>
+    <button class="opt">มีทั้ง <code>h-8.5</code> และ <code>h-12</code> — <code>cn</code> แค่ต่อ string ให้</button>
+    <button class="opt">ไม่เหลือเลย — <code>cn</code> ลบทั้งสองตัวเพราะขัดกัน</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · ผลรันจริงในหัวข้อ 6: ผ่าน <code>cn()</code> แล้ว <code>h-8.5</code> หายไป เหลือ <code>h-12</code> ตัวที่มาทีหลัง
+    </p>
+    <p>
+      ตัวเลือกที่ 2 กลับด้าน — ตัวที่มาทีหลัง (className ของคนใช้) ชนะ ·
+      ตัวเลือกที่ 3 คือพฤติกรรมของการต่อ string เฉย ๆ หรือส่ง <code>className</code> ให้ cva ตรง ๆ ไม่ใช่ของ <code>cn</code> ·
+      ตัวเลือกที่ 4 ผิดเพราะ cn ไม่ลบทิ้งทั้งคู่ มันเก็บตัวสุดท้ายไว้
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> cva สร้าง class · cn ตัดสินว่า class ไหนชนะเมื่อชนกัน — Button ที่รับ className จากข้างนอกต้องใช้คู่กัน</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">9 · ภารกิจ — เพิ่มแกนใหม่แล้วพิสูจน์ด้วยผลรัน</h2>
+
+<div class="task">
+  <h3 id="sn-sub-2">🛠 เพิ่ม <code>block</code> (เต็มความกว้าง) และขอบหนาเฉพาะปุ่มขอบใหญ่</h3>
+  <p>
+    ดีไซเนอร์ขอสองอย่าง: หน้า login อยากได้ปุ่มกว้างเต็มแถว ·
+    และปุ่ม <code>outlined</code> ขนาด <code>lg</code> ขอบ 2px ดูบางไป อยากได้ 3px ·
+    ทำตามลำดับนี้ใน <code>components/Bases/button-variants.ts</code> และ <code>Button.tsx</code>:
+  </p>
+  <ol>
+    <li>เพิ่มแกน boolean ชื่อ <code>block</code> ใน <code>variants</code>: <code>true</code> → <code>"w-full"</code> · <code>false</code> → <code>""</code> · และตั้ง default เป็น <code>false</code></li>
+    <li>เพิ่มกฎใน <code>compoundVariants</code>: เมื่อ <code>variant: "outlined"</code> <strong>และ</strong> <code>size: "lg"</code> ให้ต่อ <code>"border-3"</code></li>
+    <li>แก้ <code>Button.tsx</code> ให้ดึง <code>block</code> ออกจาก props แล้วส่งเข้า <code>buttonVariants</code></li>
+    <li>เขียนไฟล์ <code>scratch/task.mts</code> (อย่าลืมเพิ่ม <code>"scratch"</code> ใน <code>exclude</code> ของ <code>tsconfig.json</code>) เรียก
+      <code>buttonVariants</code> 4 แบบ: <code>outlined+lg</code> · <code>outlined+md</code> · <code>contained+lg</code> · <code>{ block: true }</code>
+      แล้วรัน <code>node scratch/task.mts</code> · <strong>ชี้ให้ได้ว่า <code>border-3</code> โผล่เฉพาะบรรทัดไหน</strong></li>
+    <li>เขียน <code>&lt;Button block="yes"&gt;</code> ไว้ในไฟล์ใดไฟล์หนึ่ง แล้วรัน <code>npx tsc --noEmit</code> ก็อป error มาเก็บไว้ · จากนั้นลบบรรทัดนั้นแล้วรันอีกรอบให้ exit 0</li>
+    <li>รัน <code>npx next build</code> ให้ผ่าน</li>
+  </ol>
+  <p class="ask">
+    ก่อนกดเฉลย ตอบให้ได้: string ของ <code>outlined+lg</code> มีทั้ง <code>border-2</code> และ <code>border-3</code> ไหม?
+    แล้วบนหน้าเว็บจริงปุ่มจะได้ขอบเท่าไหร่ ทำไม?
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ส่วนที่เพิ่มใน <code>button-variants.ts</code>:</p>
+<pre><code>    variants: {
+      <span class="c">// … variant / color / size เหมือนเดิม</span>
+      block: {
+        <span class="k">true</span>: <span class="s">"w-full"</span>,
+        <span class="k">false</span>: <span class="s">""</span>,
+      },
+    },
+    compoundVariants: [
+      {
+        variant: <span class="s">"outlined"</span>,
+        size: <span class="s">"lg"</span>,
+        className: <span class="s">"border-3"</span>,
+      },
+      <span class="c">// … กฎสีแปดข้อเหมือนเดิม</span>
+    ],
+    defaultVariants: {
+      variant: <span class="s">"contained"</span>,
+      color: <span class="s">"primary"</span>,
+      size: <span class="s">"md"</span>,
+      block: <span class="k">false</span>,
+    },</code></pre>
+    <p>ใน <code>Button.tsx</code> เพิ่ม <code>block,</code> ในรายการที่ดึงออก และเปลี่ยนเป็น <code>buttonVariants({ variant, color, size, block })</code></p>
+    <p><strong>ผลรันจริง</strong> ข้อ 4:</p>
+<pre><code>{ variant: "outlined", size: "lg" }
+  "inline-flex … disabled:opacity-50 border-2 bg-transparent h-12 px-6 text-base <strong>border-3</strong> border-primary text-primary hover:bg-primary/10"
+{ variant: "outlined", size: "md" }
+  "inline-flex … disabled:opacity-50 border-2 bg-transparent h-10 px-4 text-sm border-primary text-primary hover:bg-primary/10"
+{ variant: "contained", size: "lg" }
+  "inline-flex … disabled:opacity-50 h-12 px-6 text-base bg-primary text-primary-foreground hover:bg-primary/90"
+{ block: true }
+  "inline-flex … disabled:opacity-50 h-10 px-4 text-sm <strong>w-full</strong> bg-primary text-primary-foreground hover:bg-primary/90"</code></pre>
+    <p><strong>ผลรันจริง</strong> ข้อ 5 — <code>boolean</code> ของ cva ถูกแปลงเป็น type ให้เองด้วย:</p>
+<pre><code>app/buttons/bad.tsx(7,15): error TS2322: Type 'string' is not assignable to type 'boolean | null | undefined'.</code></pre>
+    <p>
+      คำตอบคำถาม: string ของ <code>outlined+lg</code> จาก <code>buttonVariants</code> <strong>มีทั้ง <code>border-2</code> และ <code>border-3</code></strong>
+      (compound แค่ต่อท้าย ไม่ลบของเดิม — ตรงกับท่อน "ที่ไม่เหมือนกัน" ในหัวข้อ 4) ·
+      แต่ Button ของเราห่อด้วย <code>cn()</code> · ผมรัน <code>cn(buttonVariants({ variant: "outlined", size: "lg" }))</code> จริงแล้วได้:
+    </p>
+<pre><code>"inline-flex … disabled:opacity-50 bg-transparent h-12 px-6 text-base border-3 border-primary text-primary hover:bg-primary/10"</code></pre>
+    <p style="margin-bottom:0">
+      <code>border-2</code> หายไป เหลือ <code>border-3</code> → หน้าเว็บได้ขอบ 3px แน่นอน ·
+      <strong>ถ้าไม่มี <code>cn</code></strong> ขอบจะหนาเท่าไหร่ขึ้นกับลำดับ rule ในไฟล์ CSS ซึ่งทายจากโค้ดไม่ได้ ·
+      นี่คือเหตุผลที่ shadcn ห่อ <code>buttonVariants</code> ด้วย <code>cn</code> ทุกครั้ง
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ ถ้าตอบสี่ข้อนี้ได้ แปลว่าบทนี้ผ่านแล้ว</strong>
+    <br>1. ทำไมสีของปุ่มในบทนี้ไปอยู่ใน <code>compoundVariants</code> แทนที่จะอยู่ในแกน <code>color</code> ตรง ๆ?
+    <br>2. <code>buttonVariants({ color: "accent" })</code> ได้สีส้มไหม ทั้งที่ไม่ได้ส่ง <code>variant</code>?
+    <br>3. <code>VariantProps&lt;typeof buttonVariants&gt;</code> ช่วยอะไร ถ้าไม่มีต้องเขียนอะไรซ้ำ?
+    <br>4. loading state ต้องทำสองอย่างอะไรบ้าง?
+    <br>ติดข้อไหน ถามกลับมาได้เลย — ยกโค้ด cva ของคุณมาพร้อมผลที่รันได้ จะตอบได้ตรงกว่า
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0081-design-tokens.html">← บทเรียน 81 · Design Tokens</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Next.js App</a>
+  <a href="./0083-app-layout-navbar.html">บทเรียน 83 → Layout และ Navbar</a>
+</nav>
+
+<h2 id="sn-sec-10">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://cva.style/docs/getting-started/variants">cva — Variants</a> —
+      <strong>อ่านหัวข้อ <em>Compound Variants</em> และ <em>Default Variants</em></strong>
+      ให้เห็นตัวอย่างทางการของสองช่องที่หัวข้อ 4 รันพิสูจน์ · สังเกตว่าในกฎ compound ใช้ได้ทั้ง <code>class</code> และ <code>className</code></li>
+  <li><a href="https://cva.style/docs/getting-started/typescript">cva — TypeScript</a> —
+      <strong>อ่านส่วนที่อธิบาย <code>VariantProps</code></strong> ·
+      สั้นมาก และเป็นท่าเดียวกับบรรทัด <code>export type ButtonVariantProps</code> ในหัวข้อ 3</li>
+  <li><a href="https://ui.shadcn.com/docs/components/button">shadcn/ui — Button</a> —
+      <strong>ดูหัวข้อ <em>Usage</em> และตัวอย่างที่ใช้ <code>buttonVariants</code> กับลิงก์</strong>
+      เพื่อเข้าใจว่าทำไม shadcn export <code>buttonVariants</code> ออกมาด้วย (ตารางหัวข้อ 7 แถวสุดท้าย)</li>
+  <li><a href="https://tailwindcss.com/docs/height">Tailwind CSS — height</a> —
+      <strong>ดูตาราง <code>h-&lt;number&gt;</code></strong> ที่เขียนว่าคำนวณจาก <code>calc(var(--spacing) * &lt;number&gt;)</code>
+      ซึ่งเป็นเหตุผลที่ <code>h-8.5</code> ได้ 34px ตรงป้ายสไลด์หน้า 30</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/button">MDN — &lt;button&gt;</a> —
+      <strong>อ่าน attribute <code>disabled</code></strong> ในรายการ Attributes ·
+      และ <a href="https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Attributes/aria-busy">MDN — aria-busy</a>
+      สำหรับเหตุผลของ <code>aria-busy</code> บนปุ่ม loading</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -127,6 +127,32 @@ _Avoid_: เรียกว่า "เงื่อนไข" — มันไม
 _Avoid_: เรียกฟังก์ชัน helper ธรรมดาว่า hook — ถ้าไม่ได้เรียก hook อื่นข้างใน มันไม่ใช่ hook
 และการตั้งชื่อขึ้นต้นด้วย `use` จะทำให้ lint เตือนผิดที่
 
+## ฝั่งแอป Next.js และ Agentic Workflow — คำที่ต้องแยกให้ชัด (เพิ่ม 15 ก.ย. 2026)
+
+**component** vs **container** (บท 79):
+component = รับ props แล้วโชว์ ไม่รู้เรื่อง business · container = ประกอบ component ตาม requirement ถือข้อมูล/state
+_Avoid_: ถือว่า container ต้องมี `"use client"` เสมอ — ตัวที่แค่ map ข้อมูลไม่จำเป็น (บท 85 วัดแล้ว)
+
+**shadcn/ui** vs **component library ปกติ** (บท 80):
+shadcn **ก็อป source มาวางใน `components/ui/`** แล้วโค้ดเป็นของเรา · library ปกติอยู่ใน `node_modules` แล้ว import
+_Avoid_: เรียก shadcn ว่า "package ที่ติดตั้ง" · และอย่าแก้ไฟล์ใน `components/ui/` ตรง ๆ — ห่อเป็น component ใหม่แทน
+
+**design token** vs **CSS variable** (บท 81):
+token = การตัดสินใจเรื่องดีไซน์ที่มีชื่อ (สีหลัก ระยะ) · CSS variable = วิธีเก็บมันในโค้ด
+ใน Tailwind v4 ต้องมีทั้ง `:root { --primary }` และ `@theme inline { --color-primary }` ถึงจะได้ class `bg-primary`
+_Avoid_: คิดว่าประกาศใน `:root` แล้วได้ class ทันที — build ผ่านเงียบ ๆ แต่ class ไม่มี CSS
+
+**variant** vs **compound variant** (บท 82):
+variant = ตัวเลือกหนึ่งมิติ (size · color) · compound variant = class ที่ใส่เพิ่ม**เมื่อหลายมิติตรงพร้อมกัน**
+
+**agentic workflow** vs **แชทถาม-ตอบ** (บท 86–87):
+agent อ่านไฟล์ รันคำสั่ง แก้โค้ดได้เอง จึงต้องมีขั้นตอน (Explore · Plan · Code · Evaluate · Commit) และต้องคุมสิทธิ์
+_Avoid_: ข้าม Evaluate แล้ว commit — สไลด์เตือนตรง ๆ ว่า Commit ทำหลัง eval ผ่านเท่านั้น
+
+**few-shot** vs **step-by-step** (บท 88):
+few-shot = ให้ตัวอย่าง input → output ให้ดูว่าดีหน้าตาเป็นยังไง · step-by-step = บอกให้คิดทีละขั้นก่อนตอบ
+_Avoid_: ใช้สองคำนี้แทนกัน — อันแรกบอก "ผลลัพธ์ที่ดี" อันหลังบอก "วิธีคิด"
+
 ## คำที่จะถูกเพิ่มเมื่อผู้เรียนพิสูจน์แล้วว่าใช้เป็น
 
 รอหลักฐานจาก quiz / ภารกิจในบทเรียน 0001–0003:

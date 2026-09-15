@@ -137,6 +137,23 @@
       { n: '76', f: 'fe-nextjs/lessons/0076-usecontext.html', t: 'useContext: ส่งค่าข้ามหลายชั้น' },
       { n: '77', f: 'fe-nextjs/lessons/0077-custom-hooks.html', t: 'custom hooks และกฎ 4 ข้อ' },
       { n: '78', f: 'fe-nextjs/lessons/0078-nextjs-workshop.html', t: 'โจทย์ Customer Search' }
+    ]},
+    { key: 'fe-nextjs-app', btn: 'Next.js App', where: 'Next.js App',
+      sheetLabel: 'Cheat sheet Next.js App', d: 104, lessons: [
+      { n: '79', f: 'fe-nextjs-app/lessons/0079-folder-structure-containers.html', t: 'โครงโฟลเดอร์: components กับ containers' },
+      { n: '80', f: 'fe-nextjs-app/lessons/0080-shadcn-ui.html', t: 'shadcn/ui: ก็อปโค้ด component มาไว้ในโปรเจกต์' },
+      { n: '81', f: 'fe-nextjs-app/lessons/0081-design-tokens.html', t: 'Design Tokens: สีและระยะที่ตั้งชื่อไว้ที่เดียว' },
+      { n: '82', f: 'fe-nextjs-app/lessons/0082-cva-variants.html', t: 'Button variants ด้วย CVA' },
+      { n: '83', f: 'fe-nextjs-app/lessons/0083-app-layout-navbar.html', t: 'Layout ของแอป: Container และ Navbar' },
+      { n: '84', f: 'fe-nextjs-app/lessons/0084-recipe-card-states.html', t: 'RecipeCard และ 4 สถานะของหน้า' },
+      { n: '85', f: 'fe-nextjs-app/lessons/0085-recipes-page-workshop.html', t: 'โจทย์หน้า All Recipes' }
+    ]},
+    { key: 'fe-agentic', btn: 'Agentic', where: 'Agentic Workflow',
+      sheetLabel: 'Cheat sheet Agentic Workflow', d: 105, lessons: [
+      { n: '86', f: 'fe-agentic/lessons/0086-claude-code-setup.html', t: 'Claude Code คืออะไร และติดตั้งใน VS Code' },
+      { n: '87', f: 'fe-agentic/lessons/0087-agentic-workflow.html', t: 'Agentic Workflow 5 ขั้น' },
+      { n: '88', f: 'fe-agentic/lessons/0088-prompting-basics.html', t: 'prompt ที่ดี (1): ชัด · ตัวอย่าง · ทีละขั้น' },
+      { n: '89', f: 'fe-agentic/lessons/0089-prompting-structure.html', t: 'prompt ที่ดี (2): โครง · รูปแบบผลลัพธ์ · แก้ทีละรอบ' }
     ]}
   ];
 
