@@ -7,7 +7,8 @@
 
 เว็บบทเรียนภาษาไทย **static ล้วน ไม่มี build step ไม่มี dependency**
 เรียบเรียงจากสไลด์คอร์ส PEA DevPool — Enterprise Go Engineering with AI Integration
-ตอนนี้มี **89 บท** แบ่งเป็นสองฝั่ง · deploy จริงบน Vercel ให้เพื่อนร่วมคอร์สใช้
+ตอนนี้มี **89 บท** แบ่งเป็นสองฝั่ง · deploy จริงให้เพื่อนร่วมคอร์สใช้ที่
+<https://learndevpool69.vercel.app/> (Vercel · push ขึ้น `main` แล้วขึ้นเองอัตโนมัติ)
 
 | ฝั่ง | เนื้อหา | โฟลเดอร์ | บท |
 |---|---|---|---|

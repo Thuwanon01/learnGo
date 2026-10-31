@@ -490,6 +490,7 @@ auditor ของบท 64 รายงานว่า `npx tsc --version` ค�
 
 ## Deploy (เพิ่มตอนขึ้น GitHub + Vercel)
 
+เว็บจริง: <https://learndevpool69.vercel.app/>
 repo: <https://github.com/Thuwanon01/learnGo> · เว็บเป็น static ล้วน
 **ไม่มี build step ไม่มี dependency** — Vercel เดา preset "Other" เองได้
 push ขึ้น `main` แล้ว deploy อัตโนมัติ · branch อื่นได้ Preview URL

@@ -472,6 +472,7 @@ detector ต้อง **ข้ามเมื่อ `display` ของตัว
 
 ## 10 · Deploy
 
+เว็บจริง: <https://learndevpool69.vercel.app/>
 repo: <https://github.com/Thuwanon01/learnGo> · push ขึ้น `main` แล้ว Vercel deploy อัตโนมัติ
 branch อื่นได้ Preview URL ของตัวเอง · Framework Preset = **Other** · Build Command เว้นว่าง
 

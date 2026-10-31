@@ -1,5 +1,7 @@
 # คอร์ส PEA DevPool — บทเรียนที่ทำแบบฝึกหัดได้จริง
 
+**เปิดอ่านได้ที่ <https://learndevpool69.vercel.app/>**
+
 สรุปจากสไลด์คอร์ส **PEA DevPool — Enterprise Go Engineering with AI Integration**
 เรียบเรียงใหม่เป็นเว็บบทเรียนภาษาไทย **89 บท** ที่มี predict-the-output, quiz
 ที่ให้ feedback ทันที และภารกิจให้ลงมือเขียนโค้ดทุกบท
