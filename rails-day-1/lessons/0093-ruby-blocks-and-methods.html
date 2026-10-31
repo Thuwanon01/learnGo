@@ -1,0 +1,1186 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 93 — Block, method และ ? กับ ! — ไวยากรณ์ที่ทำให้ Ruby หน้าตาไม่เหมือนใคร</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 93 · Rails · Day 1</p>
+  <h1>Block, method และ ? กับ ! — ไวยากรณ์ที่ทำให้ Ruby หน้าตาไม่เหมือนใคร</h1>
+  <p class="meta">~25 นาที (บทนี้ยาวกว่าปกติ เพราะมีกับดักที่ต้องรันให้ดูถึง 5 จุด) · ควรผ่าน <a href="./0092-ruby-symbol-hash-enumerable.html">บทเรียน 92</a> (Symbol · Hash) มาก่อน</p>
+  <p class="standfirst">
+    ถ้าเปิดโค้ด Rails ครั้งแรก สิ่งที่ทำให้คนเขียน Go กับ TypeScript งงที่สุดไม่ใช่ตัว framework
+    แต่เป็น<strong>หน้าตาของภาษาเอง</strong> — <code>do |format| … end</code> ที่ห้อยท้าย method ·
+    method ที่ไม่มีคำว่า <code>return</code> สักตัว · ชื่อ method ที่ลงท้ายด้วย <code>?</code> กับ <code>!</code>
+    <br>บทนี้ไล่สไลด์หน้า 22–25 ทีละเรื่อง เทียบกับ Go และ TypeScript ที่คุณรู้อยู่แล้ว
+    แล้ว<strong>รันกับดักให้ดูจริงห้าจุด</strong> — รวมถึงจุดที่ <code>puts</code> ตัวเดียวทำให้
+    <code>{ }</code> กับ <code>do…end</code> ได้ผลต่างกันโดยไม่มี error สักบรรทัด
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby -v</span>
+ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+<span class="c">$ rails -v</span>
+Rails 8.1.4
+
+<span class="c"># ตัวเทียบ</span>
+go version go1.26.5 darwin/arm64
+TypeScript Version 7.0.2 · node v24.14.0
+minitest 6.0.6 <span class="c">(มากับ Ruby 4.0 แล้ว ไม่ต้องติดตั้งเพิ่ม)</span></code></pre>
+  <p>
+    สไลด์ใช้ <strong>Ruby 4.0.6 · Rails 8.1.3</strong> · เครื่องที่ใช้ตรวจเป็น <strong>Ruby 4.0.9 · Rails 8.1.4</strong>
+    (รุ่นแก้บั๊กในสายเดียวกัน — ไวยากรณ์ทุกอย่างในบทนี้ไม่ต่างกัน)
+    <br>ทุกผลรันในบทนี้<strong>ก็อปมาจากเครื่องจริง</strong> · ค่าที่เปลี่ยนทุกครั้งที่รัน
+    (เลขที่อยู่หน่วยความจำ <code>0x0000…</code> · request id · เวลา) จะบอกกำกับไว้ทุกจุด
+    <br>ส่วนที่เป็น Rails รันในแอป <code>wongnok_blog</code> ที่สร้างตามสไลด์หน้า 40
+    (<code>rails new wongnok_blog --database=postgresql --css=tailwind</code>)
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · Block — ก้อนโค้ดที่ส่งติดท้าย method</h2>
+
+<p>
+  คุณเคยส่ง "ฟังก์ชัน" เข้าไปให้ฟังก์ชันอื่นมาแล้วทั้งสองภาษา ·
+  ใน Go คือ closure ที่เขียน <code>func(…) {…}</code> แล้วส่งเป็น argument ·
+  ใน TypeScript คือ callback แบบ arrow function ที่ใช้กับ <code>.map</code> ใน
+  <a href="../../fe-ts-fp/lessons/0067-map-filter-reduce.html">บทเรียน 67</a>
+</p>
+
+<p>
+  Ruby ก็ทำเรื่องเดียวกัน แต่<strong>ไม่ได้ส่งเป็น argument</strong> — มันมีช่องพิเศษแยกออกมาให้
+  เรียกว่า <strong>block</strong> เขียน<strong>ห้อยไว้ท้ายการเรียก method</strong> นอกวงเล็บ
+  นี่คือสไลด์หน้า 22 ทั้งสามภาษา (ผมเติมให้ครบจนรันได้จริง):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Go</th><th>TypeScript</th><th>Ruby</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><pre style="margin:0"><code>f := <span class="k">func</span>(n <span class="n">int</span>) <span class="n">int</span> {
+  <span class="k">return</span> n * <span class="n">2</span>
+}
+<span class="f">apply</span>(xs, f)</code></pre></td>
+      <td><pre style="margin:0"><code><span class="f">apply</span>(xs, n =&gt; n * <span class="n">2</span>)</code></pre></td>
+      <td><pre style="margin:0"><code>xs.<span class="f">map</span> { |n| n * <span class="n">2</span> }
+
+xs.<span class="f">each</span> <span class="k">do</span> |n|
+  <span class="f">puts</span> n
+<span class="k">end</span></code></pre></td>
+    </tr>
+    <tr>
+      <td>ฟังก์ชันเป็นค่าธรรมดา ส่งเข้าไปเป็น argument ตัวหนึ่ง · ไม่มี syntax พิเศษ</td>
+      <td>callback ก็เป็น argument ธรรมดาตัวหนึ่ง</td>
+      <td>block <strong>ไม่ใช่ argument</strong> · เป็นช่องพิเศษที่ห้อยท้าย · <code>|n|</code> คือชื่อของที่ method ส่งเข้ามาให้</td>
+    </tr>
+    <tr>
+      <td><code>[2 4 6]</code></td>
+      <td><code>[ 2, 4, 6 ]</code></td>
+      <td><code>[2, 4, 6]</code> แล้วพิมพ์ <code>1</code> <code>2</code> <code>3</code> คนละบรรทัด</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แถวสุดท้ายคือผลรันจริง (Go ต้องเขียน <code>apply</code> เองเพราะไม่มีใน standard library ·
+  <code>go build</code> ผ่าน · TS ผ่าน <code>tsc --noEmit --strict</code>)
+</p>
+
+<p>
+  <strong>"ไม่ใช่ argument" หมายความว่ายังไง?</strong> พิสูจน์ได้สองทาง —
+  method ที่นับจำนวน argument จะ<strong>ไม่นับ block</strong> และ method รู้ตัวว่ามี block มาไหมผ่าน <code>block_given?</code> ·
+  ส่วนการเรียกใช้ block จากข้างใน method ใช้คำว่า <code>yield</code>:
+</p>
+
+<pre><code><span class="k">def</span> <span class="f">twice</span>(label)
+  <span class="f">puts</span> <span class="s">"start #{label}"</span>
+  <span class="k">yield</span> <span class="n">1</span>          <span class="c"># เรียก block ครั้งที่ 1 ส่ง 1 เข้าไป</span>
+  <span class="k">yield</span> <span class="n">2</span>          <span class="c"># เรียก block ครั้งที่ 2 ส่ง 2 เข้าไป</span>
+  <span class="f">puts</span> <span class="s">"end #{label}"</span>
+<span class="k">end</span>
+
+<span class="f">twice</span>(<span class="s">"A"</span>) { |n| <span class="f">puts</span> <span class="s">"got #{n}"</span> }
+
+<span class="k">def</span> <span class="f">count_args</span>(*args) = args.<span class="f">size</span>
+<span class="f">p</span> <span class="f">count_args</span>(<span class="n">1</span>, <span class="n">2</span>) { <span class="s">"ignored?"</span> }
+
+<span class="k">def</span> <span class="f">has_block?</span> = <span class="f">block_given?</span>
+<span class="f">p</span> <span class="f">has_block?</span>
+<span class="f">p</span> <span class="f">has_block?</span> { }</code></pre>
+
+<pre><code><span class="c"># ผลรันจริง</span>
+start A
+got 1
+got 2
+end A
+2
+false
+true</code></pre>
+
+<p>
+  <code>count_args</code> ได้ <code>2</code> ไม่ใช่ <code>3</code> — block ไม่ถูกนับเป็น argument ·
+  ส่วน method ที่ <code>yield</code> แต่ไม่มีใครส่ง block มา จะพังตอนรันด้วย
+  <code>no block given (yield) (LocalJumpError)</code>
+</p>
+
+<p>
+  กฎที่สไลด์หน้า 22 ให้ไว้ มีสามข้อ:
+</p>
+<ol>
+  <li><strong>บรรทัดเดียวใช้ <code>{ }</code></strong> — <code>xs.map { |n| n * 2 }</code></li>
+  <li><strong>หลายบรรทัดใช้ <code>do … end</code></strong> — เหมือนตัวอย่าง <code>each</code> ด้านบน</li>
+  <li><strong>block ส่งได้ก้อนเดียวต่อการเรียกหนึ่งครั้ง</strong> — ลองเขียน <code>xs.map { |n| n * 2 } { |n| n * 3 }</code>
+      ได้ <code>syntax errors found (SyntaxError)</code> ตั้งแต่ก่อนรัน</li>
+</ol>
+
+<p>
+  ข้อ 1 กับ 2 เป็น<strong>ธรรมเนียม</strong>ของทีม ไม่ใช่กฎของภาษา (สไลด์ก็เขียนว่า "กฎที่ทีมส่วนใหญ่ใช้") ·
+  แต่สองแบบนี้<strong>ไม่ได้เหมือนกันร้อยเปอร์เซ็นต์</strong> — หัวข้อถัดไปจะรันให้ดูว่าต่างกันตรงไหน
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — โพสต์อิทคำสั่งที่แปะมากับกล่องพัสดุ</span>
+  <p>
+    <code>each</code> คือพนักงานคลังสินค้าที่<strong>รู้วิธีหยิบของออกจากกล่องทีละชิ้น</strong>
+    แต่ไม่รู้ว่าหยิบแล้วต้องทำอะไรต่อ ·
+    คุณจึงแปะ<strong>โพสต์อิทหนึ่งแผ่น</strong>ไว้ที่กล่องว่า "หยิบได้ชิ้นไหน ให้ตะโกนชื่อมันออกมา"
+    (นั่นคือ block <code>do |n| puts n end</code>)
+    <br>พนักงานหยิบชิ้นที่ 1 → อ่านโพสต์อิท → ทำตาม · หยิบชิ้นที่ 2 → อ่านโพสต์อิทแผ่นเดิม → ทำตาม
+    · คำว่า <code>yield</code> คือจังหวะ "หยิบโพสต์อิทขึ้นมาอ่าน"
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> โพสต์อิทจริงเป็นกระดาษเฉย ๆ
+    แต่ block <strong>มองเห็นตัวแปรรอบ ๆ ที่มันถูกเขียน</strong> (เป็น closure เหมือนใน Go) ·
+    และพนักงานจะ<strong>ไม่อ่านโพสต์อิทเลยก็ได้</strong> — ถ้า method ไม่ <code>yield</code>
+    block ที่คุณแปะไว้ก็ถูกทิ้งเงียบ ๆ ไม่มี error (เหมือน <code>count_args</code> ข้างบน)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>block</dt>
+    <dd>ก้อนโค้ดที่ห้อยท้ายการเรียก method ด้วย <code>{ }</code> หรือ <code>do … end</code> · ไม่ใช่ argument ธรรมดา ·
+        (คู่มือทางการเรียกช่องนี้ว่า <em>block argument</em> — หมายถึงช่องพิเศษท้ายสุดที่แยกจาก argument ในวงเล็บ ไม่ถูกนับรวม) ·
+        <strong>พิมพ์ถาม AI ได้ว่า "this method takes a block — what does it yield to the block?"</strong>
+        จะได้รู้ว่า <code>|…|</code> ตรงนั้นได้ค่าอะไรมา</dd>
+    <dt>yield</dt>
+    <dd>คำสั่งใน method ที่แปลว่า "เรียก block ที่ส่งมาตอนนี้ แล้วส่งค่านี้เข้าไป" ·
+        ถ้าไม่มี block แต่สั่ง <code>yield</code> จะได้ <code>LocalJumpError</code></dd>
+    <dt>block parameter (<code>|n|</code>)</dt>
+    <dd>ชื่อตัวแปรที่รับค่าที่ method <code>yield</code> ออกมา · เทียบได้กับ parameter ของ arrow function <code>n =&gt; …</code> ใน TS</dd>
+    <dt>closure</dt>
+    <dd>ฟังก์ชัน (หรือ block) ที่จำตัวแปรรอบตัวตอนที่มันถูกเขียนได้ ·
+        block ของ Ruby เป็น closure เหมือน <code>func</code> ใน Go ·
+        <strong>ถาม senior ได้ว่า "block ตรงนี้ไปแก้ตัวแปรข้างนอกหรือเปล่า"</strong> เวลาอ่านโค้ดที่ไล่ยาก</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">2 · กับดัก <code>{ }</code> vs <code>do…end</code> — block ไปเกาะ method ผิดตัว</h2>
+
+<p>
+  สองบรรทัดนี้ต่างกันแค่ใช้ <code>{ }</code> กับ <code>do…end</code> · ถ้ากฎในหัวข้อที่แล้วเป็นแค่ "เรื่องความสวยงาม"
+  ผลก็ต้องเหมือนกัน
+</p>
+
+<div class="predict">
+<pre><code><span class="f">puts</span> [<span class="n">1</span>, <span class="n">2</span>].<span class="f">map</span> { |n| n * <span class="n">2</span> }
+<span class="f">puts</span> <span class="s">"---"</span>
+<span class="f">puts</span> [<span class="n">1</span>, <span class="n">2</span>].<span class="f">map</span> <span class="k">do</span> |n| n * <span class="n">2</span> <span class="k">end</span>
+<span class="f">puts</span> <span class="s">"---"</span></code></pre>
+  <p class="ask">สองบรรทัดแรกกับสองบรรทัดหลังจะพิมพ์อะไร? ต่างกันไหม? มี error หรือ warning ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ ruby prec.rb</span>
+2
+4
+---
+#&lt;Enumerator:0x000000012480d520&gt;
+---</code></pre>
+    <p>
+      <strong>ต่างกันจริง</strong> · บรรทัดแรกได้ <code>2</code> กับ <code>4</code> ตามที่หวัง ·
+      บรรทัดที่สามได้ <code>#&lt;Enumerator:0x…&gt;</code> แทน
+      (เลขฐานสิบหกเปลี่ยนทุกครั้งที่รัน) ·
+      <strong>ไม่มี error · exit code 0 · รันด้วย <code>ruby -w</code> ก็ไม่มี warning สักบรรทัด</strong>
+    </p>
+    <p style="margin-bottom:0">
+      นี่แหละที่ทำให้กับดักนี้อันตราย — โปรแกรมไม่พัง แค่ได้ค่าผิด
+    </p>
+  </div>
+</div>
+
+<p>
+  ทำไม? เพราะ <strong><code>{ }</code> เกาะ method ที่อยู่ใกล้ที่สุด</strong> ส่วน
+  <strong><code>do…end</code> เกาะ method ที่อยู่ไกลที่สุด</strong> (ตัวซ้ายสุดในบรรทัด) ·
+  คู่มือทางการของ Ruby เขียนไว้ตรง ๆ ว่า <em>do end has lower precedence than { }</em>
+  · Ruby จึงอ่านสองบรรทัดนั้นแบบนี้:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ที่คุณเขียน</th><th>ที่ Ruby อ่าน</th><th>ผล</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>puts [1, 2].map { |n| n * 2 }</code></td>
+      <td><code>puts([1, 2].map { |n| n * 2 })</code></td>
+      <td><code>map</code> ได้ block → คืน <code>[2, 4]</code> → <code>puts</code> พิมพ์ทีละตัว</td>
+    </tr>
+    <tr>
+      <td><code>puts [1, 2].map do |n| n * 2 end</code></td>
+      <td><code>puts([1, 2].map) do |n| n * 2 end</code></td>
+      <td><code>map</code> <strong>ไม่ได้ block</strong> → คืน <code>Enumerator</code> (ของที่ "ยังรอ block อยู่") ·
+          block ไปตกที่ <code>puts</code> ซึ่งไม่สนใจ block เลย</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  วิธีหนีมีสามทาง ผลรันจริงของทั้งสามได้ <code>2</code> กับ <code>4</code> เหมือนกัน:
+  ใช้ <code>{ }</code> เมื่ออยู่บรรทัดเดียว ·
+  ใส่วงเล็บให้ <code>puts( … )</code> ·
+  หรือเก็บลงตัวแปรก่อน <code>x = [1, 2].map do |n| n * 2 end</code> แล้วค่อย <code>puts x</code>
+  (การกำหนดค่าไม่ใช่การเรียก method block จึงไม่มีที่ให้เกาะผิด)
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ตอนอ่าน Rails จะเจอ <code>do…end</code> อยู่ทุกไฟล์</strong> เช่นสไลด์หน้า 22 ยกตัวอย่าง
+    <code>respond_to do |format|</code> ใน controller ·
+    บรรทัดนั้นปลอดภัยเพราะมี method ตัวเดียว (<code>respond_to</code>) block ไม่มีทางเกาะผิด ·
+    กับดักจะโผล่เฉพาะตอนที่<strong>มีสอง method ในบรรทัดเดียวโดยไม่มีวงเล็บ</strong> —
+    ตัวที่เจอบ่อยที่สุดคือ <code>puts</code> / <code>p</code> ที่เราแปะหน้าบรรทัดตอน debug นี่แหละ
+  </p>
+</div>
+
+<p>
+  ส่วน <code>format</code> ใน <code>respond_to do |format|</code> คืออะไร?
+  สไลด์บอกว่าเป็น "object ที่ Rails ส่งเข้ามาใน block" · ผมแอบพิมพ์ class ของมันใน controller จริงดู ได้
+  <code>ActionController::MimeResponds::Collector</code> —
+  เป็นตัวเก็บว่า "ถ้าขอ HTML ทำแบบนี้ · ถ้าขอ JSON ทำแบบนี้" · ตอนนี้แค่จำว่า
+  <strong><code>|format|</code> คือของที่ <code>respond_to</code> yield ออกมาให้</strong> ก็พอ
+  รายละเอียดรอ <a href="./0102-rails-controller.html">บทเรียน 102</a> และวันถัด ๆ ไป
+</p>
+
+<h2 id="sn-sec-3">3 · Method คืนค่าบรรทัดสุดท้ายเอง — ไม่ต้องมี <code>return</code></h2>
+
+<p>
+  ใน Go กับ TS คุณต้องพิมพ์ <code>return</code> ทุกครั้งที่จะส่งค่ากลับ ·
+  Ruby กลับด้าน: <strong>method คืนค่าของบรรทัดสุดท้ายที่ถูกรันเสมอ</strong> โดยไม่ต้องบอก
+  (สไลด์หน้า 23)
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Go</th><th>TypeScript</th><th>Ruby</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><pre style="margin:0"><code><span class="k">func</span> <span class="f">Add</span>(a, b <span class="n">int</span>) <span class="n">int</span> {
+  <span class="k">return</span> a + b
+}</code></pre></td>
+      <td><pre style="margin:0"><code><span class="k">function</span> <span class="f">add</span>(a, b) {
+  <span class="k">return</span> a + b
+}</code></pre></td>
+      <td><pre style="margin:0"><code><span class="k">def</span> <span class="f">add</span>(a, b)
+  a + b        <span class="c"># ไม่มี return</span>
+<span class="k">end</span>
+
+<span class="k">def</span> <span class="f">add</span>(a, b) = a + b
+<span class="c"># endless method (3.0+)</span></code></pre></td>
+    </tr>
+    <tr>
+      <td>ต้องมี <code>return</code> · ต้องระบุ type</td>
+      <td>ต้องมี <code>return</code> (ยกเว้น arrow แบบสั้น <code>(a, b) =&gt; a + b</code>)</td>
+      <td>บรรทัดสุดท้ายคือค่าที่คืน · แบบ <code>def … = …</code> ใช้ได้เมื่อมีนิพจน์เดียว</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <code>p add(2, 3)</code> ได้ <code>5</code> ทั้งสองแบบ (รันจริงแล้ว) ·
+  แบบที่สองชื่อ <strong>endless method</strong> เพราะไม่มี <code>end</code> ปิดท้าย —
+  เทียบได้กับ arrow function แบบสั้นของ TS นั่นเอง
+</p>
+
+<p>
+  "บรรทัดสุดท้าย" หมายถึง<strong>บรรทัดสุดท้ายที่ถูกรันจริง</strong> ไม่ใช่บรรทัดล่างสุดในไฟล์ ·
+  เช่นใน <code>if/else</code> ค่าที่คืนคือบรรทัดสุดท้ายของกิ่งที่ถูกเลือก:
+</p>
+
+<pre><code><span class="k">def</span> <span class="f">grade</span>(score)
+  <span class="k">if</span> score &gt;= <span class="n">50</span>
+    <span class="s">"pass"</span>
+  <span class="k">else</span>
+    <span class="s">"fail"</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+<span class="f">p</span> <span class="f">grade</span>(<span class="n">70</span>)   <span class="c"># =&gt; "pass"</span>
+<span class="f">p</span> <span class="f">grade</span>(<span class="n">10</span>)   <span class="c"># =&gt; "fail"</span></code></pre>
+
+<p>
+  <code>return</code> ยังมีอยู่และยังใช้กันจริง — ใช้<strong>ออกก่อนกำหนด</strong>
+  แบบ guard clause ที่คุณเรียนใน <a href="../../day-2/lessons/0004-guard-clauses.html">บทเรียน 04</a>:
+  <code>return "negative" if n &lt; 0</code> ·
+  สิ่งที่ Rubyist ไม่ทำคือเขียน <code>return</code> ที่บรรทัดสุดท้าย เพราะมันซ้ำซ้อน
+</p>
+
+<div class="warn">
+  <p><strong>⚠️ กับดัก: แปะ <code>puts</code> ไว้บรรทัดสุดท้ายแล้วค่าหาย</strong></p>
+<pre><code><span class="k">def</span> <span class="f">oops</span>(a, b)
+  a + b
+  <span class="f">puts</span> <span class="s">"done"</span>     <span class="c"># เพิ่มบรรทัดนี้ตอน debug</span>
+<span class="k">end</span>
+<span class="f">p</span> <span class="f">oops</span>(<span class="n">2</span>, <span class="n">3</span>)</code></pre>
+<pre><code><span class="c"># ผลรันจริง</span>
+done
+nil</code></pre>
+  <p style="margin-bottom:0">
+    พอแทรก <code>puts</code> ไว้ท้ายสุด บรรทัดสุดท้ายก็เปลี่ยนเป็น <code>puts "done"</code>
+    ซึ่ง<strong>คืน <code>nil</code> เสมอ</strong> (หัวข้อ 6 จะพิสูจน์) · method ที่เคยคืน <code>5</code>
+    จึงคืน <code>nil</code> ทันที ทั้งที่ไม่ได้แตะบรรทัด <code>a + b</code> เลย ·
+    ใน Go เรื่องนี้เกิดไม่ได้เพราะ <code>return</code> ระบุชัดว่าคืนอะไร
+  </p>
+</div>
+
+<p>
+  สไลด์หน้า 23 ยกตัวอย่างฝั่ง Rails ไว้หนึ่งบรรทัด ซึ่งรวมทุกอย่างของหัวข้อนี้ไว้ในที่เดียว:
+</p>
+
+<pre><code><span class="k">def</span> <span class="f">published?</span> = published_at.<span class="f">present?</span></code></pre>
+
+<p>
+  อ่านว่า: method ชื่อ <code>published?</code> (endless) คืนค่าว่า <code>published_at</code> "มีค่า" หรือเปล่า ·
+  ผมลองใส่ใน class ธรรมดาแล้วรันจริง — ได้ <code>false</code> ตอนยังไม่ตั้งเวลา และ <code>true</code> หลังตั้ง ·
+  <strong>แต่ต้องรันด้วย Active Support</strong> (<code>ruby -ractive_support/all</code>) เพราะ
+  <code>present?</code> ไม่ใช่ของ Ruby เปล่า ๆ · รันด้วย Ruby ล้วนได้:
+</p>
+
+<pre><code>pub.rb:3:in 'Post#published?': undefined method 'present?' for nil (NoMethodError)</code></pre>
+
+<p>
+  ในแอป Rails ไม่ต้องห่วงเรื่องนี้ เพราะ Rails โหลด Active Support ให้ตั้งแต่บูต ·
+  แต่ถ้าวันหนึ่งคุณเขียนสคริปต์ Ruby แยกนอก Rails แล้วเจอ error นี้ ให้นึกถึงย่อหน้านี้
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — พนักงานที่ยื่นของในมือให้ตอนเลิกงาน</span>
+  <p>
+    ใน Go เหมือนพนักงานที่ต้อง<strong>เดินมายื่นของให้คุณเอง</strong> พร้อมพูดว่า "นี่ครับ" (<code>return</code>) —
+    ถ้าไม่พูด คุณไม่ได้อะไรเลย และ compiler จะดุ ·
+    ใน Ruby เหมือนพนักงานที่พอ<strong>หมดเวลางาน ของชิ้นสุดท้ายที่ถืออยู่ในมือจะถูกยื่นให้คุณอัตโนมัติ</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงจะรู้ตัวว่า "เอ๊ะ ชิ้นนี้ไม่ใช่ของที่ลูกค้าสั่ง"
+    แต่ Ruby ไม่รู้ — ถ้างานสุดท้ายคือ <code>puts</code> ของในมือคือ <code>nil</code>
+    มันก็ยื่น <code>nil</code> ให้หน้าตาเฉย ไม่มี error ไม่มี warning
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>implicit return</dt>
+    <dd>การที่ method คืนค่าบรรทัดสุดท้ายเองโดยไม่ต้องเขียน <code>return</code> ·
+        <strong>ถาม senior ได้ว่า "ทีมนี้ยอมให้เขียน explicit return ที่บรรทัดสุดท้ายไหม"</strong> —
+        ในแอปที่สร้างด้วย <code>rails new</code> ถ้าเขียน <code>return</code> ไว้บรรทัดสุดท้าย
+        <code>bin/rubocop</code> จะฟ้อง <code>Style/RedundantReturn: Redundant return detected.</code> (ลองแล้ว)</dd>
+    <dt>endless method</dt>
+    <dd>method แบบบรรทัดเดียว <code>def name(args) = expression</code> · มีตั้งแต่ Ruby 3.0 ·
+        ใช้ได้เมื่อตัวเนื้อเป็นนิพจน์เดียว</dd>
+    <dt>early return / guard clause</dt>
+    <dd><code>return</code> ที่ใช้ออกจาก method ก่อนถึงบรรทัดสุดท้าย · หลักการเดียวกับใน Go ·
+        <strong>พิมพ์บอก AI ได้ว่า "refactor this with guard clauses, keep implicit return for the happy path"</strong></dd>
+    <dt>Active Support</dt>
+    <dd>ไลบรารีส่วนหนึ่งของ Rails ที่เติม method ให้ class พื้นฐานของ Ruby (เช่น <code>present?</code> · <code>3.days.ago</code>) ·
+        ใช้นอก Rails ได้ด้วย <code>require "active_support/all"</code></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · Keyword argument — ส่งค่าด้วยชื่อ ไม่ต้องจำลำดับ</h2>
+
+<p>
+  ซ้ายมือของสไลด์หน้า 24 คือ method ที่รับค่า<strong>ด้วยชื่อ</strong> ·
+  <code>title:</code> ที่ไม่มีค่าตามหลัง = <strong>ต้องส่ง</strong> ·
+  <code>body: ""</code> กับ <code>draft: false</code> = มีค่า default ไม่ส่งก็ได้
+</p>
+
+<pre><code><span class="k">def</span> <span class="f">create</span>(title:, body: <span class="s">""</span>, draft: <span class="n">false</span>)
+  { title: title, body: body, draft: draft }
+<span class="k">end</span>
+
+<span class="f">p</span> <span class="f">create</span>(title: <span class="s">"Hi"</span>, draft: <span class="n">true</span>)
+<span class="f">p</span> <span class="f">create</span>(draft: <span class="n">true</span>, title: <span class="s">"Hi"</span>)   <span class="c"># สลับลำดับได้</span></code></pre>
+
+<pre><code><span class="c"># ผลรันจริง</span>
+{title: "Hi", body: "", draft: true}
+{title: "Hi", body: "", draft: true}</code></pre>
+
+<p>
+  ทีนี้ลองลืมส่ง <code>title</code> · สะกดชื่อผิด · และส่งแบบไม่มีชื่อ — นี่คือ error จริงทั้งสามแบบ:
+</p>
+
+<pre><code><span class="c"># create(body: "no title")</span>
+kw_missing.rb:1:in 'Object#create': missing keyword: :title (ArgumentError)
+
+    caller: kw_missing.rb:4
+    | create(body: "no title")
+      ^^^^^^
+    callee: kw_missing.rb:1
+    | def create(title:, body: "", draft: false)
+          ^^^^^^
+	from kw_missing.rb:4:in '&lt;main&gt;'
+
+<span class="c"># สองแบบล่างนี้ตัดมาแค่บรรทัดแรก (ส่วน caller/callee หน้าตาเหมือนข้างบน)</span>
+<span class="c"># create(title: "Hi", drfat: true)    ← สะกด draft ผิด</span>
+kw_typo.rb:1:in 'Object#create': unknown keyword: :drfat (ArgumentError)
+
+<span class="c"># create("Hi")                         ← ไม่บอกชื่อ</span>
+kw_pos.rb:1:in 'Object#create': wrong number of arguments (given 1, expected 0; required keyword: title) (ArgumentError)</code></pre>
+
+<p>
+  ข้อความ Ruby 4.0 ใจดีมาก — บอกทั้ง<strong>จุดที่เรียก (caller)</strong> และ<strong>จุดที่ประกาศ (callee)</strong> ·
+  แต่สังเกตคำว่า <strong>ตอนไหน</strong>: error นี้เกิด<strong>ตอนบรรทัดนั้นถูกรัน</strong> ·
+  ถ้าการเรียกผิด ๆ อยู่ใน method ที่ไม่มีใครเรียก โปรแกรมก็รันผ่านไปเฉย ๆ
+  ต่างจากเพื่อนอีกสองภาษามาก:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th>Go (struct เป็นพารามิเตอร์)</th><th>TypeScript (object + destructure)</th><th>Ruby (keyword argument)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>ลืมส่ง <code>title</code></td>
+      <td>ผ่านเงียบ ๆ · <code>{Title: Body:no title Draft:false}</code> — ได้ zero value</td>
+      <td><code>tsc</code> ฟ้อง <code>TS2741: Property 'title' is missing…</code> <strong>ก่อนรัน</strong></td>
+      <td><code>ArgumentError</code> <strong>ตอนรันถึงบรรทัดนั้น</strong></td>
+    </tr>
+    <tr>
+      <td>สลับลำดับ</td>
+      <td>ได้ (เพราะระบุชื่อ field)</td>
+      <td>ได้</td>
+      <td>ได้</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  (ทุกช่องในตารางรันจริง — Go <code>go build</code> ผ่าน ·
+  TS ผ่าน <code>tsc --noEmit --strict</code> ยกเว้นบรรทัดที่ตั้งใจลืม <code>title</code>)
+</p>
+
+<p>
+  ส่วนล่างซ้ายของสไลด์คือท่าที่<strong>เห็นทุกไฟล์ใน Rails</strong>:
+  ถ้า argument ตัวสุดท้ายเป็น Hash จะละปีกกาได้ ·
+  <code>render json: post, status: :created</code> จึงคือการส่ง Hash ก้อนเดียวเข้าไป
+</p>
+
+<pre><code><span class="k">def</span> <span class="f">render</span>(options = {})
+  <span class="f">p</span> options
+<span class="k">end</span>
+post = { title: <span class="s">"Hi"</span> }
+<span class="f">render</span> json: post, status: <span class="n">:created</span>
+<span class="f">render</span>({ json: post, status: <span class="n">:created</span> })   <span class="c"># แบบเต็มยศ — ความหมายเดียวกัน</span></code></pre>
+
+<pre><code><span class="c"># ผลรันจริง</span>
+{json: {title: "Hi"}, status: :created}
+{json: {title: "Hi"}, status: :created}</code></pre>
+
+<p>
+  พอรู้ข้อนี้ บรรทัดอย่าง <code>render json: post, status: :created</code>
+  จะไม่ดูเหมือนภาษาประหลาดอีกต่อไป — มันคือ method <code>render</code> ที่รับ Hash
+  <code>{json: …, status: :created}</code> ที่คุณเรียนใน
+  <a href="./0092-ruby-symbol-hash-enumerable.html">บทเรียน 92</a> นั่นเอง
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — แบบฟอร์มที่มีช่องติดป้าย vs ใส่ของลงกล่องเรียงแถว</span>
+  <p>
+    argument ธรรมดาเหมือน<strong>ใส่ของลงกล่องที่วางเรียงกัน</strong> —
+    กล่องแรกคือชื่อเรื่อง กล่องที่สองคือเนื้อหา ใส่สลับเมื่อไหร่ได้ของผิดช่องทันที ·
+    keyword argument เหมือน<strong>แบบฟอร์มที่ทุกช่องมีป้ายชื่อ</strong> ("ชื่อเรื่อง: ___") —
+    กรอกช่องไหนก่อนก็ได้ · ช่องที่มีดอกจัน (<code>title:</code>) เว้นว่างไม่ได้ ·
+    ช่องที่มีค่าพิมพ์ไว้ให้แล้ว (<code>draft: false</code>) ไม่กรอกก็ได้
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> แบบฟอร์มจริงมีเจ้าหน้าที่ตรวจตอน<strong>ยื่น</strong>
+    แต่ Ruby ไม่มีใครตรวจล่วงหน้าเลย (ไม่เหมือน <code>tsc</code>) — ช่องดอกจันที่ว่างจะถูกจับได้
+    <strong>ตอนโปรแกรมรันมาถึงบรรทัดนั้นจริง ๆ เท่านั้น</strong> · บรรทัดที่ไม่เคยถูกรัน ไม่มีวันรู้ว่าผิด
+    — นี่คือเหตุผลที่คนเขียน Ruby ให้ความสำคัญกับเทสมาก (Day 4 รออยู่)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>keyword argument (kwargs)</dt>
+    <dd>argument ที่ส่งด้วยชื่อ <code>name: value</code> · ลำดับไม่สำคัญ ·
+        <strong>พิมพ์บอก AI ได้ว่า "convert these positional args to keyword args"</strong>
+        เวลา method มี argument เกินสามตัวแล้วเริ่มสับสนลำดับ</dd>
+    <dt>required keyword</dt>
+    <dd>keyword ที่ไม่มีค่า default (<code>title:</code>) · ไม่ส่งได้ <code>missing keyword: :title</code></dd>
+    <dt>trailing hash / options hash</dt>
+    <dd>Hash ที่เป็น argument ตัวสุดท้ายจะละ <code>{ }</code> ได้ · ท่ามาตรฐานของ Rails ทั้ง
+        <code>render</code> · <code>redirect_to</code> · <code>validates</code> ·
+        <strong>ถาม senior ได้ว่า "method นี้รับ options อะไรได้บ้าง ดูจากไหน"</strong>
+        (คำตอบมักเป็น api.rubyonrails.org)</dd>
+    <dt>ArgumentError</dt>
+    <dd>error ที่ Ruby โยนเมื่อส่ง argument ไม่ตรงกับที่ method ประกาศ — จำนวนผิด · keyword หาย · keyword เกิน</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 · <code>?</code> กับ <code>!</code> — แค่ตัวอักษรในชื่อ แต่ทั้งวงการถือเป็นสัญญา</h2>
+
+<p>
+  ประโยคที่สำคัญที่สุดของสไลด์หน้า 24 คือ:
+  <strong><code>?</code> และ <code>!</code> ไม่ใช่ syntax ของภาษา — เป็นแค่ตัวอักษรในชื่อ method</strong>
+  · Ruby ยอมให้ชื่อ method ลงท้ายด้วยสองตัวนี้ได้ แต่<strong>ไม่ได้บังคับความหมายอะไรเลย</strong>
+  · ความหมายมาจากข้อตกลงของคนเขียน Ruby ทั้งวงการ:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ท้ายชื่อ</th><th>ข้อตกลง</th><th>ตัวอย่าง (ผลรันจริง)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>?</code></td>
+      <td>ถามคำถาม yes/no → คืนค่าที่ใช้เป็นจริง/เท็จ</td>
+      <td><code>[].empty?</code> → <code>true</code> · <code>[1].empty?</code> → <code>false</code></td>
+    </tr>
+    <tr>
+      <td><code>!</code></td>
+      <td>"อันตรายกว่าตัวที่ไม่มี <code>!</code>" — ใน Ruby core หมายถึง<strong>แก้ตัวเดิม</strong></td>
+      <td><code>name.upcase!</code> เปลี่ยน <code>name</code> ตรง ๆ</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>"ไม่บังคับ" จริงแค่ไหน?</strong> ลองดู — <code>5.nonzero?</code> ซึ่งเป็น method ของ Ruby เองคืน <code>5</code>
+  (ไม่ใช่ <code>true</code>) และ <code>0.nonzero?</code> คืน <code>nil</code> ·
+  method ที่เราเขียนเองอย่าง <code>def ok? = "yes"</code> ก็คืน <code>"yes"</code> ได้โดยไม่มีใครห้าม ·
+  คู่มือทางการก็เขียนไว้ว่า method ที่ลงท้าย <code>?</code> "may not always return just true or false" ·
+  ทำไม <code>5</code> กับ <code>nil</code> ถึงใช้แทนจริง/เท็จได้ — นั่นคือเรื่องของ
+  <a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a>
+</p>
+
+<h3 id="sn-sub-1"><code>upcase</code> vs <code>upcase!</code> — รันให้เห็นว่า "แก้ตัวเดิม" แปลว่าอะไร</h3>
+
+<pre><code>name = <span class="s">"abc"</span>
+up = name.<span class="f">upcase</span>     <span class="c"># ไม่มี ! → สร้าง string ใหม่</span>
+<span class="f">p</span> up                   <span class="c"># =&gt; "ABC"</span>
+<span class="f">p</span> name                 <span class="c"># =&gt; "abc"   ← ตัวเดิมไม่เปลี่ยน</span>
+
+name2 = <span class="s">"abc"</span>
+r = name2.<span class="f">upcase!</span>     <span class="c"># มี ! → แก้ตัวเดิม</span>
+<span class="f">p</span> r                    <span class="c"># =&gt; "ABC"</span>
+<span class="f">p</span> name2                <span class="c"># =&gt; "ABC"   ← ตัวเดิมเปลี่ยนแล้ว</span></code></pre>
+
+<p>
+  ตรงตามสไลด์ทุกตัว · แต่สไลด์ไม่ได้บอกว่า <code>upcase!</code> <strong>คืนอะไร</strong> —
+  และตรงนี้แหละที่เป็นกับดัก:
+</p>
+
+<div class="predict">
+<pre><code>s = <span class="s">"ABC"</span>         <span class="c"># ตัวใหญ่อยู่แล้ว</span>
+r = s.<span class="f">upcase!</span>
+<span class="f">p</span> r
+<span class="f">p</span> s</code></pre>
+  <p class="ask"><code>r</code> กับ <code>s</code> เป็นอะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c"># ผลรันจริง</span>
+nil
+"ABC"</code></pre>
+    <p>
+      <strong><code>r</code> เป็น <code>nil</code></strong> · method ที่มี <code>!</code> ใน Ruby core หลายตัว
+      <strong>คืน <code>nil</code> เมื่อไม่มีอะไรเปลี่ยน</strong> — เอกสารทางการเขียน signature ไว้ว่า
+      <code>upcase!(mapping) → self or nil</code>
+    </p>
+    <p>ผลที่ตามมาคือ ถ้าเอาไปต่อ method ทันที จะพังเฉพาะบางข้อมูล:</p>
+<pre><code><span class="c"># name = "admin" → พิมพ์ 5 ได้ปกติ</span>
+<span class="c"># name = "ADMIN" → พังแบบนี้</span>
+chain.rb:2:in '&lt;main&gt;': undefined method 'length' for nil (NoMethodError)
+
+puts name.upcase!.length
+                 ^^^^^^^</code></pre>
+    <p style="margin-bottom:0">
+      นี่คือบั๊กประเภทที่เทสด้วยข้อมูลตัวเล็กผ่านหมด แล้วไปพังบน production เมื่อมีคนกรอกตัวใหญ่ ·
+      กฎง่าย ๆ: <strong>method ที่มี <code>!</code> ให้เรียกเป็นบรรทัดเดี่ยว ๆ อย่าเอาค่าที่มันคืนไปใช้ต่อ</strong>
+    </p>
+  </div>
+</div>
+
+<p>
+  อีกเรื่องที่ "แก้ตัวเดิม" ส่งผลมากกว่าที่คิด — ถ้าสองตัวแปรชี้ไปที่ string ก้อนเดียวกัน
+  แก้ทางหนึ่ง อีกทางก็เห็นด้วย (หลักการเดียวกับ slice aliasing ใน
+  <a href="../../day-3/lessons/0006-slice-aliasing.html">บทเรียน 06</a>):
+</p>
+
+<pre><code>t = <span class="s">"hello"</span>
+t2 = t            <span class="c"># ไม่ได้ก็อป — t2 ชี้ไปที่ก้อนเดียวกับ t</span>
+t.<span class="f">upcase!</span>
+<span class="f">p</span> t2              <span class="c"># =&gt; "HELLO"</span></code></pre>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>💡 warning ที่คุณจะเจอเร็ว ๆ นี้:</strong> Ruby กำลังค่อย ๆ เปลี่ยนให้ string ที่พิมพ์ตรง ๆ ในโค้ด
+    (literal) <strong>แก้ไม่ได้</strong> · ใน Ruby 4.0.9 การ <code>upcase!</code> string แบบนั้นยังทำได้
+    และรันปกติไม่มีอะไรขึ้น · แต่ถ้าเปิดการเตือนเรื่อง deprecated (รันด้วย <code>ruby -w</code> หรือ minitest ซึ่งเปิดให้อัตโนมัติ — ภารกิจท้ายบทจะเจอ) จะเห็น
+    <code>warning: literal string will be frozen in the future</code> ·
+    และถ้าไฟล์มีบรรทัดแรก <code># frozen_string_literal: true</code> จะพังทันทีด้วย
+    <code>can't modify frozen String: "abc" (FrozenError)</code> ·
+    ทางออกคือสร้างสำเนาที่แก้ได้ก่อนด้วย <code>"abc".dup</code>
+  </p>
+</div>
+
+<h3 id="sn-sub-2"><code>save</code> vs <code>save!</code> — ใน Rails <code>!</code> แปลว่า "พังให้ดังไปเลย"</h3>
+
+<p>
+  มุมขวาของสไลด์หน้า 24 มีอีกคู่: <code>post.save</code> <strong>คืน <code>false</code></strong> ถ้าไม่ผ่าน ·
+  <code>post.save!</code> <strong>raise</strong> ถ้าไม่ผ่าน · ตัวนี้เป็นของ Active Record ซึ่งจะเรียนจริงใน Day 2 ·
+  ตอนนี้ขอแค่หลักการ — ผมสร้าง model <code>Post</code> ที่บังคับว่าต้องมี <code>title</code> ในแอปทดสอบ แล้วลองบันทึกโพสต์ที่ title ว่าง:
+</p>
+
+<pre><code><span class="c"># bin/rails runner — ผลรันจริง</span>
+post.save    <span class="c"># =&gt; false   (ไปต่อเงียบ ๆ ถ้าไม่มีใครเช็ค)</span>
+post.save!   <span class="c"># raise ActiveRecord::RecordInvalid</span>
+             <span class="c">#   "Validation failed: Title can't be blank"</span>
+post.update(title: <span class="s">""</span>)    <span class="c"># =&gt; false</span>
+post.update!(title: <span class="s">""</span>)   <span class="c"># raise ActiveRecord::RecordInvalid</span></code></pre>
+
+<p>
+  สังเกตว่า <strong><code>!</code> ใน Rails ไม่ได้แปลว่า "แก้ตัวเดิม"</strong> แบบ <code>upcase!</code> —
+  ทั้ง <code>save</code> และ <code>save!</code> แก้ฐานข้อมูลเหมือนกัน ·
+  <code>!</code> ตรงนี้แปลว่า "<strong>ถ้าไม่สำเร็จ จะไม่ยอมเงียบ</strong>" ·
+  ความหมายร่วมของทั้งสองแบบคือข้อที่สไลด์เขียนไว้: <strong>ตัวที่มี <code>!</code> อันตรายกว่าตัวที่ไม่มี</strong>
+</p>
+
+<p>
+  คนเขียน Go จะคุ้นกับปัญหาของ <code>save</code> ทันที — มันเหมือนฟังก์ชันที่คืน <code>error</code>
+  ซึ่ง<strong>ลืมเช็คได้</strong> (<a href="../../day-2/lessons/0005-errors-and-shadowing.html">บทเรียน 05</a>) ·
+  <code>save</code> ที่คืน <code>false</code> แล้วไม่มีใครดู <strong>ผ่านเงียบ ๆ ทุกครั้ง</strong> ·
+  <code>save!</code> คือทางเลือกที่ "ลืมเช็คไม่ได้" เพราะถ้าไม่ผ่าน โปรแกรมหยุดทันที
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ถ่ายเอกสารแล้วแก้บนสำเนา vs เขียนทับต้นฉบับ</span>
+  <p>
+    <code>name.upcase</code> คือ<strong>ถ่ายเอกสารก่อน แล้วแก้บนสำเนา</strong> — ต้นฉบับในแฟ้มเหมือนเดิมทุกอย่าง
+    คุณได้กระดาษแผ่นใหม่กลับมา ·
+    <code>name.upcase!</code> คือ<strong>หยิบปากกาเขียนทับต้นฉบับเลย</strong> — เร็วกว่า ไม่เปลืองกระดาษ
+    แต่ทุกคนที่เปิดแฟ้มเดียวกันจะเห็นรอยแก้นั้นด้วย (เหมือน <code>t2</code> ข้างบน)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> คนที่เขียนทับต้นฉบับเสร็จจะยื่นเอกสารคืนให้คุณเสมอ
+    แต่ <code>upcase!</code> ถ้า<strong>ไม่มีอะไรต้องแก้ จะยื่นมือเปล่ากลับมา (<code>nil</code>)</strong> ·
+    และใน Rails <code>!</code> ไม่ได้แปลว่า "เขียนทับต้นฉบับ" เลย แต่แปลว่า "ถ้าแก้ไม่สำเร็จ จะตะโกนบอก" —
+    การเปรียบเทียบนี้ใช้ได้แค่กับ method ของ Ruby core เท่านั้น
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>predicate method (<code>?</code>)</dt>
+    <dd>method ที่ถามคำถาม yes/no · ชื่อลงท้ายด้วย <code>?</code> ตามข้อตกลง ไม่ใช่กฎภาษา ·
+        <strong>พิมพ์บอก AI ได้ว่า "add a predicate method <code>published?</code> to Post"</strong> แล้วจะได้ชื่อที่ถูกธรรมเนียม</dd>
+    <dt>bang method (<code>!</code>)</dt>
+    <dd>method เวอร์ชัน "อันตรายกว่า" · ใน Ruby core = แก้ตัวเดิม (และบางตัวคืน <code>nil</code> เมื่อไม่มีอะไรเปลี่ยน) ·
+        ใน Rails = raise แทนการคืน <code>false</code></dd>
+    <dt>mutate / in-place</dt>
+    <dd>แก้ object ตัวเดิมแทนการสร้างใหม่ ·
+        <strong>ถาม senior ได้ว่า "ตรงนี้ควร mutate in-place หรือคืนค่าใหม่"</strong> —
+        คำตอบมักขึ้นกับว่ามีใครถือ reference ของ object นั้นอยู่อีกไหม</dd>
+    <dt>RecordInvalid</dt>
+    <dd><code>ActiveRecord::RecordInvalid</code> คือ error ที่ <code>save!</code> / <code>update!</code> /
+        <code>create!</code> โยนเมื่อ validation ไม่ผ่าน · ข้อความจะเริ่มด้วย <code>Validation failed:</code></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · <code>puts</code> · <code>p</code> · <code>inspect</code> — เครื่องมือ debug ที่จะใช้ทุกวัน</h2>
+
+<p>
+  สไลด์หน้า 25 เป็นหน้า DEMO · ผมรันโค้ดในหน้านั้นทุกบรรทัด และเพิ่มการเช็ค "คืนอะไร" ให้ด้วย:
+</p>
+
+<pre><code>post = { title: <span class="s">"Hi"</span>, tags: [<span class="s">"a"</span>, <span class="s">"b"</span>] }
+
+r1 = <span class="f">puts</span> post
+<span class="f">p</span> r1
+r2 = <span class="f">p</span> post
+<span class="f">p</span> r2.<span class="f">equal?</span>(post)      <span class="c"># เป็น object ตัวเดียวกันเป๊ะไหม</span>
+s = post.<span class="f">inspect</span>
+<span class="f">p</span> s</code></pre>
+
+<pre><code><span class="c"># ผลรันจริง</span>
+{title: "Hi", tags: ["a", "b"]}        <span class="c">← puts post</span>
+nil                                    <span class="c">← puts คืน nil</span>
+{title: "Hi", tags: ["a", "b"]}        <span class="c">← p post</span>
+true                                   <span class="c">← p คืน post ตัวเดิมกลับมา</span>
+"{title: \"Hi\", tags: [\"a\", \"b\"]}"   <span class="c">← inspect ได้ String กลับมา ไม่พิมพ์เอง</span></code></pre>
+
+<p>
+  (<code>← …</code> ทางขวาเป็นคำอธิบายที่ผมเติม ไม่ได้อยู่ใน output) ·
+  ผลตรงกับที่สไลด์เขียนทุกบรรทัด รวมทั้งหน้าตา Hash แบบใหม่ที่เปลี่ยนใน Ruby 3.4
+  (<code>{title: "Hi"}</code> · ส่วน Ruby 2.6 ที่ติดมากับ macOS ยังพิมพ์ <code>{:title=&gt;"Hi"}</code>
+  แบบที่เห็นในบทความเก่า — ถ้าเห็นหน้าตาแบบนั้น แปลว่าคุณรันผิด Ruby)
+</p>
+
+<p>
+  สังเกตว่ากับ Hash <code>puts</code> กับ <code>p</code> พิมพ์ออกมาหน้าตาเหมือนกัน ·
+  ความต่างจะโผล่ชัดตอนเป็น<strong>ตัวเลขกับข้อความ</strong> — ตรงกับที่สไลด์บอกว่า "<code>"1"</code> กับ <code>1</code> จะดูออก":
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>โค้ด</th><th>พิมพ์ (ผลรันจริง)</th><th>คืนค่า</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>puts 1</code></td><td><code>1</code></td><td><code>nil</code></td></tr>
+    <tr><td><code>puts "1"</code></td><td><code>1</code> ← แยกไม่ออก</td><td><code>nil</code></td></tr>
+    <tr><td><code>p 1</code></td><td><code>1</code></td><td><code>1</code></td></tr>
+    <tr><td><code>p "1"</code></td><td><code>"1"</code> ← มีฟันหนู รู้ทันทีว่าเป็น String</td><td><code>"1"</code></td></tr>
+    <tr><td><code>puts [1, nil, 2]</code></td><td><code>1</code> / บรรทัดว่าง / <code>2</code> (สามบรรทัด)</td><td><code>nil</code></td></tr>
+    <tr><td><code>p [1, nil, 2]</code></td><td><code>[1, nil, 2]</code></td><td>array ตัวเดิม</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="predict">
+<pre><code><span class="f">puts</span> <span class="n">nil</span>
+<span class="f">puts</span> <span class="s">""</span>
+<span class="f">p</span> <span class="n">nil</span>
+<span class="f">p</span> <span class="s">""</span>
+<span class="f">puts</span> <span class="n">nil</span>.<span class="f">inspect</span>   <span class="c"># บรรทัดนี้มาจากสไลด์หน้า 25</span></code></pre>
+  <p class="ask">ห้าบรรทัดนี้พิมพ์อะไรออกมาบ้าง? ถ้าเห็นแค่ output คุณจะบอกได้ไหมว่าบรรทัดไหนมาจาก <code>nil</code>?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c"># ผลรันจริง (ดูด้วย od -c: \n \n n i l \n " " \n n i l \n)</span>
+
+
+nil
+""
+nil</code></pre>
+    <p style="margin-bottom:0">
+      <code>puts nil</code> กับ <code>puts ""</code> <strong>ได้บรรทัดว่างเหมือนกันทุกไบต์</strong> ·
+      ถ้าคุณ debug ด้วย <code>puts</code> แล้วเห็นบรรทัดว่าง จะไม่มีทางรู้เลยว่าตัวแปรเป็น <code>nil</code>
+      (ยังไม่ได้ตั้งค่า) หรือเป็นข้อความว่าง (ตั้งแล้วแต่ไม่มีเนื้อ) — สองอย่างนี้มักเป็นบั๊กคนละตัว ·
+      <code>p</code> บอกตรง ๆ ว่า <code>nil</code> หรือ <code>""</code> ·
+      ส่วน <code>puts nil.inspect</code> (บรรทัดสุดท้าย) ก็ได้ <code>nil</code> เหมือน <code>p nil</code>
+      เพราะ <code>p x</code> ก็คือการพิมพ์ <code>x.inspect</code> นั่นเอง ·
+      นี่คือเหตุผลที่สไลด์บอกว่า <strong>"ใช้ <code>p</code> ไม่ใช่ <code>puts</code> ตอน debug"</strong>
+    </p>
+  </div>
+</div>
+
+<p>
+  อีกข้อที่สไลด์บอกคือ <code>p</code> "คืนค่าให้ด้วยจึงแทรกกลางบรรทัดได้" ·
+  แปลว่าคุณแอบดูค่ากลางนิพจน์ได้โดยไม่ต้องแยกบรรทัด: <code>x = p(1 + 2) * 10</code>
+  พิมพ์ <code>3</code> ออกมา แล้ว <code>x</code> ก็ยังได้ <code>30</code> ตามปกติ (รันจริงแล้ว) ·
+  ทำแบบเดียวกันด้วย <code>puts</code> ไม่ได้ เพราะ <code>puts</code> คืน <code>nil</code> แล้ว <code>nil * 10</code> จะพัง
+</p>
+
+<h3 id="sn-sub-3">ในแอป Rails ใช้ <code>Rails.logger</code></h3>
+
+<p>
+  มุมขวาล่างของสไลด์บอกว่าในแอป Rails ให้ใช้ <code>Rails.logger</code> แทน <code>puts</code> ·
+  ผมเขียน controller ทดสอบที่ใช้ทั้งสองแบบ แล้วเปิด server จริงทั้ง development และ production:
+</p>
+
+<pre><code><span class="c"># app/controllers/debug_controller.rb  (route: get "debug" =&gt; "debug#show")</span>
+<span class="k">class</span> <span class="n">DebugController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">show</span>
+    post = { title: <span class="s">"Hi"</span>, tags: [<span class="s">"a"</span>, <span class="s">"b"</span>] }
+    <span class="f">puts</span> <span class="s">"PUTS: #{post}"</span>
+    <span class="n">Rails</span>.logger.<span class="f">info</span> <span class="s">"LOGGER INFO: #{post.inspect}"</span>
+    <span class="n">Rails</span>.logger.<span class="f">debug</span> <span class="s">"LOGGER DEBUG: #{post.inspect}"</span>
+    <span class="f">render</span> plain: <span class="s">"html ok\n"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  (ไฟล์จริงที่รันห่อ <code>render</code> ไว้ใน <code>respond_to do |format|</code> ด้วย — ตัดออกตรงนี้ให้สั้น
+  บรรทัด log ที่เกี่ยวกับ <code>format</code> จึงไม่ได้ยกมา)
+</p>
+
+<p><strong>development</strong> — เทียบหน้าจอ terminal ที่รัน server กับไฟล์ <code>log/development.log</code> หลัง <code>curl</code> หนึ่งครั้ง
+(ตัดมาเฉพาะสี่บรรทัดที่เกี่ยว ทั้งสองฝั่งตัดตรงเดียวกัน):</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>terminal ของ <code>bin/rails server</code></h4>
+<pre><code>Processing by DebugController#show as */*
+PUTS: {title: "Hi", tags: ["a", "b"]}
+LOGGER INFO: {title: "Hi", tags: ["a", "b"]}
+LOGGER DEBUG: {title: "Hi", tags: ["a", "b"]}</code></pre>
+  </div>
+  <div class="side good">
+    <h4><code>log/development.log</code></h4>
+<pre><code>Processing by DebugController#show as */*
+LOGGER INFO: {title: "Hi", tags: ["a", "b"]}
+LOGGER DEBUG: {title: "Hi", tags: ["a", "b"]}</code></pre>
+  </div>
+</div>
+
+<p>
+  <strong>บรรทัด <code>PUTS:</code> ไม่อยู่ในไฟล์ log</strong> — มันไปออกแค่หน้าจอ terminal ·
+  ปิด terminal ไปแล้วก็หายไปด้วย
+</p>
+
+<p><strong>production</strong> — <code>RAILS_ENV=production bin/rails server</code> แล้ว <code>curl</code> หนึ่งครั้ง:</p>
+
+<pre><code><span class="c"># stdout ของ server (request id เปลี่ยนทุก request · ตัดบรรทัด format ออกเหมือนข้างบน)</span>
+[d2ccb67c-742d-41af-bd1a-1139ce2d2d78] Started GET "/debug" for 127.0.0.1 at 2026-10-31 23:58:25 +0700
+[d2ccb67c-742d-41af-bd1a-1139ce2d2d78] Processing by DebugController#show as */*
+PUTS: {title: "Hi", tags: ["a", "b"]}
+[d2ccb67c-742d-41af-bd1a-1139ce2d2d78] LOGGER INFO: {title: "Hi", tags: ["a", "b"]}
+[d2ccb67c-742d-41af-bd1a-1139ce2d2d78] Completed 200 OK in 8ms (Views: 0.1ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)</code></pre>
+
+<div class="warn">
+  <p><strong>⚠️ ผลจริงต่างจากสไลด์นิดหนึ่ง</strong></p>
+  <p>
+    สไลด์อ้างว่า "<code>puts</code> จะไม่โผล่ใน log ของ production" ·
+    แต่ใน Rails 8.1 ไฟล์ <code>config/environments/production.rb</code> ที่ <code>rails new</code> สร้างให้ตั้งไว้ว่า
+    <code>config.logger = ActiveSupport::TaggedLogging.logger(STDOUT)</code> —
+    คือ <strong>log ของ production ออกทาง stdout</strong> (ไม่มีไฟล์ <code>log/production.log</code> ด้วยซ้ำ)
+    และ <code>puts</code> ก็ออกทาง stdout เหมือนกัน · ผลรันข้างบนจึง<strong>เห็นบรรทัด <code>PUTS:</code> ปนอยู่จริง</strong>
+  </p>
+  <p style="margin-bottom:0">
+    แต่คำแนะนำของสไลด์ยังถูก — แค่เหตุผลต่างไป · ดูผลรันอีกรอบ:
+    <br>· บรรทัด <code>PUTS:</code> <strong>ไม่มี <code>[request id]</code> นำหน้า</strong> — มี request เข้ามาพร้อมกันเป็นร้อย จะไม่รู้ว่าบรรทัดนี้เป็นของ request ไหน
+    <br>· บรรทัด <code>LOGGER DEBUG:</code> <strong>หายไป</strong> เพราะ production ตั้ง log level เป็น <code>info</code> —
+    <code>Rails.logger</code> ปิด/เปิดตามระดับได้ ส่วน <code>puts</code> ปิดไม่ได้
+    <br>· ถ้าทีมเปลี่ยน <code>config.logger</code> ให้ส่ง log ไปที่อื่น <code>Rails.logger</code> ไปด้วย แต่ <code>puts</code> ไม่ไป
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>puts</code> / <code>p</code></dt>
+    <dd><code>puts</code> = แปลงเป็นข้อความ (<code>to_s</code>) แล้วพิมพ์ · คืน <code>nil</code> ·
+        <code>p</code> = พิมพ์แบบ <code>inspect</code> (เห็น type) · คืน object ตัวเดิม ·
+        <strong>debug ใช้ <code>p</code> เสมอ</strong></dd>
+    <dt><code>inspect</code> vs <code>to_s</code></dt>
+    <dd>สอง method ที่แปลง object เป็นข้อความ · <code>to_s</code> สำหรับคนอ่าน (<code>"1"</code> กลายเป็น <code>1</code>) ·
+        <code>inspect</code> สำหรับโปรแกรมเมอร์ (<code>"1"</code> ยังเป็น <code>"1"</code>) ·
+        <strong>พิมพ์ถาม AI ได้ว่า "override inspect for this class so debug output is readable"</strong></dd>
+    <dt>Rails.logger</dt>
+    <dd>ตัวเขียน log ของแอป Rails · มีระดับ <code>debug</code> · <code>info</code> · <code>warn</code> · <code>error</code> · <code>fatal</code> ·
+        <strong>ถาม senior ได้ว่า "production ของเราส่ง log ไปที่ไหน แล้วค้นด้วย request id ได้ไหม"</strong></dd>
+    <dt>log level</dt>
+    <dd>ระดับความสำคัญของข้อความ log · production ของ Rails 8.1 ตั้งไว้ที่ <code>info</code>
+        (เปลี่ยนได้ด้วย env <code>RAILS_LOG_LEVEL</code>) · ข้อความที่ต่ำกว่าระดับที่ตั้งจะถูกทิ้ง</dd>
+    <dt>tagged logging / request id</dt>
+    <dd>การแปะป้าย <code>[d2ccb67c-…]</code> หน้าทุกบรรทัด log ของ request เดียวกัน · ไว้กรอง log เฉพาะ request ที่มีปัญหา ·
+        ป้ายนี้มีเฉพาะข้อความที่ผ่าน <code>Rails.logger</code></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">7 · ภารกิจ — เขียน method สี่แบบ แล้วเขียนเทสพิสูจน์</h2>
+
+<div class="task">
+  <h3 id="sn-sub-4">🎯 ภารกิจ: <code>post_tools.rb</code></h3>
+  <ol>
+    <li>สร้างไฟล์ <code>post_tools.rb</code> มี method ต่อไปนี้ <strong>ห้ามใช้คำว่า <code>return</code> เลย</strong>
+      <ul>
+        <li><code>make_post</code> รับ keyword <code>title:</code> (บังคับ) · <code>body:</code> (default <code>""</code>) · <code>draft:</code> (default <code>false</code>) คืน Hash สามช่อง</li>
+        <li><code>draft?(post)</code> เป็น endless method คืนค่าช่อง <code>:draft</code></li>
+        <li><code>hashtags(tags)</code> เป็น endless method ใช้ <code>map</code> + block ·
+            <code>hashtags(["ruby", "rails"])</code> ต้องได้ <code>"#ruby #rails"</code></li>
+        <li><code>shout(text)</code> คืนตัวใหญ่โดย<strong>ไม่แก้ตัวเดิม</strong> ·
+            <code>shout!(text)</code> แก้ตัวเดิม และ<strong>ต้องคืน text เสมอ ห้ามคืน <code>nil</code></strong> แม้ text จะเป็นตัวใหญ่อยู่แล้ว</li>
+      </ul>
+    </li>
+    <li>สร้าง <code>post_tools_test.rb</code> ใช้ minitest (มากับ Ruby แล้ว — บรรทัดแรก <code>require "minitest/autorun"</code>)</li>
+    <li>เขียนเทสพิสูจน์ให้ครบ: ค่า default · <strong>ไม่ส่ง <code>title</code> ต้องได้ <code>ArgumentError</code> ที่ข้อความว่า <code>missing keyword: :title</code></strong> ·
+        <code>draft?</code> · <code>hashtags</code> · <code>shout</code> ไม่แก้ตัวเดิม · <code>shout!</code> แก้ตัวเดิมและไม่คืน <code>nil</code></li>
+    <li>รัน <code>ruby post_tools_test.rb</code> ให้ได้ <code>0 failures, 0 errors</code> <strong>และไม่มี warning</strong></li>
+    <li>พิสูจน์ว่าเทสจับบั๊กได้จริง: ลบบรรทัดสุดท้ายของ <code>shout!</code> ทิ้ง แล้วรันเทสอีกครั้ง ต้องเห็น <code>1 failures</code></li>
+  </ol>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c"># post_tools.rb</span>
+<span class="k">def</span> <span class="f">make_post</span>(title:, body: <span class="s">""</span>, draft: <span class="n">false</span>)
+  { title: title, body: body, draft: draft }
+<span class="k">end</span>
+
+<span class="k">def</span> <span class="f">draft?</span>(post) = post[<span class="n">:draft</span>]
+
+<span class="k">def</span> <span class="f">hashtags</span>(tags) = tags.<span class="f">map</span> { |t| <span class="s">"##{t}"</span> }.<span class="f">join</span>(<span class="s">" "</span>)
+
+<span class="k">def</span> <span class="f">shout</span>(text) = text.<span class="f">upcase</span>
+
+<span class="k">def</span> <span class="f">shout!</span>(text)
+  text.<span class="f">upcase!</span>
+  text          <span class="c"># ← บรรทัดนี้คือหัวใจ: คืน text เสมอ ไม่ใช่ผลของ upcase! ที่อาจเป็น nil</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c"># post_tools_test.rb</span>
+<span class="f">require</span> <span class="s">"minitest/autorun"</span>
+<span class="f">require_relative</span> <span class="s">"post_tools"</span>
+
+<span class="k">class</span> <span class="n">PostToolsTest</span> &lt; <span class="n">Minitest::Test</span>
+  <span class="k">def</span> <span class="f">test_make_post_uses_defaults</span>
+    post = <span class="f">make_post</span>(title: <span class="s">"Hi"</span>)
+    <span class="f">assert_equal</span>({ title: <span class="s">"Hi"</span>, body: <span class="s">""</span>, draft: <span class="n">false</span> }, post)
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">test_make_post_requires_title</span>
+    error = <span class="f">assert_raises</span>(<span class="n">ArgumentError</span>) { <span class="f">make_post</span>(body: <span class="s">"no title"</span>) }
+    <span class="f">assert_equal</span> <span class="s">"missing keyword: :title"</span>, error.<span class="f">message</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">test_draft_question_mark</span>
+    <span class="f">assert_equal</span> <span class="n">true</span>, <span class="f">draft?</span>(<span class="f">make_post</span>(title: <span class="s">"Hi"</span>, draft: <span class="n">true</span>))
+    <span class="f">assert_equal</span> <span class="n">false</span>, <span class="f">draft?</span>(<span class="f">make_post</span>(title: <span class="s">"Hi"</span>))
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">test_hashtags</span>
+    <span class="f">assert_equal</span> <span class="s">"#ruby #rails"</span>, <span class="f">hashtags</span>([<span class="s">"ruby"</span>, <span class="s">"rails"</span>])
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">test_shout_keeps_original</span>
+    name = <span class="s">"abc"</span>
+    <span class="f">assert_equal</span> <span class="s">"ABC"</span>, <span class="f">shout</span>(name)
+    <span class="f">assert_equal</span> <span class="s">"abc"</span>, name
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">test_shout_bang_changes_original_and_never_returns_nil</span>
+    name = <span class="s">"abc"</span>.<span class="f">dup</span>
+    <span class="f">assert_equal</span> <span class="s">"ABC"</span>, <span class="f">shout!</span>(name)
+    <span class="f">assert_equal</span> <span class="s">"ABC"</span>, name
+    <span class="f">assert_equal</span> <span class="s">"ABC"</span>, <span class="f">shout!</span>(<span class="s">"ABC"</span>.<span class="f">dup</span>)
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c">$ ruby post_tools_test.rb       # ผลรันจริง (seed กับเวลาเปลี่ยนทุกครั้ง)</span>
+Run options: --seed 51827
+
+# Running:
+
+......
+
+Finished in 0.000312s, 19230.7681 runs/s, 35256.4082 assertions/s.
+
+6 runs, 11 assertions, 0 failures, 0 errors, 0 skips</code></pre>
+
+    <p>
+      <strong>ทำไมต้อง <code>.dup</code>?</strong> ครั้งแรกผมเขียน <code>name = "abc"</code> ตรง ๆ —
+      เทสผ่านหมด แต่ minitest เปิดการเตือนเรื่อง deprecated ไว้ เลยได้ warning นี้สองบรรทัด (ชี้ไปที่บรรทัด <code>text.upcase!</code> ·
+      เลขบรรทัดในบทนี้นับคอมเมนต์ชื่อไฟล์บรรทัดแรกด้วย ถ้าคุณไม่ได้ก็อปบรรทัดนั้นไป เลขจะน้อยกว่านี้หนึ่ง):
+    </p>
+<pre><code><span class="c"># ข้างหน้าเป็น path เต็มของโฟลเดอร์คุณ</span>
+…/post_tools.rb:13: warning: literal string will be frozen in the future (run with --debug-frozen-string-literal for more information)</code></pre>
+    <p>
+      คือ Ruby เตือนว่า "อนาคต string ที่พิมพ์ตรง ๆ ในโค้ดจะแก้ไม่ได้แล้ว" · <code>.dup</code> สร้างสำเนาที่แก้ได้แน่นอน warning จึงหาย ·
+      ส่วน <code>test_shout_keeps_original</code> ไม่ต้อง <code>.dup</code> เพราะ <code>shout</code> ไม่แก้ตัวเดิม
+    </p>
+    <p>ข้อ 5 — ลบบรรทัด <code>text</code> ใน <code>shout!</code> ทิ้ง แล้วรันใหม่ (ผลรันจริง · seed เวลา และตำแหน่งของ <code>F</code> ในแถวจุดเปลี่ยนทุกครั้ง):</p>
+<pre><code>Run options: --seed 6505
+
+# Running:
+
+..F...
+
+Finished in 0.006722s, 892.5915 runs/s, 1636.4177 assertions/s.
+
+  1) Failure:
+PostToolsTest#test_shout_bang_changes_original_and_never_returns_nil [post_tools_test.rb:35]:
+--- expected
++++ actual
+@@ -1,3 +1 @@
+-# encoding: UTF-8
+-#    valid: true
+-"ABC"
++nil
+
+
+6 runs, 11 assertions, 1 failures, 0 errors, 0 skips</code></pre>
+    <p style="margin-bottom:0">
+      เทสที่จับได้คือ<strong>ข้อสุดท้าย</strong> — <code>shout!("ABC".dup)</code> ได้ <code>nil</code> แทน <code>"ABC"</code>
+      เพราะ <code>upcase!</code> ไม่มีอะไรต้องเปลี่ยน · สองบรรทัด <code># encoding</code> ที่โผล่มาเป็นแค่ข้อมูลประกอบจาก minitest
+      (บอกว่าฝั่ง expected เป็น string UTF-8 ที่ถูกต้อง) ไม่ใช่ปัญหา ·
+      สังเกตว่าข้อที่ใช้ <code>"abc"</code> ตัวเล็กยังผ่าน — ถ้าเทสแค่ตัวเล็ก บั๊กนี้หลุดไปถึง production แน่นอน
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-8">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">method นี้ถูกเรียกด้วย <code>x = total([10, 20])</code> · <code>x</code> มีค่าเท่าไหร่?</p>
+<pre><code><span class="k">def</span> <span class="f">total</span>(prices)
+  sum = prices.<span class="f">sum</span>
+  <span class="f">puts</span> <span class="s">"รวม #{sum}"</span>
+<span class="k">end</span></code></pre>
+  <div class="opts">
+    <button class="opt"><code>30</code> เพราะ <code>sum</code> คือค่าที่คำนวณไว้ในตัวแปร</button>
+    <button class="opt"><code>"รวม 30"</code> เพราะเป็นข้อความบรรทัดสุดท้าย</button>
+    <button class="opt"><code>nil</code> เพราะบรรทัดสุดท้ายคือ <code>puts</code></button>
+    <button class="opt">error เพราะ method ไม่มี <code>return</code> สักบรรทัด</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · รันจริงได้ <code>รวม 30</code> ออกหน้าจอ แล้ว <code>p x</code> ได้ <code>nil</code> ·
+      method คืนค่าของ<strong>นิพจน์สุดท้ายที่ถูกรัน</strong> ซึ่งคือ <code>puts …</code> และ <code>puts</code> คืน <code>nil</code> เสมอ
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิดเพราะ Ruby ไม่ได้ดูว่าตัวแปรไหน "สำคัญ" ดูแค่บรรทัดสุดท้าย ·
+      ตัวเลือกที่ 2 ผิดเพราะ <code>"รวม 30"</code> คือของที่ <code>puts</code> <strong>พิมพ์</strong> ไม่ใช่ของที่มัน<strong>คืน</strong> ·
+      ตัวเลือกที่ 4 ผิดเพราะ Ruby ไม่บังคับ <code>return</code> — นั่นคือนิสัยจาก Go
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> แปะ <code>puts</code> ท้าย method ตอน debug = เปลี่ยนค่าที่ method คืนเป็น <code>nil</code> โดยไม่รู้ตัว</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">มี <code>def create(title:, body: "", draft: false)</code> · ไฟล์หนึ่งเขียน <code>puts "start"</code> แล้วตามด้วย <code>create(body: "x")</code> · รันแล้วเกิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">พิมพ์ <code>start</code> ก่อน แล้วพังด้วย <code>ArgumentError</code> ตอนถึงบรรทัด <code>create</code></button>
+    <button class="opt">Ruby ฟ้องตั้งแต่ก่อนรันบรรทัดแรก เหมือน <code>tsc</code> ฟ้อง <code>TS2741</code></button>
+    <button class="opt">รันผ่าน และ <code>title</code> ได้ <code>nil</code> แบบเดียวกับ zero value ของ Go</button>
+    <button class="opt">รันผ่าน และ <code>title</code> ได้ <code>""</code> ตาม default ของ <code>body</code></button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · รันจริงได้ <code>start</code> ออกมาก่อน แล้วตามด้วย
+      <code>missing keyword: :title (ArgumentError)</code> ที่ชี้ไปบรรทัดที่เรียก ·
+      ความผิดพลาดเรื่อง argument ใน Ruby ถูกจับ<strong>ตอนรันถึงบรรทัดนั้น</strong> ไม่ใช่ล่วงหน้า
+    </p>
+    <p>
+      ตัวเลือกที่ 2 ผิดเพราะ Ruby ไม่มีขั้น type check ก่อนรันแบบ <code>tsc</code> (บรรทัด <code>puts "start"</code> ทำงานไปแล้วด้วยซ้ำ) ·
+      ตัวเลือกที่ 3 เป็นพฤติกรรมของ struct ใน Go ไม่ใช่ required keyword ของ Ruby ·
+      ตัวเลือกที่ 4 ผิดเพราะ default ของ <code>body</code> เป็นของ <code>body</code> คนเดียว ไม่แชร์ไปให้ช่องอื่น
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> Ruby ตรวจ argument ตอนรัน — บรรทัดที่ไม่เคยถูกรัน (หรือไม่เคยถูกเทส) ไม่มีใครรู้ว่าผิด</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ใน Rails ถ้า validation ไม่ผ่าน <code>@post.save</code> กับ <code>@post.save!</code> ต่างกันยังไง?</p>
+  <div class="opts">
+    <button class="opt"><code>save</code> แก้ object ตัวเดิม · <code>save!</code> สร้าง object ใหม่ เหมือน <code>upcase!</code></button>
+    <button class="opt">ทั้งสองตัว raise error เหมือนกัน ต่างกันแค่ข้อความใน error</button>
+    <button class="opt"><code>save</code> raise error · <code>save!</code> คืน <code>false</code> แล้วไปต่อเงียบ ๆ</button>
+    <button class="opt"><code>save</code> คืน <code>false</code> · <code>save!</code> raise <code>ActiveRecord::RecordInvalid</code></button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · รันจริงได้ <code>false</code> จาก <code>save</code> และ
+      <code>ActiveRecord::RecordInvalid</code> พร้อมข้อความ <code>Validation failed: Title can't be blank</code> จาก <code>save!</code>
+    </p>
+    <p>
+      ตัวเลือกที่ 1 เอาความหมาย <code>!</code> ของ Ruby core (แก้ตัวเดิม) มาใช้กับ Rails ซึ่งใช้ <code>!</code> คนละความหมาย
+      — และ <code>upcase!</code> ก็ไม่ได้สร้างของใหม่ด้วย ·
+      ตัวเลือกที่ 2 ผิดเพราะ <code>save</code> ไม่ raise เลย ·
+      ตัวเลือกที่ 3 สลับกันพอดี — ตัวที่มี <code>!</code> คือตัวที่ "อันตรายกว่า" คือพังให้ดัง
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> <code>!</code> แปลว่า "อันตรายกว่าตัวที่ไม่มี" เสมอ แต่อันตรายแบบไหนขึ้นกับ library — Ruby core = แก้ตัวเดิม · Rails = raise</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">โค้ด <code>x = p(1 + 2) * 10</code> แล้วตามด้วย <code>puts x</code> จะพิมพ์อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>30</code> บรรทัดเดียว เพราะ <code>p</code> แค่คืนค่า ไม่ได้พิมพ์</button>
+    <button class="opt"><code>3</code> แล้วตามด้วย <code>30</code> คนละบรรทัด</button>
+    <button class="opt"><code>3</code> แล้วพังด้วย <code>NoMethodError</code> เพราะ <code>p</code> คืน <code>nil</code></button>
+    <button class="opt"><code>3</code> แล้วตามด้วยบรรทัดว่าง เพราะ <code>x</code> เป็น <code>nil</code></button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · รันจริงได้ <code>3</code> แล้ว <code>30</code> ·
+      <code>p</code> ทำสองอย่างพร้อมกัน: <strong>พิมพ์</strong>ค่าออกมา และ<strong>คืนค่าเดิม</strong>กลับไป
+      นิพจน์จึงคำนวณต่อได้ปกติ
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ลืมไปว่า <code>p</code> พิมพ์ด้วย (ต่างจาก <code>inspect</code> ที่คืนอย่างเดียว) ·
+      ตัวเลือกที่ 3 และ 4 คือพฤติกรรมของ <code>puts</code> ซึ่งคืน <code>nil</code> — ถ้าเขียน <code>puts(1 + 2) * 10</code> ถึงจะพัง
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> <code>p</code> คืนของเดิม จึงแทรกกลางนิพจน์ได้ · <code>puts</code> คืน <code>nil</code> เสมอ</p>
+  </div>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ ถ้าตอบสี่ข้อนี้ได้ แปลว่าบทนี้ผ่านแล้ว</strong>
+    <br>1. ทำไม <code>puts [1, 2].map do |n| n * 2 end</code> ถึงได้ <code>#&lt;Enumerator…&gt;</code> แทน <code>2</code> กับ <code>4</code>?
+    <br>2. method ที่ไม่มี <code>return</code> คืนค่าอะไร — และอะไรทำให้มันกลายเป็น <code>nil</code> โดยไม่รู้ตัว?
+    <br>3. <code>"ABC".upcase!</code> คืนอะไร และทำไมห้ามเอาไปต่อ <code>.length</code>?
+    <br>4. ตอน debug ทำไมต้องใช้ <code>p</code> ไม่ใช่ <code>puts</code> — และในแอป Rails ควรใช้อะไรแทนทั้งคู่?
+  </p>
+</div>
+
+<p>
+  ติดตรงไหน ลองถามกลับได้เลย เช่น "ช่วยหาตัวอย่าง <code>do…end</code> ในโค้ด Rails ที่เกาะ method ผิดตัวให้ดูหน่อย" ·
+  หรือ "<code>!</code> ใน method อื่นของ Rails อย่าง <code>create!</code> กับ <code>find_by!</code> ต่างจาก <code>save!</code> ไหม"
+</p>
+
+<nav class="nav">
+  <a href="./0092-ruby-symbol-hash-enumerable.html">← บทเรียน 92 · Symbol · Hash · Enumerable</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 1</a>
+  <a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94 → Truthiness · nil · ||=</a>
+</nav>
+
+<h2 id="sn-sec-9">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/calling_methods_rdoc.html">Ruby 4.0 — Calling Methods</a> —
+      <strong>อ่านหัวข้อ <em>Block Argument</em></strong> ย่อหน้าที่เริ่มด้วย <em>do end has lower precedence than { }</em>
+      พร้อมตัวอย่าง <code>method_1 method_2 do … end</code> — คือคำอธิบายทางการของกับดักในหัวข้อ 2 ·
+      หัวข้อ <em>Keyword Arguments</em> ในหน้าเดียวกันอธิบายฝั่งการเรียก</li>
+  <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/methods_rdoc.html">Ruby 4.0 — Methods</a> —
+      <strong>อ่านสามหัวข้อ: <em>Return Values</em></strong> (method คืนนิพจน์สุดท้าย · ส่วน endless method <code>def one_plus_one = 1 + 1</code> อยู่ต้นหน้า ก่อนหัวข้อ <em>Method Names</em>) ·
+      <strong><em>Method Names</em></strong> ย่อหน้าที่พูดถึง bang method และ method ที่ลงท้าย <code>?</code>
+      (ยืนยันว่าเป็นแค่ convention และ <code>?</code> "may not always return just true or false") ·
+      และ <strong><em>Keyword Arguments</em></strong> ฝั่งการประกาศ</li>
+  <li><a href="https://docs.ruby-lang.org/en/4.0/String.html#method-i-upcase-21">Ruby 4.0 — <code>String#upcase!</code></a> —
+      <strong>ดูแค่บรรทัด signature <code>upcase!(mapping) → self or nil</code></strong> —
+      คำว่า "or nil" คือที่มาของกับดักในหัวข้อ 5 · method <code>!</code> ตัวอื่นของ String หลายตัวเขียนแบบเดียวกัน</li>
+  <li><a href="https://docs.ruby-lang.org/en/4.0/Kernel.html#method-i-p">Ruby 4.0 — <code>Kernel#p</code></a> และ
+      <a href="https://docs.ruby-lang.org/en/4.0/Kernel.html#method-i-puts"><code>Kernel#puts</code></a> —
+      <strong>เทียบหัวข้อของสองตัวนี้ว่าแต่ละตัวคืนอะไร</strong> ตรงกับตารางในหัวข้อ 6</li>
+  <li><a href="https://guides.rubyonrails.org/debugging_rails_applications.html#the-logger">Rails Guides — Debugging Rails Applications: The Logger</a> —
+      <strong>อ่านหัวข้อ 2.1–2.3 (What is the Logger? · Log Levels · Sending Messages)</strong>
+      แล้วข้ามไปหัวข้อ <em>Tagged Logging</em> · หัวข้อ 1 ของหน้าเดียวกัน (<em>View Helpers for Debugging</em> · <code>inspect</code>) อ่านประกอบได้</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Persistence.html">Rails API — ActiveRecord::Persistence</a> —
+      <strong>เปิดดู <code>save</code> กับ <code>save!</code> คู่กัน</strong> ว่าเอกสารเขียนพฤติกรรมตอน validation ไม่ผ่านไว้ต่างกันยังไง
+      (ไม่ต้องอ่านทั้งหน้า เนื้อหาจริงเป็นของ Day 2)</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -21,7 +21,7 @@ idempotent: ไม่มี timestamp ในไฟล์ผลลัพธ์ �
 
 page (หนึ่ง object ต่อหนึ่งไฟล์ HTML):
   "f"  file    path ของไฟล์ เทียบจากรากเว็บ  เช่น "day-6/lessons/0019-generics.html"
-  "d"  day     เลขกลุ่ม: ฝั่ง Backend = เลขวัน (1-9) · ฝั่ง Frontend = 101, 102 (int)
+  "d"  day     เลขกลุ่ม: ฝั่ง Backend = เลขวัน (1-9) · ฝั่ง Frontend = 101, 102 … · ฝั่ง Rails = 201 … (int)
   "n"  number  เลขบท 1-55 (int) — **ไม่มี key นี้** ถ้าเป็นหน้า cheat sheet
   "t"  title   ชื่อหน้าไว้โชว์เป็น breadcrumb ("อยู่บทไหน") — มาจาก <h1>
 
@@ -314,27 +314,29 @@ class PageParser(HTMLParser):
 
 # ---------------------------------------------------------------- เก็บข้อมูล
 
-# เลขกลุ่มของฝั่ง Frontend — สไลด์ฝั่งนี้ไม่ได้กำกับวันมาให้ จึงต้องแจกเลขเอง
-# ใช้ช่วง 100+ เพื่อไม่ให้ชนกับเลขวันของฝั่ง Backend แม้คอร์สจะยาวถึง Day 99
+# เลขกลุ่มของฝั่ง Frontend และ Rails — ต้องแจกเลขเอง (ฝั่ง Backend ใช้เลขวันตรง ๆ)
+# Frontend ใช้ช่วง 100+ · Rails ใช้ช่วง 200+ (rails-day-N → 200 + N)
+# จะได้ไม่ชนกับเลขวันของฝั่ง Backend แม้คอร์สจะยาวถึง Day 99
 #
-# ⚠️ ค่านี้ต้องตรงกับฟิลด์ `d:` ของ FRONT ใน assets/nav.js
+# ⚠️ ค่านี้ต้องตรงกับฟิลด์ `d:` ของ FRONT และ RAILS ใน assets/nav.js
 #    (nav.js ใช้มันเทียบว่า "ผลค้นหาอันนี้อยู่กลุ่มเดียวกับหน้าที่เปิดอยู่ไหม")
 #    เพิ่มกลุ่มใหม่ต้องแก้ทั้งสองที่ ถ้าลืม สคริปต์นี้จะหยุดพร้อมบอกชื่อกลุ่มที่ขาด
-FE_GROUP_ID = {
+GROUP_ID = {
     "fe-html-css": 101,
     "fe-ts-fp": 102,
     "fe-nextjs": 103,
     "fe-nextjs-app": 104,
     "fe-agentic": 105,
+    "rails-day-1": 201,
 }
 
 
 def discover_pages():
     """คืนรายการหน้าเรียงแบบ deterministic: บทเรียนทุกบทตามเลขบท แล้วต่อด้วย cheat sheet
 
-    กวาดสองแบบ: `day-N/` (ฝั่ง Backend) และ `fe-*/` (ฝั่ง Frontend)
+    กวาดสามแบบ: `day-N/` (ฝั่ง Backend) · `fe-*/` (ฝั่ง Frontend) · `rails-*/` (ฝั่ง Rails)
     """
-    patterns = ("day-*", "fe-*")
+    patterns = ("day-*", "fe-*", "rails-*")
     lessons, sheets = [], []
     for pat in patterns:
         lessons += glob.glob(os.path.join(ROOT, pat, "lessons", "*.html"))
@@ -349,13 +351,13 @@ def discover_pages():
         m = re.fullmatch(r"day-(\d+)", g)
         if m:
             return int(m.group(1))
-        if g not in FE_GROUP_ID:
+        if g not in GROUP_ID:
             sys.exit(
-                "กลุ่ม '%s' ยังไม่มีเลขใน FE_GROUP_ID ของ %s\n"
-                "เพิ่มเลขใหม่ที่นี่ และเพิ่มฟิลด์ d: เลขเดียวกันใน FRONT ของ assets/nav.js ด้วย"
+                "กลุ่ม '%s' ยังไม่มีเลขใน GROUP_ID ของ %s\n"
+                "เพิ่มเลขใหม่ที่นี่ และเพิ่มฟิลด์ d: เลขเดียวกันใน FRONT/RAILS ของ assets/nav.js ด้วย"
                 % (g, os.path.basename(__file__))
             )
-        return FE_GROUP_ID[g]
+        return GROUP_ID[g]
 
     def num_of(path):
         m = re.match(r"(\d+)-", os.path.basename(path))

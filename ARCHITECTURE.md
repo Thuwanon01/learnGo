@@ -69,6 +69,8 @@ day-N/lessons/NNNN-slug.html     ฝั่ง BACK (Go) · แบ่งตาม
 day-N/reference/cheatsheet.html
 fe-<slug>/lessons/NNNN-slug.html ฝั่ง FRONT · แบ่งตาม "ชื่อไฟล์สไลด์" ไม่ใช่ตามวัน
 fe-<slug>/reference/cheatsheet.html
+rails-day-N/lessons/NNNN-slug.html  ฝั่ง RAILS · คอร์ส Ruby on Rails แยกจาก Go · แบ่งตามวัน
+rails-day-N/reference/cheatsheet.html
         ↑ เลขบทเรียนต่อเนื่องกันทั้งเว็บ (global) ไม่แยกตามฝั่ง — ดูหัวข้อ 4
 
 tools/add-heading-ids.py       แปะ id ให้ h2/h3 ทุกไฟล์ · idempotent
@@ -78,8 +80,8 @@ MISSION.md RESOURCES.md GLOSSARY.md NOTES.md learning-records/   ← โคร�
 from_teacher/           PDF ต้นฉบับจากผู้สอน · gitignore ไว้ · ห้าม commit เด็ดขาด
 ```
 
-**ตอนนี้มี HTML 106 ไฟล์** = บทเรียน 89 + cheat sheet 14 + `index` + `docs` + `404`
-(ฝั่ง BACK บท 01–55 · ฝั่ง FRONT บท 56–89)
+**ตอนนี้มี HTML 123 ไฟล์** = บทเรียน 105 + cheat sheet 15 + `index` + `docs` + `404`
+(ฝั่ง BACK บท 01–55 · ฝั่ง FRONT บท 56–89 · ฝั่ง RAILS บท 90–105)
 
 ---
 
@@ -197,20 +199,25 @@ CSS อยู่ใน `assets/lesson.css` · พฤติกรรมอยู�
 (`.nav` `.lesson` `.label` `.meta` `.track` …) โดยเฉพาะ `.nav` ที่ `quiz.js` ใช้หา
 "แถบท้ายหน้า" — ถ้าแถบบนชื่อ `.nav` ด้วย กล่องติ๊ก "เรียนจบแล้ว" จะไปโผล่บนสุดของหน้า
 
-**สองฝั่ง (track) กับกลุ่ม (group)** — `nav.js` มองทั้งเว็บเป็น 2 ฝั่ง:
+**ฝั่ง (track) กับกลุ่ม (group)** — `nav.js` มองทั้งเว็บเป็น 3 ฝั่ง:
 
 | ฝั่ง | กลุ่มคืออะไร | โฟลเดอร์ | บท |
 |---|---|---|---|
 | `back` | หนึ่งวันที่เรียน | `day-N/` | 01–55 |
 | `front` | หนึ่งไฟล์สไลด์ | `fe-<slug>/` | 56–89 |
+| `rails` | หนึ่งวันของคอร์ส Rails | `rails-day-N/` | 90–105 |
 
 ฝั่ง Frontend แบ่งตามชื่อสไลด์เพราะ**อาจารย์ไม่ได้กำกับวันมาให้ในชื่อไฟล์**
 ส่วน**เลขบทเรียนต่อเนื่องกันทั้งเว็บ** ไม่แยกตามฝั่ง — เพราะเลขบทคือคีย์ของ
 `localStorage` (อ่านจากชื่อไฟล์ `^\d{4}-`) ถ้าฝั่ง FRONT เริ่มนับ 0001 ใหม่
-ความคืบหน้าของสองฝั่งจะทับกันทันที
+ความคืบหน้าของแต่ละฝั่งจะทับกันทันที
 
-แต่ละกลุ่มมีเลข `d` ประจำตัว: ฝั่ง BACK ใช้เลขวัน (1–9) · ฝั่ง FRONT ใช้ 101–105 (html-css · ts-fp · nextjs · nextjs-app · agentic)
-**เลขนี้ถูกเขียนไว้สองที่** (`FRONT` ใน `assets/nav.js` และ `FE_GROUP_ID` ใน
+ฝั่ง RAILS แยกออกมาเป็นฝั่งที่ 3 (ไม่ใช่ `day-10/` ของฝั่ง BACK) เพราะเป็น**อีกคอร์สที่นับวันของตัวเอง**
+(Rails Day 1–4) · ถ้าใส่เป็น `day-N` เลขวันจะชนกับสไลด์ Go ที่อาจมาทีหลัง
+
+แต่ละกลุ่มมีเลข `d` ประจำตัว: ฝั่ง BACK ใช้เลขวัน (1–9) · ฝั่ง FRONT ใช้ 101–105 (html-css · ts-fp · nextjs · nextjs-app · agentic) ·
+ฝั่ง RAILS ใช้ 200 + เลขวัน (`rails-day-1` = 201)
+**เลขนี้ถูกเขียนไว้สองที่** (`FRONT`/`RAILS` ใน `assets/nav.js` และ `GROUP_ID` ใน
 `tools/build-search-index.py`) — เพิ่มกลุ่มใหม่ต้องแก้ทั้งคู่ ถ้าลืม ตัวสร้าง index
 จะหยุดพร้อมบอกชื่อกลุ่มที่ขาด
 
@@ -223,7 +230,7 @@ CSS อยู่ใน `assets/lesson.css` · พฤติกรรมอยู�
 
 **คีย์ความคืบหน้า: `go-course-progress-v1`**
 คะแนน quiz **ไม่ถูกบันทึก** ตั้งใจให้ตอบใหม่ได้ทุกครั้งที่กลับมาทบทวน
-ป้ายที่มี `data-progress-track="back|front"` ใน `index.html` จะนับเฉพาะแถวที่
+ป้ายที่มี `data-progress-track="back|front|rails"` ใน `index.html` จะนับเฉพาะแถวที่
 `data-track` ตรงกัน — เพิ่มฝั่งใหม่ไม่ต้องแก้ `progress.js`
 
 ---
@@ -239,7 +246,7 @@ assets/nav.js  (DATA ที่บล็อกบนสุด)  ──►  แถ
 **เส้นที่เครื่องสร้างให้ — ต้องสั่งรันเอง ไม่มีใครรันให้ตอน deploy**
 
 ```
-day-*/**.html  และ  fe-*/**.html
+day-*/**.html  ·  fe-*/**.html  ·  rails-*/**.html
     │
     │  python3 tools/add-heading-ids.py        แปะ id ลงไฟล์ HTML จริง
     ▼
@@ -388,6 +395,11 @@ Day 7 · Day 8 · Day 9 ต่างก็มีครึ่งแรกที�
 - โค้ด Go: รันบน Go เวอร์ชันจริง แล้ว **จดเวอร์ชันลงในกล่อง `.note` ต้นบท**
 - ของที่ต้องใช้ container: `docker run` จริง แล้ว **ลบ container ทิ้งเมื่อเสร็จ**
   (เครื่องนี้ใช้ `colima` · ใช้ port สูง ๆ เช่น 55432 กันชนกับของผู้เรียน)
+- โค้ด Ruby/Rails: Ruby มาจาก mise (`~/.local/share/mise/installs/ruby/4.0.9/bin` — `ruby` ใน PATH ปกติคือ 2.6 ของระบบ)
+  · แอปตัวอย่างสร้างด้วย `rails new wongnok_blog --database=postgresql --css=tailwind` ใน scratchpad
+  แล้วชี้ `DATABASE_URL` ไป Postgres ชั่วคราวที่พอร์ต 55432 · ⚠️ **ผู้ใช้มีโปรเจกต์ Rails จริงชื่อเดียวกัน**
+  ที่ `/Users/tuwanon/Documents/devpool69/rubyOnRails/wongnok_blog` + docker `wongnok_blog-postgres-1` (พอร์ต 5432) — ห้ามแตะ
+  · ห้าม `mise use` / `gem install` (เปลี่ยนเครื่องผู้ใช้)
 - ⚠️ **เปลี่ยนทีละตัวแปรเวลาจะสรุปว่าอะไรเป็นเหตุ** — เคยสรุปผิดว่า flag ตัวหนึ่งเป็นเหตุ
   เพราะทดสอบโดยใส่คู่กับอีกตัว · ผิดแบบนี้ขึ้นเว็บไปแล้วรอบหนึ่ง
 - ⚠️ **เจอ config สองบรรทัดตีกัน ต้องรันสองรอบ** (เอา A ออก / เอา B ออก)
@@ -402,6 +414,7 @@ Day 7 · Day 8 · Day 9 ต่างก็มีครึ่งแรกที�
 |---|---|---|
 | กำกับ (ฝั่ง Backend) | `day-N/lessons/` | `day-9/lessons/0055-mid-exam-workshop.html` |
 | ไม่ได้กำกับ (ฝั่ง Frontend) | `fe-<slug>/lessons/` โดย `<slug>` มาจากชื่อสไลด์ | `fe-html-css/lessons/0056-how-the-web-works.html` |
+| กำกับ แต่เป็นคอร์ส Ruby on Rails (ฝั่ง Rails) | `rails-day-N/lessons/` | `rails-day-1/lessons/0090-ruby-and-rails-origins.html` |
 
 **อย่าตั้งวันเอง**ให้สไลด์ที่อาจารย์ไม่ได้กำกับวันมา — จะไปชนกับวันจริงที่ส่งมาทีหลัง
 
@@ -415,10 +428,10 @@ Day 7 · Day 8 · Day 9 ต่างก็มีครึ่งแรกที�
 1. `index.html` — เพิ่ม `<section class="day">` + `<li class="lesson" data-id="NNNN">`
    + แก้ตัวเลขรวมใน `.progress-summary` + แก้การ์ด `.upcoming` เป็นวันถัดไป
 2. `nav` ท้ายบทสุดท้ายของวันก่อนหน้า → ชี้มาบทแรกของวันใหม่
-3. **`DATA` ใน `assets/nav.js`** (`DAYS` สำหรับฝั่ง BACK · `FRONT` สำหรับฝั่ง FRONT) —
+3. **`DATA` ใน `assets/nav.js`** (`DAYS` สำหรับฝั่ง BACK · `FRONT` สำหรับฝั่ง FRONT · `RAILS` สำหรับฝั่ง RAILS) —
    ถ้าลืม บทใหม่จะเปิดได้จากลิงก์ตรงเท่านั้น
    **แต่จะไม่โผล่ในเมนูเลย และไม่มีอะไรฟ้อง** เพราะไม่ใช่ลิงก์เสีย
-   · กลุ่มใหม่ต้องแจกเลข `d` ด้วย และเลขนั้นต้องไปใส่ใน `FE_GROUP_ID` ของ
+   · กลุ่มใหม่ต้องแจกเลข `d` ด้วย และเลขนั้นต้องไปใส่ใน `GROUP_ID` ของ
    `tools/build-search-index.py` ให้ตรงกัน
 4. ทุกหน้าใหม่ต้องมี `<script src="../../assets/nav.js" defer></script>` ใน `<head>`
 

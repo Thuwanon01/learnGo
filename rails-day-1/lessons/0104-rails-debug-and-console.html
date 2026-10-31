@@ -1,0 +1,1127 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 104 — debugger และ bin/rails console — หยุดโค้ดกลางทาง, ลองของกับแอปจริง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 104 · Rails · Day 1</p>
+  <h1>debugger และ bin/rails console — หยุดโค้ดกลางทาง, ลองของกับแอปจริง</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="./0102-rails-controller.html">บทเรียน 102</a> (controller · params) และ <a href="./0103-rails-views-and-helpers.html">บทเรียน 103</a> (view · helper) มาก่อน</p>
+  <p class="standfirst">
+    ตอนเขียน Go คุณหาบั๊กด้วย <code>fmt.Println</code> แทรกไว้ทั่วไฟล์ แล้วรันใหม่ทุกครั้งที่อยากรู้ค่าอีกตัว
+    <br>บทนี้มีเครื่องมือสองชิ้นที่ทำให้ไม่ต้องเดาแบบนั้นอีก:
+    <strong><code>debugger</code></strong> ใช้<strong>หยุดโค้ดที่กำลังวิ่งอยู่</strong>แล้วถามค่าอะไรก็ได้ ·
+    <strong><code>bin/rails console</code></strong> ใช้<strong>เปิดแอปทั้งตัวขึ้นมาโดยไม่ต้องมี request</strong> แล้วลองเรียกของจริงเล่น
+    <br>สไลด์หน้า 67–69 สอนทั้งสองอย่างแบบย่อ ๆ · บทนี้รันทุกบรรทัดของสไลด์จริงในแอป <code>wongnok_blog</code>
+    และเจอ<strong>หลายจุดที่ผลจริงไม่ตรงสไลด์</strong> — จุดที่สำคัญที่สุดคือ
+    <code>app.get "/posts"</code> ที่สไลด์บอกว่าได้ <code>200</code> แต่ของจริงได้ <strong><code>403</code></strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby -v</span>
+ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+<span class="c">$ bin/rails -v</span>
+Rails 8.1.4
+<span class="c">$ bundle exec rdbg --version</span>
+rdbg 1.11.1
+<span class="c"># gem irb 1.18.0 · PostgreSQL 17.11</span></code></pre>
+  <p>
+    สไลด์ใช้ <strong>Ruby 4.0.6 · Rails 8.1.3</strong> · เครื่องที่ใช้ตรวจเป็น <strong>Ruby 4.0.9 · Rails 8.1.4</strong>
+    (รุ่นแก้บั๊กในสายเดียวกัน) · แอปที่ใช้คือ <code>rails new wongnok_blog --database=postgresql --css=tailwind</code>
+    ตามสไลด์หน้า 40 แล้วเพิ่ม model <code>Post</code> หนึ่งตัวกับ route <code>/posts</code> หนึ่งเส้น
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ทุกกล่องที่เป็นผลรันมาจากเครื่องจริง</strong> · debugger และ console เป็นโปรแกรมที่ต้องพิมพ์โต้ตอบ
+    ผมจึงรันมันใน<strong>เทอร์มินัลจำลอง (PTY)</strong> ป้อนคำสั่งทีละบรรทัด แล้วเก็บสิ่งที่ขึ้นจอจริงมา ·
+    สิ่งที่ถูกจัดก่อนเอามาโชว์มีสามอย่างเท่านั้น:
+    <br>① <strong>ลบรหัสสี</strong>ออก (จอคุณจะมีสี) ·
+    ② path ยาว ๆ ของเครื่องตรวจ <strong>ย่อเป็น <code>~/wongnok_blog</code></strong> ·
+    ③ บรรทัด log ที่ยาวและไม่เกี่ยวกับเรื่องที่สอน <strong>ตัดออกแล้วแทนด้วย <code>…</code></strong>
+    <br>ตัวเลขเวลา (ms) · วันที่ · เลข <code>0x…</code> ของ object จะไม่ตรงกับเครื่องคุณ ·
+    และค่าที่ยาวเกินจอ debugger จะตัดท้ายเป็น <code>...</code> ส่วน IRB จะขึ้นบรรทัดใหม่ <strong>ตามความกว้างหน้าต่างเทอร์มินัล</strong>
+    (หน้าต่างแคบจะเห็นถูกตัดสั้นกว่าในบท) — ส่วนอื่นควรตรงทุกตัวอักษร
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · สองเครื่องมือ สองคำถาม</h2>
+
+<p>
+  ก่อนลงมือ แยกให้ออกก่อนว่าสองอย่างนี้ตอบคำถามคนละแบบ:
+</p>
+
+<ul>
+  <li><strong><code>debugger</code></strong> ตอบคำถาม <em>"ตอนที่โค้ดบรรทัดนี้กำลังจะทำงาน ตัวแปรแต่ละตัวมีค่าอะไร?"</em>
+      — คุณต้องมีโค้ดที่<strong>กำลังวิ่งอยู่</strong> (เช่น request ที่เข้ามา) แล้วสั่งให้มันหยุดค้างไว้</li>
+  <li><strong><code>bin/rails console</code></strong> ตอบคำถาม <em>"ถ้าฉันเรียก method นี้กับข้อมูลจริง จะได้อะไร?"</em>
+      — ไม่ต้องมี request ไม่ต้องเปิด server · แค่เปิดแอปขึ้นมาแล้วพิมพ์ Ruby ใส่ทีละบรรทัด</li>
+</ul>
+
+<p>เทียบกับของที่คุณใช้มาแล้ว:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th>Go</th><th>TypeScript / Node</th><th>Ruby / Rails</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>ตัวหยุดโค้ด</td>
+      <td>delve (<code>dlv</code>) · <strong>ไม่ได้มากับ <code>go</code></strong> —
+          <code>go help</code> ของ Go 1.26.5 ไม่มีคำสั่ง debug และเครื่องที่ใช้ตรวจไม่มี <code>dlv</code> จนกว่าจะติดตั้งเพิ่ม</td>
+      <td><code>node inspect</code> (ในเทอร์มินัล) หรือ <code>node --inspect</code> (ต่อกับ Chrome DevTools) · มากับ <code>node</code></td>
+      <td>gem <code>debug</code> (โปรแกรมชื่อ <code>rdbg</code>) ·
+          <strong><code>rails new</code> ใส่ไว้ใน <code>Gemfile</code> ให้แล้ว</strong></td>
+    </tr>
+    <tr>
+      <td>สั่งหยุดจากในโค้ด</td>
+      <td>ตั้ง breakpoint ผ่าน <code>dlv</code> หรือ IDE</td>
+      <td><code>debugger;</code> — เป็น <strong>keyword ของภาษา</strong></td>
+      <td><code>debugger</code> — เป็น <strong>method ธรรมดา</strong> ที่ gem <code>debug</code> เติมให้ (หัวข้อ 3 จะเห็นว่าทำไมเรื่องนี้สำคัญ)</td>
+    </tr>
+    <tr>
+      <td>REPL ที่โหลดแอปทั้งตัว</td>
+      <td>ไม่มีใน <code>go</code></td>
+      <td><code>node</code> เปิด REPL ได้ แต่ได้แค่ภาษาเปล่า ๆ ไม่โหลดโปรเจกต์ให้</td>
+      <td><strong><code>bin/rails console</code></strong> — model · ฐานข้อมูล · route · helper มาครบ</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  เรื่องน่ารู้: <code>node inspect</code> ใช้ตัวอักษร <code>n</code> <code>s</code> <code>c</code> ชุดเดียวกับ debugger ของ Ruby
+  (ที่จะเจอในหัวข้อ 2) — ผมเปิด <code>help</code> ของมันดูจริง ได้บรรทัดเหล่านี้:
+</p>
+
+<pre><code><span class="c">$ node inspect shout.js</span>
+…
+debug&gt; help
+…
+cont, c               Resume execution
+next, n               Continue to next line in current file
+step, s               Step into, potentially entering a function
+…</code></pre>
+
+<p>
+  เพราะฉะนั้นถ้าเคยกด <code>n</code> <code>s</code> <code>c</code> ใน Node มาแล้ว มือจะจำได้เลย
+</p>
+
+<h2 id="sn-sec-2">2 · debugger ตัวแรก — สคริปต์ Ruby ล้วน ไม่มี Rails</h2>
+
+<p>
+  เริ่มจากที่เล็กที่สุดก่อน เพื่อจะได้เห็นแค่ debugger ไม่มีอะไรของ Rails มาปน
+  <br>ไฟล์ <code>shout.rb</code> (สร้างที่ไหนก็ได้):
+</p>
+
+<pre><code><span class="c"># shout.rb</span>
+<span class="k">require</span> <span class="s">"debug"</span>
+
+<span class="k">def</span> <span class="f">shout</span>(name)
+  msg = name.<span class="f">upcase</span>
+  msg + <span class="s">"!"</span>
+<span class="k">end</span>
+
+greeting = <span class="s">"hello"</span>
+<span class="f">debugger</span>
+result = <span class="f">shout</span>(greeting)
+<span class="f">puts</span> result</code></pre>
+
+<p>
+  มีของใหม่แค่สองบรรทัด: <code>require "debug"</code> โหลด gem เข้ามา ·
+  <code>debugger</code> บอกว่า <strong>"มาถึงตรงนี้แล้วหยุด เปิดช่องให้ฉันพิมพ์"</strong>
+  <br>รันด้วย <code>ruby shout.rb</code> ตามปกติ — โปรแกรมไม่จบ แต่ค้างอยู่แบบนี้:
+</p>
+
+<pre><code><span class="c">$ ruby shout.rb</span>
+[4, 11] in shout.rb
+     4|   msg = name.upcase
+     5|   msg + "!"
+     6| end
+     7|
+     8| greeting = "hello"
+=&gt;   9| debugger
+    10| result = shout(greeting)
+    11| puts result
+=&gt;#0	&lt;main&gt; at shout.rb:9
+(rdbg)</code></pre>
+
+<p>อ่านจอนี้ทีละส่วน:</p>
+
+<ul>
+  <li><code>=&gt;   9|</code> — ลูกศรชี้บรรทัดที่<strong>หยุดอยู่</strong></li>
+  <li><code>=&gt;#0 &lt;main&gt; at shout.rb:9</code> — ตอนนี้อยู่ใน "ชั้น" ไหนของการเรียกฟังก์ชัน ·
+      <code>&lt;main&gt;</code> แปลว่ายังอยู่นอกทุก method</li>
+  <li><code>(rdbg)</code> — prompt ของ debugger รอคุณพิมพ์</li>
+</ul>
+
+<p>
+  ที่ prompt นี้คุณพิมพ์ได้สองแบบ: <strong>คำสั่งของ debugger</strong> (ตารางข้างล่าง)
+  หรือ<strong>โค้ด Ruby อะไรก็ได้</strong> เช่น <code>greeting.length</code> แล้วจะได้ผลทันที
+  <br>คำสั่งสี่ตัวที่สไลด์หน้า 67 ให้มา คำอธิบายคัดจาก <code>help</code> ในตัว debugger เอง:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>พิมพ์</th><th><code>help</code> ของจริงบอกว่า</th><th>ภาษาคน</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>n</code></td><td><code>Step over. Resume the program until next line.</code></td>
+        <td>ไปบรรทัดถัดไป · ถ้าบรรทัดนี้เรียก method ก็<strong>รัน method นั้นจบทั้งก้อน</strong> ไม่เข้าไปดู</td></tr>
+    <tr><td><code>s</code></td><td><code>Step in. Resume the program until next breakable point.</code></td>
+        <td>ถ้าบรรทัดนี้เรียก method ให้<strong>มุดเข้าไปข้างใน</strong> method นั้น</td></tr>
+    <tr><td><code>c</code></td><td><code>Resume the program.</code></td>
+        <td>ปล่อยให้วิ่งต่อตามปกติ (จนกว่าจะเจอ <code>debugger</code> ตัวถัดไป)</td></tr>
+    <tr><td><code>info</code></td><td><code>Show information about current frame (local/instance variables and defined constants).</code></td>
+        <td>ขอดูตัวแปร<strong>ทั้งหมด</strong>ที่มองเห็นจากตรงนี้ในทีเดียว</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ลองเดินจริง — พิมพ์ <code>info</code> แล้ว <code>n</code> แล้ว <code>s</code>:
+</p>
+
+<pre><code>(rdbg) info    # command
+%self = main
+greeting = "hello"
+result = nil
+(rdbg) n    # next command
+[5, 11] in shout.rb
+     5|   msg + "!"
+     6| end
+     7|
+     8| greeting = "hello"
+     9| debugger
+=&gt;  10| result = shout(greeting)
+    11| puts result
+=&gt;#0	&lt;main&gt; at shout.rb:10
+(rdbg) s    # step command
+[1, 10] in shout.rb
+     1| require "debug"
+     2|
+     3| def shout(name)
+=&gt;   4|   msg = name.upcase
+     5|   msg + "!"
+     6| end
+     7|
+     8| greeting = "hello"
+     9| debugger
+    10| result = shout(greeting)
+=&gt;#0	Object#shout(name="hello") at shout.rb:4
+  #1	&lt;main&gt; at shout.rb:10</code></pre>
+
+<p>สามอย่างที่ควรสังเกต:</p>
+
+<ul>
+  <li>ข้อความ <code># command</code> · <code># next command</code> ที่ต่อท้ายสิ่งที่คุณพิมพ์
+      <strong>ไม่ใช่สิ่งที่ผมพิมพ์เพิ่ม</strong> — debugger เขียนเป็นตัวจาง ๆ ให้เอง เพื่อบอกว่ามันเข้าใจว่าคุณสั่ง<em>คำสั่ง</em> ไม่ใช่โค้ด Ruby</li>
+  <li><code>info</code> ครั้งแรกเห็น <code>result = nil</code> ทั้งที่บรรทัด 10 ยังไม่รัน ·
+      Ruby จองชื่อตัวแปรไว้ตั้งแต่อ่านไฟล์ ค่าเริ่มเลยเป็น <code>nil</code> (ทวนเรื่อง <code>nil</code> ได้ที่<a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a>)</li>
+  <li>หลัง <code>s</code> มีสองชั้น: <code>#0</code> คือใน <code>shout</code> · <code>#1</code> คือคนที่เรียกมันมา ·
+      และบอกค่า argument ให้ด้วย <code>name="hello"</code></li>
+</ul>
+
+<div class="predict">
+  <p>ตอนนี้หยุดอยู่ที่บรรทัด 4 ใน <code>shout</code> (ลูกศรชี้ที่ <code>msg = name.upcase</code>) แล้วพิมพ์:</p>
+<pre><code>(rdbg) info</code></pre>
+  <p class="ask">ตัวแปร <code>msg</code> จะมีค่าอะไร — <code>"HELLO"</code> หรืออย่างอื่น?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลรันจริง — <strong><code>msg</code> ยังเป็น <code>nil</code></strong>:</p>
+<pre><code>(rdbg) info    # command
+%self = main
+name = "hello"
+msg = nil</code></pre>
+    <p>
+      เพราะ<strong>ลูกศรชี้บรรทัดที่ "กำลังจะรัน" ไม่ใช่บรรทัดที่ "รันไปแล้ว"</strong> ·
+      ต้องกด <code>n</code> อีกครั้งให้บรรทัด 4 ทำงานก่อน แล้วถามใหม่:
+    </p>
+<pre><code>(rdbg) n    # next command
+…
+=&gt;   5|   msg + "!"
+…
+(rdbg) info    # command
+%self = main
+name = "hello"
+msg = "HELLO"
+(rdbg) c    # continue command
+HELLO!</code></pre>
+    <p style="margin-bottom:0">
+      นี่คือกับดักอันดับหนึ่งของคนเพิ่งใช้ debugger ทุกภาษา — เห็นค่าเป็น <code>nil</code> แล้วตกใจว่าโค้ดพัง
+      ทั้งที่แค่<strong>ยังไม่ได้รันบรรทัดนั้น</strong> · <code>c</code> ตัวสุดท้ายปล่อยให้โปรแกรมวิ่งต่อจนพิมพ์ <code>HELLO!</code> แล้วจบ
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">⏸ เทียบให้เห็นภาพ — กดหยุดหนังแล้วดูทีละเฟรม</span>
+  <p>
+    <code>debugger</code> คือปุ่ม <strong>pause</strong> ที่คุณฝังไว้ในหนังล่วงหน้า ·
+    พอหนังเล่นมาถึงฉากนั้น ภาพจะค้าง แล้วคุณทำได้สี่อย่าง:
+    <code>n</code> = เลื่อนไปทีละฉาก · <code>s</code> = ซูมเข้าไปในฉากย่อยที่ตัวละครเพิ่งเดินเข้าไป ·
+    <code>info</code> = ขอรายชื่อตัวละครทุกตัวในฉากพร้อมของที่ถืออยู่ · <code>c</code> = เล่นต่อ
+    <br>เทียบกับ <code>puts</code>: เหมือนถ่ายรูปไว้ล่วงหน้าแค่บางมุม ถ้ามุมที่อยากเห็นไม่ได้ถ่ายไว้ ต้องกลับไปถ่ายหนังใหม่ทั้งเรื่อง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> หนังที่ถูก pause ไม่มีใครรอ แต่โปรแกรมที่ถูกหยุด<strong>มีคนรออยู่จริง</strong> —
+    หัวข้อถัดไปจะเห็นว่า request ที่ค้างใน debugger ทำให้ฝั่งเบราว์เซอร์หมุนติ้วไป 23 วินาที ·
+    และอีกข้อ: ตอน pause คุณ<strong>พิมพ์โค้ดใหม่แทรกลงไปได้</strong> (เช่น <code>greeting.length</code>)
+    ซึ่งหนังทำไม่ได้ · โค้ดที่แทรกนั้นรันจริง ถ้ามันไปแก้ข้อมูล ข้อมูลก็เปลี่ยนจริง
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>breakpoint</dt>
+    <dd>จุดที่สั่งให้โปรแกรมหยุด · ใน Ruby คือบรรทัด <code>debugger</code> (หรือชื่อเล่น <code>binding.break</code> · <code>binding.b</code>) ·
+        <strong>พิมพ์บอก AI ได้ว่า “I put a <code>debugger</code> breakpoint in the controller, here is the <code>info</code> output”</strong>
+        แล้วแปะผล <code>info</code> ให้มันดู ได้คำตอบตรงกว่าการเล่าเป็นคำพูด</dd>
+    <dt>step over / step into</dt>
+    <dd><code>n</code> กับ <code>s</code> · ต่างกันแค่ตอนบรรทัดนั้นเรียก method — over ข้ามไป · into มุดเข้าไป ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ควร step into หรือ step over — โค้ดข้างในเป็นของเราหรือของ library”</strong>
+        เพราะ step into เข้าไปในโค้ดของ Rails จะหลงอยู่ในนั้นนาน</dd>
+    <dt>frame / backtrace</dt>
+    <dd>"ชั้น" ของการเรียก method ที่เรียงซ้อนกันอยู่ (<code>#0</code> คือชั้นที่หยุดอยู่ <code>#1</code> คือคนที่เรียกมันมา) ·
+        ทั้งกองเรียกว่า backtrace · ดูทั้งกองด้วยคำสั่ง <code>bt</code> ·
+        <strong>ถาม senior ได้ว่า “frame #1 มาจากไหน ทำไม method นี้ถูกเรียก”</strong></dd>
+    <dt>rdbg</dt>
+    <dd>ชื่อโปรแกรมของ gem <code>debug</code> · prompt <code>(rdbg)</code> ที่เห็นมาจากชื่อนี้ ·
+        <code>rdbg --help</code> มีโหมดอื่นอีก เช่น <code>-A</code> (attach เข้าโปรเซสที่รอ debugger อยู่) ·
+        วันแรกไม่ต้องใช้ แค่รู้ว่าเวลาคนพูด "rdbg" คือตัวเดียวกับ <code>debugger</code></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 1 · debugger หยุดอยู่ที่บรรทัด <code>result = shout(greeting)</code> และคุณอยากเห็นทีละบรรทัดว่าข้างใน <code>shout</code> ทำอะไร ต้องพิมพ์อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>n</code> — ไปบรรทัดถัดไปของไฟล์นี้ แล้วค่อยดู</button>
+    <button class="opt"><code>s</code> — ก้าวเข้าไปใน method ที่บรรทัดนี้เรียก</button>
+    <button class="opt"><code>c</code> — ปล่อยให้โปรแกรมวิ่งต่อไปจนจบก่อน</button>
+    <button class="opt"><code>info</code> — ดูตัวแปรทุกตัวที่มองเห็นจากตรงนี้</button>
+  </div>
+  <div class="explain">
+    <p>
+      <strong>ตัวเลือกที่ 2 ถูก</strong> — <code>s</code> (step in) พาเข้าไปหยุดที่บรรทัดแรกของ <code>shout</code> พร้อมโชว์ <code>name="hello"</code>
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิด เพราะ <code>n</code> คือ step <em>over</em> — ผมรันจริงแล้ว มันรัน <code>shout</code> จบทั้งก้อน
+      แล้วไปหยุดที่ <code>puts result</code> โดย <code>info</code> บอก <code>result = "HELLO!"</code> เลย ไม่ได้เห็นข้างใน ·
+      ตัวเลือกที่ 3 ผิด เพราะ <code>c</code> ปล่อยให้วิ่งจนจบ ได้ <code>HELLO!</code> แล้วโปรแกรมปิดไป ·
+      ตัวเลือกที่ 4 ผิด เพราะ <code>info</code> แค่<em>ดู</em> ไม่ได้<em>เดิน</em> — ลูกศรยังอยู่ที่เดิม
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> n = ข้ามหัว method · s = มุดเข้า method · ต่างกันแค่ตอนบรรทัดนั้นมีการเรียก method</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-3">3 · debugger ใน Rails จริง — โค้ดสไลด์หน้า 67</h2>
+
+<p>
+  ทีนี้เอาไปใส่ในแอปจริง · method <code>index</code> ตามสไลด์หน้า 67 ทุกตัวอักษร
+  (สไลด์โชว์แค่ <code>def index … end</code> · ผมห่อด้วย <code>class PostsController</code> ให้เป็นไฟล์ที่รันได้จริง ·
+  route <code>resources :posts, only: [:index]</code> กับ view <code>app/views/posts/index.html.erb</code> ที่วนพิมพ์ชื่อโพสต์
+  ทำตามแบบใน<a href="./0101-rails-routing.html">บทเรียน 101</a>–<a href="./0103-rails-views-and-helpers.html">103</a>):
+</p>
+
+<pre><code><span class="c"># app/controllers/posts_controller.rb</span>
+<span class="k">class</span> <span class="n">PostsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @posts = <span class="n">Post</span>.<span class="f">all</span>
+    <span class="f">debugger</span>        <span class="c"># &lt;- หยุดตรงนี้</span>
+    <span class="f">render</span> <span class="n">:index</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  สังเกตว่า<strong>ไม่มี <code>require "debug"</code></strong> เหมือนตอนสคริปต์ล้วน ·
+  เพราะ <code>Gemfile</code> ที่ <code>rails new</code> สร้างให้มีบรรทัดนี้อยู่แล้ว
+  (ที่<a href="./0098-rails-new-and-structure.html">บทเรียน 98</a>อ่าน Gemfile ไปทีละบรรทัด):
+</p>
+
+<pre><code><span class="k">group</span> <span class="n">:development</span>, <span class="n">:test</span> <span class="k">do</span>
+  <span class="c"># See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem</span>
+  <span class="f">gem</span> <span class="s">"debug"</span>, <span class="n">platforms:</span> <span class="n">%i[ mri windows ]</span>, <span class="n">require:</span> <span class="s">"debug/prelude"</span>
+  …
+<span class="k">end</span></code></pre>
+
+<p>
+  <code>require: "debug/prelude"</code> แปลว่า "ตอนแอปบูต โหลดแค่ <strong>ชื่อ</strong> <code>debugger</code> ไว้ก่อน
+  ตัว debugger เต็ม ๆ ค่อยโหลดตอนมีคนเรียกจริง" · และสังเกต <code>group :development, :test</code> — <strong>ไม่มี production</strong>
+  (จำไว้ อีกเดี๋ยวใช้)
+</p>
+
+<p>
+  เปิด <code>bin/rails server</code> ในเทอร์มินัลหนึ่ง แล้วเปิด <code>http://localhost:3000/posts</code>
+  (ผมใช้ <code>curl</code> จากอีกเทอร์มินัลแทนเบราว์เซอร์) · <strong>หน้าเว็บจะไม่ขึ้น</strong> แต่เทอร์มินัลที่รัน server จะกลายเป็นแบบนี้:
+</p>
+
+<pre><code>Started GET "/posts" for ::1 at 2026-11-01 00:19:14 +0700
+…
+Processing by PostsController#index as */*
+[1, 7] in ~/wongnok_blog/app/controllers/posts_controller.rb
+     1| class PostsController &lt; ApplicationController
+     2|   def index
+     3|     @posts = Post.all
+=&gt;   4|     debugger        # &lt;- หยุดตรงนี้
+     5|     render :index
+     6|   end
+     7| end
+=&gt;#0	PostsController#index at ~/wongnok_blog/app/controllers/posts_controller.rb:4
+  #1	ActionController::BasicImplicitRender#send_action(method="index", args=[]) at ~/.local/share/mise/installs/ruby/4.0.9/lib/ruby/gems/4.0.0/gems/actionpack-8.1.4/lib/action_controller/metal/basic_implicit_render.rb:8
+  # and 78 frames (use `bt' command for all frames)
+(ruby) @posts.size
+  Post Count (36.7ms)  SELECT COUNT(*) FROM "posts" /*action='index',application='WongnokBlog',controller='posts'*/
+  …
+4
+(ruby) @posts.first.title
+  Post Load (1.1ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*action='index',application='WongnokBlog',controller='posts'*/
+  …
+"Hello"
+(rdbg) params
+#&lt;ActionController::Parameters {"controller" =&gt; "posts", "action" =&gt; "index"} permitted: false&gt;</code></pre>
+
+<p>
+  ดูบรรทัด <code># and 78 frames</code> — ใต้ <code>index</code> ของคุณมีโค้ด Rails ซ้อนอยู่อีก 78 ชั้น ·
+  นี่คือเหตุผลที่ <strong>ไม่ควรกด <code>s</code> มั่ว ๆ ใน Rails</strong> เดี๋ยวจะหลงเข้าไปในนั้น
+  <br>ต่อด้วย <code>info</code> <code>n</code> <code>c</code>:
+</p>
+
+<pre><code>(rdbg) info    # command
+  Post Load (2.7ms)  SELECT "posts".* FROM "posts" /* loading for inspect */ LIMIT 11 /*action='index',application='WongnokBlog',controller='posts'*/
+  …
+%self = #&lt;PostsController:0x00000000006120&gt;
+@_action_has_layout = true
+@_action_name = "index"
+@_db_runtime = nil
+@_lookup_context = #&lt;ActionView::LookupContext:0x000000012488c0f0 @details_key=nil, @digest_cache=nil, @cache=true, ...&gt;
+@_marked_for_same_origin_verification = true
+@_params = #&lt;ActionController::Parameters {"controller" =&gt; "posts", "action" =&gt; "index"} permitted: false&gt;
+@_rendered_format = nil
+@_request = #&lt;ActionDispatch::Request GET "http://localhost:4104/posts" for ::1&gt;
+@_response = #&lt;ActionDispatch::Response:0x000000012488d860 @mon_data=#&lt;Monitor:0x000000012488d720&gt;, @mon_data_owner_...&gt;
+@_response_body = nil
+@_routes = nil
+@_url_options = nil
+@_view_runtime = nil
+@posts = #&lt;ActiveRecord::Relation [#&lt;Post id: 1, title: "Hello", created_at: "2026-10-31 17:14:27.422855000 +0000", ...&gt;
+(rdbg) n    # next command
+…
+=&gt;   5|     render :index
+…
+(rdbg) c    # continue command
+  Rendering layout layouts/application.html.erb
+  Rendering posts/index.html.erb within layouts/application
+  …
+Completed 200 OK in 23675ms (Views: 48.6ms | ActiveRecord: 60.9ms (4 queries, 0 cached) | GC: 66.1ms)</code></pre>
+
+<p>
+  (เลขพอร์ต <code>4104</code> ใน <code>@_request</code> เป็นพอร์ตของเครื่องตรวจ · เครื่องคุณจะเป็น <code>3000</code>)
+  <br>ของที่ควรเห็นจากกล่องนี้:
+</p>
+
+<ul>
+  <li><strong>ตัวแปรที่ขึ้นต้นด้วย <code>@_</code> ทั้งหมดเป็นของ Rails เอง</strong> · ของคุณมีตัวเดียวคือ <code>@posts</code> อยู่ล่างสุด ·
+      และ <code>@posts</code> เป็น <code>ActiveRecord::Relation</code> ไม่ใช่ array — Day 2 จะอธิบายว่าทำไม</li>
+  <li><strong>การพิมพ์ใน debugger ยิง SQL จริง</strong> — <code>@posts.size</code> ได้ <code>SELECT COUNT(*)</code> ·
+      แม้แต่ <code>info</code> ก็ยิง <code>/* loading for inspect */ LIMIT 11</code> เพื่อเอาค่ามาโชว์</li>
+  <li><strong><code>Completed 200 OK in 23675ms</code></strong> — request นี้ใช้เวลา 23 วินาที เพราะ<strong>ค้างอยู่ใน debugger ตลอดเวลาที่ผมพิมพ์</strong> ·
+      ฝั่ง <code>curl</code> (หรือเบราว์เซอร์) ก็รอค้างไปด้วยจนกด <code>c</code> แล้วถึงได้ <code>200</code></li>
+</ul>
+
+<p>ผลจริงต่างจากกล่องในสไลด์หน้า 67 ตรงนี้ (สาระเหมือนกัน แต่หน้าตาไม่เหมือน — อย่าตกใจตอนเห็นของจริง):</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>เรื่อง</th><th>สไลด์หน้า 67</th><th>ของจริง (debug 1.11.1)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>prompt</td><td><code>(rdbg)</code> ทุกบรรทัด</td>
+        <td><code>(rdbg)</code> แต่<strong>บางบรรทัดเปลี่ยนเป็น <code>(ruby)</code> ระหว่างพิมพ์</strong> —
+            ของผม <code>@posts.size</code> กับ <code>@posts.first.title</code> เปลี่ยน ส่วน <code>params</code> ยังเป็น <code>(rdbg)</code> ·
+            ทั้งสองแบบรันเป็น Ruby และได้ค่าออกมาเหมือนกัน ไม่ต้องสนใจ</td></tr>
+    <tr><td>ผลลัพธ์</td><td><code>=&gt; 12</code></td><td><code>4</code> — <strong>ไม่มี <code>=&gt;</code> นำหน้า</strong> และมีบรรทัด SQL ขึ้นก่อน</td></tr>
+    <tr><td><code>params</code></td><td><code>{"controller" =&gt; "posts", "action" =&gt; "index"}</code></td>
+        <td><code>#&lt;ActionController::Parameters {…} permitted: false&gt;</code> — เป็น object ไม่ใช่ hash ธรรมดา
+            (<a href="./0102-rails-controller.html">บทเรียน 102</a>)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <p><strong>⚠️ สไลด์บอกว่า debugger ดีกว่า puts เพราะ "ไม่ลืมลบ puts ทิ้งก่อน commit" — แต่ <code>debugger</code> ก็ต้องลบเหมือนกัน</strong></p>
+  <p>
+    จำ <code>group :development, :test</code> ได้ไหม? ใน production gem <code>debug</code> ไม่ถูกโหลด
+    → <strong>ไม่มี method ชื่อ <code>debugger</code></strong> → ทุก request ที่เดินผ่านบรรทัดนั้นพัง ·
+    ผมเปิด console ของแอปตัวทดสอบในโหมด production (<strong>ไม่ใช่ server production จริง</strong> ·
+    เปิดพร้อม <code>--sandbox</code> ซึ่งหัวข้อ 7 จะอธิบาย) แล้วยิง request ด้วย <code>app.get</code> (หัวข้อ 5):
+  </p>
+<pre><code>wongnok-blog(prod):001&gt; app.get "/posts"
+[90b4a43b-07a9-4641-8292-7e024f501c01] Started GET "/posts" for 127.0.0.1 at 2026-11-01 00:21:01 +0700
+[90b4a43b-07a9-4641-8292-7e024f501c01] Processing by PostsController#index as HTML
+[90b4a43b-07a9-4641-8292-7e024f501c01] Completed 500 Internal Server Error in 7ms (ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+…
+[90b4a43b-07a9-4641-8292-7e024f501c01] NameError (undefined local variable or method 'debugger' for an instance of PostsController):
+…
+=&gt; 500</code></pre>
+  <p>
+    แย่กว่านั้น: <strong><code>bin/rubocop</code> ที่ <code>rails new</code> ให้มาไม่จับ</strong> · ผมรันกับไฟล์ที่ยังมี <code>debugger</code> อยู่:
+  </p>
+<pre><code><span class="c">$ bin/rubocop app/controllers/posts_controller.rb</span>
+Inspecting 1 file
+.
+
+1 file inspected, no offenses detected
+
+<span class="c">$ bin/rubocop --show-cops Lint/Debugger</span>
+Lint/Debugger:
+  Description: Checks for debugger calls.
+  Enabled: false
+…</code></pre>
+  <p>กฎตัวนี้มี แต่ถูกปิดไว้ · สั่งเปิดเฉพาะกิจได้ด้วย <code>--only</code>:</p>
+<pre><code><span class="c">$ bin/rubocop --only Lint/Debugger app/controllers/posts_controller.rb</span>
+…
+app/controllers/posts_controller.rb:4:5: W: Lint/Debugger: Remove debugger entry point debugger.
+    debugger        # &lt;- หยุดตรงนี้
+    ^^^^^^^^
+
+1 file inspected, 1 offense detected</code></pre>
+  <p style="margin-bottom:0">
+    <strong>นิสัยที่ควรมี:</strong> ก่อน commit รัน <code>bin/rubocop --only Lint/Debugger</code>
+    (หรือ <code>grep -rn debugger app/</code>) ให้ได้ <code>no offenses detected</code> ทุกครั้ง
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>gem <code>debug</code> · <code>debug/prelude</code></dt>
+    <dd>debugger มาตรฐานของ Ruby ที่ Rails ใส่ใน Gemfile ให้ · <code>debug/prelude</code> คือการโหลดแค่ชื่อไว้ก่อน ตัวจริงโหลดตอนใช้ ·
+        <strong>ถาม senior ได้ว่า “ทีมนี้ debug ใน terminal ด้วย rdbg หรือต่อ VS Code”</strong> —
+        gem ตัวเดียวกันต่อกับ editor ได้ด้วย (<code>rdbg --help</code> มี <code>-O</code> · <code>--port</code>)</dd>
+    <dt>Lint/Debugger</dt>
+    <dd>กฎของ RuboCop ที่จับ <code>debugger</code> · <code>binding.irb</code> ที่ลืมไว้ ·
+        ใน config ที่ <code>rails new</code> ให้มา (<code>.rubocop.yml</code> สืบทอดจาก gem <code>rubocop-rails-omakase</code>) กฎนี้ถูก<strong>ปิด</strong> ·
+        <strong>พิมพ์บอก AI ได้ว่า “enable RuboCop Lint/Debugger in .rubocop.yml so leftover debugger calls fail CI”</strong>
+        ถ้าอยากให้ทีมกันพลาดแบบถาวร (บทนี้ไม่ได้รันส่วนนี้ ลองเองแล้วรันพิสูจน์ด้วย)</dd>
+    <dt>NameError</dt>
+    <dd>error ตอนเรียกชื่อที่ไม่มีอยู่ — <code>undefined local variable or method 'debugger'</code> ·
+        ใน log production ถ้าเห็นคำว่า <code>debugger</code> ใน NameError แปลว่าใครสักคนลืมลบ ·
+        <strong>ถาม senior ได้ว่า “CI ของเรามีอะไรกัน debugger หลุดขึ้น production ไหม”</strong></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ข้อ 2 · ลืมบรรทัด <code>debugger</code> ไว้ใน <code>PostsController#index</code> แล้ว deploy ขึ้น production (แอปจาก <code>rails new</code> ไม่ได้แก้ Gemfile) ผู้ใช้เปิด <code>/posts</code> จะเจออะไร?</p>
+  <div class="opts">
+    <button class="opt">หน้าเว็บขึ้นปกติ เพราะ production มองข้ามบรรทัด debugger</button>
+    <button class="opt">หน้าเว็บหมุนค้าง เพราะ server รอให้ใครมาพิมพ์ใน debugger</button>
+    <button class="opt">commit ไม่ผ่านตั้งแต่แรก เพราะ bin/rubocop ฟ้องให้ลบก่อน</button>
+    <button class="opt">ได้ 500 เพราะ NameError — ใน production ไม่มี method debugger</button>
+  </div>
+  <div class="explain">
+    <p>
+      <strong>ตัวเลือกที่ 4 ถูก</strong> — gem <code>debug</code> อยู่ใน <code>group :development, :test</code>
+      production จึงไม่รู้จัก <code>debugger</code> · ผมรันจริงได้ <code>NameError</code> และ <code>=&gt; 500</code>
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิด เพราะ <code>debugger</code> ไม่ใช่ keyword ที่ภาษามองข้ามได้ (ต่างจาก <code>debugger;</code> ของ JS) มันเป็นการเรียก method ธรรมดา ·
+      ตัวเลือกที่ 2 คือสิ่งที่เกิดใน <strong>development</strong> ไม่ใช่ production — ใน dev มันหยุดรอจริง (23 วินาทีในหัวข้อนี้) ·
+      ตัวเลือกที่ 3 ผิด เพราะกฎ <code>Lint/Debugger</code> ถูกปิดไว้ (<code>Enabled: false</code>) — <code>bin/rubocop</code> เฉย ๆ ตอบ <code>no offenses detected</code>
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> dev = หยุดรอ · production = 500 · ไม่มีใครฟ้องให้อัตโนมัติ ต้องเช็คเองก่อน commit</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-4">4 · bin/rails console — REPL ที่โหลดแอปทั้งตัว</h2>
+
+<p>
+  debugger ต้องรอให้มี request วิ่งมาชน · แต่บ่อยครั้งคำถามของคุณไม่เกี่ยวกับ request เลย เช่น
+  <em>"ตอนนี้ในตารางมีโพสต์กี่อัน"</em> หรือ <em>"<code>link_to</code> แบบนี้ได้ HTML หน้าตาอะไร"</em>
+  <br><code>bin/rails console</code> คือ <strong>IRB</strong> (REPL ของ Ruby) ที่<strong>บูตแอปทั้งตัวไว้ให้ก่อน</strong> —
+  ต่อฐานข้อมูลแล้ว · รู้จัก model ทุกตัว · รู้จัก route และ helper ทุกตัว ·
+  คุณพิมพ์ Ruby หนึ่งบรรทัด กด Enter ได้ผลทันที
+</p>
+
+<p>
+  ผมสร้าง model <code>Post</code> ด้วย <code>bin/rails g model Post title:string</code> แล้ว <code>bin/rails db:migrate</code>
+  ใส่ข้อมูลไว้ 3 แถว (วิธีสร้าง model จริงจังรอ Day 2) · แล้วพิมพ์บรรทัดของสไลด์หน้า 68 ทีละบรรทัด:
+</p>
+
+<pre><code><span class="c">$ bin/rails console</span>
+Loading development environment (Rails 8.1.4)
+wongnok-blog(dev):001&gt; Post.count
+  Post Count (46.7ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 3
+wongnok-blog(dev):002&gt; Post.first
+  Post Load (2.2ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000124a8a2d0
+ id: 1,
+ title: "Hello",
+ created_at: "2026-10-31 17:14:27.422855000 +0000",
+ updated_at: "2026-10-31 17:14:27.422855000 +0000"&gt;
+wongnok-blog(dev):003&gt; Post.create!(title: "จากใน console")
+  TRANSACTION (1.3ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (2.5ms)  INSERT INTO "posts" ("title", "created_at", "updated_at") VALUES ('จากใน console', '2026-10-31 17:14:59.150284', '2026-10-31 17:14:59.150284') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.3ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000125df7818
+ id: 4,
+ title: "จากใน console",
+ created_at: "2026-10-31 17:14:59.150284000 +0000",
+ updated_at: "2026-10-31 17:14:59.150284000 +0000"&gt;
+wongnok-blog(dev):004&gt; Post.count
+  Post Count (2.2ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 4
+wongnok-blog(dev):005&gt; helper.link_to "x", "/posts"
+=&gt; "&lt;a href=\"/posts\"&gt;x&lt;/a&gt;"</code></pre>
+
+<p>อ่านทีละจุด:</p>
+
+<ul>
+  <li><strong>prompt ไม่ใช่ <code>irb&gt;</code> อย่างในสไลด์</strong> แต่เป็น <code>wongnok-blog(dev):001&gt;</code> —
+      ชื่อแอป (Rails แปลง <code>wongnok_blog</code> เป็นขีดกลาง) · <code>(dev)</code> คือ environment · <code>001</code> คือบรรทัดที่เท่าไรของ session นี้ ·
+      ในจอจริงคำว่า <code>dev</code> <strong>เป็นสีน้ำเงิน</strong> (หัวข้อ 7 จะกลับมาเรื่องนี้)</li>
+  <li><strong>ทุกบรรทัดที่แตะฐานข้อมูลโชว์ SQL จริงให้ดู</strong> — <code>Post.count</code> คือ <code>SELECT COUNT(*)</code> ·
+      <code>Post.create!</code> คือ <code>BEGIN</code> → <code>INSERT</code> → <code>COMMIT</code> ·
+      นี่เป็นวิธีเรียน Active Record ที่ดีที่สุดใน Day 2: พิมพ์ Ruby แล้วดูว่ามันกลายเป็น SQL อะไร</li>
+  <li><strong><code>Post.first</code> หน้าตาไม่เหมือนสไลด์</strong> — สไลด์เขียน <code>#&lt;Post id: 1, title: "Hello"&gt;</code> บรรทัดเดียว ·
+      ของจริงแตกเป็นหลายบรรทัดและมี <code>created_at</code> · <code>updated_at</code> ที่ Rails เติมให้ทุกตาราง</li>
+  <li><strong>ข้อมูลที่ <code>create!</code> ลงฐานข้อมูลจริง</strong> — <code>Post.count</code> จาก 3 เป็น 4 · ปิด console แล้วก็ยังอยู่</li>
+  <li><strong><code>helper</code></strong> คือทางเข้า view helper ทุกตัว — ตรงกับสไลด์เป๊ะ ·
+      ใช้ลองว่า helper ใน<a href="./0103-rails-views-and-helpers.html">บทเรียน 103</a>ได้ HTML อะไรโดยไม่ต้องเขียน view</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🍳 เทียบให้เห็นภาพ — เข้าครัวร้านตอนร้านปิด</span>
+  <p>
+    แอป Rails ของคุณคือร้านอาหาร (ตรงกับชื่อ <code>wongnok_blog</code> พอดี) · request คือลูกค้าที่สั่งอาหารผ่านหน้าร้าน
+    <br><code>bin/rails console</code> คือการ<strong>เดินเข้าครัวหลังร้านตอนร้านปิด</strong> —
+    เปิดตู้เย็นจริงนับของได้ (<code>Post.count</code>) · หยิบวัตถุดิบจริงมาดู (<code>Post.first</code>) ·
+    ลองจัดจานตามสูตรว่าออกมาหน้าตายังไง (<code>helper.link_to</code>) ·
+    ทั้งหมดนี้โดย<strong>ไม่ต้องมีลูกค้าสักคน</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> คนส่วนใหญ่คิดว่าครัวทดลองคือที่เล่นได้ไม่มีผล ·
+    แต่ console <strong>ใช้ตู้เย็นใบเดียวกับร้านจริง</strong> — <code>Post.create!</code> คือของเข้าตู้จริง ·
+    <code>destroy</code> คือของหายจริง · ไม่มีปุ่มย้อนกลับ ·
+    ถ้าอยากได้ครัวที่ "ทำอะไรก็ไม่มีผล" ต้องสั่ง <code>--sandbox</code> (หัวข้อ 7)
+  </p>
+</div>
+
+<h2 id="sn-sec-5">5 · app.get — สไลด์บอก 200 แต่ของจริงได้ 403</h2>
+
+<p>
+  บรรทัดถัดไปในสไลด์หน้า 68 คือ <code>app.get "/posts"</code> · <code>app</code> คือ <strong>เบราว์เซอร์จำลอง</strong>ที่อยู่ใน console —
+  สั่งให้มันยิง request เข้าแอปได้โดยไม่ต้องเปิด <code>bin/rails server</code>
+  <br>ถ้าเคยทำ <a href="../../day-8/lessons/0040-httptest-handler.html">บทเรียน 40</a> มา นี่คือความคิดเดียวกับ <code>httptest</code> ของ Go:
+  request วิ่งผ่านแอปทั้งตัวในโปรเซสเดียว ไม่มีเครือข่ายจริง
+</p>
+
+<div class="predict">
+  <p>แอปมี route <code>resources :posts, only: [:index]</code> และ controller ทำงานได้ (debugger ลบออกแล้ว) · เปิด <code>bin/rails console</code> ใหม่ แล้วพิมพ์ตามสไลด์:</p>
+<pre><code>wongnok-blog(dev):001&gt; app.get "/posts"</code></pre>
+  <p class="ask">สไลด์บอกว่าได้ <code>=&gt; 200</code> · คุณคิดว่าของจริงได้อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลรันจริง — <strong>ได้ <code>403</code></strong> และไม่มี log ของ controller เลยสักบรรทัด:</p>
+<pre><code>wongnok-blog(dev):001&gt; app.get "/posts"
+[ActionDispatch::HostAuthorization::DefaultResponseApp] Blocked hosts: www.example.com
+=&gt; 403</code></pre>
+    <p>
+      request ถูกตีกลับ<strong>ก่อนถึง router ด้วยซ้ำ</strong> โดยด่านที่ชื่อ <code>HostAuthorization</code> · สาเหตุมีสองชิ้นประกอบกัน:
+    </p>
+<pre><code>wongnok-blog(dev):001&gt; Rails.application.config.hosts
+=&gt;
+[".localhost",
+ ".test",
+ #&lt;IPAddr: IPv4:0.0.0.0/0.0.0.0&gt;,
+ #&lt;IPAddr: IPv6:0000:0000:0000:0000:0000:0000:0000:0000/0000:0000:0000:0000:0000:0000:0000:0000&gt;]
+wongnok-blog(dev):002&gt; app.host
+=&gt; "www.example.com"</code></pre>
+    <ul>
+      <li>ใน development Rails ยอมรับแค่ชื่อเครื่องที่ลงท้าย <code>.localhost</code> · <code>.test</code> หรือเป็นเลข IP</li>
+      <li><code>app</code> ส่ง request ในนามชื่อเครื่อง <code>www.example.com</code> เป็นค่าตั้งต้น
+          (เอกสาร API เรียกค่านี้ว่า <code>DEFAULT_HOST</code>) → ไม่อยู่ในรายชื่อ → <code>403</code></li>
+    </ul>
+    <p style="margin-bottom:0">
+      นี่เป็นกลไกป้องกันการโจมตีแบบปลอมชื่อเครื่อง (DNS rebinding) ที่เปิดไว้ใน development โดยตั้งใจ — ไม่ใช่บั๊ก
+    </p>
+  </div>
+</div>
+
+<p>
+  แก้ได้สองวิธี · วิธีแรกบอก <code>app</code> ว่าให้ใช้ชื่อ <code>localhost</code> ตลอด session ·
+  วิธีที่สองเป็นท่าที่คู่มือทางการ (Rails Command Line guide) แนะนำ คือส่ง header <code>Host</code> ไปกับ request นั้นเลย:
+</p>
+
+<pre><code>wongnok-blog(dev):002&gt; app.host! "localhost"
+=&gt; "localhost"
+wongnok-blog(dev):003&gt; app.get "/posts"
+Started GET "/posts" for 127.0.0.1 at 2026-11-01 00:16:33 +0700
+…
+Processing by PostsController#index as HTML
+  Rendering layout layouts/application.html.erb
+  Rendering posts/index.html.erb within layouts/application
+  Post Load (25.8ms)  SELECT "posts".* FROM "posts" /*action='index',application='WongnokBlog',controller='posts'*/
+  Rendered posts/index.html.erb within layouts/application (Duration: 32.6ms | GC: 0.0ms)
+  Rendered layout layouts/application.html.erb (Duration: 37.4ms | GC: 0.0ms)
+Completed 200 OK in 51ms (Views: -0.6ms | ActiveRecord: 39.1ms (1 query, 0 cached) | GC: 0.2ms)
+
+
+=&gt; 200
+wongnok-blog(dev):004&gt; app.response.body.scan(/&lt;li&gt;.*&lt;\/li&gt;/)
+=&gt; ["&lt;li&gt;Hello&lt;/li&gt;", "&lt;li&gt;Rails วันแรก&lt;/li&gt;", "&lt;li&gt;Ruby ไม่ยาก&lt;/li&gt;", "&lt;li&gt;จากใน console&lt;/li&gt;"]</code></pre>
+
+<pre><code><span class="c"># วิธีที่สอง (console ใหม่ ไม่ได้สั่ง host! มาก่อน) — log ระหว่างกลางตัดออก</span>
+wongnok-blog(dev):001&gt; app.get "/posts", headers: { "Host" =&gt; "localhost" }
+…
+Completed 200 OK in 56ms (Views: 3.4ms | ActiveRecord: 35.4ms (1 query, 0 cached) | GC: 7.8ms)
+…
+=&gt; 200
+wongnok-blog(dev):002&gt; app.class
+=&gt; ActionDispatch::Integration::Session</code></pre>
+
+<p>
+  <code>app.class</code> บอกว่า <code>app</code> คือ <code>ActionDispatch::Integration::Session</code> —
+  <strong>ตัวเดียวกับที่ integration test ของ Rails ใช้</strong> (Day 4) · เพราะฉะนั้นอะไรที่ลองยิงใน console ได้ ก็ย้ายไปเขียนเป็นเทสได้เกือบตรงตัว
+  <br>แล้วถ้า<strong>ยังไม่มี route</strong>ล่ะ? ผมลองก่อนเพิ่ม <code>resources :posts</code> (สั่ง <code>host!</code> แล้ว):
+</p>
+
+<pre><code>wongnok-blog(dev):004&gt; app.get "/posts"
+Started GET "/posts" for 127.0.0.1 at 2026-11-01 00:15:55 +0700
+…
+
+ActionController::RoutingError (No route matches [GET] "/posts"):
+
+(wongnok-blog):4:in '&lt;main&gt;'
+=&gt; 404</code></pre>
+
+<p>
+  ได้ <code>404</code> ตามที่ควร · สรุปเลขสามตัวนี้ให้อ่านออก: <strong>403 = ไม่ผ่านด่านชื่อเครื่อง</strong> ·
+  <strong>404 = ผ่านด่านแล้วแต่ไม่มี route</strong> · <strong>200 = ถึง controller และ render สำเร็จ</strong>
+</p>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อ 3 · เปิด <code>bin/rails console</code> ของแอป Rails 8.1 ที่มี route <code>/posts</code> อยู่แล้ว พิมพ์ <code>app.get "/posts"</code> ได้ <code>=&gt; 403</code> สาเหตุคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">ยังไม่ได้เปิด bin/rails server ไว้อีกเทอร์มินัล request เลยไม่มีที่ไป</button>
+    <button class="opt">route /posts ยังไม่ถูกโหลด ต้องสั่ง reload! ก่อนยิงทุกครั้ง</button>
+    <button class="opt">app ใช้ชื่อเครื่อง www.example.com ซึ่ง config.hosts ของ dev ไม่ยอมรับ</button>
+    <button class="opt">console เปิดใน development ซึ่ง Rails ห้ามยิง request จาก console</button>
+  </div>
+  <div class="explain">
+    <p>
+      <strong>ตัวเลือกที่ 3 ถูก</strong> — log บอกตรง ๆ ว่า <code>Blocked hosts: www.example.com</code> ·
+      แก้ด้วย <code>app.host! "localhost"</code> หรือส่ง <code>headers: { "Host" =&gt; "localhost" }</code> แล้วได้ <code>200</code> จริง
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิด เพราะ <code>app</code> ไม่ต้องใช้ server เลย (ผมยิงได้ <code>200</code> ทั้งที่ไม่มี server เปิดอยู่) ·
+      ตัวเลือกที่ 2 ผิด เพราะถ้า route ไม่มีจะได้ <code>404</code> ไม่ใช่ <code>403</code> · console โหลด route ให้ตั้งแต่บูต ·
+      ตัวเลือกที่ 4 ผิด เพราะยิงจาก console ใน development ได้ — ยิงซ้ำหลัง <code>host!</code> ใน session เดิมก็ผ่าน
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> เจอ 403 จาก <code>app.get</code> ให้นึกถึง Host ก่อนอย่างอื่น · 403 ≠ 404</p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>REPL</dt>
+    <dd>Read–Eval–Print Loop · อ่านที่พิมพ์ → รัน → พิมพ์ผล → วนรอบใหม่ · ของ Ruby ชื่อ <strong>IRB</strong> · <code>bin/rails console</code> คือ IRB + แอปทั้งตัว ·
+        <strong>ถาม senior ได้ว่า “อันนี้ลองใน console ก่อนได้ไหม”</strong> — เป็นประโยคที่ใช้บ่อยมากในทีม Rails</dd>
+    <dt><code>helper</code> / <code>app</code></dt>
+    <dd>สองตัวแปรพิเศษที่มีใน console เท่านั้น · <code>helper</code> = ทางเข้า view helper · <code>app</code> = เบราว์เซอร์จำลอง (<code>ActionDispatch::Integration::Session</code>) ·
+        <strong>พิมพ์บอก AI ได้ว่า “in rails console, use <code>app.get</code> with a Host header to reproduce this request”</strong></dd>
+    <dt>HostAuthorization · <code>config.hosts</code></dt>
+    <dd>ด่านแรกของแอปที่ตรวจว่า request ส่งมาในนามชื่อเครื่องที่อนุญาตหรือเปล่า · ไม่ผ่านได้ <code>403</code> พร้อม log <code>Blocked hosts:</code> ·
+        <strong>ถาม senior ได้ว่า “production ของเราตั้ง <code>config.hosts</code> ไว้เป็นโดเมนอะไร”</strong>
+        (ใน <code>config/environments/production.rb</code> ของ <code>rails new</code> ค่านี้ยังเป็น comment อยู่)</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · reload! — โหลดโค้ดใหม่ แต่ของเก่าในมือไม่เปลี่ยนตาม</h2>
+
+<p>
+  console บูตแอปครั้งเดียวตอนเปิด · ถ้าคุณไปแก้ไฟล์ใน <code>app/</code> ระหว่างที่ console เปิดอยู่
+  <strong>console ไม่รู้</strong> จนกว่าจะสั่ง <code>reload!</code> (บรรทัดสุดท้ายของสไลด์หน้า 68)
+  <br>แต่มีกับดักหนึ่งที่สไลด์ไม่ได้บอก ลองทายดู
+</p>
+
+<div class="predict">
+  <p>เปิด console แล้วเก็บโพสต์แรกไว้ในตัวแปร <code>old</code> · จากนั้น<strong>ไปแก้ไฟล์ <code>app/models/post.rb</code></strong> ในอีกหน้าต่างให้เป็นแบบนี้แล้วเซฟ:</p>
+<pre><code><span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="k">def</span> <span class="f">shout</span>
+    title.<span class="f">upcase</span> + <span class="s">"!"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+  <p>กลับมาที่ console เดิม แล้วพิมพ์ตามลำดับ:</p>
+<pre><code>Post.first.shout
+reload!
+Post.first.shout
+old.shout</code></pre>
+  <p class="ask">สี่บรรทัดนี้ บรรทัดไหนได้ผล บรรทัดไหนพัง?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลรันจริง (ผมแก้ไฟล์หลังบรรทัด <code>001</code>):</p>
+<pre><code>wongnok-blog(dev):001&gt; old = Post.first
+  Post Load (0.9ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000124cd4f40
+...
+wongnok-blog(dev):002&gt; Post.first.shout
+  Post Load (2.4ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+(wongnok-blog):2:in '&lt;main&gt;': undefined method 'shout' for an instance of Post (NoMethodError)
+wongnok-blog(dev):003&gt; reload!
+Reloading...
+=&gt; nil
+wongnok-blog(dev):004&gt; Post.first.shout
+  Post Load (1.2ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt; "HELLO!"
+wongnok-blog(dev):005&gt; old.shout
+(wongnok-blog):5:in '&lt;main&gt;': undefined method 'shout' for an instance of Post (NoMethodError)</code></pre>
+    <ul>
+      <li>บรรทัด <code>002</code> พัง ทั้งที่ดึงข้อมูลใหม่จากฐานข้อมูลแล้ว — ไฟล์ถูกแก้แล้วแต่ยังไม่ <code>reload!</code> ·
+          console ยังใช้ class <code>Post</code> ตัวที่โหลดไว้ตอนเปิด</li>
+      <li>บรรทัด <code>004</code> ได้ <code>"HELLO!"</code> — หลัง <code>reload!</code> คำว่า <code>Post</code> ชี้ไปที่ class ตัวใหม่</li>
+      <li><strong>บรรทัด <code>005</code> ยังพัง</strong> — <code>old</code> ถูกสร้างจาก class <strong>ตัวเก่า</strong> ·
+          <code>reload!</code> ไม่ได้ไปเปลี่ยน object ที่คุณถือไว้ในมือแล้ว</li>
+    </ul>
+    <p style="margin-bottom:0">
+      กฎจำง่าย: <strong>หลัง <code>reload!</code> ให้ดึงข้อมูลใหม่เสมอ</strong> (<code>old = Post.first</code> อีกรอบ) ·
+      ส่วน <code>...</code> ในบรรทัด <code>001</code> ไม่ใช่ผมตัด — IRB ย่อผลของการ assign ตัวแปรที่ยาวหลายบรรทัดให้เอง
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-7">7 · --sandbox, -e production และ dbconsole (สไลด์หน้า 69)</h2>
+
+<p>
+  สไลด์หน้า 69 ให้เพื่อนของ console มาอีกสามตัว · ดูตัวเลือกจริงจาก <code>--help</code> ก่อน:
+</p>
+
+<pre><code><span class="c">$ bin/rails console --help</span>
+Usage:
+  bin/rails console
+
+Options:
+  -e, [--environment=ENVIRONMENT]                    # The environment to run `console` in (e.g. test / development / production).
+  -s, [--sandbox], [--no-sandbox], [--skip-sandbox]  # Rollback database modifications on exit.
+
+Start the Rails console</code></pre>
+
+<h3 id="sn-sub-1">--sandbox — ทำอะไรก็ได้ ออกแล้วหายหมด</h3>
+
+<p>
+  สไลด์บอกว่า "ทุกอย่างที่ทำในนี้ถูก rollback ตอนออก" · อย่าเชื่อแค่ข้อความ — พิสูจน์ด้วยการ<strong>สร้าง แล้ว
+  ลบทิ้งทั้งตาราง</strong> แล้วออกไปนับใหม่จาก console ปกติ:
+</p>
+
+<pre><code><span class="c">$ bin/rails console --sandbox</span>
+Loading development environment in sandbox (Rails 8.1.4)
+Any modifications you make will be rolled back on exit
+wongnok-blog(dev):001&gt; Post.count
+  TRANSACTION (0.4ms)  BEGIN /*application='WongnokBlog'*/
+  Post Count (31.8ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 4
+wongnok-blog(dev):002&gt; Post.create!(title: "ของเล่นใน sandbox")
+  …
+  Post Create (4.2ms)  INSERT INTO "posts" ("title", "created_at", "updated_at") VALUES ('ของเล่นใน sandbox', '2026-10-31 17:17:41.187204', '2026-10-31 17:17:41.187204') RETURNING "id" /*application='WongnokBlog'*/
+  …
+=&gt;
+#&lt;Post:0x0000000127a20440
+ id: 5,
+ title: "ของเล่นใน sandbox",
+ created_at: "2026-10-31 17:17:41.187204000 +0000",
+ updated_at: "2026-10-31 17:17:41.187204000 +0000"&gt;
+wongnok-blog(dev):003&gt; Post.destroy_all.size
+  …
+  Post Destroy (3.8ms)  DELETE FROM "posts" WHERE "posts"."id" = 1 /*application='WongnokBlog'*/
+  …
+  Post Destroy (2.6ms)  DELETE FROM "posts" WHERE "posts"."id" = 5 /*application='WongnokBlog'*/
+  …
+=&gt; 5
+wongnok-blog(dev):004&gt; Post.count
+  …
+  Post Count (3.6ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 0
+wongnok-blog(dev):005&gt; exit
+
+<span class="c">$ bin/rails console</span>
+Loading development environment (Rails 8.1.4)
+wongnok-blog(dev):001&gt; Post.count
+  Post Count (47.2ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 4
+wongnok-blog(dev):002&gt; Post.pluck(:title)
+  Post Pluck (0.8ms)  SELECT "posts"."title" FROM "posts" /*application='WongnokBlog'*/
+=&gt; ["Hello", "Rails วันแรก", "Ruby ไม่ยาก", "จากใน console"]</code></pre>
+
+<p>
+  ข้างในเหลือ <code>0</code> แต่พอออกมานับใหม่ได้ <code>4</code> ครบ — <strong>rollback จริง</strong>
+  (<code>…</code> ที่ตัดออกคือบรรทัด <code>SAVEPOINT</code> / <code>RELEASE SAVEPOINT</code> 23 บรรทัด ·
+  บรรทัด <code>Post Load</code> ของ <code>destroy_all</code> · และ <code>DELETE</code> ของ id 2–4)
+  <br>กลไกอยู่ในบรรทัดแรกสุด: <code>TRANSACTION … BEGIN</code> — sandbox <strong>เปิด transaction ครอบทั้ง session</strong>
+  แล้วตอน <code>exit</code> สั่งยกเลิกทั้งก้อน
+</p>
+
+<p>
+  มีของหนึ่งอย่างที่ rollback <strong>ไม่</strong>คืน · ผมสร้างโพสต์ใหม่หลังออกจาก sandbox (ด้วย <code>bin/rails runner</code>):
+</p>
+
+<pre><code><span class="c">$ bin/rails runner 'x = Post.create!(title: "หลัง sandbox"); p x.id; x.destroy; p Post.count'</span>
+6
+4</code></pre>
+
+<p>
+  ได้ id <code>6</code> ไม่ใช่ <code>5</code> · เพราะตัวนับ id ของ PostgreSQL (sequence) <strong>ไม่ถอยกลับตาม transaction</strong> —
+  id <code>5</code> ถูกใช้ไปแล้วใน sandbox และหายไปตลอดกาล · ไม่เสียหายอะไร แต่ถ้าเห็น id กระโดดก็อย่าตกใจ
+</p>
+
+<div class="analogy">
+  <span class="label">✏️ เทียบให้เห็นภาพ — เขียนด้วยดินสอบนแผ่นใส</span>
+  <p>
+    console ปกติคือการเขียนด้วย<strong>ปากกาลงสมุดจริง</strong> · <code>--sandbox</code> คือการ<strong>วางแผ่นใสทับสมุด</strong>แล้วเขียนบนแผ่นใส —
+    คุณมองเห็นทั้งของจริงข้างใต้และสิ่งที่เพิ่งเขียน ลบ ขีดฆ่าได้ตามใจ · พอ <code>exit</code> ก็ยกแผ่นใสทิ้ง สมุดเหมือนเดิมทุกตัวอักษร
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> แผ่นใสไม่ทิ้งร่องรอยบนสมุดเลย แต่ sandbox <strong>ทิ้งไว้อย่างน้อยหนึ่งอย่าง</strong> คือเลข id ที่ถูกใช้ไป ·
+    และระหว่างที่แผ่นใสยังวางอยู่ ฐานข้อมูลต้องจำทุกอย่างที่คุณทำไว้ — คู่มือ Rails (หัวข้อ <code>config.disable_sandbox</code>)
+    เตือนว่า sandbox ที่เปิดค้างนาน ๆ อาจทำให้ database server หน่วยความจำหมดได้ · ใช้เสร็จแล้วออก อย่าเปิดทิ้งข้ามวัน
+  </p>
+</div>
+
+<h3 id="sn-sub-2">-e production — console ที่ชี้ไปอีก environment</h3>
+
+<p>
+  <code>-e production</code> คือการเปิด console โดยใช้ config ของ production — ถ้ารันบนเครื่อง production จริง
+  <strong>คุณกำลังจับข้อมูลลูกค้าจริงด้วยมือ</strong> · สไลด์จึงบอกว่า "ระวังมาก — ใช้คู่กับ <code>--sandbox</code> เสมอ"
+  <br>ผม<strong>ไม่ได้</strong>รันกับ production จริง · แต่เปิดแอปตัวทดสอบด้วย <code>-e production --sandbox</code> เพื่อให้เห็นว่าหน้าจอเปลี่ยนไปยังไง:
+</p>
+
+<pre><code><span class="c">$ bin/rails console -e production --sandbox</span>
+Using vips to process variants requires the libvips library. Please install libvips using the instructions on the libvips website.
+Loading production environment in sandbox (Rails 8.1.4)
+Any modifications you make will be rolled back on exit
+wongnok-blog(prod):001&gt; Rails.env
+=&gt; "production"</code></pre>
+
+<p>
+  (บรรทัดแรกเรื่อง <code>libvips</code> เป็นคำเตือนของระบบย่อรูปภาพ ขึ้นเฉพาะตอนเปิดแบบ production ในเครื่องที่ยังไม่ได้ติดตั้ง libvips ·
+  ไม่เกี่ยวกับบทนี้ · เรื่องไฟล์และรูปรอ Day 3)
+</p>
+
+<p>
+  ตรงนี้คือ <strong>"เคล็ดลับสี prompt" ของสไลด์หน้า 69</strong> — และข่าวดีคือ <strong>Rails 8.1.4 ทำให้แล้วโดยไม่ต้องตั้งอะไร</strong> ·
+  ผมเปิดโค้ดของ railties 8.1.4 (<code>lib/rails/commands/console/irb_console.rb</code>) ดู:
+</p>
+
+<pre><code><span class="k">def</span> <span class="f">colorized_env</span>
+  <span class="k">case</span> <span class="n">Rails</span>.env
+  <span class="k">when</span> <span class="s">"development"</span>
+    <span class="n">IRB</span>::<span class="n">Color</span>.<span class="f">colorize</span>(<span class="s">"dev"</span>, [<span class="n">:BLUE</span>])
+  <span class="k">when</span> <span class="s">"test"</span>
+    <span class="n">IRB</span>::<span class="n">Color</span>.<span class="f">colorize</span>(<span class="s">"test"</span>, [<span class="n">:BLUE</span>])
+  <span class="k">when</span> <span class="s">"production"</span>
+    <span class="n">IRB</span>::<span class="n">Color</span>.<span class="f">colorize</span>(<span class="s">"prod"</span>, [<span class="n">:RED</span>])
+  <span class="k">else</span>
+    <span class="n">IRB</span>::<span class="n">Color</span>.<span class="f">colorize</span>(<span class="n">Rails</span>.env, [<span class="n">:MAGENTA</span>])
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  และในเทอร์มินัลจริงเห็นตามนั้น: <code>(dev)</code> กับ <code>(test)</code> <strong>สีน้ำเงิน</strong> ·
+  <code>(prod)</code> <strong>สีแดง</strong> · environment อื่น (เช่น <code>staging</code>) เป็นสีม่วงแดงตามโค้ดข้างบน (ข้อนี้ไม่ได้รันเอง) ·
+  <strong>เห็นสีแดงเมื่อไหร่ ให้หยุดมือก่อนกด Enter ทุกครั้ง</strong>
+  <br>ด่านป้องกันอีกชั้นที่ Rails มีให้: ถ้าใส่ <code>config.sandbox_by_default = true</code> ใน config ของ production
+  console ใน environment ที่ไม่ใช่ dev/test จะ<strong>เปิดเป็น sandbox อัตโนมัติ</strong> ต้องพิมพ์ <code>--no-sandbox</code> เองถึงจะเขียนจริงได้
+  (ข้อนี้ผมไม่ได้รันเอง — มาจากคู่มือ Configuring และโค้ด railties ที่เขียนว่า <code>return false if Rails.env.local?</code> แล้วค่อยดู <code>sandbox_by_default</code>)
+</p>
+
+<h3 id="sn-sub-3">dbconsole — เข้า psql ตรง ๆ (ถ้ามี psql)</h3>
+
+<p>
+  <code>bin/rails dbconsole</code> อ่าน <code>config/database.yml</code> แล้วเปิดโปรแกรม client ของฐานข้อมูลนั้นให้ —
+  สำหรับ PostgreSQL คือ <code>psql</code> · ใช้ตอนอยากเขียน SQL เองโดยไม่ผ่าน Active Record
+  <br>แต่ <strong><code>psql</code> ไม่ได้มากับ Rails</strong> · เครื่องที่ใช้ตรวจรัน PostgreSQL ใน Docker และไม่มี <code>psql</code> ในเครื่อง ได้ผลแบบนี้:
+</p>
+
+<pre><code><span class="c">$ which psql            # ข้อความข้างล่างเป็นของ zsh · ถ้าใช้ bash จะไม่พิมพ์อะไรเลย</span>
+psql not found
+<span class="c">$ bin/rails dbconsole</span>
+Couldn't find database client: psql. Check your $PATH and try again.</code></pre>
+
+<p>
+  ถ้าเจอข้อความนี้ ให้ติดตั้ง client ตามหน้าดาวน์โหลดของ PostgreSQL (ลิงก์ในหัวข้ออ้างอิง) ·
+  บน macOS หน้านั้นให้ตัวอย่างเป็น <code>brew install postgresql@15</code> และบอกให้เปลี่ยนเลขเป็นรุ่นที่ต้องการ —
+  เลือกเลขให้ตรงกับ server ของคุณ (คอร์สนี้ใช้ 17)
+  <br><strong>ไม่ต้องรีบติดตั้งวันนี้</strong> · Day 1 กับ Day 2 ทำทุกอย่างผ่าน console ได้ และ console โชว์ SQL ให้ดูอยู่แล้ว
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>transaction / rollback</dt>
+    <dd>transaction คือ "ก้อนงาน" ที่ฐานข้อมูลรับประกันว่าจะสำเร็จทั้งก้อนหรือไม่เกิดเลย · <code>COMMIT</code> = ยืนยัน · rollback = ยกเลิกทั้งก้อน ·
+        <code>--sandbox</code> คือ transaction ใหญ่ครอบทั้ง session · Day 2 จะเจอคำนี้อีกเยอะ ·
+        <strong>ถาม senior ได้ว่า “อันนี้ต้องห่อ transaction ไหม ถ้าพังครึ่งทางข้อมูลจะเป็นยังไง”</strong></dd>
+    <dt>sequence</dt>
+    <dd>ตัวนับเลข id อัตโนมัติของ PostgreSQL · <strong>ไม่ถอยตาม rollback</strong> จึงทำให้ id กระโดดได้ ·
+        <strong>พิมพ์บอก AI ได้ว่า “Postgres sequence gaps after rollback — is this expected?”</strong> (คำตอบคือ ใช่ ปกติ)</dd>
+    <dt>environment (<code>RAILS_ENV</code>)</dt>
+    <dd>ชุด config ที่แอปใช้ — development · test · production · <code>-e</code> คือการเลือกชุด ·
+        <strong>ถาม senior ได้ว่า “ทีมเราเข้า console ของ production ยังไง ต้องขอสิทธิ์ใคร มีบังคับ sandbox ไหม”</strong>
+        คำตอบนี้ต้องรู้ก่อนวันที่ต้องแก้ข้อมูลกลางดึก</dd>
+    <dt>dbconsole / psql</dt>
+    <dd><code>dbconsole</code> แค่<strong>เปิดโปรแกรมอื่นให้</strong> โดยกรอกชื่อ DB / user / host จาก <code>database.yml</code> ·
+        โปรแกรมนั้น (<code>psql</code>) ต้องติดตั้งเอง ·
+        <strong>พิมพ์บอก AI ได้ว่า “rails dbconsole says Couldn't find database client: psql — how do I install only the client on macOS”</strong></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อ 4 · ในตารางมี 4 แถว id สูงสุดคือ 4 · เปิด <code>bin/rails console --sandbox</code> สร้างโพสต์ใหม่ (ได้ id 5) แล้ว <code>exit</code> · จากนั้นนับแถว และสร้างโพสต์ใหม่<strong>นอก</strong> sandbox จะเป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">ก่อนสร้างนับได้ 4 แถว · โพสต์ใหม่ได้ id 6 เพราะ sequence ไม่ถอย</button>
+    <button class="opt">ก่อนสร้างนับได้ 4 แถว · โพสต์ใหม่ได้ id 5 เพราะทุกอย่างถูกถอยกลับ</button>
+    <button class="opt">ก่อนสร้างนับได้ 5 แถว · เพราะ create! สั่ง COMMIT ทันทีแม้ใน sandbox</button>
+    <button class="opt">exit ไม่ได้ ต้องพิมพ์ rollback เองก่อน ไม่งั้นข้อมูลค้างอยู่ครึ่ง ๆ</button>
+  </div>
+  <div class="explain">
+    <p>
+      <strong>ตัวเลือกที่ 1 ถูก</strong> — ผมรันจริง: ออกจาก sandbox แล้ว <code>Post.count</code> ได้ <code>4</code> · โพสต์ที่สร้างหลังจากนั้นได้ id <code>6</code>
+    </p>
+    <p>
+      ตัวเลือกที่ 2 ผิดครึ่งเดียว — จำนวนแถวถอยจริง แต่ตัวนับ id ของ PostgreSQL ไม่ถอยตาม transaction ·
+      ตัวเลือกที่ 3 ผิด เพราะใน sandbox <code>create!</code> ไม่ได้ <code>COMMIT</code> จริง แค่ทำ <code>SAVEPOINT</code> ใน transaction ใหญ่ที่เปิดไว้ตั้งแต่ต้น ·
+      ตัวเลือกที่ 4 ผิด เพราะ <code>exit</code> สั่ง rollback ให้เอง — ข้อความตอนเปิดบอกไว้แล้วว่า <code>rolled back on exit</code>
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> sandbox คืนข้อมูลครบ แต่ไม่คืนเลข id · และอย่าเปิดค้างนาน</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-8">8 · สรุป และ Day 2 รออยู่</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>อยากรู้ว่า…</th><th>ใช้</th><th>จำแค่นี้</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>ตอนโค้ดบรรทัดนี้วิ่ง ตัวแปรมีค่าอะไร</td><td><code>debugger</code></td>
+        <td><code>n</code> ข้าม · <code>s</code> มุด · <code>c</code> ไปต่อ · <code>info</code> ดูทั้งหมด · ลูกศรชี้บรรทัดที่<strong>ยังไม่รัน</strong> · <strong>ลบก่อน commit</strong></td></tr>
+    <tr><td>ข้อมูล / helper / route ทำงานยังไง</td><td><code>bin/rails console</code></td>
+        <td>เขียนฐานข้อมูลจริง · prompt บอกชื่อแอปและ env · <code>app.get</code> ต้องตั้ง Host ก่อน</td></tr>
+    <tr><td>แก้โค้ดแล้ว console ไม่เห็น</td><td><code>reload!</code></td>
+        <td>แล้วดึง object ใหม่ด้วย · ของเก่าในตัวแปรยังเป็น class เก่า</td></tr>
+    <tr><td>อยากลองของอันตราย</td><td><code>--sandbox</code></td>
+        <td>ออกแล้ว rollback · id ไม่คืน · อย่าเปิดค้าง</td></tr>
+    <tr><td>อยากเขียน SQL เอง</td><td><code>bin/rails dbconsole</code></td>
+        <td>ต้องมี <code>psql</code> ในเครื่องก่อน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>Day 2 (Active Record · PostgreSQL · CRUD) จะใช้ console หนักมาก</strong> — แทบทุกเรื่องจะเริ่มจาก
+  "พิมพ์ใน console ดูว่าได้ SQL อะไร" · บทนี้แค่ต้องการให้คุณ<strong>เปิด–ออก–อ่าน prompt–อ่าน SQL ที่โผล่มา</strong>ได้คล่องมือ
+  ส่วน <code>Post.where</code> · <code>find</code> · association ทั้งหลาย รอวันพรุ่งนี้
+</p>
+
+<div class="task">
+  <h3 id="sn-sub-4">🎯 ภารกิจ — ลองเครื่องมือทั้งสองชิ้นกับ wongnok_blog ของคุณเอง</h3>
+  <ol>
+    <li>ถ้ายังไม่มี model <code>Post</code>: <code>bin/rails g model Post title:string</code> แล้ว <code>bin/rails db:migrate</code></li>
+    <li>เปิด <code>bin/rails console</code> สร้างโพสต์ 3 อันด้วย <code>Post.create!</code> · <strong>จดหน้าตา prompt ของคุณไว้</strong> (ชื่อแอปอะไร · env สีอะไร)</li>
+    <li>เพิ่ม route <code>resources :posts, only: [:index]</code> · controller ตามสไลด์หน้า 67 (มี <code>debugger</code>) · view ที่วนพิมพ์ <code>post.title</code></li>
+    <li>รัน <code>bin/rails server</code> เปิด <code>/posts</code> ในเบราว์เซอร์ · ในเทอร์มินัลของ server พิมพ์ <code>info</code> แล้วตอบให้ได้ว่า
+        <strong>ตัวแปรตัวไหนเป็นของคุณ</strong> · ลอง <code>n</code> หนึ่งครั้ง แล้ว <code>c</code> · สังเกตเลข <code>Completed 200 OK in …ms</code></li>
+    <li>เปิด <code>bin/rails console --sandbox</code> สั่ง <code>Post.destroy_all</code> · <code>exit</code> · เปิด console ปกตินับใหม่</li>
+    <li><strong>พิสูจน์ว่าสะอาดก่อน commit:</strong> ลบบรรทัด <code>debugger</code> ออก แล้วรัน <code>bin/rubocop --only Lint/Debugger</code> ให้ได้ <code>no offenses detected</code>
+        · และใน console ยิง <code>app.get "/posts", headers: { "Host" =&gt; "localhost" }</code> ให้ได้ <code>200</code></li>
+  </ol>
+  <p class="ask">
+    ทำครบแล้วตอบก่อนกดเฉลย: <strong>ทำไมข้อ 4 เลข <code>Completed … in …ms</code> ถึงสูงผิดปกติ
+    และถ้าลบ <code>debugger</code> แล้วยิงใหม่ เลขนี้จะเหลือประมาณเท่าไร?</strong>
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>
+      <strong>เลขสูงเพราะ request ถูกนับเวลารวมช่วงที่ค้างอยู่ใน debugger</strong> — ตั้งแต่เข้า controller จนกด <code>c</code> ·
+      ของผมได้ <code>Completed 200 OK in 23675ms</code> ทั้งที่งานจริงใช้ไม่กี่สิบ ms ·
+      พอลบ <code>debugger</code> แล้วยิงผ่าน <code>app.get</code> ได้ <code>Completed 200 OK in 56ms</code> (ของคุณจะต่างไปบ้าง แต่ควรอยู่หลักสิบถึงร้อย ms)
+    </p>
+    <p>ผลที่ควรเห็นในแต่ละข้อ (จากเครื่องที่ใช้ตรวจ):</p>
+    <ul>
+      <li>ข้อ 2 — prompt <code>wongnok-blog(dev):001&gt;</code> · <code>dev</code> สีน้ำเงิน</li>
+      <li>ข้อ 4 — <code>info</code> โชว์ตัวแปร <code>@_…</code> ของ Rails ยาวเหยียด · ของคุณมีแค่ <code>@posts</code> (เป็น <code>ActiveRecord::Relation</code>) ·
+          <code>n</code> พาไปบรรทัด <code>render :index</code></li>
+      <li>ข้อ 5 — ถ้านับใน sandbox หลัง <code>destroy_all</code> จะได้ <code>0</code> · ออกมานับใหม่ได้เท่าเดิม</li>
+      <li>ข้อ 6 — ผลจริงของผม:</li>
+    </ul>
+<pre><code><span class="c">$ bin/rubocop --only Lint/Debugger</span>
+............................
+
+28 files inspected, no offenses detected</code></pre>
+    <p style="margin-bottom:0">
+      (จำนวนไฟล์ของคุณจะต่างไปตามไฟล์ที่สร้าง) · ถ้าข้อ 6 ยังเจอ <code>Lint/Debugger: Remove debugger entry point debugger.</code>
+      แปลว่ายังลบไม่หมด — บรรทัดที่ฟ้องบอกเลขบรรทัดและคอลัมน์ให้ตรง ๆ ·
+      <strong>ติดตรงไหน หรือผลของคุณไม่ตรงกับที่เขียนไว้ ถามกลับมาได้เลย</strong> พร้อมแปะสิ่งที่จอขึ้นมาทั้งก้อน
+    </p>
+  </div>
+</div>
+
+<nav class="nav">
+  <a href="./0103-rails-views-and-helpers.html">← บทเรียน 103 · View · ERB · helper · ความปลอดภัย</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 1</a>
+  <a href="./0105-rails-day1-lab.html">บทเรียน 105 → Lab 1</a>
+</nav>
+
+<h2 id="sn-sec-9">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem">Rails Guides — Debugging Rails Applications § Debugging with the debug Gem</a> —
+      <strong>อ่าน 4.1 <em>Entering a Debugging Session</em> และ 4.2.1 <em>The info Command</em></strong> ·
+      ยืนยันว่า gem <code>debug</code> มากับแอปใหม่และพร้อมใช้ใน development / test · และ <code>debugger</code> มีชื่อเล่น <code>binding.break</code> · <code>binding.b</code> ·
+      ข้ามหัวข้อ breakpoint ขั้นสูง (4.3) ไปก่อนได้</li>
+  <li><a href="https://guides.rubyonrails.org/command_line.html#bin-rails-console">Rails Guides — The Rails Command Line § bin/rails console</a> —
+      <strong>อ่านถึงจบ 5.2 <em>bin/rails dbconsole</em></strong> · ย่อหน้าใน 5.1.1 <em>The app Object</em> คือที่มาของวิธีแก้ <code>403</code> ในหัวข้อ 5 —
+      คู่มือบอกเองว่าต้องส่ง header <code>Host</code> เพราะค่าตั้งต้นคือ <code>www.example.com</code></li>
+  <li><a href="https://guides.rubyonrails.org/configuring.html#config-sandbox-by-default">Rails Guides — Configuring § config.sandbox_by_default</a> —
+      สั้นมาก <strong>อ่านคู่กับ <a href="https://guides.rubyonrails.org/configuring.html#config-disable-sandbox"><code>config.disable_sandbox</code></a></strong>
+      ที่อยู่ไม่ไกลกัน · ตัวหลังคือที่มาของคำเตือน "sandbox เปิดค้างนานทำ database server หน่วยความจำหมด"</li>
+  <li><a href="https://guides.rubyonrails.org/configuring.html#config-hosts">Rails Guides — Configuring § config.hosts</a> —
+      <strong>อ่านเพื่อเข้าใจว่าทำไม development ถึงยอมแค่ <code>.localhost</code> · <code>.test</code> · เลข IP</strong>
+      และ production ควรตั้งเป็นโดเมนจริงของคุณ</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionDispatch/Integration/Session.html">Rails API — ActionDispatch::Integration::Session</a> —
+      คลาสของ <code>app</code> ใน console · <strong>ดูส่วน <em>Constants</em> (<code>DEFAULT_HOST = "www.example.com"</code>) และ <em>Attributes</em> (<code>host!</code> · <code>response</code>)</strong></li>
+  <li><a href="https://rubygems.org/gems/debug">RubyGems — debug</a> — หน้า gem ทางการ · <strong>ดูเลขรุ่นล่าสุดเทียบกับ <code>bundle exec rdbg --version</code> ของคุณ</strong>
+      และตามลิงก์ Documentation ไปดูรายการคำสั่งเต็ม (บทนี้ใช้แค่ <code>n</code> <code>s</code> <code>c</code> <code>info</code> <code>bt</code>) ·
+      หรือพิมพ์ <code>help</code> ใน <code>(rdbg)</code> ได้รายการเดียวกัน</li>
+  <li><a href="https://www.postgresql.org/download/macosx/">PostgreSQL — macOS packages</a> —
+      <strong>อ่านหัวข้อ <em>Homebrew</em></strong> ถ้า <code>bin/rails dbconsole</code> ฟ้องว่าหา <code>psql</code> ไม่เจอ ·
+      เปลี่ยนเลขใน <code>postgresql@NN</code> ให้ตรงกับรุ่น server ของคุณ</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

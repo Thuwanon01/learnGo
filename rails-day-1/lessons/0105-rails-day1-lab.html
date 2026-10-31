@@ -1,0 +1,972 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 105 — Lab 1 — สร้างแอปเอง เพิ่ม /about และอ่าน error ให้เป็น</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 105 · Rails · Day 1</p>
+  <h1>Lab 1 — สร้างแอปเอง เพิ่ม /about และอ่าน error ให้เป็น</h1>
+  <p class="meta">~35 นาทีสำหรับอ่าน + ลงมือทำ Lab ตามสไลด์อีก ~45 นาที · ควรผ่าน
+    <a href="./0101-rails-routing.html">บทเรียน 101</a> (Routing) ·
+    <a href="./0102-rails-controller.html">บทเรียน 102</a> (Controller) ·
+    <a href="./0103-rails-views-and-helpers.html">บทเรียน 103</a> (View) ·
+    <a href="./0104-rails-debug-and-console.html">บทเรียน 104</a> (console) มาก่อน</p>
+  <p class="standfirst">
+    วันแรกของ Rails จบด้วยโจทย์ 6 ข้อในสไลด์หน้า 72 — ฟังดูง่าย:
+    สร้างแอป · เพิ่มหน้า <code>/about</code> · รับชื่อจาก URL · ลองสลับ route · ลองพิมพ์ชื่อผิด · เปิด console
+    <br>แต่ทั้ง 6 ข้อคือ<strong>การเดิน loop เดียวกันซ้ำ 6 รอบ</strong>:
+    browser → <code>routes.rb</code> → controller → view → HTML ·
+    และครึ่งหนึ่งของ Lab คือ<strong>การทำให้ loop นี้พังโดยตั้งใจ</strong> แล้วดูว่า Rails ฟ้องว่าอะไร
+    <br>บทนี้มีสามส่วน: <strong>ภารกิจ Lab 1 พร้อมเฉลยที่รันจริงทุกขั้น</strong> ·
+    <strong>quiz 4 ข้อจากสไลด์หน้า 70–71</strong> ที่ผมรันพิสูจน์เฉลยครบทุกข้อ ·
+    แล้วปิดด้วย<strong>ตารางทบทวนบท 90–105</strong> กับสิ่งที่รออยู่ใน Day 2
+    — และมี<strong>สองจุดที่ผลจริงไม่ตรงกับที่คนส่วนใหญ่คาด</strong> (รวมถึงตัวผมเองตอนเขียน spec ของบทนี้)
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby -v</span>
+ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+<span class="c">$ rails -v</span>
+Rails 8.1.4</code></pre>
+  <p>
+    สไลด์ใช้ <strong>Ruby 4.0.6 · Rails 8.1.3</strong> · เครื่องที่ใช้ตรวจเป็น <strong>Ruby 4.0.9 · Rails 8.1.4</strong>
+    (รุ่น patch ถัดไป เรื่องที่บทนี้พูดถึงไม่ต่างกัน) · ฐานข้อมูลเป็น PostgreSQL 17
+    <br>· ขั้นที่ 1 รัน <code>rails new wongnok_blog --database=postgresql --css=tailwind</code> ตามสไลด์หน้า 40 ใหม่จริง ๆ
+    <br>· ขั้นที่ 2–6 ทำในแอปที่สร้างด้วยคำสั่งเดียวกัน แล้วเปิด <code>bin/rails server -p 4105</code> ตัวจริง
+    ยิงด้วย <code>curl</code> · error ทุกตัวก็อปจากหน้า error ของ Rails และจาก log ของ server
+    <br>· quiz ทั้ง 4 ข้อรันพิสูจน์แล้วทุกข้อ (Ruby ล้วน หรือแอป Rails ตัวเดียวกันนี้)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ทุก output · error message · ค่าหลัง <code>=&gt;</code> ในบทนี้มาจากการรันจริง ไม่ได้พิมพ์เอง</strong>
+    · ที่ตัดออกมีสี่อย่าง: stack trace ยาว ๆ ใต้ error · บรรทัด <code>create …</code> ส่วนใหญ่ของ <code>rails new</code> (มี 203 บรรทัด) ·
+    path ส่วนหน้าที่เป็นโฟลเดอร์ทดลองในเครื่องผม (เขียนแทนด้วย <code>…</code>) ·
+    และวงเล็บสถิติท้ายบรรทัด <code>Completed …</code> ใน log (<code>(ActiveRecord: 0.0ms … | GC: 0.0ms)</code>)
+    · ค่าที่เปลี่ยนทุกครั้งที่รัน (เวลา · PID · commit hash) เป็นของรอบที่ผมรัน ของคุณจะต่างไปตามจริง
+    · ผมใช้พอร์ต 4105 เพราะเครื่องตรวจรันหลายแอปพร้อมกัน ของคุณใช้ค่าเริ่มต้น <code>3000</code> ได้เลย
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · Lab นี้คือ loop เดียว เดินซ้ำ 6 รอบ</h2>
+
+<p>
+  ก่อนเปิด terminal ให้ดูภาพนี้ก่อน — มันคือภาพเดียวกับสไลด์หน้า 50 (วงจรของ 1 request)
+  ที่เรียนไปใน <a href="./0100-rails-boot-request-mvc.html">บท 100</a>
+  แต่เขียนด้วยชื่อไฟล์จริงของ Lab นี้ และติดป้ายว่าแต่ละขั้นของ Lab แตะกล่องไหน:
+</p>
+
+<div class="diagram">Browser:  GET /about?name=Nan
+   │
+   ▼
+① config/routes.rb ........................ ขั้น 2 · ขั้น 4
+   get "/about", to: "pages#about"
+   │   "pages#about"  →  class PagesController  +  method about
+   ▼
+② app/controllers/pages_controller.rb ..... ขั้น 2 · ขั้น 3 · ขั้น 5
+   def about
+     @name = params[:name] ...
+   │   ไม่ได้สั่ง render → Rails หา view ชื่อเดียวกับ action เอง
+   ▼
+③ app/views/pages/about.html.erb .......... ขั้น 2 · ขั้น 3
+   &lt;p&gt;Hello &lt;%= @name %&gt;&lt;/p&gt;
+   │
+   ▼
+HTML กลับไปที่ browser</div>
+
+<p>
+  เส้นที่เชื่อมสามกล่องนี้<strong>ไม่ใช่โค้ดที่คุณเขียน</strong> — เป็น<strong>ชื่อ</strong>ล้วน ๆ
+  <br><code>"pages#about"</code> ใน routes.rb กลายเป็นชื่อ class <code>PagesController</code> ·
+  ชื่อ class กลายเป็นชื่อไฟล์ <code>pages_controller.rb</code> ·
+  ชื่อ action <code>about</code> กลายเป็นชื่อไฟล์ view <code>pages/about.html.erb</code>
+  <br>ใน Go คุณต้องเขียน <code>r.GET("/about", aboutHandler)</code> ส่งฟังก์ชันเข้าไปตรง ๆ
+  (<a href="../../day-8/lessons/0038-gin-routing.html">บท 38</a>) ·
+  ใน Rails <strong>คุณส่งแค่ชื่อ แล้ว Rails ไปหาของเอง</strong> —
+  ซึ่งแปลว่าถ้าชื่อผิดแม้ตัวเดียว เส้นจะขาด และ compiler ไม่มีให้ฟ้องก่อนรัน · นั่นคือเหตุผลที่ขั้น 5 มีอยู่
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ขั้นใน Lab (สไลด์หน้า 72)</th><th>กล่องที่แตะ</th><th>ถ้าติด กลับไปอ่าน</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1 · <code>rails new</code> ด้วยตัวเอง</td><td>ทั้งโปรเจกต์</td>
+        <td><a href="./0098-rails-new-and-structure.html">บท 98</a></td></tr>
+    <tr><td>2 · route <code>/about</code> + controller + view</td><td>① ② ③</td>
+        <td><a href="./0099-rails-naming-and-explore.html">บท 99</a> (ชื่อ) ·
+            <a href="./0101-rails-routing.html">บท 101</a> · <a href="./0102-rails-controller.html">102</a> ·
+            <a href="./0103-rails-views-and-helpers.html">103</a></td></tr>
+    <tr><td>3 · query param <code>/about?name=Nan</code></td><td>② ③</td>
+        <td><a href="./0102-rails-controller.html">บท 102</a> (params) ·
+            <a href="./0094-ruby-truthiness-and-nil.html">บท 94</a> (<code>||</code> กับค่าว่าง)</td></tr>
+    <tr><td>4 · <code>/about/:id</code> แล้วสลับลำดับ</td><td>①</td>
+        <td><a href="./0101-rails-routing.html">บท 101</a></td></tr>
+    <tr><td>5 · ตั้งชื่อ controller ผิด แล้วอ่าน error</td><td>① ②</td>
+        <td><a href="./0099-rails-naming-and-explore.html">บท 99</a> ·
+            <a href="./0096-ruby-errors-and-duck-typing.html">บท 96</a> (อ่าน error ของ Ruby)</td></tr>
+    <tr><td>6 · console: <code>3.days.ago</code> · <code>"post".pluralize</code></td><td>นอก loop</td>
+        <td><a href="./0104-rails-debug-and-console.html">บท 104</a> ·
+            <a href="./0097-ruby-before-rails.html">บท 97</a> (open class · Active Support)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-2">2 · ทายก่อนลงมือ: สลับลำดับ route แล้วเกิดอะไร</h2>
+
+<p>
+  ขั้นที่ 4 ของ Lab สั่งว่า <em>“เพิ่ม route <code>/about/:id</code> แล้วลองสลับลำดับดูว่าเกิดอะไร”</em>
+  · สไลด์หน้า 59 สอนไว้ว่า <strong>Rails ไล่จากบนลงล่าง และหยุดที่เส้นแรกที่ match</strong>
+  · ลองเอาความรู้นั้นมาทายก่อน
+  (ผมเพิ่ม action ชื่อ <code>member</code> ไว้รับ <code>/about/:id</code> — ชื่อนี้ผมตั้งเอง สไลด์ไม่ได้กำหนด)
+</p>
+
+<div class="predict">
+  <pre><code><span class="c"># แบบ A — /about อยู่บน</span>
+<span class="f">get</span> <span class="s">"/about"</span>,     <span class="n">to:</span> <span class="s">"pages#about"</span>
+<span class="f">get</span> <span class="s">"/about/:id"</span>, <span class="n">to:</span> <span class="s">"pages#member"</span>
+
+<span class="c"># แบบ B — สลับสองบรรทัด</span>
+<span class="f">get</span> <span class="s">"/about/:id"</span>, <span class="n">to:</span> <span class="s">"pages#member"</span>
+<span class="f">get</span> <span class="s">"/about"</span>,     <span class="n">to:</span> <span class="s">"pages#about"</span></code></pre>
+  <p class="ask">เปิด <code>/about</code> กับ <code>/about/7</code> — แบบ B ได้ผลต่างจากแบบ A ตรงไหน?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่ต่างกันเลยสักบรรทัด</strong> · ผลรันจริง ยิงห้า URL กับทั้งสองแบบ:</p>
+    <pre><code><span class="c">--- แบบ A (/about อยู่บน)</span>
+/about               &lt;p&gt;Hello PEA&lt;/p&gt; [200]
+/about/7             &lt;p&gt;id = 7 (String)&lt;/p&gt; [200]
+/about/nan           &lt;p&gt;id = nan (String)&lt;/p&gt; [200]
+/about/              &lt;p&gt;Hello PEA&lt;/p&gt; [200]
+/about/7?name=Nan    &lt;p&gt;id = 7 (String)&lt;/p&gt; [200]
+<span class="c">--- แบบ B (/about/:id อยู่บน)</span>
+/about               &lt;p&gt;Hello PEA&lt;/p&gt; [200]
+/about/7             &lt;p&gt;id = 7 (String)&lt;/p&gt; [200]
+/about/nan           &lt;p&gt;id = nan (String)&lt;/p&gt; [200]
+/about/              &lt;p&gt;Hello PEA&lt;/p&gt; [200]
+/about/7?name=Nan    &lt;p&gt;id = 7 (String)&lt;/p&gt; [200]</code></pre>
+    <p>
+      เหตุผล: <code>/about/:id</code> <strong>ต้องมีอะไรสักอย่างต่อท้าย <code>/about/</code></strong> ถึงจะ match
+      · ส่วน <code>/about</code> ไม่มีอะไรต่อท้าย → <strong>ไม่มี URL ไหนเลยที่สองเส้นนี้แย่งกัน</strong>
+      ลำดับจึงไม่มีผล (สังเกต <code>/about/</code> ที่มี <code>/</code> ปิดท้าย ก็ยังเข้า <code>about</code> ทั้งสองแบบ)
+    </p>
+    <p style="margin-bottom:0">
+      ถ้าคุณทาย “แบบ B จะพัง” ไม่ต้องรู้สึกแย่ — ผมเองตอนวางโจทย์บทนี้ก็คาดว่าจะเห็นอะไรเปลี่ยน
+      <br><strong>“ลำดับสำคัญ” จริงเฉพาะเมื่อมีสองเส้นที่ match URL เดียวกันได้</strong> ·
+      หัวข้อถัดไปจะทำให้มันชนกันจริง ๆ
+    </p>
+  </div>
+</div>
+
+<h3 id="sn-sub-1">ทำให้ชนกันจริง: เพิ่ม <code>/about/team</code></h3>
+
+<p>
+  เพิ่มเส้น<strong>ที่เจาะจง</strong> (static segment) ไว้<strong>ใต้</strong>เส้นที่กว้างกว่า —
+  แบบเดียวกับ <code>/posts/popular</code> ในสไลด์หน้า 59:
+</p>
+
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="f">get</span> <span class="s">"/about"</span>,      <span class="n">to:</span> <span class="s">"pages#about"</span>
+<span class="f">get</span> <span class="s">"/about/:id"</span>,  <span class="n">to:</span> <span class="s">"pages#member"</span>
+<span class="f">get</span> <span class="s">"/about/team"</span>, <span class="n">to:</span> <span class="s">"pages#team"</span>     <span class="c"># ← อยู่ล่าง :id</span></code></pre>
+
+<pre><code><span class="c">$ curl ... (ผลจริง)</span>
+/about         &lt;p&gt;Hello PEA&lt;/p&gt; [200]
+/about/7       &lt;p&gt;id = 7 (String)&lt;/p&gt; [200]
+/about/team    &lt;p&gt;id = team (String)&lt;/p&gt; [200]      <span class="c"># ← ไม่ได้หน้า team</span>
+
+<span class="c"># log ของ server ตอนเปิด /about/team</span>
+Started GET "/about/team" for 127.0.0.1 at 2026-11-01 00:16:14 +0700
+Processing by PagesController#member as */*
+  Parameters: {"id" =&gt; "team"}</code></pre>
+
+<p>
+  <code>/about/team</code> ตกไปที่ <code>member</code> โดย <code>params[:id]</code> เป็นสตริง <code>"team"</code>
+  · หน้า team <strong>ไม่มีวันถูกเรียก</strong> และไม่มีอะไรเตือนเลย — แม้แต่ตาราง <code>bin/rails routes</code> ก็โชว์เส้นนี้ปกติ:
+</p>
+
+<pre><code><span class="c">$ bin/rails routes -c pages</span>
+    Prefix Verb URI Pattern           Controller#Action
+     about GET  /about(.:format)      pages#about
+           GET  /about/:id(.:format)  pages#member
+about_team GET  /about/team(.:format) pages#team</code></pre>
+
+<p>
+  ย้ายเส้น <code>team</code> ขึ้นไปไว้<strong>เหนือ</strong> <code>:id</code> แล้วยิงใหม่:
+</p>
+
+<pre><code>/about         &lt;p&gt;Hello PEA&lt;/p&gt; [200]
+/about/7       &lt;p&gt;id = 7 (String)&lt;/p&gt; [200]
+/about/team    &lt;p&gt;this is the team page&lt;/p&gt; [200]</code></pre>
+
+<p>
+  กฎที่ใช้ได้จริง: <strong>เส้นที่เจาะจงไว้บน เส้นที่กว้างไว้ล่าง</strong> (ตรงกับฝั่ง “ถูก” ของสไลด์หน้า 59)
+  · และ<strong>ถ้าสองเส้นไม่มีทางแย่ง URL เดียวกันได้ จะเรียงยังไงก็ได้</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">📮 เทียบกับของจริง</span>
+  <p>
+    routes.rb เหมือน<strong>กระดาษกฎแผ่นเดียวของพนักงานคัดแยกจดหมาย</strong>
+    ที่อ่านจากบนลงล่าง เจอข้อแรกที่เข้าก็โยนซองลงช่องนั้นทันที ไม่อ่านข้อที่เหลือ
+    <br>กฎข้อ 1 “ซองจ่าหน้า <em>ฝ่ายบุคคล / ชื่อใครก็ได้</em> → ช่อง A” ·
+    กฎข้อ 2 “ซองจ่าหน้า <em>ฝ่ายบุคคล / หัวหน้าฝ่าย</em> → ช่อง B”
+    → จดหมายถึงหัวหน้าฝ่ายลงช่อง A หมด เพราะ “หัวหน้าฝ่าย” ก็เป็น “ชื่อใครก็ได้” แบบหนึ่ง
+    <br>แต่ถ้ากฎสองข้อคือ “ซองที่<em>ไม่มี</em>ชื่อผู้รับ” กับ “ซองที่<em>มี</em>ชื่อผู้รับ” —
+    ไม่มีซองไหนเข้าได้ทั้งสองข้อ จะเขียนข้อไหนก่อนก็ได้ผลเหมือนกัน
+    (นี่คือ <code>/about</code> กับ <code>/about/:id</code>)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงทำงานไปเดือนนึงแล้วเห็นว่าช่อง B ว่างตลอด ก็จะเอะใจแล้วถามหัวหน้า
+    <br>Rails <strong>ไม่เอะใจ</strong> — ไม่เตือนตอน boot ไม่เตือนใน <code>bin/rails routes</code>
+    ไม่เตือนตอนมี request เข้า · เส้นที่ถูกบังจะนั่งเงียบอยู่ในไฟล์ไปตลอด
+    จนกว่าจะมีคนสงสัยว่าทำไมหน้า team ไม่เคยขึ้น
+    <br>และพนักงานอ่านแค่หน้าซอง แต่ Rails ดูทั้ง <strong>HTTP method กับ path</strong> —
+    <code>GET /posts</code> กับ <code>POST /posts</code> คือคนละกฎ (สไลด์หน้า 54)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์เรื่องลำดับ route</span>
+  <dl>
+    <dt>dynamic segment · static segment</dt>
+    <dd>ส่วนของ path ที่ขึ้นต้นด้วย <code>:</code> (เช่น <code>:id</code>) คือ <em>dynamic</em> — รับค่าอะไรก็ได้แล้วใส่ลง <code>params</code> ·
+        ส่วนที่เป็นตัวอักษรตายตัว (เช่น <code>team</code>) คือ <em>static</em> ·
+        <strong>ถาม senior ได้ว่า “เส้นนี้มี dynamic segment ที่บัง static route ข้างล่างอยู่หรือเปล่า”</strong></dd>
+    <dt>first match wins</dt>
+    <dd>กฎของ Rails router: เส้นแรกที่ match ชนะ เส้นที่เหลือไม่ถูกดูต่อ ·
+        คำนี้ใช้คุยได้กับ router แทบทุกตัว แต่<strong>อย่าเหมาว่าทุก framework เป็นแบบนี้</strong> —
+        พิมพ์ถาม AI ได้ว่า <em>“Does this router use first-match or most-specific-match?”</em>
+        ก่อนจะย้ายความรู้นี้ไปใช้กับ framework อื่น</dd>
+    <dt>shadowed route (เส้นที่ถูกบัง)</dt>
+    <dd>เส้นที่ไม่มีวันถูกเรียกเพราะมีเส้นข้างบนกินหมด เช่น <code>/about/team</code> ใต้ <code>/about/:id</code> ·
+        เป็นคำที่คนใช้คุยกัน ไม่ใช่ชื่อ error ใน Rails (เพราะ Rails ไม่ฟ้อง) ·
+        <strong>บอก AI ได้ว่า “check my routes.rb for shadowed routes”</strong></dd>
+    <dt><code>recognize_path</code></dt>
+    <dd>เมธอดที่ถาม router ตรง ๆ ว่า URL นี้จะไปไหน ไม่ต้องเปิด server ·
+        ใช้ใน console ได้: <code>Rails.application.routes.recognize_path("/posts/popular")</code>
+        (ผลจริงอยู่ใน quiz ข้อ 4 ข้างล่าง) · เร็วกว่าเดาจากการอ่านไฟล์มาก</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">3 · ภารกิจ: Lab 1 ทั้ง 6 ขั้น</h2>
+
+<p>
+  ทำเองทั้ง 6 ขั้นก่อนค่อยกดเฉลย · เฉลยยาว เพราะ<strong>ทุกขั้นมีผลรันจริงแนบ</strong>
+  ไว้ให้เทียบกับหน้าจอของคุณ — ถ้าของคุณขึ้นต่างจากนี้ นั่นคือเบาะแส ไม่ใช่ความผิด
+</p>
+
+<div class="task">
+  <h3 id="sn-sub-2">🎯 Lab 1 (สไลด์หน้า 72 · ประมาณ 45 นาที)</h3>
+  <ol>
+    <li><strong>สร้างโปรเจกต์ใหม่ด้วย <code>rails new</code> ด้วยตัวเอง</strong> —
+        ใช้คำสั่งเดียวกับสไลด์หน้า 40 · แล้วเปิด <code>bin/rails server</code> ให้ขึ้น</li>
+    <li><strong>เพิ่ม route <code>/about</code> พร้อม controller และ view</strong> —
+        เขียนมือทั้ง 3 ไฟล์แบบสไลด์หน้า 60 (ห้ามใช้ generator) · เปิด <code>/about</code> แล้วต้องเห็นหน้าของคุณ</li>
+    <li><strong>รับ query param มาแสดง</strong> — <code>/about?name=Nan</code> ต้องขึ้น <code>Hello Nan</code> ·
+        ไม่ส่ง <code>name</code> มาให้ขึ้นค่าเริ่มต้น · <em>แถม:</em> ลอง <code>/about?name=</code> (มีเครื่องหมาย <code>=</code> แต่ไม่มีค่า) ดูด้วย</li>
+    <li><strong>เพิ่ม route <code>/about/:id</code> แล้วลองสลับลำดับ</strong> — จดว่าอะไรเปลี่ยน
+        แล้วลองเพิ่ม <code>/about/team</code> ไว้ใต้ <code>:id</code></li>
+    <li><strong>ตั้งชื่อ controller ให้ผิด แล้วอ่าน error</strong> — ลองผิดอย่างน้อยสามแบบ:
+        (ก) ใน routes.rb เขียน <code>"page#about"</code> ไม่มี s ·
+        (ข) ไฟล์ชื่อถูก แต่ class ข้างในชื่อ <code>PageController</code> ·
+        (ค) class ชื่อถูก แต่ไฟล์ชื่อ <code>page_controller.rb</code> ·
+        แต่ละแบบให้จดชื่อ error กับ HTTP status</li>
+    <li><strong>เปิด <code>bin/rails console</code></strong> แล้วลอง <code>3.days.ago</code> กับ <code>"post".pluralize</code> ·
+        ดูให้ดีว่า <code>3.days.ago</code> บอกเวลาเป็นโซนไหน</li>
+  </ol>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+
+    <p><strong>ขั้น 1 · <code>rails new</code></strong></p>
+    <pre><code><span class="c">$ rails new wongnok_blog --database=postgresql --css=tailwind</span>
+      create
+      create  README.md
+      create  Rakefile
+      create  .ruby-version
+      create  config.ru
+      create  .gitignore
+      create  .gitattributes
+      create  Gemfile
+         run  git init -b main from "."
+<span class="c">  … (บรรทัด create อีกราวร้อยบรรทัด) …</span>
+         run  bundle install --quiet
+<span class="c">  …</span>
+  Compile initial Tailwind build
+         run    rails tailwindcss:build from "."
+≈ tailwindcss v4.3.3
+
+Done in 37ms
+<span class="c">  …</span>
+       force  config/cable.yml</code></pre>
+    <p>
+      ทั้งหมด 203 บรรทัด ใช้เวลาราว 8 วินาทีบนเครื่องตรวจ (gem ลงไว้ครบแล้ว ครั้งแรกของคุณอาจนานกว่ามาก)
+      · <strong>สังเกตบรรทัด <code>git init</code></strong> — Rails สร้าง repo ให้ <strong>แต่ไม่ commit ให้</strong>
+      (สไลด์หน้า 40 เขียนว่าได้ “git repo ที่ commit แรกให้แล้ว” — ของจริงไม่มี commit เลย ·
+      รายละเอียดอยู่ใน <a href="./0098-rails-new-and-structure.html">บท 98</a>):
+    </p>
+    <pre><code><span class="c">$ cd wongnok_blog</span>
+<span class="c">$ git log --oneline</span>
+fatal: your current branch 'main' does not have any commits yet</code></pre>
+    <p>
+      <strong>commit ทันทีก่อนแตะอะไร</strong> — แล้วตลอด Lab คุณจะใช้ <code>git diff</code>
+      ดูได้ว่าตัวเองแก้อะไรไปบ้าง และ <code>git checkout .</code> ย้อนได้ตอนทำขั้น 5 พัง:
+    </p>
+    <pre><code><span class="c">$ git add . &amp;&amp; git commit -m "rails new"</span>
+<span class="c">$ git log --oneline</span>
+183ad04 rails new</code></pre>
+    <p>
+      ต่อด้วยสร้างฐานข้อมูลแล้วเปิด server
+      (ฐานข้อมูลของผมชื่อ <code>w105</code> เพราะเครื่องตรวจแยก DB ต่อบท · ของคุณจะเป็น <code>wongnok_blog_development</code> ตามที่เขียนใน <code>config/database.yml</code>):
+    </p>
+    <pre><code><span class="c">$ bin/rails db:prepare</span>
+Created database 'w105'
+
+<span class="c">$ bin/rails server -p 4105</span>
+=&gt; Booting Puma
+=&gt; Rails 8.1.4 application starting in development
+=&gt; Run `bin/rails server --help` for more startup options
+Puma starting in single mode...
+* Puma version: 8.0.2 ("Into the Arena")
+* Ruby version: ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+*  Min threads: 3
+*  Max threads: 3
+*  Environment: development
+*          PID: 44110
+* Listening on http://127.0.0.1:4105
+* Listening on http://[::1]:4105
+Use Ctrl-C to stop</code></pre>
+    <div class="warn">
+      <span class="label">⚠️ ข้าม <code>db:prepare</code> ไม่ได้ ทั้งที่ Lab นี้ยังไม่มี model สักตัว</span>
+      <p style="margin-bottom:0">
+        ผมลองเปิด server ชี้ไปที่ฐานข้อมูลที่ยังไม่ได้สร้าง แล้วเปิด <code>/about</code> — ได้ <strong>500</strong>:
+      </p>
+      <pre style="margin-bottom:0.4rem"><code>ActiveRecord::NoDatabaseError
+Database not found: w105_nodb. Available database configurations can be found in config/database.yml.
+To resolve this error:
+- Create the database by running:
+ bin/rails db:create
+- Verify that config/database.yml contains the correct database name.</code></pre>
+      <p style="margin-bottom:0">
+        เพราะในโหมด development ทุก request แรกจะเช็คว่ามี migration ค้างไหม ซึ่งต้องคุยกับฐานข้อมูล
+        (log ของ request แรกบนเครื่องผมมีบรรทัด <code>CREATE TABLE "schema_migrations"</code> โผล่มาด้วย)
+        · หน้า error มีปุ่ม <strong>Create database</strong> ให้กดด้วย · เรื่องต่อ PostgreSQL เต็ม ๆ เป็นของ Day 2
+      </p>
+    </div>
+
+    <p><strong>ขั้น 2 · route + controller + view (เขียนมือ 3 ไฟล์)</strong></p>
+    <pre><code><span class="c"># config/routes.rb</span>
+<span class="n">Rails</span>.application.routes.<span class="f">draw</span> <span class="k">do</span>
+  <span class="f">get</span> <span class="s">"/about"</span>, <span class="n">to:</span> <span class="s">"pages#about"</span>
+<span class="k">end</span>
+
+<span class="c"># app/controllers/pages_controller.rb</span>
+<span class="k">class</span> <span class="n">PagesController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">about</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="c"># app/views/pages/about.html.erb</span>
+&lt;h1&gt;About wongnok_blog&lt;/h1&gt;
+&lt;p&gt;Hello from Day 1&lt;/p&gt;</code></pre>
+    <p>
+      method <code>about</code> ว่างเปล่าได้ — ไม่ต้องเขียน <code>render</code> เพราะ Rails หา view ที่ชื่อตรงกับ action เอง (สไลด์หน้า 60 กล่อง “no render line”)
+      · ผลจริงจาก <code>curl</code> ดูเฉพาะส่วน <code>&lt;main&gt;</code>:
+    </p>
+    <pre><code><span class="c">$ curl -s http://127.0.0.1:4105/about</span>
+    &lt;main class="container mx-auto mt-28 px-5 flex"&gt;
+      &lt;!-- BEGIN app/views/pages/about.html.erb
+--&gt;&lt;h1&gt;About wongnok_blog&lt;/h1&gt;
+&lt;p&gt;Hello from Day 1&lt;/p&gt;
+&lt;!-- END app/views/pages/about.html.erb --&gt;
+    &lt;/main&gt;</code></pre>
+    <p>
+      <strong>ของแถมที่มีประโยชน์มาก:</strong> comment <code>BEGIN app/views/pages/about.html.erb</code> นั้นไม่ได้มาจากเรา —
+      แอปที่ <code>rails new</code> สร้างเปิด <code>config.action_view.annotate_rendered_view_with_filenames = true</code>
+      ไว้ใน <code>config/environments/development.rb</code> · แปลว่า <strong>กด View Source ในเบราว์เซอร์ก็รู้ได้ทันทีว่าหน้านี้มาจากไฟล์ไหน</strong>
+      (เราจะใช้มันพิสูจน์ quiz ข้อ 1)
+    </p>
+    <p>log ของ server ยืนยันว่าเส้นทางเดินครบ loop:</p>
+    <pre><code>Started GET "/about" for 127.0.0.1 at 2026-11-01 00:15:38 +0700
+Processing by PagesController#about as */*
+  Rendering layout layouts/application.html.erb
+  Rendering pages/about.html.erb within layouts/application</code></pre>
+
+    <p><strong>ขั้น 3 · query param</strong></p>
+    <pre><code><span class="c"># app/controllers/pages_controller.rb — แบบสไลด์หน้า 60</span>
+<span class="k">def</span> <span class="f">about</span>
+  @name = params[<span class="n">:name</span>] || <span class="s">"PEA"</span>
+<span class="k">end</span>
+
+<span class="c"># app/views/pages/about.html.erb</span>
+&lt;h1&gt;About wongnok_blog&lt;/h1&gt;
+&lt;p&gt;Hello &lt;%= @name %&gt;&lt;/p&gt;</code></pre>
+    <pre><code>/about                      &lt;p&gt;Hello PEA&lt;/p&gt;
+/about?name=Nan             &lt;p&gt;Hello Nan&lt;/p&gt;
+/about?name=                &lt;p&gt;Hello &lt;/p&gt;                       <span class="c"># ← !</span>
+/about?name=%3Cb%3ENan%3C/b%3E  &lt;p&gt;Hello &amp;lt;b&amp;gt;Nan&amp;lt;/b&amp;gt;&lt;/p&gt;
+/about?name=Nan&amp;name=Bee     &lt;p&gt;Hello Bee&lt;/p&gt;</code></pre>
+    <p>
+      บรรทัดที่สามคือกับดักแรกของ Lab — ดูหัวข้อ 5 ข้างล่าง ·
+      บรรทัดที่สี่คือ <code>&lt;b&gt;</code> ที่ถูก escape ให้อัตโนมัติ (<code>&lt;%= %&gt;</code> ทำให้เอง —
+      <a href="./0103-rails-views-and-helpers.html">บท 103</a>) ·
+      บรรทัดที่ห้า: ส่งชื่อซ้ำสองครั้ง ตัวหลังชนะ · log ของ server ยืนยันว่าค่ามาเป็นสตริง:
+    </p>
+    <pre><code>Started GET "/about?name=Nan" for 127.0.0.1 at 2026-11-01 00:15:52 +0700
+Processing by PagesController#about as */*
+  Parameters: {"name" =&gt; "Nan"}</code></pre>
+
+    <p><strong>ขั้น 4 · <code>/about/:id</code> แล้วสลับลำดับ</strong></p>
+    <pre><code><span class="c"># config/routes.rb</span>
+<span class="f">get</span> <span class="s">"/about"</span>,     <span class="n">to:</span> <span class="s">"pages#about"</span>
+<span class="f">get</span> <span class="s">"/about/:id"</span>, <span class="n">to:</span> <span class="s">"pages#member"</span>
+
+<span class="c"># เพิ่มใน PagesController</span>
+<span class="k">def</span> <span class="f">member</span>
+  @id = params[<span class="n">:id</span>]
+<span class="k">end</span>
+
+<span class="c"># app/views/pages/member.html.erb</span>
+&lt;h1&gt;Member&lt;/h1&gt;
+&lt;p&gt;id = &lt;%= @id %&gt; (&lt;%= @id.class %&gt;)&lt;/p&gt;</code></pre>
+    <p>
+      ผลของการสลับอยู่ในกล่องทายผลหัวข้อ 2 — <strong>สลับ <code>/about</code> กับ <code>/about/:id</code> แล้วไม่มีอะไรเปลี่ยน</strong>
+      · ต้องเพิ่ม <code>/about/team</code> ไว้ใต้ <code>:id</code> ถึงจะเห็นผลของลำดับ
+      · สังเกต <code>(String)</code> — <code>/about/7</code> ได้ <code>"7"</code> ไม่ใช่เลข 7 (สไลด์หน้า 61)
+      · และ <code>/about/7?name=Nan</code> ทำให้ <code>params</code> มีทั้งสองค่ารวมกัน:
+    </p>
+    <pre><code>Processing by PagesController#member as */*
+  Parameters: {"name" =&gt; "Nan", "id" =&gt; "7"}</code></pre>
+
+    <p><strong>ขั้น 5 · ตั้งชื่อ controller ผิด</strong></p>
+    <pre><code><span class="c"># (ก) routes.rb เขียน "page#about" — ไม่มี s</span>
+ActionDispatch::MissingController (uninitialized constant PageController)
+Caused by: NameError (uninitialized constant PageController)
+<span class="c">→ HTTP 500</span>
+
+<span class="c"># (ข) ไฟล์ pages_controller.rb แต่ข้างในเขียน class PageController</span>
+Zeitwerk::NameError (expected file …/app/controllers/pages_controller.rb to define constant PagesController, but didn't)
+<span class="c">→ HTTP 500</span>
+
+<span class="c"># (ค) class PagesController แต่ไฟล์ชื่อ page_controller.rb</span>
+ActionDispatch::MissingController (uninitialized constant PagesController)
+Caused by: NameError (uninitialized constant PagesController)
+<span class="c">→ HTTP 500</span></code></pre>
+    <p>
+      สามบรรทัดนี้ก็อปจาก log ของ server · หน้า error ในเบราว์เซอร์บอกข้อความเดียวกัน
+      โดยหัวหน้าของ (ก) เขียนว่า <code>ActionDispatch::MissingController in PageController#about</code>
+      · วิธีอ่านทั้งหมดอยู่ในหัวข้อ 4 — <strong>อย่าข้าม</strong> เพราะ (ก) กับ (ค) ได้ error ชื่อเดียวกันทั้งที่ผิดคนละไฟล์
+      · ทำตามลำดับ (ก) → (ข) → (ค) และ<strong>แก้กลับให้ <code>/about</code> ขึ้นปกติก่อนลองแบบถัดไปทุกครั้ง</strong>
+      · ถ้าลอง (ก) <em>หลัง</em> (ข) แล้วได้ error คนละตัวกับนี้ อ่านกล่องเตือนท้ายหัวข้อ 4
+    </p>
+
+    <p><strong>ขั้น 6 · console</strong></p>
+    <pre><code><span class="c">$ bin/rails console</span>
+Loading development environment (Rails 8.1.4)
+wongnok-blog(dev):001&gt; 3.days.ago
+=&gt; 2026-10-28 17:17:51.188270000 UTC +00:00
+wongnok-blog(dev):002&gt; "post".pluralize
+=&gt; "posts"
+wongnok-blog(dev):003&gt; exit</code></pre>
+    <p style="margin-bottom:0">
+      prompt บอกชื่อแอป (<code>wongnok-blog</code>) กับ environment (<code>dev</code>) ให้ทุกบรรทัด —
+      เวลาเปิด console หลายแอปพร้อมกันจะได้ไม่พิมพ์ผิดตัว
+      · <strong>ดูเวลาให้ดี:</strong> ตอนที่ผมรัน นาฬิกาในเครื่องคือ 1 พ.ย. 00:17 เวลาไทย
+      แต่ <code>3.days.ago</code> ตอบเป็น <strong>UTC</strong> — กับดักที่สองของ Lab อยู่ในหัวข้อ 5
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-4">4 · อ่าน error ให้เป็น: ชื่อผิดแต่ละแบบ ฟ้องคนละที่</h2>
+
+<p>
+  ขั้น 5 ของ Lab ไม่ได้ให้ท่องชื่อ error · มันฝึกให้<strong>อ่านแล้วรู้ว่าต้องไปแก้ไฟล์ไหน</strong>
+  · ผมทำผิดห้าแบบในแอปเดียวกัน (สามแบบตามภารกิจ + สองแบบที่เจอบ่อยพอกัน) แล้วจดทุกอย่างจากของจริง:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>สิ่งที่พิมพ์ผิด</th><th>error ที่ได้ (ตัวจริง)</th><th>status</th><th>ไปแก้ที่</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>(ก) routes.rb: <code>"page#about"</code></td>
+        <td><code>ActionDispatch::MissingController</code><br>uninitialized constant <strong>PageController</strong></td>
+        <td>500</td><td>① routes.rb</td></tr>
+    <tr><td>(ข) ไฟล์ <code>pages_controller.rb</code> แต่ <code>class PageController</code></td>
+        <td><code>Zeitwerk::NameError</code><br>expected file …/pages_controller.rb to define constant PagesController, but didn't</td>
+        <td>500</td><td>② ชื่อ class</td></tr>
+    <tr><td>(ค) ไฟล์ <code>page_controller.rb</code> แต่ <code>class PagesController</code></td>
+        <td><code>ActionDispatch::MissingController</code><br>uninitialized constant <strong>PagesController</strong></td>
+        <td>500</td><td>② ชื่อไฟล์</td></tr>
+    <tr><td>(ง) routes.rb: <code>"pages#abuot"</code> (action สะกดผิด)</td>
+        <td><code>AbstractController::ActionNotFound</code><br>The action 'abuot' could not be found for PagesController<br>Did you mean? about</td>
+        <td>404</td><td>① หรือ ② ชื่อ method</td></tr>
+    <tr><td>(จ) ลืมสร้างไฟล์ view</td>
+        <td><code>ActionController::MissingExactTemplate</code><br>GreetingsController#index is missing a template for request formats: text/html</td>
+        <td>406 (เบราว์เซอร์)<br>204 (curl)</td><td>③ view</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สามเรื่องที่ตารางนี้สอน:
+</p>
+
+<p>
+  <strong>1 · (ก) กับ (ค) ได้ error ชื่อเดียวกัน</strong> — ต้องอ่านต่ออีกครึ่งบรรทัด
+  <br>ชื่อ constant ที่หาไม่เจอคือเบาะแส: <code>PageController</code> (ไม่มี s) แปลว่า<strong>Rails ได้ชื่อนี้มาจาก routes.rb</strong>
+  · <code>PagesController</code> (มี s ถูกแล้ว) แปลว่า routes ถูก แต่<strong>Rails หาไฟล์ที่ควรประกาศชื่อนี้ไม่เจอ</strong>
+  ซึ่งก็คือไฟล์ <code>pages_controller.rb</code> — ชื่อไฟล์ต้องเป็น snake_case ของชื่อ class เป๊ะ ๆ
+</p>
+
+<p>
+  <strong>2 · มีคำสั่งที่จับ (ข) กับ (ค) ได้โดยไม่ต้องเปิดเบราว์เซอร์</strong> —
+  <code>bin/rails zeitwerk:check</code> โหลดทุกไฟล์ในแอปแล้วเช็คว่าชื่อไฟล์ตรงกับชื่อ class ไหม:
+</p>
+
+<pre><code><span class="c">$ bin/rails zeitwerk:check        # สถานะ (ข)</span>
+Hold on, I am eager loading the application.
+expected file app/controllers/pages_controller.rb to define constant PagesController, but didn't
+<span class="c">$ echo $?</span>
+1
+
+<span class="c">$ bin/rails zeitwerk:check        # สถานะ (ค)</span>
+Hold on, I am eager loading the application.
+expected file app/controllers/page_controller.rb to define constant PageController, but didn't
+
+<span class="c">$ bin/rails zeitwerk:check        # แก้แล้ว</span>
+Hold on, I am eager loading the application.
+All is good!</code></pre>
+
+<p>
+  ดูบรรทัดของ (ค) ให้ดี: Rails อ่านชื่อไฟล์ <code>page_controller.rb</code> แล้ว<strong>คาดว่า</strong>ข้างในต้องเป็น
+  <code>PageController</code> — นี่คือกฎตั้งชื่อของ <a href="./0099-rails-naming-and-explore.html">บท 99</a>
+  ที่ทำงานกลับด้าน (จากไฟล์ → ชื่อ class) · เลข <code>1</code> หลัง <code>echo $?</code> แปลว่าคำสั่งนี้เอาไปใส่ใน CI ให้ build ล้มได้
+</p>
+
+<p>
+  <strong>3 · (จ) ไม่ใช่ error ถ้าถามด้วย curl</strong> — ตัวนี้ผมเจอตอนพิสูจน์ quiz ข้อ 1 แล้วงงไปพักนึง:
+</p>
+
+<pre><code><span class="c"># curl ธรรมดา (ส่ง Accept: */*) — ไม่มีไฟล์ view</span>
+Processing by GreetingsController#index as */*
+No template found for GreetingsController#index, rendering head :no_content
+Completed 204 No Content in 1ms
+
+<span class="c"># curl -H 'Accept: text/html' (แกล้งเป็นเบราว์เซอร์) — ไม่มีไฟล์ view เหมือนเดิม</span>
+Processing by GreetingsController#index as HTML
+Completed 406 Not Acceptable in 1ms
+ActionController::MissingExactTemplate (GreetingsController#index is missing a template for request formats: text/html)</code></pre>
+
+<p>
+  Rails คิดว่า request ที่ไม่ได้ขอ HTML อาจเป็น API ที่ตั้งใจไม่ตอบอะไร เลยส่ง <code>204 No Content</code> กลับไปเงียบ ๆ
+  · <strong>ถ้าคุณทดสอบด้วย curl แล้วได้หน้าว่าง status 204 — ให้สงสัยว่าลืมไฟล์ view ก่อนอย่างอื่น</strong>
+  · ส่วนในเบราว์เซอร์ หน้า error จะบอกคำตอบตรง ๆ ถึงชื่อไฟล์ที่ควรมี (ดูใน quiz ข้อ 1)
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ ลอง (ข) ไปแล้ว ค่อยกลับมาลอง (ก) — error เปลี่ยนหน้าตาไปเลย</span>
+  <p>
+    ผมลองสลับลำดับ: ทำ (ข) ก่อน → แก้ class กลับเป็น <code>PagesController</code> จน <code>/about</code> ได้ 200 →
+    แล้วค่อยแก้ routes.rb เป็น <code>"page#about"</code> ตามแบบ (ก) · คราวนี้ <strong>ไม่ได้ <code>MissingController</code></strong> แต่ได้:
+  </p>
+  <pre style="margin-bottom:0.4rem"><code>Processing by PageController#about as HTML
+Completed 406 Not Acceptable in 1ms
+ActionController::MissingExactTemplate (PageController#about is missing a template for request formats: text/html)</code></pre>
+  <p>
+    แปลว่า Rails <strong>เจอ</strong> <code>PageController</code> — ทั้งที่ไม่มีไฟล์ไหนประกาศมันแล้ว ·
+    มันคือของค้างจากตอนทำ (ข) ที่ server โหลดไฟล์ซึ่งเขียน <code>class PageController</code> ไว้
+    แล้ว class นั้นยังอยู่ใน memory ของ server ตัวที่เปิดค้างไว้ · ผมทำซ้ำได้ทุกครั้ง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ทางแก้คือปิด server (Ctrl-C) แล้วเปิดใหม่</strong> — ผมลองแล้ว (ก) กลับมาได้ <code>MissingController</code> 500 ตามตาราง ·
+    บทเรียนที่เอาไปใช้ได้ทุกวัน: <strong>ถ้า error ดูไม่เข้ากับโค้ดที่อยู่ในไฟล์ตอนนี้เลย ให้ลอง restart server ก่อนนั่งไล่โค้ด</strong>
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">📦 เทียบกับของจริง</span>
+  <p>
+    error ห้าตัวนี้เหมือน<strong>ตราประทับบนพัสดุตีกลับ</strong> ที่บอกว่าส่งไม่ถึงเพราะอะไร:
+    <br>(ก) <em>“ไม่มีผู้รับชื่อนี้ในระบบ”</em> — คนเขียนจ่าหน้าผิด (routes.rb) ·
+    (ข) <em>“บ้านเลขที่ถูก แต่คนในบ้านชื่อไม่ตรงทะเบียน”</em> ·
+    (ค) <em>“ชื่อผู้รับถูก แต่ไม่มีบ้านเลขที่นี้”</em> ·
+    (ง) <em>“ผู้รับอยู่ แต่ไม่มีแผนกที่ระบุ — หมายถึงแผนกนี้หรือเปล่า?”</em> ·
+    (จ) <em>“ผู้รับอยู่ รับเรื่องแล้ว แต่ไม่มีของจะส่งกลับ”</em>
+    <br>คนที่อ่านตราประทับเป็น จะรู้ทันทีว่าต้องแก้จ่าหน้า หรือต้องโทรถามผู้รับ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ตราประทับของไปรษณีย์จริงคนละแบบก็คนละข้อความ
+    แต่ Rails ใช้<strong>ตราเดียวกัน</strong> (<code>MissingController</code>) กับ (ก) และ (ค) ทั้งที่ผิดคนละไฟล์ —
+    ต้องอ่านชื่อ constant ต่อท้ายถึงจะแยกได้
+    <br>และพัสดุตีกลับไม่มีใครส่งรายงานเส้นทางทั้งหมดมาด้วย ·
+    Rails แนบ <strong>stack trace</strong> มายาวหลายสิบบรรทัด ซึ่งส่วนใหญ่เป็นโค้ดของ Rails เอง
+    (<code>actionpack (8.1.4) lib/…</code>) · บรรทัดที่คุณต้องอ่านมักเป็น<strong>บรรทัดแรกสุด</strong>
+    ไม่ใช่กองข้างล่าง
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์สำหรับคุยเรื่อง error</span>
+  <dl>
+    <dt>constant (ใน Ruby)</dt>
+    <dd>ชื่อที่ขึ้นต้นด้วยตัวพิมพ์ใหญ่ · <strong>ชื่อ class ก็เป็น constant</strong> —
+        นั่นคือเหตุผลที่ error บอกว่า <em>uninitialized constant PageController</em> ไม่ใช่ “class not found” ·
+        พิมพ์ถาม AI ได้ว่า <em>“Why does Rails say uninitialized constant for a controller that exists?”</em></dd>
+    <dt>autoloading · Zeitwerk</dt>
+    <dd>Rails ไม่ให้คุณเขียน <code>require</code> เอง · มันเดาไฟล์จากชื่อ constant ด้วยตัวโหลดชื่อ <strong>Zeitwerk</strong>
+        (<code>PagesController</code> → <code>pages_controller.rb</code>) · ชื่อไม่ตรงกฎ = หาไม่เจอ ·
+        <strong>ถาม senior ได้ว่า “รัน <code>bin/rails zeitwerk:check</code> ใน CI ด้วยไหมครับ”</strong></dd>
+    <dt>stack trace (backtrace)</dt>
+    <dd>รายการว่า error เกิดขึ้นระหว่างที่โค้ดไหนเรียกโค้ดไหนอยู่ ·
+        บรรทัดบนสุดคือจุดที่พัง บรรทัดล่างคือจุดเริ่ม ·
+        เวลาส่งให้ AI หรือ senior ให้ส่ง<strong>บรรทัดชื่อ error + ข้อความ + 5–10 บรรทัดแรกของ trace</strong> ไม่ต้องส่งทั้งกอง</dd>
+    <dt>404 · 406 · 500 · 204</dt>
+    <dd>status ที่ Rails เลือกให้ error แต่ละแบบ (ทบทวนจากบทฝั่ง Go <a href="../../day-8/lessons/0034-http-status-code.html">บท 34</a>) ·
+        500 = โค้ดฝั่งเราพัง · 404 = หาสิ่งที่ขอไม่เจอ · 406 = มีของ แต่ไม่มีในรูปแบบที่ขอ ·
+        204 = สำเร็จแต่ไม่มีเนื้อหา · <strong>บอกเพื่อนในทีมได้ว่า “ได้ 204 ตอน curl แต่ 406 ในเบราว์เซอร์ น่าจะลืม view”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 · กับดักเล็กสองตัวที่ Lab ไม่ได้บอก</h2>
+
+<h3 id="sn-sub-3"><code>/about?name=</code> ได้ “Hello ” ไม่ใช่ “Hello PEA”</h3>
+
+<p>
+  โค้ดตามสไลด์หน้า 60 คือ <code>params[:name] || "PEA"</code> · พอส่ง <code>?name=</code> ที่ไม่มีค่า
+  <code>params[:name]</code> ได้ <strong>สตริงว่าง <code>""</code></strong> ไม่ใช่ <code>nil</code>
+  <br>และใน Ruby <strong><code>""</code> เป็นค่าจริง</strong> (เหมือน <code>0</code> — quiz ข้อ 2 ข้างล่าง) →
+  <code>||</code> ไม่ไปหยิบ <code>"PEA"</code> → ได้ <code>Hello </code> ตามด้วยความว่างเปล่า
+  · คนที่มาจาก TypeScript จะพลาดตรงนี้แน่ ๆ เพราะใน TS <code>"" || "PEA"</code> ได้ <code>"PEA"</code>
+</p>
+
+<p>แก้ด้วย <code>presence</code> จาก Active Support (<a href="./0094-ruby-truthiness-and-nil.html">บท 94</a>):</p>
+
+<pre><code><span class="k">def</span> <span class="f">about</span>
+  @name = params[<span class="n">:name</span>].<span class="f">presence</span> || <span class="s">"PEA"</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c"># ผลจริงหลังแก้</span>
+/about              &lt;p&gt;Hello PEA&lt;/p&gt;
+/about?name=Nan     &lt;p&gt;Hello Nan&lt;/p&gt;
+/about?name=        &lt;p&gt;Hello PEA&lt;/p&gt;
+/about?name=%20%20  &lt;p&gt;Hello PEA&lt;/p&gt;      <span class="c"># เว้นวรรคล้วนก็นับเป็น "ไม่มีค่า"</span></code></pre>
+
+<h3 id="sn-sub-4"><code>3.days.ago</code> ตอบเป็น UTC ไม่ใช่เวลาไทย</h3>
+
+<p>
+  ตอนผมรัน นาฬิกาเครื่องคือ <strong>1 พ.ย. 2026 00:17 (+07:00)</strong> ·
+  ย้อนไป 3 วันควรได้ 29 ต.ค. 00:17 เวลาไทย · แต่ console ตอบว่า
+  <code>2026-10-28 17:17:51.188270000 UTC +00:00</code>
+  <br>มันเป็นเวลา<strong>เดียวกัน</strong> แค่บอกเป็นโซน UTC (ลบ 7 ชั่วโมง เลยตกไปเป็นวันที่ 28) —
+  เพราะแอปที่ <code>rails new</code> สร้างใช้ time zone เป็น UTC โดยปริยาย:
+</p>
+
+<pre><code><span class="c">$ bin/rails runner 'p Time.zone.name; p 3.days.ago.class'</span>
+"UTC"
+ActiveSupport::TimeWithZone</code></pre>
+
+<p>
+  ไม่ใช่บั๊ก แต่ถ้าคุณเอา <code>3.days.ago</code> ไปโชว์ให้ผู้ใช้ไทยดูตรง ๆ จะเห็นวันที่ผิดไปหนึ่งวันในบางช่วงของวัน
+  · เรื่องตั้ง time zone ของแอปเก็บไว้ทีหลัง ตอนนี้แค่รู้ว่า<strong>ค่าเริ่มต้นคือ UTC</strong>
+  · และสังเกตบรรทัดที่สอง: ผลเป็น <code>ActiveSupport::TimeWithZone</code> ไม่ใช่ <code>Time</code> ธรรมดาของ Ruby
+  — <code>days</code> กับ <code>ago</code> เป็น method ที่ Active Support เติมให้ <code>Integer</code>
+  ตามที่สไลด์หน้า 37 เล่าไว้ (<a href="./0097-ruby-before-rails.html">บท 97</a>)
+</p>
+
+<h2 id="sn-sec-6">6 · Quiz ท้ายวัน (สไลด์หน้า 70–71)</h2>
+
+<p>
+  สี่ข้อนี้ถอดมาจากสไลด์ตรง ๆ (ในสไลด์ให้ตอบ A–D ในแชท) ·
+  ผม<strong>รันพิสูจน์เฉลยทุกข้อ</strong>ก่อนใส่ — ผลจริงอยู่ในคำอธิบายหลังตอบ
+</p>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 1 · <code>get "/hello", to: "greetings#index"</code> → Rails จะไปหา view ที่ไฟล์ไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>app/views/hello.html.erb</code></button>
+    <button class="opt"><code>app/views/greetings/index.html.erb</code></button>
+    <button class="opt"><code>app/views/greetings.html.erb</code></button>
+    <button class="opt"><code>app/hello/index.html.erb</code></button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · ผมพิสูจน์ด้วยการวางไฟล์ view ไว้ทีละที่ตามตัวเลือกทั้งสี่ แล้ว <code>curl /hello</code> ·
+      ตัวเลือกที่ 1, 3, 4 ได้ <code>204</code> (คือหาไฟล์ไม่เจอ — ดูหัวข้อ 4 ข้อ (จ)) ·
+      มีแค่ตัวเลือกที่ 2 ที่ได้ <code>200</code> พร้อม comment <code>&lt;!-- BEGIN app/views/greetings/index.html.erb</code> ใน HTML
+      <br>และถ้าลบไฟล์ทิ้งแล้วเปิดด้วยเบราว์เซอร์ หน้า error ของ Rails 8.1.4 <strong>เฉลยให้เอง</strong>ว่า
+      <em>“should have a corresponding view template in a file named app/views/greetings/index.html.erb”</em>
+      <br>ตัวเลือกที่ 1 เอาชื่อ <strong>URL</strong> (<code>/hello</code>) ไปตั้งชื่อไฟล์ — แต่ Rails ไม่สน URL เลย สนแค่ <code>"greetings#index"</code> ·
+      ตัวเลือกที่ 3 ใช้ชื่อ controller แต่ลืมว่า action คือชื่อไฟล์ <em>ในโฟลเดอร์</em> ของ controller ·
+      ตัวเลือกที่ 4 ผิดสองชั้น: ใช้ชื่อ URL และอยู่นอก <code>app/views/</code>
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> <code>"controller#action"</code> → <code>app/views/controller/action.html.erb</code> ·
+      URL ไม่เกี่ยวกับชื่อไฟล์ view เลย — เปลี่ยน <code>/hello</code> เป็น <code>/hi</code> ไฟล์ view ก็ยังเป็นตัวเดิม</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 2 · ใน Ruby <code>if 0</code> จะเข้าเงื่อนไขไหม?</p>
+  <div class="opts">
+    <button class="opt">ไม่เข้า — เหมือน TypeScript ที่ 0 เป็น falsy</button>
+    <button class="opt">เข้า — เพราะใน Ruby 0 นับเป็นค่าจริง</button>
+    <button class="opt">error — Ruby ไม่ให้ใช้ตัวเลขเป็นเงื่อนไข</button>
+    <button class="opt">ขึ้นกับเวอร์ชันของ Ruby ที่ใช้รันอยู่</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · ผลรันจริงบน Ruby 4.0.9 เทียบกับ node v24:
+    </p>
+    <pre><code><span class="c">$ ruby q2.rb       # if 0 ... else ... end</span>
+เข้า if
+<span class="c">$ node -e 'if (0) { console.log("เข้า if") } else { console.log("ไม่เข้า") }'</span>
+ไม่เข้า</code></pre>
+    <p>
+      ใน Ruby มี falsy แค่ <code>nil</code> กับ <code>false</code> · <code>!!0</code> ได้ <code>true</code> · <code>!!""</code> ก็ได้ <code>true</code>
+      (สไลด์หน้า 26 · <a href="./0094-ruby-truthiness-and-nil.html">บท 94</a>)
+      <br>ตัวเลือกที่ 1 คือกับดักของคนมาจาก TypeScript ตรง ๆ ·
+      ตัวเลือกที่ 3 ผิด — Ruby ไม่ error (ถ้ารันด้วย <code>ruby -w</code> จะมีแค่คำเตือน
+      <code>warning: literal in condition</code> แล้วก็ยังเข้า if อยู่ดี) ·
+      ตัวเลือกที่ 4 ผิด — กติกา “มีแค่ nil กับ false ที่เป็นเท็จ” เขียนไว้ในเอกสารทางการของภาษา ไม่ได้เปลี่ยนตามเวอร์ชัน
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> ใน Ruby <code>0</code> · <code>""</code> · <code>[]</code> เป็นจริงทั้งหมด ·
+      อยากเช็คว่าเป็นศูนย์ใช้ <code>.zero?</code> · อยากเช็คว่าว่างใช้ <code>.blank?</code> / <code>.presence</code> (คือตัวแก้กับดักในหัวข้อ 5)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อ 3 · <code>posts.map(&amp;:title)</code> เท่ากับข้อไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>posts.map { |p| p.title }</code></button>
+    <button class="opt"><code>posts.map { |p| :title }</code></button>
+    <button class="opt"><code>posts.select { |p| p.title }</code></button>
+    <button class="opt"><code>posts.title</code></button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · ผมรันทั้งห้าแบบกับ <code>posts</code> สองตัว (<code>Struct</code> ที่มี <code>title</code>):
+    </p>
+    <pre><code>p posts.map(&amp;:title)              <span class="c"># =&gt; ["Hello Rails", "Draft"]</span>
+p posts.map { |p| p.title }       <span class="c"># =&gt; ["Hello Rails", "Draft"]</span>
+p posts.map { |p| :title }        <span class="c"># =&gt; [:title, :title]</span>
+p posts.select { |p| p.title }    <span class="c"># =&gt; [#&lt;struct Post title="Hello Rails", published=true&gt;, #&lt;struct Post title="Draft", published=false&gt;]</span>
+posts.title                       <span class="c"># NoMethodError: undefined method 'title' for an instance of Array</span></code></pre>
+    <p>
+      ตัวเลือกที่ 2 คืน symbol <code>:title</code> ตัวเดิมซ้ำทุกรอบ — ไม่ได้เรียก method ·
+      ตัวเลือกที่ 3 คืน <em>post ทั้งตัว</em> ที่ title เป็นค่าจริง (ซึ่งก็คือทุกตัว เพราะสตริงเป็นจริงเสมอ) ไม่ใช่รายการ title ·
+      ตัวเลือกที่ 4 เรียก <code>title</code> บน Array ซึ่งไม่มี method นี้
+      (<a href="./0092-ruby-symbol-hash-enumerable.html">บท 92</a> · สไลด์หน้า 21)
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> <code>&amp;:ชื่อ</code> = “เรียก method ชื่อนี้กับสมาชิกทุกตัว” ·
+      ใช้ได้เมื่อ block ทำแค่เรียก method ตัวเดียวโดยไม่ส่งอาร์กิวเมนต์</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 4 · route สองเส้นเรียงแบบนี้ — <code>get "/posts/:id"</code> → <code>show</code> แล้วบรรทัดถัดมา <code>get "/posts/popular"</code> → <code>popular</code> · เปิด <code>/posts/popular</code> จะเข้า action ไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>popular</code> — เพราะเป็นเส้นที่เจาะจงกว่า</button>
+    <button class="opt"><code>show</code> — โดย <code>params[:id]</code> เป็น <code>"popular"</code></button>
+    <button class="opt">error ตอน boot — เพราะมีสองเส้นที่ชนกัน</button>
+    <button class="opt">ทั้งคู่ — เข้า <code>show</code> ก่อนแล้วต่อ <code>popular</code></button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · ผลรันจริงในแอป Rails ตัวเดียวกับ Lab:</p>
+    <pre><code><span class="c">$ curl http://127.0.0.1:4105/posts/popular</span>
+show id=popular
+
+<span class="c">$ bin/rails runner 'p Rails.application.routes.recognize_path("/posts/popular")'</span>
+{controller: "posts", action: "show", id: "popular"}</code></pre>
+    <p>
+      ตัวเลือกที่ 1 คือสิ่งที่<em>ควรจะเป็น</em> แต่ Rails ไม่ได้เลือกเส้นที่เจาะจงที่สุด — มันเลือก<strong>เส้นแรก</strong> ·
+      ตัวเลือกที่ 3 ผิด — server boot ปกติ <code>bin/rails routes</code> ก็ไม่เตือน ·
+      ตัวเลือกที่ 4 ผิด — หนึ่ง request เข้าได้ action เดียว พอเจอเส้นแรกที่ match ก็หยุด
+    </p>
+    <p style="margin-bottom:0"><strong>จุดที่ต้องจำ:</strong> เส้นแรกที่ match ชนะ และไม่มีใครเตือน ·
+      เส้นที่เจาะจงไว้บน เส้นที่มี <code>:id</code> ไว้ล่าง · ถ้าสองเส้นไม่มีทางแย่ง URL เดียวกัน (เช่น <code>/about</code> กับ <code>/about/:id</code>) ลำดับไม่มีผล</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-7">7 · ทบทวนทั้ง Day 1 — บท 90 ถึง 105</h2>
+
+<p>
+  สิบหกบทที่ผ่านมาแบ่งเป็นสามช่วงตามสไลด์: <strong>ประวัติ</strong> (หน้า 3–13) ·
+  <strong>Ruby ผ่านสายตาคนเขียน Go กับ TypeScript</strong> (หน้า 14–38) ·
+  <strong>Rails: โครงสร้าง → request → routing → controller → view → debug</strong> (หน้า 39–69)
+  · ถ้าข้อไหนในคอลัมน์ขวาอ่านแล้วไม่แน่ใจ ให้กลับไปบทนั้น
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>บท</th><th>เรื่อง</th><th>สิ่งเดียวที่ต้องจำให้ได้</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><a href="./0090-ruby-and-rails-origins.html">90</a></td>
+        <td>Ruby กับ Rails คือใคร</td>
+        <td>Ruby คือ<strong>ภาษา</strong> · Rails คือ <strong>framework</strong> ที่เขียนด้วย Ruby · คนละตัวกัน (สไลด์หน้า 3–5)</td></tr>
+    <tr><td><a href="./0091-ruby-variables-objects-strings.html">91</a></td>
+        <td>ตัวแปร · object · string</td>
+        <td>ไม่มี primitive — <code>0.class</code> คือ <code>Integer</code> · แทรกค่า <code>#{}</code> ได้เฉพาะใน <code>"…"</code> ใน <code>'…'</code> ไม่ได้</td></tr>
+    <tr><td><a href="./0092-ruby-symbol-hash-enumerable.html">92</a></td>
+        <td>Symbol · Hash · Enumerable</td>
+        <td><code>map</code> / <code>select</code> แทน for loop · <code>posts.map(&amp;:title)</code> = <code>posts.map { |p| p.title }</code></td></tr>
+    <tr><td><a href="./0093-ruby-blocks-and-methods.html">93</a></td>
+        <td>Block · method · <code>?</code> และ <code>!</code></td>
+        <td>method คืนค่าบรรทัดสุดท้ายเอง · <code>?</code> ท้ายชื่อ = ตอบจริง/เท็จ · <code>!</code> ท้ายชื่อ = เวอร์ชันที่อันตรายกว่า</td></tr>
+    <tr><td><a href="./0094-ruby-truthiness-and-nil.html">94</a></td>
+        <td>Truthiness · nil · <code>||=</code></td>
+        <td>เท็จมีแค่ <code>nil</code> กับ <code>false</code> · <code>0</code> กับ <code>""</code> เป็นจริง → ใช้ <code>presence</code> / <code>blank?</code></td></tr>
+    <tr><td><a href="./0095-ruby-class-and-module.html">95</a></td>
+        <td>Class · Module · mixin</td>
+        <td>module เอามา <code>include</code> เพื่อเติม method ให้ class ได้ · เป็นที่มาของ concerns ใน Rails (สไลด์หน้า 29)</td></tr>
+    <tr><td><a href="./0096-ruby-errors-and-duck-typing.html">96</a></td>
+        <td>Error · duck typing · 6 กับดัก</td>
+        <td>Ruby ใช้ <code>raise</code> / <code>rescue</code> ไม่ได้คืน <code>err</code> แบบ Go · สนว่า “ตอบ method นี้ได้ไหม” มากกว่า “เป็น type อะไร”</td></tr>
+    <tr><td><a href="./0097-ruby-before-rails.html">97</a></td>
+        <td>5 เรื่องก่อนเข้า Rails</td>
+        <td>hash ตัวท้ายละปีกกาได้ · block รับ object · method เกิดตอนรัน · open class (<code>3.days.ago</code>) · <code>@ivar</code></td></tr>
+    <tr><td><a href="./0098-rails-new-and-structure.html">98</a></td>
+        <td><code>rails new</code> · โครงสร้าง · Gemfile</td>
+        <td><code>rails new</code> สร้างแอปครบพร้อม <code>git init</code> <strong>แต่ไม่ commit</strong> · Gemfile คือรายการ gem ของแอป</td></tr>
+    <tr><td><a href="./0099-rails-naming-and-explore.html">99</a></td>
+        <td>naming convention · สำรวจโปรเจกต์</td>
+        <td><code>posts</code> → <code>Post</code> → <code>PostsController</code> → <code>app/views/posts/</code> · ชื่อคือสายไฟที่เชื่อมไฟล์ (สไลด์หน้า 11, 46)</td></tr>
+    <tr><td><a href="./0100-rails-boot-request-mvc.html">100</a></td>
+        <td>boot · request · MVC</td>
+        <td>หนึ่ง request: route → controller → (model) → view → HTML · แต่ละชั้นมีหน้าที่ของตัวเอง ไม่ข้ามเส้น</td></tr>
+    <tr><td><a href="./0101-rails-routing.html">101</a></td>
+        <td>Routing</td>
+        <td>เส้นแรกที่ match ชนะ ไม่มีเตือน · ดูตารางจริงด้วย <code>bin/rails routes</code></td></tr>
+    <tr><td><a href="./0102-rails-controller.html">102</a></td>
+        <td>Controller · params · render/redirect</td>
+        <td><code>params</code> รวม query · path · form ไว้ที่เดียว และ<strong>เป็นสตริงเสมอ</strong> (<code>/about/7</code> ได้ <code>"7"</code>)</td></tr>
+    <tr><td><a href="./0103-rails-views-and-helpers.html">103</a></td>
+        <td>View · ERB · helper · ความปลอดภัย</td>
+        <td><code>&lt;%= %&gt;</code> escape ให้เอง — <code>?name=&lt;b&gt;Nan&lt;/b&gt;</code> ออกมาเป็น <code>&amp;lt;b&amp;gt;</code></td></tr>
+    <tr><td><a href="./0104-rails-debug-and-console.html">104</a></td>
+        <td>debugger · console</td>
+        <td><code>debugger</code> หยุดโค้ดกลางทาง · <code>bin/rails console</code> เข้าถึงทั้งแอป · มี <code>--sandbox</code> ให้ลองของอันตราย (สไลด์หน้า 69)</td></tr>
+    <tr><td><strong>105</strong></td>
+        <td><strong>Lab 1</strong></td>
+        <td><strong>ชื่อคือสัญญา — ชื่อผิดตัวเดียว loop ขาด แล้วชื่อ error + ชื่อ constant จะบอกว่าขาดตรงไหน</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-8">8 · Day 2 จะเจออะไร</h2>
+
+<p>
+  ฝั่งขวาของสไลด์หน้า 72 สรุปไว้สามเรื่อง:
+</p>
+
+<ul>
+  <li><strong>ตอนนี้หน้าเว็บของเรายัง hardcode ข้อความไว้</strong> — <code>Hello PEA</code> ของเรามาจากสตริงในโค้ด ไม่ได้มาจากที่ไหนเลย</li>
+  <li><strong>ต่อ PostgreSQL แล้วอ่าน–เขียนข้อมูลจริงด้วย Active Record</strong> —
+      ฐานข้อมูลที่เราสร้างด้วย <code>db:prepare</code> ในขั้น 1 ตอนนี้ยังว่าง (มีแค่ตารางของ Rails เอง)</li>
+  <li><strong><code>resources :posts</code> บรรทัดเดียวแทน 6 บรรทัดที่เขียนวันนี้</strong> (route ของ posts ในสไลด์หน้า 54)</li>
+</ul>
+
+<div class="note">
+  <span class="label">🔎 ลองดูล่วงหน้า: <code>resources :posts</code> ให้มากกว่า 6 เส้น</span>
+  <p>ผมลองใส่บรรทัดเดียวนี้ลง routes.rb แล้วดูตารางจริง:</p>
+  <pre style="margin:0.5rem 0"><code><span class="c">$ bin/rails routes -c posts</span>
+   Prefix Verb   URI Pattern               Controller#Action
+    posts GET    /posts(.:format)          posts#index
+          POST   /posts(.:format)          posts#create
+ new_post GET    /posts/new(.:format)      posts#new
+edit_post GET    /posts/:id/edit(.:format) posts#edit
+     post GET    /posts/:id(.:format)      posts#show
+          PATCH  /posts/:id(.:format)      posts#update
+          PUT    /posts/:id(.:format)      posts#update
+          DELETE /posts/:id(.:format)      posts#destroy</code></pre>
+  <p style="margin-bottom:0">
+    <strong>8 เส้น ไม่ใช่ 6</strong> — มี <code>edit</code> (หน้าฟอร์มแก้ไข) กับ <code>PUT</code> เพิ่มมาจาก 6 เส้นในสไลด์หน้า 54
+    · สังเกตด้วยว่า <code>/posts/new</code> อยู่<strong>เหนือ</strong> <code>/posts/:id</code> ให้เอง —
+    เรื่องเดียวกับ quiz ข้อ 4 ที่ Rails จัดลำดับให้ถูกโดยอัตโนมัติ · รายละเอียดทั้งหมดรอ Day 2
+  </p>
+</div>
+
+<p>
+  <strong>อ่านมาก่อน</strong> (สไลด์สั่งไว้):
+  <a href="https://guides.rubyonrails.org/active_record_basics.html">Rails Guides — Active Record Basics</a>
+  · ไม่ต้องอ่านทั้งหน้า อ่านหัวข้อ 1 <em>What is Active Record?</em> กับหัวข้อ 2 <em>Convention over Configuration in Active Record</em> พอ —
+  หัวข้อ 2 คือกฎตั้งชื่อชุดเดียวกับที่ทำให้ขั้น 5 พัง แค่ย้ายจาก controller ไปใช้กับตารางในฐานข้อมูล
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่จะได้ยินตั้งแต่ชั่วโมงแรกของ Day 2</span>
+  <dl>
+    <dt>ORM (Object-Relational Mapping)</dt>
+    <dd>ตัวแปลงระหว่าง<strong>แถวในตาราง</strong>กับ <strong>object ในโค้ด</strong> ·
+        คุณรู้จักมาแล้วหนึ่งตัวจากฝั่ง Go คือ GORM (<a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a>) ·
+        Active Record คือ ORM ของ Rails ที่มากับ framework เลย ไม่ต้องเลือกเอง ·
+        <strong>ถาม senior ได้ว่า “query นี้ ORM แปลงเป็น SQL หน้าตายังไง”</strong> — คำถามที่กันปัญหา performance ได้เยอะที่สุด</dd>
+    <dt>Active Record</dt>
+    <dd>ชื่อ ORM ของ Rails และเป็นชื่อ<strong>รูปแบบการออกแบบ</strong>ด้วย (object หนึ่งตัวรู้ทั้งข้อมูลและวิธีเซฟตัวเอง) ·
+        เวลาค้นเอกสารให้พิมพ์ <em>“Rails Active Record”</em> ไม่งั้นจะเจอบทความเรื่อง pattern ทั่วไปปนมา</dd>
+    <dt>resourceful routing (<code>resources</code>)</dt>
+    <dd>การประกาศ route ชุดมาตรฐานของ “ของหนึ่งอย่าง” (สร้าง · อ่าน · แก้ · ลบ) ในบรรทัดเดียว ·
+        ใช้คู่กับ <code>only:</code> / <code>except:</code> เพื่อเลือกเฉพาะเส้นที่ต้องการ ·
+        <strong>บอก AI ได้ว่า “use resources with only: [:index, :show]”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9">9 · ถามกลับได้เลย</h2>
+
+<p>
+  ถ้าขั้น 5 ของคุณได้ error ที่ไม่อยู่ในตารางหัวข้อ 4 — <strong>นั่นคือของดีที่สุดที่จะเอามาคุยกัน</strong>
+  · ส่งมาสามอย่าง: บรรทัดชื่อ error · ข้อความต่อท้าย · และสิ่งที่คุณเปลี่ยนไป (<code>git diff</code> ช่วยได้ ถ้า commit ไว้ตั้งแต่ขั้น 1)
+  <br>หรือถ้าผลของขั้น 4 ของคุณ<strong>ต่าง</strong>จากที่ผมได้ (เช่นสลับ <code>/about</code> กับ <code>/about/:id</code> แล้วมีอะไรเปลี่ยน)
+  ก็ส่ง <code>config/routes.rb</code> ทั้งไฟล์มาได้เลย — มักมีเส้นที่สามที่เราไม่ได้มองอยู่
+</p>
+
+<nav class="nav">
+  <a href="./0104-rails-debug-and-console.html">← บทเรียน 104 · debugger · console</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 1</a>
+</nav>
+
+<h2 id="sn-sec-10">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/routing.html">Rails Guides — Rails Routing from the Outside In</a> —
+      <strong>อ่านหัวข้อ 2.2 <em>CRUD, Verbs, and Actions</em> ย่อหน้าที่ขึ้นต้นว่า “Order matters in the routes.rb file”</strong>
+      (ยืนยันกฎ first match ของขั้น 4 และ quiz ข้อ 4) · แล้วต่อด้วย 3.2 <em>Dynamic Segments</em> กับ 3.4 <em>The Query String</em>
+      สำหรับขั้น 3–4</li>
+  <li><a href="https://guides.rubyonrails.org/layouts_and_rendering.html">Rails Guides — Layouts and Rendering in Rails</a> —
+      <strong>อ่านหัวข้อ 2.1 <em>Rendering by Default: Convention Over Configuration in Action</em></strong>
+      ที่อธิบายว่าทำไม action ว่าง ๆ ก็ได้หน้าเว็บ และ Rails เดาชื่อไฟล์ view จากอะไร (quiz ข้อ 1) ·
+      เป็นเอกสารเดียวกับที่หน้า error <code>MissingExactTemplate</code> ชี้ไป</li>
+  <li><a href="https://guides.rubyonrails.org/autoloading_and_reloading_constants.html">Rails Guides — Autoloading and Reloading Constants</a> —
+      <strong>อ่านหัวข้อ 2 <em>Project Structure</em></strong> (กฎชื่อไฟล์ ↔ ชื่อ constant ที่ทำให้ขั้น 5 (ข)(ค) พัง)
+      กับหัวข้อ 14.1 <em>Manual Testing</em> ที่พูดถึง <code>bin/rails zeitwerk:check</code></li>
+  <li><a href="https://guides.rubyonrails.org/command_line.html">Rails Guides — The Rails Command Line</a> —
+      <strong>อ่านหัวข้อ 2 <em>Creating a New Rails Application</em> · 5.1 <em>bin/rails console</em> · 6.1 <em>bin/rails routes</em></strong>
+      คือคำสั่งสามตัวที่ Lab นี้ใช้</li>
+  <li><a href="https://docs.ruby-lang.org/en/master/syntax/control_expressions_rdoc.html">Ruby docs — Control Expressions</a> —
+      <strong>อ่านย่อหน้าแรกสุดของหน้า</strong> ที่เขียนว่า nil กับ false เป็น false-value ส่วน object อื่นทุกตัวเป็น true-value
+      (หลักฐานของ quiz ข้อ 2 และกับดัก <code>?name=</code>)</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_basics.html">Rails Guides — Active Record Basics</a> —
+      <strong>อ่านหัวข้อ 1 และ 2 ก่อนเข้า Day 2</strong> (สไลด์หน้า 72 สั่งไว้)</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -71,14 +71,15 @@ PREFIX = {'2': 'sn-sec-', '3': 'sn-sub-'}
 # โฟลเดอร์ที่ถือว่าเป็น "กลุ่มบทเรียน"
 #   day-N  = ฝั่ง Backend (สไลด์กำกับวันมาให้)
 #   fe-*   = ฝั่ง Frontend (สไลด์ไม่ได้กำกับวัน จึงตั้งชื่อตามสไลด์)
-GROUP_DIR = re.compile(r'(?:day-\d+|fe-[a-z0-9-]+)$')
+#   rails-day-N = ฝั่ง Ruby on Rails (คอร์สแยก สไลด์กำกับวันมา)
+GROUP_DIR = re.compile(r'(?:day-\d+|fe-[a-z0-9-]+|rails-day-\d+)$')
 
 
 def target_files():
     """บทเรียนทุกบท + cheat sheet ทุกใบ เรียงคงที่เพื่อให้รายงานซ้ำได้
 
-    เรียงฝั่ง Backend (day-1..day-N) ก่อน แล้วต่อด้วยฝั่ง Frontend (fe-*)
-    เพราะเลขบทเรียนต่อเนื่องกันแบบนั้น
+    เรียงฝั่ง Backend (day-1..day-N) ก่อน ต่อด้วยฝั่ง Frontend (fe-*)
+    แล้วฝั่ง Rails (rails-day-1..N) เพราะเลขบทเรียนต่อเนื่องกันแบบนั้น
     """
     dirs = [d for d in os.listdir(ROOT) if GROUP_DIR.fullmatch(d)]
 
@@ -86,6 +87,8 @@ def target_files():
         # day-9 ต้องมาก่อน day-10 → เรียงด้วยเลข ไม่ใช่ตัวอักษร
         if d.startswith('day-'):
             return (0, int(d.split('-')[1]), '')
+        if d.startswith('rails-day-'):
+            return (2, int(d.split('-')[2]), '')
         return (1, 0, d)
 
     out = []

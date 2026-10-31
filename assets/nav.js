@@ -158,8 +158,35 @@
   ];
 
   /* ------------------------------------------------------------------------
-     รวมสองฝั่งให้เป็นรูปทรงเดียวกัน แล้วโค้ดข้างล่างจะได้ไม่ต้องรู้ว่ามาจากไหน
-     "group" = ปุ่มหนึ่งปุ่มบนแถบ (ฝั่ง Backend = หนึ่งวัน · ฝั่ง Frontend = หนึ่งสไลด์)
+     ฝั่ง Ruby on Rails — สไลด์กำกับวันมา (Day 1–4) แต่เป็นคอร์สแยกจาก Go
+     จึงตั้งโฟลเดอร์เป็น rails-day-N/ และใช้เลขกลุ่ม d ตั้งแต่ 201
+     (ต้องตรงกับ GROUP_ID ใน tools/build-search-index.py)
+     ---------------------------------------------------------------------- */
+  var RAILS = [
+    { key: 'rails-day-1', btn: 'Day 1', where: 'Rails Day 1',
+      sheetLabel: 'Cheat sheet Rails Day 1', d: 201, lessons: [
+      { n: '90', f: 'rails-day-1/lessons/0090-ruby-and-rails-origins.html', t: 'Ruby กับ Rails คือใคร — ภาษา, framework และความเชื่อ 3 ข้อ' },
+      { n: '91', f: 'rails-day-1/lessons/0091-ruby-variables-objects-strings.html', t: 'ตัวแปร · ทุกอย่างเป็น object · string แทรกค่า' },
+      { n: '92', f: 'rails-day-1/lessons/0092-ruby-symbol-hash-enumerable.html', t: 'Symbol, Array, Hash และ Enumerable' },
+      { n: '93', f: 'rails-day-1/lessons/0093-ruby-blocks-and-methods.html', t: 'Block, method และ ? กับ !' },
+      { n: '94', f: 'rails-day-1/lessons/0094-ruby-truthiness-and-nil.html', t: 'Truthiness และ nil — 0 เป็นจริง' },
+      { n: '95', f: 'rails-day-1/lessons/0095-ruby-class-and-module.html', t: 'Class และ Module — mixin ที่มาของ concerns' },
+      { n: '96', f: 'rails-day-1/lessons/0096-ruby-errors-and-duck-typing.html', t: 'Error handling และ duck typing' },
+      { n: '97', f: 'rails-day-1/lessons/0097-ruby-before-rails.html', t: '5 เรื่องของ Ruby ก่อนเปิดโค้ด Rails' },
+      { n: '98', f: 'rails-day-1/lessons/0098-rails-new-and-structure.html', t: 'rails new และโครงสร้างโปรเจกต์' },
+      { n: '99', f: 'rails-day-1/lessons/0099-rails-naming-and-explore.html', t: 'naming convention และสำรวจโปรเจกต์' },
+      { n: '100', f: 'rails-day-1/lessons/0100-rails-boot-request-mvc.html', t: 'boot · วงจร request · MVC' },
+      { n: '101', f: 'rails-day-1/lessons/0101-rails-routing.html', t: 'Routing — config/routes.rb' },
+      { n: '102', f: 'rails-day-1/lessons/0102-rails-controller.html', t: 'Controller — params, render กับ redirect_to' },
+      { n: '103', f: 'rails-day-1/lessons/0103-rails-views-and-helpers.html', t: 'View — ERB, layout และ helper' },
+      { n: '104', f: 'rails-day-1/lessons/0104-rails-debug-and-console.html', t: 'debugger และ bin/rails console' },
+      { n: '105', f: 'rails-day-1/lessons/0105-rails-day1-lab.html', t: 'Lab 1 — สร้างแอปเอง เพิ่ม /about' }
+    ]}
+  ];
+
+  /* ------------------------------------------------------------------------
+     รวมทุกฝั่งให้เป็นรูปทรงเดียวกัน แล้วโค้ดข้างล่างจะได้ไม่ต้องรู้ว่ามาจากไหน
+     "group" = ปุ่มหนึ่งปุ่มบนแถบ (ฝั่ง Backend = หนึ่งวัน · ฝั่ง Frontend = หนึ่งสไลด์ · ฝั่ง Rails = หนึ่งวัน)
      ---------------------------------------------------------------------- */
   function group(o) {
     return {
@@ -177,7 +204,9 @@
                        sheetLabel: 'Cheat sheet Day ' + d.day, d: d.day, lessons: d.lessons });
       }) },
     { id: 'front', label: 'FRONT', title: 'ฝั่ง Frontend — HTML, CSS, TypeScript',
-      groups: FRONT.map(group) }
+      groups: FRONT.map(group) },
+    { id: 'rails', label: 'RAILS', title: 'ฝั่ง Ruby on Rails',
+      groups: RAILS.map(group) }
   ];
 
   TRACKS.forEach(function (t) { t.groups.forEach(function (g) { g.track = t; }); });
@@ -442,7 +471,7 @@ body { padding-top: 0; }
 .sn-chip.sn-chip-sheet { border-style: dashed; }
 
 /* ---------- ปุ่มเมนูจอแคบ ---------- */
-/* ---------- ตัวสลับฝั่ง BACK / FRONT ----------
+/* ---------- ตัวสลับฝั่ง BACK / FRONT / RAILS ----------
    ทำเป็น segmented control (ปุ่มติดกันในกรอบเดียว) เพราะมันสื่อว่า
    "เลือกได้อันเดียว" โดยไม่ต้องเขียนอธิบาย ต่างจากปุ่มกลุ่มที่อยู่ถัดไป
    ซึ่งเป็นเมนูกางลง — ผู้ใช้จะได้ไม่สับสนว่าสองแถวนี้ทำงานคนละแบบ */
@@ -528,7 +557,7 @@ body { padding-top: 0; }
 .sn-mgroup { padding-left: 0.6rem; border-left: 2px solid var(--rule); margin: 0 0 0.4rem 0.5rem; }
 
 /* เส้นแบ่งอยู่ที่ 1100px ไม่ใช่ 768px เพราะแถบบนต้องใส่ให้ครบสี่อย่าง:
-   🏠 + ตัวสลับฝั่ง (~110px) + ปุ่มกลุ่มของฝั่ง BACK 9 ปุ่ม (~700px) + ช่องค้นหา (12rem)
+   🏠 + ตัวสลับฝั่ง 3 ปุ่ม (~165px) + ปุ่มกลุ่มของฝั่ง BACK 9 ปุ่ม (~700px) + ช่องค้นหา (12rem)
    รวมแล้วเกิน 960px ที่จอ 1000px มีให้ → ต่ำกว่า 1100px จึงยุบเป็นปุ่ม ☰ ทั้งหมด
    (ค่านี้ต้องตรงกับ MQ_NARROW ในโค้ดช่องค้นหา ไม่งั้น 🔍 กับ ☰ จะโผล่คนละจังหวะ) */
 @media (max-width: 1099px) {
@@ -987,9 +1016,9 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
   bar.appendChild(home);
 
   /* ==========================================================================
-     -- กลาง: สลับฝั่ง BACK / FRONT แล้วค่อยเลือกกลุ่ม --
+     -- กลาง: สลับฝั่ง BACK / FRONT / RAILS แล้วค่อยเลือกกลุ่ม --
 
-     ทำไมสร้างแถวของ "ทั้งสองฝั่ง" ไว้พร้อมกันแล้วซ่อนอันที่ไม่ได้ใช้
+     ทำไมสร้างแถวของ "ทุกฝั่ง" ไว้พร้อมกันแล้วซ่อนอันที่ไม่ได้ใช้
      แทนที่จะสร้างใหม่ทุกครั้งที่กดสลับ: เพราะ makeToggle() ลงทะเบียนคู่
      {btn, panel} ไว้ในอาเรย์ toggles เพื่อบังคับ "เปิดได้ทีละเมนู"
      ถ้ารื้อ DOM ทิ้งแล้วสร้างใหม่ อาเรย์นั้นจะเหลือ node ที่หลุดจากหน้าไปแล้ว
@@ -1524,7 +1553,7 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
     if (to < text.length) node.appendChild(document.createTextNode(text.slice(to)));
   }
 
-  /* ป้ายกลุ่มจากเลข d ที่ builder ใส่มาให้ (ฝั่ง BACK = เลขวัน · ฝั่ง FRONT = 101, 102)
+  /* ป้ายกลุ่มจากเลข d ที่ builder ใส่มาให้ (ฝั่ง BACK = เลขวัน · ฝั่ง FRONT = 101, 102 · ฝั่ง RAILS = 201, …)
      ⚠️ ห้ามเขียน 'Day ' + pg.d ตรง ๆ ไม่งั้นผลค้นหาฝั่ง Frontend จะขึ้นว่า "Day 101" */
   var GROUP_BY_D = {};
   TRACKS.forEach(function (t) {

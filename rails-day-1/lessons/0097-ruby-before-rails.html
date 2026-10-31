@@ -1,0 +1,1401 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 97 — 5 เรื่องของ Ruby ที่ต้องรู้ก่อนเปิดโค้ด Rails — hash ไม่มีปีกกา, yield, method ที่เกิดตอนรัน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 97 · Rails · Day 1</p>
+  <h1>5 เรื่องของ Ruby ที่ต้องรู้ก่อนเปิดโค้ด Rails — hash ไม่มีปีกกา, yield, method ที่เกิดตอนรัน</h1>
+  <p class="meta">~25 นาที (บทหนัก มีห้าเรื่อง) · ควรผ่าน <a href="./0092-ruby-symbol-hash-enumerable.html">บทเรียน 92</a> (Symbol · Hash) ·
+    <a href="./0093-ruby-blocks-and-methods.html">บทเรียน 93</a> (Block) · <a href="./0095-ruby-class-and-module.html">บทเรียน 95</a> (Class) มาก่อน</p>
+  <p class="standfirst">
+    เปิดไฟล์ Rails ครั้งแรก หลายคนรู้สึกว่า <strong>"นี่มันไม่ใช่ Ruby ที่เพิ่งเรียนมา"</strong> —
+    <code>validates :title, presence: true</code> ไม่มีวงเล็บ ไม่มีปีกกา ·
+    <code>form_with model: @post do |f|</code> โผล่ <code>f</code> มาจากไหนไม่รู้ ·
+    <code>post.title</code> เรียกได้ทั้งที่ไฟล์ model ว่างเปล่า ·
+    <code>3.days.ago</code> ทั้งที่ตัวเลขไม่น่าจะมี method ชื่อ <code>days</code>
+    <br>ทั้งหมดนี้ <strong>ไม่ใช่เวทมนตร์ของ Rails</strong> แต่เป็น<strong>ความสามารถห้าอย่างของภาษา Ruby</strong>
+    ที่ Rails เอามาใช้จนสุดทาง (สไลด์หน้า 33–38)
+    <br>บทนี้ไล่ทีละเรื่อง เทียบกับ Go และ TypeScript ที่คุณรู้อยู่แล้ว ·
+    เรื่องไหนพิสูจน์ได้ด้วย Ruby ล้วนก็รันด้วย Ruby ล้วน · เรื่องไหนต้องเห็นของจริง
+    ผม<strong>สร้างแอป Rails จริงแล้ว curl หน้าเว็บจริง</strong>มาให้ดู
+    — และมี<strong>สองจุดที่ผลจริงไม่ตรงกับที่สไลด์พูด</strong> จะบอกไว้ตรงจุดนั้น
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby -v</span>
+ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+<span class="c">$ rails -v</span>
+Rails 8.1.4</code></pre>
+  <p>
+    สไลด์ใช้ <strong>Ruby 4.0.6 · Rails 8.1.3</strong> · เครื่องที่ใช้ตรวจเป็น <strong>Ruby 4.0.9 · Rails 8.1.4</strong>
+    (รุ่น patch ถัดไป พฤติกรรมที่บทนี้พูดถึงไม่ต่างกัน)
+    <br>· โค้ด Ruby ล้วนรันด้วย <code>ruby ไฟล์.rb</code> · ตัวที่ต้องใช้ Active Support นอก Rails รันด้วย <code>ruby -ractive_support/all ไฟล์.rb</code>
+    <br>· ของจริงฝั่ง Rails มาจากแอปที่สร้างตามสไลด์หน้า 40 (<code>rails new wongnok_blog --database=postgresql --css=tailwind</code>)
+    แล้ว <code>bin/rails g model</code> · <code>bin/rails runner</code> · <code>curl</code> ไปที่ <code>bin/rails server</code> ตัวจริง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ทุก output · error message · ค่าหลัง <code># =&gt;</code> ในบทนี้มาจากการรันจริง ไม่ได้พิมพ์เอง</strong>
+    · ที่ตัดออกมีอย่างเดียวคือ stack trace ยาว ๆ (บรรทัด <code>from …</code>) ใต้ error บางก้อน — บรรทัดข้อความ error และกล่อง <code>^^^^</code> ที่ Ruby ชี้ตำแหน่งเก็บไว้ตามจริง
+    · ค่าที่เปลี่ยนทุกครั้งที่รัน (เวลา · เลขที่อยู่ <code>0x0000…</code>) เป็นของรอบที่ผมรัน ของคุณจะต่างไปตามจริง
+  </p>
+</div>
+
+<h2 id="sn-sec-1">0 · ภาพรวม: Rails คือ Ruby ที่ใช้ห้าท่านี้หนักมาก</h2>
+
+<p>
+  ลองดูโค้ดสามบรรทัดนี้ — ทั้งหมดมาจาก<strong>ไฟล์ที่ <code>rails new</code> กับ <code>rails g model</code> สร้างให้จริง</strong>
+  ในแอปที่ใช้ตรวจ ไม่ได้แต่งขึ้น:
+</p>
+
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="f">get</span> <span class="s">"up"</span> =&gt; <span class="s">"rails/health#show"</span>, <span class="n">as:</span> <span class="n">:rails_health_check</span>
+
+<span class="c"># db/migrate/20261031165811_create_posts.rb</span>
+<span class="f">create_table</span> <span class="n">:posts</span> <span class="k">do</span> |t|
+
+<span class="c"># app/views/layouts/application.html.erb</span>
+&lt;%= <span class="k">yield</span> %&gt;</code></pre>
+
+<p>
+  ถ้ายังอ่านสามบรรทัดนี้แล้ว<strong>บอกไม่ได้ว่า Ruby เห็นมันเป็นอะไร</strong> บทนี้คือบทของคุณ
+  · พอจบบท ให้กลับมาดูอีกรอบ — บรรทัดแรกคือเรื่องที่ 1 · บรรทัดสองกับสามคือเรื่องที่ 2
+</p>
+
+<h2 id="sn-sec-2">1 · hash ตัวสุดท้ายละปีกกาได้ (สไลด์หน้า 34)</h2>
+
+<p>
+  กฎนี้คุณเจอแล้วใน <a href="./0093-ruby-blocks-and-methods.html">บทเรียน 93</a> หัวข้อ 4 (<code>render json: post, status: :created</code>):
+  <strong>ถ้า argument ตัวสุดท้ายเป็น hash จะละปีกกาได้</strong> และการเรียก method ใน Ruby ละวงเล็บได้อยู่แล้ว
+  · บทนี้ไม่สอนซ้ำ แต่จะ<strong>ตรวจสองตัวอย่างของสไลด์หน้า 34</strong> แล้วไปต่อที่เรื่องที่บท 93 ยังไม่ได้แตะ:
+  <strong>ใส่ปีกกาเองเมื่อไหร่ถึงพัง</strong>
+</p>
+
+<p>
+  วิธีตรวจที่ง่ายที่สุด: เขียน method ปลอมชื่อเดียวกัน ให้มัน<strong>รับทุกอย่างแล้ว <code>p</code> ออกมาดู</strong>
+  ว่า Ruby ส่งอะไรมาให้จริง ๆ
+</p>
+
+<pre><code><span class="c"># hash1.rb</span>
+<span class="k">def</span> <span class="f">validates</span>(*args)
+  <span class="f">p</span> args
+<span class="k">end</span>
+
+<span class="f">validates</span> <span class="n">:title</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">minimum:</span> <span class="n">5</span> }        <span class="c"># แบบที่เขียนใน Rails</span>
+<span class="f">validates</span>(<span class="n">:title</span>, { <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">minimum:</span> <span class="n">5</span> } })   <span class="c"># แบบที่สไลด์บอกว่า "Ruby เห็นจริง ๆ"</span></code></pre>
+
+<pre><code><span class="c">$ ruby hash1.rb</span>
+[:title, {presence: true, length: {minimum: 5}}]
+[:title, {presence: true, length: {minimum: 5}}]</code></pre>
+
+<p>
+  <strong>ได้ของเหมือนกันเป๊ะ</strong> — array สองช่อง: symbol <code>:title</code> กับ hash หนึ่งก้อน ·
+  ตัวอย่างที่สองของสไลด์ก็เป็นแบบเดียวกัน:
+</p>
+
+<pre><code><span class="c"># hash3.rb — หน้าตา method เลียนแบบ Rails ตัวจริง (ดูหัวข้อ 1.2)</span>
+<span class="k">def</span> <span class="f">redirect_to</span>(options = {}, response_options = {})
+  <span class="f">p</span> options
+  <span class="f">p</span> response_options
+<span class="k">end</span>
+
+post = <span class="s">"Post#1"</span>
+<span class="f">redirect_to</span> post, <span class="n">notice:</span> <span class="s">"saved"</span>, <span class="n">status:</span> <span class="n">:see_other</span></code></pre>
+
+<pre><code><span class="c">$ ruby hash3.rb</span>
+"Post#1"
+{notice: "saved", status: :see_other}</code></pre>
+
+<p>เทียบกับภาษาที่คุณรู้แล้ว — เรื่อง "ส่งก้อนตัวเลือกเข้า function" ทุกภาษาทำได้ ต่างกันแค่ต้องพิมพ์อะไรบ้าง:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Go</th><th>TypeScript</th><th>Ruby</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>ไม่มี keyword argument · ต้องทำ struct เป็นก้อนตัวเลือกเอง<br>
+          <code>Redirect(post, Opts{Notice: "saved", Status: 303})</code></td>
+      <td>ส่ง object · <strong>ปีกกาห้ามขาด</strong><br>
+          <code>redirectTo(post, { notice: "saved", status: 303 })</code></td>
+      <td>ส่ง hash · <strong>ปีกกาและวงเล็บละได้</strong><br>
+          <code>redirect_to post, notice: "saved", status: :see_other</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+<p style="font-size:0.9em">(ช่อง Go กับ TypeScript เป็นโค้ดเลียนแบบเพื่อเทียบรูปร่าง ไม่ใช่ API ของ library จริง)</p>
+
+<h3 id="sn-sub-1">1.1 · กับดักของ Ruby 3+: "keyword argument" กับ "hash" ไม่ใช่ของชิ้นเดียวกันแล้ว</h3>
+
+<p>
+  สไลด์เขียนว่า "Ruby เห็นเป็น hash" ซึ่งจริงสำหรับ method ที่ประกาศรับ <code>*args</code> แบบข้างบน
+  · แต่ Ruby มี method อีกแบบที่ประกาศรับ <strong>keyword argument</strong> (<code>**opts</code> หรือ <code>notice:</code>)
+  และตั้งแต่ Ruby 3.0 ภาษา<strong>แยกสองอย่างนี้ออกจากกันเด็ดขาด</strong>
+  · ตรงนี้แหละที่การ "ใส่ปีกกาให้ครบตามที่สไลด์บอกว่า Ruby เห็น" จะทำให้ผลเปลี่ยน
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># hash1.rb (ต่อ) — method นี้มีช่อง **opts รอรับ keyword</span>
+<span class="k">def</span> <span class="f">validates_kw</span>(*args, **opts)
+  <span class="f">p</span> args
+  <span class="f">p</span> opts
+<span class="k">end</span>
+
+<span class="f">validates_kw</span> <span class="n">:title</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">minimum:</span> <span class="n">5</span> }
+<span class="f">validates_kw</span>(<span class="n">:title</span>, { <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">minimum:</span> <span class="n">5</span> } })</code></pre>
+  <p class="ask">สองบรรทัดล่างพิมพ์ต่างกันแค่ปีกกา — คิดว่า <code>args</code> กับ <code>opts</code> ของแต่ละบรรทัดได้อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ ruby hash1.rb   (เฉพาะ 4 บรรทัดหลังที่มาจาก validates_kw)</span>
+[:title]
+{presence: true, length: {minimum: 5}}
+[:title, {presence: true, length: {minimum: 5}}]
+{}</code></pre>
+    <p style="margin-bottom:0">
+      <strong>ไม่มีปีกกา</strong> → Ruby ถือว่าเป็น keyword → ไปลง <code>opts</code>
+      · <strong>มีปีกกา</strong> → Ruby ถือว่าเป็น hash ธรรมดาหนึ่งก้อน (positional) → ไปลง <code>args</code> แล้ว <code>opts</code> ว่างเปล่า
+      <br>แปลว่า <strong>ปีกกาไม่ใช่แค่ของตกแต่ง</strong> — ใน Ruby 3+ มันเปลี่ยนว่าค่าจะไปตกช่องไหน
+    </p>
+  </div>
+</div>
+
+<p>
+  ถ้า method ประกาศ keyword แบบ<strong>บังคับ</strong> (ไม่มี <code>**</code> ไว้กวาด) การใส่ปีกกาจะ<strong>พังเลย</strong>:
+</p>
+
+<pre><code><span class="c"># hash2.rb</span>
+<span class="k">def</span> <span class="f">redirect</span>(target, <span class="n">notice:</span>, <span class="n">status:</span> <span class="n">:found</span>)
+  <span class="f">p</span> [target, notice, status]
+<span class="k">end</span>
+
+<span class="f">redirect</span> <span class="s">"/posts/1"</span>, <span class="n">notice:</span> <span class="s">"saved"</span>, <span class="n">status:</span> <span class="n">:see_other</span>
+<span class="f">redirect</span> <span class="s">"/posts/1"</span>, { <span class="n">notice:</span> <span class="s">"saved"</span>, <span class="n">status:</span> <span class="n">:see_other</span> }</code></pre>
+
+<pre><code><span class="c">$ ruby hash2.rb</span>
+["/posts/1", "saved", :see_other]
+hash2.rb:1:in 'Object#redirect': wrong number of arguments (given 2, expected 1; required keyword: notice) (ArgumentError)
+
+    caller: hash2.rb:6
+    | redirect "/posts/1", { notice: "saved", status: :see_other }
+      ^^^^^^^^
+    callee: hash2.rb:1
+    | def redirect(target, notice:, status: :found)
+          ^^^^^^^^
+	from hash2.rb:6:in '&lt;main&gt;'</code></pre>
+
+<h3 id="sn-sub-2">1.2 · แล้ว Rails ของจริงล่ะ — เปิดซอร์สดู</h3>
+
+<p>
+  เปิดซอร์สของ gem ที่ติดตั้งอยู่ (Rails 8.1.4) ได้คำตอบที่น่าสนใจ — <strong>Rails ใช้ทั้งสองแบบปนกัน</strong>:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>method</th><th>ประกาศไว้ในซอร์สจริงว่า</th><th>ใส่ปีกกาเองได้ไหม</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>validates</code> (activemodel)</td><td><code>def validates(*attributes)</code> แล้วดึง hash ตัวท้ายออกด้วย <code>extract_options!</code></td><td>ได้ — ผลเหมือนกัน (ตรงกับสไลด์)</td></tr>
+    <tr><td><code>redirect_to</code> (actionpack)</td><td><code>def redirect_to(options = {}, response_options = {})</code></td><td>ได้ — ผลเหมือนกัน (ตรงกับสไลด์)</td></tr>
+    <tr><td><code>form_with</code> (actionview)</td><td><code>def form_with(model: false, scope: nil, url: nil, format: nil, **options, &amp;block)</code></td><td><strong>ไม่ได้</strong> — ดูผลข้างล่าง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ผมลองเขียน view สองไฟล์ในแอปจริง ต่างกันแค่ปีกกา แล้ว <code>curl</code> ดู:
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>ไม่มีปีกกา (แบบที่สไลด์หน้า 35 เขียน)</h4>
+<pre><code>&lt;%= <span class="f">form_with</span> <span class="n">model:</span> @post, <span class="n">url:</span> <span class="s">"/posts"</span> <span class="k">do</span> |f| %&gt;
+  &lt;%= f.<span class="f">text_field</span> <span class="n">:title</span> %&gt;
+&lt;% <span class="k">end</span> %&gt;</code></pre>
+    <p style="margin-bottom:0">ได้ฟอร์มปกติ (มี <code>&lt;input type="text" value="Hi" name="post[title]" id="post_title" /&gt;</code> อยู่ข้างใน)</p>
+  </div>
+  <div class="side bad">
+    <h4>ใส่ปีกกา "ตามที่ Ruby เห็น"</h4>
+<pre><code>&lt;%= <span class="f">form_with</span>({ <span class="n">model:</span> @post, <span class="n">url:</span> <span class="s">"/posts"</span> }) <span class="k">do</span> |f| %&gt;
+  &lt;%= f.<span class="f">text_field</span> <span class="n">:title</span> %&gt;
+&lt;% <span class="k">end</span> %&gt;</code></pre>
+    <p style="margin-bottom:0">HTTP 500 · หน้า error ของ Rails เขียนว่า<br>
+      <code>ArgumentError in Greetings#form_braces</code><br>
+      <code>wrong number of arguments (given 1, expected 0)</code></p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ จุดที่สไลด์หน้า 34 พูดไม่ครบ:</strong> "กฎเดียว" ของสไลด์ใช้ได้กับ method ที่รับ hash แบบ positional
+    (เช่น <code>validates</code> · <code>redirect_to</code>) แต่<strong>ไม่ได้แปลว่าทุก method ใน Rails จะรับแบบมีปีกกาได้</strong>
+    · กฎที่ปลอดภัยกว่า: <strong>เขียนแบบไม่มีปีกกาเสมอ</strong> (แบบที่คู่มือ Rails เขียน) — แบบนี้ใช้ได้กับทั้งสองชนิด
+    <br>อีกกับดักเล็ก ๆ: ห้ามวาง <code>{</code> ติดชื่อ method โดยไม่มีวงเล็บ เช่น <code>show { presence: true }</code>
+    — Ruby อ่าน <code>{</code> ตรงนั้นเป็น<strong>จุดเริ่มของ block</strong> ไม่ใช่ hash · รันจริงได้
+    <code>syntax errors found (SyntaxError)</code> พร้อมชี้ว่า <code>unexpected ':'</code>
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🍳 เทียบให้เห็นภาพ — ใบสั่งอาหารตามสั่ง</span>
+  <p>
+    คุณสั่ง "กะเพราหมู · ไข่ดาว: ใส่ · เผ็ด: มาก" พนักงานจดลงใบเดียว
+    — ชื่อเมนูเป็น<strong>ของหลัก</strong> ส่วน "ไข่ดาว: ใส่ · เผ็ด: มาก" คือ<strong>รายการตัวเลือก</strong>ที่พ่วงท้าย
+    ไม่มีใครต้องพูดว่า "เปิดวงเล็บ ตัวเลือก ปิดวงเล็บ" ครัวก็เข้าใจ
+    <br><code>validates :title, presence: true</code> ก็เป็นแบบนั้น — <code>:title</code> คือเมนู ·
+    <code>presence: true</code> คือตัวเลือกพ่วงท้าย · Ruby รวบตัวเลือกเป็น hash ก้อนเดียวให้เอง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านอาหารไม่สนว่าคุณจะพูดตัวเลือกยังไง แต่ Ruby 3+ <strong>สน</strong>
+    — ครัวบางร้าน (method ที่ประกาศ keyword เช่น <code>form_with</code>) รับเฉพาะตัวเลือกแบบ "พูดลอย ๆ"
+    ถ้าคุณยื่นเป็นกระดาษใส่ซองมา (hash ที่มีปีกกา) ครัวจะบอกว่า "สั่งเกินมาหนึ่งอย่าง" แล้วไม่ทำให้เลย
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>keyword argument separation (Ruby 3.0)</dt>
+    <dd>การที่ Ruby 3 เลิกแปลง hash ↔ keyword ให้อัตโนมัติ · hash ที่มีปีกกาเป็น positional เสมอ ·
+        error ที่เจอบ่อยคือ <code>wrong number of arguments (given 1, expected 0)</code> ·
+        <strong>บอก senior ได้ว่า “ผมส่ง hash ที่มีปีกกาเข้า method ที่รับ keyword เลยโดน ArgumentError ครับ”</strong></dd>
+    <dt>extract_options!</dt>
+    <dd>method ของ Active Support ที่ดึง hash ตัวท้ายออกจาก array ของ argument · เป็นเหตุผลที่ <code>validates</code>
+        รับได้ทั้งแบบมีและไม่มีปีกกา ·
+        <strong>ถาม AI ได้ว่า “does this Rails method take an options hash or keyword arguments?”</strong> ก่อนจะเติมปีกกาเอง</dd>
+    <dt>splat <code>*args</code> · double splat <code>**opts</code></dt>
+    <dd><code>*</code> กวาด positional ที่เหลือเป็น array · <code>**</code> กวาด keyword ที่เหลือเป็น hash ·
+        คล้าย rest parameter <code>...args</code> ของ TypeScript (<a href="../../fe-ts-fp/lessons/0065-typing-functions.html">บทเรียน 65</a>)</dd>
+    <dt>DSL (Domain-Specific Language)</dt>
+    <dd>โค้ดที่ออกแบบให้อ่านเหมือนภาษาเฉพาะเรื่อง เช่น <code>routes.rb</code> หรือ <code>validates</code> ·
+        ใน Rails มันคือ<strong>การเรียก method ธรรมดา</strong>ที่ละวงเล็บ/ปีกกาไว้ ·
+        <strong>พิมพ์บอก AI ได้ว่า “rewrite this Rails DSL line with explicit parentheses so I can see the method call”</strong></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ให้ <code>def redirect(target, notice:, status: :found)</code> — การเรียกแบบไหน<strong>พัง</strong>ด้วย <code>ArgumentError</code>?</p>
+  <div class="opts">
+    <button class="opt"><code>redirect "/posts/1", notice: "saved"</code></button>
+    <button class="opt"><code>redirect("/posts/1", notice: "saved", status: :see_other)</code></button>
+    <button class="opt"><code>redirect "/posts/1", status: :see_other, notice: "saved"</code></button>
+    <button class="opt"><code>redirect "/posts/1", { notice: "saved", status: :see_other }</code></button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · รันจริงได้ <code>wrong number of arguments (given 2, expected 1; required keyword: notice)</code>
+      เพราะปีกกาทำให้ก้อนนั้นกลายเป็น hash positional ตัวที่สอง ซึ่ง method ไม่มีช่องรับ และ keyword <code>notice:</code> ก็ไม่ได้ถูกส่ง
+      <br>ตัวเลือกที่ 1 ผิด เพราะ <code>status:</code> มีค่าตั้งต้น <code>:found</code> ไม่ส่งก็ได้ (รันจริงได้ <code>["/posts/1", "saved", :found]</code>) ·
+      ตัวเลือกที่ 2 ผิด เพราะวงเล็บไม่ได้เปลี่ยนอะไร keyword ยังเป็น keyword ·
+      ตัวเลือกที่ 3 ผิด เพราะ keyword สลับลำดับได้ — จับคู่ด้วยชื่อ ไม่ใช่ตำแหน่ง
+      <br><strong>จุดที่ต้องจำ:</strong> ใน Ruby 3+ ปีกกาเปลี่ยนความหมาย · เขียนตัวเลือกท้าย method แบบไม่มีปีกกาไว้ก่อน ใช้ได้กับทั้งสองแบบ
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-3">2 · block ที่รับ object — <code>yield</code> (สไลด์หน้า 35)</h2>
+
+<p>
+  <a href="./0093-ruby-blocks-and-methods.html">บทเรียน 93</a> หัวข้อ 1 สอนพื้นฐานไปแล้ว — block คือก้อน <code>do … end</code> ที่แนบไปกับการเรียก method ·
+  method เรียกมันด้วย <code>yield</code> · ไม่มี block แล้ว <code>yield</code> จะพังด้วย <code>LocalJumpError</code> · เช็คก่อนได้ด้วย <code>block_given?</code>
+  <br>สิ่งที่สไลด์หน้า 35 เพิ่มมาคือ <strong>yield แบบส่ง object ให้ block เอาไปสั่งงานต่อ</strong> — ท่าที่ Rails ใช้ทั้ง form · layout · transaction
+</p>
+
+<p>
+  คิดว่า <code>yield</code> คือ <strong>"ถึงตาคุณแล้ว"</strong>: method ทำงานของตัวเองไปครึ่งหนึ่ง
+  แล้ว<strong>ส่งไม้ให้ block</strong> พร้อมยื่น object ให้หนึ่งชิ้น · ชิ้นที่ยื่นให้คือตัวที่โผล่ใน <code>|f|</code>
+  · block ทำเสร็จ ไม้กลับมาที่ method ให้ทำส่วนที่เหลือ
+  <br>เขียน <code>form_with</code> จิ๋วตามสไลด์หน้า 35 ให้รันได้จริงดูเลย:
+</p>
+
+<pre><code><span class="c"># form.rb</span>
+<span class="n">Post</span> = <span class="n">Struct</span>.<span class="f">new</span>(<span class="n">:title</span>, <span class="n">:body</span>)
+
+<span class="k">class</span> <span class="n">FormBuilder</span>
+  <span class="k">def</span> <span class="f">initialize</span>(model)
+    @model = model
+    @fields = []
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">text_field</span>(name)
+    value = @model.<span class="f">public_send</span>(name)
+    @fields &lt;&lt; <span class="s">%(&lt;input name="post[#{name}]" value="#{value}"&gt;)</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">to_html</span>
+    <span class="s">"&lt;form&gt;\n  "</span> + @fields.<span class="f">join</span>(<span class="s">"\n  "</span>) + <span class="s">"\n&lt;/form&gt;"</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="k">def</span> <span class="f">form_with</span>(<span class="n">model:</span>)
+  builder = <span class="n">FormBuilder</span>.<span class="f">new</span>(model)
+  <span class="k">yield</span>(builder)        <span class="c"># ส่ง builder เข้า block → กลายเป็น |f|</span>
+  builder.<span class="f">to_html</span>
+<span class="k">end</span>
+
+post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hello Ruby"</span>, <span class="s">"..."</span>)
+
+html = <span class="f">form_with</span> <span class="n">model:</span> post <span class="k">do</span> |f|
+  f.<span class="f">text_field</span> <span class="n">:title</span>
+  f.<span class="f">text_field</span> <span class="n">:body</span>
+<span class="k">end</span>
+
+<span class="f">puts</span> html</code></pre>
+
+<pre><code><span class="c">$ ruby form.rb</span>
+&lt;form&gt;
+  &lt;input name="post[title]" value="Hello Ruby"&gt;
+  &lt;input name="post[body]" value="..."&gt;
+&lt;/form&gt;</code></pre>
+
+<p>
+  ไล่ทางเดินทีละขั้น: <code>form_with</code> สร้าง <code>builder</code> → <code>yield(builder)</code> กระโดดเข้า block โดย <code>f</code> = <code>builder</code>
+  → block เรียก <code>f.text_field</code> สองครั้ง (เก็บ input ลง <code>@fields</code>) → block จบ กลับมาที่ <code>form_with</code>
+  → <code>builder.to_html</code> ประกอบ HTML คืนออกไป
+  <br>ของจริงใน Rails ซับซ้อนกว่านี้มาก (มี <code>authenticity_token</code> · สร้าง <code>id</code> ให้ · escape ค่า)
+  แต่<strong>รูปร่างของการส่งไม้เหมือนกัน</strong>
+</p>
+
+<h3 id="sn-sub-3">2.1 · layout · form · transaction — กลไกเดียวกันหมด</h3>
+
+<p>
+  สไลด์บอกว่า "layout ก็ใช้ yield · form ก็ใช้ yield · transaction ก็ใช้ yield" — ลองเขียนจิ๋ว ๆ ให้เห็นว่าจริง:
+</p>
+
+<pre><code><span class="c"># layout.rb — layout ห่อหน้าไว้ข้างนอก</span>
+<span class="k">def</span> <span class="f">layout</span>
+  <span class="f">puts</span> <span class="s">"&lt;html&gt;&lt;body&gt;"</span>
+  <span class="k">yield</span>
+  <span class="f">puts</span> <span class="s">"&lt;/body&gt;&lt;/html&gt;"</span>
+<span class="k">end</span>
+
+<span class="f">layout</span> <span class="k">do</span>
+  <span class="f">puts</span> <span class="s">"  &lt;h1&gt;หน้า posts&lt;/h1&gt;"</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c">$ ruby layout.rb</span>
+&lt;html&gt;&lt;body&gt;
+  &lt;h1&gt;หน้า posts&lt;/h1&gt;
+&lt;/body&gt;&lt;/html&gt;</code></pre>
+
+<p>transaction ก็ห่อแบบเดียวกัน แค่ข้างนอกเป็น BEGIN / COMMIT แทนแท็ก HTML — และมีจังหวะที่ block พังด้วย:</p>
+
+<div class="predict">
+<pre><code><span class="c"># tx.rb</span>
+<span class="k">def</span> <span class="f">transaction</span>
+  <span class="f">puts</span> <span class="s">"BEGIN"</span>
+  result = <span class="k">yield</span>
+  <span class="f">puts</span> <span class="s">"COMMIT"</span>
+  result
+<span class="k">rescue</span> =&gt; e
+  <span class="f">puts</span> <span class="s">"ROLLBACK เพราะ #{e.message}"</span>
+<span class="k">end</span>
+
+<span class="f">transaction</span> <span class="k">do</span>
+  <span class="f">puts</span> <span class="s">"  INSERT post"</span>
+<span class="k">end</span>
+
+<span class="f">transaction</span> <span class="k">do</span>
+  <span class="f">puts</span> <span class="s">"  INSERT post"</span>
+  <span class="k">raise</span> <span class="s">"title ว่าง"</span>
+<span class="k">end</span></code></pre>
+  <p class="ask">รอบที่สอง block <code>raise</code> กลางทาง — บรรทัด <code>COMMIT</code> จะถูกพิมพ์ไหม? แล้ว error หลุดออกมาทำให้โปรแกรมพังหรือเปล่า?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ ruby tx.rb</span>
+BEGIN
+  INSERT post
+COMMIT
+BEGIN
+  INSERT post
+ROLLBACK เพราะ title ว่าง</code></pre>
+    <p style="margin-bottom:0">
+      <strong>ไม่มี COMMIT รอบสอง และโปรแกรมไม่พัง</strong> — <code>raise</code> ใน block กระโดดข้าม <code>puts "COMMIT"</code>
+      ไปลง <code>rescue</code> ของ <strong>method <code>transaction</code></strong> (ไม่ใช่ของ block) ·
+      นี่คือหัวใจของ <code>Post.transaction do … end</code> ที่ Day 2 จะใช้จริง: <strong>คนห่อ (method) เป็นคนตัดสินว่า commit หรือ rollback</strong>
+      ส่วนคนในห่อ (block) แค่ทำงานของตัวเอง · ของจริงใน Active Record ทำงานกับ DB จริงและซับซ้อนกว่านี้ — อันนี้แค่โชว์รูปร่าง
+    </p>
+  </div>
+</div>
+
+<p>
+  แล้วในแอป Rails จริงล่ะ? ไฟล์ <code>app/views/layouts/application.html.erb</code> ที่ <code>rails new</code> สร้างให้
+  มีบรรทัด <code>&lt;%= yield %&gt;</code> อยู่ใน <code>&lt;main&gt;</code> — <strong>ตรงนั้นคือที่ที่หน้าแต่ละหน้าจะถูกยัดลงไป</strong>
+  · และ migration ที่ <code>rails g model</code> สร้างก็เขียน <code>create_table :posts do |t|</code> — <code>t</code> คือ object ที่ถูก yield ออกมาให้คุณสั่ง <code>t.string</code>
+</p>
+
+<p>
+  ตัวอย่างที่สามของสไลด์หน้า 35 คือ <code>respond_to do |format|</code> (ใช้ใน controller เลือกว่าจะตอบเป็น HTML หรือ Turbo Stream — รายละเอียดรอ Day 3)
+  · เปิดซอร์สจริงของ actionpack 8.1.4 (<code>action_controller/metal/mime_responds.rb</code>) ดูสองบรรทัดนี้:
+</p>
+
+<pre><code><span class="k">def</span> <span class="f">respond_to</span>(*mimes)
+  <span class="c"># …</span>
+  collector = <span class="n">Collector</span>.<span class="f">new</span>(mimes, request.variant)
+  <span class="k">yield</span> collector <span class="k">if</span> <span class="f">block_given?</span></code></pre>
+
+<p>
+  <strong>รูปร่างเดียวกับ <code>form_with</code> จิ๋วของเราเป๊ะ</strong> — สร้าง object หนึ่งตัว แล้ว yield ให้ block · <code>format</code> ใน <code>|format|</code>
+  ก็คือ <code>collector</code> ตัวนี้ · และมี <code>block_given?</code> กันไว้ด้วย (ไม่แนบ block ก็ไม่พัง)
+</p>
+
+<p>
+  ฝั่ง Go คุณเคยเห็นท่านี้แล้วใน <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> หัวข้อ 8.3:
+  <code>db.Transaction(func(tx *gorm.DB) error { … })</code> — <strong>ส่ง function เข้าไปให้อีกฝั่งเรียก</strong> · ฝั่ง TypeScript คือ callback
+  <code>(f) =&gt; { … }</code> · Ruby แค่ทำให้ไวยากรณ์สั้นลงด้วย <code>do |f| … end</code> กับ <code>yield</code>
+</p>
+
+<p>
+  (กับดัก <code>{ }</code> กับ <code>do … end</code> ที่เกาะ method คนละตัว — บทเรียน 93 หัวข้อ 2 รันให้ดูแล้ว ·
+  นี่คือเหตุผลที่ใน ERB ของ Rails เห็น <code>&lt;%= form_with … do |f| %&gt;</code> เป็นหลัก)
+</p>
+
+<div class="analogy">
+  <span class="label">🍕 เทียบให้เห็นภาพ — ร้านพิซซ่าที่ให้ลูกค้าโรยหน้าเอง</span>
+  <p>
+    ร้านนวดแป้งให้ (<code>FormBuilder.new</code>) → <strong>ยื่นแป้งให้คุณ</strong>พร้อมบอกว่า "เชิญโรยหน้า" (<code>yield(builder)</code>)
+    → คุณโรยชีส โรยหมู (<code>f.text_field :title</code>) → ยื่นคืน → ร้านเอาเข้าเตาแล้วใส่กล่อง (<code>builder.to_html</code>)
+    <br>คุณไม่ต้องรู้วิธีนวดแป้งหรือคุมเตา · ร้านไม่ต้องรู้ว่าคุณชอบหน้าอะไร · แต่ละฝ่ายทำส่วนของตัวเอง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงรอคุณได้ แต่ถ้าคุณ<strong>ไม่มาโรยหน้าเลย</strong> (ไม่แนบ block)
+    method ที่ไม่เช็ค <code>block_given?</code> จะพังทันทีด้วย <code>LocalJumpError</code> ไม่ใช่อบแป้งเปล่ามาให้
+    · และร้านเรียกคุณมาโรยกี่รอบก็ได้ — <code>yield</code> เรียกได้หลายครั้งในหนึ่ง method (แบบที่ <code>each</code> ทำ)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>yielded object (block parameter)</dt>
+    <dd>object ที่ method ยื่นให้ block ผ่าน <code>yield(obj)</code> แล้วไปโผล่ใน <code>|f|</code> · <code>|t|</code> · <code>|format|</code> ·
+        เวลาเจอ <code>|x|</code> ที่ไม่รู้ว่าคืออะไร
+        <strong>ถาม AI ได้ว่า “what object does this Rails helper yield to the block, and what methods does it have?”</strong></dd>
+    <dt><code>&lt;%= yield %&gt;</code> ใน layout</dt>
+    <dd>จุดใน <code>app/views/layouts/application.html.erb</code> ที่ view ของแต่ละ action ถูกวางลงไป · หนึ่งหน้าเว็บ = layout ห่อ view หนึ่งตัว</dd>
+    <dt>builder pattern (FormBuilder)</dt>
+    <dd>object ที่มีหน้าที่ "ค่อย ๆ ประกอบของ" แล้วค่อยออกผลทีเดียว · <code>f</code> ใน <code>form_with</code> คือ
+        <code>ActionView::Helpers::FormBuilder</code> ตัวจริง ·
+        <strong>บอก senior ได้ว่า “<code>f</code> ใน form คือ FormBuilder ที่ form_with yield ออกมา”</strong> — ฟังดูรู้เรื่องกว่า “ตัว f”</dd>
+    <dt>callback</dt>
+    <dd>ชื่อเรียกทั่วไปของ "function ที่ส่งไปให้คนอื่นเรียกกลับ" · block + yield ของ Ruby
+        คือ callback ในรูปที่สั้นที่สุด · คำเดียวกับที่คุณใช้ใน TypeScript และ Go</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">3 · method ที่เกิดตอนรัน (สไลด์หน้า 36)</h2>
+
+<p>
+  ใน Go ถ้าอยากได้ <code>post.Title</code> คุณต้องเขียน <code>Title string</code> ใน struct เอง
+  · ใน TypeScript ต้องเขียน <code>title: string</code> ใน type เอง
+  · ใน Rails <strong>ไฟล์ model ว่างเปล่า</strong> แต่ <code>post.title</code> ใช้ได้ — เพราะ Ruby
+  <strong>สร้าง method ใหม่ได้ระหว่างโปรแกรมกำลังรัน</strong> ด้วย <code>define_method</code>
+  <br>คุณเห็นของแบบนี้มาแล้วหนึ่งตัว: <code>attr_accessor :title</code> ใน <a href="./0095-ruby-class-and-module.html">บทเรียน 95</a> หัวข้อ 2
+  คือ method ที่เขียน method ให้เรา · Active Record ทำแบบเดียวกัน แค่<strong>เอารายชื่อมาจาก DB</strong> แทนที่จะให้คุณพิมพ์
+</p>
+
+<p>ลองทำ "Active Record จิ๋ว" ที่รับรายชื่อ column แล้วสร้าง getter/setter ให้เอง:</p>
+
+<pre><code><span class="c"># dm.rb</span>
+<span class="k">class</span> <span class="n">TinyRecord</span>
+  <span class="k">def</span> <span class="k">self</span>.<span class="f">columns</span>(*names)
+    names.<span class="f">each</span> <span class="k">do</span> |name|
+      <span class="f">define_method</span>(name) <span class="k">do</span>            <span class="c"># getter: post.title</span>
+        @attributes[name]
+      <span class="k">end</span>
+
+      <span class="f">define_method</span>(<span class="s">"#{name}="</span>) <span class="k">do</span> |value|   <span class="c"># setter: post.title = "Hi"</span>
+        @attributes[name] = value
+      <span class="k">end</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">initialize</span>
+    @attributes = {}
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">TinyRecord</span>
+  <span class="f">columns</span> <span class="n">:title</span>, <span class="n">:published_at</span>   <span class="c"># ในของจริง รายชื่อนี้มาจาก DB</span>
+<span class="k">end</span>
+
+post = <span class="n">Post</span>.<span class="f">new</span>
+<span class="f">p</span> post.<span class="f">respond_to?</span>(<span class="n">:title</span>)
+post.title = <span class="s">"Hi"</span>
+<span class="f">p</span> post.title
+<span class="f">p</span> post.published_at
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">instance_methods</span>(<span class="k">false</span>)
+<span class="f">p</span> <span class="n">Post</span>.superclass.<span class="f">instance_methods</span>(<span class="k">false</span>)
+post.body</code></pre>
+
+<pre><code><span class="c">$ ruby dm.rb</span>
+true
+"Hi"
+nil
+[:title, :title=, :published_at, :published_at=]
+[]
+dm.rb:30:in '&lt;main&gt;': undefined method 'body' for an instance of Post (NoMethodError)
+
+post.body
+    ^^^^^</code></pre>
+
+<p>
+  คลาส <code>Post</code> ไม่มีคำว่า <code>def</code> สักตัว แต่มี method สี่ตัว ·
+  <code>body</code> ไม่อยู่ในรายชื่อ column เลยไม่ถูกสร้าง → <code>NoMethodError</code>
+</p>
+
+<h3 id="sn-sub-4">3.1 · ของจริงใน Rails 8.1.4</h3>
+
+<pre><code><span class="c">$ bin/rails g model Post title:string published_at:datetime</span>
+      invoke  active_record
+      create    db/migrate/20261031165811_create_posts.rb
+      create    app/models/post.rb
+      invoke    test_unit
+      create      test/models/post_test.rb
+      create      test/fixtures/posts.yml
+<span class="c">$ bin/rails db:migrate</span>
+== 20261031165811 CreatePosts: migrating ======================================
+-- create_table(:posts)
+   -&gt; 0.0058s
+== 20261031165811 CreatePosts: migrated (0.0059s) =============================</code></pre>
+
+<div class="compare">
+  <div class="side">
+    <h4><code>app/models/post.rb</code> — ทั้งไฟล์</h4>
+<pre><code><span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+<span class="k">end</span></code></pre>
+    <p style="margin-bottom:0">ไม่มีบรรทัดไหนบอกว่ามี column อะไร</p>
+  </div>
+  <div class="side">
+    <h4><code>db/schema.rb</code> — ส่วนที่เกี่ยว</h4>
+<pre><code><span class="f">create_table</span> <span class="s">"posts"</span>, <span class="n">force:</span> <span class="n">:cascade</span> <span class="k">do</span> |t|
+  t.<span class="f">string</span> <span class="s">"title"</span>
+  t.<span class="f">datetime</span> <span class="s">"published_at"</span>
+  t.<span class="f">datetime</span> <span class="s">"created_at"</span>, <span class="n">null:</span> <span class="k">false</span>
+  t.<span class="f">datetime</span> <span class="s">"updated_at"</span>, <span class="n">null:</span> <span class="k">false</span>
+<span class="k">end</span></code></pre>
+    <p style="margin-bottom:0">รายชื่อ column จริงอยู่ที่นี่ (Rails เขียนไฟล์นี้ใหม่ทุกครั้งที่ migrate)</p>
+  </div>
+</div>
+
+<p>แล้วเรียกทุกอย่างที่สไลด์หน้า 36 เขียนไว้ ผ่าน <code>bin/rails runner</code>:</p>
+
+<pre><code><span class="c"># runner1.rb  →  bin/rails runner runner1.rb</span>
+post = <span class="n">Post</span>.<span class="f">new</span>
+<span class="f">p</span> post.title
+post.title = <span class="s">"Hi"</span>
+<span class="f">p</span> post.title
+<span class="f">p</span> post.published_at
+post.<span class="f">save!</span>
+
+found = <span class="n">Post</span>.<span class="f">find_by_title</span>(<span class="s">"Hi"</span>)
+<span class="f">p</span> found.title
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">find_by_title</span>(<span class="s">"ไม่มีจริง"</span>)
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">find_by</span>(<span class="n">title:</span> <span class="s">"Hi"</span>) == found</code></pre>
+
+<pre><code>nil
+"Hi"
+nil
+"Hi"
+nil
+true</code></pre>
+
+<p>
+  <strong>ใช้ได้ทุกตัว รวมถึง <code>find_by_title</code></strong> (dynamic finder ยังอยู่ใน Rails 8.1.4 และคู่มือทางการยังสอนอยู่)
+  · ส่วน <code>find_by(title: "Hi")</code> คือรูปที่เขียนกันเป็นหลักในโค้ดใหม่ — ได้ record ตัวเดียวกัน
+</p>
+
+<p>
+  ทีนี้ลองจับ<strong>จังหวะ</strong>ที่ method เกิดขึ้น — ตรงนี้สนุกกว่าที่สไลด์เล่า:
+</p>
+
+<pre><code><span class="c"># runner2.rb</span>
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">instance_methods</span>(<span class="k">false</span>)
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">method_defined?</span>(<span class="n">:title</span>)
+<span class="n">Post</span>.<span class="f">new</span>
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">method_defined?</span>(<span class="n">:title</span>)
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">instance_method</span>(<span class="n">:title</span>).owner
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">singleton_methods</span>.<span class="f">include?</span>(<span class="n">:find_by_title</span>)
+<span class="n">Post</span>.<span class="f">find_by_title</span>(<span class="s">"Hi"</span>)
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">singleton_methods</span>.<span class="f">include?</span>(<span class="n">:find_by_title</span>)
+<span class="f">p</span> <span class="n">Post</span>.<span class="f">column_names</span>
+<span class="n">Post</span>.<span class="f">find_by_body</span>(<span class="s">"x"</span>)</code></pre>
+
+<pre><code>[]
+false
+true
+Post::GeneratedAttributeMethods
+false
+true
+["id", "title", "published_at", "created_at", "updated_at"]
+…/activerecord-8.1.4/lib/active_record/dynamic_matchers.rb:24:in 'ActiveRecord::DynamicMatchers#method_missing': undefined method 'find_by_body' for class Post (NoMethodError)
+Did you mean?  find_by</code></pre>
+<p style="font-size:0.9em">(บรรทัดสุดท้ายย่อ path ยาวของ gem เป็น <code>…</code> และตัด stack trace ใต้ error ออก — ข้อความที่เหลือไม่ได้แก้)</p>
+
+<p>อ่านผลทีละบรรทัด:</p>
+<ul>
+  <li><code>method_defined?(:title)</code> <strong>เป็น <code>false</code> ก่อน <code>Post.new</code> แล้วเป็น <code>true</code> หลัง</strong>
+      — ในโหมด development ที่ใช้รันตรวจ Rails ไม่ได้สร้าง getter ตอนโหลดไฟล์ แต่สร้างตอน<strong>ใช้ครั้งแรก</strong> (อ่าน column จาก DB แล้วค่อยสร้าง)</li>
+  <li>method ไปอยู่ใน module ชื่อ <code>Post::GeneratedAttributeMethods</code> ไม่ได้อยู่ใน <code>Post</code> ตรง ๆ —
+      เลยเห็น <code>instance_methods(false)</code> เป็น <code>[]</code></li>
+  <li><code>find_by_title</code> <strong>ไม่มีอยู่จริงจนกว่าจะมีคนเรียก</strong> — การเรียกครั้งแรกตกไปที่
+      <code>method_missing</code> (ดูชื่อใน error บรรทัดล่าง) ซึ่งเช็คว่ามี column ชื่อ <code>title</code> ไหม ถ้ามีก็สร้าง method แล้วเรียกต่อ ·
+      ถ้าไม่มี (<code>body</code>) ก็โยน <code>NoMethodError</code></li>
+</ul>
+
+<div class="note">
+  <p style="margin-bottom:0">
+    <strong>📌 ต่างจากสไลด์นิดหนึ่ง (สไลด์เขียนว่า "กลไกคร่าว ๆ" อยู่แล้ว):</strong>
+    สไลด์วาดภาพว่า Rails วน <code>define_method</code> ทุก column · ซอร์สจริงของ activemodel 8.1.4
+    มีคอมเมนต์บอกว่า<em>ตั้งใจ</em>ใช้ <code>module_eval</code> แทน <code>define_method</code> เพราะเร็วกว่าตอนเรียก
+    · และ <code>find_by_*</code> ไม่ได้ถูกสร้างล่วงหน้า แต่เกิดผ่าน <code>method_missing</code> ตามผลข้างบน
+    · <strong>แนวคิดเดียวกัน — "สร้าง method ตอนรัน" — แค่เครื่องมือต่างกัน</strong> · <code>define_method</code> ที่คุณเขียนเองยังเป็นวิธีที่ถูกและอ่านง่ายสุด
+  </p>
+</div>
+
+<h3 id="sn-sub-5">3.2 · ราคาที่ต้องจ่าย และเรื่อง gem annotate</h3>
+
+<p>
+  ข้อดีตามสไลด์: <strong>เพิ่ม column ใน DB แล้วใช้ได้เลย</strong> ไม่ต้องไปแก้ struct แบบ Go หรือแก้ type แบบ TypeScript · โค้ดสั้นลงมาก
+  <br>ข้อเสียตามสไลด์คือ <strong>เปิดไฟล์ model แล้วไม่รู้ว่ามี field อะไร</strong> · autocomplete ของ editor ช่วยได้ไม่เต็มที่ ·
+  ต้องเปิด <code>db/schema.rb</code> คู่เสมอ
+  (ที่เพิ่งเห็นข้างบนนั่นแหละ) · สไลด์แนะนำ gem <code>annotate</code> ที่แปะ schema เป็นคอมเมนต์ไว้หัวไฟล์ model ให้
+</p>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ เช็คกับ rubygems.org แล้ว:</strong> gem ชื่อ <code>annotate</code> รุ่นล่าสุดคือ <strong>3.2.0 ออกเมื่อ 2022-02-10</strong>
+    และประกาศ dependency ไว้ว่า <code>activerecord &gt;= 3.2, &lt; 8.0</code> — ตามที่ประกาศไว้ <strong>ใช้กับ Rails 8.1 ไม่ได้</strong>
+    · gem ที่ยังพัฒนาต่อชื่อ <strong><code>annotaterb</code></strong> (รุ่น 4.26.0 ออก 2026-10-29 · ประกาศ <code>activerecord &gt;= 6.0.0</code>)
+    · ผมยัง<strong>ไม่ได้ติดตั้งลองจริง</strong> (บทนี้ห้ามติดตั้ง gem บนเครื่องตรวจ) ถ้าจะใช้ให้อ่านหน้า gem ก่อนเสมอ
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🗄 เทียบให้เห็นภาพ — ตู้ล็อกเกอร์ที่ป้ายชื่อมาจากฝ่ายบุคคล</span>
+  <p>
+    ไฟล์ <code>post.rb</code> คือ<strong>ตู้ล็อกเกอร์เปล่าที่ไม่มีป้ายสักบาน</strong> · รายชื่อพนักงานจริงอยู่ที่ฝ่ายบุคคล (ตาราง <code>posts</code> ใน DB)
+    · พอมีคนมาใช้ตู้ครั้งแรก ช่างจะไปขอรายชื่อจากฝ่ายบุคคลแล้ว<strong>ติดป้ายให้ทุกบาน</strong> (<code>title</code> · <code>published_at</code> …)
+    · รับพนักงานใหม่ (เพิ่ม column) ก็ได้บานใหม่โดยไม่ต้องไปต่อตู้เอง
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ป้าย <code>find_by_…</code> ไม่ได้ติดล่วงหน้าเลย — ช่างทำป้ายให้<strong>ตอนมีคนเดินมาถามหา</strong>บานนั้นเป็นครั้งแรก
+    (<code>method_missing</code>) · และคนที่ยืนดูตู้จากข้างนอก (คุณที่เปิดไฟล์ <code>post.rb</code> · editor ที่ทำ autocomplete)
+    <strong>มองไม่เห็นป้ายพวกนี้เลย</strong> เพราะมันไม่เคยถูกเขียนลงไฟล์
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>metaprogramming</dt>
+    <dd>โค้ดที่เขียนหรือแก้โค้ดอื่นตอนรัน · <code>define_method</code> · <code>method_missing</code> · <code>module_eval</code> อยู่ในกลุ่มนี้ ·
+        <strong>ถาม senior ได้ว่า “method นี้ไม่มีใน model มันถูก generate มาจากไหน — attribute, association หรือ method_missing?”</strong></dd>
+    <dt>define_method</dt>
+    <dd>สร้าง method ใหม่ให้ class โดยรับชื่อเป็นค่า (string/symbol) ที่รู้ตอนรัน · ต่างจาก <code>def</code> ที่ชื่อตายตัวตอนเขียน</dd>
+    <dt>method_missing</dt>
+    <dd>method พิเศษที่ Ruby เรียกเมื่อหา method ชื่อนั้นไม่เจอ · Rails ใช้ทำ dynamic finder ·
+        ถ้าเห็นชื่อนี้ใน stack trace แปลว่า “ไม่มี method นี้จริง ๆ มีแต่ตัวดักไว้”</dd>
+    <dt>dynamic finder</dt>
+    <dd><code>find_by_ชื่อcolumn</code> ที่ไม่มีใครเขียนไว้ · ยังใช้ได้ใน Rails 8.1.4 · โค้ดใหม่นิยม <code>find_by(column: ค่า)</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า “rewrite dynamic finders to find_by with a hash”</strong></dd>
+    <dt>db/schema.rb</dt>
+    <dd>ไฟล์ที่ Rails เขียนใหม่หลัง migrate ทุกครั้ง · <strong>เป็นที่ที่ดูว่า model มี field อะไรจริง</strong> ·
+        ห้ามแก้มือ (หัวไฟล์เขียนไว้เองว่า auto-generated)</dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q"><code>app/models/post.rb</code> ว่างเปล่า ตาราง <code>posts</code> มี column <code>title</code> — ทำไม <code>Post.find_by_title("Hi")</code> ถึงใช้ได้?</p>
+  <div class="opts">
+    <button class="opt">ครั้งแรกที่เรียก ชื่อนี้ตกไปที่ <code>method_missing</code> ซึ่งเช็ค column แล้วสร้าง method ให้</button>
+    <button class="opt"><code>bin/rails db:migrate</code> เขียน method <code>find_by_title</code> ลงใน <code>post.rb</code> ให้แล้ว</button>
+    <button class="opt"><code>ApplicationRecord</code> ประกาศ <code>find_by_*</code> ของทุก column ไว้ล่วงหน้าตอนโหลด</button>
+    <button class="opt">Ruby แปลง method ที่ขึ้นต้นด้วย <code>find_by_</code> เป็น SQL ให้เองทุก class</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · ผลรันจริง: ก่อนเรียก <code>Post.singleton_methods.include?(:find_by_title)</code> เป็น <code>false</code>
+      หลังเรียกเป็น <code>true</code> · และ error ของ <code>find_by_body</code> มาจาก <code>DynamicMatchers#method_missing</code>
+      <br>ตัวเลือกที่ 2 ผิด เพราะหลัง migrate <code>post.rb</code> ยังมีแค่ <code>class Post &lt; ApplicationRecord</code> กับ <code>end</code> ·
+      ตัวเลือกที่ 3 ผิด เพราะ <code>application_record.rb</code> มีแค่ <code>primary_abstract_class</code> และ method ไม่ได้มีอยู่ก่อนถูกเรียก ·
+      ตัวเลือกที่ 4 ผิด เพราะ Ruby ล้วนไม่มีอะไรแบบนี้ — เป็นของ Active Record และใช้ได้เฉพาะชื่อที่ตรงกับ column (<code>find_by_body</code> พัง)
+      <br><strong>จุดที่ต้องจำ:</strong> method ที่ไม่มีในไฟล์ model มาจาก DB ตอนรัน · อยากรู้ว่ามี field อะไร เปิด <code>db/schema.rb</code>
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">4 · open class และ Active Support (สไลด์หน้า 37)</h2>
+
+<p>
+  Ruby ยอมให้<strong>เปิด class ที่มีอยู่แล้ว — แม้แต่ของภาษาเอง อย่าง <code>Integer</code> — มาเติม method</strong>
+  แค่เขียน <code>class Integer</code> ซ้ำ Ruby ไม่ได้สร้าง class ใหม่ แต่เปิดตัวเดิมขึ้นมาเติม:
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>ยังไม่เติม</h4>
+<pre style="margin-bottom:0.6rem"><code><span class="c"># oc0.rb</span>
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span></code></pre>
+<pre style="margin-bottom:0"><code><span class="c">$ ruby oc0.rb</span>
+oc0.rb:1:in '&lt;main&gt;': undefined method 'days' for an instance of Integer (NoMethodError)
+
+p 3.days
+   ^^^^^</code></pre>
+  </div>
+  <div class="side">
+    <h4>เปิด <code>Integer</code> มาเติมเอง (โค้ดสไลด์)</h4>
+<pre style="margin-bottom:0.6rem"><code><span class="c"># oc1.rb</span>
+<span class="k">class</span> <span class="n">Integer</span>
+  <span class="k">def</span> <span class="f">days</span>
+    <span class="k">self</span> * <span class="n">24</span> * <span class="n">60</span> * <span class="n">60</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span>
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span>.class</code></pre>
+<pre style="margin-bottom:0"><code><span class="c">$ ruby oc1.rb</span>
+259200
+Integer</code></pre>
+  </div>
+</div>
+
+<p>
+  <code>3.days # =&gt; 259200</code> ตรงกับสไลด์ · Active Support คือ<strong>ชุด method ที่ Rails เติมเข้าไปใน class พื้นฐานด้วยวิธีนี้</strong>
+  · รันทุกบรรทัดในสไลด์ดู:
+</p>
+
+<pre><code><span class="c"># as.rb</span>
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span>
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span>.class
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span>.<span class="f">to_i</span>
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span> == <span class="n">259200</span>
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span>.<span class="f">ago</span>
+<span class="f">p</span> <span class="n">1</span>.<span class="f">megabyte</span>
+<span class="f">p</span> <span class="n">2</span>.<span class="f">weeks</span>.<span class="f">from_now</span>
+<span class="f">p</span> <span class="s">"post"</span>.<span class="f">pluralize</span>
+<span class="f">p</span> <span class="s">"BlogPost"</span>.<span class="f">underscore</span>
+<span class="f">p</span> [<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>].<span class="f">second</span>
+<span class="f">p</span> <span class="k">nil</span>.<span class="f">blank?</span>
+<span class="f">p</span> <span class="s">""</span>.<span class="f">blank?</span>
+<span class="f">p</span> <span class="s">"   "</span>.<span class="f">blank?</span>
+<span class="f">p</span> [].<span class="f">blank?</span>
+<span class="f">p</span> <span class="n">0</span>.<span class="f">blank?</span></code></pre>
+
+<pre><code><span class="c">$ TZ=Asia/Bangkok ruby -ractive_support/all as.rb</span>
+3 days
+ActiveSupport::Duration
+259200
+true
+2026-10-28 23:57:47.095573 +0700
+1048576
+2026-11-14 23:57:47.095637 +0700
+"posts"
+"blog_post"
+2
+true
+true
+true
+true
+false</code></pre>
+
+<p>
+  ค่าใน comment ของสไลด์ (<code>"posts"</code> · <code>"blog_post"</code> · <code>2</code> · <code>true</code>) <strong>ตรงกับผลจริงทุกตัว</strong>
+  · สังเกต <code>0.blank?</code> เป็น <code>false</code> — ตัวเลขศูนย์ไม่นับว่า "ว่าง" (คู่มือ Active Support เขียนเตือนไว้ตรง ๆ ·
+  เรื่อง <code>blank?</code> / <code>present?</code> แบบเต็มอยู่ใน <a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a> หัวข้อ 5)
+</p>
+
+<h3 id="sn-sub-6">4.1 · <code>3.days</code> ของเรา กับของ Active Support ต่างกันตรงไหน</h3>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th><code>3.days</code> ที่เราเขียนเอง</th><th><code>3.days</code> ของ Active Support</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>p</code> ออกมาเป็น</td><td><code>259200</code></td><td><code>3 days</code></td></tr>
+    <tr><td>class</td><td><code>Integer</code> — แค่ตัวเลขธรรมดา</td><td><code>ActiveSupport::Duration</code> — object ที่รู้ว่าตัวเองคือ "ช่วงเวลา"</td></tr>
+    <tr><td>เป็นวินาที</td><td><code>259200</code></td><td><code>.to_i</code> ได้ <code>259200</code> · <code>== 259200</code> ได้ <code>true</code></td></tr>
+    <tr><td><code>.ago</code> · <code>.from_now</code></td><td><strong>ไม่มี</strong> (Integer ไม่รู้จัก)</td><td>มี — คืน <code>Time</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ความต่างนี้แหละที่ทำให้<strong>ข้อควรระวังในสไลด์</strong>เป็นเรื่องจริง — ถ้ามี gem สักตัวเปิด <code>Integer</code> มาเติม <code>days</code> แบบของตัวเองทับ:
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># clash.rb</span>
+<span class="k">require</span> <span class="s">"active_support/all"</span>
+
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span>.<span class="f">ago</span>.class      <span class="c"># ก่อนเราแตะ</span>
+
+<span class="k">class</span> <span class="n">Integer</span>             <span class="c"># "gem ของใครสักคน" เปิด Integer มาเติม days แบบของตัวเอง</span>
+  <span class="k">def</span> <span class="f">days</span>
+    <span class="k">self</span> * <span class="n">24</span> * <span class="n">60</span> * <span class="n">60</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span>
+<span class="f">p</span> <span class="n">3</span>.<span class="f">days</span>.<span class="f">ago</span></code></pre>
+  <p class="ask">บรรทัดสุดท้ายได้อะไร? และ Ruby จะเตือนอะไรเราไหม ว่ามีคนเขียนทับ <code>days</code>?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ ruby clash.rb</span>
+Time
+259200
+clash.rb:12:in '&lt;main&gt;': undefined method 'ago' for an instance of Integer (NoMethodError)
+
+p 3.days.ago
+        ^^^^</code></pre>
+    <p>
+      <strong>บรรทัดที่เคยใช้ได้ พังทันที</strong> · และรันด้วย <code>ruby -W clash.rb</code> (เปิดคำเตือนเต็ม) ก็<strong>ไม่มีคำเตือนเลยสักบรรทัด</strong>
+    </p>
+    <p style="margin-bottom:0">
+      ทำไมไม่เตือน? เพราะ Active Support ไม่ได้ใส่ <code>days</code> ไว้ที่ <code>Integer</code> — ใส่ไว้ที่ <code>Numeric</code> ซึ่งเป็นแม่ของ <code>Integer</code>
+      (เช็คได้ด้วย <code>3.method(:days).owner</code> ได้ <code>Numeric</code> · <code>source_location</code> ชี้ไปที่ไฟล์
+      <code>active_support/core_ext/numeric/time.rb</code> บรรทัด 37)
+      · ของ gem ใส่ที่ <code>Integer</code> ซึ่ง Ruby หาเจอก่อน เลย<strong>บังของ Active Support ไปเงียบ ๆ</strong> ไม่ได้นับว่า "เขียนทับ"
+      <br>นี่คือเหตุผลที่สไลด์เตือนว่า gem ที่เขียนไม่ดีทำให้โค้ดเราพังได้ ·
+      และเพราะใครก็เปิด class ไหนก็ได้ gem ที่<strong>ตั้งใจร้าย</strong>ก็เปิดมาแอบดักข้อมูลได้เหมือนกัน — เลือก gem จากแหล่งที่เชื่อถือได้เสมอ
+    </p>
+  </div>
+</div>
+
+<p>เทียบกับภาษาที่คุณรู้:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Go</th><th>TypeScript</th><th>Ruby</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>ทำไม่ได้</strong> · <code>go build</code> จริงได้<br><code>cannot define new methods on non-local type int</code><br>
+          ต้องสร้าง type ใหม่ <code>type Days int</code> แล้วเติม method ให้ type นั้นแทน</td>
+      <td>ทำได้ด้วยการแก้ <code>Number.prototype</code> + ประกาศ <code>interface Number</code> เพิ่ม
+          (ลองแล้ว <code>tsc --strict</code> ผ่าน · <code>node</code> พิมพ์ <code>259200</code>) · เสี่ยงชนกันแบบเดียวกับ Ruby</td>
+      <td><strong>ทำได้ง่ายที่สุด</strong> · แค่เขียน <code>class Integer</code> ซ้ำ · Rails ทั้งระบบพึ่งท่านี้ (Active Support)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">📘 เทียบให้เห็นภาพ — คู่มือพนักงานเล่มกลางที่ใครก็เปิดมาเขียนเพิ่มได้</span>
+  <p>
+    บริษัทมีคู่มือเล่มเดียววางกลางออฟฟิศ (<code>Integer</code> · <code>String</code> · <code>Array</code>)
+    · ทีม Rails เขียนหน้าเพิ่มไว้หลายสิบหน้าอย่างดี (Active Support) ทุกคนเลยใช้ <code>3.days.ago</code> ได้เหมือนเป็นของในคู่มือตั้งแต่แรก
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> คู่มือกระดาษ ถ้ามีคนแปะกระดาษทับหน้าเดิม อย่างน้อยยังเห็นรอยแปะ
+    · ใน Ruby การเปิด class มาเติม<strong>ไม่มีรอย ไม่มีประวัติ ไม่มีคำเตือน</strong>
+    และมีผลกับ<strong>โค้ดทุกบรรทัดในโปรแกรมทันที</strong> ไม่ใช่แค่ไฟล์ของคนที่แปะ (ตามที่ <code>clash.rb</code> เพิ่งโชว์)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>open class (reopening a class)</dt>
+    <dd>การเขียน <code>class ชื่อเดิม</code> ซ้ำเพื่อเติม method ให้ class ที่มีอยู่แล้ว · Go ไม่อนุญาต · Ruby อนุญาตทุก class</dd>
+    <dt>monkey patch</dt>
+    <dd>ชื่อเล่น (มักมีน้ำเสียงเตือน) ของการใช้ open class ไปแก้/เติมของคนอื่น ·
+        <strong>ถาม senior ได้ว่า “ในโปรเจกต์นี้มี monkey patch อยู่ที่ไหนบ้าง ปกติเก็บไว้ที่ <code>config/initializers</code> หรือ <code>lib/</code>?”</strong></dd>
+    <dt>Active Support · core extensions</dt>
+    <dd>gem ใน Rails ที่เติม method ให้ class พื้นฐาน (<code>blank?</code> · <code>pluralize</code> · <code>days</code> …) ·
+        เวลาหาว่า method หนึ่งมาจากไหน <strong>พิมพ์ <code>ค่า.method(:ชื่อ).owner</code> และ <code>.source_location</code></strong> ·
+        <strong>ถาม AI ได้ว่า “is <code>blank?</code> plain Ruby or Active Support?”</strong> — คำถามนี้สำคัญตอนเขียน Ruby นอก Rails</dd>
+    <dt>ActiveSupport::Duration</dt>
+    <dd>class ของ <code>3.days</code> ใน Rails · ทำตัวเหมือนตัวเลข (<code>== 259200</code>) แต่รู้ว่าเป็นช่วงเวลา จึงมี <code>.ago</code> · <code>.from_now</code></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">แอป Rails มี gem ที่เปิด <code>class Integer</code> แล้วเขียน <code>def days; self * 86400; end</code> และถูกโหลด<strong>หลัง</strong> Active Support — <code>3.days.ago</code> จะเป็นอะไร?</p>
+  <div class="opts">
+    <button class="opt">ใช้ได้ปกติ เพราะ Active Support ถูกโหลดก่อนจึงได้สิทธิ์ก่อน</button>
+    <button class="opt">Ruby พิมพ์คำเตือน method redefined แล้วกลับไปใช้ของ Active Support</button>
+    <button class="opt"><code>NoMethodError</code> เพราะ <code>days</code> ของ gem คืน Integer ซึ่งไม่มี <code>ago</code></button>
+    <button class="opt">ได้ <code>Time</code> ย้อนไป 259200 วินาที เพราะผลคูณออกมาเท่ากัน</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · รันจริงได้ <code>undefined method 'ago' for an instance of Integer (NoMethodError)</code>
+      เพราะของ gem อยู่ที่ <code>Integer</code> ซึ่ง Ruby หาเจอก่อน <code>Numeric</code> (ที่ Active Support ใส่ไว้)
+      <br>ตัวเลือกที่ 1 ผิด เพราะลำดับการโหลดไม่ได้ทำให้ "ตัวแรกชนะ" — ตัวที่อยู่ใกล้ class ของค่ามากกว่าชนะ ·
+      ตัวเลือกที่ 2 ผิด เพราะรันด้วย <code>ruby -W</code> แล้วไม่มีคำเตือนเลย ·
+      ตัวเลือกที่ 4 ผิด เพราะ "ผลคูณเท่ากัน" ไม่ได้ทำให้ Integer มี method <code>ago</code>
+      <br><strong>จุดที่ต้องจำ:</strong> open class มีผลทั้งโปรแกรมและไม่มีใครเตือน · method แปลก ๆ พังหลังเพิ่ม gem ให้เช็ค <code>.method(:ชื่อ).owner</code>
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-6">5 · <code>@ivar</code> กับ <code>self</code> (สไลด์หน้า 38)</h2>
+
+<p>
+  ตัวแปรใน Ruby มีสองแบบที่ต้องแยกให้ออกก่อนเข้า Rails:
+  <strong>ตัวแปรธรรมดา</strong> (<code>name</code>) อยู่แค่ใน method ที่ประกาศ จบ method ก็หาย ·
+  <strong>instance variable</strong> (<code>@name</code>) ติดอยู่กับ <strong>object</strong> — method ไหนของ object เดียวกันก็เห็น
+  · และ<strong>ไม่ต้องประกาศล่วงหน้า</strong> แค่กำหนดค่าครั้งแรกก็เกิดเลย
+</p>
+
+<pre><code><span class="c"># ivar.rb</span>
+<span class="k">class</span> <span class="n">GreetingsController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    name  = <span class="s">"local"</span>
+    @name = <span class="s">"instance"</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">show</span>
+    <span class="f">p</span> @name       <span class="c"># ตั้งไว้ใน index — คนละ method แต่ object เดียวกัน</span>
+    <span class="f">p</span> @nmae       <span class="c"># สะกดผิด</span>
+    <span class="f">p</span> name        <span class="c"># local ของ index ตายไปแล้ว</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+c = <span class="n">GreetingsController</span>.<span class="f">new</span>
+c.<span class="f">index</span>
+<span class="f">p</span> c.<span class="f">instance_variables</span>
+c.<span class="f">show</span></code></pre>
+
+<pre><code><span class="c">$ ruby ivar.rb</span>
+[:@name]
+"instance"
+nil
+ivar.rb:10:in 'GreetingsController#show': undefined local variable or method 'name' for an instance of GreetingsController (NameError)
+Did you mean?  @name</code></pre>
+
+<p>
+  สามบรรทัดที่ต้องจำ: <code>@name</code> ข้าม method ได้ · <strong><code>@nmae</code> สะกดผิดได้ <code>nil</code> เงียบ ๆ ไม่ error</strong>
+  (ตรงกับที่สไลด์บอก และ <a href="./0095-ruby-class-and-module.html">บทเรียน 95</a> หัวข้อ 3 ก็รันให้ดูแล้ว) ·
+  <code>name</code> ตัวธรรมดาข้าม method ไม่ได้ → <code>NameError</code>
+  · ของใหม่ของบทนี้คือข้อถัดไป — <strong>เรื่องเดียวกันนี้ข้ามจาก controller ไป view ยังไง</strong>
+</p>
+
+<h3 id="sn-sub-7">5.1 · พิสูจน์ในแอป Rails: view เห็น <code>@name</code> แต่ไม่เห็น <code>name</code></h3>
+
+<pre><code><span class="c"># app/controllers/greetings_controller.rb (สร้างด้วย bin/rails g controller Greetings index)</span>
+<span class="k">class</span> <span class="n">GreetingsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    name  = <span class="s">"local"</span>
+    @name = <span class="s">"instance"</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">broken</span>
+    name  = <span class="s">"local"</span>
+    @name = <span class="s">"instance"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<div class="predict">
+<pre><code><span class="c">&lt;%# app/views/greetings/index.html.erb %&gt;</span>
+&lt;p&gt;@name = &lt;%= @name %&gt;&lt;/p&gt;
+&lt;p&gt;@nmae = [&lt;%= @nmae %&gt;]&lt;/p&gt;
+
+<span class="c">&lt;%# app/views/greetings/broken.html.erb %&gt;</span>
+&lt;p&gt;name = &lt;%= name %&gt;&lt;/p&gt;</code></pre>
+  <p class="ask"><code>curl</code> สองหน้านี้ — หน้าไหนได้อะไร? บรรทัด <code>@nmae</code> (สะกดผิด) จะพังหน้าไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ curl -s http://127.0.0.1:4097/greetings/index    (เฉพาะส่วนที่ view นี้สร้าง)</span>
+&lt;p&gt;@name = instance&lt;/p&gt;
+&lt;p&gt;@nmae = []&lt;/p&gt;
+
+<span class="c">$ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4097/greetings/broken</span>
+500</code></pre>
+    <p>หน้า error ของ Rails (ดึงเฉพาะหัวเรื่องกับบรรทัดข้อความ error):</p>
+<pre><code>NameError in Greetings#broken
+undefined local variable or method 'name' for an instance of #&lt;Class:0x0000000124476f60&gt;</code></pre>
+    <p style="margin-bottom:0">
+      <code>@name</code> ไปถึง view · <code>@nmae</code> <strong>ไม่พัง แค่ว่างเปล่า</strong> (บั๊กสะกดผิดแบบนี้หายากมาก) ·
+      <code>name</code> ไม่ไปถึง → 500
+      <br>สังเกตท้าย error: <code>for an instance of #&lt;Class:0x…&gt;</code> — <strong>ไม่ใช่ <code>GreetingsController</code></strong>
+      แปลว่า view เป็น <strong>object อีกตัวหนึ่ง</strong> ไม่ใช่ controller · มันเลยมองไม่เห็นตัวแปร local ใน method ของ controller
+    </p>
+  </div>
+</div>
+
+<p>
+  แล้ว Rails "ส่ง" <code>@name</code> ไปให้ view ยังไง? ซอร์สของ actionpack 8.1.4 มี method ชื่อ <code>view_assigns</code>
+  ที่เอา <code>instance_variables</code> ทั้งหมดของ controller (ลบตัวที่ Rails ใช้ภายใน) มาทำเป็น hash · ลองเรียกดู:
+</p>
+
+<pre><code><span class="c">$ bin/rails runner 'c = GreetingsController.new; c.index; p c.view_assigns'</span>
+{"name" =&gt; "instance"}</code></pre>
+
+<p>
+  <strong>นี่แหละ "สะพาน" ในสไลด์</strong> — มีแต่ของที่ขึ้นต้นด้วย <code>@</code> · ตัวแปร <code>name</code> ธรรมดาไม่อยู่ในนั้นเลย
+</p>
+
+<h3 id="sn-sub-8">5.2 · <code>self</code> — ละได้ตอนอ่าน ห้ามละตอนเขียน</h3>
+
+<p>
+  <code>self</code> คือ "object ตัวนี้" (เหมือน <code>this</code> ใน TypeScript · เหมือน receiver <code>p</code> ใน <code>func (p *Post)</code> ของ Go)
+  · สไลด์บอกว่า <code>self.title.downcase</code> กับ <code>title.downcase</code> ใช้แทนกันได้ — <strong>จริงตอนอ่าน</strong>
+  แต่มีกับดักตอน<strong>กำหนดค่า</strong>ที่สไลด์ไม่ได้พูด:
+</p>
+
+<pre><code><span class="c"># self.rb</span>
+<span class="k">class</span> <span class="n">Post</span>
+  <span class="f">attr_accessor</span> <span class="n">:title</span>
+
+  <span class="k">def</span> <span class="f">slug</span>
+    <span class="k">self</span>.title.<span class="f">downcase</span>    <span class="c"># self = object ตัวนี้</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">slug_short</span>
+    title.<span class="f">downcase</span>         <span class="c"># ละ self ได้ตอน "อ่าน"</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">rename_wrong</span>(new_title)
+    title = new_title      <span class="c"># ไม่มี self → Ruby สร้างตัวแปร local ชื่อ title</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">rename_right</span>(new_title)
+    <span class="k">self</span>.title = new_title <span class="c"># มี self → เรียก method title=</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+post = <span class="n">Post</span>.<span class="f">new</span>
+post.title = <span class="s">"Hello Rails"</span>
+<span class="f">p</span> post.<span class="f">slug</span>
+<span class="f">p</span> post.<span class="f">slug_short</span>
+post.<span class="f">rename_wrong</span>(<span class="s">"Changed?"</span>)
+<span class="f">p</span> post.title
+post.<span class="f">rename_right</span>(<span class="s">"Changed!"</span>)
+<span class="f">p</span> post.title</code></pre>
+
+<pre><code><span class="c">$ ruby self.rb</span>
+"hello rails"
+"hello rails"
+"Hello Rails"
+"Changed!"</code></pre>
+
+<p>
+  <code>rename_wrong</code> <strong>ไม่ error แต่ไม่ได้เปลี่ยนอะไรเลย</strong> — กฎจำง่าย: <strong>ฝั่งซ้ายของ <code>=</code> ต้องมี <code>self.</code> เสมอ</strong>
+  · ตอน Day 2 ที่เขียน callback ใน model จะเจอกับดักนี้แน่
+</p>
+
+<p>
+  ส่วนเรื่อง "ไม่ต้องประกาศล่วงหน้า" ที่สไลด์เทียบไว้ — TypeScript strict จะไม่ยอม:
+  <code>this.name = "instance"</code> ใน class ที่ไม่ได้ประกาศ <code>name</code> ได้
+  <code>error TS2339: Property 'name' does not exist on type 'GreetingsController'.</code> (รัน <code>tsc --noEmit --strict</code> จริง)
+  · Ruby ปล่อยผ่าน — <strong>สะดวกกว่า แต่ก็ไม่มีใครจับคำสะกดผิดให้</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">🎒 เทียบให้เห็นภาพ — กระดาษทดกับกระเป๋านักเรียน</span>
+  <p>
+    ตัวแปรธรรมดา (<code>name</code>) คือ<strong>กระดาษทด</strong> — ใช้ในคาบนั้น หมดคาบก็ทิ้ง
+    · <code>@name</code> คือ<strong>ของในกระเป๋า</strong>ของนักเรียนคนนั้น — วิชาไหนก็หยิบได้
+    · ตอน render Rails เปิดกระเป๋าของ controller แล้ว<strong>ยกของทุกชิ้นที่ติดป้าย <code>@</code> ใส่กระเป๋าใบใหม่</strong>ให้ view
+    (<code>view_assigns</code>) · กระดาษทดไม่ได้ถูกยกไปด้วย
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ล้วงกระเป๋าจริงหาของที่ไม่มี คุณรู้ทันทีว่า "ไม่มี" · แต่ล้วงหา <code>@nmae</code> ที่ไม่เคยใส่
+    Ruby ยื่น <code>nil</code> ให้เฉย ๆ เหมือนเจอของ — หน้าเว็บเลยแสดงช่องว่างโดยไม่มี error
+    ซึ่งหลอกตากว่ากระดาษทดที่หายแล้วพังดัง ๆ (<code>NameError</code>) เสียอีก
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>instance variable (ivar) · <code>@name</code></dt>
+    <dd>ตัวแปรที่ติดกับ object · อ่านตัวที่ไม่เคยตั้งได้ <code>nil</code> ไม่ error ·
+        <strong>บอก senior ได้ว่า “view ได้ค่าว่างเพราะ controller ไม่ได้ตั้ง ivar ตัวนี้ / สะกดชื่อ ivar ไม่ตรงกัน”</strong></dd>
+    <dt>local variable</dt>
+    <dd>ตัวแปรไม่มี <code>@</code> · อยู่ใน method เดียว · ไม่ถูกส่งไป view · ใช้ใน view แล้วได้ <code>NameError</code></dd>
+    <dt>view_assigns</dt>
+    <dd>method ใน controller ที่รวบ instance variable เป็น hash ส่งให้ view · เปิดดูได้ใน <code>bin/rails runner</code> ·
+        <strong>พิมพ์ถาม AI ได้ว่า “how does Rails pass controller instance variables to the view (view_assigns)?”</strong></dd>
+    <dt>self · implicit receiver</dt>
+    <dd><code>self</code> = object ปัจจุบัน · เรียก method โดยไม่เขียน <code>self.</code> เรียกว่า implicit receiver ·
+        ใช้ได้ตอนอ่าน แต่ <strong>setter ต้องมี <code>self.</code></strong> ไม่งั้นกลายเป็นตัวแปร local</dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">action <code>quiz</code> เขียนว่า <code>post = Post.first</code> แล้ว <code>@title = post.title</code> — ใน view ของ action นี้ ข้อไหน<strong>ตรงกับผลรันจริง</strong>?</p>
+  <div class="opts">
+    <button class="opt">view เห็นทั้ง <code>post</code> และ <code>@title</code> เพราะอยู่ใน request เดียวกัน</button>
+    <button class="opt"><code>@title</code> แสดงค่า · <code>@post</code> ว่างเปล่าไม่ error · <code>post</code> ได้ <code>NameError</code></button>
+    <button class="opt"><code>@post</code> ได้ <code>NameError</code> เพราะ controller ไม่เคยตั้งค่าตัวนี้เลย</button>
+    <button class="opt">view เห็นแค่ <code>post</code> เพราะประกาศก่อน <code>@title</code> หนึ่งบรรทัด</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · รันในแอปจริง: view ที่มี <code>&lt;%= @title %&gt;</code> กับ <code>&lt;%= @post %&gt;</code> ได้
+      <code>@title = [Hi]</code> และ <code>@post = []</code> · view ที่มี <code>&lt;%= post.title %&gt;</code> ได้ HTTP 500
+      <code>undefined local variable or method 'post'</code>
+      <br>ตัวเลือกที่ 1 ผิด เพราะ "request เดียวกัน" ไม่ได้แปลว่า "object เดียวกัน" — view เป็น object อีกตัว รับได้แค่ ivar ·
+      ตัวเลือกที่ 3 ผิด เพราะ ivar ที่ไม่เคยตั้งได้ <code>nil</code> ไม่ใช่ error ·
+      ตัวเลือกที่ 4 ผิด เพราะลำดับบรรทัดไม่เกี่ยว ตัวแปร local ไม่ข้ามไป view ไม่ว่าประกาศตอนไหน
+      <br><strong>จุดที่ต้องจำ:</strong> ของที่จะไปถึง view ต้องมี <code>@</code> · ivar สะกดผิดไม่ error แต่ได้ช่องว่าง
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-7">6 · สรุป: ห้าเรื่องนี้ไปโผล่ตรงไหนใน Rails</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>เรื่องของ Ruby</th><th>จำแค่นี้</th><th>เจอใน Rails ตรงไหน</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>hash ตัวท้ายละปีกกา</td>
+      <td>ตัวเลือกท้าย method คือ hash/keyword ก้อนเดียว · <strong>อย่าเติมปีกกาเอง</strong> (Ruby 3+ แยก keyword กับ hash)</td>
+      <td><code>routes.rb</code> (<a href="./0101-rails-routing.html">บท 101</a>) · <code>redirect_to … notice:</code> (<a href="./0102-rails-controller.html">บท 102</a>) · <code>validates</code> (Day 2)</td>
+    </tr>
+    <tr>
+      <td>block + <code>yield</code></td>
+      <td>method ส่งไม้ให้ block พร้อม object หนึ่งชิ้น (<code>|f|</code>) แล้วรับไม้คืน</td>
+      <td><code>&lt;%= yield %&gt;</code> ใน layout · <code>form_with … do |f|</code> (<a href="./0103-rails-views-and-helpers.html">บท 103</a>) ·
+          <code>create_table do |t|</code> · <code>Post.transaction</code> (Day 2)</td>
+    </tr>
+    <tr>
+      <td>method เกิดตอนรัน</td>
+      <td>column ใน DB กลายเป็น method · <strong>ดู field จริงที่ <code>db/schema.rb</code></strong></td>
+      <td>model ทุกตัว · <code>find_by_*</code> · ลองเล่นใน <code>bin/rails console</code> (<a href="./0104-rails-debug-and-console.html">บท 104</a>)</td>
+    </tr>
+    <tr>
+      <td>open class</td>
+      <td>Rails เติม method ให้ class พื้นฐานผ่าน Active Support · ทั้งโปรแกรมโดน · ไม่มีคำเตือน</td>
+      <td><code>3.days.ago</code> · <code>blank?</code> / <code>present?</code> · <code>pluralize</code>/<code>underscore</code> ที่อยู่เบื้องหลังกฎตั้งชื่อ (<a href="./0099-rails-naming-and-explore.html">บท 99</a>)</td>
+    </tr>
+    <tr>
+      <td><code>@ivar</code> + <code>self</code></td>
+      <td><code>@</code> = สะพานเดียวจาก controller ไป view · setter ต้องมี <code>self.</code></td>
+      <td>ทุก action ใน controller → view (<a href="./0102-rails-controller.html">บท 102</a>–<a href="./0103-rails-views-and-helpers.html">103</a>) · callback ใน model (Day 2)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  กลับไปดูสามบรรทัดในหัวข้อ 0 อีกรอบ:
+  <code>get "up" =&gt; "rails/health#show", as: :rails_health_check</code> คือการเรียก method <code>get</code> ที่ละทั้งวงเล็บและปีกกา
+  · ซอร์สของ actionpack 8.1.4 ประกาศ <code>get</code> แบบ keyword (<code>def get(*path_or_actions, as: DEFAULT, to: nil, … **mapping, &amp;block)</code>)
+  · ลองเลียนแบบดูว่าค่าไปตกช่องไหน:
+</p>
+
+<pre><code><span class="c"># get.rb</span>
+<span class="k">def</span> <span class="f">get</span>(*path_or_actions, <span class="n">as:</span> <span class="k">nil</span>, <span class="n">to:</span> <span class="k">nil</span>, **mapping)
+  <span class="f">p</span> path_or_actions
+  <span class="f">p</span> as
+  <span class="f">p</span> mapping
+<span class="k">end</span>
+
+<span class="f">get</span> <span class="s">"up"</span> =&gt; <span class="s">"rails/health#show"</span>, <span class="n">as:</span> <span class="n">:rails_health_check</span></code></pre>
+
+<pre><code><span class="c">$ ruby get.rb</span>
+[]
+:rails_health_check
+{"up" =&gt; "rails/health#show"}</code></pre>
+
+<p>
+  <code>as:</code> ไปลงช่อง keyword ชื่อ <code>as</code> · ส่วน <code>"up" =&gt; …</code> ไม่มีช่องชื่อตรง เลยถูก <code>**mapping</code> กวาดไป
+  — เรื่องที่ 1 ครบทั้งสองแบบในบรรทัดเดียว ·
+  <code>create_table … do |t|</code> กับ <code>&lt;%= yield %&gt;</code> คือ yield ทั้งคู่ (เรื่องที่ 2) — อ่านออกแล้วใช่ไหม
+</p>
+
+<h2 id="sn-sec-8">7 · ภารกิจ — Rails จิ๋วในไฟล์เดียว แล้วพิสูจน์ด้วยเทส</h2>
+
+<div class="task">
+  <h3 id="sn-sub-9">🛠 เขียน <code>mini_rails.rb</code> ที่ใช้สามเรื่องของบทนี้ แล้วให้ Minitest ตัดสิน</h3>
+  <p>ไม่ต้องใช้ Rails เลย · Ruby ล้วน + Minitest ที่มากับ Ruby (เครื่องตรวจมี minitest 6.0.6)</p>
+  <ol>
+    <li>สร้าง <code>class Record</code> ที่มี <code>def self.columns(*names)</code> — ใช้ <code>define_method</code>
+        สร้าง getter และ setter ให้ทุกชื่อ โดยเก็บค่าใน <code>@attributes</code> (hash ที่ตั้งใน <code>initialize</code>)</li>
+    <li>เพิ่ม <code>def self.validates(*args)</code> ที่<strong>ดึง hash ตัวท้ายออกเอง</strong> (ถ้าตัวท้ายเป็น <code>Hash</code>)
+        แล้วจำกฎไว้เป็น array ของ <code>[ชื่อ attribute, options]</code> · มี <code>def self.rules</code> ไว้อ่านกฎ
+        · และ <code>def valid?</code> ที่คืน <code>false</code> ถ้า attribute ที่มี <code>presence: true</code> เป็น <code>nil</code> หรือมีแต่ช่องว่าง</li>
+    <li>สร้าง <code>class Post &lt; Record</code> ที่มีแค่ <code>columns :title, :body</code> กับ <code>validates :title, presence: true</code>
+        — <strong>ห้ามมี <code>def</code> ใน <code>Post</code></strong></li>
+    <li>เขียน method <code>transaction</code> (นอก class) ที่ใช้ <code>yield</code> · ไม่มี block คืน <code>"ไม่มีงานให้ทำ"</code> ·
+        block จบดีคืน <code>"COMMIT"</code> · block <code>raise</code> คืน <code>"ROLLBACK: ข้อความ error"</code></li>
+    <li><strong>เขียนเทสพิสูจน์</strong> ในไฟล์ <code>mini_rails_test.rb</code> (<code>require "minitest/autorun"</code>) ให้ครบสี่ข้อ:
+        <code>Post.instance_methods(false).sort</code> เท่ากับ <code>[:body, :body=, :title, :title=]</code> ·
+        <code>Post.rules</code> เท่ากับ <code>[[:title, { presence: true }]]</code> ·
+        <code>valid?</code> เป็น false เมื่อ title เป็น <code>"   "</code> และ true เมื่อเป็น <code>"Hi"</code> ·
+        <code>transaction</code> คืนสามแบบตามข้อ 4 · แล้วรัน <code>ruby mini_rails_test.rb</code> ให้ผ่านหมด</li>
+  </ol>
+  <p class="ask">
+    ก่อนกดเฉลย ตอบให้ได้: <strong>ถ้าเปลี่ยนข้อ 2 เป็น <code>def self.validates(*args, **opts)</code> แล้วใช้ <code>opts</code> แทนการดึงตัวท้ายเอง
+    เทส <code>Post.rules</code> ยังผ่านไหม? แล้วถ้ามีคนเรียก <code>validates(:title, { presence: true })</code> แบบมีปีกกาล่ะ?</strong>
+    (ย้อนดูหัวข้อ 1.1)
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c"># mini_rails.rb</span>
+<span class="k">class</span> <span class="n">Record</span>
+  <span class="k">def</span> <span class="k">self</span>.<span class="f">columns</span>(*names)
+    names.<span class="f">each</span> <span class="k">do</span> |name|
+      <span class="f">define_method</span>(name) { @attributes[name] }
+      <span class="f">define_method</span>(<span class="s">"#{name}="</span>) { |value| @attributes[name] = value }
+    <span class="k">end</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="k">self</span>.<span class="f">validates</span>(*args)
+    options = args.<span class="f">last</span>.<span class="f">is_a?</span>(<span class="n">Hash</span>) ? args.<span class="f">pop</span> : {}
+    @rules ||= []
+    args.<span class="f">each</span> { |attr| @rules &lt;&lt; [attr, options] }
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="k">self</span>.<span class="f">rules</span>
+    @rules || []
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">initialize</span>
+    @attributes = {}
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">valid?</span>
+    <span class="k">self</span>.class.rules.<span class="f">all?</span> <span class="k">do</span> |attr, options|
+      value = <span class="f">public_send</span>(attr)
+      !(options[<span class="n">:presence</span>] &amp;&amp; (value.<span class="f">nil?</span> || value.<span class="f">strip</span>.<span class="f">empty?</span>))
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">Record</span>
+  <span class="f">columns</span> <span class="n">:title</span>, <span class="n">:body</span>
+  <span class="f">validates</span> <span class="n">:title</span>, <span class="n">presence:</span> <span class="k">true</span>
+<span class="k">end</span>
+
+<span class="k">def</span> <span class="f">transaction</span>
+  <span class="k">return</span> <span class="s">"ไม่มีงานให้ทำ"</span> <span class="k">unless</span> <span class="f">block_given?</span>
+
+  <span class="k">yield</span>
+  <span class="s">"COMMIT"</span>
+<span class="k">rescue</span> =&gt; e
+  <span class="s">"ROLLBACK: #{e.message}"</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c"># mini_rails_test.rb</span>
+<span class="k">require</span> <span class="s">"minitest/autorun"</span>
+<span class="f">require_relative</span> <span class="s">"mini_rails"</span>
+
+<span class="k">class</span> <span class="n">MiniRailsTest</span> &lt; <span class="n">Minitest::Test</span>
+  <span class="k">def</span> <span class="f">test_columns_create_methods_at_runtime</span>
+    <span class="f">assert_equal</span> [<span class="n">:body</span>, <span class="n">:body=</span>, <span class="n">:title</span>, <span class="n">:title=</span>], <span class="n">Post</span>.<span class="f">instance_methods</span>(<span class="k">false</span>).<span class="f">sort</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">test_validates_receives_one_hash</span>
+    <span class="f">assert_equal</span> [[<span class="n">:title</span>, { <span class="n">presence:</span> <span class="k">true</span> }]], <span class="n">Post</span>.<span class="f">rules</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">test_valid_checks_presence</span>
+    post = <span class="n">Post</span>.<span class="f">new</span>
+    post.title = <span class="s">"   "</span>
+    <span class="f">refute</span> post.<span class="f">valid?</span>
+    post.title = <span class="s">"Hi"</span>
+    <span class="f">assert</span> post.<span class="f">valid?</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">test_transaction_uses_yield</span>
+    <span class="f">assert_equal</span> <span class="s">"ไม่มีงานให้ทำ"</span>, <span class="f">transaction</span>
+    <span class="f">assert_equal</span> <span class="s">"COMMIT"</span>, <span class="f">transaction</span> { <span class="n">1</span> + <span class="n">1</span> }
+    <span class="f">assert_equal</span> <span class="s">"ROLLBACK: title ว่าง"</span>, <span class="f">transaction</span> { <span class="k">raise</span> <span class="s">"title ว่าง"</span> }
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c">$ ruby mini_rails_test.rb</span>
+Run options: --seed 39982
+
+# Running:
+
+....
+
+Finished in 0.000220s, 18181.8192 runs/s, 31818.1837 assertions/s.
+
+4 runs, 7 assertions, 0 failures, 0 errors, 0 skips</code></pre>
+<p style="font-size:0.9em">(<code>--seed</code> กับเวลาจะต่างไปทุกครั้งที่รัน)</p>
+
+    <p>
+      <strong>คำตอบของคำถามก่อนเฉลย:</strong> เรียกแบบไม่มีปีกกา (<code>validates :title, presence: true</code>)
+      ค่าจะไปลง <code>opts</code> เป็น <code>{presence: true}</code> เทสยังผ่านได้ถ้าคุณเก็บ <code>opts</code> แทน ·
+      แต่ถ้ามีคนเรียก<strong>แบบมีปีกกา</strong> hash จะไปตกใน <code>args</code> และ <code>opts</code> เป็น <code>{}</code>
+      (ผลเดียวกับ <code>validates_kw</code> ในหัวข้อ 1.1) · ลองรันจริงแล้ว <code>Post.rules</code> ได้
+      <code>[[:title, {}], [{presence: true}, {}]]</code> — <code>:title</code> เสียกฎ presence ไป และตัว hash เองกลายเป็น "ชื่อ attribute" ปลอม
+      · พอเรียก <code>valid?</code> ก็พังด้วย <code>{presence: true} is not a symbol nor a string (TypeError)</code>
+      · นี่คือเหตุผลที่ <code>validates</code> ตัวจริงของ Rails ใช้ <code>*attributes</code> + <code>extract_options!</code> แบบเดียวกับเฉลยข้างบน
+      ไม่ว่าจะเรียกแบบไหนก็ได้ผลเท่ากัน
+    </p>
+    <p style="margin-bottom:0">
+      สังเกตว่า <code>@rules</code> ใน <code>self.validates</code> เป็น ivar ของ<strong>ตัว class <code>Post</code></strong> (เพราะ <code>self</code> ตอนนั้นคือ class)
+      ไม่ใช่ของ post แต่ละตัว — ถ้าสงสัยตรงนี้ เอาไปถาม AI ต่อได้ว่า
+      <strong>“what is a class-level instance variable in Ruby and how is it different from @@class_variable?”</strong>
+    </p>
+  </div>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ ถ้าตอบห้าข้อนี้ได้ แปลว่าพร้อมเปิดโค้ด Rails แล้ว</strong>
+    <br>1. <code>redirect_to @post, notice: "saved"</code> — ถ้าเขียนวงเล็บและปีกกาให้ครบ จะหน้าตายังไง? แล้วทำไม <code>form_with</code> ห้ามเขียนแบบนั้น?
+    <br>2. <code>f</code> ใน <code>form_with … do |f|</code> มาจากบรรทัดไหนของ <code>form_with</code>?
+    <br>3. model ว่างเปล่า — จะรู้ได้ยังไงว่ามี field อะไร?
+    <br>4. <code>3.days</code> ใน Rails เป็น class อะไร ทำไมถึงมี <code>.ago</code> ได้?
+    <br>5. ทำไม view เห็น <code>@post</code> แต่ไม่เห็น <code>post</code>?
+    <br>ข้อไหนตอบไม่ได้ — ก็อปโค้ดกับผลรันของคุณไปถาม AI หรือถามในกลุ่มคอร์สได้เลย บอกด้วยว่า "ติดที่บทเรียน 97 หัวข้อไหน"
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0096-ruby-errors-and-duck-typing.html">← บทเรียน 96 · Error · duck typing · 6 กับดัก</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 1</a>
+  <a href="./0098-rails-new-and-structure.html">บทเรียน 98 → rails new · โครงสร้าง · Gemfile</a>
+</nav>
+
+<h2 id="sn-sec-9">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://www.ruby-lang.org/en/news/2019/12/12/separation-of-positional-and-keyword-arguments-in-ruby-3-0/">ruby-lang.org — Separation of positional and keyword arguments in Ruby 3.0</a> —
+      <strong>อ่านส่วน <em>tl;dr</em> แล้วต่อด้วย <em>Typical cases</em></strong> (ตัวอย่าง <code>foo(h)</code> ที่ Ruby 3.0 โยน <code>ArgumentError</code> และ <code>bar(h, **kwargs)</code> ที่ต้องใส่ปีกกา)
+      ซึ่งคือเหตุผลตรง ๆ ของผลในหัวข้อ 1.1 และ error ของ <code>form_with({ … })</code></li>
+  <li><a href="https://docs.ruby-lang.org/en/master/syntax/calling_methods_rdoc.html">Ruby docs — Calling Methods</a> —
+      <strong>อ่านหัวข้อ <em>Keyword Arguments</em> และ <em>Block Argument</em></strong>
+      (ส่วนหลังอธิบายเรื่อง <code>{ }</code> กับ <code>do … end</code> จับ method ต่างกันด้วย)</li>
+  <li><a href="https://docs.ruby-lang.org/en/master/syntax/methods_rdoc.html">Ruby docs — Methods</a> —
+      <strong>อ่านหัวข้อ <em>Array/Hash Argument</em> (<code>*</code> กับ <code>**</code>) และ <em>Block Argument</em></strong>
+      ที่บอกว่าถ้าแค่จะเรียก block ให้ใช้ <code>yield</code> แทนการรับ <code>&amp;block</code></li>
+  <li><a href="https://guides.rubyonrails.org/active_support_core_extensions.html">Rails Guides — Active Support Core Extensions</a> —
+      <strong>อ่าน <em>2.1 blank? and present?</em></strong> (มีประโยคยืนยันว่า <code>0</code> ไม่ blank) ·
+      <strong>และ <em>7. Extensions to Numeric</em></strong> ที่มี <code>megabyte</code> · ใช้เป็นสารบัญเวลาสงสัยว่า method ไหนมาจาก Active Support</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#dynamic-finder-methods">Rails Guides — Active Record Query Interface: Dynamic Finder Methods</a> —
+      หัวข้อสั้นมาก · ยืนยันว่า <code>find_by_ชื่อcolumn</code> ยังเป็นของที่คู่มือทางการสอน และมีรุ่น <code>!</code> ที่ raise เมื่อหาไม่เจอ</li>
+  <li><a href="https://guides.rubyonrails.org/layouts_and_rendering.html#understanding-yield">Rails Guides — Layouts and Rendering: Understanding <code>yield</code></a> —
+      <strong>อ่านเฉพาะหัวข้อนี้</strong> เพื่อเห็นว่า <code>&lt;%= yield %&gt;</code> ใน layout คือจุดที่หน้าของแต่ละ action ถูกวาง (รายละเอียดเต็มรอ Day 3)</li>
+  <li><a href="https://rubygems.org/gems/annotate">rubygems.org — annotate</a> กับ
+      <a href="https://rubygems.org/gems/annotaterb">rubygems.org — annotaterb</a> —
+      <strong>ดูช่อง <em>Runtime Dependencies</em> กับวันที่ของรุ่นล่าสุด</strong> ก่อนตัดสินใจเลือก gem แปะ schema (หัวข้อ 3.2)</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

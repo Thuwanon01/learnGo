@@ -3,20 +3,21 @@
 **เปิดอ่านได้ที่ <https://learndevpool69.vercel.app/>**
 
 สรุปจากสไลด์คอร์ส **PEA DevPool — Enterprise Go Engineering with AI Integration**
-เรียบเรียงใหม่เป็นเว็บบทเรียนภาษาไทย **89 บท** ที่มี predict-the-output, quiz
+เรียบเรียงใหม่เป็นเว็บบทเรียนภาษาไทย **105 บท** ที่มี predict-the-output, quiz
 ที่ให้ feedback ทันที และภารกิจให้ลงมือเขียนโค้ดทุกบท
 
-แบ่งเป็นสองฝั่ง:
+แบ่งเป็นสามฝั่ง:
 
 | ฝั่ง | เนื้อหา | บท |
 |---|---|---|
 | **BACK** | Go — พื้นฐานภาษา · testing · concurrency · database · REST API ด้วย Gin · Keycloak | 01–55 |
 | **FRONT** | HTML/CSS · Functional Programming with TypeScript · Next.js · Next.js App · Agentic Workflow | 56–89 |
+| **RAILS** | Ruby on Rails — Ruby สำหรับคนมาจาก Go/TS · โครงสร้าง · routing · controller · view | 90–105 |
 
 ฝั่ง BACK แบ่งตามวันที่เรียน (Day 1–9) · ฝั่ง FRONT แบ่งตามชื่อไฟล์สไลด์
-เพราะอาจารย์ไม่ได้กำกับวันมาให้
+เพราะอาจารย์ไม่ได้กำกับวันมาให้ · ฝั่ง RAILS เป็นคอร์สแยกที่แบ่งตามวันของตัวเอง (Rails Day 1–4)
 
-**ตัวอย่างทุกอันถูกรันจริงก่อนเผยแพร่** — Go 1.26 · TypeScript ตรวจด้วย `tsc --strict` ·
+**ตัวอย่างทุกอันถูกรันจริงก่อนเผยแพร่** — Go 1.26 · Ruby 4.0.9 + Rails 8.1.4 · TypeScript ตรวจด้วย `tsc --strict` ·
 HTML/CSS มีกล่อง "ผลลัพธ์จริง" ที่เรนเดอร์ให้ดูข้างโค้ด
 ระหว่างทำเจอจุดที่สไลด์ผิด 11 จุด
 บันทึกไว้ใน [learning record 0002](learning-records/0002-course-slides-have-errors.md)
@@ -33,6 +34,8 @@ HTML/CSS มีกล่อง "ผลลัพธ์จริง" ที่เ�
 | `day-N/reference/cheatsheet.html` | สรุปของวันนั้น พิมพ์ลงกระดาษได้ |
 | `fe-<slug>/lessons/NNNN-slug.html` | บทเรียนฝั่ง FRONT (เลขบทต่อเนื่องจากฝั่ง BACK) |
 | `fe-<slug>/reference/cheatsheet.html` | สรุปของกลุ่มนั้น |
+| `rails-day-N/lessons/NNNN-slug.html` | บทเรียนฝั่ง RAILS (เลขบทต่อจากฝั่ง FRONT) |
+| `rails-day-N/reference/cheatsheet.html` | สรุปของวันนั้น |
 | `docs.html` | ตัวอ่านเอกสาร `.md` ทั้งหมดในรีโป |
 | `assets/` | CSS + JS ที่ทุกหน้าใช้ร่วมกัน |
 
@@ -80,10 +83,10 @@ python3 -m http.server 8000
    ทุกบทต้องมี quiz 4 ข้อ, predict อย่างน้อย 1, ภารกิจ 1, แหล่งอ้างอิง, scorebar, nav
 3. เพิ่ม `cheatsheet.html` ของกลุ่มนั้น
 4. เพิ่ม `<section class="day">` ในสารบัญ `index.html` พร้อม
-   `<li class="lesson" data-id="NNNN" data-track="back|front">`
+   `<li class="lesson" data-id="NNNN" data-track="back|front|rails">`
 5. แก้เลขรวมในแถบความคืบหน้าของ `index.html`
 6. ต่อ nav ของบทสุดท้ายกลุ่มก่อนหน้าให้ชี้มาบทแรกของกลุ่มใหม่
-7. เพิ่มกลุ่มใหม่ลง `DAYS`/`FRONT` ใน `assets/nav.js` แล้วรัน
+7. เพิ่มกลุ่มใหม่ลง `DAYS`/`FRONT`/`RAILS` ใน `assets/nav.js` (front/rails ต้องใส่เลข `d` ใน `GROUP_ID` ของ `tools/build-search-index.py` ด้วย) แล้วรัน
    `python3 tools/add-heading-ids.py` ตามด้วย `python3 tools/build-search-index.py`
 
 ปุ่ม "ทำบทนี้เสร็จแล้ว" ไม่ต้องเขียนเพิ่ม — `assets/quiz.js` อ่านเลขบทจากชื่อไฟล์แล้วแทรกให้เอง

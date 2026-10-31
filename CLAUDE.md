@@ -7,15 +7,17 @@
 
 เว็บบทเรียนภาษาไทย **static ล้วน ไม่มี build step ไม่มี dependency**
 เรียบเรียงจากสไลด์คอร์ส PEA DevPool — Enterprise Go Engineering with AI Integration
-ตอนนี้มี **89 บท** แบ่งเป็นสองฝั่ง · deploy จริงให้เพื่อนร่วมคอร์สใช้ที่
+ตอนนี้มี **105 บท** แบ่งเป็นสามฝั่ง · deploy จริงให้เพื่อนร่วมคอร์สใช้ที่
 <https://learndevpool69.vercel.app/> (Vercel · push ขึ้น `main` แล้วขึ้นเองอัตโนมัติ)
 
 | ฝั่ง | เนื้อหา | โฟลเดอร์ | บท |
 |---|---|---|---|
 | **BACK** | Go — พื้นฐาน · testing · concurrency · database · Gin · Keycloak | `day-1/` … `day-9/` | 01–55 |
 | **FRONT** | HTML/CSS · Functional Programming with TypeScript · Next.js · Next.js App · Agentic Workflow | `fe-html-css/` · `fe-ts-fp/` · `fe-nextjs/` · `fe-nextjs-app/` · `fe-agentic/` | 56–89 |
+| **RAILS** | Ruby on Rails — Ruby สำหรับคนมาจาก Go/TS · โครงสร้าง · routing · controller · view | `rails-day-1/` | 90–105 |
 
 **ฝั่ง FRONT แบ่งกลุ่มตามชื่อไฟล์สไลด์ ไม่ใช่ตามวัน** เพราะอาจารย์ไม่ได้กำกับวันมาให้ ·
+**ฝั่ง RAILS เป็นคอร์สแยก** ที่นับวันของตัวเอง (Rails Day 1–4) จึงใช้ `rails-day-N/` ไม่ใช่ `day-N/` ·
 **เลขบทต่อเนื่องกันทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง** (เลขบทคือคีย์ของ localStorage)
 รีโปนี้เป็น **teaching workspace ของ skill `/teach`** (โครง MISSION / RESOURCES /
 learning-records / lessons / reference / assets / NOTES)
@@ -70,12 +72,13 @@ learning-records / lessons / reference / assets / NOTES)
 ```
 1  สไลด์กำกับวันมา → mkdir -p day-N/lessons day-N/reference
    ไม่ได้กำกับวัน  → mkdir -p fe-<slug>/lessons fe-<slug>/reference   (slug จากชื่อสไลด์)
-2  เขียนบทต่อจากเลขล่าสุด (ตอนนี้จบที่ 0089) + cheat sheet ของกลุ่ม
+   สไลด์ Rails     → mkdir -p rails-day-N/lessons rails-day-N/reference
+2  เขียนบทต่อจากเลขล่าสุด (ตอนนี้จบที่ 0105) + cheat sheet ของกลุ่ม
 3  index.html      → section กลุ่มใหม่ + data-id + data-track + เลขรวม
 4  บทสุดท้ายของกลุ่มก่อน → แก้ nav ให้ชี้มาบทแรกของกลุ่มใหม่
-5  assets/nav.js   → เพิ่มลง DAYS (ฝั่ง back) หรือ FRONT (ฝั่ง front)
+5  assets/nav.js   → เพิ่มลง DAYS (back) · FRONT (front) · RAILS (rails)
                      ⚠️ ลืมแล้วไม่มีอะไรฟ้อง แค่ไม่โผล่ในเมนู
-                     กลุ่มใหม่ฝั่ง front ต้องแจกเลข d แล้วใส่ FE_GROUP_ID ใน
+                     กลุ่มใหม่ฝั่ง front/rails ต้องแจกเลข d (front 10x · rails 200+วัน) แล้วใส่ GROUP_ID ใน
                      tools/build-search-index.py ให้ตรงกันด้วย
 6  ทุกหน้าใหม่     → <script src="../../assets/nav.js" defer></script>
                      (บท HTML/CSS เพิ่ม assets/demo.js ด้วยถ้าใช้กล่อง .demo)
@@ -96,7 +99,12 @@ python3 -m http.server 8000                   # docs.html เปิดด้ว�
 pdftotext -layout from_teacher/<file>.pdf -   # อ่านสไลด์เป็นข้อความ
 pdftoppm -jpeg -r 100 <file>.pdf <out>/p      # สไลด์ที่เป็นภาพ ต้องแปลงเป็นรูปก่อนอ่าน
 tsc --noEmit --strict <file>.ts               # ตรวจตัวอย่าง TypeScript (มี tsc 7 + node 24)
+export PATH=$HOME/.local/share/mise/installs/ruby/4.0.9/bin:$PATH   # Ruby 4.0.9 + Rails 8.1.4 (ruby ปกติคือ 2.6 ของระบบ)
 ```
+
+⚠️ **ผู้ใช้มีโปรเจกต์ Rails จริง**ที่ `/Users/tuwanon/Documents/devpool69/rubyOnRails/wongnok_blog`
+(ชื่อเดียวกับแอปในสไลด์) + docker `wongnok_blog-postgres-1` พอร์ต 5432 — **ห้ามแตะ**
+ตัวอย่าง Rails ให้ `rails new` ใน scratchpad แล้วใช้ Postgres ชั่วคราวของตัวเองคนละพอร์ต (ลบทิ้งเมื่อเสร็จ)
 
 ## กับดักที่เสียเวลาที่สุด (ย่อจาก NOTES.md)
 

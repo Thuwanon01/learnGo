@@ -20,7 +20,7 @@
 ## โครงสร้าง workspace (ต้องรักษาไว้)
 
 ```
-index.html                    ← ประตูเดียว · แยก FRONT / BACK + progress ของแต่ละฝั่ง
+index.html                    ← ประตูเดียว · แยก BACK / FRONT / RAILS + progress ของแต่ละฝั่ง
 docs.html                     ← ตัวอ่านเอกสาร .md ทุกไฟล์ (?f=<path>)
 404.html                      ← Vercel เสิร์ฟให้เองเมื่อไม่พบหน้า
 assets/lesson.css             ← ทุกหน้าใช้ร่วมกัน
@@ -32,6 +32,8 @@ day-N/lessons/NNNN-slug.html  ← ฝั่ง BACK (Go) · บท 01-55 · แ�
 day-N/reference/cheatsheet.html
 fe-<slug>/lessons/NNNN-slug.html  ← ฝั่ง FRONT · บท 56-89 · แบ่งตามชื่อไฟล์สไลด์
 fe-<slug>/reference/cheatsheet.html
+rails-day-N/lessons/NNNN-slug.html  ← ฝั่ง RAILS · บท 90-105 · คอร์ส Rails แยก แบ่งตามวัน
+rails-day-N/reference/cheatsheet.html
         ↑ เลขบทต่อเนื่องกันทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง (เลขบท = คีย์ localStorage)
 vercel.json  .gitignore  robots.txt  README.md   ← สำหรับ deploy
 from_teacher/                 ← PDF ต้นฉบับจากผู้สอน · gitignore ไว้ ไม่ push ขึ้น repo
@@ -41,22 +43,23 @@ from_teacher/                 ← PDF ต้นฉบับจากผู้ส
 
 **ข้อ 0 — ตัดสินก่อนว่าเป็นฝั่งไหน:** ชื่อไฟล์สไลด์กำกับวันมาไหม
 · กำกับ → ฝั่ง BACK ใช้ `day-N/` · **ไม่ได้กำกับ → ฝั่ง FRONT ใช้ `fe-<slug>/`**
+· สไลด์คอร์ส Ruby on Rails → ฝั่ง RAILS ใช้ `rails-day-N/` (คอร์สแยกที่นับวันของตัวเอง)
 โดย `<slug>` มาจากชื่อสไลด์ · **ห้ามตั้งวันเอง** จะไปชนกับวันจริงที่ส่งมาทีหลัง
 
 1. `mkdir -p <กลุ่ม>/lessons <กลุ่ม>/reference`
-2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0089) — **เลขต่อเนื่องทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง**
+2. บทเรียนต่อเลขจากบทสุดท้าย (ตอนนี้จบที่ 0105) — **เลขต่อเนื่องทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง**
    เพราะ `quiz.js` ใช้เลขสี่หลักจากชื่อไฟล์เป็นคีย์ `localStorage`
 3. เขียน `<กลุ่ม>/reference/cheatsheet.html` ครอบคลุมสไลด์ทั้งชุด
-4. เพิ่ม `<section class="day">` ใน `index.html` (ในบล็อก `#back` หรือ `#front` ให้ถูกฝั่ง)
-   + ทุกแถวต้องมี `data-track="back|front"` + อัปเดตตัวเลขใน `.progress-summary`
+4. เพิ่ม `<section class="day">` ใน `index.html` (ในบล็อก `#back` `#front` หรือ `#rails` ให้ถูกฝั่ง)
+   + ทุกแถวต้องมี `data-track="back|front|rails"` + อัปเดตตัวเลขใน `.progress-summary`
    + แก้การ์ด `.upcoming` ให้เป็นวันถัดไป
 5. แก้ `nav` ของบทสุดท้ายกลุ่มก่อนหน้า ให้ลิงก์มาบทแรกของกลุ่มใหม่
-6. **เพิ่มกลุ่มใหม่ลงใน `DAYS` (ฝั่ง back) หรือ `FRONT` (ฝั่ง front) ของ `assets/nav.js`** —
+6. **เพิ่มกลุ่มใหม่ลงใน `DAYS` (ฝั่ง back) · `FRONT` (ฝั่ง front) · `RAILS` (ฝั่ง rails) ของ `assets/nav.js`** —
    ถ้าลืม บทใหม่จะเปิดได้จากลิงก์ตรงเท่านั้น **แต่จะไม่โผล่ในเมนูด้านบนเลย**
    และจะไม่มีอะไรฟ้อง เพราะไม่ใช่ลิงก์เสีย · ทุกหน้าใหม่ต้องมีบรรทัดนี้ใน `<head>` ด้วย:
    `<script src="../../assets/nav.js" defer></script>`
    (สคริปต์ฉีดอัตโนมัติแบบรันซ้ำได้อยู่ที่ `scratchpad/inject-nav.py`)
-   · กลุ่มใหม่ฝั่ง front ต้องแจกเลข `d` แล้วใส่เลขเดียวกันใน `FE_GROUP_ID` ของ
+   · กลุ่มใหม่ฝั่ง front/rails ต้องแจกเลข `d` (front 10x · rails 200 + เลขวัน) แล้วใส่เลขเดียวกันใน `GROUP_ID` ของ
    `tools/build-search-index.py` ด้วย — **ลืมแล้วตัวสร้าง index จะหยุดพร้อมบอกชื่อกลุ่ม**
    · บท HTML/CSS ที่ใช้กล่อง `.demo` ต้องมี `<script src="../../assets/demo.js" defer></script>` ด้วย
 7. **รันสองสคริปต์นี้ตามลำดับ** แล้ว commit ผลด้วย:
@@ -484,8 +487,8 @@ auditor ของบท 64 รายงานว่า `npx tsc --version` ค�
   ที่ map เลข → ชื่อกลุ่ม (`Day 6` · `HTML & CSS` · `TypeScript`)
   **เจอตอนทดสอบค้นจริงเท่านั้น** เพราะ dropdown กับแถบ chip ใช้ `g.where` อยู่แล้วจึงถูกมาตลอด
 - ฝั่งที่เลือกจำไว้ใน `go-course-track-v1` **แต่ถ้าอยู่หน้าบทเรียน ให้ใช้ฝั่งของหน้านั้นเสมอ**
-- เลขกลุ่ม `d` (BACK = เลขวัน · FRONT = 101, 102) อยู่**สองที่**: `FRONT` ใน `nav.js`
-  และ `FE_GROUP_ID` ใน `tools/build-search-index.py` — ตัวสร้าง index จะหยุดพร้อมบอกชื่อกลุ่ม
+- เลขกลุ่ม `d` (BACK = เลขวัน · FRONT = 101, 102 · RAILS = 201) อยู่**สองที่**: `FRONT`/`RAILS` ใน `nav.js`
+  และ `GROUP_ID` (เดิมชื่อ `FE_GROUP_ID`) ใน `tools/build-search-index.py` — ตัวสร้าง index จะหยุดพร้อมบอกชื่อกลุ่ม
   ถ้าเจอ `fe-*` ที่ยังไม่มีเลข
 
 ## Deploy (เพิ่มตอนขึ้น GitHub + Vercel)

@@ -1,0 +1,1203 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 101 — Routing — config/routes.rb ทีละเส้น, :id, ชื่อ route, namespace และลำดับที่สำคัญ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 101 · Rails · Day 1</p>
+  <h1>Routing — config/routes.rb ทีละเส้น, :id, ชื่อ route, namespace และลำดับที่สำคัญ</h1>
+  <p class="meta">~25 นาที (บทหนัก มีของให้รันเยอะ) · ควรผ่าน <a href="./0100-rails-boot-request-mvc.html">บทเรียน 100</a> (boot · request · MVC) มาก่อน ·
+    ถ้าลืม router ของ Gin ทวนได้ที่ <a href="../../day-8/lessons/0038-gin-routing.html">บทเรียน 38</a></p>
+  <p class="standfirst">
+    บทที่แล้วคุณเห็นแล้วว่า request หนึ่งตัววิ่งผ่าน Rails ยังไง ด่านแรกที่มันเจอคือ <strong>router</strong>
+    ซึ่งทำงานตามไฟล์เดียวชื่อ <code>config/routes.rb</code>
+    <br>คุณเคยเขียน <code>r.GET("/posts/:id", getPost)</code> ใน Gin มาแล้ว เพราะฉะนั้นไอเดียไม่ใหม่
+    แต่ Rails มี<strong>กติกาที่ต่างจาก Gin สองข้อ</strong> ที่ถ้าไม่รู้จะเสียเวลาไล่บั๊กเป็นชั่วโมง:
+    <strong>ลำดับบรรทัดมีผล</strong> (Gin ไม่สน) และ <strong>route ที่ไม่ได้ตั้งชื่อจะไม่มี helper ให้ใช้</strong>
+    <br>บทนี้ไล่สไลด์หน้า 54–59 ครบทั้ง 6 ตอน ·
+    <strong>ทุกตัวอย่างผมเขียนลง <code>routes.rb</code> จริง แล้วโชว์ <code>bin/rails routes</code> กับ <code>curl</code> ของจริง</strong>
+    — และเจอจุดที่ตารางในสไลด์หน้า 58 ไม่ตรงกับโค้ดในสไลด์หน้า 54 ด้วย (หัวข้อ 5)
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby -v</span>
+ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+<span class="c">$ bin/rails -v</span>
+Rails 8.1.4</code></pre>
+  <p>
+    สไลด์ใช้ <strong>Ruby 4.0.6 · Rails 8.1.3</strong> ส่วนเครื่องที่ใช้ตรวจเป็น <strong>Ruby 4.0.9 · Rails 8.1.4</strong>
+    ต่างกันแค่ patch version · โปรเจกต์สร้างด้วย <code>rails new wongnok_blog --database=postgresql --css=tailwind</code>
+    ตามสไลด์หน้า 40 · ฝั่ง Go ใช้ go1.26.5
+  </p>
+  <p>
+    ทุกกล่องที่เป็นผลรันในบทนี้<strong>ก็อปมาจากเครื่องจริง ไม่ได้พิมพ์เอง</strong> ·
+    ตาราง <code>bin/rails routes</code> ทุกอันได้จากการเขียน <code>config/routes.rb</code> ตามที่โชว์ไว้เหนือมันเป๊ะ ๆ
+  </p>
+  <p style="margin-bottom:0">
+    <strong>เรื่องเดียวที่ปรับก่อนเอามาโชว์ คือเลขพอร์ต</strong> — เครื่องที่ใช้ตรวจรัน server ด้วย
+    <code>bin/rails server -p 4101</code> เพราะมีหลายโปรเจกต์รันพร้อมกัน ·
+    ในคำสั่ง <code>curl</code> ผมเขียนเป็น <code>localhost:3000</code> (ค่าปกติที่คุณจะได้) ·
+    <strong>output ที่ server ตอบกลับมาไม่ได้แก้แม้แต่ตัวเดียว</strong> และที่เดียวที่เลขพอร์ตโผล่ใน output คือหัวข้อ 3
+    ซึ่งผมโชว์เลข 4101 ตามจริง เพราะมันคือหลักฐานของเรื่องที่กำลังสอนพอดี
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · <code>routes.rb</code> คือสมุดจดว่า "URL นี้ ไปหาใคร"</h2>
+
+<p>
+  ทุก request ที่เข้ามาในแอป Rails มีของสองอย่างติดมาเสมอ: <strong>verb</strong> (<code>GET</code> / <code>POST</code> / <code>PATCH</code> / <code>DELETE</code>)
+  กับ <strong>path</strong> (<code>/posts/42</code>)
+  <br>router มีหน้าที่เดียว คือเอาสองอย่างนี้ไปเทียบกับรายการใน <code>config/routes.rb</code>
+  แล้วบอกว่า <strong>"ส่งต่อให้ controller ตัวไหน method ไหน"</strong> — แค่นั้นจริง ๆ มันไม่ได้แตะฐานข้อมูล ไม่ได้ render อะไร
+</p>
+
+<p>นี่คือโค้ดในสไลด์หน้า 54 ที่ผมพิมพ์ลง <code>config/routes.rb</code> ตรงตัว:</p>
+
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="n">Rails</span>.application.routes.<span class="f">draw</span> <span class="k">do</span>
+  <span class="f">get</span>    <span class="s">"/posts"</span>,       to: <span class="s">"posts#index"</span>
+  <span class="f">get</span>    <span class="s">"/posts/new"</span>,   to: <span class="s">"posts#new"</span>
+  <span class="f">post</span>   <span class="s">"/posts"</span>,       to: <span class="s">"posts#create"</span>
+  <span class="f">get</span>    <span class="s">"/posts/:id"</span>,   to: <span class="s">"posts#show"</span>
+  <span class="f">patch</span>  <span class="s">"/posts/:id"</span>,   to: <span class="s">"posts#update"</span>
+  <span class="f">delete</span> <span class="s">"/posts/:id"</span>,   to: <span class="s">"posts#destroy"</span>
+
+  <span class="f">root</span> <span class="s">"posts#index"</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  อ่านทีละบรรทัดได้ว่า <strong>"ถ้ามา <code>GET /posts</code> ให้ไปที่ <code>posts#index</code>"</strong> ·
+  สตริง <code>"posts#index"</code> แบ่งด้วย <code>#</code> เป็นสองท่อน —
+  <strong>ก่อน <code>#</code> คือชื่อ controller</strong> (<code>posts</code> → class <code>PostsController</code>
+  ตามกฎตั้งชื่อใน <a href="./0099-rails-naming-and-explore.html">บทเรียน 99</a>)
+  และ<strong>หลัง <code>#</code> คือชื่อ method</strong> ใน class นั้น ซึ่ง Rails เรียกว่า <strong>action</strong>
+  <br>ส่วน <code>root</code> คือหน้าแรกของเว็บ (<code>/</code>) — เขียนสั้นกว่าเพราะ path ตายตัวอยู่แล้ว
+</p>
+
+<p>เทียบกับของที่คุณเคยเขียนมา:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th>Go (Gin) — บท 38</th><th>TypeScript (Next.js App Router) — บท 79</th><th>Ruby (Rails)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>เขียน route ที่ไหน</td>
+      <td>ในโค้ด <code>main.go</code> ทีละบรรทัด</td>
+      <td><strong>ไม่มีไฟล์รวม</strong> — โฟลเดอร์คือ route เช่น <code>app/posts/[id]/page.tsx</code></td>
+      <td>ไฟล์เดียว <code>config/routes.rb</code></td>
+    </tr>
+    <tr>
+      <td>หน้าตา</td>
+      <td><code>r.GET("/posts/:id", showPost)</code></td>
+      <td>ชื่อโฟลเดอร์ <code>[id]</code></td>
+      <td><code>get "/posts/:id", to: "posts#show"</code></td>
+    </tr>
+    <tr>
+      <td>ชี้ไปหาอะไร</td>
+      <td><strong>ตัวฟังก์ชัน</strong> (ส่งค่าฟังก์ชันเข้าไปเลย)</td>
+      <td>ไฟล์ <code>page.tsx</code> ในโฟลเดอร์นั้น</td>
+      <td><strong>สตริง</strong> <code>"posts#show"</code> — Rails ไปหา class กับ method จากชื่อเอง</td>
+    </tr>
+    <tr>
+      <td>อ่านค่า <code>:id</code></td>
+      <td><code>c.Param("id")</code></td>
+      <td><code>const { id } = await params</code></td>
+      <td><code>params[:id]</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แถวที่สามคือจุดที่ต่างกันจริง — Gin ส่ง<strong>ตัวฟังก์ชัน</strong>เข้าไป พิมพ์ชื่อผิด <code>go build</code> ฟ้องทันที
+  แต่ Rails ส่งแค่<strong>สตริง</strong> พิมพ์ชื่อ action ผิด Rails ก็ boot ได้ปกติ
+  จะรู้ตัวก็ตอนมี request มาจริง หรือตอนสั่ง <code>bin/rails routes -u</code> เอง (หัวข้อ 5)
+</p>
+
+<h3 id="sn-sub-1">ดูตารางที่ Rails สร้างจากไฟล์นี้</h3>
+
+<p>
+  คำสั่ง <code>bin/rails routes</code> พิมพ์ทุก route ที่ Rails เข้าใจออกมาเป็นตาราง
+  (<code>-c posts</code> คือกรองเอาเฉพาะที่ไปหา <code>PostsController</code> — หัวข้อ 5 จะอธิบายว่าทำไมต้องกรอง):
+</p>
+
+<pre><code><span class="c">$ bin/rails routes -c posts</span>
+   Prefix Verb   URI Pattern          Controller#Action
+    posts GET    /posts(.:format)     posts#index
+posts_new GET    /posts/new(.:format) posts#new
+          POST   /posts(.:format)     posts#create
+          GET    /posts/:id(.:format) posts#show
+          PATCH  /posts/:id(.:format) posts#update
+          DELETE /posts/:id(.:format) posts#destroy
+     root GET    /                    posts#index</code></pre>
+
+<p>
+  ครบทั้ง 7 บรรทัดตามที่เขียน · <strong>จำสองจุดนี้ไว้ก่อน แล้วหัวข้อ 3 กับ 5 จะกลับมาเฉลย</strong>:
+  คอลัมน์ Prefix ของ <code>/posts/new</code> คือ <code>posts_new</code> และของ <code>GET /posts/:id</code> <strong>ว่างเปล่า</strong>
+</p>
+
+<h3 id="sn-sub-2">path เดียวกัน คนละ verb = คนละ action</h3>
+
+<p>
+  เพื่อดูว่า router ส่งไปที่ไหนจริง ผมเขียน <code>PostsController</code> ที่แค่พิมพ์สิ่งที่ได้รับกลับมาเป็นข้อความ
+  (ยังไม่แตะฐานข้อมูล — นั่นคือเรื่องของ Day 2) และ<strong>ตั้งใจไม่เขียน <code>update</code> กับ <code>destroy</code></strong>:
+</p>
+
+<pre><code><span class="c"># app/controllers/posts_controller.rb — ตัวที่ใช้ตรวจทั้งบท</span>
+<span class="k">class</span> <span class="n">PostsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    <span class="f">render</span> plain: <span class="s">"#{self.class.name}#index\n"</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">new</span>
+    <span class="f">render</span> plain: <span class="s">"posts#new\n"</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">show</span>
+    <span class="f">render</span> plain: <span class="s">"posts#show  params[:id] = #{params[:id].inspect}  (#{params[:id].class})  format=#{params[:format].inspect}\n"</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">popular</span>
+    <span class="f">render</span> plain: <span class="s">"posts#popular\n"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>แล้วยิง <code>/posts/42</code> ด้วย 4 verb:</p>
+
+<pre><code><span class="c"># ยิงด้วย curl -X &lt;verb&gt; localhost:3000/posts/42 แล้วพิมพ์ status + ข้อความหลักของหน้า</span>
+GET    /posts/42 -&gt; 200  posts#show  params[:id] = "42"  (String)  format=nil
+PATCH  /posts/42 -&gt; 404  The action 'update' could not be found for PostsController
+DELETE /posts/42 -&gt; 404  The action 'destroy' could not be found for PostsController
+PUT    /posts/42 -&gt; 404  No route matches [PUT] "/posts/42"</code></pre>
+
+<p>
+  (ข้อความของ 404 ดึงมาจากหน้า error ของ development ซึ่งเป็น HTML ทั้งหน้า)
+  <br>ได้ 404 สามบรรทัดเหมือนกัน แต่<strong>คนละเรื่องกันเลย</strong>:
+</p>
+<ul>
+  <li><code>PATCH</code> กับ <code>DELETE</code> — <strong>router หาเจอ</strong> แล้วส่งต่อไปที่ <code>PostsController</code>
+      แต่ใน class ไม่มี method ชื่อนั้น → <em>The action … could not be found</em></li>
+  <li><code>PUT</code> — <strong>router หาไม่เจอตั้งแต่แรก</strong> เพราะไม่มีบรรทัดไหนเขียน <code>put</code> ไว้ → <em>No route matches</em></li>
+</ul>
+<p>
+  สองข้อความนี้บอกว่า<strong>ต้องไปแก้คนละไฟล์</strong> — แบบแรกแก้ controller · แบบหลังแก้ <code>routes.rb</code> ·
+  อ่านให้ออกตั้งแต่วันแรก จะไม่ต้องเดา
+</p>
+
+<p>
+  ส่วนที่สไลด์บอกว่า <code>root</code> "มีได้ตัวเดียว" — ผมลองเขียนสองบรรทัดดู Rails ไม่ยอม boot เลย:
+</p>
+<pre><code><span class="c"># routes.rb ที่มี root "posts#index" และ root "posts#popular"</span>
+<span class="c">$ bin/rails routes</span>
+…/actionpack-8.1.4/lib/action_dispatch/routing/route_set.rb:647:in 'ActionDispatch::Routing::RouteSet#add_route': Invalid route name, already in use: 'root'  (ArgumentError)</code></pre>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — โต๊ะประชาสัมพันธ์ที่ถือรายชื่อห้องเรียงจากบนลงล่าง</span>
+  <p>
+    นึกถึงพนักงานโต๊ะประชาสัมพันธ์ของตึกสำนักงาน ในมือมี<strong>แผ่นรายการหนึ่งแผ่น</strong>
+    เขียนว่า "ถามหาฝ่ายบัญชี → ชั้น 3 ห้อง 301" · "มาส่งของ → ชั้น 1 ห้องรับพัสดุ"
+    <br>คนมาถาม พนักงานก็ไล่นิ้วจากบรรทัดแรกลงไป เจอบรรทัดที่ตรงก็ชี้ทางให้ แล้ว<strong>หยุดอ่านทันที</strong>
+    <br>แผ่นรายการนั้นคือ <code>routes.rb</code> · ห้อง 301 คือ <code>PostsController</code> · คนในห้องที่ทำงานให้คือ action
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานที่เป็นคนจริงจะใช้วิจารณญาณ — ถ้ามีสองบรรทัดที่ดูเข้าเค้า
+    เขาจะเลือกอันที่<strong>ตรงกว่า</strong>ให้คุณ
+    <br>router ของ Rails <strong>ไม่คิดแบบนั้น</strong> มันเลือก<strong>บรรทัดแรกที่เข้าเงื่อนไข</strong> เสมอ
+    แม้บรรทัดถัดไปจะตรงกว่าก็ตาม — ซึ่งต่างจาก Gin ที่คุณเคยใช้ และเป็นที่มาของกับดักในหัวข้อ 6
+    <br>อีกข้อคือ พนักงานจะบอกคุณว่า "ห้องนี้ปิดแล้ว" ถ้าไม่มีคนอยู่ · router ไม่รู้ว่าในห้องมีคนหรือเปล่า
+    ชี้ทางไปก่อน แล้วค่อยไปพังที่ controller (แบบ <code>PATCH</code> ข้างบน)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>route</dt>
+    <dd>หนึ่งบรรทัดใน <code>routes.rb</code> = กฎหนึ่งข้อที่จับคู่ <strong>verb + path</strong> เข้ากับ <strong>controller#action</strong> ·
+        <strong>ถาม senior ได้ว่า “endpoint นี้ route ไปที่ controller#action ไหน”</strong> — คนทำ Rails พูดกันแบบนี้</dd>
+    <dt>action</dt>
+    <dd>method สาธารณะใน controller ที่ router เรียกได้ เช่น <code>index</code> <code>show</code> ·
+        ฝั่ง Gin คือ handler function · <strong>พิมพ์บอก AI ได้ว่า “add a <code>popular</code> action to <code>PostsController</code> and route <code>GET /posts/popular</code> to it”</strong></dd>
+    <dt>routing DSL</dt>
+    <dd><code>get</code> <code>post</code> <code>root</code> ที่เห็นในไฟล์<strong>เป็น method ของ Ruby ธรรมดา</strong> ไม่ใช่ภาษาพิเศษ ·
+        DSL ย่อจาก <em>domain-specific language</em> = ชุด method ที่ออกแบบให้อ่านเหมือนภาษาเฉพาะเรื่อง ·
+        <strong>ถาม AI ได้ว่า “in Rails routes.rb, which object is <code>get</code> called on?”</strong></dd>
+    <dt>Routing Error / ActionNotFound</dt>
+    <dd>สองข้อความ 404 ที่เห็นข้างบน · <em>No route matches</em> = router หาไม่เจอ (แก้ <code>routes.rb</code>) ·
+        <em>The action … could not be found</em> = router เจอ แต่ controller ไม่มี method (แก้ controller) ·
+        <strong>แปะข้อความเต็มให้ AI ดีกว่าบอกว่า “มัน 404”</strong> เพราะสองแบบแก้คนละที่</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">2 · Dynamic segment — ช่อง <code>:id</code> ที่รับค่าอะไรก็ได้</h2>
+
+<p>
+  ตัวที่ขึ้นต้นด้วย <code>:</code> ใน path เช่น <code>:id</code> คือ<strong>ช่องว่างที่รอรับค่า</strong> —
+  URL ส่งอะไรมาในตำแหน่งนั้น Rails เก็บใส่ <code>params[:id]</code> ให้ ·
+  เหมือน <code>:id</code> ของ Gin ทุกอย่าง
+  <br>สไลด์หน้า 55 เน้นข้อเดียวที่สำคัญที่สุด: <strong>ค่าที่ได้เป็น string เสมอ</strong> ·
+  ก่อนดูผล ลองทายก่อน
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># routes.rb = โค้ดสไลด์หน้า 54 ชุดเดิม (มี get "/posts/:id", to: "posts#show")</span>
+<span class="c">$ curl localhost:3000/posts/42</span>
+<span class="c">$ curl localhost:3000/posts/abc</span>
+<span class="c">$ curl localhost:3000/posts/42.json</span>
+<span class="c">$ curl localhost:3000/posts/1.5</span></code></pre>
+  <p class="ask">
+    สี่บรรทัดนี้ <code>params[:id]</code> ได้อะไร เป็น class อะไร?
+    โดยเฉพาะ<strong>สองบรรทัดล่างที่มีจุด</strong>
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ curl localhost:3000/posts/42</span>
+posts#show  params[:id] = "42"  (String)  format=nil
+<span class="c">$ curl localhost:3000/posts/abc</span>
+posts#show  params[:id] = "abc"  (String)  format=nil
+<span class="c">$ curl localhost:3000/posts/42.json</span>
+posts#show  params[:id] = "42"  (String)  format="json"
+<span class="c">$ curl localhost:3000/posts/1.5</span>
+posts#show  params[:id] = "1"  (String)  format="5"</code></pre>
+    <ul>
+      <li><strong>ทุกตัวเป็น <code>String</code></strong> — <code>"42"</code> ไม่ใช่ <code>42</code> · URL เป็นข้อความ router ไม่เดาให้ว่าควรเป็นตัวเลข</li>
+      <li><code>/posts/abc</code> ก็เข้า <code>show</code> ได้สบาย — <code>:id</code> <strong>ไม่ได้แปลว่า "ตัวเลข"</strong> มันรับอะไรก็ได้</li>
+      <li><strong>จุด <code>.</code> ถูกตัดไปเป็น <code>format</code></strong> — <code>/posts/1.5</code> ได้ id <code>"1"</code> กับ format <code>"5"</code>
+          เพราะทุก route มีส่วน <code>(.:format)</code> แอบต่อท้าย (เห็นในตาราง <code>bin/rails routes</code> หัวข้อ 1)
+          · คู่มือ Rails เขียนไว้ตรง ๆ ว่า dynamic segment ไม่รับจุดโดยค่าตั้งต้น</li>
+    </ul>
+    <p style="margin-bottom:0">
+      ข้อสุดท้ายนี่แหละที่คนพลาด — ถ้า id ของคุณเป็นอะไรอย่าง <code>v1.2</code> หรือชื่อไฟล์ <code>a.png</code>
+      จะได้ค่าครึ่งเดียวโดยไม่มี error
+    </p>
+  </div>
+</div>
+
+<h3 id="sn-sub-3">"เอาไปคำนวณเองต้อง <code>.to_i</code>" — แต่ <code>.to_i</code> ไม่เคยฟ้อง</h3>
+
+<p>
+  สไลด์หน้า 55 บอกว่าตอน <code>find</code> Active Record แปลงให้เอง (Day 2) แต่ถ้าจะเอาไปคำนวณเองต้อง <code>.to_i</code> ·
+  จริง และมีกับดักที่สไลด์ไม่ได้พูด:
+</p>
+
+<pre><code><span class="f">p</span> <span class="s">"42"</span>.<span class="f">to_i</span>          <span class="c"># =&gt; 42</span>
+<span class="f">p</span> <span class="s">"42"</span> + <span class="s">"1"</span>        <span class="c"># =&gt; "421"   ← ลืมแปลง ได้การต่อสตริง</span>
+<span class="f">p</span> <span class="s">"42"</span>.<span class="f">to_i</span> + <span class="n">1</span>      <span class="c"># =&gt; 43</span>
+<span class="f">p</span> <span class="s">"abc"</span>.<span class="f">to_i</span>         <span class="c"># =&gt; 0     ← ไม่ error!</span>
+<span class="f">p</span> <span class="s">"42abc"</span>.<span class="f">to_i</span>       <span class="c"># =&gt; 42    ← ตัดส่วนที่ไม่ใช่ตัวเลขทิ้งเงียบ ๆ</span>
+<span class="f">Integer</span>(<span class="s">"abc"</span>)        <span class="c"># ArgumentError: invalid value for Integer(): "abc"</span></code></pre>
+
+<p>(ทุกค่าหลัง <code>=&gt;</code> มาจากการรัน <code>ruby</code> จริง)</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Go — <code>strconv.Atoi</code></h4>
+<pre><code>n, err := strconv.<span class="f">Atoi</span>(<span class="s">"abc"</span>)
+fmt.<span class="f">Println</span>(n, err)
+<span class="c">// 0 strconv.Atoi: parsing "abc": invalid syntax</span></code></pre>
+    <p style="margin-bottom:0">บังคับให้คุณเห็น <code>err</code> ทุกครั้ง</p>
+  </div>
+  <div class="side">
+    <h4>Ruby — <code>String#to_i</code></h4>
+<pre><code><span class="s">"abc"</span>.<span class="f">to_i</span>
+<span class="c"># =&gt; 0</span></code></pre>
+    <p style="margin-bottom:0">ไม่มี error ให้เห็นเลย · อยากให้พังต้องใช้ <code>Integer("abc")</code></p>
+  </div>
+</div>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ <code>/posts/abc</code> + <code>params[:id].to_i</code> = โพสต์เลข 0</strong> — ไม่ใช่ error ·
+    ถ้า id ต้องเป็นตัวเลขเท่านั้น <strong>ให้ router คัดออกตั้งแต่ต้นทางด้วย constraint</strong> (ข้างล่าง)
+    แทนที่จะไปหวังพึ่ง <code>.to_i</code> ใน controller
+  </p>
+</div>
+
+<h3 id="sn-sub-4">หลายช่องในเส้นเดียว</h3>
+
+<pre><code><span class="c"># routes.rb</span>
+<span class="f">get</span> <span class="s">"/posts/:post_id/comments/:id"</span>,
+    to: <span class="s">"comments#show"</span>
+
+<span class="c">$ bin/rails routes -c comments</span>
+Prefix Verb URI Pattern                            Controller#Action
+       GET  /posts/:post_id/comments/:id(.:format) comments#show
+
+<span class="c">$ curl localhost:3000/posts/7/comments/99</span>
+comments#show  post_id="7"  id="99"
+<span class="c">$ curl -o /dev/null -w '%{http_code}' localhost:3000/posts/7/comments</span>
+404</code></pre>
+
+<p>
+  แต่ละช่องได้ชื่อของตัวเองใน <code>params</code> (<code>CommentsController</code> ตัวที่ใช้ตรวจพิมพ์ทั้งสองค่าออกมา) ·
+  และ<strong>ทุกช่องต้องมีค่า</strong> — ขาดไปช่องเดียว (<code>/posts/7/comments</code>) ได้ 404
+  <em>No route matches</em> ทันที ไม่ใช่ id ว่าง (เหมือน Gin ในบท 38 ที่ <code>/users/</code> ได้ 404)
+</p>
+
+<h3 id="sn-sub-5">ช่องที่ "มีหรือไม่มีก็ได้" — วงเล็บ <code>( )</code></h3>
+
+<pre><code><span class="c"># routes.rb</span>
+<span class="f">get</span> <span class="s">"/posts(/:id)"</span>, to: <span class="s">"posts#show"</span>
+
+<span class="c">$ bin/rails routes -c posts</span>
+Prefix Verb URI Pattern            Controller#Action
+       GET  /posts(/:id)(.:format) posts#show
+
+<span class="c">$ curl localhost:3000/posts</span>
+posts#show  params[:id] = nil  (NilClass)  format=nil
+<span class="c">$ curl localhost:3000/posts/42</span>
+posts#show  params[:id] = "42"  (String)  format=nil</code></pre>
+
+<p>
+  ข้อยกเว้นของ "string เสมอ" อยู่ตรงนี้: <strong>ถ้าช่องไม่ถูกส่งมา ได้ <code>nil</code></strong> ไม่ใช่สตริงว่าง ·
+  (เรื่อง <code>nil</code> ทวนได้ใน <a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a>)
+  <br>สังเกตด้วยว่า <code>(.:format)</code> ที่ Rails แปะท้ายทุก route <strong>ก็คือช่อง optional แบบเดียวกันนี้</strong> — วงเล็บ = มีหรือไม่มีก็ได้
+</p>
+
+<h3 id="sn-sub-6">constraint — ให้ router คัดกรองตั้งแต่ต้นทาง</h3>
+
+<pre><code><span class="c"># routes.rb</span>
+<span class="f">get</span> <span class="s">"/posts/:id"</span>, to: <span class="s">"posts#show"</span>,
+    constraints: { id: <span class="s">/\d+/</span> }
+
+<span class="c">$ bin/rails routes -c posts</span>
+Prefix Verb URI Pattern          Controller#Action
+       GET  /posts/:id(.:format) posts#show {id: /\d+/}
+
+<span class="c">$ curl localhost:3000/posts/42</span>
+posts#show  params[:id] = "42"  (String)  format=nil
+<span class="c">$ curl -o /dev/null -w '%{http_code}' localhost:3000/posts/abc</span>
+404
+<span class="c">$ curl -o /dev/null -w '%{http_code}' localhost:3000/posts/42abc</span>
+404
+<span class="c">$ curl localhost:3000/posts/42.json</span>
+posts#show  params[:id] = "42"  (String)  format="json"</code></pre>
+
+<p>
+  <code>/\d+/</code> คือ regex แปลว่า "ตัวเลขหนึ่งตัวขึ้นไป" · ตารางโชว์ constraint ต่อท้ายให้เห็นด้วย (<code>{id: /\d+/}</code>)
+  <br><strong><code>/posts/abc</code> ได้ 404 แบบ <em>No route matches [GET] "/posts/abc"</em></strong>
+  — ไม่เข้า controller เลย · และ <code>42abc</code> ก็ไม่ผ่าน เพราะ Rails ต้องให้<strong>ทั้งช่อง</strong>ตรงกับ regex ไม่ใช่แค่บางส่วน
+  <br>แต่ดูบรรทัดแรกให้ดี: <strong>ผ่าน constraint แล้วก็ยังเป็น <code>"42"</code> (String) อยู่ดี</strong> —
+  constraint แค่<em>คัดกรอง</em> ไม่ได้<em>แปลงชนิด</em>
+</p>
+
+<div class="quiz" data-answer="1">
+  <p class="q">route คือ <code>get "/posts/:id", to: "posts#show", constraints: { id: /\d+/ }</code> แล้วมี request <code>GET /posts/42</code> เข้ามา — ใน action <code>show</code> ค่า <code>params[:id]</code> คืออะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>42</code> เป็น Integer เพราะ constraint บังคับให้เป็นตัวเลขแล้ว</button>
+    <button class="opt"><code>"42"</code> เป็น String เพราะ constraint แค่คัดกรอง ไม่แปลงชนิด</button>
+    <button class="opt"><code>nil</code> เพราะ constraint กินค่าไปใช้ตรวจแล้วไม่ส่งต่อ</button>
+    <button class="opt">ไม่เข้า action เลย ได้ 404 เพราะ <code>42</code> ไม่ใช่ regex</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก — curl จริงได้ <code>params[:id] = "42"  (String)</code> ·
+      ตัวเลือกที่ 1 คือความเข้าใจผิดที่พบบ่อยที่สุด: constraint ทำหน้าที่<strong>ด่านตรวจ</strong> ผ่านหรือไม่ผ่านเท่านั้น
+      ค่าที่ผ่านไปยังเป็นข้อความจาก URL เหมือนเดิม ·
+      ตัวเลือกที่ 3 ผิดเพราะ <code>nil</code> เกิดแค่กับช่อง optional ที่<strong>ไม่ได้ส่งมา</strong> ·
+      ตัวเลือกที่ 4 ผิดเพราะ <code>"42"</code> ตรงกับ <code>/\d+/</code> ทั้งช่อง ได้ 200
+    </p>
+    <p style="margin-bottom:0">
+      <strong>จุดที่ต้องจำ:</strong> ค่าใน <code>params</code> ที่มาจาก URL เป็น String เสมอ (หรือ <code>nil</code> ถ้าไม่ได้ส่งมา) ·
+      จะเอาไปคำนวณต้องแปลงเอง
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-3">3 · ชื่อ route และ helper — อย่า hardcode URL เด็ดขาด</h2>
+
+<p>
+  กลับไปดูตารางหัวข้อ 1 — <code>GET /posts/:id</code> มีคอลัมน์ Prefix <strong>ว่าง</strong>
+  แปลว่า route นี้<strong>ไม่มีชื่อ</strong> · ไม่มีชื่อ = ไม่มี method ให้เรียกเพื่อสร้าง URL ของมัน ผมลองเรียกดูจริง:
+</p>
+
+<pre><code><span class="c"># routes.rb มี get "/posts", get "/posts/new", get "/posts/:id" แบบสไลด์หน้า 54 (ไม่มี as:)</span>
+h = <span class="n">Rails</span>.application.routes.url_helpers
+<span class="f">p</span> h.<span class="f">posts_path</span>       <span class="c"># =&gt; "/posts"</span>
+<span class="f">p</span> h.<span class="f">posts_new_path</span>   <span class="c"># =&gt; "/posts/new"</span>
+h.<span class="f">post_path</span>(<span class="n">42</span>)
+<span class="c"># NoMethodError: undefined method 'post_path' for module #&lt;Module:0x00000001228e1d68&gt;</span></code></pre>
+
+<p>
+  (รันด้วย <code>bin/rails runner</code> · เลข <code>0x…</code> เป็นที่อยู่ใน memory รันแต่ละรอบไม่ตรงกัน)
+  <br>Rails ตั้งชื่อให้เองเฉพาะ path ที่<strong>ไม่มีช่อง <code>:</code></strong> (เอาคำใน path มาต่อกันด้วย <code>_</code> —
+  <code>/posts/new</code> เลยได้ <code>posts_new</code>) · path ที่มี <code>:id</code> ต้องตั้งชื่อเองด้วย <code>as:</code> ตามสไลด์หน้า 56:
+</p>
+
+<pre><code><span class="c"># routes.rb</span>
+<span class="f">get</span> <span class="s">"/posts/:id"</span>, to: <span class="s">"posts#show"</span>, as: <span class="n">:post</span>
+
+<span class="c">$ bin/rails routes -c posts</span>
+Prefix Verb URI Pattern          Controller#Action
+  post GET  /posts/:id(.:format) posts#show</code></pre>
+
+<p>
+  Prefix <code>post</code> โผล่มาแล้ว · เอาไปต่อท้ายด้วย <code>_path</code> หรือ <code>_url</code> ได้ method สองตัวทันที:
+</p>
+
+<pre><code>h = <span class="n">Rails</span>.application.routes.url_helpers
+<span class="f">p</span> h.<span class="f">post_path</span>(<span class="n">42</span>)                    <span class="c"># =&gt; "/posts/42"</span>
+<span class="f">p</span> h.<span class="f">post_path</span>(<span class="s">"abc"</span>)                 <span class="c"># =&gt; "/posts/abc"</span>
+<span class="f">p</span> h.<span class="f">post_path</span>(<span class="n">42</span>, format: <span class="n">:json</span>)      <span class="c"># =&gt; "/posts/42.json"</span>
+<span class="f">p</span> h.<span class="f">post_path</span>(<span class="n">42</span>, page: <span class="n">2</span>)          <span class="c"># =&gt; "/posts/42?page=2"</span>
+h.<span class="f">post_path</span>
+<span class="c"># ActionController::UrlGenerationError: No route matches {action: "show", controller: "posts"}, missing required keys: [:id]</span></code></pre>
+
+<p>
+  ของที่ไม่รู้จัก (<code>page: 2</code>) กลายเป็น query string ให้เอง · ลืมส่ง id ได้ error ที่บอกชัดว่าขาด key อะไร
+</p>
+
+<h3 id="sn-sub-7"><code>post_url(42)</code> — สไลด์เขียนว่าได้ <code>http://localhost:3000/posts/42</code> แต่ลองนอก request ดูก่อน</h3>
+
+<pre><code>h.<span class="f">post_url</span>(<span class="n">42</span>)
+<span class="c"># ArgumentError: Missing host to link to! Please provide the :host parameter,</span>
+<span class="c">#   set default_url_options[:host], or set :only_path to true</span>
+
+<span class="f">p</span> h.<span class="f">post_url</span>(<span class="n">42</span>, host: <span class="s">"localhost:3000"</span>)
+<span class="c"># =&gt; "http://localhost:3000/posts/42"</span>
+<span class="f">p</span> h.<span class="f">post_url</span>(<span class="n">42</span>, host: <span class="s">"wongnok.example.com"</span>, protocol: <span class="s">"https"</span>)
+<span class="c"># =&gt; "https://wongnok.example.com/posts/42"</span></code></pre>
+
+<p>
+  <strong><code>_url</code> ต้องรู้ชื่อโดเมน</strong> แต่ใน <code>bin/rails runner</code> ไม่มี request — Rails เลยไม่รู้ว่าจะใส่โดเมนอะไร ·
+  แล้วทำไมสไลด์ถึงได้ <code>localhost:3000</code>? เพราะ<strong>ใน controller หรือ view มี request อยู่</strong>
+  และ Rails ยืมโดเมนจาก request นั้น · ผมพิสูจน์ด้วย action ที่พิมพ์สองค่านี้ออกมา (ยิงที่ server พอร์ต 4101 ของเครื่องตรวจ):
+</p>
+
+<pre><code><span class="c">$ curl localhost:4101/links</span>
+post_path(42) = /posts/42
+post_url(42)  = http://localhost:4101/posts/42
+
+<span class="c">$ curl -H 'Host: localhost:3000' localhost:4101/links</span>
+post_path(42) = /posts/42
+post_url(42)  = http://localhost:3000/posts/42</code></pre>
+
+<p>
+  server ตัวเดียวกัน แค่เปลี่ยน header <code>Host</code> → <code>post_url</code> เปลี่ยนตาม ·
+  <strong>เลข 3000 ในสไลด์ไม่ได้ฝังอยู่ใน helper</strong> มันมาจากที่อาจารย์รัน server ที่พอร์ต 3000 ·
+  (ถ้าอยากลองใน <code>bin/rails console</code> ใช้ <code>app.post_url(42)</code> ได้ — ผมรันแล้วได้ <code>"http://www.example.com/posts/42"</code>
+  เพราะ <code>app</code> ใช้โดเมนสมมติ · เรื่อง console อยู่ใน <a href="./0104-rails-debug-and-console.html">บทเรียน 104</a>)
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th><code>post_path(42)</code></th><th><code>post_url(42)</code></th></tr></thead>
+  <tbody>
+    <tr><td>ได้อะไร</td><td><code>/posts/42</code> — path เปล่า ๆ</td><td><code>http://โดเมน/posts/42</code> — ครบทั้งโดเมน</td></tr>
+    <tr><td>ใช้ตอนไหน (สไลด์หน้า 56)</td><td>ลิงก์ในเว็บตัวเอง — เบราว์เซอร์เติมโดเมนให้เอง</td><td>อีเมล · redirect ข้ามโดเมน · webhook — ที่ที่ไม่มี "หน้าปัจจุบัน" ให้อ้างอิง</td></tr>
+    <tr><td>นอก request (runner, job)</td><td>ใช้ได้เลย</td><td>ต้องบอก <code>host:</code> ไม่งั้น <code>ArgumentError</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-8">ทำไมห้าม hardcode — และ "ย่อได้" ที่สไลด์พูดถึง</h3>
+
+<p>
+  สไลด์หน้า 56 ให้เหตุผลไว้ดีมาก: เขียน <code>"/posts/#{id}"</code> ไว้ 40 ที่ วันหนึ่งเปลี่ยน URL เป็น <code>/articles</code>
+  ต้องไล่แก้ 40 จุดและจะลืมแน่นอน · ใช้ helper แล้ว<strong>แก้ที่ <code>routes.rb</code> ที่เดียวจบ</strong>
+  <br>ในสไลด์มีอีกท่าที่เขียนสั้นกว่า:
+</p>
+
+<pre><code><span class="c"># ใน view (ERB — บทเรียน 103)</span>
+&lt;%= <span class="f">link_to</span> <span class="s">"อ่านต่อ"</span>, <span class="f">post_path</span>(@post) %&gt;
+&lt;%= <span class="f">link_to</span> <span class="s">"อ่านต่อ"</span>, @post %&gt;    <span class="c"># ย่อได้</span>
+
+<span class="c"># ใน controller (บทเรียน 102)</span>
+<span class="f">redirect_to</span> <span class="f">post_path</span>(@post)
+<span class="f">redirect_to</span> @post                  <span class="c"># ย่อได้</span></code></pre>
+
+<p>
+  ตัวย่อทำงานยังไง? Rails ดูว่า <code>@post</code> เป็น object class <code>Post</code> → แปลงเป็นชื่อ <code>post</code> →
+  เรียก <strong><code>post_path</code></strong> ให้ · แปลว่า<strong>ตัวย่อพึ่งชื่อ route <code>post</code></strong>
+  <br>model <code>Post</code> ของจริงรอ Day 2 ผมเลยทำ object ที่ทำตัวเหมือน model ขึ้นมาแทน แล้วให้ Rails แปลงเป็น path
+  (<code>polymorphic_path</code> คือตัวที่ <code>link_to @post</code> กับ <code>redirect_to @post</code> ใช้อยู่ข้างใน):
+</p>
+
+<pre><code><span class="k">class</span> <span class="n">Post</span>
+  <span class="k">include</span> <span class="n">ActiveModel</span>::<span class="n">Model</span>
+  <span class="f">attr_accessor</span> <span class="n">:id</span>
+  <span class="k">def</span> <span class="f">persisted?</span> = <span class="k">true</span>
+<span class="k">end</span>
+<span class="k">include</span> <span class="n">Rails</span>.application.routes.url_helpers
+<span class="f">p</span> <span class="f">polymorphic_path</span>(<span class="n">Post</span>.<span class="f">new</span>(id: <span class="n">42</span>))
+
+<span class="c"># routes.rb: get "/posts/:id", to: "posts#show"              ← ไม่มีชื่อ</span>
+NoMethodError: undefined method 'post_path' for main
+<span class="c"># routes.rb: get "/posts/:id", to: "posts#show", as: :post   ← มีชื่อ</span>
+"/posts/42"</code></pre>
+
+<p>
+  นี่คือเหตุผลที่ <code>as: :post</code> ในสไลด์หน้า 56 <strong>ไม่ใช่ของประดับ</strong> —
+  ถ้าใช้ <code>routes.rb</code> แบบสไลด์หน้า 54 ตรง ๆ แล้วไปเขียน <code>redirect_to @post</code> จะพังทันที
+  (Day 2 จะใช้ <code>resources :posts</code> ซึ่งตั้งชื่อ <code>post</code> ให้เอง — หัวข้อ 5)
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ชื่อในรายชื่อติดต่อของมือถือ</span>
+  <p>
+    คุณไม่ได้จำเบอร์แม่ คุณบันทึกไว้ในมือถือว่า <strong>"แม่"</strong> แล้วกดโทรจากชื่อ
+    <br>วันที่แม่เปลี่ยนเบอร์ คุณแก้ในรายชื่อ<strong>ที่เดียว</strong> — ปุ่มโทรด่วน แชท ประวัติโทร ทุกอย่างที่อ้าง "แม่" ใช้เบอร์ใหม่ทันที
+    <br>ชื่อ route (<code>post</code>) คือชื่อในรายชื่อ · URL จริง (<code>/posts/42</code>) คือเบอร์ ·
+    การเขียน <code>"/posts/#{id}"</code> ตรง ๆ คือ<strong>การจดเบอร์ไว้ในกระดาษ 40 แผ่น</strong>
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> รายชื่อในมือถือเก็บเบอร์สำเร็จรูปไว้หนึ่งเบอร์
+    แต่ helper <strong>ประกอบ URL ใหม่ทุกครั้ง</strong>จาก pattern กับค่าที่คุณส่งเข้าไป (<code>42</code>, <code>format:</code>, <code>page:</code>)
+    — มันจึงสร้าง URL ได้เป็นล้านแบบจากชื่อเดียว
+    <br>และถ้าวันหนึ่งคุณ<strong>เปลี่ยนชื่อ</strong>เอง (แก้ <code>as:</code>) ทุกที่ที่เรียกชื่อเก่าจะพัง
+    — แต่พังแบบดัง ๆ เป็น <code>NoMethodError</code> ตอนเปิดหน้านั้น ไม่ใช่ลิงก์เสียเงียบ ๆ แบบ hardcode
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>named route</dt>
+    <dd>route ที่มีชื่อ (คอลัมน์ Prefix ไม่ว่าง) · ได้มาจาก <code>as:</code> หรือจาก Rails ตั้งให้เอง ·
+        <strong>ถาม senior ได้ว่า “route นี้ named หรือยัง ผมจะใช้ <code>_path</code> helper”</strong></dd>
+    <dt>path helper / URL helper</dt>
+    <dd><code>post_path</code> กับ <code>post_url</code> · method ที่ Rails สร้างจากชื่อ route ·
+        <strong>พิมพ์บอก AI ได้ว่า “replace hardcoded URLs with Rails route helpers”</strong> — AI จะรู้ทันทีว่าให้ทำอะไร</dd>
+    <dt>url_helpers</dt>
+    <dd><code>Rails.application.routes.url_helpers</code> · กล่องที่เก็บ helper ทุกตัวไว้ เอามาใช้นอก controller/view ได้ (runner, job, console) ·
+        คู่มือ Rails หัวข้อ <em>Routes in Rails Console</em> ใช้ตัวนี้เหมือนกัน ·
+        <strong>ถาม AI ได้ว่า “how do I call Rails route helpers outside a controller, e.g. in a background job”</strong></dd>
+    <dt>default_url_options / host</dt>
+    <dd>ค่าโดเมนตั้งต้นที่ <code>_url</code> ใช้เมื่อไม่มี request · ข้อความ error <em>Missing host to link to!</em> แปลว่าขาดตัวนี้ ·
+        <strong>ถาม senior ได้ว่า “อีเมลที่ส่งจาก job เราตั้ง host ของ url helper ไว้ที่ไหน”</strong></dd>
+    <dt>polymorphic URL</dt>
+    <dd>การยื่น object ให้ Rails เดา helper เอง (<code>redirect_to @post</code>) · ทำงานได้เพราะมี route ชื่อ <code>post</code> ·
+        <strong>ถาม AI ได้ว่า “why does <code>link_to @post</code> raise undefined method <code>post_path</code>”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · จัดกลุ่ม route — <code>namespace</code> · <code>scope</code> · <code>scope module:</code></h2>
+
+<p>
+  พอแอปโตขึ้นจะมีหน้าหลังบ้าน (admin) และ API ปนกัน · สไลด์หน้า 57 มีสามท่า ซึ่งเปลี่ยน<strong>คนละส่วน</strong>ของ route
+  — ผมเขียนแต่ละท่าลงไฟล์ (ใส่ <code>get "/posts"</code> หนึ่งเส้นข้างใน · ท่าที่สามสไลด์เว้นว่างไว้) แล้วดูตารางจริง:
+</p>
+
+<pre><code><span class="c"># A · namespace</span>
+<span class="f">namespace</span> <span class="n">:admin</span> <span class="k">do</span>
+  <span class="f">get</span> <span class="s">"/posts"</span>, to: <span class="s">"posts#index"</span>
+<span class="k">end</span>
+
+     Prefix Verb URI Pattern            Controller#Action
+admin_posts GET  /admin/posts(.:format) admin/posts#index
+
+<span class="c"># B · scope "/api"</span>
+<span class="f">scope</span> <span class="s">"/api"</span> <span class="k">do</span>
+  <span class="f">get</span> <span class="s">"/posts"</span>, to: <span class="s">"posts#index"</span>
+<span class="k">end</span>
+
+Prefix Verb URI Pattern          Controller#Action
+ posts GET  /api/posts(.:format) posts#index
+
+<span class="c"># C · scope module:</span>
+<span class="f">scope</span> module: <span class="n">:admin</span> <span class="k">do</span>
+  <span class="f">get</span> <span class="s">"/posts"</span>, to: <span class="s">"posts#index"</span>
+<span class="k">end</span>
+
+Prefix Verb URI Pattern      Controller#Action
+ posts GET  /posts(.:format) admin/posts#index</code></pre>
+
+<p>สรุปจากตารางจริงทั้งสาม:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ท่า</th><th>URL</th><th>controller (class)</th><th>ไฟล์ controller</th><th>ชื่อ helper</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>namespace :admin</code></td><td><strong><code>/admin/posts</code></strong></td><td><strong><code>Admin::PostsController</code></strong></td><td><code>app/controllers/admin/posts_controller.rb</code></td><td><strong><code>admin_posts_path</code></strong></td></tr>
+    <tr><td><code>scope "/api"</code></td><td><strong><code>/api/posts</code></strong></td><td><code>PostsController</code> (ตัวเดิม)</td><td><code>app/controllers/posts_controller.rb</code></td><td><code>posts_path</code></td></tr>
+    <tr><td><code>scope module: :admin</code></td><td><code>/posts</code> (เดิม)</td><td><strong><code>Admin::PostsController</code></strong></td><td><code>app/controllers/admin/posts_controller.rb</code></td><td><code>posts_path</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ตัวหนา = ส่วนที่ท่านั้นเปลี่ยน · <strong>namespace เปลี่ยนทั้งสามอย่าง</strong> (URL + module + ชื่อ helper) ตรงกับที่สไลด์สรุป ·
+  scope เลือกเปลี่ยนแค่อย่างเดียว
+  <br>ผมเขียน <code>Admin::PostsController</code> ไว้ใน <code>app/controllers/admin/posts_controller.rb</code> แล้ว curl ดูว่าใครรับจริง:
+</p>
+
+<pre><code><span class="c">$ curl localhost:3000/admin/posts     # A</span>
+Admin::PostsController#index
+<span class="c">$ curl localhost:3000/api/posts       # B</span>
+PostsController#index
+<span class="c">$ curl localhost:3000/posts           # C</span>
+Admin::PostsController#index</code></pre>
+
+<p>
+  (ทั้งสอง controller พิมพ์ <code>self.class.name</code> ออกมา เลยเห็นชื่อ class ตรง ๆ)
+  <br>ถ้า<strong>ยังไม่ได้สร้าง</strong>ไฟล์ <code>admin/posts_controller.rb</code> แล้วยิง <code>/admin/posts</code>
+  จะได้ status <strong>500</strong> พร้อมข้อความ <code>uninitialized constant Admin</code> —
+  router ชี้ไปที่ <code>Admin::PostsController</code> แล้ว แต่ Ruby หา module <code>Admin</code> ไม่เจอ
+  (ไม่ใช่ 404 แบบ <em>No route matches</em> เพราะ router ทำงานสำเร็จแล้ว)
+</p>
+
+<div class="warn">
+  <p>
+    <strong>⚠️ เอาสามท่ามาไว้ในไฟล์เดียวกัน — route ตัวสุดท้ายเสียชื่อไปเงียบ ๆ</strong>
+  </p>
+<pre><code><span class="c"># routes.rb มีทั้ง A, B, C ตามลำดับ</span>
+<span class="c">$ bin/rails routes -g posts</span>
+     Prefix Verb URI Pattern            Controller#Action
+admin_posts GET  /admin/posts(.:format) admin/posts#index
+      posts GET  /api/posts(.:format)   posts#index
+            GET  /posts(.:format)       admin/posts#index</code></pre>
+  <p style="margin-bottom:0">
+    B กับ C อยากได้ชื่อ <code>posts</code> เหมือนกัน · B มาก่อนเลยได้ไป · <strong>C ไม่ได้ชื่อเลย และไม่มี error</strong>
+    — <code>posts_path</code> ตอนนี้คืน <code>"/api/posts"</code> (รัน runner ยืนยันแล้ว) ·
+    ต่างจากตอนตั้งชื่อซ้ำเองด้วย <code>as:</code> หรือ <code>root</code> สองตัว ซึ่ง Rails <strong>ไม่ยอม boot</strong>
+    (<code>Invalid route name, already in use</code>) · ชื่อที่ Rails ตั้งให้เองจะถูกข้ามเงียบ ๆ ถ้าชนกัน
+  </p>
+</div>
+
+<p>
+  เทียบกับ Gin ที่คุณเคยเขียนในบท 38: <code>v1 := r.Group("/api/v1")</code> คือ<strong>ท่า B (<code>scope "/api"</code>)</strong> —
+  เปลี่ยนแค่ URL · Go ไม่มีอะไรตรงกับ "ย้าย controller ไปอยู่ใน module" เพราะ Gin ส่งตัวฟังก์ชันตรง ๆ
+  อยากใช้ handler จาก package ไหนก็ import มาเอง
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ — ย้ายแผนกทั้งแผนก vs เปลี่ยนแค่ป้าย</span>
+  <p>
+    นึกถึงแผนกบัญชีของบริษัท มีสามอย่างผูกกันอยู่: <strong>ป้ายหน้าห้อง</strong> (URL) · <strong>คนที่นั่งทำงานในห้อง</strong> (controller) ·
+    <strong>ชื่อในสมุดโทรศัพท์ภายใน</strong> (ชื่อ helper)
+  </p>
+  <ul>
+    <li><code>namespace :admin</code> = <strong>ย้ายทั้งแผนกขึ้นชั้นผู้บริหาร</strong> — ป้ายใหม่ คนชุดใหม่ ชื่อในสมุดก็ขึ้นต้นด้วย "admin"</li>
+    <li><code>scope "/api"</code> = <strong>เปลี่ยนแค่ป้ายหน้าห้อง</strong> — คนเดิมนั่งที่เดิม ชื่อในสมุดเหมือนเดิม</li>
+    <li><code>scope module: :admin</code> = <strong>ป้ายเดิม แต่เปลี่ยนคนนั่ง</strong> — ลูกค้าเดินมาห้องเดิม แต่คนที่บริการเป็นทีมใหม่</li>
+  </ul>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ในบริษัทจริง ถ้าย้ายแผนกไปแล้วลืมจ้างคน ห้องจะว่างและมีคนบอกคุณ ·
+    ใน Rails ถ้าใช้ <code>namespace :admin</code> แต่ยังไม่ได้สร้าง <code>Admin::PostsController</code>
+    <strong>Rails boot ผ่านปกติ</strong> และ <code>bin/rails routes</code> ก็โชว์ route ให้ดูสวยงาม —
+    จะรู้ตัวก็ตอนมี request จริงแล้วได้ 500 · อีกข้อคือในบริษัท สองแผนกใช้ชื่อเดียวกันในสมุดไม่ได้แล้วมีคนทักแน่
+    แต่ใน Rails ชื่อที่ตั้งให้อัตโนมัติชนกันแล้ว<strong>เงียบ</strong> (กล่องเตือนข้างบน)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>namespace</dt>
+    <dd>จัดกลุ่ม route ที่เปลี่ยน URL + module ของ controller + ชื่อ helper พร้อมกัน · ใช้กับหลังบ้าน admin ·
+        <strong>พิมพ์บอก AI ได้ว่า “put these routes under an <code>admin</code> namespace and generate <code>Admin::PostsController</code>”</strong></dd>
+    <dt>scope (path)</dt>
+    <dd><code>scope "/api"</code> — เติมคำหน้า URL อย่างเดียว ไม่แตะ controller ไม่แตะชื่อ · คล้าย <code>r.Group</code> ของ Gin ·
+        <strong>ถาม senior ได้ว่า “API ของเราแยกด้วย namespace หรือแค่ scope path”</strong> — คำตอบบอกว่าโค้ด controller อยู่ไหน</dd>
+    <dt>scope module</dt>
+    <dd><code>scope module: :admin</code> — URL เดิม แต่ไปหา controller ใน module <code>Admin</code> · ใช้ตอนอยากจัดไฟล์ใหม่โดยไม่เปลี่ยน URL ที่คนใช้อยู่แล้ว ·
+        <strong>ถาม senior ได้ว่า “จะย้าย controller เข้า module <code>Admin</code> แต่ URL เดิมต้องไม่เปลี่ยน ใช้ <code>scope module:</code> ได้ไหม”</strong></dd>
+    <dt><code>Admin::PostsController</code></dt>
+    <dd>class <code>PostsController</code> ที่อยู่ใน module <code>Admin</code> · <code>::</code> คือตัวคั่น ·
+        Rails คาดว่าอยู่ใน <code>app/controllers/admin/posts_controller.rb</code> (โฟลเดอร์ = module) · เรื่อง module ทวนได้ที่
+        <a href="./0095-ruby-class-and-module.html">บทเรียน 95</a> ·
+        <strong>เจอ <em>uninitialized constant Admin</em> ให้บอก AI ว่า “the route points to <code>Admin::PostsController</code> but the class doesn't exist yet”</strong></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">อยากให้ URL เป็น <code>/admin/posts</code> แต่<strong>ไม่อยากย้ายไฟล์</strong> — ให้ <code>PostsController</code> ตัวเดิมรับต่อไป ควรเขียนแบบไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>namespace :admin do get "/posts", to: "posts#index" end</code></button>
+    <button class="opt"><code>scope module: :admin do get "/posts", to: "posts#index" end</code></button>
+    <button class="opt"><code>scope "/admin" do get "/posts", to: "posts#index" end</code></button>
+    <button class="opt"><code>get "/posts", to: "admin/posts#index"</code></button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก — ผมรันแล้วได้ <code>posts GET /admin/posts(.:format) posts#index</code>
+      คือ URL ขึ้นต้น <code>/admin</code> แต่ controller ยังเป็น <code>posts</code> ตัวเดิม ·
+      ตัวเลือกที่ 1 ได้ URL ถูกแต่ controller กลายเป็น <code>admin/posts</code> → ต้องสร้างไฟล์ใหม่ ·
+      ตัวเลือกที่ 2 ตรงข้ามกับที่ต้องการ: URL ยังเป็น <code>/posts</code> แต่เปลี่ยน controller ·
+      ตัวเลือกที่ 4 ก็เปลี่ยน controller เป็น <code>Admin::PostsController</code> และ URL ยังเป็น <code>/posts</code>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>จุดที่ต้องจำ:</strong> <code>namespace</code> เปลี่ยนทุกอย่าง · <code>scope "/x"</code> เปลี่ยนแค่ URL ·
+      <code>scope module:</code> เปลี่ยนแค่ controller · ไม่แน่ใจให้รัน <code>bin/rails routes</code> ดูคอลัมน์ URI Pattern กับ Controller#Action
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">5 · อ่านตาราง <code>bin/rails routes</code> ให้ออก — และตารางในสไลด์หน้า 58 มาจากไหน</h2>
+
+<p>
+  ตารางมี 4 คอลัมน์ ตามที่สไลด์หน้า 58 อธิบาย:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คอลัมน์</th><th>คืออะไร</th><th>ตัวอย่าง</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Prefix</strong></td><td>ชื่อ route · เติม <code>_path</code> หรือ <code>_url</code> ต่อท้ายได้ชื่อ helper ·
+        <strong>ว่าง = route นี้ไม่มีชื่อของตัวเอง</strong></td><td><code>new_post</code> → <code>new_post_path</code></td></tr>
+    <tr><td><strong>Verb</strong></td><td>HTTP method ที่ route นี้รับ</td><td><code>GET</code> <code>PATCH</code></td></tr>
+    <tr><td><strong>URI Pattern</strong></td><td>รูปแบบ path · <code>:id</code> คือช่อง · <code>(.:format)</code> คือส่วนที่ขอ <code>.json</code> / <code>.xml</code> ต่อท้ายได้ (มีหรือไม่มีก็ได้)</td><td><code>/posts/:id(.:format)</code></td></tr>
+    <tr><td><strong>Controller#Action</strong></td><td>ปลายทางจริงที่จะถูกเรียก · ต่อท้ายด้วย constraint ถ้ามี</td><td><code>posts#show</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-9">ตารางในสไลด์หน้า 58 ไม่ได้มาจากโค้ดในสไลด์หน้า 54</h3>
+
+<p>
+  ตารางในสไลด์หน้า 58 มี <code>new_post</code> กับ <code>post</code> ในคอลัมน์ Prefix
+  — แต่หัวข้อ 1 เราเห็นแล้วว่าโค้ดหน้า 54 ได้ <code>posts_new</code> และ <code>GET /posts/:id</code> <strong>ไม่มีชื่อ</strong>
+  <br>ตารางแบบในสไลด์ได้มาจากบรรทัดเดียวที่ Day 2 จะสอน — <code>resources :posts</code> · ผมรันดูของจริง:
+</p>
+
+<pre><code><span class="c"># routes.rb</span>
+<span class="f">resources</span> <span class="n">:posts</span>
+
+<span class="c">$ bin/rails routes -c posts</span>
+   Prefix Verb   URI Pattern               Controller#Action
+    posts GET    /posts(.:format)          posts#index
+          POST   /posts(.:format)          posts#create
+ new_post GET    /posts/new(.:format)      posts#new
+edit_post GET    /posts/:id/edit(.:format) posts#edit
+     post GET    /posts/:id(.:format)      posts#show
+          PATCH  /posts/:id(.:format)      posts#update
+          PUT    /posts/:id(.:format)      posts#update
+          DELETE /posts/:id(.:format)      posts#destroy</code></pre>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ ของจริงได้ 8 เส้น สไลด์โชว์ 6</strong> — สไลด์ตัดออกไปสองแถว:
+    <code>edit_post GET /posts/:id/edit</code> (หน้าฟอร์มแก้ไข) และ <code>PUT /posts/:id</code>
+    (ไปที่ <code>posts#update</code> เหมือน <code>PATCH</code>) ·
+    เข้าใจได้ว่าตัดให้พอดีหน้า แต่ถ้าคุณรันเองแล้วเห็น 8 แถว <strong>ไม่ได้ทำอะไรผิด</strong> ·
+    เรื่องว่าแต่ละเส้นใช้ทำอะไรรอ Day 2 (CRUD)
+  </p>
+</div>
+
+<p>
+  สังเกตอีกอย่าง — ใน <code>resources</code> Rails วาง <code>/posts/new</code> <strong>ไว้เหนือ</strong> <code>/posts/:id</code> ให้เอง
+  และสไลด์หน้า 54 ก็เขียนแบบนั้น · เหตุผลอยู่ในหัวข้อ 6
+  <br>ส่วน PATCH/PUT/DELETE ที่ Prefix ว่าง — <strong>ไม่ได้แปลว่า "ชื่อเหมือนแถวบน"</strong> แปลว่าไม่มีชื่อของตัวเอง
+  ที่ใช้ <code>post_path</code> สร้าง URL ของมันได้ก็เพราะ path บังเอิญเหมือนกับของ <code>post</code> เท่านั้น
+  (verb เป็นเรื่องของฟอร์มหรือปุ่ม ไม่ใช่ของ helper)
+</p>
+
+<h3 id="sn-sub-10">ทำไมต้องกรอง — แอปเปล่า ๆ ก็มี route ของ Rails เองอยู่แล้ว</h3>
+
+<p>
+  แอปที่เพิ่ง <code>rails new</code> เสร็จ ยังไม่ได้เขียนอะไรเลย <code>bin/rails routes</code> พิมพ์ออกมา 28 บรรทัด
+  (หัวตาราง + <strong>27 route</strong> ของ Rails เอง — health check <code>/up</code>, Turbo, Action Mailbox, Active Storage) ·
+  เลยต้องกรอง:
+</p>
+
+<pre><code><span class="c">$ bin/rails routes -g post      # -g = grep: หาจากชื่อ · verb · path · controller#action (บางส่วนก็นับ)</span>
+                       Prefix Verb   URI Pattern                                             Controller#Action
+                        posts GET    /posts(.:format)                                        posts#index
+                              POST   /posts(.:format)                                        posts#create
+                     new_post GET    /posts/new(.:format)                                    posts#new
+                    edit_post GET    /posts/:id/edit(.:format)                               posts#edit
+                         post GET    /posts/:id(.:format)                                    posts#show
+                              PATCH  /posts/:id(.:format)                                    posts#update
+                              PUT    /posts/:id(.:format)                                    posts#update
+                              DELETE /posts/:id(.:format)                                    posts#destroy
+rails_postmark_inbound_emails POST   /rails/action_mailbox/postmark/inbound_emails(.:format) action_mailbox/ingresses/postmark/inbound_emails#create</code></pre>
+
+<p>
+  บรรทัดสุดท้ายหลุดมาเพราะ <code>rails_<strong>post</strong>mark…</code> มีคำว่า <code>post</code> อยู่ข้างใน — <code>-g</code> คือการค้นแบบ<strong>บางส่วนก็นับ</strong> ·
+  และสังเกตว่า route <code>POST</code> ตัวอื่นของ Action Mailbox <strong>ไม่</strong>หลุดมา เพราะ <code>-g post</code> (ตัวเล็ก) ไม่ตรงกับ <code>POST</code> (ตัวใหญ่) ·
+  อยากกรองตาม controller อย่างเดียว (ไม่ไปค้นในชื่อ · verb · path) ใช้ <code>-c</code>:
+</p>
+
+<pre><code><span class="c">$ bin/rails routes -c posts            # ได้ 8 เส้นของ PostsController พอดี</span>
+<span class="c">$ bin/rails routes -c PostsController  # เขียนชื่อ class เต็มก็ได้ ผลเหมือนกัน</span>
+<span class="c">$ bin/rails routes -u                  # route ที่ชี้ไป action ที่ยังไม่มีใน controller</span>
+Found 5 unused routes:
+
+   Prefix Verb   URI Pattern               Controller#Action
+          POST   /posts(.:format)          posts#create
+edit_post GET    /posts/:id/edit(.:format) posts#edit
+          PATCH  /posts/:id(.:format)      posts#update
+          PUT    /posts/:id(.:format)      posts#update
+          DELETE /posts/:id(.:format)      posts#destroy</code></pre>
+
+<p>
+  <code>-u</code> เป็นของแถมที่สไลด์ไม่ได้พูด — <code>PostsController</code> ตัวที่ใช้ตรวจมีแค่ <code>index</code> <code>new</code> <code>show</code> <code>popular</code>
+  เลยเหลือ 5 เส้นที่ยังไม่มีคนรับ · หัวข้อ 6 จะเห็นว่ามันจับอะไร<strong>ไม่ได้</strong>
+  <br>ระวังอีกนิด: <code>-c</code> ก็ยังเป็นการค้น<strong>บางส่วน</strong>เหมือนกัน (ข้างในมันแปลงเป็น regex) ·
+  ผมลองใส่ <code>namespace :admin</code> จากหัวข้อ 4 ไว้คู่กับ <code>resources :posts</code> แล้ว <code>-c posts</code>
+  ได้แถว <code>admin_posts GET /admin/posts(.:format) admin/posts#index</code> ติดมาด้วย เพราะ <code>admin/posts</code> มีคำว่า <code>posts</code> อยู่ข้างใน
+</p>
+
+<h3 id="sn-sub-11">ดูในเบราว์เซอร์ — <code>/rails/info/routes</code></h3>
+
+<pre><code><span class="c">$ curl -s -o /dev/null -w '%{http_code}\n' localhost:3000/rails/info/routes</span>
+200</code></pre>
+
+<p>
+  เปิด <code>http://localhost:3000/rails/info/routes</code> ในเบราว์เซอร์จะได้หน้าชื่อ <em>Routes</em> ที่มีตารางเดียวกัน พร้อมช่องค้นหา ·
+  คู่มือ Rails ระบุว่าหน้านี้มี<strong>ใน development environment</strong> (อย่าหวังว่าจะเปิดบน production ได้) ·
+  ทริกเล็ก ๆ: หน้า <em>Routing Error</em> ตอนได้ 404 ใน development ก็มีตาราง route แบบเดียวกันแนบมาในหน้าด้วย
+</p>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ในตาราง <code>bin/rails routes</code> ของโค้ดสไลด์หน้า 54 แถว <code>GET /posts/:id(.:format) posts#show</code> มีคอลัมน์ Prefix ว่าง — แปลว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">ใช้ชื่อเดียวกับแถวด้านบน คือเรียก <code>posts_new_path(42)</code> ได้</button>
+    <button class="opt">route นี้ถูกปิดไว้ ต้องเปิดด้วย <code>as:</code> ก่อนถึงจะรับ request ได้</button>
+    <button class="opt">Rails ตั้งชื่อให้เป็น <code>post</code> แต่ซ่อนไว้ไม่โชว์ในตาราง</button>
+    <button class="opt">route นี้รับ request ได้ปกติ แต่ไม่มีชื่อ เลยไม่มี <code>post_path</code> ให้เรียก</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก — curl <code>/posts/42</code> เข้า <code>show</code> ได้ 200 แต่ <code>post_path(42)</code> ได้
+      <code>NoMethodError: undefined method 'post_path'</code> (รันจริงในหัวข้อ 3) ·
+      ตัวเลือกที่ 1 ผิดเพราะ Prefix ว่างไม่ได้แปลว่า "เหมือนแถวบน" และ <code>posts_new_path</code> ให้ <code>/posts/new</code> ซึ่งคนละ path ·
+      ตัวเลือกที่ 2 ผิดเพราะ route ไม่มีชื่อก็รับ request ได้ปกติ ชื่อมีไว้สร้าง URL เท่านั้น ·
+      ตัวเลือกที่ 3 ผิดเพราะตารางโชว์ทุกชื่อที่มี — Rails ไม่ตั้งชื่ออัตโนมัติให้ path ที่มีช่อง <code>:id</code>
+    </p>
+    <p style="margin-bottom:0">
+      <strong>จุดที่ต้องจำ:</strong> ชื่อ route มีไว้<strong>สร้าง URL</strong> ไม่ได้มีไว้<strong>รับ request</strong> ·
+      Prefix ว่าง = รับได้ แต่สร้าง URL ด้วย helper ของตัวเองไม่ได้ · อยากได้ก็ใส่ <code>as:</code>
+    </p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>Prefix</dt>
+    <dd>คอลัมน์แรกของ <code>bin/rails routes</code> = ชื่อ route · <strong>ถาม AI ได้ว่า “what does an empty Prefix in <code>rails routes</code> output mean”</strong></dd>
+    <dt>URI Pattern / <code>(.:format)</code></dt>
+    <dd>รูปแบบ path ที่ route จับ · วงเล็บ = ส่วน optional · <code>(.:format)</code> ทำให้ <code>/posts/42.json</code> เข้า route เดียวกันได้โดย <code>params[:format] == "json"</code> ·
+        <strong>ถาม AI ได้ว่า “why does <code>/posts/1.5</code> give <code>params[:id] == "1"</code> in Rails”</strong> — คำตอบจะพาไปที่ <code>(.:format)</code> ตัวนี้</dd>
+    <dt>resources / RESTful routes</dt>
+    <dd><code>resources :posts</code> สร้าง route มาตรฐานให้ 8 เส้น (7 action) พร้อมชื่อครบ · รายละเอียดคือ Day 2 ·
+        <strong>ถาม senior ได้ว่า “ที่นี่ใช้ <code>resources</code> กับ <code>only:</code> หรือเขียน route ทีละเส้น”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · ลำดับสำคัญ — บรรทัดแรกที่ match ชนะทันที</h2>
+
+<p>
+  สไลด์หน้า 59 คือกับดักที่คนมาจาก Gin โดนแน่นอน เพราะในบท 38 คุณพิสูจน์ไปแล้วว่า
+  <strong>Gin ไม่สนลำดับ</strong> — ลง <code>/users/:id</code> ก่อนหรือหลัง <code>/users/me</code> ก็ได้ผลเหมือนกัน
+  เพราะ router ของ Gin เลือก<em>อันที่เจาะจงกว่า</em>ให้เอง · ลองทายว่า Rails ทำแบบเดียวกันไหม
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># routes.rb — ฝั่ง "ผิด" ของสไลด์หน้า 59</span>
+<span class="f">get</span> <span class="s">"/posts/:id"</span>,     to: <span class="s">"posts#show"</span>
+<span class="f">get</span> <span class="s">"/posts/popular"</span>, to: <span class="s">"posts#popular"</span>
+
+<span class="c">$ curl localhost:3000/posts/popular</span></code></pre>
+  <p class="ask">
+    ได้ <code>posts#popular</code> แบบ Gin หรือเปล่า? แล้ว <code>bin/rails routes -u</code> จะเตือนว่ามีเส้นที่ไม่มีวันถูกเรียกไหม?
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ bin/rails routes -c posts</span>
+       Prefix Verb URI Pattern              Controller#Action
+              GET  /posts/:id(.:format)     posts#show
+posts_popular GET  /posts/popular(.:format) posts#popular
+
+<span class="c">$ curl localhost:3000/posts/popular</span>
+posts#show  params[:id] = "popular"  (String)  format=nil
+
+<span class="c">$ bin/rails routes -u</span>
+No unused routes found.</code></pre>
+    <p>
+      <strong>เข้า <code>show</code> โดย <code>params[:id] == "popular"</code></strong> ตรงกับที่สไลด์เขียนไว้ทุกตัวอักษร ·
+      <code>:id</code> รับอะไรก็ได้ (หัวข้อ 2) คำว่า <code>popular</code> เลยเข้าเงื่อนไขบรรทัดแรก และ Rails หยุดหาทันที
+    </p>
+    <p style="margin-bottom:0">
+      ส่วน <code>-u</code> บอกว่า <strong>ไม่มี route ที่ไม่ได้ใช้</strong> — เพราะมันเช็คแค่ว่า action <code>popular</code> มีอยู่ใน controller ไหม
+      (มี) ไม่ได้เช็คว่ามี request ไปถึงได้จริงหรือเปล่า ·
+      นี่คือที่สไลด์บอกว่า <strong>"ไม่มีการเตือนว่ามีเส้นที่ไม่มีวันถูกเรียก"</strong> — ผมลองหาตัวเตือนแล้วก็ไม่เจอจริง ๆ
+    </p>
+  </div>
+</div>
+
+<p>สลับเป็นฝั่ง "ถูก" — เส้นที่เจาะจงกว่าอยู่บน เส้นที่กว้างกว่าอยู่ล่าง:</p>
+
+<pre><code><span class="c"># routes.rb — ฝั่ง "ถูก"</span>
+<span class="f">get</span> <span class="s">"/posts/popular"</span>, to: <span class="s">"posts#popular"</span>
+<span class="f">get</span> <span class="s">"/posts/:id"</span>,     to: <span class="s">"posts#show"</span>
+
+<span class="c">$ bin/rails routes -c posts</span>
+       Prefix Verb URI Pattern              Controller#Action
+posts_popular GET  /posts/popular(.:format) posts#popular
+              GET  /posts/:id(.:format)     posts#show
+
+<span class="c">$ curl localhost:3000/posts/popular</span>
+posts#popular
+<span class="c">$ curl localhost:3000/posts/42</span>
+posts#show  params[:id] = "42"  (String)  format=nil</code></pre>
+
+<p>
+  ตาราง <code>bin/rails routes</code> เรียง<strong>ตามลำดับในไฟล์เป๊ะ ๆ</strong> (คู่มือ Rails ยืนยัน) —
+  เพราะฉะนั้นเวลาสงสัยว่า URL ไหนไปไหน <strong>ไล่ตารางจากบนลงล่าง แถวแรกที่เข้าเงื่อนไขคือคำตอบ</strong>
+</p>
+
+<h3 id="sn-sub-12">ทางแก้ที่สอง — constraint ทำให้บรรทัดบน "ไม่ match" แล้วไหลลงไปต่อ</h3>
+
+<pre><code><span class="c"># ลำดับ "ผิด" เหมือนเดิม แต่เติม constraint</span>
+<span class="f">get</span> <span class="s">"/posts/:id"</span>,     to: <span class="s">"posts#show"</span>, constraints: { id: <span class="s">/\d+/</span> }
+<span class="f">get</span> <span class="s">"/posts/popular"</span>, to: <span class="s">"posts#popular"</span>
+
+<span class="c">$ curl localhost:3000/posts/popular</span>
+posts#popular
+<span class="c">$ curl localhost:3000/posts/42</span>
+posts#show  params[:id] = "42"  (String)  format=nil</code></pre>
+
+<p>
+  <code>popular</code> ไม่ใช่ตัวเลข → บรรทัดแรกไม่ match → router อ่านบรรทัดถัดไป ·
+  นี่คือที่สไลด์หน้า 55 บอกว่า constraint "แยก <code>/posts/42</code> ออกจาก <code>/posts/latest</code> ได้" ·
+  ในงานจริงทำ<strong>ทั้งสองอย่าง</strong>ได้ยิ่งดี: เรียงให้ถูก + มี constraint กันไว้อีกชั้น
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Gin (บท 38)</th><th>Rails</th></tr></thead>
+  <tbody>
+    <tr><td>ลง <code>:id</code> ก่อน แล้วค่อยลง path ตายตัว</td><td>path ตายตัวชนะเสมอ <strong>ลำดับไม่มีผล</strong></td><td><strong><code>:id</code> ชนะ</strong> เพราะมาก่อน</td></tr>
+    <tr><td>วิธีที่ router หา</td><td>ต้นไม้ (radix tree) — เลือกที่เจาะจงที่สุด</td><td>ไล่รายการจากบนลงล่าง หยุดที่แรกที่ตรง</td></tr>
+    <tr><td>มีอะไรเตือนไหม</td><td>ชนกันแบบที่แยกไม่ได้ → panic ตอนลง route</td><td>ไม่มี — <code>-u</code> ก็ไม่จับ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-13">พิสูจน์ด้วยเทส — ตัวอย่างล่วงหน้าของ Day 4</h3>
+
+<p>
+  curl พิสูจน์ได้ครั้งเดียว · ถ้าอยากให้มี<strong>คนเฝ้า</strong>ไม่ให้ใครมาสลับบรรทัดทีหลัง Rails มี <code>assert_recognizes</code>
+  ที่ถามว่า "URL นี้ router ส่งไปไหน" · เรื่องเทสเต็ม ๆ คือ Day 4 แต่ดูไว้ก่อนว่าหน้าตาเป็นยังไง:
+</p>
+
+<pre><code><span class="c"># test/routing/posts_routing_test.rb</span>
+<span class="f">require</span> <span class="s">"test_helper"</span>
+
+<span class="k">class</span> <span class="n">PostsRoutingTest</span> &lt; <span class="n">ActionDispatch</span>::<span class="n">IntegrationTest</span>
+  <span class="f">test</span> <span class="s">"/posts/popular ไปที่ posts#popular"</span> <span class="k">do</span>
+    <span class="f">assert_recognizes</span>({ controller: <span class="s">"posts"</span>, action: <span class="s">"popular"</span> }, <span class="s">"/posts/popular"</span>)
+  <span class="k">end</span>
+
+  <span class="f">test</span> <span class="s">"/posts/42 ไปที่ posts#show พร้อม id เป็น string"</span> <span class="k">do</span>
+    <span class="f">assert_recognizes</span>({ controller: <span class="s">"posts"</span>, action: <span class="s">"show"</span>, id: <span class="s">"42"</span> }, <span class="s">"/posts/42"</span>)
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>ลำดับถูก (หรือมี constraint) → <code>2 runs, 2 assertions, 0 failures, 0 errors, 0 skips</code> · ลบ constraint แล้วปล่อยลำดับผิดไว้:</p>
+
+<pre><code><span class="c">$ bin/rails test test/routing/posts_routing_test.rb</span>
+Failure:
+PostsRoutingTest#test_/posts/popular_ไปที่_posts#popular [test/routing/posts_routing_test.rb:5]:
+The recognized options &lt;{"controller" =&gt; "posts", "action" =&gt; "show", "id" =&gt; "popular"}&gt; did not match &lt;{"controller" =&gt; "posts", "action" =&gt; "popular"}&gt;, difference:
+
+bin/rails test test/routing/posts_routing_test.rb:4
+
+2 runs, 2 assertions, 1 failures, 0 errors, 0 skips</code></pre>
+
+<p>
+  (ตัดบรรทัดหัว <code>Running 2 tests…</code> / <code>Run options</code> / <code>Finished in …</code> และแถวจุด <code>.F</code> ออก ที่เหลือก็อปมาตรงตัว) ·
+  เทสบอกตรง ๆ ว่า router ส่งไป <code>show</code> พร้อม <code>id "popular"</code> — ตรงกับที่ curl เห็น
+  และสังเกตว่า <code>id: "42"</code> ในเทสข้อสองต้องเป็น<strong>สตริง</strong> ถึงจะผ่าน
+</p>
+
+<div class="quiz" data-answer="1">
+  <p class="q"><code>routes.rb</code> เขียน <code>get "/posts/:id", to: "posts#show"</code> ไว้<strong>ก่อน</strong> <code>get "/posts/new", to: "posts#new"</code> — แล้วมี request <code>GET /posts/new</code> เข้ามา เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">เข้า <code>posts#new</code> เพราะ <code>new</code> เป็นคำตายตัวที่เจาะจงกว่า <code>:id</code></button>
+    <button class="opt">เข้า <code>posts#show</code> โดย <code>params[:id] == "new"</code> เพราะบรรทัดบนตรงก่อน</button>
+    <button class="opt">Rails ไม่ยอม boot เพราะสอง route ชนกันที่ path <code>/posts/new</code></button>
+    <button class="opt">ได้ 404 เพราะ router สับสนว่าควรเลือกบรรทัดไหน</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก — curl จริงได้ <code>posts#show  params[:id] = "new"  (String)</code> ·
+      ตัวเลือกที่ 1 คือพฤติกรรมของ <strong>Gin</strong> (บท 38) ไม่ใช่ Rails · Rails ไม่เทียบว่าบรรทัดไหนเจาะจงกว่า ·
+      ตัวเลือกที่ 3 ผิดเพราะ Rails boot ได้ปกติและไม่เตือนอะไรเลย (ที่ไม่ยอม boot คือชื่อซ้ำ เช่น <code>root</code> สองตัว) ·
+      ตัวเลือกที่ 4 ผิดเพราะ router ไม่เคย "สับสน" — มันหยุดที่บรรทัดแรกที่ตรง
+    </p>
+    <p style="margin-bottom:0">
+      <strong>จุดที่ต้องจำ:</strong> นี่คือเหตุผลที่สไลด์หน้า 54 วาง <code>/posts/new</code> ไว้<strong>เหนือ</strong> <code>/posts/:id</code>
+      และ <code>resources</code> ก็เรียงแบบนั้นให้เอง · เส้นที่เจาะจงกว่าอยู่บนเสมอ
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-7">7 · ภารกิจ — เขียน routes ของ wongnok_blog แล้วพิสูจน์ทุกข้อด้วยผลรัน</h2>
+
+<div class="task">
+  <h3 id="sn-sub-14">🛠 หน้าโพสต์ยอดนิยม + หลังบ้าน admin</h3>
+  <p>
+    ในโปรเจกต์ <code>wongnok_blog</code> ของคุณ (สร้าง <code>PostsController</code> กับ <code>Admin::PostsController</code>
+    ที่แค่ <code>render plain:</code> แบบในบทนี้ก็พอ) แก้ <code>config/routes.rb</code> ให้ได้ตามนี้ —
+    <strong>ข้อ 1 ต้องเขียนก่อนข้อ 2 ในไฟล์</strong> (ตั้งใจให้ลำดับ "ผิด")
+  </p>
+  <ol>
+    <li><code>GET /posts/:id</code> → <code>posts#show</code> · ชื่อ route <code>post</code> · id ต้องเป็นตัวเลขเท่านั้น</li>
+    <li><code>GET /posts/popular</code> → <code>posts#popular</code> · ชื่อ route <code>popular_posts</code></li>
+    <li><code>GET /admin/posts</code> → <code>Admin::PostsController#index</code> · ชื่อ helper <code>admin_posts_path</code></li>
+    <li>หน้าแรก <code>/</code> → <code>posts#index</code></li>
+  </ol>
+  <p><strong>แล้วพิสูจน์ทีละข้อ</strong> (ห้ามข้าม):</p>
+  <ol>
+    <li><code>bin/rails routes -g posts</code> — Prefix ต้องมี <code>post</code> · <code>popular_posts</code> · <code>admin_posts</code> · <code>root</code></li>
+    <li><code>bin/rails runner</code> พิมพ์ <code>post_path(7)</code> · <code>popular_posts_path</code> · <code>admin_posts_path</code> · <code>root_path</code></li>
+    <li><code>curl</code> ห้า URL: <code>/posts/popular</code> · <code>/posts/7</code> · <code>/posts/abc</code> · <code>/admin/posts</code> · <code>/</code> — จด status ทุกตัว</li>
+    <li><strong>ตั้งใจทำพัง:</strong> ลบ constraint ในข้อ 1 ออก แล้ว curl <code>/posts/popular</code> ใหม่ — ได้อะไร?</li>
+    <li>เรียก <code>post_path("abc")</code> ตอนที่ <strong>มี</strong> constraint อยู่ — ได้อะไร?</li>
+  </ol>
+  <p class="ask">
+    ก่อนกดเฉลย ตอบให้ได้: <strong>ทำไมข้อ 1 กับ 2 อยู่ลำดับ "ผิด" แต่ <code>/posts/popular</code> ยังไปถูกที่ จนกระทั่งลบ constraint?</strong>
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="n">Rails</span>.application.routes.<span class="f">draw</span> <span class="k">do</span>
+  <span class="f">get</span> <span class="s">"/posts/:id"</span>,      to: <span class="s">"posts#show"</span>,    as: <span class="n">:post</span>,
+      constraints: { id: <span class="s">/\d+/</span> }
+  <span class="f">get</span> <span class="s">"/posts/popular"</span>,  to: <span class="s">"posts#popular"</span>, as: <span class="n">:popular_posts</span>
+
+  <span class="f">namespace</span> <span class="n">:admin</span> <span class="k">do</span>
+    <span class="f">get</span> <span class="s">"/posts"</span>, to: <span class="s">"posts#index"</span>
+  <span class="k">end</span>
+
+  <span class="f">root</span> <span class="s">"posts#index"</span>
+<span class="k">end</span></code></pre>
+    <p>ผลรันจริงของคำตอบนี้:</p>
+<pre><code><span class="c">$ bin/rails routes -g posts</span>
+       Prefix Verb URI Pattern              Controller#Action
+         post GET  /posts/:id(.:format)     posts#show {id: /\d+/}
+popular_posts GET  /posts/popular(.:format) posts#popular
+  admin_posts GET  /admin/posts(.:format)   admin/posts#index
+         root GET  /                        posts#index
+
+<span class="c"># bin/rails runner (ผ่าน Rails.application.routes.url_helpers)</span>
+"/posts/7"
+"/posts/popular"
+"/admin/posts"
+"/"
+
+<span class="c"># curl → status  body</span>
+/posts/popular   -&gt; 200  posts#popular
+/posts/7         -&gt; 200  posts#show  params[:id] = "7"  (String)  format=nil
+/posts/abc       -&gt; 404  &lt;!DOCTYPE html&gt;   ← หน้า Routing Error (No route matches)
+/admin/posts     -&gt; 200  Admin::PostsController#index
+/                -&gt; 200  PostsController#index
+
+<span class="c"># ข้อ 4 — ลบ constraint</span>
+posts#show  params[:id] = "popular"  (String)  format=nil
+
+<span class="c"># ข้อ 5 — post_path("abc") ตอนมี constraint</span>
+ActionController::UrlGenerationError: No route matches {action: "show", controller: "posts", id: "abc"}, possible unmatched constraints: [:id]</code></pre>
+    <ul>
+      <li>
+        <strong>ทำไมลำดับผิดแต่ยังถูก</strong> — constraint <code>/\d+/</code> ทำให้บรรทัดแรก<strong>ไม่ match</strong> กับคำว่า <code>popular</code>
+        router เลยอ่านต่อไปบรรทัดสอง · พอลบ constraint บรรทัดแรกรับทุกอย่าง <code>popular</code> เลยตกไปที่ <code>show</code> ทันที
+        → <strong>constraint คือตาข่ายนิรภัย แต่อย่าใช้แทนการเรียงลำดับให้ถูก</strong> (เผื่อวันหนึ่งมีคนลบออก)
+      </li>
+      <li>
+        <code>root</code> โผล่ใน <code>-g posts</code> ด้วย เพราะ <code>-g</code> ค้นเจอคำว่า <code>posts</code> ในคอลัมน์ Controller#Action (<code>posts#index</code>)
+      </li>
+      <li>
+        ข้อ 5: <strong>constraint ใช้ทั้งขาเข้าและขาออก</strong> — ไม่ใช่แค่กัน request แต่ helper ก็ไม่ยอมสร้าง URL ที่ผิดรูปให้ด้วย ·
+        error บอกชัดว่าติดที่ <code>[:id]</code>
+      </li>
+    </ul>
+    <p style="margin-bottom:0">
+      ถ้าอยากไปไกลกว่านี้: เขียน <code>test/routing/posts_routing_test.rb</code> แบบในหัวข้อ 6
+      แล้วลองลบ constraint ดูว่าเทสจับได้จริง — นั่นคือสิ่งที่จะกันไม่ให้เพื่อนร่วมทีมมาลบทิ้งโดยไม่รู้ตัว
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-8">8 · สรุปบทนี้</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เรื่อง (สไลด์)</th><th>จำแค่นี้พอ</th></tr></thead>
+  <tbody>
+    <tr><td><code>routes.rb</code> (54)</td><td>verb + path → <code>"controller#action"</code> · <code>root</code> มีได้ตัวเดียว ·
+        404 สองแบบ: <em>No route matches</em> (แก้ routes) กับ <em>action could not be found</em> (แก้ controller)</td></tr>
+    <tr><td><code>:id</code> (55)</td><td><strong>String เสมอ</strong> (หรือ <code>nil</code> ถ้า optional แล้วไม่ส่ง) · จุดถูกตัดเป็น format ·
+        <code>"abc".to_i</code> = <code>0</code> เงียบ ๆ · constraint คัดกรองแต่ไม่แปลงชนิด → 404</td></tr>
+    <tr><td>ชื่อ route (56)</td><td>path ที่มี <code>:id</code> ไม่ได้ชื่ออัตโนมัติ ต้อง <code>as:</code> · <code>_url</code> ต้องรู้ host ·
+        <code>redirect_to @post</code> พึ่งชื่อ <code>post</code></td></tr>
+    <tr><td>จัดกลุ่ม (57)</td><td><code>namespace</code> เปลี่ยน URL + controller + ชื่อ · <code>scope "/x"</code> แค่ URL · <code>scope module:</code> แค่ controller ·
+        ชื่ออัตโนมัติชนกันแล้วเงียบ</td></tr>
+    <tr><td>ตาราง (58)</td><td>Prefix · Verb · URI Pattern · Controller#Action · <code>resources :posts</code> ได้ <strong>8 เส้น</strong> (สไลด์โชว์ 6) ·
+        กรองด้วย <code>-c</code> แม่นกว่า <code>-g</code></td></tr>
+    <tr><td>ลำดับ (59)</td><td><strong>บรรทัดแรกที่ match ชนะ</strong> ต่างจาก Gin · ไม่มีใครเตือน · เจาะจงไว้บน กว้างไว้ล่าง + constraint เป็นตาข่าย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ ถ้าตอบสี่ข้อนี้ได้ แปลว่าบทนี้ผ่านแล้ว</strong>
+    <br>1. <code>curl /posts/1.5</code> กับ route <code>get "/posts/:id"</code> — <code>params[:id]</code> ได้อะไร และทำไม?
+    <br>2. ทำไม <code>post_url(42)</code> ใน <code>bin/rails runner</code> ถึงพัง แต่ใน controller ใช้ได้?
+    <br>3. ต้องการ URL <code>/api/posts</code> โดยใช้ <code>PostsController</code> ตัวเดิม — เขียนยังไง?
+    <br>4. ย้ายโค้ด Gin ที่ลง <code>/users/:id</code> ก่อน <code>/users/me</code> มาเป็น Rails ตามลำดับเดิม — <code>/users/me</code> จะไปที่ไหน?
+    <br><br>ติดข้อไหน หรือรันแล้วได้ผลไม่ตรงกับในบท <strong>ถามกลับมาได้เลย</strong> — แปะ <code>config/routes.rb</code>
+    กับผล <code>bin/rails routes</code> มาด้วย จะช่วยได้ตรงจุดที่สุด
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0100-rails-boot-request-mvc.html">← บทเรียน 100 · boot · request · MVC</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 1</a>
+  <a href="./0102-rails-controller.html">บทเรียน 102 → Controller · params · render/redirect</a>
+</nav>
+
+<h2 id="sn-sec-9">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/routing.html#dynamic-segments">Rails Guides — Rails Routing from the Outside In</a> —
+      <strong>อ่านหัวข้อ 3.1 <em>Bound Parameters</em> ถึง 3.8 <em>Segment Constraints</em></strong>
+      (ข้าม 3.4–3.5 ได้) · 3.1 มีตัวอย่าง optional <code>(/:id)</code> · 3.2 มีประโยคที่ยืนยันว่า dynamic segment ไม่รับจุด
+      ตรงกับ <code>/posts/1.5</code> ในหัวข้อ 2 · 3.6 <em>Naming Routes</em> คือ <code>as:</code></li>
+  <li><a href="https://guides.rubyonrails.org/routing.html#crud-verbs-and-actions">Rails Guides — 2.2 CRUD, Verbs, and Actions</a> —
+      <strong>อ่านย่อหน้าที่ขึ้นต้นว่า <em>Order matters in the routes.rb file</em></strong>
+      คือคำยืนยันทางการของสไลด์หน้า 59 · แล้วเลื่อนไปอ่าน <strong>2.6 <em>Controller Namespaces and Routing</em></strong>
+      ทั้ง <em>Using Module</em> และ <em>Using Scope</em> ซึ่งมีตารางเทียบแบบเดียวกับหัวข้อ 4</li>
+  <li><a href="https://guides.rubyonrails.org/routing.html#listing-existing-routes">Rails Guides — 5. Inspecting Routes</a> —
+      <strong>อ่าน 5.1 ถึง 5.4 ให้จบ (สั้นมาก)</strong> · 5.1 บอกว่า <code>/rails/info/routes</code> ใช้ใน development และตารางเรียงตามลำดับในไฟล์ ·
+      5.2 คือ <code>-g</code> / <code>-c</code> · 5.3 คือ <code>-u</code> · 5.4 คือ <code>url_helpers</code> ใน console</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionDispatch/Routing/Mapper/Scoping.html">Rails API — ActionDispatch::Routing::Mapper::Scoping</a> —
+      <strong>ดู method <code>namespace</code> แล้วอ่านส่วน <em>Options</em> ใต้มัน</strong> ซึ่งบอกว่า
+      <code>:path</code> · <code>:as</code> · <code>:module</code> ตั้งค่าตามชื่อ namespace ให้ทั้งหมด (คือเหตุผลที่ namespace "เปลี่ยนทุกอย่าง")
+      แล้วดู <code>scope</code> ในหน้าเดียวกัน — ส่วน <em>Options</em> มีตัวอย่าง <code>scope module: "admin"</code> กับ <code>scope path: "/admin"</code>
+      คู่เดียวกับหัวข้อ 4 พอดี</li>
+  <li><a href="https://docs.ruby-lang.org/en/master/String.html#method-i-to_i">Ruby docs — String#to_i</a> —
+      <strong>อ่านสองประโยคท้ายของหัวข้อ</strong>: <em>Characters past a leading valid number … are ignored</em>
+      กับ <em>Returns zero if there is no leading valid number</em> —
+      ที่มาของ <code>"42abc".to_i</code> = <code>42</code> และ <code>"abc".to_i</code> = <code>0</code> ในหัวข้อ 2</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,1256 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 100 — จาก bin/rails server ถึง HTML — ลำดับการ boot, วงจร request และ MVC</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 100 · Rails · Day 1</p>
+  <h1>จาก bin/rails server ถึง HTML — ลำดับการ boot, วงจร request และ MVC</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="./0098-rails-new-and-structure.html">บทเรียน 98</a> (rails new · โครงสร้าง) และ
+    <a href="./0099-rails-naming-and-explore.html">บทเรียน 99</a> (naming convention) มาก่อน ·
+    ถ้าลืม middleware ของ Gin ทวนได้ที่ <a href="../../day-8/lessons/0039-gin-binding-middleware.html">บทเรียน 39</a></p>
+  <p class="standfirst">
+    ตอนเขียน Go คุณเห็นทุกอย่างกับตา: <code>main()</code> สร้าง router · ลง route · ใส่ middleware · แล้วสั่ง <code>r.Run()</code>
+    <br>พอมา Rails คุณพิมพ์ <code>bin/rails server</code> บรรทัดเดียว แล้วเว็บก็ขึ้นเลย —
+    <strong>ไม่มี <code>main()</code> ให้อ่าน</strong> หลายคนเลยรู้สึกว่า Rails เป็นกล่องดำ
+    <br>บทนี้จะเปิดกล่องนั้นตามสไลด์หน้า 49–53: ไฟล์ไหนถูกอ่านก่อนหลังตอน boot ·
+    request หนึ่งตัวเดินผ่านอะไรบ้างกว่าจะกลายเป็น HTML · และ Model / View / Controller แบ่งงานกันยังไง
+    <br>ผม<strong>ไม่ได้แค่อ่านสไลด์แล้วเล่าต่อ</strong> — ผมแปะป้ายลงในไฟล์ config ทุกไฟล์แล้วเปิด server จริงดูว่าป้ายไหนโผล่ก่อน
+    และ<strong>เจอจุดที่ของจริงไม่ตรงกับสไลด์</strong> — ลำดับ boot (หัวข้อ 2) · CSRF ที่สไลด์จัดไว้ใน middleware (หัวข้อ 6) ·
+    และ status 422 ที่สไลด์สองหน้าเขียนไม่ตรงกัน (หัวข้อ 7)
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby -v</span>
+ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+<span class="c">$ bin/rails -v</span>
+Rails 8.1.4
+<span class="c"># gem ที่เกี่ยวในบทนี้ (อ่านจาก stack trace จริง)</span>
+rack 3.2.8 · puma 8.0.2 · actionpack 8.1.4 · railties 8.1.4</code></pre>
+  <p>
+    สไลด์ใช้ <strong>Ruby 4.0.6 · Rails 8.1.3</strong> ส่วนเครื่องที่ใช้ตรวจเป็น <strong>Ruby 4.0.9 · Rails 8.1.4</strong>
+    ต่างกันแค่ patch version
+  </p>
+  <p style="margin-bottom:0">
+    ทุกกล่องที่เป็นผลรันในบทนี้ก็อปมาจากเครื่องจริง ไม่ได้พิมพ์เอง ·
+    รันในโปรเจกต์ที่สร้างด้วย <code>rails new wongnok_blog --database=postgresql --css=tailwind</code> ตามสไลด์หน้า 40 ·
+    <br>· เครื่องที่ตรวจมีหลายโปรเจกต์เปิดอยู่ เลย<strong>เปิด server ที่พอร์ต 4100</strong> (<code>bin/rails server -p 4100</code>) —
+    ของคุณจะเป็น <strong>3000</strong> ตามค่าเริ่มต้น ที่เหลือเหมือนกันทุกตัวอักษร
+    <br>· log ของ Rails ในเทอร์มินัลจริงมีสี ผมตัดรหัสสี (ANSI) ออกให้อ่านง่าย ข้อความไม่ได้แก้
+    <br>· ตัวเลข <code>object_id</code> · PID · เวลา ในผลรัน <strong>รันแต่ละรอบจะไม่ตรงกัน</strong> เป็นเรื่องปกติ ·
+    ฝั่ง Go ใช้ go1.26.5
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · พิมพ์ <code>bin/rails server</code> แล้วเกิดอะไรขึ้น — 7 ขั้นของสไลด์หน้า 49</h2>
+
+<p>
+  ก่อนที่ server จะตอบ request แรกได้ มันต้อง<strong>เตรียมตัว</strong>ก่อน — โหลด gem · ตั้งค่า · เตรียมตาราง route ·
+  แล้วค่อยเปิดพอร์ตรอ ขั้นตอนนี้เรียกว่า <strong>boot</strong>
+  <br>ใน Go คุณเขียนขั้นตอนนี้เองทั้งหมดใน <code>main()</code> · ใน Rails มัน<strong>กระจายอยู่ในโฟลเดอร์ <code>config/</code></strong>
+  ทีละไฟล์ แต่ละไฟล์ทำหน้าที่เดียว สไลด์หน้า 49 เรียงไว้แบบนี้:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>#</th><th>ไฟล์</th><th>สไลด์บอกว่า</th><th>บรรทัดสำคัญในไฟล์จริง</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td><code>config.ru</code></td><td>จุดเริ่มจริง — บอก Rack ว่าแอปคืออะไร</td>
+        <td><code>run Rails.application</code></td></tr>
+    <tr><td>2</td><td><code>config/boot.rb</code></td><td>ตั้ง Bundler ให้โหลด gem ตาม Gemfile.lock</td>
+        <td><code>require "bundler/setup"</code></td></tr>
+    <tr><td>3</td><td><code>config/application.rb</code></td><td>โหลด Rails แต่ละชิ้นที่เราใช้ + ตั้งค่าระดับแอป</td>
+        <td><code>require "rails/all"</code> · <code>config.load_defaults 8.1</code></td></tr>
+    <tr><td>4</td><td><code>config/environments/*.rb</code></td><td>ทับค่าเฉพาะ environment ที่กำลังรัน</td>
+        <td><code>config.eager_load = false</code> (development)</td></tr>
+    <tr><td>5</td><td><code>config/initializers/*.rb</code></td><td>รันไฟล์ทั้งหมดเรียงตามชื่อ</td>
+        <td>4 ไฟล์ที่ <code>rails new</code> สร้างให้</td></tr>
+    <tr><td>6</td><td><code>config/routes.rb</code></td><td>โหลดตาราง route ทั้งหมดเข้าหน่วยความจำ</td>
+        <td><code>Rails.application.routes.draw do</code></td></tr>
+    <tr><td>7</td><td>พร้อมรับ request</td><td>Puma เปิดพอร์ต 3000</td>
+        <td><code>port ENV.fetch("PORT", 3000)</code> ใน <code>config/puma.rb</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  อย่าเชื่อตารางนี้เพราะมันอยู่ในสไลด์ — เปิดไฟล์จริงดูทีละไฟล์ (ผมตัดคอมเมนต์ออกบางไฟล์ ไม่ได้แก้โค้ด):
+</p>
+
+<p><strong>① <code>config.ru</code></strong> — ทั้งไฟล์มีแค่นี้</p>
+<pre><code><span class="c"># This file is used by Rack-based servers to start the application.</span>
+
+<span class="f">require_relative</span> <span class="s">"config/environment"</span>
+
+<span class="f">run</span> <span class="n">Rails</span>.application
+<span class="n">Rails</span>.application.<span class="f">load_server</span></code></pre>
+<p>
+  สังเกตบรรทัดที่ 3: <strong>มัน <code>require</code> ไฟล์ <code>config/environment</code></strong> — ไฟล์ที่<strong>ไม่มีในสไลด์</strong>
+  (เดี๋ยวหัวข้อ 2 จะเห็นว่ามันสำคัญแค่ไหน) · ส่วน <code>run Rails.application</code> คือการบอก Rack ว่า
+  "แอปของฉันคือก้อนนี้ request มาเมื่อไหร่ให้ส่งเข้าก้อนนี้"
+</p>
+
+<p><strong>② <code>config/boot.rb</code></strong> — ทั้งไฟล์</p>
+<pre><code><span class="n">ENV</span>[<span class="s">"BUNDLE_GEMFILE"</span>] ||= <span class="n">File</span>.<span class="f">expand_path</span>(<span class="s">"../Gemfile"</span>, <span class="k">__dir__</span>)
+
+<span class="f">require</span> <span class="s">"bundler/setup"</span> <span class="c"># Set up gems listed in the Gemfile.</span>
+<span class="f">require</span> <span class="s">"bootsnap/setup"</span> <span class="c"># Speed up boot time by caching expensive operations.</span></code></pre>
+<p>
+  <code>bundler/setup</code> ทำให้ <code>require</code> ทุกตัวหลังจากนี้<strong>เห็นเฉพาะ gem และเวอร์ชันที่ล็อกไว้ใน <code>Gemfile.lock</code></strong>
+  — เป้าหมายเดียวกับ <code>go.mod</code> + <code>go.sum</code> ที่ทำให้ <code>go build</code> ทุกเครื่องได้ dependency ชุดเดียวกัน
+  (รายละเอียดว่า lock ของ Ruby เก็บอะไรบ้างอยู่ใน <a href="./0098-rails-new-and-structure.html">บทเรียน 98</a>) ·
+  ส่วน <code>bootsnap</code> แค่ cache ให้ boot เร็วขึ้น (สไลด์ไม่ได้พูดถึง)
+</p>
+
+<p><strong>③ <code>config/application.rb</code></strong> — ตัดคอมเมนต์ออก</p>
+<pre><code><span class="f">require_relative</span> <span class="s">"boot"</span>
+
+<span class="f">require</span> <span class="s">"rails/all"</span>
+
+<span class="n">Bundler</span>.<span class="f">require</span>(*<span class="n">Rails</span>.groups)
+
+<span class="k">module</span> <span class="n">WongnokBlog</span>
+  <span class="k">class</span> <span class="n">Application</span> &lt; <span class="n">Rails::Application</span>
+    config.<span class="f">load_defaults</span> <span class="n">8.1</span>
+    config.<span class="f">autoload_lib</span>(ignore: <span class="s">%w[assets tasks]</span>)
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<p>
+  สามบรรทัดที่ต้องรู้จัก: <code>require "rails/all"</code> โหลด Rails ทุกชิ้น (Active Record · Action Controller · Action View …) ·
+  <code>Bundler.require</code> โหลด<strong>ทุก gem ใน Gemfile ให้อัตโนมัติ</strong> (เฉพาะกลุ่มของ environment ที่รันอยู่ · ใน Go ต้อง <code>import</code> ทีละตัว) ·
+  และ <code>class Application &lt; Rails::Application</code> คือ "ตัวแอป" ที่ <code>config.ru</code> สั่ง <code>run</code> นั่นเอง
+  (<code>&lt;</code> คือ inheritance ที่เรียนใน <a href="./0095-ruby-class-and-module.html">บทเรียน 95</a>)
+</p>
+
+<p><strong>④ <code>config/environment.rb</code></strong> — ไฟล์ที่สไลด์ข้ามไป ทั้งไฟล์มีแค่นี้</p>
+<pre><code><span class="c"># Load the Rails application.</span>
+<span class="f">require_relative</span> <span class="s">"application"</span>
+
+<span class="c"># Initialize the Rails application.</span>
+<span class="n">Rails</span>.application.<span class="f">initialize!</span></code></pre>
+<p>
+  <code>initialize!</code> คือ<strong>ปุ่มสตาร์ทตัวจริง</strong> — ขั้น ④ และ ⑤ ของสไลด์ (environments กับ initializers)
+  เกิดขึ้น<strong>ข้างในการเรียกบรรทัดนี้</strong>
+</p>
+
+<p><strong>⑤ <code>config/environments/development.rb</code></strong> — 10 บรรทัดแรก</p>
+<pre><code><span class="f">require</span> <span class="s">"active_support/core_ext/integer/time"</span>
+
+<span class="n">Rails</span>.application.<span class="f">configure</span> <span class="k">do</span>
+  <span class="c"># Settings specified here will take precedence over those in config/application.rb.</span>
+
+  <span class="c"># Make code changes take effect immediately without server restart.</span>
+  config.enable_reloading = <span class="n">true</span>
+
+  <span class="c"># Do not eager load code on boot.</span>
+  config.eager_load = <span class="n">false</span></code></pre>
+<p>
+  คอมเมนต์บรรทัดที่ 4 พูดเรื่องเดียวกับสไลด์: ค่าในไฟล์นี้<strong>ทับ</strong>ค่าใน <code>application.rb</code> ·
+  ไฟล์ <code>production.rb</code> ตั้งสองค่าเดียวกันนี้กลับด้าน (<code>enable_reloading = false</code> · <code>eager_load = true</code>) —
+  จำ <code>eager_load</code> ไว้ หัวข้อ 2 จะได้ใช้
+</p>
+
+<p><strong>⑥ <code>config/initializers/</code></strong> — <code>rails new</code> ให้มา 4 ไฟล์</p>
+<pre><code><span class="c">$ ls config/initializers</span>
+assets.rb
+content_security_policy.rb
+filter_parameter_logging.rb
+inflections.rb</code></pre>
+
+<p><strong>⑦ <code>config/routes.rb</code></strong> — ตอนเพิ่ง <code>rails new</code> (ตัดคอมเมนต์ออก)</p>
+<pre><code><span class="n">Rails</span>.application.routes.<span class="f">draw</span> <span class="k">do</span>
+  <span class="f">get</span> <span class="s">"up"</span> =&gt; <span class="s">"rails/health#show"</span>, as: <span class="n">:rails_health_check</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  และพอร์ต 3000 มาจาก <code>config/puma.rb</code> บรรทัด <code>port ENV.fetch("PORT", 3000)</code>
+  ซึ่งตรงกับที่ <code>bin/rails server --help</code> บอกไว้:
+</p>
+<pre><code><span class="c">$ bin/rails server --help | grep port</span>
+  -p, [--port=port]                                                    # Run Rails on the specified port - defaults to 3000.</code></pre>
+
+<div class="analogy">
+  <span class="label">☕ เทียบให้เห็นภาพ — เช็คลิสต์เปิดร้านกาแฟตอนเช้า</span>
+  <p>
+    ก่อนเปิดประตูรับลูกค้า บาริสต้าต้องทำตามลำดับ: ติดป้ายหน้าร้านว่าร้านนี้คือร้านอะไร (<code>config.ru</code>) ·
+    เช็ควัตถุดิบให้ตรงใบสั่งของ (<code>boot.rb</code> + <code>Gemfile.lock</code>) ·
+    ตั้งเครื่องชงตามมาตรฐานแบรนด์ (<code>application.rb</code>) ·
+    ปรับตามกฎของสาขานี้ เช่นสาขาทดลองเปิดเมนูลับ (<code>environments/*.rb</code>) ·
+    ทำงานเตรียมย่อยทีละข้อตามลำดับในเช็คลิสต์ (<code>initializers/*.rb</code>) ·
+    ติดเมนูหน้าเคาน์เตอร์ (<code>routes.rb</code>) · แล้วค่อยเปิดประตู (Puma เปิดพอร์ต)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> เช็คลิสต์ร้านกาแฟเป็นรายการเรียงตรง ๆ ทำข้อ 1 จบแล้วค่อยข้อ 2 ·
+    แต่ไฟล์ของ Rails <strong>เรียกต่อกันเป็นทอด ๆ ด้วย <code>require</code></strong> (<code>config.ru</code> เรียก
+    <code>environment.rb</code> ที่เรียก <code>application.rb</code> ที่เรียก <code>boot.rb</code>) —
+    ลำดับที่ "เปิดไฟล์" กับลำดับที่ "โค้ดในไฟล์ได้รันจริง" จึงไม่ใช่ลำดับเดียวกัน ·
+    และ<strong>การติดเมนู (routes) ใน development ไม่ได้เกิดก่อนเปิดประตู</strong> หัวข้อถัดไปพิสูจน์ให้ดู
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>boot</dt>
+    <dd>ช่วงที่แอปเตรียมตัวก่อนพร้อมรับ request · ถ้าแอปเปิดช้า คนจะพูดว่า "boot ช้า" ·
+        <strong>ถาม senior ได้ว่า “ถ้าจะใส่โค้ดที่ต้องรันครั้งเดียวตอน boot ทีมนี้ใส่ไว้ใน initializer หรือที่อื่น”</strong></dd>
+    <dt>Rack · <code>config.ru</code></dt>
+    <dd><strong>Rack</strong> คือข้อตกลงกลางระหว่าง web server (เช่น Puma) กับเว็บแอป Ruby ทุกตัว ·
+        <code>config.ru</code> คือไฟล์ที่บอก server ว่า "แอปคือก้อนไหน" ·
+        เทียบกับ Go คือ interface <code>http.Handler</code> ที่ทุก router ต้องทำตาม ·
+        <strong>พิมพ์ถาม AI ได้ว่า “explain the Rack interface: call(env) returning status, headers, body”</strong></dd>
+    <dt>Bundler · <code>Gemfile.lock</code></dt>
+    <dd>Bundler คือตัวจัดการ gem · <code>Gemfile.lock</code> ล็อกเวอร์ชันทุก gem ให้ตรงกันทุกเครื่อง
+        (รุ่นที่ล็อกแบบ <code>package-lock.json</code> + checksum แบบ <code>go.sum</code> ในไฟล์เดียว ตามที่บทเรียน 98 เปิดดู) ·
+        <strong>ถาม senior ได้ว่า “Gemfile.lock ต้อง commit ไหม”</strong> — สำหรับแอป คำตอบคือต้อง</dd>
+    <dt>environment (<code>RAILS_ENV</code>)</dt>
+    <dd>โหมดที่แอปกำลังรัน: <code>development</code> · <code>test</code> · <code>production</code> ·
+        แต่ละโหมดมีไฟล์ใน <code>config/environments/</code> ของตัวเอง ·
+        <strong>พิมพ์บอก AI ได้ว่า “this setting should only apply in production, put it in config/environments/production.rb”</strong></dd>
+    <dt>initializer</dt>
+    <dd>ไฟล์ใน <code>config/initializers/</code> ที่ Rails รันให้ครั้งเดียวตอน boot เรียงตามชื่อไฟล์ ·
+        เป็นที่ตั้งค่า gem ต่าง ๆ · คอมเมนต์บรรทัดแรกของ <code>inflections.rb</code> เตือนไว้เองว่า
+        <em>Be sure to restart your server when you modify this file.</em> — <strong>แก้ initializer ต้อง restart server</strong></dd>
+    <dt>Puma</dt>
+    <dd>web server ที่ Rails ใช้เป็นค่าเริ่มต้น · เป็นตัวที่เปิดพอร์ตแล้วรับ request จริง · ตั้งค่าที่ <code>config/puma.rb</code></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">2 · พิสูจน์ลำดับจริง — แปะป้าย <code>[BOOT]</code> ทุกไฟล์</h2>
+
+<p>
+  วิธีพิสูจน์ง่ายที่สุดคือ<strong>ให้แต่ละไฟล์ตะโกนชื่อตัวเองตอนถูกอ่าน</strong> ·
+  ผมเพิ่มบรรทัดนี้ไว้<strong>บนสุด</strong>ของทุกไฟล์ในตารางข้างบน (รวม <code>bin/rails</code> กับ <code>config/environment.rb</code> ด้วย):
+</p>
+<pre><code><span class="c"># บรรทัดแรกของ config/boot.rb (ไฟล์อื่นเปลี่ยนแค่ชื่อในเครื่องหมายคำพูด)</span>
+<span class="n">$stderr</span>.<span class="f">puts</span> <span class="s">"[BOOT] config/boot.rb"</span></code></pre>
+
+<div class="predict">
+  <p class="ask">
+    แปะครบทุกไฟล์แล้วสั่ง <code>bin/rails server</code> ใน development —
+    <strong>ป้ายไหนจะโผล่เป็นอันแรก</strong> (<code>config.ru</code> ตามสไลด์ หรืออย่างอื่น)?
+    <br>และ <strong>ป้าย <code>[BOOT] config/routes.rb</code> จะโผล่ก่อนหรือหลังบรรทัด <code>Listening on …</code></strong> ของ Puma?
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลรันจริง:</p>
+<pre><code><span class="c">$ bin/rails server -p 4100</span>
+[BOOT] bin/rails
+[BOOT] config/boot.rb
+[BOOT] config/application.rb
+=&gt; Booting Puma
+=&gt; Rails 8.1.4 application starting in development
+=&gt; Run `bin/rails server --help` for more startup options
+[BOOT] config.ru
+[BOOT] config/environment.rb
+[BOOT] config/environments/development.rb
+[BOOT] config/initializers/assets.rb
+[BOOT] config/initializers/content_security_policy.rb
+[BOOT] config/initializers/filter_parameter_logging.rb
+[BOOT] config/initializers/inflections.rb
+Puma starting in single mode...
+* Puma version: 8.0.2 ("Into the Arena")
+* Ruby version: ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+*  Min threads: 3
+*  Max threads: 3
+*  Environment: development
+*          PID: 43336
+* Listening on http://127.0.0.1:4100
+* Listening on http://[::1]:4100
+Use Ctrl-C to stop</code></pre>
+    <p>
+      <strong>ไม่มี <code>[BOOT] config/routes.rb</code> เลย</strong> ทั้งที่ Puma บอกว่าพร้อมแล้ว ·
+      มันโผล่<strong>ตอนมี request แรกเข้ามา</strong>:
+    </p>
+<pre><code><span class="c">$ curl -s -o /dev/null http://127.0.0.1:4100/hello   # ยิงสองครั้ง</span>
+
+Started GET "/hello" for 127.0.0.1 at 2026-11-01 00:14:32 +0700
+  ActiveRecord::SchemaMigration Load (1.1ms)  SELECT "schema_migrations"."version" FROM "schema_migrations" ORDER BY "schema_migrations"."version" ASC /*application='WongnokBlog'*/
+[BOOT] config/routes.rb
+Processing by GreetingsController#index as */*
+  …
+Completed 200 OK in 14ms (Views: 6.1ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+
+
+Started GET "/hello" for 127.0.0.1 at 2026-11-01 00:14:32 +0700
+Processing by GreetingsController#index as */*
+  …
+Completed 200 OK in 1ms (Views: 0.5ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)</code></pre>
+    <p style="margin-bottom:0">
+      request แรกโหลด routes · <strong>request ที่สองไม่โหลดซ้ำ</strong> (ไม่มีป้ายรอบสอง — ตราบใดที่ไม่มีใครแก้ไฟล์ในโปรเจกต์ระหว่างนั้น ·
+      ถ้าแก้ไฟล์ใน <code>app/</code> เช่น view หรือ controller ป้ายนี้จะโผล่อีกรอบใน request ถัดไป เพราะตอน reload โค้ด
+      Rails โหลด routes ใหม่ด้วยเสมอ — คอมเมนต์ใน <code>railties/lib/rails/application/finisher.rb</code> อธิบายไว้) ·
+      บรรทัด <code>SchemaMigration Load</code> ที่โผล่ก่อน routes คือ middleware ตัวหนึ่ง
+      (<code>ActiveRecord::Migration::CheckPending</code>) แอบเช็คว่ามี migration ค้างไหม — เป็นหลักฐานแรกว่า
+      <strong>middleware ทำงานก่อนถึง routes</strong> ซึ่งหัวข้อ 3 จะเจาะต่อ
+    </p>
+  </div>
+</div>
+
+<p>
+  ทำไม routes ถึงมาช้า? ในซอร์สของ railties 8.1.4 (<code>lib/rails/engine.rb</code> บรรทัด 591) มีบรรทัดนี้:
+</p>
+<pre><code>config.route_set_class = <span class="n">LazyRouteSet</span> <span class="k">if</span> <span class="n">Rails</span>.env.<span class="f">local?</span></code></pre>
+<p>
+  <code>local?</code> แปลว่า development หรือ test · สองโหมดนี้ใช้ <strong>ตาราง route แบบขี้เกียจ (lazy)</strong> —
+  รอจนมีคนต้องใช้จริงค่อยโหลด เพื่อให้ boot เร็ว ·
+  ลองเปิดแบบ production ดู (สั่งแบบนี้เพื่อทดลองเท่านั้น <code>SECRET_KEY_BASE_DUMMY=1</code> คือคีย์ปลอมที่ Rails เตรียมไว้ให้ลองรัน):
+</p>
+<pre><code><span class="c">$ RAILS_ENV=production SECRET_KEY_BASE_DUMMY=1 bin/rails server -p 4100</span>
+…
+[BOOT] config/environments/production.rb
+[BOOT] config/initializers/assets.rb
+[BOOT] config/initializers/content_security_policy.rb
+[BOOT] config/initializers/filter_parameter_logging.rb
+[BOOT] config/initializers/inflections.rb
+[BOOT] config/routes.rb
+…
+* Listening on http://0.0.0.0:4100</code></pre>
+<p>
+  <strong>production โหลด routes ก่อนเปิดพอร์ต</strong> — ตรงกับสไลด์เป๊ะ · สไลด์หน้า 49 จึงถูกสำหรับ production
+  แต่ไม่ใช่สิ่งที่คุณจะเห็นตอนนั่งเขียนโค้ดบนเครื่องตัวเอง
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ สามจุดที่ของจริงไม่ตรงกับสไลด์หน้า 49</span>
+  <p>
+    <strong>1. <code>config.ru</code> ไม่ใช่ไฟล์แรกเมื่อสั่งผ่าน <code>bin/rails server</code></strong> —
+    เปิด <code>bin/rails</code> ดูจะเห็นว่ามันเรียก <code>boot.rb</code> เองตั้งแต่บรรทัดที่ 3:
+  </p>
+<pre><code><span class="c">#!/usr/bin/env ruby</span>
+<span class="n">APP_PATH</span> = <span class="n">File</span>.<span class="f">expand_path</span>(<span class="s">"../config/application"</span>, <span class="k">__dir__</span>)
+<span class="f">require_relative</span> <span class="s">"../config/boot"</span>
+<span class="f">require</span> <span class="s">"rails/commands"</span></code></pre>
+  <p>
+    แล้วคำสั่ง <code>server</code> ก็โหลด <code>APP_PATH</code> (<code>application.rb</code>) ต่อ ก่อนจะส่งให้ Puma ไปอ่าน <code>config.ru</code> ·
+    พอถึง <code>config.ru</code> บรรทัด <code>require_relative "config/environment"</code> ก็ไม่โหลด <code>application.rb</code> กับ <code>boot.rb</code> ซ้ำ
+    เพราะ <code>require</code> ของ Ruby โหลดไฟล์เดิมแค่ครั้งเดียว ·
+    คำว่า "จุดเริ่มจริง" ในสไลด์จึงถูกในความหมายว่า <strong><code>config.ru</code> คือไฟล์ที่ Rack server ใช้หาแอป</strong>
+    ไม่ใช่ไฟล์แรกที่ถูกรัน
+  </p>
+  <p>
+    <strong>2. สไลด์ไม่มี <code>config/environment.rb</code></strong> — ทั้งที่มันคือไฟล์ที่เรียก <code>initialize!</code>
+    ซึ่งเป็นตัวสั่งให้ environments กับ initializers ทำงาน
+  </p>
+  <p style="margin-bottom:0">
+    <strong>3. ใน development ขั้น routes เกิดตอน request แรก ไม่ใช่ตอน boot</strong> — ถ้า <code>routes.rb</code> มีโค้ดพัง
+    server จะ<strong>เปิดขึ้นได้ปกติ</strong> แล้วไปพังตอนเปิดหน้าเว็บครั้งแรก · อย่าตกใจถ้าเจอแบบนั้น
+  </p>
+</div>
+
+<p>
+  ถ้าวาดเป็นภาพ ลำดับที่ <strong>โค้ดได้รันจริง</strong> (ไม่ใช่ลำดับที่ไฟล์ถูกเปิด) ตอนสั่ง <code>bin/rails server</code> ใน development คือ:
+</p>
+<div class="diagram"><pre><code>bin/rails ──require──▶ config/boot.rb              (Bundler ล็อก gem)
+    │
+    └─ server command ──▶ config/application.rb    (โหลด Rails + Bundler.require)
+                              │
+Puma อ่าน config.ru ──require──▶ config/environment.rb
+                                    │
+                                    └─ initialize! ──▶ config/environments/development.rb
+                                                    ──▶ config/initializers/*.rb  (เรียงตามชื่อ)
+Puma เปิดพอร์ต  ◀────────────────────────────────────┘
+    │
+request แรกเข้ามา ──▶ config/routes.rb   (development/test เท่านั้น · production โหลดก่อนเปิดพอร์ต)</code></pre></div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">เปิด <code>bin/rails server</code> ใน development แล้ว<strong>ยังไม่มีใครยิง request เลย</strong> — <code>config/routes.rb</code> ถูกอ่านไปแล้วหรือยัง?</p>
+  <div class="opts">
+    <button class="opt">อ่านแล้ว — routes ถูกโหลดก่อนที่ Puma จะเปิดพอร์ตเสมอทุก environment</button>
+    <button class="opt">ยัง — ใน development Rails 8.1 รอโหลดตอน request แรกที่ต้องใช้ route</button>
+    <button class="opt">ยัง — Rails อ่าน routes.rb ใหม่ทุกครั้งที่มี request เข้ามา ไม่เคยเก็บไว้</button>
+    <button class="opt">อ่านแล้ว — แต่เฉพาะตอนที่สั่ง bin/rails routes ไว้ก่อนเปิด server</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · ผลรันในหัวข้อ 2 ไม่มีป้าย <code>[BOOT] config/routes.rb</code> ก่อน <code>Listening on</code>
+      แต่โผล่หลัง <code>Started GET "/hello"</code> ครั้งแรก
+    </p>
+    <p style="margin-bottom:0">
+      ตัวเลือกที่ 1 ถูกแค่ใน production (เราเปิดดูแล้ว) · ตัวเลือกที่ 3 ผิดเพราะ request ที่สองไม่มีป้ายซ้ำ —
+      มันโหลดครั้งเดียวแล้วเก็บไว้ (จะโหลดใหม่ก็ต่อเมื่อมีไฟล์โค้ดเปลี่ยน — ผมลองแตะแค่ไฟล์ view หรือ controller
+      request ถัดไปก็มีป้าย <code>[BOOT] config/routes.rb</code> อีกรอบ แม้ <code>routes.rb</code> จะไม่ได้แก้) ·
+      ตัวเลือกที่ 4 ผิดเพราะ <code>bin/rails routes</code> เป็นอีก process หนึ่ง ไม่เกี่ยวกับ server ที่เปิดอยู่เลย ·
+      <strong>จุดที่ต้องจำ:</strong> สไลด์หน้า 49 คือลำดับของ production · ใน development routes รอจน request แรก
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-3">3 · วงจรของ 1 request — สไลด์หน้า 50</h2>
+
+<p>
+  boot เสร็จแล้ว server นั่งรอ · ทีนี้ browser ยิง <code>GET /hello</code> เข้ามา สไลด์หน้า 50 บอกว่า request จะเดินผ่าน 6 ด่าน:
+</p>
+<div class="diagram"><pre><code>Browser   GET /hello
+   │
+Rack      config.ru — ประตูจริงของแอป
+   │
+Middleware    session, CSRF, logger   (bin/rails middleware)
+   │
+config/routes.rb   จับคู่ URL กับ controller#action
+   │
+GreetingsController#index   instance ใหม่ทุก request — ไม่มี state ค้าง
+   │
+index.html.erb + layout     implicit render — ไม่เขียน render ก็หา view เจอเอง
+   │
+HTML  200</code></pre></div>
+
+<p>
+  ด่าน <strong>Middleware</strong> คือของที่คุณรู้จักแล้วจาก Gin ใน <a href="../../day-8/lessons/0039-gin-binding-middleware.html">บทเรียน 39</a> —
+  ฟังก์ชันที่ต่อคิวกันห่อ handler ไว้ แต่ละตัวทำงานหนึ่งอย่างแล้วส่งต่อ (Gin ใช้ <code>c.Next()</code>) ·
+  ต่างกันแค่ว่า Gin คุณ <code>r.Use(...)</code> เองทีละตัว · Rails <strong>ใส่มาให้ครบตั้งแต่ <code>rails new</code></strong>
+  ดูได้ด้วยคำสั่งที่สไลด์บอก:
+</p>
+
+<pre><code><span class="c">$ bin/rails middleware</span>
+use ActionDispatch::HostAuthorization
+use Rack::Sendfile
+use ActionDispatch::Static
+use Propshaft::Server
+use ActionDispatch::Executor
+use ActionDispatch::ServerTiming
+use ActiveSupport::Cache::Strategy::LocalCache::Middleware
+use Rack::Runtime
+use Rack::MethodOverride
+use ActionDispatch::RequestId
+use ActionDispatch::RemoteIp
+use Propshaft::QuietAssets
+use Rails::Rack::Logger
+use ActionDispatch::ShowExceptions
+use WebConsole::Middleware
+use ActionDispatch::DebugExceptions
+use ActionDispatch::ActionableExceptions
+use ActionDispatch::Reloader
+use ActionDispatch::Callbacks
+use ActiveRecord::Migration::CheckPending
+use ActionDispatch::Cookies
+use ActionDispatch::Session::CookieStore
+use ActionDispatch::Flash
+use ActionDispatch::ContentSecurityPolicy::Middleware
+use Rack::Head
+use Rack::ConditionalGet
+use Rack::ETag
+use Rack::TempfileReaper
+run WongnokBlog::Application.routes</code></pre>
+
+<p>
+  <strong>28 ตัวใน development</strong> (production มี 21 ตัว — ตัวช่วย debug อย่าง <code>WebConsole::Middleware</code> กับ
+  <code>ActionDispatch::Reloader</code> หายไป) · อ่านจากบนลงล่าง = ลำดับที่ request เดินผ่าน ·
+  บรรทัดสุดท้าย <code>run WongnokBlog::Application.routes</code> บอกว่า<strong>ปลายทางของคิว middleware คือตาราง routes</strong> ·
+  ของที่สไลด์พูดถึงอยู่ในนี้จริง: <code>Rails::Rack::Logger</code> (logger) · <code>ActionDispatch::Session::CookieStore</code> (session)
+  — <strong>แต่หา CSRF ไม่เจอ</strong> เก็บข้อสังเกตนี้ไว้ หัวข้อ 6 จะไขให้
+</p>
+
+<p>
+  อยากเห็นว่า request เดินผ่านคิวนี้จริงไหม? ดูจาก <strong>stack trace</strong> ตอนเกิด error ได้เลย ·
+  นี่คือ error จริงจากหัวข้อ 5 (ตัดมาบางบรรทัด · <strong>อ่านจากล่างขึ้นบน</strong> = ลำดับที่ request เดิน):
+</p>
+<pre><code>ActionController::MissingExactTemplate (GreetingsController#nope is missing a template for request formats: text/html):
+actionpack (8.1.4) lib/action_controller/metal/implicit_render.rb:49:in 'ActionController::ImplicitRender#default_render'
+⋮
+actionpack (8.1.4) lib/action_controller/metal.rb:252:in 'ActionController::Metal#dispatch'
+⋮
+actionpack (8.1.4) lib/action_dispatch/routing/route_set.rb:906:in 'ActionDispatch::Routing::RouteSet#call'
+railties (8.1.4) lib/rails/engine/lazy_route_set.rb:93:in 'Rails::Engine::LazyRouteSet#call'
+rack (3.2.8) lib/rack/tempfile_reaper.rb:20:in 'Rack::TempfileReaper#call'
+rack (3.2.8) lib/rack/etag.rb:29:in 'Rack::ETag#call'
+⋮
+actionpack (8.1.4) lib/action_dispatch/middleware/cookies.rb:708:in 'ActionDispatch::Cookies#call'
+⋮
+railties (8.1.4) lib/rails/rack/logger.rb:29:in 'Rails::Rack::Logger#call'
+⋮
+rack (3.2.8) lib/rack/method_override.rb:28:in 'Rack::MethodOverride#call'
+⋮
+actionpack (8.1.4) lib/action_dispatch/middleware/host_authorization.rb:144:in 'ActionDispatch::HostAuthorization#call'
+railties (8.1.4) lib/rails/engine.rb:534:in 'Rails::Engine#call'
+puma (8.0.2) lib/puma/configuration.rb:305:in 'Puma::Configuration::ConfigMiddleware#call'
+⋮
+puma (8.0.2) lib/puma/server.rb:508:in 'Puma::Server#process_client'</code></pre>
+<p>
+  ไล่จากล่าง: Puma รับ request → <code>Rails::Engine#call</code> (ตัวแอป) → middleware ตัวแรก <code>HostAuthorization</code> →
+  … → ตัวสุดท้าย <code>TempfileReaper</code> → <code>LazyRouteSet</code> (routes แบบ lazy จากหัวข้อ 2!) → <code>RouteSet</code> →
+  controller · <strong>ทุกตัวชื่อลงท้ายด้วย <code>#call</code></strong> — นั่นคือกฎข้อเดียวของ Rack:
+  "ใครก็ตามที่มี method <code>call</code> รับ request แล้วคืน response ได้ ถือเป็นแอปหรือ middleware"
+</p>
+
+<div class="analogy">
+  <span class="label">🏢 เทียบให้เห็นภาพ — ด่านตรวจหน้าตึกสำนักงาน</span>
+  <p>
+    request เหมือนแขกที่มาติดต่อตึกใหญ่ · ต้องผ่าน รปภ. ดูว่ามาถูกตึกไหม (<code>HostAuthorization</code>) ·
+    ลงชื่อในสมุดผู้มาติดต่อ (<code>Logger</code>) · แลกบัตรผ่าน (<code>Cookies</code> · <code>Session</code>) ·
+    แล้วไปที่ประชาสัมพันธ์ซึ่งดูว่าต้องไปชั้นไหนห้องไหน (<strong>routes</strong>) ·
+    สุดท้ายถึงห้องเจ้าหน้าที่ที่ทำเรื่องให้จริง (<strong>controller</strong>)
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> แขกในตึกเดินทางเดียวแล้วจบ · แต่ request ใน Rack
+    <strong>ต้องเดินย้อนกลับผ่านทุกด่านเดิมตอนขากลับ</strong> พร้อม response — ด่านอย่าง <code>Rack::ETag</code>
+    ทำงานตอนขากลับนี่แหละ (แปะ <code>etag</code> header ที่คุณจะเห็นตอน <code>curl -i</code>) ·
+    เหมือน <code>c.Next()</code> ของ Gin ที่โค้ดหลังบรรทัดนั้นรันตอนขากลับ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของวงจร request</span>
+  <dl>
+    <dt>middleware stack</dt>
+    <dd>คิวของ middleware ที่ request เดินผ่านก่อนถึง routes · ดูได้ด้วย <code>bin/rails middleware</code> ·
+        <strong>ถาม senior ได้ว่า “ทีมนี้มี middleware ที่เขียนเองไหม ใส่ไว้ตรงไหนของ stack”</strong></dd>
+    <dt>Rack app · <code>call(env)</code></dt>
+    <dd>อะไรก็ตามที่มี method <code>call</code> รับข้อมูล request (<code>env</code>) แล้วคืน status, headers, body ·
+        ทั้งตัวแอป Rails และ middleware ทุกตัวทำตามกฎนี้ จึงต่อกันเป็นคิวได้ ·
+        <strong>พิมพ์ถาม AI ได้ว่า “show me a minimal Rack middleware that logs the request path, and how to add it to a Rails app”</strong></dd>
+    <dt>stack trace</dt>
+    <dd>รายการ method ที่กำลังเรียกซ้อนกันอยู่ตอนเกิด error · บรรทัดบนสุดคือที่ error เกิด · <strong>อ่านจากล่างขึ้นบน = ลำดับที่โค้ดถูกเรียก</strong> ·
+        เวลาส่งให้ senior ดู <strong>ส่งบรรทัดแรก (ชื่อ error + ข้อความ) และบรรทัดที่เป็นไฟล์ใน <code>app/</code> ของเราไปก่อน</strong>
+        บรรทัดของ gem ส่วนใหญ่ไม่ต้องอ่าน</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · controller เป็น instance ใหม่ทุก request — พิสูจน์ด้วย <code>object_id</code></h2>
+
+<p>
+  สไลด์หน้า 50 เขียนสั้น ๆ ว่า <em>"instance ใหม่ทุก request — ไม่มี state ค้าง"</em> ·
+  แปลเป็นภาษาคน: ทุกครั้งที่มี request เข้ามา Rails จะ <strong><code>GreetingsController.new</code> ขึ้นมาใหม่หนึ่งตัว</strong>
+  ใช้ตอบ request นั้นจบแล้วทิ้ง · ตัวแปร <code>@</code> ทุกตัวที่ตั้งไว้ก็หายไปพร้อมกัน
+</p>
+<p>
+  พิสูจน์ด้วยโค้ดชุดเดียวกับสไลด์หน้า 60 (route + controller + view) แล้วเพิ่มสองบรรทัด:
+  <code>object_id</code> (เลขประจำตัวของ object — คนละตัวก็คนละเลข) กับตัวนับ <code>@visits</code>
+</p>
+
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="n">Rails</span>.application.routes.<span class="f">draw</span> <span class="k">do</span>
+  <span class="f">get</span> <span class="s">"/hello"</span>, to: <span class="s">"greetings#index"</span>
+  <span class="f">root</span> <span class="s">"greetings#index"</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c"># app/controllers/greetings_controller.rb</span>
+<span class="k">class</span> <span class="n">GreetingsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @name = params[<span class="n">:name</span>] || <span class="s">"PEA"</span>
+    @controller_id = <span class="f">object_id</span>          <span class="c"># เพิ่ม: เลขประจำตัวของ controller ตัวนี้</span>
+    @visits = (@visits || <span class="n">0</span>) + <span class="n">1</span>        <span class="c"># เพิ่ม: นับว่าเปิดหน้านี้กี่ครั้งแล้ว</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p><strong><code>app/views/greetings/index.html.erb</code></strong></p>
+<pre><code>&lt;h1&gt;Hello <span class="k">&lt;%=</span> @name <span class="k">%&gt;</span>&lt;/h1&gt;
+&lt;p&gt;controller object_id: <span class="k">&lt;%=</span> @controller_id <span class="k">%&gt;</span>&lt;/p&gt;
+&lt;p&gt;visits: <span class="k">&lt;%=</span> @visits <span class="k">%&gt;</span>&lt;/p&gt;</code></pre>
+
+<div class="predict">
+  <p class="ask">
+    เปิด server แล้ว <code>curl</code> หน้า <code>/hello</code> <strong>สามครั้งติดกัน</strong> ·
+    <code>object_id</code> สามครั้งจะเป็นเลขเดียวกันไหม? และ <code>visits</code> ครั้งที่สามจะเป็นเลขอะไร?
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c">$ for i in 1 2 3; do curl -s http://127.0.0.1:4100/hello | grep -E '&lt;h1&gt;|object_id|visits'; done</span>
+--&gt;&lt;h1&gt;Hello PEA&lt;/h1&gt;
+&lt;p&gt;controller object_id: 12320&lt;/p&gt;
+&lt;p&gt;visits: 1&lt;/p&gt;
+--&gt;&lt;h1&gt;Hello PEA&lt;/h1&gt;
+&lt;p&gt;controller object_id: 12376&lt;/p&gt;
+&lt;p&gt;visits: 1&lt;/p&gt;
+--&gt;&lt;h1&gt;Hello PEA&lt;/h1&gt;
+&lt;p&gt;controller object_id: 12408&lt;/p&gt;
+&lt;p&gt;visits: 1&lt;/p&gt;</code></pre>
+    <p>
+      <strong><code>object_id</code> ไม่ซ้ำกันเลย</strong> = controller คนละตัวทุกครั้ง ·
+      <strong><code>visits</code> เป็น 1 ตลอด</strong> เพราะ <code>@visits</code> ของตัวใหม่เริ่มจาก <code>nil</code> ทุกครั้ง
+      (<code>nil || 0</code> ได้ <code>0</code> — ทวนได้ใน <a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a>)
+    </p>
+    <p style="margin-bottom:0">
+      <code>--&gt;</code> ที่ติดหน้า <code>&lt;h1&gt;</code> ไม่ใช่บั๊ก — เป็นท้ายคอมเมนต์ HTML ที่ Rails แปะไว้บอกว่าส่วนนี้มาจากไฟล์ view ไหน
+      หัวข้อ 5 จะเปิดให้ดูเต็ม ๆ
+    </p>
+  </div>
+</div>
+
+<p>
+  ทีนี้ลองเขียนแบบเดียวกันใน Go · handler ใน Go มักเป็น method ของ struct ที่<strong>สร้างครั้งเดียวตอน start</strong>
+  (แบบ <code>NewHandler(...)</code> ที่เห็นใน <a href="../../day-8/lessons/0040-httptest-handler.html">บทเรียน 40</a>):
+</p>
+<pre><code><span class="c">// main.go</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+	<span class="s">"fmt"</span>
+	<span class="s">"net/http"</span>
+	<span class="s">"net/http/httptest"</span>
+)
+
+<span class="k">type</span> <span class="n">GreetingsHandler</span> <span class="k">struct</span> {
+	visits <span class="n">int</span>
+}
+
+<span class="k">func</span> (h *<span class="n">GreetingsHandler</span>) <span class="f">Index</span>(w <span class="n">http.ResponseWriter</span>, r *<span class="n">http.Request</span>) {
+	h.visits++
+	fmt.<span class="f">Fprintf</span>(w, <span class="s">"handler %p visits: %d"</span>, h, h.visits)
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+	h := &amp;<span class="n">GreetingsHandler</span>{} <span class="c">// สร้างครั้งเดียวตอน start</span>
+	mux := http.<span class="f">NewServeMux</span>()
+	mux.<span class="f">HandleFunc</span>(<span class="s">"GET /hello"</span>, h.Index)
+
+	<span class="k">for</span> i := <span class="n">0</span>; i &lt; <span class="n">3</span>; i++ {
+		rec := httptest.<span class="f">NewRecorder</span>()
+		mux.<span class="f">ServeHTTP</span>(rec, httptest.<span class="f">NewRequest</span>(<span class="s">"GET"</span>, <span class="s">"/hello"</span>, <span class="k">nil</span>))
+		fmt.<span class="f">Println</span>(rec.Body.<span class="f">String</span>())
+	}
+}</code></pre>
+<pre><code><span class="c">$ go run .</span>
+handler 0x281d49fb6208 visits: 1
+handler 0x281d49fb6208 visits: 2
+handler 0x281d49fb6208 visits: 3</code></pre>
+<p>
+  <strong>ตรงกันข้ามกับ Rails ทุกอย่าง</strong>: address เดิมทั้งสามครั้ง (struct ตัวเดียว) และตัวนับเพิ่มขึ้นเรื่อย ๆ ·
+  ใน server จริงที่ request วิ่งพร้อมกันหลาย goroutine ตัวนับแบบนี้คือ <strong>data race</strong> ตรง ๆ
+  แบบใน <a href="../../day-6/lessons/0024-data-race-mutex.html">บทเรียน 24</a> ·
+  Rails ตัดปัญหานี้ทิ้งด้วยการให้ทุก request มี controller ของตัวเอง — <strong>ราคาที่จ่ายคือ <code>@ตัวแปร</code> จำอะไรข้าม request ไม่ได้</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th>Go (handler struct)</th><th>Ruby on Rails (controller)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>สร้างเมื่อไหร่</td><td>ครั้งเดียวตอน start</td><td>ใหม่ทุก request</td></tr>
+    <tr><td>field / <code>@ตัวแปร</code></td><td>แชร์กันทุก request — ต้องระวัง race</td><td>ของ request นั้นคนเดียว — หายเมื่อจบ request</td></tr>
+    <tr><td>ใส่อะไรใน field ได้</td><td>ของที่ใช้ร่วมกันได้ปลอดภัย เช่น <code>*sql.DB</code> · service</td><td>ข้อมูลของ request นี้ที่จะส่งให้ view</td></tr>
+    <tr><td>อยากจำข้าม request</td><td>database · cache · cookie</td><td>database · cache · <code>session</code> (cookie)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">🧾 เทียบให้เห็นภาพ — ใบคำร้องที่เคาน์เตอร์ธนาคาร</span>
+  <p>
+    controller ของ Rails เหมือน<strong>ใบคำร้องเปล่า</strong>ที่เคาน์เตอร์ — ลูกค้าทุกคนหยิบใบใหม่ กรอกเฉพาะเรื่องของตัวเอง
+    ยื่นเสร็จพนักงานก็เก็บเข้าแฟ้ม ไม่มีใครเห็นสิ่งที่ลูกค้าคนก่อนกรอก ·
+    handler struct ของ Go เหมือน<strong>ไวท์บอร์ดแผ่นเดียวหน้าเคาน์เตอร์</strong> — ทุกคนเขียนลงแผ่นเดียวกัน
+    ถ้าสองคนเขียนพร้อมกันก็ทับกันมั่ว
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ใบคำร้องจริงถูกเก็บเข้าแฟ้มไว้อ่านทีหลังได้ · แต่ controller ที่จบ request แล้ว
+    <strong>ไม่ได้ถูกเก็บไว้ที่ไหนเลย</strong> — อยากให้ข้อมูลอยู่ข้าม request ต้องเขียนลงที่อื่นเอง
+    (database · <code>session</code>) · และการสร้าง object ใหม่ใน Ruby ถูกมาก ไม่ได้เสียเวลาเหมือนพิมพ์กระดาษใหม่ทุกใบ
+  </p>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">อยากนับว่า<strong>ผู้ใช้คนหนึ่ง</strong>เปิดหน้า <code>/hello</code> ไปกี่ครั้งแล้ว (คนละคนนับแยกกัน) — ควรเก็บตัวนับไว้ที่ไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>@visits</code> ใน controller เพราะ instance variable อยู่ได้ตลอดอายุของแอป</button>
+    <button class="opt">ตัวแปร local <code>visits</code> ใน action เพราะเป็นของ request นั้นคนเดียว</button>
+    <button class="opt">ตัวแปรระดับ class <code>@@visits</code> เพราะทุก request มองเห็นค่าเดียวกัน</button>
+    <button class="opt"><code>session[:visits]</code> เพราะเก็บใน cookie ของผู้ใช้แต่ละคนข้าม request ได้</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 4 ถูก · ผมแก้ controller ให้นับทั้งสองแบบแล้ว curl ด้วย cookie ชุดเดียวกันสามครั้ง:</p>
+<pre><code><span class="c"># เพิ่มใน action: session[:visits] = (session[:visits] || 0) + 1</span>
+&lt;p&gt;visits: 1&lt;/p&gt;
+&lt;p&gt;session visits: 1&lt;/p&gt;
+&lt;p&gt;visits: 1&lt;/p&gt;
+&lt;p&gt;session visits: 2&lt;/p&gt;
+&lt;p&gt;visits: 1&lt;/p&gt;
+&lt;p&gt;session visits: 3&lt;/p&gt;
+<span class="c">-- คนใหม่ ไม่มี cookie</span>
+&lt;p&gt;session visits: 1&lt;/p&gt;</code></pre>
+    <p style="margin-bottom:0">
+      ตัวเลือกที่ 1 ผิด — พิสูจน์แล้วว่า <code>@visits</code> เป็น 1 ตลอด เพราะ controller ตายพร้อม request ·
+      ตัวเลือกที่ 2 ผิดหนักกว่าอีก ตัวแปร local หายตั้งแต่ action จบ ·
+      ตัวเลือกที่ 3 คือกับดักแบบ Go: ผมลอง <code>@@visits += 1</code> แล้ว curl สามครั้ง<strong>โดยไม่ส่ง cookie</strong> (เท่ากับคนละคน)
+      ได้ <code>class-level visits: 1</code> → <code>2</code> → <code>3</code> — <strong>แชร์กันทุกผู้ใช้</strong> ไม่แยกคน และหายเมื่อ restart ·
+      <strong>จุดที่ต้องจำ:</strong> <code>@ตัวแปร</code> ใน controller อยู่แค่หนึ่ง request · จำข้าม request ต้องใช้ session หรือ database
+      (<code>session</code> มาจาก middleware <code>CookieStore</code> ที่เห็นในหัวข้อ 3)
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">5 · implicit render — ไม่เขียน <code>render</code> แต่ได้ HTML ทั้งหน้า</h2>
+
+<p>
+  ดู controller ในหัวข้อ 4 อีกที: <strong>ไม่มีบรรทัดไหนสั่งให้ส่งอะไรกลับไปเลย</strong> ·
+  ใน Go ถ้า handler ไม่เขียนอะไรลง <code>w</code> เลย (<code>func(w http.ResponseWriter, r *http.Request) {}</code>)
+  ผลรันจริงด้วย <code>httptest</code> คือ <code>status=200 body=""</code> — ได้หน้าเปล่า ·
+  แต่ Rails มีกติกา: <strong>ถ้า action จบโดยไม่ได้ <code>render</code> หรือ <code>redirect_to</code> อะไรเลย
+  ให้ไปหา view ที่ชื่อตรงกับ controller และ action เอง</strong> — เรียกว่า <strong>implicit render</strong>
+</p>
+<p>
+  <code>GreetingsController</code> + action <code>index</code> → <code>app/views/<strong>greetings</strong>/<strong>index</strong>.html.erb</code>
+  (กฎตั้งชื่อนี้อยู่ใน <a href="./0099-rails-naming-and-explore.html">บทเรียน 99</a>) · log ของ server บอกไว้ชัด:
+</p>
+<pre><code>Started GET "/hello?name=Somchai" for 127.0.0.1 at 2026-11-01 00:10:24 +0700
+Processing by GreetingsController#index as */*
+  Parameters: {"name" =&gt; "Somchai"}
+  Rendering layout layouts/application.html.erb
+  Rendering greetings/index.html.erb within layouts/application
+  Rendered greetings/index.html.erb within layouts/application (Duration: 0.0ms | GC: 0.0ms)
+  Rendered layout layouts/application.html.erb (Duration: 0.4ms | GC: 0.0ms)
+Completed 200 OK in 1ms (Views: 0.5ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)</code></pre>
+<p>
+  คำว่า <strong><code>within layouts/application</code></strong> คือครึ่งหลังของด่าน "index.html.erb + layout" ในสไลด์ ·
+  view ของเรามีแค่ 3 บรรทัด แต่ HTML ที่ได้กลับมามี 53 บรรทัด เพราะมันถูก<strong>ห่อด้วย layout</strong>
+  (<code>app/views/layouts/application.html.erb</code>) อีกชั้น · ใน development Rails แปะคอมเมนต์บอกขอบเขตให้ด้วย
+  (มาจาก <code>config.action_view.annotate_rendered_view_with_filenames = true</code> ใน <code>development.rb</code>):
+</p>
+<pre><code><span class="c">$ curl -s http://127.0.0.1:4100/hello     # ตัดส่วน &lt;head&gt; ออก</span>
+&lt;!-- BEGIN app/views/layouts/application.html.erb
+--&gt;&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+  &lt;head&gt;
+    &lt;title&gt;Wongnok Blog&lt;/title&gt;
+    …
+  &lt;/head&gt;
+
+  &lt;body&gt;
+    &lt;main class="container mx-auto mt-28 px-5 flex"&gt;
+      &lt;!-- BEGIN app/views/greetings/index.html.erb
+--&gt;&lt;h1&gt;Hello PEA&lt;/h1&gt;
+&lt;p&gt;controller object_id: 12504&lt;/p&gt;
+&lt;p&gt;visits: 1&lt;/p&gt;
+&lt;!-- END app/views/greetings/index.html.erb --&gt;
+    &lt;/main&gt;
+  &lt;/body&gt;
+&lt;/html&gt;
+&lt;!-- END app/views/layouts/application.html.erb --&gt;</code></pre>
+<p>
+  view ของเราไปโผล่ตรงที่ layout เขียนว่า <code>&lt;%= yield %&gt;</code> ·
+  ถ้าเคยทำ <code>app/layout.tsx</code> ของ Next.js ใน <a href="../../fe-nextjs-app/lessons/0083-app-layout-navbar.html">บทเรียน 83</a>
+  นี่คือเรื่องเดียวกัน: <code>yield</code> ของ Rails ≈ <code>{children}</code> ของ Next.js — "ตรงนี้ให้เอาเนื้อหาของหน้ามาใส่"
+</p>
+
+<p>
+  แล้ว<strong>ถ้าไม่มีไฟล์ view ล่ะ?</strong> ผมเพิ่ม <code>get "/nope", to: "greetings#nope"</code> กับ action
+  <code>def nope; end</code> ที่ไม่มีไฟล์ view แล้วยิงสองแบบ:
+</p>
+<pre><code><span class="c">$ curl -s -o /dev/null -w 'html:%{http_code}\n' -H 'Accept: text/html' http://127.0.0.1:4100/nope</span>
+html:406
+<span class="c">$ curl -s -o /dev/null -w 'any:%{http_code}\n' http://127.0.0.1:4100/nope</span>
+any:204</code></pre>
+<p>
+  <strong>browser ได้ 406 พร้อมหน้า error <code>MissingExactTemplate</code></strong> (บรรทัดแรกของ stack trace ในหัวข้อ 3) ·
+  <strong>แต่ curl เฉย ๆ ได้ 204 No Content แบบเงียบ ๆ</strong> · เอกสาร API ของ <code>ActionController::ImplicitRender</code>
+  อธิบายว่า ถ้าเป็นการเปิดหน้าใน browser (GET ที่ขอ HTML) แล้วหา view ไม่เจอ Rails จะ raise error เพราะคุณน่าจะลืมสร้างไฟล์ ·
+  แต่ถ้าไม่ใช่ (เช่น curl ที่ส่ง <code>Accept: */*</code>) Rails ถือว่าไม่ต้องการเนื้อหา แล้วตอบ 204 ·
+  <strong>บทเรียน: ทดสอบด้วย curl แล้วได้ 204 ไม่ได้แปลว่าหน้าเว็บทำงาน</strong> — เปิดใน browser ดูด้วยเสมอ
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของ controller และการ render</span>
+  <dl>
+    <dt>controller#action</dt>
+    <dd>วิธีเรียก "method ไหนของ controller ไหน" เช่น <code>greetings#index</code> = method <code>index</code> ของ
+        <code>GreetingsController</code> · เห็นใน <code>routes.rb</code> และใน log บรรทัด <code>Processing by …</code></dd>
+    <dt>per-request instance</dt>
+    <dd>controller ถูกสร้างใหม่ทุก request · <strong>พิมพ์บอก AI ได้ว่า “Rails controllers are instantiated per request,
+        so don't store cross-request state in instance variables”</strong> เวลามันเสนอให้เก็บของใน <code>@ตัวแปร</code> ข้ามหน้า</dd>
+    <dt>implicit render</dt>
+    <dd>action ที่ไม่ได้ <code>render</code>/<code>redirect_to</code> เอง จะ render view ชื่อเดียวกับ action ให้อัตโนมัติ ·
+        ตรงข้ามคือ <strong>explicit render</strong> (<code>render :new</code>) ที่เรียนใน <a href="./0102-rails-controller.html">บทเรียน 102</a></dd>
+    <dt>layout · <code>yield</code></dt>
+    <dd>กรอบ HTML ที่ห่อทุกหน้า (<code>app/views/layouts/application.html.erb</code>) · <code>yield</code> คือช่องที่เนื้อหาของหน้าจะไปอยู่ ·
+        <strong>ถาม AI ได้ว่า “how do I use a different layout for the admin pages in Rails”</strong></dd>
+    <dt><code>MissingExactTemplate</code> · 406 / 204</dt>
+    <dd>error ตอนหา view ไม่เจอ · browser เห็น 406 · request ที่ไม่ได้ขอ HTML ได้ 204 เงียบ ๆ ·
+        เจอเมื่อไหร่ให้เช็คชื่อโฟลเดอร์ใน <code>app/views/</code> กับชื่อไฟล์ก่อนเลย</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · HTTP methods ที่ Rails ยึด — สไลด์หน้า 51</h2>
+
+<p>
+  ห้า method นี้คุณเรียนแล้วใน <a href="../../day-8/lessons/0033-rest-resource-method.html">บทเรียน 33</a>
+  และลง route ด้วย Gin ใน <a href="../../day-8/lessons/0038-gin-routing.html">บทเรียน 38</a> ·
+  ความหมายไม่เปลี่ยน สิ่งที่ต้องรู้เพิ่มคือ<strong>มุมของ Rails</strong> ตามที่สไลด์เขียน:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>method</th><th>ความหมาย</th><th>สไลด์หน้า 51 บอกว่า</th><th>Gin (Go)</th><th>Rails <code>routes.rb</code></th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>GET</code></td><td>อ่านอย่างเดียว</td><td>เรียกซ้ำได้ไม่เปลี่ยนอะไร · cache ได้</td><td><code>r.GET</code></td><td><code>get</code></td></tr>
+    <tr><td><code>POST</code></td><td>สร้างของใหม่</td><td>เรียกซ้ำ = สร้างซ้ำ · จึงต้อง redirect หลังสำเร็จ</td><td><code>r.POST</code></td><td><code>post</code></td></tr>
+    <tr><td><code>PATCH</code></td><td>แก้บางส่วน</td><td>Rails ใช้ตัวนี้เป็นหลัก ไม่ใช่ PUT</td><td><code>r.PATCH</code></td><td><code>patch</code></td></tr>
+    <tr><td><code>PUT</code></td><td>แทนที่ทั้งก้อน</td><td>Rails รองรับ แต่ไม่ค่อยใช้</td><td><code>r.PUT</code></td><td><code>put</code></td></tr>
+    <tr><td><code>DELETE</code></td><td>ลบ</td><td>browser ส่งเองไม่ได้ ต้องอาศัย hidden field</td><td><code>r.DELETE</code></td><td><code>delete</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  "PATCH เป็นหลัก แต่รองรับ PUT" เห็นได้จากตาราง route ที่ Rails สร้างจาก <code>resources :posts</code> บรรทัดเดียว
+  (<code>resources</code> เรียนจริงใน <a href="./0101-rails-routing.html">บทเรียน 101</a>):
+</p>
+<pre><code><span class="c">$ bin/rails routes -c posts</span>
+   Prefix Verb   URI Pattern               Controller#Action
+    posts GET    /posts(.:format)          posts#index
+          POST   /posts(.:format)          posts#create
+ new_post GET    /posts/new(.:format)      posts#new
+edit_post GET    /posts/:id/edit(.:format) posts#edit
+     post GET    /posts/:id(.:format)      posts#show
+          PATCH  /posts/:id(.:format)      posts#update
+          PUT    /posts/:id(.:format)      posts#update
+          DELETE /posts/:id(.:format)      posts#destroy</code></pre>
+<p><strong>PATCH กับ PUT วิ่งเข้า <code>posts#update</code> ตัวเดียวกัน</strong> — Rails ไม่ได้แยกพฤติกรรมให้ คุณได้ action เดียว</p>
+
+<p>
+  ส่วน "DELETE ต้องอาศัย hidden field": <strong><code>&lt;form&gt;</code> ของ HTML ส่งได้แค่ GET กับ POST</strong> ·
+  Rails เลยแอบส่งเป็น POST แล้วแนบช่องลับชื่อ <code>_method=delete</code> ไปด้วย ·
+  แล้วใครเปลี่ยน POST กลับเป็น DELETE? คำตอบอยู่ในรายการ middleware หัวข้อ 3 — <strong><code>Rack::MethodOverride</code></strong> ·
+  ผมลงไว้ <code>delete "/hello", to: "greetings#destroy"</code> แล้ว<strong>ส่ง POST จริง ๆ</strong> ไปดู:
+</p>
+<pre><code><span class="c">$ curl -s -o /dev/null -w '%{http_code}\n' -X POST -d '_method=delete' http://127.0.0.1:4100/hello</span>
+422</code></pre>
+<pre><code><span class="c"># log ของ server</span>
+Started DELETE "/hello" for 127.0.0.1 at 2026-11-01 00:11:28 +0700
+Processing by GreetingsController#destroy as */*
+Can't verify CSRF token authenticity.
+Completed 422 Unprocessable Content in 0ms (ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+ActionController::InvalidAuthenticityToken (Can't verify CSRF token authenticity.):
+actionpack (8.1.4) lib/action_controller/metal/request_forgery_protection.rb:321:in 'ActionController::RequestForgeryProtection::ProtectionMethods::Exception#handle_unverified_request'
+…</code></pre>
+<p>
+  log นี้ให้หลักฐานสองเรื่องในคราวเดียว:
+</p>
+<ol>
+  <li><strong>ส่ง POST แต่ log เขียน <code>Started DELETE</code></strong> — <code>Rack::MethodOverride</code> เปลี่ยน method ให้แล้วตั้งแต่ด่าน middleware
+      และ router ก็ส่งเข้า <code>#destroy</code> ถูกตัว</li>
+  <li><strong>CSRF ไม่ได้อยู่ใน middleware</strong> — request เดินถึง <code>Processing by GreetingsController#destroy</code> แล้ว
+      ถึงโดนปฏิเสธ และไฟล์ที่ปฏิเสธคือ <code>action_controller/metal/request_forgery_protection.rb</code> ซึ่งเป็นส่วนหนึ่งของ<strong>controller</strong> ·
+      สไลด์หน้า 50 เขียน CSRF ไว้ในกล่อง Middleware จึงไม่ตรงกับของจริง — มันคือด่านที่อยู่<strong>ใน</strong> controller
+      (ทำงานก่อน action และตรวจ request ที่เปลี่ยนข้อมูลอย่าง POST / PATCH / DELETE) · ส่วน token ที่มันตรวจ ฝังอยู่ใน layout ทุกหน้าผ่าน <code>&lt;%= csrf_meta_tags %&gt;</code></li>
+</ol>
+<p>
+  (ฟอร์มจริงที่ Rails สร้างให้จะแนบ token มาด้วยเอง ไม่โดน 422 แบบนี้ — เรื่องฟอร์มรออยู่ในวันถัด ๆ ไป)
+</p>
+
+<h2 id="sn-sec-7">7 · status code กับชื่อ symbol — และเรื่อง <code>:unprocessable_content</code></h2>
+
+<p>
+  ใน Go คุณเขียน <code>http.StatusNotFound</code> แทน <code>404</code> (<a href="../../day-8/lessons/0034-http-status-code.html">บทเรียน 34</a>) ·
+  Rails ทำแบบเดียวกันแต่ใช้ <strong>Symbol</strong> (ทวนได้ใน <a href="./0092-ruby-symbol-hash-enumerable.html">บทเรียน 92</a>) เช่น
+  <code>render :new, status: :unprocessable_content</code> · ตารางในสไลด์หน้า 51 ตรวจด้วย <code>bin/rails runner</code> แล้วตรงทุกตัว:
+</p>
+
+<pre><code><span class="c">$ bin/rails runner '%i[ok found see_other not_found unprocessable_content internal_server_error].each { |s| puts "#{s} =&gt; #{Rack::Utils.status_code(s)}" }'</span>
+ok =&gt; 200
+found =&gt; 302
+see_other =&gt; 303
+not_found =&gt; 404
+unprocessable_content =&gt; 422
+internal_server_error =&gt; 500</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>เลข</th><th>Rails symbol</th><th>Go</th><th>เจอตอนไหน (ตามสไลด์)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>200</td><td><code>:ok</code></td><td><code>http.StatusOK</code></td><td>ปกติ</td></tr>
+    <tr><td>302</td><td><code>:found</code></td><td><code>http.StatusFound</code></td><td>redirect</td></tr>
+    <tr><td>303</td><td><code>:see_other</code></td><td><code>http.StatusSeeOther</code></td><td>หลัง DELETE</td></tr>
+    <tr><td>404</td><td><code>:not_found</code></td><td><code>http.StatusNotFound</code></td><td>หาไม่เจอ</td></tr>
+    <tr><td>422</td><td><code>:unprocessable_content</code></td><td><code>http.StatusUnprocessableEntity</code></td><td>form ไม่ผ่าน</td></tr>
+    <tr><td>500</td><td><code>:internal_server_error</code></td><td><code>http.StatusInternalServerError</code></td><td>server พัง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทีนี้จุดที่น่าสงสัย: <strong>สไลด์หน้า 51 เขียน <code>unprocessable_content</code></strong> แต่<strong>หน้า 62 และ 77 เขียน
+  <code>:unprocessable_entity</code></strong> · ถ้าลอง AI หรือค้นเว็บ ก็จะเจอทั้งสองแบบปนกัน · อันไหนถูก?
+  ผมถาม Rack ตรง ๆ:
+</p>
+<pre><code><span class="c">$ bin/rails runner 'p Rack::Utils.status_code(:unprocessable_content); p Rack::Utils.status_code(:unprocessable_entity)'</span>
+<span class="c"># (ย่อ path ต้นบรรทัด warning ด้วย … · ข้อความที่เหลือไม่ได้แก้)</span>
+422
+/Users/…/gems/railties-8.1.4/lib/rails/commands/runner/runner_command.rb:49: warning: Status code :unprocessable_entity is deprecated and will be removed in a future version of Rack. Please use :unprocessable_content instead.
+422</code></pre>
+<p>
+  <strong>ได้ 422 ทั้งคู่ แต่ <code>:unprocessable_entity</code> โดนเตือนว่า deprecated</strong> (ยังใช้ได้ แต่กำลังจะถูกถอด) ·
+  แล้วถ้าใช้ใน <strong>controller</strong> แบบสไลด์หน้า 62 ล่ะ? ผมทำสอง action ให้ต่างกันแค่ symbol:
+</p>
+<pre><code><span class="c"># render plain: "old", status: :unprocessable_entity   และ   render plain: "new", status: :unprocessable_content</span>
+<span class="c">$ curl -s -w ' -&gt; %{http_code}\n' http://127.0.0.1:4100/status_old</span>
+old -&gt; 422
+<span class="c">$ curl -s -w ' -&gt; %{http_code}\n' http://127.0.0.1:4100/status_new</span>
+new -&gt; 422</code></pre>
+<pre><code><span class="c"># log ของ server (ทั้งสองตัวหน้าตาเหมือนกัน · ไม่มี warning)</span>
+Completed 422 Unprocessable Content in 4ms (Views: 3.7ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.1ms)
+Completed 422 Unprocessable Content in 1ms (Views: 0.1ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)</code></pre>
+<p>
+  <strong>ใน controller ไม่มี warning เลย</strong> · เหตุผลอยู่ในซอร์สของ actionpack 8.1.4
+  (<code>lib/action_dispatch/http/response.rb</code> บรรทัด 50–53) — Rails <strong>แอบแปลงชื่อเก่าเป็นชื่อใหม่ให้ก่อน</strong>ส่งต่อให้ Rack:
+</p>
+<pre><code><span class="k">if</span> <span class="n">ActionDispatch::Constants::UNPROCESSABLE_CONTENT</span> == <span class="n">:unprocessable_content</span>
+  <span class="k">def</span> <span class="f">rack_status_code</span>(status) <span class="c"># :nodoc:</span>
+    status = <span class="n">:unprocessable_content</span> <span class="k">if</span> status == <span class="n">:unprocessable_entity</span>
+    <span class="n">Rack::Utils</span>.<span class="f">status_code</span>(status)</code></pre>
+<p>
+  ทำไมถึงเปลี่ยนชื่อ? ตารางชื่อ status ของ Rack <strong>สร้างจากทะเบียน status code ของ IANA</strong> (คอมเมนต์ในซอร์ส <code>rack/utils.rb</code> เขียนไว้)
+  และ CHANGELOG ของ Rack 3.1.0 บันทึกว่า "update descriptions for 413, 422, &amp; 451" — ชื่อทางการของ 422 ตอนนี้คือ
+  <code>Unprocessable Content</code> · ฝั่ง Go 1.26.5 ยังใช้ชื่อเก่าอยู่:
+</p>
+<pre><code><span class="c">// status.go</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+	<span class="s">"fmt"</span>
+	<span class="s">"net/http"</span>
+)
+
+<span class="k">func</span> <span class="f">main</span>() {
+	fmt.<span class="f">Println</span>(http.StatusUnprocessableEntity, http.<span class="f">StatusText</span>(http.StatusUnprocessableEntity))
+}</code></pre>
+<pre><code><span class="c">$ go run status.go</span>
+422 Unprocessable Entity</code></pre>
+<p>
+  และตัวสร้างโค้ด CRUD อัตโนมัติของ Rails 8.1.4 (<code>bin/rails g scaffold_controller Post title:string</code> — จะเจอในวันถัด ๆ ไป) ก็สร้างโค้ดเป็นชื่อใหม่แล้ว:
+</p>
+<pre><code><span class="c">$ grep -n 'unprocessable' app/controllers/posts_controller.rb</span>
+31:        format.html { render :new, status: :unprocessable_content }
+32:        format.json { render json: @post.errors, status: :unprocessable_content }
+44:        format.html { render :edit, status: :unprocessable_content }
+45:        format.json { render json: @post.errors, status: :unprocessable_content }</code></pre>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ สรุปใช้งาน:</strong> โค้ดใหม่ให้เขียน <strong><code>:unprocessable_content</code></strong> ตามสไลด์หน้า 51 ·
+    เจอ <code>:unprocessable_entity</code> ในโค้ดเก่า (หรือในสไลด์หน้า 62 / 77) <strong>ไม่ต้องตกใจ</strong> — ใน controller ของ Rails 8.1.4
+    ยังได้ 422 และไม่มี warning · จะโดนเตือนก็ต่อเมื่อเรียก Rack ตรง ๆ เท่านั้น
+  </p>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ใน Rails 8.1.4 (Rack 3.2.8) เขียน <code>render :new, status: :unprocessable_entity</code> ใน controller ตามสไลด์หน้า 62 — จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">ได้ 500 เพราะ Rack 3.2 ถอด symbol ชื่อนี้ออกไปแล้ว ใช้ไม่ได้อีก</button>
+    <button class="opt">ได้ 422 แต่มี deprecation warning โผล่ใน log ของ server ทุกครั้ง</button>
+    <button class="opt">ได้ 422 ไม่มี warning เพราะ Rails แปลงเป็นชื่อใหม่ก่อนส่งให้ Rack</button>
+    <button class="opt">ได้ 200 เพราะ symbol ที่ Rack ไม่รู้จักจะถูกข้ามแล้วใช้ค่าเริ่มต้น</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · curl ได้ <code>old -&gt; 422</code> และ log มีแค่ <code>Completed 422 Unprocessable Content</code> ไม่มี warning ·
+      เพราะ <code>rack_status_code</code> ใน actionpack แปลง <code>:unprocessable_entity</code> เป็น <code>:unprocessable_content</code> ก่อน
+    </p>
+    <p style="margin-bottom:0">
+      ตัวเลือกที่ 1 ผิด — Rack 3.2.8 ยังมีชื่อเก่าในตาราง <code>OBSOLETE_SYMBOLS_TO_STATUS_CODES</code> ·
+      ตัวเลือกที่ 2 คือสิ่งที่เกิด<strong>ถ้าเรียก <code>Rack::Utils.status_code</code> ตรง ๆ</strong> (เห็นใน <code>bin/rails runner</code>) ไม่ใช่ใน controller ·
+      ตัวเลือกที่ 4 ผิด — symbol ที่ไม่รู้จักจริง ๆ Rack ไม่ได้เงียบ แต่ raise error (ลอง <code>:foo</code> แล้วได้
+      <code>Unrecognized status code :foo (ArgumentError)</code>) ·
+      <strong>จุดที่ต้องจำ:</strong> ทั้งสองชื่อได้ 422 · เขียนใหม่ให้ใช้ <code>:unprocessable_content</code>
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-8">8 · M · V · C ใครรับผิดชอบอะไร — สไลด์หน้า 52–53</h2>
+
+<p>
+  ตั้งแต่หัวข้อ 3 เราเห็น request เดินจาก routes ไป controller ไป view · ยังขาดตัวที่สามคือ <strong>Model</strong>
+  ซึ่งคือส่วนที่คุยกับ database (เรียนจริง Day 2) · สามตัวนี้รวมกันเรียกว่า <strong>MVC</strong>
+  และเป็นเส้นแบ่งที่สไลด์หน้า 52 บอกว่า "คนข้ามบ่อยที่สุด"
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th>Model</th><th>View</th><th>Controller</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>สไลด์หน้า 52 สรุปว่า</td><td>ข้อมูลและกฎของธุรกิจ</td><td>หน้าตาที่ผู้ใช้เห็น</td><td>คนกลางที่ประสานงาน</td></tr>
+    <tr><td>รู้อะไร</td><td>รู้จัก DB · รู้ว่าอะไรถูกอะไรผิด</td><td>แสดงผลอย่างเดียว</td><td>รับ request · เรียก model · เลือก view</td></tr>
+    <tr><td>ห้ามอะไร</td><td>ไม่รู้จัก HTTP เลย</td><td>ไม่ควรมี query อยู่ในนี้</td><td>ควรบางที่สุด</td></tr>
+    <tr><td>ไฟล์ในโปรเจกต์</td><td><code>app/models/post.rb</code></td><td><code>app/views/posts/index.html.erb</code></td><td><code>app/controllers/posts_controller.rb</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สไลด์หน้า 53 วาดทางเดินของ <code>GET /posts</code> เป็น 6 ขั้น — ถอดเป็นตัวอักษรได้แบบนี้:
+</p>
+<div class="diagram"><pre><code>① Browser          ──GET /posts───▶ config/routes.rb      resources :posts
+② config/routes.rb ──posts#index──▶ PostsController (C)   def index
+                                                             @posts = Post.all
+                                                           end
+③ PostsController  ──Post.all─────▶ Post (M)              class Post &lt; ApplicationRecord
+                                     └──SQL──▶ PostgreSQL (ตาราง posts)
+④ Post (M)         ──ข้อมูล───────▶ PostsController
+⑤ PostsController  ──@posts───────▶ index.html.erb (V)    &lt;% @posts.each do |post| %&gt;
+                                                             &lt;h2&gt;&lt;%= post.title %&gt;&lt;/h2&gt;
+⑥ index.html.erb   ──ส่ง HTML─────▶ Browser</code></pre></div>
+<p>
+  สังเกตลูกศร ⑤: <strong>ของที่ส่งจาก controller ไป view คือ <code>@ตัวแปร</code></strong> — สะพานเดียวกับ <code>@name</code> ในหัวข้อ 4
+  (สไลด์หน้า 60 เรียกว่า "instance variable คือสะพานเดียวจาก controller ไปถึง view") ·
+  และ <strong>view ไม่ได้คุยกับ model หรือ database เอง</strong> มันแค่วนแสดงของที่ controller ยื่นให้
+</p>
+
+<p>
+  คุณเคยแบ่งงานแบบนี้มาแล้วใน Go — <code>handler</code> / <code>service</code> / <code>repository</code> ใน
+  <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a> · เอามาวางเทียบกัน:
+</p>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Go (บทเรียน 27)</th><th>หน้าที่</th><th>Rails</th><th>ต่างกันตรงไหน</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>handler.go</code></td><td>รับ HTTP · แปลง input · คืน status code</td><td><strong>Controller</strong></td>
+        <td>เกือบเหมือนกันทุกอย่าง · Rails ได้ <code>params</code> มาแบบแกะเสร็จแล้ว</td></tr>
+    <tr><td><code>service.go</code></td><td>กฎธุรกิจ · ตรวจความถูกต้อง</td><td rowspan="2"><strong>Model</strong></td>
+        <td rowspan="2">Rails <strong>รวมสองชั้นไว้ใน class เดียว</strong> — <code>Post</code> ทั้งรู้กฎ (<code>validates</code>) และคุยกับ DB เอง
+        (<code>Post.all</code>) · แนวคิดนี้ชื่อ Active Record (Day 2)</td></tr>
+    <tr><td><code>repository.go</code></td><td>คุยกับ database อย่างเดียว</td></tr>
+    <tr><td><code>c.JSON(...)</code> ใน handler</td><td>จัดรูปผลลัพธ์ส่งกลับ</td><td><strong>View</strong></td>
+        <td>API ของ Go ส่ง JSON เลยไม่มีไฟล์ view แยก · Rails ส่ง HTML ทั้งหน้า จึงแยกออกมาเป็นไฟล์ <code>.html.erb</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">🍜 เทียบให้เห็นภาพ — ร้านก๋วยเตี๋ยวที่มีพนักงานเสิร์ฟ</span>
+  <p>
+    <strong>Controller</strong> คือพนักงานเสิร์ฟ — รับออเดอร์จากโต๊ะ (request) · เดินไปบอกครัว · ยกชามมาเสิร์ฟ ·
+    ไม่ได้ลวกเส้นเอง · <strong>Model</strong> คือครัว — รู้สูตร รู้ว่าวัตถุดิบไหนหมด รู้ว่า "เส้นใหญ่แห้งไม่ใส่ผัก" ทำได้ไหม ·
+    ครัวไม่เคยเห็นหน้าลูกค้า (ไม่รู้จัก HTTP) · <strong>View</strong> คือการจัดชามก่อนเสิร์ฟ — วางผักโรยกระเทียมให้ดูน่ากิน
+    แต่ไม่ได้ตัดสินว่าจะใส่อะไร
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริง คนจัดชามอาจเดินเข้าครัวไปหยิบลูกชิ้นเพิ่มเองได้ ·
+    แต่ใน Rails <strong>View เดินเข้าครัวได้จริงด้วย</strong> (ERB เขียน <code>Post.where(...)</code> ได้ และมันทำงาน!) —
+    ไม่มีอะไรห้าม <strong>เป็นแค่ข้อตกลงที่ทีมต้องรักษาเอง</strong> · ข้อนี้คือเหตุผลที่สไลด์เรียกมันว่าเส้นที่คนข้ามบ่อยที่สุด
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของ MVC</span>
+  <dl>
+    <dt>MVC (Model–View–Controller)</dt>
+    <dd>รูปแบบการแบ่งโค้ดเป็นสามส่วนตามหน้าที่ · <strong>ถาม senior ได้ว่า “ทีมนี้ยอมให้ logic อยู่ใน controller ได้แค่ไหน
+        หรือต้องย้ายไป model / service object”</strong> — แต่ละทีมขีดเส้นไม่เท่ากัน</dd>
+    <dt>skinny controller, fat model</dt>
+    <dd>คำขวัญที่ชาว Rails ใช้บ่อย = controller บาง ๆ (ประสานงานอย่างเดียว) กฎธุรกิจไปอยู่ใน model ·
+        ตรงกับคำว่า "ควรบางที่สุด" ในสไลด์หน้า 52 · <strong>พิมพ์บอก AI ได้ว่า “refactor this to skinny controller, move the business rule into the model”</strong></dd>
+    <dt>business logic / กฎธุรกิจ</dt>
+    <dd>กฎที่ยังเป็นจริงแม้จะไม่มีเว็บ เช่น "โพสต์ต้องมีชื่อเรื่อง" · ทดสอบง่าย ๆ ว่าถ้าย้ายไปทำเป็น CLI กฎนี้ยังต้องมีไหม — ถ้าต้องมี มันคือของ Model</dd>
+    <dt>instance variable (เป็นสะพาน C → V)</dt>
+    <dd><code>@posts</code> ที่ตั้งใน action จะอ่านได้ใน view ของ action นั้น · ตัวแปร local ไม่ข้ามไป ·
+        <strong>ถาม AI ได้ว่า “why can the view see @posts but not a local variable posts”</strong></dd>
+  </dl>
+</div>
+
+<p>
+  กฎตัดสินจากสไลด์หน้า 52 ใช้ได้เกือบทุกครั้ง: <strong>ข้อมูลและกฎของธุรกิจ → Model</strong> ·
+  <strong>เกี่ยวกับ HTTP, params, session, redirect → Controller</strong> · <strong>หน้าตาล้วน ๆ → View</strong> · ลองใช้ดู:
+</p>
+
+<div class="predict">
+<pre><code>1.  validates <span class="n">:title</span>, presence: <span class="n">true</span>
+2.  @name = params[<span class="n">:name</span>] || <span class="s">"PEA"</span>
+3.  &lt;h1&gt;Hello <span class="k">&lt;%=</span> @name <span class="k">%&gt;</span>&lt;/h1&gt;
+4.  redirect_to posts_path, status: <span class="n">:see_other</span>
+5.  scope <span class="n">:published</span>, -&gt; { where.not(published_at: <span class="n">nil</span>) }
+6.  <span class="k">&lt;%=</span> link_to <span class="s">"แก้ไข"</span>, edit_post_path(post) <span class="k">%&gt;</span>
+7.  render <span class="n">:new</span>, status: <span class="n">:unprocessable_content</span>
+8.  <span class="k">&lt;%</span> Post.where.not(published_at: <span class="n">nil</span>).each <span class="k">do</span> |post| <span class="k">%&gt;</span>     <span class="c">← เจอในไฟล์ index.html.erb</span></code></pre>
+  <p class="ask">
+    แต่ละบรรทัด<strong>ควร</strong>อยู่ใน M, V หรือ C? · บรรทัดที่ 8 เจอใน view และ<strong>ทำงานได้จริง</strong> — มันอยู่ถูกที่ไหม?
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>อยู่ที่</th><th>เหตุผล</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><strong>M</strong></td><td>"โพสต์ต้องมีชื่อเรื่อง" เป็นกฎธุรกิจ · เป็นจริงแม้ไม่มีเว็บ</td></tr>
+        <tr><td>2</td><td><strong>C</strong></td><td><code>params</code> มาจาก URL/HTTP — Model ห้ามรู้จัก</td></tr>
+        <tr><td>3</td><td><strong>V</strong></td><td>หน้าตาล้วน ๆ แค่หยิบ <code>@name</code> มาแสดง</td></tr>
+        <tr><td>4</td><td><strong>C</strong></td><td><code>redirect_to</code> คือคำสั่ง HTTP (ตอบ 303 ให้ browser ไปหน้าอื่น)</td></tr>
+        <tr><td>5</td><td><strong>M</strong></td><td>นิยามว่า "โพสต์ที่เผยแพร่แล้ว" คืออะไร = กฎธุรกิจ + รู้จัก DB</td></tr>
+        <tr><td>6</td><td><strong>V</strong></td><td>สร้างลิงก์บนหน้า (ผลจริง: <code>&lt;a href="/posts/1/edit"&gt;แก้ไข&lt;/a&gt;</code>)</td></tr>
+        <tr><td>7</td><td><strong>C</strong></td><td>เลือกว่าจะ render view ไหนด้วย status อะไร = งานของคนประสานงาน</td></tr>
+        <tr><td>8</td><td><strong>V แต่ผิดที่</strong></td><td>มี query อยู่ใน view — ข้ามเส้นที่สไลด์หน้า 52 เตือน · ย้ายเงื่อนไขไปเป็นบรรทัดที่ 5 (scope ใน M)
+            แล้วให้ C เขียน <code>@posts = Post.published</code> · view เหลือแค่ <code>&lt;% @posts.each do |post| %&gt;</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="margin-bottom:0">
+      ผมรันทุกบรรทัดใน sandbox แล้ว (สร้าง model <code>Post</code> ชั่วคราว) — ทุกบรรทัดทำงานได้
+      (บรรทัดที่ 4 curl ได้ <code>303</code> ไปที่ <code>/posts</code> · บรรทัดที่ 7 ได้ <code>422</code>) <strong>รวมถึงบรรทัดที่ 8</strong>
+      ซึ่ง render ออกมาเป็น <code>&lt;h2&gt;ข้าวซอย&lt;/h2&gt;</code> ได้ตามปกติ · นั่นคือปัญหา:
+      <strong>Rails ไม่ฟ้องเวลาโค้ดอยู่ผิดชั้น</strong> คุณต้องรู้เอง ·
+      ถ้าบรรทัดนี้ถูกก็อปไปอีก 3 หน้า แล้ววันหนึ่งความหมายของ "เผยแพร่แล้ว" เปลี่ยน คุณต้องไล่แก้ 3 view ·
+      แต่ถ้าอยู่ใน scope แก้ที่เดียวจบ
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">เจอบรรทัด <code>&lt;% Post.where.not(published_at: nil).each do |post| %&gt;</code> ใน <code>index.html.erb</code> — หน้าเว็บแสดงผลถูกต้อง แต่ควรแก้ยังไง?</p>
+  <div class="opts">
+    <button class="opt">ย้ายเงื่อนไขไปเป็น scope ใน Model แล้วให้ Controller ตั้ง <code>@posts = Post.published</code></button>
+    <button class="opt">ย้ายทั้งบรรทัดไปไว้ใน Controller แล้วให้ Controller ประกอบ HTML ส่งออกไปเองทั้งหน้า</button>
+    <button class="opt">ไม่ต้องแก้ เพราะ View ของ Rails ออกแบบมาให้ query ตรงได้ และเร็วกว่าผ่าน Controller</button>
+    <button class="opt">ย้ายไปไว้ใน <code>config/routes.rb</code> เพื่อกรองโพสต์ตั้งแต่ตอนจับคู่ URL กับ action</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · "โพสต์ที่เผยแพร่แล้ว" เป็นกฎธุรกิจ → Model · การเลือกว่าหน้านี้แสดงโพสต์ชุดไหน → Controller ·
+      view เหลือแค่วนแสดง <code>@posts</code> (ตรงกับภาพสไลด์หน้า 53 ทุกขั้น)
+    </p>
+    <p style="margin-bottom:0">
+      ตัวเลือกที่ 2 แก้ผิดทาง — ให้ Controller ทำ HTML ก็ข้ามเส้นอีกเส้น (C ไปทำงานของ V) ·
+      ตัวเลือกที่ 3 ครึ่งจริงครึ่งหลอก: view query ได้จริง แต่<strong>ไม่ได้เร็วกว่า</strong> (SQL ตัวเดียวกัน) และสไลด์บอกตรง ๆ ว่า "ไม่ควรมี query อยู่ในนี้" ·
+      ตัวเลือกที่ 4 ผิด — <code>routes.rb</code> จับคู่ URL กับ action อย่างเดียว ไม่ได้แตะข้อมูล ·
+      <strong>จุดที่ต้องจำ:</strong> โค้ดที่ทำงานได้ไม่ได้แปลว่าอยู่ถูกชั้น — กฎ → M · HTTP → C · หน้าตา → V
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">9 · ภารกิจ — เห็นวงจรทั้งเส้นด้วยตาตัวเอง</h2>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ: พิสูจน์สามเรื่องในโปรเจกต์ <code>wongnok_blog</code> ของคุณ</h3>
+  <ol>
+    <li><strong>ลำดับ boot</strong> — ใส่ <code>$stderr.puts "[BOOT] ชื่อไฟล์"</code> บนสุดของ <code>config.ru</code> ·
+        <code>config/environment.rb</code> · <code>config/environments/development.rb</code> · <code>config/routes.rb</code>
+        แล้วสั่ง <code>bin/rails server</code> · จดว่าป้ายไหนโผล่ก่อน <code>Listening on</code> · ป้ายไหนโผล่หลังจากเปิดหน้าเว็บครั้งแรก</li>
+    <li><strong>controller ตัวใหม่ทุก request</strong> — สร้าง route + controller + view ของสไลด์หน้า 60
+        เพิ่ม <code>@controller_id = object_id</code> แล้วเปิด <code>http://localhost:3000/hello</code> แล้วกด refresh สามครั้ง —
+        เลขต้องไม่ซ้ำกันเลย</li>
+    <li><strong>ทางเดินของ request</strong> — ดูใน log ของ server ว่า request หนึ่งตัวมีบรรทัด <code>Processing by …</code>
+        และ <code>Rendering … within layouts/application</code> หรือไม่ ·
+        แล้วรัน <code>bin/rails middleware</code> หาว่า middleware ตัวไหนเปลี่ยน <code>_method=delete</code> เป็น DELETE</li>
+    <li><strong>ลบป้าย <code>[BOOT]</code> ออกให้หมดเมื่อเสร็จ</strong> แล้วเช็คว่าไม่เหลือด้วย
+        <code>grep -rn '\[BOOT\]' config.ru config bin</code> (ต้องไม่มีอะไรพิมพ์ออกมา) ·
+        <strong>อย่าใช้ <code>git diff</code> เช็ค</strong> — <code>rails new</code> แค่ <code>git init</code> ให้แต่<strong>ไม่ได้ commit</strong>
+        ถ้าคุณยังไม่เคย commit เอง <code>git diff</code> จะว่างเปล่าทั้งที่ป้ายยังอยู่ (ผมลองแล้ว: แปะป้ายใน <code>config.ru</code> แล้ว <code>git diff</code> ได้ 0 บรรทัด)</li>
+  </ol>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ข้อ 1</strong> — ผลจริงในหัวข้อ 2: ก่อน <code>Listening on</code> จะเห็น
+      <code>config.ru</code> → <code>config/environment.rb</code> → <code>config/environments/development.rb</code> ·
+      ส่วน <code>[BOOT] config/routes.rb</code> โผล่<strong>หลัง</strong> <code>Started GET</code> ของ request แรก และไม่โผล่อีกใน request ถัดไป ·
+      <strong>ยกเว้น</strong>คุณแก้ไฟล์โค้ดระหว่างนั้น (เช่นทำข้อ 2 ไปด้วย) — ป้ายจะโผล่อีกรอบใน request แรกหลังแก้ ไม่ใช่บั๊ก</p>
+    <p><strong>ข้อ 2</strong> — โค้ดครบสามไฟล์อยู่ในหัวข้อ 4 · ผลจริง (เลขของคุณจะต่างไป แต่ต้อง<strong>ไม่ซ้ำกัน</strong>):</p>
+<pre><code>&lt;p&gt;controller object_id: 12320&lt;/p&gt;
+&lt;p&gt;controller object_id: 12376&lt;/p&gt;
+&lt;p&gt;controller object_id: 12408&lt;/p&gt;</code></pre>
+    <p>
+      ถ้าเลขซ้ำกัน ให้เช็คว่า browser ไม่ได้ดึงหน้าเดิมจาก cache (เปิด DevTools → Network ดูว่ามี request ไปถึง server จริงไหม
+      และดูใน log ว่ามี <code>Started GET "/hello"</code> ครบสามครั้ง)
+    </p>
+    <p><strong>ข้อ 3</strong> — log จริงของ request หนึ่งตัว:</p>
+<pre><code>Started GET "/hello?name=Somchai" for 127.0.0.1 at 2026-11-01 00:10:24 +0700
+Processing by GreetingsController#index as */*
+  Parameters: {"name" =&gt; "Somchai"}
+  Rendering layout layouts/application.html.erb
+  Rendering greetings/index.html.erb within layouts/application
+  …
+Completed 200 OK in 1ms (…)</code></pre>
+    <p style="margin-bottom:0">
+      middleware ที่เปลี่ยน method คือ <strong><code>Rack::MethodOverride</code></strong> (บรรทัดที่ 9 ของ <code>bin/rails middleware</code>) ·
+      ถ้าอยากลองเห็นเอง: <code>curl -X POST -d '_method=delete' http://localhost:3000/hello</code> แล้วดู log จะขึ้น
+      <code>Started DELETE "/hello"</code> เสมอ · ถ้า<strong>ยังไม่ได้ลง</strong> route <code>delete</code> ไว้จะได้ 404 พร้อม
+      <code>No route matches [DELETE] "/hello"</code> (ผมลองแล้ว — router เห็นเป็น DELETE จริง เลยหาไม่เจอ) ·
+      ถ้าลงไว้แบบหัวข้อ 6 จะได้ 422 เพราะ CSRF ใน controller — ทั้งสองแบบปกติ ไม่ต้องแก้
+      · การเขียนเทสอัตโนมัติพิสูจน์เรื่องพวกนี้แทนการ curl รออยู่ Day 4
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">10 · สรุป</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เรื่อง</th><th>จำแค่นี้</th></tr></thead>
+  <tbody>
+    <tr><td>boot</td><td><code>bin/rails</code> → <code>boot.rb</code> → <code>application.rb</code> → <code>config.ru</code> → <code>environment.rb</code>
+        (<code>initialize!</code>) → <code>environments/*.rb</code> → <code>initializers/*.rb</code> → Puma เปิดพอร์ต ·
+        <code>routes.rb</code>: production ก่อนเปิดพอร์ต · development ตอน request แรก (และโหลดใหม่หลังแก้โค้ด)</td></tr>
+    <tr><td>request</td><td>Puma → middleware 28 ตัว (<code>bin/rails middleware</code>) → routes → controller ตัวใหม่ → view ใน layout → HTML</td></tr>
+    <tr><td>controller</td><td>instance ใหม่ทุก request · <code>@ตัวแปร</code> ไม่ข้าม request · จำข้าม request ใช้ session/DB</td></tr>
+    <tr><td>implicit render</td><td>ไม่เขียน <code>render</code> → หา <code>app/views/&lt;controller&gt;/&lt;action&gt;.html.erb</code> · ไม่เจอ: browser 406 · curl 204</td></tr>
+    <tr><td>HTTP</td><td>PATCH เป็นหลัก PUT ไปที่เดียวกัน · DELETE จาก form = POST + <code>_method</code> → <code>Rack::MethodOverride</code> · CSRF อยู่ใน controller</td></tr>
+    <tr><td>422</td><td>เขียน <code>:unprocessable_content</code> · <code>:unprocessable_entity</code> ยังได้ 422 ใน controller</td></tr>
+    <tr><td>MVC</td><td>กฎธุรกิจ → M · HTTP/params/session/redirect → C · หน้าตา → V · view query ได้แต่ไม่ควร</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="win">
+  <p style="margin-bottom:0">
+    <strong>✅ ถ้าตอบสี่ข้อนี้ได้ แปลว่าบทนี้ผ่านแล้ว</strong>
+    <br>1. ไฟล์ไหนเรียก <code>Rails.application.initialize!</code> และทำไมสไลด์หน้า 49 ถึงขาดไฟล์นั้นไป?
+    <br>2. ทำไม <code>@visits = (@visits || 0) + 1</code> ใน controller ถึงได้ 1 ทุกครั้ง แต่ใน Go handler struct ได้ 1, 2, 3?
+    <br>3. ส่ง POST พร้อม <code>_method=delete</code> แล้ว log เขียน <code>Started DELETE</code> — ใครเปลี่ยนให้?
+    <br>4. <code>Post.where(...)</code> ใน view ทำงานได้ แล้วทำไมยังต้องย้าย และย้ายไปไหน?
+    <br><br>ติดตรงไหน หรือรันแล้วได้ไม่เหมือนในบท — <strong>ก็อป log ทั้งก้อนมาถามได้เลย</strong>
+    โดยเฉพาะถ้า <code>[BOOT]</code> ของคุณโผล่คนละลำดับกับของผม อยากรู้มากว่าเกิดจากอะไร
+  </p>
+</div>
+
+<nav class="nav">
+  <a href="./0099-rails-naming-and-explore.html">← บทเรียน 99 · naming convention · สำรวจโปรเจกต์</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 1</a>
+  <a href="./0101-rails-routing.html">บทเรียน 101 → Routing</a>
+</nav>
+
+<h2 id="sn-sec-11">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/initialization.html#bin-rails">Rails Guides — The Rails Initialization Process</a> —
+      <strong>อ่านหัวข้อ <em>bin/rails</em> และ <em>config/boot.rb</em></strong> ที่อธิบายว่าทำไม <code>bin/rails</code> เรียก <code>boot.rb</code>
+      ก่อนจะไปถึง <code>config.ru</code> · แล้วข้ามไปหัวข้อ <em>config/environment.rb</em> ที่เป็นตัวเรียก <code>initialize!</code> ·
+      คู่มือนี้ลงลึกถึงซอร์สของ Rails อ่านแค่ภาพรวมของแต่ละหัวข้อก็พอ</li>
+  <li><a href="https://guides.rubyonrails.org/rails_on_rack.html#inspecting-the-middleware-stack">Rails Guides — Rails on Rack</a> —
+      <strong>อ่าน <em>Inspecting the Middleware Stack</em></strong> (คำสั่ง <code>bin/rails middleware</code>) แล้วไล่
+      <strong><em>Internal Middleware Stack</em></strong> ที่อธิบายทีละตัว · หาย่อหน้าของ <code>Rack::MethodOverride</code>
+      ที่บอกว่ามันคือเหตุผลที่ Rails รองรับ PUT/PATCH/DELETE จาก browser ได้</li>
+  <li><a href="https://guides.rubyonrails.org/action_controller_overview.html#creating-a-controller">Rails Guides — Action Controller Overview</a> —
+      <strong>อ่านหัวข้อ <em>Creating a Controller</em></strong> ย่อหน้าที่เขียนว่า Rails <em>creates an instance of that controller class</em>
+      เมื่อ router จับคู่ request ได้ — ตรงกับที่เราพิสูจน์ด้วย <code>object_id</code></li>
+  <li><a href="https://guides.rubyonrails.org/layouts_and_rendering.html#rendering-by-default-convention-over-configuration-in-action">Rails Guides — Layouts and Rendering</a> —
+      <strong>อ่าน <em>Rendering by Default: Convention Over Configuration in Action</em></strong> (implicit render) ·
+      แล้วอ่าน <em>Understanding yield</em> เพื่อดูว่า layout เอา view มาใส่ตรงไหน</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionController/ImplicitRender.html">Rails API — ActionController::ImplicitRender</a> —
+      สั้นมาก · <strong>อ่านรายการเงื่อนไข 4 ข้อ</strong> ที่ตัดสินว่าเมื่อหา view ไม่เจอจะ raise <code>MissingExactTemplate</code> หรือตอบ 204 —
+      คือที่มาของ 406 กับ 204 ในหัวข้อ 5</li>
+  <li><a href="https://guides.rubyonrails.org/security.html#csrf-countermeasures">Rails Guides — Securing Rails Applications: CSRF Countermeasures</a> —
+      <strong>อ่านหัวข้อ <em>CSRF Countermeasures</em></strong> เพื่อดูว่า token ใน <code>csrf_meta_tags</code> ทำงานยังไง ·
+      ประกอบกับ <a href="https://api.rubyonrails.org/classes/ActionController/RequestForgeryProtection.html">API ของ ActionController::RequestForgeryProtection</a>
+      ที่ยืนยันว่า CSRF เป็นส่วนของ controller ไม่ใช่ middleware</li>
+  <li><a href="https://guides.rubyonrails.org/getting_started.html#model-view-controller-basics">Rails Guides — Getting Started: Model-View-Controller Basics</a> —
+      <strong>อ่าน <em>Model-View-Controller Basics</em></strong> (สั้น) แล้วข้ามไป <strong><em>A Request's Journey Through Rails</em></strong>
+      ที่เล่าทางเดินเดียวกับสไลด์หน้า 53 ด้วยตัวอย่าง products</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

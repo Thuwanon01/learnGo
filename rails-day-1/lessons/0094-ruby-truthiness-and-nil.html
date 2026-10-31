@@ -1,0 +1,1085 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 94 — Truthiness และ nil — 0 เป็นจริง, present? blank? และ ||=</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 94 · Rails · Day 1</p>
+  <h1>Truthiness และ nil — 0 เป็นจริง, present? blank? และ ||=</h1>
+  <p class="meta">~22 นาที · ควรผ่าน <a href="./0093-ruby-blocks-and-methods.html">บทเรียน 93</a> (method ที่ลงท้ายด้วย <code>?</code>) มาก่อน</p>
+  <p class="standfirst">
+    คำถามง่าย ๆ ข้อเดียว — <strong>"ค่านี้นับว่าจริงไหม"</strong> — Go, TypeScript และ Ruby ตอบไม่เหมือนกันเลย
+    <br>Go ไม่ยอมตอบ (compile ไม่ผ่าน) · TypeScript ถือว่า <code>0</code> กับ <code>""</code> เป็นเท็จ ·
+    ส่วน Ruby ถือว่า<strong>ทุกอย่างเป็นจริง ยกเว้น <code>nil</code> กับ <code>false</code></strong>
+    <br>สไลด์หน้า 26 เรียกเรื่องนี้ว่า "จุดที่คนมาจาก TypeScript เจ็บที่สุด" — เพราะเขียนผิดแล้ว
+    <strong>ไม่มี error ไม่มี warning</strong> แค่หน้าเว็บโชว์ "มีคนดู 0 ครั้ง" เฉย ๆ
+    <br>บทนี้จะรันให้ดูทีละค่า แล้วต่อด้วยเครื่องมือที่ Ruby กับ Rails ให้มารับมือกับ <code>nil</code>:
+    <code>&amp;.</code> · <code>.nil?</code> · <code>||=</code> (ที่มีกับดักเรื่อง <code>false</code>) ·
+    และ <code>blank?</code> <code>present?</code> <code>presence</code> ที่ <strong>Ruby เปล่า ๆ ไม่มี</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
+  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby -v</span>
+ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+<span class="c">$ rails -v</span>
+Rails 8.1.4
+<span class="c">$ node -v                      # ใช้รันตัวอย่างฝั่ง TypeScript</span>
+v24.14.0
+<span class="c">$ go version                   # ใช้รันตัวอย่างฝั่ง Go</span>
+go version go1.26.5 darwin/arm64</code></pre>
+  <p style="margin-bottom:0">
+    สไลด์ใช้ <strong>Ruby 4.0.6 · Rails 8.1.3</strong> ส่วนเครื่องที่ใช้ตรวจเป็น <strong>Ruby 4.0.9 · Rails 8.1.4</strong>
+    (รุ่นแก้บั๊กในสายเดียวกัน เรื่องในบทนี้ไม่ต่างกัน)
+    <br>ทุกกล่องผลรันในบทนี้ก็อปมาจากเครื่องจริง ·
+    ไฟล์ TypeScript ผ่าน <code>tsc --noEmit --strict</code> ก่อน แล้วรันด้วย <code>node ไฟล์.ts</code>
+    (node 24 รัน <code>.ts</code> ได้ตรง ๆ) ·
+    ตัวอย่างที่ต้องใช้ Active Support รันด้วย <code>ruby -ractive_support/all ไฟล์.rb</code>
+    ซึ่งคือการโหลดส่วนเสริมของ Rails เข้ามาใน Ruby เปล่า ๆ
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · คำถามเดียว สามภาษา สามคำตอบ</h2>
+
+<p>
+  เวลาเขียน <code>if count</code> โดยไม่มี <code>== 0</code> หรือ <code>&gt; 0</code> ต่อท้าย
+  ภาษาต้องตัดสินใจเองว่า "<code>count</code> ตัวนี้ นับว่าจริงหรือเท็จ" ·
+  การตัดสินใจนี้มีชื่อเรียกว่า <strong>truthiness</strong> และแต่ละภาษาตั้งกฎไม่เหมือนกัน
+</p>
+
+<p>
+  เริ่มจากภาษาที่คุณรู้จักดีที่สุด — <strong>Go ไม่เล่นเกมนี้เลย</strong>
+  ถ้าเงื่อนไขไม่ใช่ <code>bool</code> ก็ compile ไม่ผ่าน (เหมือนที่เห็นใน
+  <a href="../../day-1/lessons/0002-var-and-types.html">บทเรียน 2</a> ว่า Go เข้มเรื่อง type แค่ไหน):
+</p>
+
+<pre><code><span class="k">package</span> main
+
+<span class="k">import</span> <span class="s">"fmt"</span>
+
+<span class="k">func</span> <span class="f">main</span>() {
+	count := <span class="n">0</span>
+	<span class="k">if</span> count {
+		fmt.<span class="f">Println</span>(<span class="s">"มีคนดู"</span>)
+	}
+}</code></pre>
+
+<pre><code><span class="c">$ go run main.go</span>
+# command-line-arguments
+./main.go:7:5: non-boolean condition in if statement</code></pre>
+
+<p>
+  สไลด์หน้า 26 สรุปฝั่ง Go ไว้ว่า <em>"ยาว แต่ไม่มีทางพลาด"</em> — ต้องเขียน <code>if x != 0</code> ·
+  <code>if s != ""</code> · <code>if err != nil</code> ให้ชัดทุกครั้ง
+  <br>ทีนี้ลองของจริงของ Ruby กับ TypeScript ด้วยค่าแปดตัวชุดเดียวกัน
+</p>
+
+<div class="predict">
+  <pre><code><span class="c"># predict.rb</span>
+values = [<span class="n">nil</span>, <span class="n">false</span>, <span class="n">0</span>, <span class="s">""</span>, <span class="s">" "</span>, [], <span class="s">"false"</span>, <span class="s">"0"</span>]
+
+values.<span class="f">each</span> <span class="k">do</span> |v|
+  <span class="k">if</span> v
+    <span class="f">puts</span> <span class="s">"#{v.inspect.ljust(8)} เข้า if"</span>
+  <span class="k">else</span>
+    <span class="f">puts</span> <span class="s">"#{v.inspect.ljust(8)} ไม่เข้า"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+  <p class="ask">
+    ก่อนกดเฉลย จดลงกระดาษ: ค่าแปดตัวนี้ ตัวไหน<strong>เข้า if</strong> ตัวไหน<strong>ไม่เข้า</strong> ใน Ruby?
+    <br>แล้วถ้าเป็น TypeScript (<code>null</code> แทน <code>nil</code>) คำตอบจะต่างกันตรงไหนบ้าง?
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลรันจริงทั้งสองภาษา วางเทียบกัน:</p>
+    <div class="compare">
+      <div class="side">
+        <h4>Ruby</h4>
+<pre><code><span class="c">$ ruby predict.rb</span>
+nil      ไม่เข้า
+false    ไม่เข้า
+0        เข้า if
+""       เข้า if
+" "      เข้า if
+[]       เข้า if
+"false"  เข้า if
+"0"      เข้า if</code></pre>
+      </div>
+      <div class="side">
+        <h4>TypeScript</h4>
+<pre><code><span class="c">$ node predict.ts</span>
+null     ไม่เข้า
+false    ไม่เข้า
+0        ไม่เข้า
+""       ไม่เข้า
+" "      เข้า if
+[]       เข้า if
+"false"  เข้า if
+"0"      เข้า if</code></pre>
+      </div>
+    </div>
+    <p>
+      ฝั่ง TypeScript ใช้ค่าแปดตัวชุดเดียวกัน (เปลี่ยน <code>nil</code> เป็น <code>null</code>) ผ่าน <code>tsc --noEmit --strict</code> แล้วรันด้วย node:
+    </p>
+<pre><code><span class="c">// predict.ts</span>
+<span class="k">const</span> values: <span class="n">unknown</span>[] = [<span class="n">null</span>, <span class="n">false</span>, <span class="n">0</span>, <span class="s">""</span>, <span class="s">" "</span>, [], <span class="s">"false"</span>, <span class="s">"0"</span>];
+<span class="k">for</span> (<span class="k">const</span> v <span class="k">of</span> values) {
+  <span class="k">if</span> (v) {
+    console.<span class="f">log</span>(<span class="s">`${JSON.stringify(v).padEnd(8)} เข้า if`</span>);
+  } <span class="k">else</span> {
+    console.<span class="f">log</span>(<span class="s">`${JSON.stringify(v).padEnd(8)} ไม่เข้า`</span>);
+  }
+}</code></pre>
+    <p>
+      ต่างกันอยู่ <strong>สองแถวพอดี: <code>0</code> กับ <code>""</code></strong>
+      — TypeScript ปัดตกทั้งคู่ Ruby ให้ผ่านทั้งคู่
+      <br>ที่หลายคนทายผิดคือ <code>[]</code> — <strong>อาร์เรย์ว่างเป็นจริงทั้งสองภาษา</strong> ·
+      และ <code>" "</code> (มีช่องว่างหนึ่งตัว) ก็จริงทั้งสองภาษา เพราะมันไม่ใช่สตริงว่าง
+      — จำแถวนี้ไว้ หัวข้อ 5 จะกลับมาใช้
+    </p>
+  </div>
+</div>
+
+<p>สรุปเป็นตารางเดียวตามสไลด์หน้า 26 (แก้ตัวเลขฝั่ง TypeScript ให้ตรงกับที่รันจริงแล้ว — ดูกล่องเตือนข้างล่าง):</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th></th><th>Go</th><th>TypeScript</th><th>Ruby</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>ค่าที่นับว่าเท็จ (falsy)</td>
+      <td>ไม่มีเรื่องนี้ · <code>if</code> รับแค่ <code>bool</code></td>
+      <td><code>false</code> <code>0</code> <code>-0</code> <code>0n</code> <code>""</code> <code>null</code> <code>undefined</code> <code>NaN</code></td>
+      <td><strong><code>nil</code> กับ <code>false</code> เท่านั้น</strong></td>
+    </tr>
+    <tr>
+      <td><code>0</code></td><td>compile ไม่ผ่าน</td><td>เท็จ</td><td><strong>จริง</strong></td>
+    </tr>
+    <tr>
+      <td><code>""</code></td><td>compile ไม่ผ่าน</td><td>เท็จ</td><td><strong>จริง</strong></td>
+    </tr>
+    <tr>
+      <td><code>[]</code></td><td>compile ไม่ผ่าน</td><td>จริง</td><td>จริง</td>
+    </tr>
+    <tr>
+      <td>วิธีเขียนที่ปลอดภัย</td>
+      <td><code>if x != 0</code></td>
+      <td><code>if (x !== 0)</code></td>
+      <td><code>if x.positive?</code> · <code>if x.zero?</code> (หัวข้อ 2)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <p>
+    <strong>⚠️ สไลด์หน้า 26 เขียนหัวคอลัมน์ TypeScript ว่า "falsy 6 ตัว" แต่ลิสต์มาแค่ 5 ตัว</strong>
+    (<code>0</code> <code>""</code> <code>null</code> <code>undefined</code> <code>NaN</code>) — ขาด <code>false</code> ตัวที่ชัดที่สุดไป
+    <br>และถ้านับให้ครบจริง ๆ JavaScript มีค่า falsy มากกว่า 6 ตัวด้วย — รันจริงด้วย <code>Boolean()</code>:
+  </p>
+  <pre style="margin:0.5rem 0 0"><code><span class="c">$ node -e 'for (const v of [false, 0, -0, 0n, "", null, undefined, NaN]) console.log(String(v).padEnd(10), Boolean(v))'</span>
+false      false
+0          false
+0          false
+0          false
+           false
+null       false
+undefined  false
+NaN        false</code></pre>
+  <p style="margin-bottom:0">
+    (แถวที่ 3 กับ 4 คือ <code>-0</code> และ <code>0n</code> ซึ่ง <code>String()</code> พิมพ์ออกมาเป็น <code>0</code> ทั้งคู่ ·
+    แถวที่ 5 คือสตริงว่างเลยไม่เห็นอะไร)
+    <br>ประเด็นหลักของสไลด์ยังถูกต้องเต็มที่: <strong>ฝั่ง Ruby มีแค่ 2 ตัว</strong> และ <code>0</code> <code>""</code> <code>[]</code> เป็นจริงหมด
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">📦 เทียบให้เห็นภาพ — ยามหน้าหอพักที่เช็คพัสดุ</span>
+  <p>
+    ลองนึกถึงยามหน้าหอสองคนที่ต้องตอบคำถามว่า "ห้องนี้มีพัสดุมาไหม"
+    <br><strong>ยาม Ruby</strong> ดูแค่ว่า<strong>มีกล่องวางอยู่หน้าห้องไหม</strong> ·
+    กล่องเปล่า (<code>""</code>) กล่องที่ข้างในเขียนเลข 0 (<code>0</code>) ก็ยังเป็นกล่อง → "มี"
+    · จะตอบว่า "ไม่มี" ก็ต่อเมื่อ<strong>ไม่มีกล่องเลย</strong> (<code>nil</code>)
+    หรือมีป้ายเขียนชัด ๆ ว่า <strong>"ไม่มี"</strong> (<code>false</code>)
+    <br><strong>ยาม TypeScript</strong> ชอบเปิดดูข้างใน — กล่องเปล่า กล่องที่เขียนเลข 0 เขาตอบว่า "ไม่มี" ด้วย
+    <br><strong>ยาม Go</strong> ไม่ตอบเลย ถ้าคุณไม่ถามมาเป็นประโยคใช่/ไม่ใช่ชัด ๆ เช่น "มีกล่องมากกว่า 0 ใบไหม"
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ยาม TypeScript ไม่ได้เปิดกล่องทุกชนิด —
+    <code>[]</code> (อาร์เรย์ว่าง) เขาก็ถือว่า "มี" เหมือนยาม Ruby
+    ทั้งที่ข้างในว่างเปล่า · เพราะฉะนั้นอย่าจำว่า "TS ดูว่าข้างในว่างไหม"
+    ให้จำ<strong>รายชื่อ falsy</strong> ในตารางข้างบนแทน ·
+    และในโลกจริง <code>false</code> ก็ไม่ใช่ "ป้าย" แต่เป็นค่าจริง ๆ ตัวหนึ่ง เหมือน <code>true</code>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>truthiness</dt>
+    <dd>กฎของภาษาว่าค่าที่ไม่ใช่ boolean จะ "นับว่าจริงหรือเท็จ" เมื่อเอาไปใส่ใน <code>if</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า “I come from TypeScript — check this Ruby code for places that rely on 0 or empty string being falsy”</strong>
+        ได้ผลกว่าการถามว่า "โค้ดนี้มีบั๊กไหม" เพราะ AI จะรู้ว่าต้องมองหาอะไร</dd>
+    <dt>truthy / falsy</dt>
+    <dd>คำคุณศัพท์ของสองคำบน · ใน Ruby <strong>falsy มีแค่ <code>nil</code> กับ <code>false</code></strong> ที่เหลือ truthy หมด ·
+        <strong>ถาม senior ได้ว่า “ทีมนี้ยอมให้เขียน <code>if count</code> ลอย ๆ ไหม หรือต้องเขียน <code>count.positive?</code> ให้ชัด”</strong>
+        คำตอบต่างกันไปแต่ละทีม ถามไว้ก่อนดีกว่าโดนแก้ใน code review</dd>
+    <dt><code>nil</code></dt>
+    <dd>ค่า "ไม่มีอะไร" ของ Ruby ตัวเดียว (ไม่มีแยก <code>null</code> กับ <code>undefined</code> แบบ TS) ·
+        เป็น object จริง ๆ ของคลาส <code>NilClass</code> ·
+        <strong>เวลาเห็น error <code>undefined method '…' for nil</code> ให้ถาม AI ว่า “where can this value become nil”</strong>
+        ไม่ใช่ “how to fix NoMethodError”</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">2 · บั๊กที่ไม่มีใครเตือน: <code>if @post.views</code></h2>
+
+<p>
+  สไลด์หน้า 26 ยกตัวอย่างที่เจอใน Rails จริง: บทความมีคอลัมน์ <code>views</code> (จำนวนครั้งที่มีคนเปิดดู)
+  แล้วอยากโชว์ป้าย "มีคนดู" เฉพาะบทความที่มีคนดูแล้ว
+  <br>คนที่มาจาก TypeScript จะเขียนออกมาแบบนี้โดยไม่คิด เพราะใน TS มันใช้ได้
+  (บทความยังไม่มี model จริง — Active Record รออยู่ Day 2 — เลยจำลองด้วย <code>Struct</code> ไปก่อน):
+</p>
+
+<pre><code><span class="c"># views.rb</span>
+<span class="n">Post</span> = <span class="n">Struct</span>.<span class="f">new</span>(<span class="n">:title</span>, <span class="n">:views</span>)
+post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"ข้าวมันไก่ประตูน้ำ"</span>, <span class="n">0</span>)
+
+<span class="k">if</span> post.views
+  <span class="f">puts</span> <span class="s">"แสดงป้าย: มีคนดู #{post.views} ครั้ง"</span>
+<span class="k">end</span>
+
+<span class="k">if</span> post.views.<span class="f">positive?</span>
+  <span class="f">puts</span> <span class="s">"positive?: มีคนดูแล้ว"</span>
+<span class="k">else</span>
+  <span class="f">puts</span> <span class="s">"positive?: ยังไม่มีใครดู"</span>
+<span class="k">end</span>
+
+<span class="f">p</span> post.views.<span class="f">zero?</span>
+<span class="f">p</span> <span class="n">5</span>.<span class="f">positive?</span>
+<span class="f">p</span> <span class="n">0</span>.<span class="f">positive?</span></code></pre>
+
+<pre><code><span class="c">$ ruby views.rb</span>
+แสดงป้าย: มีคนดู 0 ครั้ง
+positive?: ยังไม่มีใครดู
+true
+true
+false</code></pre>
+
+<p>
+  บรรทัดแรกของผลคือบั๊ก — <strong>หน้าเว็บโชว์ "มีคนดู 0 ครั้ง"</strong> เพราะ <code>0</code> เป็นจริงใน Ruby
+  <br>ทางแก้ตามสไลด์คือ<strong>ถามให้ชัด</strong>ด้วย method ที่ลงท้ายด้วย <code>?</code>
+  (ที่เรียนใน <a href="./0093-ruby-blocks-and-methods.html">บทเรียน 93</a> ว่าคืนค่า true/false):
+</p>
+
+<ul>
+  <li><code>views.positive?</code> — มากกว่า 0 ไหม (ใช้กับ "มีคนดูแล้ว")</li>
+  <li><code>views.zero?</code> — เท่ากับ 0 ไหม (ใช้กับ "ยังไม่มีใครดู")</li>
+</ul>
+
+<div class="warn">
+  <p style="margin-bottom:0">
+    <strong>⚠️ สไลด์เขียนว่า <code>if @post.views</code> "จริงเสมอ" — จริงเสมอ<em>ยกเว้นตอนเป็น <code>nil</code></em></strong>
+    · และถ้า <code>views</code> เป็น <code>nil</code> ได้ (เช่นคอลัมน์ในฐานข้อมูลไม่ได้ตั้งค่าเริ่มต้นไว้)
+    <code>.positive?</code> จะพังแทน:
+  </p>
+  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby nilpos.rb          # views = nil แล้วเรียก views.positive?</span>
+nilpos.rb:2:in '&lt;main&gt;': undefined method 'positive?' for nil (NoMethodError)
+
+views.positive?
+     ^^^^^^^^^^</code></pre>
+  <p style="margin-bottom:0">
+    ทางที่ดีคือทำให้คอลัมน์นับจำนวนแบบนี้<strong>ไม่มีวันเป็น <code>nil</code></strong> (ตั้ง default เป็น 0 ตอนสร้างตาราง — เรื่องของ Day 2)
+    หรือถ้ายังไม่แน่ใจ ใช้ <code>views.to_i.positive?</code> (<code>nil.to_i</code> ได้ <code>0</code> — รันแล้ว) ·
+    ภารกิจท้ายบทจะได้ลองเอง
+  </p>
+</div>
+
+<h2 id="sn-sec-3">3 · รับมือ <code>nil</code>: <code>&amp;.</code> กับ <code>.nil?</code></h2>
+
+<p>
+  ใน Rails คุณจะเจอ <code>nil</code> บ่อยมาก — หา user ไม่เจอ · ฟอร์มไม่ได้ส่งช่องนั้นมา · ความสัมพันธ์ยังไม่ได้ผูก
+  <br>ปัญหาคือ เรียก method ใส่ <code>nil</code> แล้วพังทันที · Ruby เลยมีเครื่องมือสองชิ้นในตัว (สไลด์หน้า 27 ครึ่งบน):
+</p>
+
+<pre><code><span class="n">User</span> = <span class="n">Struct</span>.<span class="f">new</span>(<span class="n">:name</span>)
+
+user = <span class="n">User</span>.<span class="f">new</span>(<span class="s">"Somchai"</span>)
+<span class="f">p</span> user&amp;.<span class="f">name</span>
+
+user = <span class="n">nil</span>
+<span class="f">p</span> user&amp;.<span class="f">name</span>
+<span class="f">p</span> user&amp;.<span class="f">name</span>&amp;.<span class="f">upcase</span>
+<span class="f">p</span> user.<span class="f">nil?</span></code></pre>
+
+<pre><code><span class="c">$ ruby safe.rb</span>
+"Somchai"
+nil
+nil
+true</code></pre>
+
+<p>
+  <code>user&amp;.name</code> อ่านว่า "ถ้า <code>user</code> ไม่ใช่ <code>nil</code> ก็เรียก <code>.name</code> · ถ้าเป็น <code>nil</code> ก็ได้ <code>nil</code> กลับมาเลย ไม่พัง"
+  — คือ <code>user?.name</code> ของ TypeScript นั่นเอง แค่เปลี่ยนเครื่องหมายจาก <code>?.</code> เป็น <code>&amp;.</code>
+  (เพราะ <code>?</code> ใน Ruby ถูกจองไว้ให้ชื่อ method อย่าง <code>nil?</code> แล้ว)
+  <br>ถ้าไม่ใส่ <code>&amp;</code> จะเจอ error ที่คุณจะเห็นบ่อยที่สุดตลอดชีวิตการเขียน Rails:
+</p>
+
+<pre><code><span class="c">$ ruby safe.rb           # เพิ่มบรรทัดที่ 10: user.name ตอน user เป็น nil</span>
+"Somchai"
+nil
+nil
+true
+safe.rb:10:in '&lt;main&gt;': undefined method 'name' for nil (NoMethodError)
+
+user.name
+    ^^^^^</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>อยากได้</th><th>Go</th><th>TypeScript</th><th>Ruby</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>เรียกต่อเมื่อไม่ว่าง</td>
+      <td><code>if u != nil { n = u.Name }</code></td>
+      <td><code>u?.name</code></td>
+      <td><code>u&amp;.name</code></td>
+    </tr>
+    <tr>
+      <td>เช็คว่าว่างไหม</td>
+      <td><code>u == nil</code></td>
+      <td><code>u == null</code> (จับทั้ง null และ undefined)</td>
+      <td><code>u.nil?</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  มีจุดเล็ก ๆ ที่ทำให้ <code>&amp;.</code> ต่างจาก "ค่าเท็จ":
+  <strong><code>&amp;.</code> ข้ามให้แค่ <code>nil</code> ไม่ข้าม <code>false</code></strong> ·
+  และ <code>.nil?</code> ก็ตอบ <code>true</code> แค่กับ <code>nil</code> ตัวเดียว:
+</p>
+
+<pre><code><span class="c">$ ruby safe2.rb          # user = false แล้ว p user&amp;.name</span>
+safe2.rb:2:in '&lt;main&gt;': undefined method 'name' for false (NoMethodError)
+
+p user&amp;.name
+      ^^^^^^
+<span class="c">$ ruby -e 'p "".nil?, false.nil?'</span>
+false
+false</code></pre>
+
+<p>
+  นี่คือเหตุผลที่ <code>!x</code> กับ <code>x.nil?</code> <strong>ไม่ใช่ของเดียวกัน</strong> —
+  <code>!false</code> เป็นจริง แต่ <code>false.nil?</code> เป็นเท็จ ·
+  ถ้าตั้งใจถามว่า "ไม่มีค่า" ให้ใช้ <code>.nil?</code> · ถ้าตั้งใจถามว่า "เป็นเท็จ" ค่อยใช้ <code>!</code>
+</p>
+
+<div class="analogy">
+  <span class="label">🚪 เทียบให้เห็นภาพ — กดกริ่งเฉพาะห้องที่มีคนอยู่</span>
+  <p>
+    <code>user.name</code> คือเดินไปเคาะประตูถามชื่อเลย — ถ้าห้องว่าง (<code>nil</code>) คุณก็ยืนงงอยู่หน้าห้อง (โปรแกรมพัง)
+    <br><code>user&amp;.name</code> คือ<strong>มองไฟห้องก่อน</strong> ถ้าห้องมืดก็เดินกลับมาพร้อมคำตอบว่า "ไม่มีใคร" (<code>nil</code>)
+    ไม่ต้องเคาะให้เสียเรื่อง
+    <br><code>user.nil?</code> คือแค่มองไฟอย่างเดียว ไม่ได้ถามอะไรต่อ — ได้คำตอบใช่/ไม่ใช่
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ในชีวิตจริง ห้องที่มีป้าย "ไม่อยู่" (<code>false</code>) คุณก็คงไม่เคาะ ·
+    แต่ <code>&amp;.</code> <strong>เคาะ</strong> — มันมองเห็นแค่ห้องที่ว่างจริง ๆ (<code>nil</code>) เท่านั้น
+    แล้วก็พังตามผลรันข้างบน · และการ "เดินกลับมามือเปล่า" อาจแค่เลื่อนปัญหาออกไป
+    ถ้าโค้ดถัดไปเอา <code>nil</code> นั้นไปใช้ต่อโดยไม่เช็คอีกที
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>safe navigation operator (<code>&amp;.</code>)</dt>
+    <dd>ชื่อทางการในเอกสาร Ruby · คนเรียกเล่น ๆ ว่า <em>lonely operator</em> ·
+        เทียบได้กับ <em>optional chaining</em> (<code>?.</code>) ของ TS ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ควรใช้ <code>&amp;.</code> หรือควรทำให้ค่าไม่มีวันเป็น nil ตั้งแต่ต้น”</strong>
+        — การโรย <code>&amp;.</code> ทุกจุดมักแปลว่ายังไม่รู้ว่า nil มาจากไหน</dd>
+    <dt><code>NoMethodError</code></dt>
+    <dd>error ที่เกิดเมื่อเรียก method ที่ object ไม่มี · แบบที่เจอบ่อยสุดคือ <code>undefined method '…' for nil</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า “trace back where this variable got nil, don't just add &amp;.”</strong>
+        จะได้คำตอบที่แก้ต้นเหตุ ไม่ใช่แค่ปิดอาการ</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · <code>||=</code> — ใส่ค่าให้เฉพาะตอนยังไม่มี (และกับดักเรื่อง <code>false</code>)</h2>
+
+<p>
+  <code>count ||= 0</code> อ่านว่า "ถ้า <code>count</code> ยังเป็นค่าเท็จอยู่ ก็ใส่ <code>0</code> ให้ · ถ้ามีค่าแล้วก็ปล่อยไว้"
+  <br>คำว่า <strong>"ค่าเท็จ"</strong> ตรงนี้คือกฎเดียวกับหัวข้อ 1 — แปลว่า <code>nil</code> <strong>หรือ <code>false</code></strong>
+  และตรงคำว่า <code>false</code> นี่แหละที่เป็นกับดัก
+</p>
+
+<div class="predict">
+  <pre><code><span class="c"># orq.rb</span>
+count = <span class="n">nil</span>
+count ||= <span class="n">0</span>
+<span class="f">p</span> count
+
+count = <span class="n">5</span>
+count ||= <span class="n">0</span>
+<span class="f">p</span> count
+
+x = <span class="n">false</span>
+x ||= <span class="n">true</span>
+<span class="f">p</span> x
+
+y = <span class="n">0</span>
+y ||= <span class="n">99</span>
+<span class="f">p</span> y</code></pre>
+  <p class="ask">สี่บรรทัดที่ <code>p</code> ออกมาคืออะไรบ้าง? ระวังบรรทัดที่สามเป็นพิเศษ</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <pre><code><span class="c">$ ruby orq.rb</span>
+0
+5
+true
+0</code></pre>
+    <p>
+      สองบรรทัดแรกตรงตามที่คาด · บรรทัดที่สี่ — <code>0</code> เป็นจริงใน Ruby จึง<strong>ไม่ถูกแทนที่</strong>ด้วย 99
+      <br>บรรทัดที่สามคือกับดัก: <strong><code>x</code> ตั้งใจเป็น <code>false</code> แต่ <code>||=</code> เขียนทับเป็น <code>true</code></strong>
+      เพราะ <code>false</code> เป็นค่าเท็จ → <code>||=</code> เข้าใจว่า "ยังไม่มีค่า"
+      <br>ในงานจริงหน้าตามันคือ <code>settings[:notify] ||= true</code> — ผู้ใช้ที่<strong>ปิด</strong>การแจ้งเตือนไว้
+      จะถูกเปิดกลับให้ทุกครั้งที่โค้ดบรรทัดนี้วิ่งผ่าน (ภารกิจท้ายบทมีข้อนี้)
+    </p>
+  </div>
+</div>
+
+<h3 id="sn-sub-1">สไลด์เทียบ <code>||=</code> กับ <code>??=</code> ของ TypeScript — แม่นแค่ไหน</h3>
+
+<p>
+  สไลด์หน้า 27 เขียนไว้ว่า <code>||=</code> เทียบได้กับ <code>x ??= 0</code> ของ TS
+  — ใกล้ แต่<strong>ไม่เท่ากันพอดี</strong> · ผมรันฝั่ง TypeScript ทั้ง <code>??=</code> และ <code>||=</code> ให้ดู:
+</p>
+
+<pre><code><span class="c">// nq.ts (ผ่าน tsc --noEmit --strict)</span>
+<span class="k">let</span> x: <span class="n">boolean</span> = <span class="n">false</span>;
+x ??= <span class="n">true</span>;
+console.<span class="f">log</span>(<span class="s">"??= :"</span>, x);
+
+<span class="k">let</span> y: <span class="n">boolean</span> = <span class="n">false</span>;
+y ||= <span class="n">true</span>;
+console.<span class="f">log</span>(<span class="s">"||= :"</span>, y);
+
+<span class="k">let</span> n: <span class="n">number</span> = <span class="n">0</span>;
+n ??= <span class="n">99</span>;
+console.<span class="f">log</span>(<span class="s">"??= 0 :"</span>, n);
+
+<span class="k">let</span> m: <span class="n">number</span> = <span class="n">0</span>;
+m ||= <span class="n">99</span>;
+console.<span class="f">log</span>(<span class="s">"||= 0 :"</span>, m);</code></pre>
+
+<pre><code><span class="c">$ node nq.ts</span>
+??= : false
+||= : true
+??= 0 : 0
+||= 0 : 99</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ค่าเดิมของตัวแปร</th><th>TS <code>??=</code><br>(ใส่เมื่อ null/undefined)</th><th>TS <code>||=</code><br>(ใส่เมื่อ falsy ทุกตัว)</th><th>Ruby <code>||=</code><br>(ใส่เมื่อ nil/false)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>nil</code> / <code>null</code></td><td>ใส่ค่าใหม่</td><td>ใส่ค่าใหม่</td><td>ใส่ค่าใหม่</td></tr>
+    <tr><td><code>0</code></td><td>คงไว้</td><td><strong>ใส่ค่าใหม่</strong></td><td>คงไว้</td></tr>
+    <tr><td><code>""</code></td><td>คงไว้</td><td><strong>ใส่ค่าใหม่</strong></td><td>คงไว้</td></tr>
+    <tr><td><code>false</code></td><td>คงไว้</td><td>ใส่ค่าใหม่</td><td><strong>ใส่ค่าใหม่</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  อ่านตารางแล้วจะเห็นว่า Ruby <code>||=</code> <strong>อยู่ตรงกลาง</strong>:
+  เรื่อง <code>0</code> กับ <code>""</code> มันเหมือน <code>??=</code> (คงไว้) ·
+  แต่เรื่อง <code>false</code> มันเหมือน <code>||=</code> ของ TS (เขียนทับ)
+  <br>สรุปสั้น ๆ: <strong>สไลด์เทียบกับ <code>??=</code> ถูกในเคส <code>nil</code> <code>0</code> <code>""</code> แต่ผิดเคส <code>false</code></strong> ·
+  ถ้าตัวแปรเป็น boolean อย่าใช้ <code>||=</code> ใส่ค่าเริ่มต้น ให้เขียน
+  <code>x = true <span class="k">if</span> x.nil?</code> แทน
+</p>
+
+<h3 id="sn-sub-2">บรรทัด Go ในสไลด์ไม่มีความหมาย</h3>
+
+<p>
+  สไลด์หน้า 27 เทียบ <code>||=</code> กับ Go ไว้ว่า <code>// Go: if x == 0 { x = 0 }</code>
+  — อ่านดี ๆ จะเห็นว่า <strong>"ถ้า x เป็น 0 ก็ตั้งให้เป็น 0"</strong> ไม่ได้เปลี่ยนอะไรเลย
+  (รันจริงก็ได้ <code>0</code> เหมือนเดิม) · น่าจะตั้งใจเขียนอย่างอื่นแต่พิมพ์ผิด
+  <br>ใน Go ตัวแปร <code>int</code> เป็น <code>0</code> ตั้งแต่ประกาศอยู่แล้ว (zero value) ·
+  ที่ใกล้ <code>||=</code> จริง ๆ คือการเช็ค <code>nil</code> ของ map หรือ pointer แล้วค่อยใส่ค่าเริ่มต้น:
+</p>
+
+<pre><code><span class="k">package</span> main
+
+<span class="k">import</span> <span class="s">"fmt"</span>
+
+<span class="k">func</span> <span class="f">main</span>() {
+	<span class="c">// ตามสไลด์: ไม่มีผลอะไรเลย เพราะถ้า x เป็น 0 ก็ตั้งให้เป็น 0 อีกรอบ</span>
+	x := <span class="n">0</span>
+	<span class="k">if</span> x == <span class="n">0</span> {
+		x = <span class="n">0</span>
+	}
+	fmt.<span class="f">Println</span>(<span class="s">"slide:"</span>, x)
+
+	<span class="c">// ที่ใกล้ ||= จริง ๆ: เช็ค nil แล้วค่อยใส่ค่าเริ่มต้น</span>
+	<span class="k">var</span> cache <span class="k">map</span>[<span class="n">string</span>]<span class="n">int</span>
+	<span class="k">if</span> cache == <span class="n">nil</span> {
+		cache = <span class="k">map</span>[<span class="n">string</span>]<span class="n">int</span>{}
+	}
+	cache[<span class="s">"views"</span>]++
+	fmt.<span class="f">Println</span>(<span class="s">"map:"</span>, cache)
+
+	<span class="k">var</span> limit *<span class="n">int</span>
+	<span class="k">if</span> limit == <span class="n">nil</span> {
+		v := <span class="n">20</span>
+		limit = &amp;v
+	}
+	fmt.<span class="f">Println</span>(<span class="s">"pointer:"</span>, *limit)
+}</code></pre>
+
+<pre><code><span class="c">$ go run main.go</span>
+slide: 0
+map: map[views:1]
+pointer: 20</code></pre>
+
+<h3 id="sn-sub-3">ที่จะเจอบ่อยที่สุด: <code>@current_user ||= User.find_by(...)</code></h3>
+
+<p>
+  สไลด์หน้า 27 บอกว่าจะเจอ <code>||=</code> บ่อยมากในรูปนี้ · ท่านี้มีชื่อเรียกว่า <strong>memoization</strong>
+  = "คำนวณครั้งแรกแล้วจำผลไว้ ครั้งต่อไปหยิบของที่จำไว้มาใช้เลย"
+  <br>ในหนึ่ง request หน้าเว็บอาจถาม <code>current_user</code> สิบครั้ง (ใน controller, ใน view, ใน helper)
+  ถ้าไม่จำไว้ก็ยิง SQL ไปฐานข้อมูลสิบรอบ · <code>@current_user</code> เป็นตัวแปรของ object
+  (<code>@</code> = instance variable — รายละเอียดอยู่<a href="./0095-ruby-class-and-module.html">บทเรียน 95</a>)
+  จึงอยู่ได้ตลอดอายุของ object นั้น
+  <br>ผมจำลองฐานข้อมูลด้วย <code>puts</code> เพื่อให้เห็นว่ายิง query กี่ครั้ง (ยังไม่ใช่ Active Record จริง):
+</p>
+
+<pre><code><span class="c"># memo.rb</span>
+<span class="k">class</span> <span class="n">FakeDB</span>
+  <span class="k">def</span> <span class="n">self</span>.<span class="f">find_user</span>(id)
+    <span class="f">puts</span> <span class="s">"  -&gt; SELECT * FROM users WHERE id = #{id.inspect}"</span>
+    id == <span class="n">1</span> ? <span class="s">"Somchai"</span> : <span class="n">nil</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="k">class</span> <span class="n">PageController</span>
+  <span class="k">def</span> <span class="f">initialize</span>(session_user_id)
+    @session_user_id = session_user_id
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">current_user</span>
+    @current_user ||= <span class="n">FakeDB</span>.<span class="f">find_user</span>(@session_user_id)
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="f">puts</span> <span class="s">"login แล้ว (id = 1):"</span>
+c = <span class="n">PageController</span>.<span class="f">new</span>(<span class="n">1</span>)
+<span class="n">3</span>.<span class="f">times</span> { c.<span class="f">current_user</span> }
+
+<span class="f">puts</span> <span class="s">"ยังไม่ login (id = nil):"</span>
+c = <span class="n">PageController</span>.<span class="f">new</span>(<span class="n">nil</span>)
+<span class="n">3</span>.<span class="f">times</span> { c.<span class="f">current_user</span> }</code></pre>
+
+<pre><code><span class="c">$ ruby memo.rb</span>
+login แล้ว (id = 1):
+  -&gt; SELECT * FROM users WHERE id = 1
+ยังไม่ login (id = nil):
+  -&gt; SELECT * FROM users WHERE id = nil
+  -&gt; SELECT * FROM users WHERE id = nil
+  -&gt; SELECT * FROM users WHERE id = nil</code></pre>
+
+<p>
+  ตอน login แล้ว เรียก 3 ครั้ง ยิง query <strong>ครั้งเดียว</strong> — memoization ทำงาน ✅
+  <br>แต่ตอน<strong>ยังไม่ login</strong> ผลของการค้นคือ <code>nil</code> → <code>||=</code> เห็นค่าเท็จ →
+  คิดว่ายังไม่เคยหา → <strong>ยิงใหม่ทุกครั้ง</strong> · กับดักเดียวกับ <code>false</code> ในหัวข้อนี้ แค่มาในรูป <code>nil</code>
+  <br>ถ้าอยากจำ "ผลว่าไม่เจอ" ไว้ด้วย ต้องเช็คว่า<strong>เคยตั้งค่าตัวแปรแล้วหรือยัง</strong> แทนการเช็คว่าค่าเป็นจริงไหม:
+</p>
+
+<pre><code><span class="c"># memo2.rb — เหมือน memo.rb ทุกบรรทัด ยกเว้น current_user ที่เปลี่ยนเป็นแบบนี้</span>
+  <span class="k">def</span> <span class="f">current_user</span>
+    <span class="k">return</span> @current_user <span class="k">if</span> <span class="k">defined?</span>(@current_user)
+    @current_user = <span class="n">FakeDB</span>.<span class="f">find_user</span>(@session_user_id)
+  <span class="k">end</span></code></pre>
+
+<pre><code><span class="c">$ ruby memo2.rb</span>
+login แล้ว (id = 1):
+  -&gt; SELECT * FROM users WHERE id = 1
+ยังไม่ login (id = nil):
+  -&gt; SELECT * FROM users WHERE id = nil</code></pre>
+
+<p>
+  ในงานจริง หน้าที่ไม่มีคน login มีไม่กี่หน้า query เกินมาสองสามครั้งอาจไม่ใช่เรื่องใหญ่ ·
+  แต่ถ้าสิ่งที่ memo ไว้คือ<strong>การเช็คสิทธิ์ที่คืน <code>true</code>/<code>false</code></strong>
+  (เช่น <code>@admin ||= check_admin</code>) ทุกคนที่ไม่ใช่ admin จะโดนคำนวณซ้ำทุกครั้ง —
+  จำไว้ว่า <strong><code>||=</code> จำได้แค่ค่าที่เป็นจริง</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">📝 เทียบให้เห็นภาพ — โพสต์อิทแปะจอ</span>
+  <p>
+    <code>@current_user ||= User.find_by(...)</code> เหมือนจดเบอร์โทรลูกค้าที่ต้องโทรบ่อยลงโพสต์อิทแปะข้างจอ
+    · ครั้งแรกต้องเปิดแฟ้มหา (ยิง query) · ครั้งต่อไปเหลือบมองโพสต์อิทพอ
+    <br>กฎของ <code>||=</code> คือ "<strong>ถ้าโพสต์อิทว่าง ค่อยเปิดแฟ้ม</strong>"
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงที่เปิดแฟ้มแล้วไม่เจอ จะจดลงโพสต์อิทว่า "ไม่มีในแฟ้ม" แล้วไม่เปิดซ้ำ ·
+    แต่ <code>||=</code> <strong>จดคำว่า "ไม่มี" ไม่เป็น</strong> — ได้ <code>nil</code> หรือ <code>false</code> มาก็เหมือนโพสต์อิทยังว่าง
+    แล้วเปิดแฟ้มใหม่ทุกรอบ (ผลรันข้างบน) · และโพสต์อิทของจริงอยู่ข้ามวันได้ แต่ <code>@current_user</code>
+    ใน controller อยู่แค่หนึ่ง request — request ถัดไปเริ่มจากโพสต์อิทว่างใหม่
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>abbreviated assignment (<code>||=</code>)</dt>
+    <dd>ชื่อในเอกสาร Ruby ของการกำหนดค่าแบบย่อ · คนในวงการเรียก <code>||=</code> ว่า <em>or-equals</em> ·
+        <strong>ถาม senior ได้ว่า “ตัวแปรนี้เป็น false ได้ไหม ถ้าได้ <code>||=</code> ตรงนี้จะเขียนทับมัน”</strong>
+        — เป็นคำถามรีวิวโค้ดที่ดูเป็นมืออาชีพมาก</dd>
+    <dt>nullish coalescing (<code>??</code> / <code>??=</code>)</dt>
+    <dd>ชื่อของตัวดำเนินการฝั่ง TS ที่ดูแค่ <code>null</code>/<code>undefined</code> · <strong>Ruby ไม่มีตัวที่ตรงกันเป๊ะ</strong> ·
+        <strong>พิมพ์บอก AI ได้ว่า “translate this TS <code>??=</code> to Ruby — note the value can be false”</strong>
+        ไม่งั้น AI มักแปลเป็น <code>||=</code> ตรง ๆ</dd>
+    <dt>memoization</dt>
+    <dd>คำนวณครั้งแรกแล้วเก็บผลไว้ในตัวแปร ครั้งต่อไปคืนของที่เก็บไว้ · ใน Ruby มักเห็นเป็น <code>@x ||= …</code> ·
+        <strong>ถาม senior ได้ว่า “method นี้ memoize ไว้ ถ้าผลเป็น nil จะยิงซ้ำไหม ต้องใช้ <code>defined?</code> หรือเปล่า”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 · <code>blank?</code> · <code>present?</code> · <code>presence</code> — ของที่ Rails เติมให้</h2>
+
+<p>
+  สไลด์หน้า 27 กล่องขวาบนให้เหตุผลไว้ดีมาก: <strong>ฟอร์มบนเว็บส่ง <code>""</code> มา ไม่ได้ส่ง <code>nil</code></strong>
+  และ <code>" "</code> ที่ผู้ใช้เผลอเคาะ space ก็ควรนับว่าว่าง — แต่ตามตารางหัวข้อ 1 ทั้ง <code>""</code> และ <code>" "</code>
+  <strong>เป็นจริง</strong>ใน Ruby
+  <br>Ruby เปล่า ๆ มี <code>empty?</code> ให้ แต่มันนับแค่สตริงยาว 0 ตัว ช่องว่างไม่นับ · และ <strong><code>blank?</code> ไม่มีใน Ruby เปล่า ๆ เลย</strong>:
+</p>
+
+<pre><code><span class="f">p</span> <span class="s">""</span>.<span class="f">empty?</span>
+<span class="f">p</span> <span class="s">" "</span>.<span class="f">empty?</span>
+<span class="f">p</span> <span class="s">" "</span>.<span class="f">blank?</span></code></pre>
+
+<pre><code><span class="c">$ ruby blank_plain.rb</span>
+true
+false
+blank_plain.rb:3:in '&lt;main&gt;': undefined method 'blank?' for an instance of String (NoMethodError)
+
+p " ".blank?
+     ^^^^^^^</code></pre>
+
+<p>
+  <code>blank?</code> มาจาก <strong>Active Support</strong> — ไลบรารีที่ติดมากับ Rails ซึ่ง "เติม method" ให้คลาสพื้นฐานของ Ruby
+  (Ruby ยอมให้เปิดคลาสที่มีอยู่แล้วมาเติม method ได้ — Active Support ใช้ช่องนี้) ·
+  ในแอป Rails ใช้ได้เลยทุกไฟล์ · นอก Rails ต้องโหลดเอง ซึ่งคือสิ่งที่ <code>-ractive_support/all</code> ทำ:
+</p>
+
+<pre><code><span class="c"># blank_as.rb — รันด้วย ruby -ractive_support/all blank_as.rb</span>
+<span class="f">p</span> <span class="s">""</span>.<span class="f">blank?</span>
+<span class="f">p</span> <span class="s">" "</span>.<span class="f">blank?</span>
+<span class="f">p</span> <span class="s">"\n\t"</span>.<span class="f">blank?</span>
+<span class="f">p</span> <span class="n">nil</span>.<span class="f">blank?</span>
+<span class="f">p</span> [].<span class="f">blank?</span>
+<span class="f">p</span>({}.<span class="f">blank?</span>)
+<span class="f">p</span> <span class="n">0</span>.<span class="f">blank?</span>
+<span class="f">p</span> <span class="n">false</span>.<span class="f">blank?</span>
+<span class="f">p</span> <span class="s">"abc"</span>.<span class="f">present?</span>
+<span class="f">p</span> <span class="s">" "</span>.<span class="f">present?</span></code></pre>
+
+<pre><code><span class="c">$ ruby -ractive_support/all blank_as.rb</span>
+true
+true
+true
+true
+true
+true
+false
+true
+true
+false</code></pre>
+
+<p>ตรงกับคอมเมนต์ในสไลด์ทุกบรรทัด (สไลด์มี <code>""</code> <code>" "</code> <code>nil</code> <code>[]</code> <code>0</code> <code>"abc".present?</code> — ผมเติม <code>"\n\t"</code> <code>{}</code> <code>false</code> ให้เห็นครบขึ้น) · สามอย่างที่ต้องจำ:</p>
+
+<ul>
+  <li><strong><code>" ".empty?</code> เป็น <code>false</code> แต่ <code>" ".blank?</code> เป็น <code>true</code></strong> — <code>blank?</code> นับช่องว่าง แท็บ ขึ้นบรรทัดใหม่ ว่าเป็น "ว่าง" ด้วย</li>
+  <li><strong><code>0.blank?</code> เป็น <code>false</code></strong> — ตัวเลขไม่เคย blank · 0 คือค่าที่ผู้ใช้ตั้งใจกรอก ไม่ใช่ "ไม่ได้กรอก"</li>
+  <li><code>present?</code> คือ <code>!blank?</code> ตามที่สไลด์เขียนไว้ — มีไว้ให้อ่านง่าย ไม่ต้องเขียน <code>!</code> นำหน้า</li>
+</ul>
+
+<h3 id="sn-sub-4"><code>presence</code> — ค่าเริ่มต้นให้ช่องค้นหา</h3>
+
+<p>
+  <code>x.presence</code> คืน <strong><code>x</code> เอง</strong>ถ้า <code>x</code> present · คืน <strong><code>nil</code></strong> ถ้า <code>x</code> blank
+  <br>ประโยชน์ของมันคือเอาไปต่อกับ <code>||</code> ได้ เพราะ <code>nil</code> เป็นเท็จ —
+  สไลด์ยกตัวอย่าง <code>params[:q].presence || "default"</code> ·
+  ผมรันเทียบกับ <code>params[:q] || "default"</code> เฉย ๆ โดยจำลอง <code>params</code> ด้วย Hash ก่อน:
+</p>
+
+<pre><code><span class="c"># params.rb — รันด้วย ruby -ractive_support/all params.rb</span>
+[{ <span class="n">q:</span> <span class="s">"ramen"</span> }, { <span class="n">q:</span> <span class="s">""</span> }, { <span class="n">q:</span> <span class="s">"   "</span> }, {}].<span class="f">each</span> <span class="k">do</span> |params|
+  a = params[<span class="n">:q</span>] || <span class="s">"default"</span>
+  b = params[<span class="n">:q</span>].<span class="f">presence</span> || <span class="s">"default"</span>
+  <span class="f">puts</span> <span class="s">"#{params.inspect.ljust(14)} ||: #{a.inspect.ljust(10)} presence ||: #{b.inspect}"</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c">$ ruby -ractive_support/all params.rb</span>
+{q: "ramen"}   ||: "ramen"    presence ||: "ramen"
+{q: ""}        ||: ""         presence ||: "default"
+{q: "   "}     ||: "   "      presence ||: "default"
+{}             ||: "default"  presence ||: "default"</code></pre>
+
+<p>
+  <code>||</code> เฉย ๆ ช่วยได้แค่แถวสุดท้าย (ไม่มี key <code>:q</code> เลย = <code>nil</code>) ·
+  แถว <code>""</code> กับ <code>"   "</code> หลุดไปเป็นคำค้นว่าง ๆ เพราะสตริงพวกนั้นเป็นจริง
+  <br>เพื่อให้แน่ใจว่า Rails ส่งของแบบนี้มาจริง ผมใช้แอป <code>wongnok_blog</code> ที่สร้างด้วย <code>rails new</code> ตามสไลด์หน้า 40 แล้วเพิ่ม action เล็ก ๆ หนึ่งตัวที่พิมพ์ <code>params[:q]</code> กลับมา
+  (เรื่อง routing กับ controller รออยู่<a href="./0101-rails-routing.html">บทเรียน 101</a>–<a href="./0102-rails-controller.html">102</a>)
+  แล้ว <code>curl</code> แบบเดียวกับที่ฟอร์มค้นหาส่งมาตอนช่องว่าง
+  (เครื่องที่ตรวจเปิด server ไว้ที่พอร์ต 4294 · ถ้าคุณสั่ง <code>bin/rails server</code> เฉย ๆ จะเป็นพอร์ต 3000):
+</p>
+
+<pre><code><span class="c">$ curl 'http://localhost:4294/search?q='</span>
+params[:q] = ""
+|| ได้      ""
+presence ได้ "default"
+<span class="c">$ curl 'http://localhost:4294/search?q=+++'      # + ใน URL คือช่องว่าง</span>
+params[:q] = "   "
+|| ได้      "   "
+presence ได้ "default"
+<span class="c">$ curl 'http://localhost:4294/search?'</span>
+params[:q] = nil
+|| ได้      "default"
+presence ได้ "default"</code></pre>
+
+<p>
+  นี่คือหลักฐานของประโยคในสไลด์: <strong>ฟอร์มที่ช่องว่างส่ง <code>""</code> มา ไม่ใช่ <code>nil</code></strong> —
+  <code>nil</code> จะโผล่ก็ต่อเมื่อไม่มี <code>q</code> ใน URL เลย
+</p>
+
+<div class="analogy">
+  <span class="label">🧾 เทียบให้เห็นภาพ — เจ้าหน้าที่รับใบสมัคร</span>
+  <p>
+    นึกถึงใบสมัครกระดาษที่มีช่อง "ชื่อเล่น"
+    <br><code>nil</code> = ใบสมัครรุ่นเก่าที่<strong>ไม่มีช่องนี้</strong> ·
+    <code>""</code> = มีช่องแต่<strong>ไม่ได้เขียน</strong> · <code>"   "</code> = <strong>ขีดเส้นว่าง ๆ</strong> ไว้
+    <br>เจ้าหน้าที่ที่ใช้ <code>.nil?</code> หรือ <code>||</code> จะบอกว่า "ไม่มีชื่อเล่น" แค่กรณีแรก ·
+    เจ้าหน้าที่ที่ใช้ <code>.blank?</code> มองทั้งสามกรณีว่า "ไม่ได้กรอก" เหมือนคนทั่วไปมอง
+    <br><code>.presence</code> คือเจ้าหน้าที่ที่ "ถ้ากรอกมาก็ส่งต่อตามนั้น ถ้าไม่ได้กรอกก็ส่งกระดาษเปล่ากลับ (<code>nil</code>)
+    ให้คนถัดไปเติมค่าเริ่มต้นเอง"
+  </p>
+  <p style="margin-bottom:0">
+    <strong>ที่ไม่เหมือนกัน:</strong> ถ้าช่องเป็น "จำนวนบุตร" แล้วมีคนกรอก <code>0</code> เจ้าหน้าที่คนจริงอาจมองว่า "ไม่มี" ·
+    แต่ <code>0.blank?</code> เป็น <code>false</code> — สำหรับ Active Support ตัวเลขไม่เคยว่าง ·
+    และ <code>blank?</code> <strong>ไม่ได้ตัดช่องว่างทิ้ง</strong> — <code>" ramen "</code> ยัง present อยู่และมีช่องว่างหัวท้ายติดไปด้วย
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>Active Support</dt>
+    <dd>gem ส่วนหนึ่งของ Rails ที่เติม method ให้คลาสพื้นฐาน (<code>blank?</code> · <code>3.days.ago</code> · ฯลฯ) ·
+        ส่วนที่เติมให้คลาสของ Ruby เรียกว่า <em>core extensions</em> ·
+        <strong>ถาม AI ได้ว่า “is this method plain Ruby or Active Support?”</strong>
+        ทุกครั้งที่เจอ method ที่ไม่แน่ใจ — สำคัญมากถ้าโค้ดนั้นจะไปรันนอก Rails</dd>
+    <dt>blank / present</dt>
+    <dd><em>blank</em> = <code>nil</code> · <code>false</code> · สตริงที่มีแต่ช่องว่าง · collection ว่าง ·
+        <em>present</em> = ตรงข้าม · <strong>พิมพ์บอก AI ได้ว่า “treat whitespace-only input as missing — use presence”</strong>
+        จะได้โค้ดที่จัดการฟอร์มถูกตั้งแต่แรก</dd>
+    <dt><code>presence</code></dt>
+    <dd>คืนตัวเองถ้า present · คืน <code>nil</code> ถ้า blank · ใช้คู่กับ <code>||</code> เพื่อใส่ค่าเริ่มต้น ·
+        <strong>ถาม senior ได้ว่า “ช่องนี้ควร strip ก่อน presence ไหม”</strong> —
+        เพราะ <code>presence</code> ไม่ตัดช่องว่างหัวท้ายให้</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · สรุป: ถามให้ตรงกับที่อยากรู้</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>อยากรู้ว่า…</th><th>เขียน</th><th>อย่าเขียน</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>ตัวเลขมากกว่า 0 ไหม</td><td><code>n.positive?</code></td><td><code>if n</code> (0 ก็ผ่าน)</td></tr>
+    <tr><td>ตัวเลขเป็น 0 ไหม</td><td><code>n.zero?</code></td><td><code>unless n</code></td></tr>
+    <tr><td>ไม่มีค่าเลยไหม</td><td><code>x.nil?</code></td><td><code>!x</code> (false ก็ติด)</td></tr>
+    <tr><td>เรียกต่อถ้ามีค่า</td><td><code>user&amp;.name</code></td><td>โรย <code>&amp;.</code> ทุกจุดโดยไม่รู้ว่า nil มาจากไหน</td></tr>
+    <tr><td>ผู้ใช้กรอกมาจริงไหม (ฟอร์ม)</td><td><code>s.present?</code> / <code>s.blank?</code></td><td><code>if s</code> · <code>s.empty?</code></td></tr>
+    <tr><td>ค่าจากฟอร์ม + ค่าเริ่มต้น</td><td><code>params[:q].presence || "…"</code></td><td><code>params[:q] || "…"</code></td></tr>
+    <tr><td>ใส่ค่าเริ่มต้นให้ตัวแปรที่อาจเป็น nil</td><td><code>x ||= …</code></td><td>—</td></tr>
+    <tr><td>ใส่ค่าเริ่มต้นให้ boolean</td><td><code>x = true if x.nil?</code></td><td><code>x ||= true</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-7">7 · ภารกิจ: แก้บั๊กสามจุด</h2>
+
+<div class="task">
+  <p>
+    สร้างไฟล์ <code>task.rb</code> แล้ววางโค้ดข้างล่างทั้งก้อน · ฟังก์ชันสามตัวข้างบนมีบั๊กตัวละจุด
+    — ทุกจุดคือเรื่องที่เรียนในบทนี้ · ส่วน "ตัวตรวจ" ข้างล่าง<strong>ห้ามแก้</strong>
+  </p>
+<pre><code><span class="c"># task.rb — โค้ดตั้งต้น (มีบั๊ก 3 จุด)</span>
+
+<span class="k">def</span> <span class="f">view_badge</span>(views)
+  <span class="k">if</span> views
+    <span class="s">"ดูแล้ว #{views} ครั้ง"</span>
+  <span class="k">else</span>
+    <span class="s">"ยังไม่มีคนดู"</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="k">def</span> <span class="f">search_term</span>(params)
+  params[<span class="n">:q</span>] || <span class="s">"ทั้งหมด"</span>
+<span class="k">end</span>
+
+<span class="k">def</span> <span class="f">apply_defaults</span>(settings)
+  settings[<span class="n">:notify</span>] ||= <span class="n">true</span>
+  settings
+<span class="k">end</span>
+
+<span class="c"># ---- ตัวตรวจ ห้ามแก้ ----</span>
+<span class="n">FAILED</span> = []
+
+<span class="k">def</span> <span class="f">check</span>(label, actual, expected)
+  <span class="k">if</span> actual == expected
+    <span class="f">puts</span> <span class="s">"ผ่าน  #{label}"</span>
+  <span class="k">else</span>
+    <span class="f">puts</span> <span class="s">"พัง   #{label}: ได้ #{actual.inspect} แต่ควรได้ #{expected.inspect}"</span>
+    <span class="n">FAILED</span> &lt;&lt; label
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="f">check</span> <span class="s">"views 12"</span>,  <span class="f">view_badge</span>(<span class="n">12</span>),  <span class="s">"ดูแล้ว 12 ครั้ง"</span>
+<span class="f">check</span> <span class="s">"views 0"</span>,   <span class="f">view_badge</span>(<span class="n">0</span>),   <span class="s">"ยังไม่มีคนดู"</span>
+<span class="f">check</span> <span class="s">"views nil"</span>, <span class="f">view_badge</span>(<span class="n">nil</span>), <span class="s">"ยังไม่มีคนดู"</span>
+
+<span class="f">check</span> <span class="s">"q ramen"</span>, <span class="f">search_term</span>({ <span class="n">q:</span> <span class="s">"ramen"</span> }), <span class="s">"ramen"</span>
+<span class="f">check</span> <span class="s">"q ว่าง"</span>,  <span class="f">search_term</span>({ <span class="n">q:</span> <span class="s">""</span> }),      <span class="s">"ทั้งหมด"</span>
+<span class="f">check</span> <span class="s">"q space"</span>, <span class="f">search_term</span>({ <span class="n">q:</span> <span class="s">"   "</span> }),   <span class="s">"ทั้งหมด"</span>
+<span class="f">check</span> <span class="s">"ไม่มี q"</span>, <span class="f">search_term</span>({}),             <span class="s">"ทั้งหมด"</span>
+
+<span class="f">check</span> <span class="s">"notify ไม่ได้ตั้ง"</span>, <span class="f">apply_defaults</span>({}),                { <span class="n">notify:</span> <span class="n">true</span> }
+<span class="f">check</span> <span class="s">"notify ปิดไว้"</span>,    <span class="f">apply_defaults</span>({ <span class="n">notify:</span> <span class="n">false</span> }), { <span class="n">notify:</span> <span class="n">false</span> }
+
+<span class="f">puts</span>(<span class="n">FAILED</span>.<span class="f">empty?</span> ? <span class="s">"ผ่านทุกข้อ"</span> : <span class="s">"ยังพัง #{FAILED.size} ข้อ"</span>)
+<span class="f">exit</span>(<span class="n">1</span>) <span class="k">unless</span> <span class="n">FAILED</span>.<span class="f">empty?</span></code></pre>
+  <ol>
+    <li>รัน <code>ruby -ractive_support/all task.rb</code> ก่อนแก้ — ดูว่าพังข้อไหนบ้าง แล้ว<strong>อธิบายเหตุผลให้ตัวเองฟัง</strong>ก่อนลงมือแก้</li>
+    <li>แก้เฉพาะฟังก์ชันสามตัวข้างบน (ตัวละบรรทัดก็พอ) จนรันแล้วขึ้น <code>ผ่านทุกข้อ</code></li>
+    <li>ลองรันเฉลยของคุณด้วย <code>ruby task.rb</code> (ไม่มี <code>-ractive_support/all</code>) แล้วดูว่าพังตรงไหน เพราะอะไร</li>
+  </ol>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ก่อนแก้ — รันจริงได้แบบนี้ (พัง 4 ข้อ จากบั๊ก 3 จุด):</p>
+<pre><code><span class="c">$ ruby -ractive_support/all task.rb</span>
+ผ่าน  views 12
+พัง   views 0: ได้ "ดูแล้ว 0 ครั้ง" แต่ควรได้ "ยังไม่มีคนดู"
+ผ่าน  views nil
+ผ่าน  q ramen
+พัง   q ว่าง: ได้ "" แต่ควรได้ "ทั้งหมด"
+พัง   q space: ได้ "   " แต่ควรได้ "ทั้งหมด"
+ผ่าน  ไม่มี q
+ผ่าน  notify ไม่ได้ตั้ง
+พัง   notify ปิดไว้: ได้ {notify: true} แต่ควรได้ {notify: false}
+ยังพัง 4 ข้อ</code></pre>
+    <p>
+      (ถ้าภาษาไทยในเครื่องหมายคำพูดออกมาเป็น <code>"ดู…"</code> แทนตัวอักษร
+      แปลว่า terminal ของคุณไม่ได้ตั้ง locale เป็น UTF-8 — <code>inspect</code> จึง escape ตัวอักษรที่ไม่ใช่ ASCII ·
+      รันซ้ำด้วย <code>LANG=en_US.UTF-8 ruby -ractive_support/all task.rb</code> จะเห็นเป็นภาษาไทยตามข้างบน)
+    </p>
+    <p>แก้สามบรรทัด:</p>
+<pre><code><span class="k">def</span> <span class="f">view_badge</span>(views)
+  <span class="k">if</span> views.<span class="f">to_i</span>.<span class="f">positive?</span>      <span class="c"># 0 เป็นจริงใน Ruby · to_i กัน nil พัง</span>
+    <span class="s">"ดูแล้ว #{views} ครั้ง"</span>
+  <span class="k">else</span>
+    <span class="s">"ยังไม่มีคนดู"</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="k">def</span> <span class="f">search_term</span>(params)
+  params[<span class="n">:q</span>].<span class="f">presence</span> || <span class="s">"ทั้งหมด"</span>   <span class="c"># "" กับ "   " เป็นจริง ต้องผ่าน presence ก่อน</span>
+<span class="k">end</span>
+
+<span class="k">def</span> <span class="f">apply_defaults</span>(settings)
+  settings[<span class="n">:notify</span>] = <span class="n">true</span> <span class="k">if</span> settings[<span class="n">:notify</span>].<span class="f">nil?</span>   <span class="c"># ||= จะทับ false</span>
+  settings
+<span class="k">end</span></code></pre>
+<pre><code><span class="c">$ ruby -ractive_support/all task.rb</span>
+ผ่าน  views 12
+ผ่าน  views 0
+ผ่าน  views nil
+ผ่าน  q ramen
+ผ่าน  q ว่าง
+ผ่าน  q space
+ผ่าน  ไม่มี q
+ผ่าน  notify ไม่ได้ตั้ง
+ผ่าน  notify ปิดไว้
+ผ่านทุกข้อ</code></pre>
+    <p>ข้อ 3 — รันโดยไม่โหลด Active Support จะผ่านสามข้อแรก แล้วพังที่ <code>presence</code> ตอนตรวจข้อ <code>q ramen</code>:</p>
+<pre><code><span class="c">$ ruby task.rb</span>
+task.rb:12:in 'Object#search_term': undefined method 'presence' for an instance of String (NoMethodError)
+Did you mean?  prepend
+	from task.rb:36:in '&lt;main&gt;'
+ผ่าน  views 12
+ผ่าน  views 0
+ผ่าน  views nil</code></pre>
+    <p style="margin-bottom:0">
+      (ผลนี้เก็บมาโดยต่อ output ผ่าน pipe — ข้อความ error ขึ้นก่อนบรรทัด "ผ่าน" เพราะ error ออกทาง stderr ที่พิมพ์ทันที
+      ส่วน <code>puts</code> ออกทาง stdout ที่ถูกพักไว้ก่อน · รันใน terminal ตรง ๆ ลำดับบนจอของคุณอาจต่างจากนี้)
+      <br>นี่คือเหตุผลที่ต้องรู้ว่า method ไหนเป็น Ruby เปล่า ๆ method ไหนเป็นของ Rails:
+      สคริปต์ที่ไม่ได้รันใน Rails (เช่น rake task ที่ไม่ได้โหลด environment หรือ gem ที่เขียนเอง) จะไม่มี <code>presence</code> ให้ใช้ ·
+      ทางเลือกของ <code>apply_defaults</code> ที่ไม่ใช่ <code>if nil?</code> ก็มี เช่น
+      <code>settings[:notify] = settings.fetch(:notify, true)</code> (รันแล้วผ่านทุกข้อเหมือนกัน) —
+      ถ้าลองเขียนแบบอื่นแล้วผ่านตัวตรวจครบ ถือว่าถูกเหมือนกัน
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-8">ลองตอบดู</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q"><code>post.views</code> เป็น <code>0</code> แล้วโค้ด <code>if post.views</code> โชว์ป้าย "มีคนดู 0 ครั้ง" — แก้ยังไงถึงตรงที่สุด?</p>
+  <div class="opts">
+    <button class="opt">เปลี่ยนเป็น <code>if !post.views.nil?</code> เพื่อเช็คให้ชัดว่ามีค่าแล้ว</button>
+    <button class="opt">เปลี่ยนเป็น <code>if post.views.positive?</code> เพื่อถามว่ามากกว่าศูนย์ไหม</button>
+    <button class="opt">เปลี่ยนเป็น <code>if post.views.present?</code> ให้ Active Support ตัดสินแทน</button>
+    <button class="opt">เปลี่ยนเป็น <code>if post&amp;.views</code> เพื่อกันกรณี post เป็น nil ไว้ก่อน</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · <code>0.positive?</code> ได้ <code>false</code> (รันจริงในหัวข้อ 2) จึงไม่โชว์ป้าย
+      <br>ตัวเลือกที่ 1 ผิดเพราะ <code>0</code> ไม่ใช่ <code>nil</code> → <code>!0.nil?</code> เป็นจริง ป้ายยังขึ้นเหมือนเดิม ·
+      ตัวเลือกที่ 3 ผิดเพราะ <code>0.blank?</code> เป็น <code>false</code> → <code>0.present?</code> เป็น <code>true</code>
+      (ตัวเลขไม่เคย blank) ·
+      ตัวเลือกที่ 4 แก้ผิดปัญหา — <code>&amp;.</code> กันแค่ <code>post</code> เป็น nil ส่วน <code>views</code> ที่เป็น <code>0</code> ก็ยังเป็นจริงอยู่ดี
+      <br><strong>จุดที่ต้องจำ:</strong> อยากรู้เรื่องตัวเลข ให้ถามด้วย method ของตัวเลข (<code>positive?</code> <code>zero?</code>) อย่าพึ่ง truthiness
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">โค้ด TypeScript <code>let on = false; on ??= true;</code> ได้ <code>on</code> เป็น <code>false</code> · ถ้าแปลเป็น Ruby ข้อไหนให้ผลเหมือนกัน?</p>
+  <div class="opts">
+    <button class="opt"><code>on = false</code> แล้วตามด้วย <code>on ||= true</code> บรรทัดถัดไป</button>
+    <button class="opt"><code>on = false</code> แล้วตามด้วย <code>on = on || true</code> บรรทัดถัดไป</button>
+    <button class="opt"><code>on = false</code> แล้วตามด้วย <code>on = true unless on</code> บรรทัดถัดไป</button>
+    <button class="opt"><code>on = false</code> แล้วตามด้วย <code>on = true if on.nil?</code> บรรทัดถัดไป</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · <code>false.nil?</code> เป็น <code>false</code> (รันจริงในหัวข้อ 3) จึงไม่เขียนทับ — ตรงกับ <code>??=</code> ที่ดูแค่ null/undefined
+      <br>ตัวเลือกที่ 1 คือกับดักหลักของบท — รันจริง <code>x = false; x ||= true</code> ได้ <code>true</code> ·
+      ตัวเลือกที่ 2 <code>false || true</code> ได้ <code>true</code> แล้วเอาไปเขียนทับ — รันจริงได้ <code>true</code> ·
+      ตัวเลือกที่ 3 <code>unless on</code> แปลว่า "ถ้า on เป็นเท็จ" ซึ่ง <code>false</code> เป็นเท็จ ก็ได้ <code>true</code> เหมือนกัน
+      <br><strong>จุดที่ต้องจำ:</strong> สไลด์เทียบ <code>||=</code> กับ <code>??=</code> — ใช้ได้กับ <code>nil</code> <code>0</code> <code>""</code> แต่<strong>ไม่ใช่กับ <code>false</code></strong>
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ผู้ใช้เคาะ space สามทีในช่องค้นหาแล้วกดค้น · Rails ได้ <code>params[:q]</code> เป็น <code>"   "</code> · <code>params[:q] || "default"</code> ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>"   "</code> เพราะสตริงที่มีช่องว่างเป็นค่าจริงใน Ruby</button>
+    <button class="opt"><code>"default"</code> เพราะ Rails ตัดช่องว่างทิ้งให้ก่อนถึง params</button>
+    <button class="opt"><code>"default"</code> เพราะสตริงที่มีแต่ช่องว่างนับว่าเป็นเท็จ</button>
+    <button class="opt"><code>nil</code> เพราะฟอร์มที่ไม่มีตัวอักษรจะไม่ถูกส่ง key มา</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · ผลรันจริงจาก <code>curl 'http://localhost:4294/search?q=+++'</code> คือ <code>|| ได้ "   "</code>
+      <br>ตัวเลือกที่ 2 ผิดเพราะ Rails ไม่ได้ตัดช่องว่างให้ — <code>params[:q] = "   "</code> มาครบสามตัว ·
+      ตัวเลือกที่ 3 ผิดเพราะใน Ruby มีแค่ <code>nil</code> กับ <code>false</code> ที่เป็นเท็จ ·
+      ตัวเลือกที่ 4 ผิดเพราะ key <code>q</code> ถูกส่งมา (ค่า <code>nil</code> เกิดเฉพาะตอนไม่มี <code>q</code> ใน URL เลย)
+      <br><strong>จุดที่ต้องจำ:</strong> ค่าจากฟอร์มให้ใช้ <code>params[:q].presence || "default"</code> — <code>presence</code> เปลี่ยน <code>""</code> และ <code>"   "</code> เป็น <code>nil</code> ก่อน
+    </p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">method <code>current_user</code> ข้างในเขียนว่า <code>@current_user ||= User.find_by(id: session[:user_id])</code> · ผู้ใช้ยังไม่ login แล้วหน้าเว็บเรียก <code>current_user</code> 3 ครั้ง · ยิง query กี่ครั้ง?</p>
+  <div class="opts">
+    <button class="opt">ไม่ยิงเลย เพราะ session ไม่มี user_id จึงข้ามไปทั้งบรรทัด</button>
+    <button class="opt">1 ครั้ง เพราะผลครั้งแรกถูกจำไว้ใน <code>@current_user</code></button>
+    <button class="opt">3 ครั้ง เพราะผลเป็น nil ซึ่ง <code>||=</code> มองว่ายังไม่มีค่า</button>
+    <button class="opt">พังตั้งแต่ครั้งแรก เพราะ <code>find_by</code> เจอ nil จะโยน error</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · ผลรันจริงของ <code>memo.rb</code> ฝั่ง "ยังไม่ login" มีบรรทัด <code>SELECT</code> สามบรรทัด
+      <br>ตัวเลือกที่ 1 ผิดเพราะ <code>||=</code> ไม่ได้ดู <code>session</code> — มันดูแค่ <code>@current_user</code> ซึ่งยังเป็น nil จึงเรียกฝั่งขวาทุกครั้ง ·
+      ตัวเลือกที่ 2 จะถูกก็ต่อเมื่อผลเป็นค่าจริง (กรณี login แล้ว) ·
+      ตัวเลือกที่ 4 ผิดเพราะ <code>find_by</code> หาไม่เจอจะคืน <code>nil</code> ไม่ได้โยน error
+      (รันจริงใน <code>bin/rails runner</code>: <code>User.find_by(id: 999)</code> ได้ <code>nil</code> ส่วน <code>User.find(999)</code> โยน <code>ActiveRecord::RecordNotFound</code> — รายละเอียดรอ Day 2)
+      <br><strong>จุดที่ต้องจำ:</strong> <code>||=</code> จำได้แค่ค่าที่เป็นจริง — ผล <code>nil</code>/<code>false</code> จะถูกคำนวณใหม่ทุกครั้ง · ถ้าต้องจำด้วยให้ใช้ <code>defined?</code>
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">ถามกลับได้เลย</h2>
+
+<p>
+  ถ้ายังสับสนว่าเมื่อไหร่ใช้ <code>nil?</code> เมื่อไหร่ใช้ <code>blank?</code> —
+  ลองเอาค่าที่สงสัยมาถามว่า "ค่านี้มาจากไหน" (ฐานข้อมูล? ฟอร์ม? ตัวแปรที่ยังไม่ได้ตั้ง?) แล้วเทียบกับตารางในหัวข้อ 6
+  <br>หรือถ้าคุณเคยเขียน TypeScript ที่พึ่ง <code>if (x)</code> เยอะ ๆ เอาโค้ดมาแปลเป็น Ruby ด้วยกันได้ —
+  จุดที่น่าสนใจที่สุดมักเป็นบรรทัดที่ <strong>ไม่ต้องแก้ แต่ความหมายเปลี่ยนเงียบ ๆ</strong>
+</p>
+
+<nav class="nav">
+  <a href="./0093-ruby-blocks-and-methods.html">← บทเรียน 93 · Block · method · ? และ !</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 1</a>
+  <a href="./0095-ruby-class-and-module.html">บทเรียน 95 → Class · Module · mixin</a>
+</nav>
+
+<h2 id="sn-sec-10">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/control_expressions_rdoc.html">Ruby docs — Control Expressions</a> —
+      <strong>อ่านย่อหน้าแรกสุดของหน้า (อยู่ก่อนหัวข้อ <em>if Expression</em>)</strong>
+      ที่เขียนไว้ประโยคเดียวว่า <code>nil</code> กับ <code>false</code> เป็น false-value ส่วนที่เหลือเป็น true-value ·
+      เป็นที่มาทางการของตารางในหัวข้อ 1</li>
+  <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/calling_methods_rdoc.html">Ruby docs — Calling Methods</a> —
+      <strong>อ่านหัวข้อ <em>Safe Navigation Operator</em></strong> (อยู่ใต้ <em>Receiver</em>)
+      สั้นมาก อธิบาย <code>&amp;.</code> ว่าข้ามให้เฉพาะ receiver ที่เป็น <code>nil</code></li>
+  <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/assignment_rdoc.html">Ruby docs — Assignment</a> —
+      <strong>อ่านหัวข้อ <em>Abbreviated Assignment</em></strong>
+      ย่อหน้าที่เขียนว่า <code>||=</code> กำหนดค่าเมื่อค่าเดิมเป็น <code>nil</code> หรือ <code>false</code> — ตรงกับกับดักในหัวข้อ 4 · และหัวข้อ <em>Instance Variables</em> ถ้าอยากรู้ว่า <code>@current_user</code> อยู่ได้นานแค่ไหน</li>
+  <li><a href="https://guides.rubyonrails.org/active_support_core_extensions.html">Rails Guides — Active Support Core Extensions</a> —
+      <strong>อ่านหัวข้อ <em>blank? and present?</em> กับ <em>presence</em></strong>
+      (อยู่ในส่วน Extensions to All Objects) จะเห็นรายการเต็มว่าอะไรนับว่า blank
+      และตัวอย่าง <code>config[:host].presence || "localhost"</code> ซึ่งเป็นท่าเดียวกับ <code>params[:q].presence || "default"</code> ในสไลด์</li>
+  <li><a href="https://api.rubyonrails.org/classes/Object.html">Rails API — <code>Object</code></a> —
+      <strong>ดู method <code>blank?</code> · <code>present?</code> · <code>presence</code></strong>
+      กดดู source ได้ จะเห็นว่าแต่ละตัวสั้นแค่บรรทัดเดียว</li>
+  <li><a href="https://docs.ruby-lang.org/en/4.0/Numeric.html">Ruby docs — <code>Numeric</code></a> —
+      <strong>ดู <code>positive?</code> · <code>zero?</code> · <code>negative?</code></strong>
+      ทางแก้บั๊ก <code>if @post.views</code> ในหัวข้อ 2</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>
