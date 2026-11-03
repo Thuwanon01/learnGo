@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>บทเรียน 95 — Class และ Module — attr_accessor, @ตัวแปร และ mixin ที่มาของ concerns</title>
+<title>บทเรียน 95 — Class และ Module — แม่พิมพ์ของข้อมูล และกล่องเครื่องมือที่แชร์กัน</title>
 <link rel="stylesheet" href="../../assets/lesson.css">
 <script src="../../assets/quiz.js" defer></script>
 <script src="../../assets/nav.js" defer></script>
@@ -12,76 +12,804 @@
 
 <header>
   <p class="kicker">บทเรียน 95 · Rails · Day 1</p>
-  <h1>Class และ Module — attr_accessor, @ตัวแปร และ mixin ที่มาของ concerns</h1>
-  <p class="meta">~25 นาที · ควรผ่าน <a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a> (nil) มาก่อน ·
-    ถ้าลืม interface ของ Go ทวนได้ที่ <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a></p>
+  <h1>Class และ Module — แม่พิมพ์ของข้อมูล และกล่องเครื่องมือที่แชร์กัน</h1>
+  <p class="meta">~24 นาที · ควรผ่าน <a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a> (nil) มาก่อน</p>
   <p class="standfirst">
-    คุณเขียน <code>struct</code> ของ Go กับ <code>class</code> ของ TypeScript มาแล้ว
-    บทนี้เลยไม่ต้องเริ่มจากศูนย์ แค่ดูว่า Ruby เขียนเรื่องเดียวกันต่างไปยังไง
-    <br>สไลด์หน้า 28–29 มีโค้ดแค่สองก้อน แต่ถ้าอ่านไม่ออกจะติดทั้งคอร์ส เพราะ
-    <strong>ทุก model ของ Rails เป็น class</strong> (<code>class Post &lt; ApplicationRecord</code>)
-    และของที่ Rails เรียกว่า <strong>concern</strong> ก็คือ <code>module</code> ที่จะเรียนในบทนี้นั่นเอง
-    <br>มีกับดักหนึ่งที่ต้องระวังเป็นพิเศษ: <strong>สะกดชื่อ <code>@ตัวแปร</code> ผิด Ruby ก็ไม่เตือน</strong>
-    แม้จะเปิด <code>-w</code> แล้วก็ตาม ส่วน Go กับ TypeScript ฟ้องตั้งแต่ยังไม่ได้รัน ·
-    หัวข้อ 3 รันให้ดูทั้งสามภาษา
+    บทก่อน ๆ เราจำลอง "บทความ" ด้วย Hash มาตลอด แต่ในโค้ด Rails จะเจอคำว่า <code>Post</code> ตัวใหญ่โผล่มาเฉย ๆ
+    <br>บทนี้ตอบคำถามนั้นตรง ๆ: <strong><code>Post</code> คืออะไร และมาจากไหน</strong>
+    <br>อ่านจบแล้วคุณจะเขียน <code>class Post</code> ของตัวเองได้ · รู้ว่ามันคือ <code>struct</code> + method ของ Go ในอีกหน้าตาหนึ่ง ·
+    และเข้าใจว่าทำไม <code>Post</code> ใน Rails ถึงว่างเปล่าแต่ยังเรียก <code>post.title</code> ได้
   </p>
 </header>
 
 <main>
 
 <div class="note">
-  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
-  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby -v</span>
-ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
-<span class="c">$ rails -v</span>
-Rails 8.1.4</code></pre>
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อนที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>object กับการเรียก method ด้วยจุด</strong> (บท 91) — <code>"hi".upcase</code> คือสั่งให้ object <code>"hi"</code> ทำงาน <code>upcase</code></li>
+    <li><strong><code>#{}</code></strong> (บท 91) — แทรกค่าลงใน string ที่ใช้ฟันหนูคู่ <code>"…"</code></li>
+    <li><strong>symbol</strong> (บท 92) — ชื่อที่ขึ้นต้นด้วย <code>:</code> เช่น <code>:title</code> ใช้เป็น "ชื่อเรียก" ของอะไรสักอย่าง</li>
+    <li><strong><code>def</code> และ return อัตโนมัติ</strong> (บท 93) — บรรทัดสุดท้ายของ method คือค่าที่ส่งกลับ</li>
+    <li><strong><code>nil</code></strong> (บท 94) — แปลว่า "ไม่มีค่า"</li>
+  </ul>
   <p>
-    สไลด์ใช้ <strong>Ruby 4.0.6 · Rails 8.1.3</strong> ส่วนเครื่องที่ใช้ตรวจเป็น <strong>Ruby 4.0.9 · Rails 8.1.4</strong>
-    ต่างกันแค่ patch version เนื้อหาในบทนี้ใช้ได้เหมือนกัน
-  </p>
-  <p style="margin-bottom:0">
-    ทุกกล่องที่เป็นผลรันในบทนี้ก็อปมาจากเครื่องจริง ไม่ได้พิมพ์เอง ·
-    โค้ด Ruby ล้วนรันด้วย <code>ruby ไฟล์.rb</code> ·
-    ส่วนที่เกี่ยวกับ Rails รันในโปรเจกต์ที่สร้างด้วย <code>rails new wongnok_blog --database=postgresql --css=tailwind</code>
-    ตามสไลด์หน้า 40 · ฝั่ง Go ใช้ go1.26.5 ส่วน TypeScript ตรวจด้วย <code>tsc --noEmit --strict</code> (tsc 7.0.2) ·
-    เลข <code>0x0000…</code> ในผลของ <code>p</code> เป็นที่อยู่ใน memory <strong>รันแต่ละรอบจะไม่ตรงกัน</strong> เป็นเรื่องปกติ
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · Go 1.26.5
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — ต่างกันแค่รุ่นย่อย เนื้อหาบทนี้ใช้ได้เหมือนกัน) ·
+    ผลรันทุกกล่องก็อปมาจากเครื่องจริง
   </p>
 </div>
 
-<h2 id="sn-sec-1">1 · Class เดียวกัน เขียนสามภาษา</h2>
+<h2 id="sn-sec-1">1 · ปัญหา: บทความหลายชิ้น หน้าตาต้องเหมือนกัน</h2>
 
 <p>
-  เริ่มจากสไลด์หน้า 28 ซึ่งเขียน <code>Post</code> ตัวเดียวกันด้วยสามภาษา
-  แต่ละตัวมีช่อง <code>title</code> หนึ่งช่อง กับ method <code>greeting</code> ที่คืนคำทักทาย:
+  ในบท 92 เราเก็บบทความหนึ่งชิ้นไว้ใน Hash ทำนองนี้ (จำลองบทความ ยังไม่ใช่ Rails):
 </p>
 
-<p><strong>Go</strong></p>
+<pre><code>post = { <span class="n">title:</span> <span class="s">"ต้มยำกุ้ง"</span>, <span class="n">body:</span> <span class="s">"วิธีทำ..."</span> }</code></pre>
+
+<p>
+  ใช้ได้ แต่ไม่มีใครบังคับว่าบทความทุกชิ้นต้องมีช่อง <code>title</code> ·
+  ถ้าเพื่อนพิมพ์ <code>titel:</code> ผิด ก็ได้บทความหน้าตาเพี้ยนมาหนึ่งชิ้น ·
+  และงานที่บทความ "ทำได้" (เช่น ทำคำทักทาย) ก็ต้องเขียนกระจายไว้ที่อื่น
+</p>
+
+<p>
+  <strong>class</strong> คือทางแก้: เราเขียน "แบบ" ของบทความไว้ที่เดียว ว่าบทความหนึ่งชิ้นมีข้อมูลอะไร และทำอะไรได้บ้าง ·
+  จากนั้นจะสร้างบทความกี่ชิ้นก็ได้ ทุกชิ้นออกมาจากแบบเดียวกัน ·
+  ของแต่ละชิ้นที่สร้างออกมาเรียกว่า <strong>object</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">🍮 เทียบให้เห็นภาพ</span>
+  <p>
+    <strong>class เหมือนแม่พิมพ์ขนมไข่</strong> — แม่พิมพ์มีอันเดียว กำหนดรูปร่างไว้แล้ว
+    <br><strong>object คือขนมแต่ละชิ้น</strong>ที่หยอดแป้งออกมาจากแม่พิมพ์ · ทุกชิ้นรูปร่างเหมือนกัน
+    แต่แต่ละชิ้นมีของของตัวเอง ชิ้นหนึ่งโรยงา อีกชิ้นโรยลูกเกด
+    <br><code>Post</code> คือแม่พิมพ์ · บทความ "ต้มยำกุ้ง" กับบทความ "ผัดกะเพรา" คือขนมสองชิ้น
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ขนมอบเสร็จแล้วแก้ไม่ได้ แต่ object แก้ข้อมูลข้างในทีหลังได้เรื่อย ๆ ·
+    และแม่พิมพ์ขนมทำได้แค่กำหนดรูปร่าง ส่วน class ยังเขียนไว้ด้วยว่า object "ทำอะไรได้บ้าง" (method)
+  </p>
+</div>
+
+<p>
+  ถ้าเทียบกับ Go — <code>type Post struct { ... }</code> ก็คือแม่พิมพ์เหมือนกัน
+  และ <code>Post{Title: "Hi"}</code> คือขนมหนึ่งชิ้น · แนวคิดเดียวกันเป๊ะ ต่างแค่วิธีเขียน
+</p>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>class</dt>
+    <dd>แบบที่บอกว่าข้อมูลชนิดหนึ่งมีอะไรและทำอะไรได้ · ชื่อขึ้นต้นด้วยตัวใหญ่เสมอ เช่น <code>Post</code> ·
+        ถาม AI ได้ว่า "class Post ใน Ruby เทียบกับ struct ของ Go ตรงไหนบ้าง"</dd>
+    <dt>object / instance</dt>
+    <dd>ของหนึ่งชิ้นที่สร้างจาก class · สองคำนี้ใช้แทนกันได้ ("post เป็น instance ของ Post") ·
+        ถาม senior ได้ว่า "ตัวแปร post ตรงนี้เป็น instance ของ class ไหนครับ"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">2 · เขียน class Post ตัวแรก — เทียบ Go ทีละบรรทัด</h2>
+
+<p>
+  มาเขียนแม่พิมพ์บทความกัน · ซ้ายคือ Go ที่คุณเคยเขียน · ขวาคือ Ruby ที่ทำเรื่องเดียวกัน
+  (ทั้งสองฝั่งรันจริงแล้ว):
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Go</h4>
 <pre><code><span class="k">type</span> <span class="n">Post</span> <span class="k">struct</span> {
-  Title <span class="n">string</span>
+	Title <span class="k">string</span>
 }
 
-<span class="k">func</span> (p <span class="n">Post</span>) <span class="f">Greeting</span>() <span class="n">string</span> {
-  <span class="k">return</span> <span class="s">"Hello, "</span> + p.Title
+<span class="k">func</span> <span class="f">NewPost</span>(title <span class="k">string</span>) <span class="n">Post</span> {
+	<span class="k">return</span> <span class="n">Post</span>{Title: title}
 }
 
-<span class="c">// ไม่มี inheritance</span></code></pre>
+post := <span class="f">NewPost</span>(<span class="s">"Hi"</span>)</code></pre>
+  </div>
+  <div class="side">
+    <h4>Ruby</h4>
+<pre><code><span class="c"># post.rb</span>
+<span class="k">class</span> <span class="n">Post</span>
+  <span class="k">def</span> <span class="f">initialize</span>(title)
+    @title = title
+  <span class="k">end</span>
+<span class="k">end</span>
 
-<p><strong>TypeScript</strong></p>
-<pre><code><span class="k">class</span> <span class="n">Post</span> {
-  title: <span class="n">string</span>
+post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>)
+<span class="f">p</span> post</code></pre>
+  </div>
+</div>
 
-  <span class="f">constructor</span>(title: <span class="n">string</span>) {
-    <span class="k">this</span>.title = title
-  }
+<p>
+  ทวนฝั่ง Go ก่อนครึ่งประโยค: Go ไม่มี method สร้าง object แบบพิเศษ (เขียน <code>Post{Title: "Hi"}</code> ตรง ๆ ก็ได้) · <code>NewPost</code> เป็นแค่ <code>func</code> ธรรมดาที่เราตั้งชื่อขึ้นต้นด้วย <code>New</code> ตามธรรมเนียม ·
+  ส่วน Ruby มีที่ทางให้ตายตัว คือ method ชื่อ <code>initialize</code> เท่านั้น
+</p>
 
-  <span class="f">greeting</span>() {
-    <span class="k">return</span> <span class="s">`Hello, ${</span><span class="k">this</span>.title<span class="s">}`</span>
-  }
+<p>อ่านฝั่ง Ruby ทีละบรรทัด:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Ruby</th><th>แปลว่า</th><th>ใน Go คือ</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>class Post</code> … <code>end</code></td>
+      <td>เริ่มเขียนแม่พิมพ์ชื่อ <code>Post</code> · ทุกอย่างจนถึง <code>end</code> ตัวสุดท้ายเป็นของ class นี้</td>
+      <td><code>type Post struct</code></td>
+    </tr>
+    <tr>
+      <td><code>def initialize(title)</code></td>
+      <td>method ชื่อพิเศษ <strong>รันอัตโนมัติทุกครั้งที่สร้างบทความใหม่</strong> · รับชื่อเรื่องเข้ามาหนึ่งตัว</td>
+      <td><code>func NewPost(title string)</code></td>
+    </tr>
+    <tr>
+      <td><code>@title = title</code></td>
+      <td>เก็บชื่อเรื่องไว้ <strong>ติดกับบทความชิ้นนี้</strong> · <code>@</code> ข้างหน้าแปลว่า "ของ object ตัวนี้" ไม่ใช่ตัวแปรชั่วคราว</td>
+      <td><code>Post{Title: title}</code></td>
+    </tr>
+    <tr>
+      <td><code>Post.new("Hi")</code></td>
+      <td>สั่งแม่พิมพ์ให้หยอดขนมหนึ่งชิ้น · <code>new</code> จะไปเรียก <code>initialize("Hi")</code> ให้เอง เราไม่ได้เรียก <code>initialize</code> ตรง ๆ</td>
+      <td><code>NewPost("Hi")</code></td>
+    </tr>
+    <tr>
+      <td><code>p post</code></td>
+      <td>พิมพ์ object ออกมาดูแบบละเอียด (สำหรับ debug)</td>
+      <td><code>fmt.Printf("%+v", post)</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>ผลรันจริง:</p>
+
+<pre><code>$ ruby post.rb
+#&lt;Post:0x0000000121f0beb0 @title="Hi"&gt;</code></pre>
+
+<p>
+  อ่านว่า "นี่คือ object ของ class <code>Post</code> · ข้างในมี <code>@title</code> เป็น <code>"Hi"</code>" ·
+  ตัวเลข <code>0x0000…</code> คือที่อยู่ใน memory <strong>ของคุณจะไม่ตรงกับนี้</strong> และเปลี่ยนทุกครั้งที่รัน เป็นเรื่องปกติ
+</p>
+
+<p>
+  ทีนี้ลองหยอดขนมสองชิ้นจากแม่พิมพ์เดียว · แต่ละชิ้นมี <code>@title</code> เป็นของตัวเอง ไม่ปนกัน:
+</p>
+
+<div class="diagram">class Post   ← แม่พิมพ์ (มีอันเดียว)
+   │
+   ├─ Post.new("ต้มยำกุ้ง") ──▶  object a   @title = "ต้มยำกุ้ง"
+   │
+   └─ Post.new("ผัดกะเพรา") ──▶  object b   @title = "ผัดกะเพรา"</div>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>initialize / constructor</dt>
+    <dd>method ที่ <code>Post.new(...)</code> เรียกให้อัตโนมัติตอนสร้าง object · ภาษาอื่นเรียกว่า constructor ·
+        ถาม senior ได้ว่า "ค่าเริ่มต้นของบทความควรตั้งใน initialize เลยไหมครับ"</dd>
+    <dt>instance variable (<code>@title</code>)</dt>
+    <dd>ตัวแปรที่ขึ้นต้นด้วย <code>@</code> · ติดอยู่กับ object แต่ละตัว อยู่ได้ตลอดอายุของ object ·
+        พิมพ์บอก AI ได้ว่า "อธิบาย instance variable ใน Ruby เทียบกับ field ใน struct ของ Go"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">3 · post.title — เอาข้อมูลออกมาดู</h2>
+
+<p>
+  ใน Go ถ้าชื่อ field ขึ้นต้นตัวใหญ่ (<code>Title</code>) คนข้างนอกก็อ่าน <code>post.Title</code> ได้เลย ·
+  Ruby ไม่ได้ทำแบบนั้น — ลองทายดู:
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># post2.rb — class เดิมจากหัวข้อ 2 ทุกตัวอักษร</span>
+<span class="k">class</span> <span class="n">Post</span>
+  <span class="k">def</span> <span class="f">initialize</span>(title)
+    @title = title
+  <span class="k">end</span>
+<span class="k">end</span>
+
+post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>)
+<span class="f">puts</span> post.title</code></pre>
+  <p class="ask">ใน object มี <code>@title = "Hi"</code> อยู่แล้ว · บรรทัดสุดท้ายจะพิมพ์อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>$ ruby post2.rb
+post2.rb:9:in '&lt;main&gt;': undefined method 'title' for an instance of Post (NoMethodError)
+
+puts post.title
+         ^^^^^^</code></pre>
+    <p>
+      <strong>พัง</strong> · error แปลว่า "object ของ Post ไม่มี method ชื่อ <code>title</code>" ·
+      ใน Ruby <code>post.title</code> <strong>ไม่ใช่การหยิบ field</strong> แต่เป็นการเรียก method ชื่อ <code>title</code> ·
+      ข้อมูล <code>@title</code> อยู่ข้างใน object จริง แต่คนข้างนอกแตะตรง ๆ ไม่ได้ ต้องมี method ไว้ให้เรียก
+    </p>
+  </div>
+</div>
+
+<p>
+  ทางแก้ตรงไปตรงมา คือเขียน method ที่ส่ง <code>@title</code> ออกมาเอง:
+</p>
+
+<pre><code><span class="k">class</span> <span class="n">Post</span>
+  <span class="k">def</span> <span class="f">initialize</span>(title)
+    @title = title
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">title</span>            <span class="c"># อ่านค่า — คืน @title ออกไป (return อัตโนมัติ)</span>
+    @title
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">title=</span>(value)   <span class="c"># แก้ค่า — ชื่อ method คือ "title=" มีเครื่องหมาย = ติดท้ายจริง ๆ</span>
+    @title = value
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  พอมีสอง method นี้ <code>post.title</code> ก็อ่านได้ · ส่วน <code>post.title = "ใหม่"</code>
+  ที่ดูเหมือนการเอาค่าไปใส่ จริง ๆ คือการเรียก method ชื่อ <code>title=</code> แล้วส่ง <code>"ใหม่"</code> เข้าไป ·
+  Ruby ยอมให้เว้นวรรคระหว่าง <code>title</code> กับ <code>=</code> ได้ เพื่อให้อ่านเหมือนการตั้งค่าตัวแปร
+</p>
+
+<p>
+  แต่ต้องเขียน 6 บรรทัดต่อข้อมูลหนึ่งช่อง ซึ่งน่าเบื่อมาก · Ruby เลยมีทางลัด <strong>บรรทัดเดียว</strong>:
+</p>
+
+<pre><code><span class="c"># post3.rb</span>
+<span class="k">class</span> <span class="n">Post</span>
+  <span class="f">attr_accessor</span> <span class="n">:title</span>     <span class="c"># สร้าง def title กับ def title= ให้เอง</span>
+
+  <span class="k">def</span> <span class="f">initialize</span>(title)
+    @title = title
+  <span class="k">end</span>
+<span class="k">end</span>
+
+post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>)
+<span class="f">puts</span> post.title
+post.title = <span class="s">"Hello Ruby"</span>
+<span class="f">puts</span> post.title</code></pre>
+
+<pre><code>$ ruby post3.rb
+Hi
+Hello Ruby</code></pre>
+
+<ul>
+  <li><code>attr_accessor</code> — คำสั่งที่เขียนไว้ในตัว class แล้วมัน<strong>เขียน method สองตัวให้แทนเรา</strong> ·
+      ตัวมันเองก็เป็น method ที่เรียกแบบไม่ใส่วงเล็บ (เขียนเต็ม ๆ คือ <code>attr_accessor(:title)</code> — เรื่องวงเล็บที่ละได้อยู่บท 97)</li>
+  <li><code>:title</code> — symbol จากบท 92 · ที่นี่ใช้บอกว่า "ข้อมูลช่องชื่อ title" → ได้ method <code>title</code> กับ <code>title=</code> ที่อ่าน/เขียน <code>@title</code></li>
+  <li>มีหลายช่องก็เขียนต่อกันได้: <code>attr_accessor :title, :body</code></li>
+</ul>
+
+<p>
+  ถ้าอยากให้คนนอก <strong>อ่านได้อย่างเดียว</strong> ให้ใช้ <code>attr_reader :title</code> แทน (สร้างแค่ <code>title</code>) ·
+  แล้วถ้าใครสั่งแก้ค่า จะพังแบบนี้:
+</p>
+
+<pre><code><span class="c"># reader.rb</span>
+<span class="k">class</span> <span class="n">Post</span>
+  <span class="f">attr_reader</span> <span class="n">:title</span>     <span class="c"># อ่านได้อย่างเดียว</span>
+
+  <span class="k">def</span> <span class="f">initialize</span>(title)
+    @title = title
+  <span class="k">end</span>
+<span class="k">end</span>
+
+post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>)
+<span class="f">puts</span> post.title               <span class="c"># อ่าน — ทำได้</span>
+post.title = <span class="s">"Hello Ruby"</span>     <span class="c"># แก้ — พังตรงนี้</span></code></pre>
+
+<pre><code>$ ruby reader.rb
+Hi
+reader.rb:12:in '&lt;main&gt;': undefined method 'title=' for an instance of Post (NoMethodError)</code></pre>
+
+<p>
+  บรรทัด <code>Hi</code> คือการอ่านที่ทำได้ · ส่วน error บอกว่าหา method ชื่อ <code>'title='</code> ไม่เจอ
+  เพราะ <code>attr_reader</code> สร้างให้แค่ <code>title</code> ตัวเดียว
+</p>
+
+<div class="analogy">
+  <span class="label">🍱 เทียบให้เห็นภาพ</span>
+  <p>
+    object เหมือน<strong>กล่องข้าวที่ปิดฝาไว้</strong> · <code>@title</code> คือกับข้าวที่อยู่ในกล่อง คนข้างนอกล้วงเองไม่ได้
+    <br><code>attr_reader</code> = เปลี่ยนเป็น<strong>ฝาใส</strong> มองเห็นว่ามีอะไร แต่เปลี่ยนกับข้าวไม่ได้
+    <br><code>attr_accessor</code> = <strong>ฝาที่เปิดได้</strong> ทั้งดูและเปลี่ยนกับข้าวได้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> กล่องข้าวจริงปิดฝาแล้ว ใครแอบเปิดก็ได้ ·
+    ส่วนใน Ruby ไม่มี method ก็คือเรียกไม่ได้ ได้ <code>NoMethodError</code> ทันที ·
+    และฝาใสมีฝาเดียวต่อกล่อง แต่ <code>attr_reader</code> เลือกได้ทีละช่องข้อมูล (title ฝาใส · body ฝาเปิดได้)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>getter / setter</dt>
+    <dd>method ที่อ่านค่า (getter เช่น <code>title</code>) และ method ที่ตั้งค่า (setter เช่น <code>title=</code>) ·
+        พิมพ์บอก AI ได้ว่า "ทำไม error บอกว่าไม่มี method title= ผมแค่จะตั้งค่าเอง"</dd>
+    <dt><code>attr_accessor</code> / <code>attr_reader</code> / <code>attr_writer</code></dt>
+    <dd>ทางลัดสร้าง getter+setter / getter อย่างเดียว / setter อย่างเดียว ·
+        ถาม senior ได้ว่า "title ควรเป็น attr_reader ไหมครับ ไม่อยากให้ข้างนอกแก้ได้"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · ให้บทความ "ทำอะไรได้" — method ใน class</h2>
+
+<p>
+  นอกจากเก็บข้อมูล class ยังเขียนได้ว่า object ทำอะไรได้บ้าง · ตัวอย่างจากสไลด์หน้า 28 คือ method <code>greeting</code>
+  ที่คืนคำทักทาย · ฝั่ง Go คือ method ที่มี receiver <code>(p Post)</code>
+  (ทวน: <code>(p Post)</code> หน้าชื่อ func แปลว่า "func นี้เป็นของ Post · ข้างในเรียกบทความชิ้นที่ถูกเรียกว่า <code>p</code>"):
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Go</h4>
+<pre><code><span class="k">func</span> (p <span class="n">Post</span>) <span class="f">Greeting</span>() <span class="k">string</span> {
+	<span class="k">return</span> <span class="s">"Hello, "</span> + p.Title
+}</code></pre>
+  </div>
+  <div class="side">
+    <h4>Ruby (เขียนไว้ใน class Post)</h4>
+<pre><code><span class="k">def</span> <span class="f">greeting</span>
+  <span class="s">"Hello, #{@title}"</span>
+<span class="k">end</span></code></pre>
+  </div>
+</div>
+
+<ul>
+  <li>Ruby ไม่ต้องเขียน receiver แบบ <code>(p Post)</code> · method ที่อยู่ใน <code>class Post</code> เป็นของ Post อัตโนมัติ</li>
+  <li><code>@title</code> ตรงนี้ทำหน้าที่เหมือน <code>p.Title</code> ของ Go — "ชื่อเรื่องของบทความชิ้นที่ถูกเรียก"</li>
+  <li>ไม่มี <code>return</code> เพราะบรรทัดสุดท้ายคือค่าที่คืน (บท 93)</li>
+</ul>
+
+<p>
+  เติมลงใน class Post แล้วเรียก <code>puts Post.new("Hi").greeting</code> ได้ <code>Hello, Hi</code> (ฝั่ง Go ก็ได้ <code>Hello, Hi</code> เหมือนกัน)
+</p>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>instance method</dt>
+    <dd>method ที่เขียนใน class แล้วเรียกผ่าน object แต่ละชิ้น เช่น <code>post.greeting</code> · ผลขึ้นกับข้อมูลของชิ้นนั้น ·
+        ถาม senior ได้ว่า "logic ทำคำทักทายนี้ควรเป็น instance method ของ Post ไหมครับ"</dd>
+  </dl>
+</div>
+
+<div class="warn">
+  <p>
+    <strong>⚠️ พิมพ์ชื่อ <code>@</code>ตัวแปรผิด Ruby ไม่เตือน</strong> — ถ้าเผลอเขียน <code>"Hello, #{@titel}"</code>
+    จะไม่มี error ไม่มี warning (แม้รันด้วย <code>ruby -w</code> ซึ่งสั่งให้ Ruby เตือนเรื่องน่าสงสัย ก็ยังเงียบ) เพราะ <code>@</code>ตัวแปรที่ยังไม่เคยตั้งค่าจะได้ <code>nil</code> เฉย ๆ:
+  </p>
+<pre><code>$ ruby typo.rb      <span class="c"># greeting เขียน @titel แทน @title · บรรทัดท้าย p post.greeting</span>
+"Hello, "</code></pre>
+  <p>
+    Go จะฟ้องตั้งแต่ compile ว่าไม่มี field <code>Titel</code> · ใน Ruby ถ้าผลออกมาว่างแบบแปลก ๆ ให้สงสัยตัวสะกดของ <code>@</code>ตัวแปรก่อน
+  </p>
+</div>
+
+<h2 id="sn-sec-5">5 · สืบทอดด้วย &lt; — class ลูกที่ต่อยอดจาก class แม่</h2>
+
+<p>
+  แอปบล็อกของเราอยากมีบทความชนิดพิเศษ: <strong>สูตรอาหาร</strong> ที่มีทุกอย่างเหมือนบทความ (ชื่อเรื่อง · คำทักทาย)
+  แต่มี "เวลาที่ใช้ทำ" เพิ่มมาหนึ่งช่อง · แทนที่จะก็อป Post มาทั้งก้อน Ruby ให้เขียนว่า
+  "Recipe เป็นลูกของ Post" ด้วยเครื่องหมาย <code>&lt;</code>
+</p>
+
+<div class="analogy">
+  <span class="label">👩‍🍳 เทียบให้เห็นภาพ</span>
+  <p>
+    เหมือน<strong>สูตรขนมที่ต่อยอดจากสูตรแม่</strong> — สูตรแม่คือขนมไข่ธรรมดา ·
+    สูตรลูกเขียนว่า "ทำตามสูตรแม่ทุกขั้น <strong>แล้วเพิ่ม</strong>ไส้สังขยา" ·
+    ไม่ต้องคัดลอกขั้นตอนของแม่ลงมาใหม่ แค่เขียนส่วนที่เพิ่ม
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> สูตรลูกในครัวจริงจดไว้แล้วก็จบ ถ้าแม่แก้สูตรทีหลัง สูตรลูกที่จดไว้ไม่เปลี่ยนตาม ·
+    แต่ใน Ruby ถ้าแก้ class แม่ class ลูกเปลี่ยนตามทันที เพราะลูกไม่ได้ก็อปโค้ดของแม่ไว้ แค่ชี้ไปหาแม่
+  </p>
+</div>
+
+<pre><code><span class="c"># inherit.rb — ข้างบนคือ class Post ที่มี attr_accessor :title, initialize และ greeting (หัวข้อ 3–4)</span>
+<span class="k">class</span> <span class="n">Recipe</span> &lt; <span class="n">Post</span>
+  <span class="f">attr_accessor</span> <span class="n">:minutes</span>
+
+  <span class="k">def</span> <span class="f">initialize</span>(title, minutes)
+    <span class="k">super</span>(title)          <span class="c"># ให้ initialize ของ Post ตั้ง @title ให้ก่อน</span>
+    @minutes = minutes    <span class="c"># แล้วค่อยเก็บส่วนที่ Recipe เพิ่มเอง</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+r = <span class="n">Recipe</span>.<span class="f">new</span>(<span class="s">"ต้มยำกุ้ง"</span>, <span class="n">15</span>)
+<span class="f">puts</span> r.greeting
+<span class="f">puts</span> r.title
+<span class="f">puts</span> r.minutes
+<span class="f">p</span> r.is_a?(<span class="n">Post</span>)</code></pre>
+
+<pre><code>$ ruby inherit.rb
+Hello, ต้มยำกุ้ง
+ต้มยำกุ้ง
+15
+true</code></pre>
+
+<ul>
+  <li><code>class Recipe &lt; Post</code> — อ่านว่า "Recipe เป็นลูกของ Post" · <code>&lt;</code> ตรงนี้<strong>ไม่ใช่</strong>น้อยกว่า</li>
+  <li><code>super(title)</code> — "เรียก method ชื่อเดียวกันของแม่" · ในที่นี้คือ <code>initialize</code> ของ Post · <strong>ใส่วงเล็บและส่งเฉพาะของที่แม่รับเสมอ</strong> (ถ้าลืม ดู error ในภารกิจท้ายบท)</li>
+  <li><code>greeting</code> กับ <code>title</code> ไม่ได้เขียนใน Recipe เลย แต่เรียกได้ เพราะได้มาจากแม่</li>
+  <li><code>r.is_a?(Post)</code> — ถามว่า "r เป็น Post ด้วยไหม" · ได้ <code>true</code> เพราะสูตรอาหารก็เป็นบทความชนิดหนึ่ง</li>
+</ul>
+
+<p>
+  <strong>Go ไม่มีการสืบทอดแบบนี้</strong> (สไลด์หน้า 28 ก็เขียนไว้) · Go ใช้การฝัง struct ไว้ข้างใน (embedding) แทน ซึ่งจะเห็นในหัวข้อ 7
+</p>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>inheritance (การสืบทอด)</dt>
+    <dd>ให้ class หนึ่งได้ทุกอย่างของอีก class ไปใช้ · class แม่เรียก <em>superclass</em> · class ลูกเรียก <em>subclass</em> ·
+        ถาม senior ได้ว่า "Recipe ควรเป็น subclass ของ Post ไหมครับ หรือแยกเป็นคนละ class ดีกว่า"</dd>
+    <dt><code>super</code></dt>
+    <dd>เรียก method ชื่อเดียวกันของแม่ · ใช้บ่อยใน <code>initialize</code> ของลูก ·
+        พิมพ์บอก AI ได้ว่า "ใน initialize ของ class ลูก ควรเรียก super แบบไหน ถึงไม่ส่ง argument เกิน"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · สะพานไป Rails — Post ในโปรเจกต์จริงมาจากไหน</h2>
+
+<p>
+  ถึงตรงนี้ตอบคำถามต้นบทได้แล้ว · ในโปรเจกต์ Rails จะมีไฟล์ <code>app/models/post.rb</code> ที่หน้าตาแบบนี้
+  (Rails สร้างไฟล์นี้ให้ด้วยคำสั่ง <code>bin/rails generate</code> — เจอในบท 99):
+</p>
+
+<pre><code><span class="c"># app/models/post.rb — ทั้งไฟล์มีแค่นี้จริง ๆ</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  อ่านออกแล้วใช่ไหม — <strong><code>Post</code> คือ class ธรรมดา ที่เป็นลูกของ <code>ApplicationRecord</code></strong> ·
+  แต่แปลกตรงที่<strong>ว่างเปล่า</strong> ไม่มี <code>attr_accessor</code> ไม่มี <code>initialize</code> ·
+  แล้ว <code>post.title</code> มาจากไหน?
+</p>
+
+<p>
+  คำตอบ: Rails <strong>เปิดดูตาราง <code>posts</code> ในฐานข้อมูล</strong>ตอนรัน แล้วสร้าง method ตามชื่อคอลัมน์ให้เอง
+  (<code>title</code> · <code>title=</code> · <code>body</code> · …)
+</p>
+
+<p>
+  สังเกตชื่อสองแบบ: <code>Post</code> (ตัวใหญ่ เอกพจน์) คือ<strong>แม่พิมพ์ของบทความหนึ่งชิ้น</strong> ·
+  <code>posts</code> (ตัวเล็ก พหูพจน์) คือ<strong>ตารางที่เก็บบทความทุกชิ้น</strong> (ตาราง = ที่เก็บข้อมูลเป็นแถว ๆ ในฐานข้อมูล แบบที่เคยใช้กับ GORM) ·
+  Rails จับคู่สองชื่อนี้ให้เองตามกฎตั้งชื่อ — ละเอียดในบท 99
+</p>
+
+<p>
+  ผมสร้างตาราง <code>posts</code> ที่มีคอลัมน์ <code>title</code> กับ <code>body</code> ไว้ก่อน
+  (ด้วย <code>bin/rails generate model Post title:string body:text</code> แล้ว <code>bin/rails db:prepare</code> — เรื่องของ Day 2 ตอนนี้แค่ดู) ·
+  แล้วรันสคริปต์นี้ในโปรเจกต์:
+</p>
+
+<pre><code><span class="c"># try.rb — วางไว้ในโฟลเดอร์โปรเจกต์ wongnok_blog</span>
+<span class="f">p</span> <span class="n">Post</span>.column_names
+
+post = <span class="n">Post</span>.<span class="f">new</span>(<span class="n">title:</span> <span class="s">"Hi"</span>, <span class="n">body:</span> <span class="s">"My first post"</span>)
+<span class="f">puts</span> post.title
+<span class="f">puts</span> post.body
+<span class="f">p</span> post.respond_to?(<span class="n">:title</span>)
+<span class="f">p</span> post.respond_to?(<span class="n">:author</span>)</code></pre>
+
+<pre><code>$ bin/rails runner try.rb
+["id", "title", "body", "created_at", "updated_at"]
+Hi
+My first post
+true
+false</code></pre>
+
+<ul>
+  <li><code>bin/rails runner try.rb</code> — รันไฟล์ Ruby โดยโหลดทั้งโปรเจกต์ Rails ให้ก่อน (เลยรู้จัก <code>Post</code> โดยไม่ต้อง import — เรื่องนี้ละเอียดในบท 99)</li>
+  <li><code>Post.column_names</code> — ขอรายชื่อคอลัมน์ของตาราง <code>posts</code> · เห็น <code>title</code> กับ <code>body</code> ที่เราสร้าง และอีกสามช่องที่ Rails เติมให้</li>
+  <li><code>Post.new(title: "Hi", body: "…")</code> — ส่งค่าแบบระบุชื่อช่อง คล้าย keyword argument ในบท 93 (เบื้องหลังเป็น hash — บท 97 อธิบาย) · ไม่ใช่ <code>Post.new("Hi")</code> แบบ class ของเราเอง</li>
+  <li><code>respond_to?(:title)</code> — ถามว่า "object นี้มี method ชื่อนี้ไหม" · <code>title</code> มี (<code>true</code>) เพราะเป็นคอลัมน์ · <code>author</code> ไม่มี (<code>false</code>) เพราะตารางไม่มีคอลัมน์นี้</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🍽️ เทียบกับร้านอาหาร (ภาพเดียวกันทั้งคอร์ส)</span>
+  <p>
+    model <code>Post</code> คือ<strong>ห้องเก็บวัตถุดิบ + คนดูแลสต็อก</strong> · ฐานข้อมูลทั้งก้อนคือ<strong>ตู้เก็บแฟ้ม</strong> ·
+    ตาราง <code>posts</code> คือ<strong>ลิ้นชักบทความ</strong> · บทความหนึ่งแถวคือแฟ้มหนึ่งแผ่น
+    <br>คนดูแลสต็อกของ Rails <strong>เดินไปเปิดลิ้นชักดูเองว่าแฟ้มมีช่องอะไรบ้าง</strong> (title · body) แล้วก็พร้อมหยิบช่องนั้นให้ทันที
+    <br>ส่วน Go ที่เคยเรียน = <strong>เปิดร้านเองตั้งแต่ศูนย์</strong> ต้องจดรายการช่องของแฟ้มเองทุกช่องใน struct ·
+    Rails = <strong>ร้านแฟรนไชส์ที่ได้ครัวครบชุด</strong> ขอแค่ตั้งชื่อลิ้นชักตามที่แฟรนไชส์กำหนด (<code>Post</code> ↔ <code>posts</code>)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนดูแลสต็อกจริงเห็นลิ้นชักแล้วจำได้ตลอด ·
+    ส่วน Rails ไม่ได้เขียนชื่อช่องลงไฟล์ <code>post.rb</code> ให้เราเห็นเลย ·
+    เปิดไฟล์ดูก็ว่างเปล่า ต้องไปดูที่ตาราง (หรือ <code>Post.column_names</code>) ถึงรู้ว่ามีช่องอะไร
+  </p>
+</div>
+
+<p>เทียบกับ Go + GORM ที่เคยเรียนในบท 27 ให้เห็นชัด ๆ (ตัดมาเฉพาะส่วน struct):</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Go + GORM — เขียนทุกช่องเอง</h4>
+<pre><code><span class="k">type</span> <span class="n">Post</span> <span class="k">struct</span> {
+	ID    <span class="k">uint</span>
+	Title <span class="k">string</span>
+	Body  <span class="k">string</span>
+}</code></pre>
+    <p>ลืมเขียน <code>Body</code> = ใช้ <code>post.Body</code> ไม่ได้ แม้ตารางจะมีคอลัมน์นี้</p>
+  </div>
+  <div class="side">
+    <h4>Rails — ไม่เขียนสักช่อง</h4>
+<pre><code><span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+<span class="k">end</span></code></pre>
+    <p>ตารางมีคอลัมน์ไหน <code>post.ชื่อคอลัมน์</code> ก็ใช้ได้เลย</p>
+  </div>
+</div>
+
+<p>
+  แล้ว <code>ApplicationRecord</code> เป็นใคร? เป็น class ที่ <code>rails new</code> สร้างไว้ให้ และเป็นลูกของ <code>ActiveRecord::Base</code>
+  ซึ่งเป็นตัวที่มีความสามารถคุยกับฐานข้อมูลทั้งหมด (<code>::</code> แปลว่า "ที่อยู่ในกล่องชื่อ ActiveRecord"):
+</p>
+
+<pre><code>$ bin/rails runner 'p Post.superclass; p ApplicationRecord.superclass'
+ApplicationRecord(abstract)
+ActiveRecord::Base</code></pre>
+
+<p>
+  <code>.superclass</code> คือถามว่า "แม่ของ class นี้คือใคร" ·
+  คำว่า <code>(abstract)</code> ท้าย ApplicationRecord แปลว่า class นี้มีไว้เป็นแม่ให้ model อื่นสืบทอดเท่านั้น ไม่ได้ผูกกับตารางของตัวเอง
+</p>
+
+<p>
+  นี่คือการสืบทอดจากหัวข้อ 5 ล้วน ๆ: <code>Post</code> → แม่คือ <code>ApplicationRecord</code> → แม่คือ <code>ActiveRecord::Base</code> ·
+  การบันทึกลงฐานข้อมูล การค้นหา (เช่น <code>Post.where(...)</code> = หาบทความตามเงื่อนไข) ทั้งหมดได้มาจากแม่ — <strong>Day 2 จะสอนเรื่องนี้เต็ม ๆ</strong>
+</p>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>model</dt>
+    <dd>class ที่แทนข้อมูลหนึ่งชนิดในฐานข้อมูล เช่น <code>Post</code> แทนตาราง <code>posts</code> · อยู่ใน <code>app/models/</code> ·
+        ถาม senior ได้ว่า "model Post นี้ผูกกับตารางไหนครับ มีคอลัมน์อะไรบ้าง"</dd>
+    <dt>attribute (มาจาก column)</dt>
+    <dd>ช่องข้อมูลของ model ที่ Rails สร้าง method ให้จากชื่อคอลัมน์ในตาราง ·
+        พิมพ์บอก AI ได้ว่า "model ของผมว่างเปล่า แต่เรียก post.title ได้ อธิบายว่า Rails สร้าง attribute จาก column ยังไง"</dd>
+    <dt><code>ApplicationRecord</code></dt>
+    <dd>class แม่ของทุก model ในแอป · เป็นลูกของ <code>ActiveRecord::Base</code> อีกทอด ·
+        ถาม senior ได้ว่า "ของที่ทุก model ต้องใช้ ควรใส่ไว้ใน ApplicationRecord ไหมครับ"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">7 · Module + include — กล่องเครื่องมือที่หลาย class ยืมไปใช้</h2>
+
+<p>
+  สมมติอยากให้บทความมี <strong>slug</strong> — ชื่อเรื่องที่แปลงให้ใส่ใน URL ได้ เช่น <code>"Hello Ruby World"</code> → <code>hello-ruby-world</code>
+  (เว็บจะได้มี URL แบบ <code>/posts/hello-ruby-world</code> ที่คนอ่านออก) ·
+  แล้วอยากให้ <strong>หมวดหมู่</strong> (<code>Category</code>) ทำ slug ได้ด้วย
+</p>
+
+<p>
+  ใช้การสืบทอดไม่ได้ เพราะหมวดหมู่ไม่ได้ "เป็น" บทความ · Ruby เลยมี <strong>module</strong>:
+  ก้อน method ที่<strong>สร้าง object เองไม่ได้</strong> แต่ class ไหนก็ <strong><code>include</code></strong> ไปใช้ได้
+</p>
+
+<div class="analogy">
+  <span class="label">🧰 เทียบให้เห็นภาพ</span>
+  <p>
+    module เหมือน<strong>ชุดเครื่องมือช่างกลางของหมู่บ้าน</strong> · ใครก็ยืมไปใช้ได้ บ้านไหนจะยืมก็ไม่ต้องเป็นญาติกัน ·
+    <code>include Sluggable</code> = "บ้านนี้ยืมชุดเครื่องมือทำ slug มาใช้"
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> เครื่องมือช่างจริงทำงานได้ด้วยตัวเอง ·
+    แต่ method ใน module ใช้ <strong>ข้อมูลของบ้านที่ยืมไป</strong> — <code>slug</code> ต้องการให้ class นั้นมี <code>title</code> ·
+    ถ้าไม่มี Ruby ก็ไม่ตรวจตอนยืม แต่จะพังตอนเรียกใช้ครั้งแรก · และยืมแล้วไม่ต้องคืน ทุกบ้านใช้ได้พร้อมกัน
+  </p>
+</div>
+
+<p>นี่คือโค้ดจากสไลด์หน้า 29:</p>
+
+<pre><code><span class="k">module</span> <span class="n">Sluggable</span>
+  <span class="k">def</span> <span class="f">slug</span>
+    title.downcase.tr(<span class="s">" "</span>, <span class="s">"-"</span>)
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="k">class</span> <span class="n">Post</span>
+  <span class="k">include</span> <span class="n">Sluggable</span>
+<span class="k">end</span>
+
+<span class="n">Post</span>.<span class="f">new</span>.slug      <span class="c"># ใช้ได้เลย</span></code></pre>
+
+<ul>
+  <li><code>module Sluggable</code> … <code>end</code> — เขียนเหมือน class แต่ใช้คำว่า <code>module</code></li>
+  <li><code>title.downcase</code> — <code>title</code> ที่เขียนเฉย ๆ ไม่มี <code>@</code> และไม่มีอะไรนำหน้าจุด แปลว่า
+      "เรียก method <code>title</code> ของ object ตัวเองที่กำลังทำงานอยู่" · ได้ชื่อเรื่องมาแล้วแปลงเป็นตัวเล็กด้วย <code>downcase</code></li>
+  <li><code>.tr(" ", "-")</code> — แทนที่ช่องว่างทุกตัวด้วยขีด</li>
+  <li><code>include Sluggable</code> — ยัด method ทุกตัวใน Sluggable เข้าไปใน Post</li>
+</ul>
+
+<div class="warn">
+  <p>
+    <strong>⚠️ พิมพ์ตามสไลด์แล้วพัง</strong> — Post ในสไลด์ไม่มี <code>title</code> ให้ slug เรียก:
+  </p>
+<pre><code>$ ruby slide29.rb
+slide29.rb:3:in 'Sluggable#slug': undefined local variable or method 'title' for an instance of Post (NameError)
+
+    title.downcase.tr(" ", "-")
+    ^^^^^
+	from slide29.rb:11:in '&lt;main&gt;'</code></pre>
+  <p>แก้โดยเติม <code>attr_accessor :title</code> กับ <code>initialize</code> ให้ Post (ตัวอย่างข้างล่าง)</p>
+</div>
+
+<p>ฉบับที่รันได้จริง — สอง class ที่ไม่เกี่ยวกัน ยืม Sluggable ตัวเดียวกัน:</p>
+
+<pre><code><span class="c"># sluggable.rb</span>
+<span class="k">module</span> <span class="n">Sluggable</span>
+  <span class="k">def</span> <span class="f">slug</span>
+    title.downcase.tr(<span class="s">" "</span>, <span class="s">"-"</span>)
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="k">class</span> <span class="n">Post</span>
+  <span class="k">include</span> <span class="n">Sluggable</span>
+  <span class="f">attr_accessor</span> <span class="n">:title</span>
+
+  <span class="k">def</span> <span class="f">initialize</span>(title)
+    @title = title
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="k">class</span> <span class="n">Category</span>
+  <span class="k">include</span> <span class="n">Sluggable</span>
+  <span class="f">attr_accessor</span> <span class="n">:title</span>
+
+  <span class="k">def</span> <span class="f">initialize</span>(title)
+    @title = title
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="f">puts</span> <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hello Ruby World"</span>).slug
+<span class="f">puts</span> <span class="n">Category</span>.<span class="f">new</span>(<span class="s">"Thai Food"</span>).slug</code></pre>
+
+<pre><code>$ ruby sluggable.rb
+hello-ruby-world
+thai-food</code></pre>
+
+<p>
+  <code>title</code> ใน <code>slug</code> คือ title ของ object ที่เรียกมัน — ตอนเรียกจาก Post ก็เป็นชื่อบทความ · ตอนเรียกจาก Category ก็เป็นชื่อหมวด ·
+  และ module หยอดขนมเองไม่ได้ ถ้าสั่ง <code>Sluggable.new</code> จะได้
+  <code>undefined method 'new' for module Sluggable (NoMethodError)</code>
+</p>
+
+<p>
+  ฝั่ง Go ที่ใกล้ที่สุดคือ <strong>ฝัง struct</strong> (embedding) ซึ่งก็ได้ method มาใช้ฟรีเหมือนกัน (รันจริงได้ <code>hello-go-world</code>):
+</p>
+
+<pre><code><span class="c">// main.go</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+	<span class="s">"fmt"</span>
+	<span class="s">"strings"</span>
+)
+
+<span class="k">type</span> <span class="n">Sluggable</span> <span class="k">struct</span> {
+	Title <span class="k">string</span>
+}
+
+<span class="k">func</span> (s <span class="n">Sluggable</span>) <span class="f">Slug</span>() <span class="k">string</span> {
+	<span class="k">return</span> strings.<span class="f">ReplaceAll</span>(strings.<span class="f">ToLower</span>(s.Title), <span class="s">" "</span>, <span class="s">"-"</span>)
+}
+
+<span class="k">type</span> <span class="n">Post</span> <span class="k">struct</span> {
+	<span class="n">Sluggable</span> <span class="c">// ฝัง struct ไว้ข้างใน → ได้ Slug() มาใช้ด้วย</span>
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+	post := <span class="n">Post</span>{<span class="n">Sluggable</span>{Title: <span class="s">"Hello Go World"</span>}}
+	fmt.<span class="f">Println</span>(post.<span class="f">Slug</span>())
 }</code></pre>
 
-<p><strong>Ruby</strong></p>
-<pre><code><span class="c"># post.rb — สามบรรทัดล่างเพิ่มเองเพื่อรันให้เห็นผล</span>
+<ul>
+  <li><code>type Sluggable struct</code> + <code>func (s Sluggable) Slug()</code> — struct ที่มี method <code>Slug()</code> ของตัวเอง</li>
+  <li>ใน <code>Post</code> เขียนแค่ชื่อชนิด <code>Sluggable</code> ไม่มีชื่อ field — นี่คือการฝัง · Go จะยก method ของ Sluggable มาให้ Post เรียกได้ตรง ๆ</li>
+  <li><code>post.Slug()</code> — เรียกได้เหมือนเป็น method ของ Post เอง</li>
+</ul>
+
+<p>
+  ต่างกันตรงที่ Go ต้องย้าย <code>Title</code> ไปอยู่ใน <code>Sluggable</code> เพราะ <code>Slug()</code> มองเห็นแค่ข้อมูลของตัวมันเอง ·
+  ส่วน module ของ Ruby ใช้ <code>title</code> ของ class ที่ include มันได้เลย ·
+  และ <strong>ไม่เหมือน interface</strong> (บท 10) ที่บอกแค่ว่า "ต้องมี method นี้" แล้วให้เราเขียนเอง — module ให้โค้ดที่ทำงานได้มาด้วย
+</p>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>module</dt>
+    <dd>ก้อน method ที่สร้าง object เองไม่ได้ เอาไว้ให้หลาย class ใช้ร่วมกัน ·
+        ถาม senior ได้ว่า "method slug นี้ควรแยกเป็น module ไหมครับ มีหลาย class ใช้"</dd>
+    <dt>mixin / <code>include</code></dt>
+    <dd>การเอา method ของ module ไปใส่ใน class · class นั้นได้ method ไปใช้ทันที ·
+        พิมพ์บอก AI ได้ว่า "แยก method slug ออกเป็น module แล้ว include ใน Post กับ Category ให้หน่อย"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">8 · Concern — ที่เก็บ module ของ Rails (แค่ปู)</h2>
+
+<p>
+  สไลด์หน้า 29 ปิดท้ายว่า Rails เรียก module แบบนี้ว่า <strong>concern</strong> และมีโฟลเดอร์ให้เก็บ ·
+  เปิดโปรเจกต์ที่เพิ่ง <code>rails new</code> ก็เห็นโฟลเดอร์รออยู่แล้ว (<code>.keep</code> คือไฟล์ว่างที่ใส่ไว้ให้ git เก็บโฟลเดอร์เปล่าได้):
+</p>
+
+<pre><code>$ find app/models/concerns app/controllers/concerns
+app/models/concerns
+app/models/concerns/.keep
+app/controllers/concerns
+app/controllers/concerns/.keep</code></pre>
+
+<p>
+  ลองย้าย Sluggable ไปไว้ที่ <code>app/models/concerns/sluggable.rb</code> (เนื้อในเหมือนเดิมทุกตัวอักษร)
+  แล้วเติม <code>include Sluggable</code> หนึ่งบรรทัดใน <code>class Post &lt; ApplicationRecord</code>:
+</p>
+
+<pre><code>$ bin/rails runner 'puts Post.new(title: "Hello Rails World").slug'
+hello-rails-world</code></pre>
+
+<p>
+  ไม่ต้องเขียน <code>title</code> เอง เพราะ Rails สร้างจากคอลัมน์ให้แล้ว (หัวข้อ 6) · และไม่ต้อง import ไฟล์ sluggable.rb เพราะ Rails หาไฟล์ตามชื่อเอง (บท 99) ·
+  concern ของจริงมักมีบรรทัด <code>extend ActiveSupport::Concern</code> ด้วย — ไว้เจอทีหลัง ตอนนี้รู้แค่ว่า <strong>concern = module ที่วางไว้ในโฟลเดอร์ concerns</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">🍽️ เทียบกับร้านอาหาร</span>
+  <p>
+    Rails เป็น<strong>ร้านแฟรนไชส์</strong>ที่ทุกสาขาวางของตำแหน่งเดียวกัน · โฟลเดอร์ concerns คือ<strong>ชั้นวางเครื่องมือกลางของครัว</strong>ที่แฟรนไชส์กำหนดไว้แล้ว ·
+    ห้องไหนในร้านอยากใช้เครื่องทำ slug (model ใช้ชั้นใน app/models/concerns · controller ใช้ชั้นใน app/controllers/concerns) ก็หยิบจากชั้นนี้ (<code>include Sluggable</code>) ไม่ต้องตามหาว่าใครเก็บไว้ที่ไหน
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ชั้นวางจริงหยิบเครื่องมือไปแล้วคนอื่นต้องรอ ·
+    แต่ module ถูก include ได้พร้อมกันหลาย model ไม่มีใครต้องรอ ·
+    และของบนชั้นจริงหยิบได้ด้วยมือ ส่วน Rails หาไฟล์ให้จากชื่อ — ตั้งชื่อไฟล์ <code>sluggable.rb</code> ให้ตรงกับ <code>Sluggable</code> ถึงจะหาเจอ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>concern</dt>
+    <dd>module ที่ Rails แนะนำให้วางใน <code>app/models/concerns/</code> หรือ <code>app/controllers/concerns/</code> เพื่อแชร์ method ระหว่าง model หรือ controller ·
+        ถาม senior ได้ว่า "method slug ที่ Post กับ Category ใช้ร่วมกัน ควรแยกเป็น concern ไหมครับ"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9">9 · ภารกิจ — บทความ สูตรอาหาร และ slug</h2>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ: เขียน blog.rb ไฟล์เดียว (~10 นาที)</h3>
+  <ol>
+    <li>สร้างไฟล์ <code>blog.rb</code> ที่ไหนก็ได้ (ไม่ต้องใช้ Rails)</li>
+    <li>เขียน <code>module Sluggable</code> ที่มี method <code>slug</code> แบบหัวข้อ 7</li>
+    <li>เขียน <code>class Post</code> ที่ <code>include Sluggable</code> · มี <code>attr_accessor :title</code> · <code>initialize(title)</code> · และ <code>greeting</code></li>
+    <li>เขียน <code>class Recipe &lt; Post</code> ที่รับ <code>title</code> กับ <code>minutes</code> (ใช้ <code>super(title)</code>)</li>
+    <li>ท้ายไฟล์สร้าง <code>Recipe.new("Tom Yum Goong", 15)</code> แล้ว <code>puts</code> ค่า <code>greeting</code> · <code>slug</code> · <code>minutes</code></li>
+    <li>รัน <code>ruby blog.rb</code> · ควรเห็นสามบรรทัด: <code>Hello, Tom Yum Goong</code> · <code>tom-yum-goong</code> · <code>15</code></li>
+  </ol>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c"># blog.rb</span>
+<span class="k">module</span> <span class="n">Sluggable</span>
+  <span class="k">def</span> <span class="f">slug</span>
+    title.downcase.tr(<span class="s">" "</span>, <span class="s">"-"</span>)
+  <span class="k">end</span>
+<span class="k">end</span>
+
 <span class="k">class</span> <span class="n">Post</span>
+  <span class="k">include</span> <span class="n">Sluggable</span>
   <span class="f">attr_accessor</span> <span class="n">:title</span>
 
   <span class="k">def</span> <span class="f">initialize</span>(title)
@@ -93,1074 +821,223 @@ Rails 8.1.4</code></pre>
   <span class="k">end</span>
 <span class="k">end</span>
 
-post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>)
-<span class="f">puts</span> post.<span class="f">greeting</span>
-<span class="f">puts</span> post.<span class="f">title</span>
-post.<span class="f">title</span> = <span class="s">"Ruby"</span>
-<span class="f">puts</span> post.<span class="f">greeting</span></code></pre>
-
-<pre><code><span class="c">$ ruby post.rb</span>
-Hello, Hi
-Hi
-Hello, Ruby</code></pre>
-
-<p>
-  ผมรันฝั่ง Go กับ TypeScript ด้วย (เติม <code>package main</code> กับ <code>main()</code> ให้ Go
-  และบรรทัด <code>console.log(new Post("Hi").greeting())</code> ให้ TS) ทั้งคู่พิมพ์ <code>Hello, Hi</code> เหมือนกัน ·
-  ทีนี้ลองจับคู่ทีละบรรทัดดูว่าอะไรตรงกับอะไร:
-</p>
-
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr><th>เรื่อง</th><th>Go</th><th>TypeScript</th><th>Ruby</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>ประกาศว่ามีช่องอะไร</td>
-      <td><code>Title string</code> ใน struct</td>
-      <td><code>title: string</code></td>
-      <td><strong>ไม่ต้องประกาศ</strong> · ตั้ง <code>@title = …</code> เมื่อไหร่ก็มีเมื่อนั้น</td>
-    </tr>
-    <tr>
-      <td>ฟังก์ชันที่รันตอนสร้าง</td>
-      <td>ไม่มี · ใช้ <code>Post{Title: "Hi"}</code> หรือเขียน <code>NewPost()</code> เอง</td>
-      <td><code>constructor(title)</code></td>
-      <td><code>def initialize(title)</code> · เรียกผ่าน <code>Post.new("Hi")</code></td>
-    </tr>
-    <tr>
-      <td>อ้างถึงช่องของตัวเอง</td>
-      <td><code>p.Title</code> (p คือ receiver)</td>
-      <td><code>this.title</code></td>
-      <td><code>@title</code> · <strong>เครื่องหมาย <code>@</code> ทำหน้าที่แทน <code>this.</code></strong></td>
-    </tr>
-    <tr>
-      <td>ให้คนนอกอ่าน/เขียนช่องได้</td>
-      <td>ตัวใหญ่ = export</td>
-      <td>public เป็นค่าเริ่มต้น</td>
-      <td>ต้องเปิดเองด้วย <code>attr_accessor</code> (หัวข้อ 2)</td>
-    </tr>
-    <tr>
-      <td>แทรกค่าลงใน string</td>
-      <td><code>"Hello, " + p.Title</code></td>
-      <td><code>`Hello, ${this.title}`</code></td>
-      <td><code>"Hello, #{@title}"</code> · ต้องใช้ฟันหนูคู่ <code>"</code></td>
-    </tr>
-    <tr>
-      <td>คืนค่า</td>
-      <td><code>return</code></td>
-      <td><code>return</code></td>
-      <td>บรรทัดสุดท้ายของ method คือค่าที่คืน ไม่ต้องเขียน <code>return</code></td>
-    </tr>
-    <tr>
-      <td>สืบทอด class</td>
-      <td>ไม่มี (ใช้ embedding แทน)</td>
-      <td><code>class Recipe extends Post</code></td>
-      <td><code>class Recipe &lt; Post</code> (หัวข้อ 6)</td>
-    </tr>
-  </tbody>
-</table>
-</div>
-
-<h2 id="sn-sec-2">2 · attr_accessor คือ method ที่เขียน method ให้เรา</h2>
-
-<p>
-  เรื่องนี้ต่างจาก TypeScript ตรงที่ <strong>ใน Ruby คนนอกแตะ <code>@title</code> ตรง ๆ ไม่ได้เลย</strong>
-  เพราะ <code>@title</code> เป็นของภายใน object
-  ถ้าอยากให้คนข้างนอกอ่านหรือแก้ได้ ต้องมี method ไว้ให้เรียก
-</p>
-
-<p>
-  ถ้าเขียน method พวกนี้เองทั้งหมดก็จะออกมาแบบนี้ ซึ่งยาวและน่าเบื่อ:
-</p>
-
-<pre><code><span class="k">class</span> <span class="n">D</span>
-  <span class="k">def</span> <span class="f">title</span>            <span class="c"># getter — อ่านค่า</span>
-    @title
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">title=</span>(value)    <span class="c"># setter — ชื่อ method มี = ติดท้ายจริง ๆ</span>
-    @title = value
-  <span class="k">end</span>
-<span class="k">end</span></code></pre>
-
-<p>
-  <code>attr_accessor :title</code> บรรทัดเดียวจะสร้างสอง method นี้ให้ ·
-  ถ้าต้องการแค่ครึ่งเดียวก็มีอีกสองตัวให้เลือก
-  ลองให้ Ruby บอกเองว่าแต่ละตัวสร้าง method อะไรไว้บ้าง
-  (<code>instance_methods(false)</code> แปลว่า "ขอเฉพาะ method ที่ class นี้มีเอง ไม่เอาของที่สืบทอดมา"):
-</p>
-
-<pre><code><span class="k">class</span> <span class="n">A</span>; <span class="f">attr_reader</span>   <span class="n">:title</span>; <span class="k">end</span>
-<span class="k">class</span> <span class="n">B</span>; <span class="f">attr_writer</span>   <span class="n">:title</span>; <span class="k">end</span>
-<span class="k">class</span> <span class="n">C</span>; <span class="f">attr_accessor</span> <span class="n">:title</span>; <span class="k">end</span>
-<span class="c"># D คือ class ที่เขียนสอง method เองข้างบน</span>
-
-<span class="f">p</span> <span class="n">A</span>.<span class="f">instance_methods</span>(<span class="k">false</span>)
-<span class="f">p</span> <span class="n">B</span>.<span class="f">instance_methods</span>(<span class="k">false</span>)
-<span class="f">p</span> <span class="n">C</span>.<span class="f">instance_methods</span>(<span class="k">false</span>)
-<span class="f">p</span> <span class="n">D</span>.<span class="f">instance_methods</span>(<span class="k">false</span>)</code></pre>
-
-<pre><code><span class="c">$ ruby methods.rb</span>
-[:title]
-[:title=]
-[:title, :title=]
-[:title, :title=]</code></pre>
-
-<p>
-  <code>C</code> กับ <code>D</code> ได้ method ชุดเดียวกันทุกตัว แปลว่า
-  <strong><code>attr_accessor</code> ไม่ได้มีความสามารถพิเศษอะไร มันแค่เขียน <code>def</code> ให้เราแทน</strong>
-  · ทีนี้มาดูว่าถ้าเรียก method ที่ไม่ได้สร้างไว้จะเกิดอะไรขึ้น ลองใช้ <code>attr_reader</code> แล้วสั่งแก้ค่า:
-</p>
-
-<pre><code><span class="c"># reader.rb</span>
-<span class="k">class</span> <span class="n">Post</span>
-  <span class="f">attr_reader</span> <span class="n">:title</span>
-
-  <span class="k">def</span> <span class="f">initialize</span>(title)
-    @title = title
-  <span class="k">end</span>
-<span class="k">end</span>
-
-post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>)
-<span class="f">puts</span> post.<span class="f">title</span>
-post.<span class="f">title</span> = <span class="s">"Ruby"</span></code></pre>
-
-<pre><code><span class="c">$ ruby reader.rb</span>
-Hi
-reader.rb:12:in '&lt;main&gt;': undefined method 'title=' for an instance of Post (NoMethodError)
-
-post.title = "Ruby"
-    ^^^^^^^^</code></pre>
-
-<p>
-  ให้สังเกตว่า error บอกว่าไม่มี method ชื่อ <strong><code>'title='</code></strong>
-  ไม่ได้บอกว่า "ช่องนี้เป็น read-only"
-  เพราะในมุมของ Ruby <code>post.title = "Ruby"</code> ก็คือการเรียก method ชื่อ <code>title=</code>
-  ส่วนช่องว่างก่อน <code>=</code> เป็นแค่ syntax ที่ทำให้อ่านง่าย ·
-  ถ้าสลับไปใช้ <code>attr_writer</code> ก็จะพังกลับด้าน คือตั้งค่าได้แต่อ่านไม่ได้:
-</p>
-
-<pre><code><span class="c">$ ruby writer.rb      # attr_writer :title แล้วเรียก puts post.title</span>
-writer.rb:11:in '&lt;main&gt;': undefined method 'title' for an instance of Post (NoMethodError)
-
-puts post.title
-         ^^^^^^</code></pre>
-
-<div class="analogy">
-  <span class="label">🏠 เทียบให้เห็นภาพ</span>
-  <p>
-    ลองนึกว่า object หนึ่งตัวเป็น<strong>บ้านหลังหนึ่ง</strong> และ <code>@title</code> เป็นของที่วางอยู่ในบ้าน
-    คนข้างนอกเดินเข้าไปหยิบเองไม่ได้ ต้องมีช่องให้ใช้:
-  </p>
-  <ul>
-    <li><code>attr_reader</code> = <strong>หน้าต่างกระจก</strong> มองเห็นของข้างในได้ แต่ยื่นมือเข้าไปเปลี่ยนไม่ได้</li>
-    <li><code>attr_writer</code> = <strong>ช่องหย่อนจดหมาย</strong> ใส่ของใหม่เข้าไปได้ แต่มองไม่เห็นว่าข้างในมีอะไร</li>
-    <li><code>attr_accessor</code> = <strong>ประตู</strong> ทั้งมองเห็นและเปลี่ยนของได้</li>
-  </ul>
-  <p style="margin-bottom:0">
-    <strong>ที่ไม่เหมือนกัน:</strong> บ้านจริงที่ไม่มีหน้าต่างก็ยังมีคนแอบส่องหรืองัดเข้าไปได้
-    ส่วน Ruby ก็มีช่องทางลับคล้าย ๆ กันอย่าง <code>instance_variable_get</code> ให้คนดื้อใช้
-    ดังนั้น <code>attr_reader</code> <strong>ไม่ใช่ระบบความปลอดภัย</strong> มันแค่ประกาศว่า
-    "ตามปกติให้อ่านได้อย่างเดียว" และอีกข้อที่ต่างคือหน้าต่างของบ้านต้องเจาะผนังทีละช่อง
-    แต่ <code>attr_accessor :title, :body</code> เปิดหลายช่องได้ในบรรทัดเดียว
-  </p>
-</div>
-
-<div class="jargon">
-  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
-  <dl>
-    <dt>instance variable (<code>@title</code>)</dt>
-    <dd>ตัวแปรของ object แต่ละตัว ขึ้นต้นด้วย <code>@</code> ใช้แทน <code>this.title</code> ของ TS ·
-        ถาม senior ได้ว่า <em>"ค่านี้ควรเก็บเป็น instance variable หรือคำนวณสดใน method ดีครับ"</em></dd>
-    <dt>getter / setter (reader / writer)</dt>
-    <dd>method ที่อ่านค่าคือ getter ส่วน method ที่ตั้งค่าคือ setter (ชื่อลงท้ายด้วย <code>=</code>) ·
-        <code>attr_reader</code> / <code>attr_writer</code> / <code>attr_accessor</code> สร้างให้อัตโนมัติ ·
-        พิมพ์บอก AI ได้ว่า <em>"เปลี่ยน attr_accessor เป็น attr_reader ให้หน่อย ไม่อยากให้ข้างนอกแก้ title ได้"</em></dd>
-    <dt><code>initialize</code></dt>
-    <dd>method ที่ <code>Post.new(...)</code> เรียกให้อัตโนมัติ ตรงกับ <code>constructor</code> ของ TS ·
-        เราไม่ได้เรียก <code>initialize</code> ตรง ๆ แต่เรียกผ่าน <code>new</code> ·
-        ถาม senior ได้ว่า <em>"ค่า default ของ field นี้ควรตั้งใน initialize หรือให้คนเรียกส่งมาเองครับ"</em></dd>
-    <dt>class macro</dt>
-    <dd>method ที่เรียกในตัว class เพื่อเขียน method อื่นให้ เช่น <code>attr_accessor</code> ·
-        Rails ใช้ท่านี้เยอะมาก (<code>has_many</code>, <code>validates</code> ซึ่งจะเจอใน Day 2) ·
-        ถาม senior ได้ว่า <em>"บรรทัด has_many นี่เป็น class macro ใช่ไหมครับ มันสร้าง method อะไรให้บ้าง"</em></dd>
-  </dl>
-</div>
-
-<h2 id="sn-sec-3">3 · @ตัวแปร ไม่ต้องประกาศ — สะกดผิดก็ไม่มีใครเตือน</h2>
-
-<p>
-  สไลด์หน้า 28 บอกว่า <code>@title</code> <em>ไม่ต้องประกาศล่วงหน้า อ่านค่าที่ยังไม่เคยตั้งจะได้ nil ไม่ error</em>
-  ข้อนี้ถูก และ<a href="https://docs.ruby-lang.org/en/4.0/syntax/assignment_rdoc.html#label-Instance+Variables">เอกสารทางการ</a>ก็เขียนไว้ตรง ๆ
-  · แต่ฟังดูเป็นข้อดีอย่างเดียว ทั้งที่มันมีผลเสียซ่อนอยู่ ลองทายดูก่อน:
-</p>
-
-<div class="predict">
-<pre><code><span class="c"># typo.rb — ตั้งชื่อ @title แต่ใน greeting พิมพ์ผิดเป็น @titel</span>
-<span class="k">class</span> <span class="n">Post</span>
-  <span class="f">attr_accessor</span> <span class="n">:title</span>
-
-  <span class="k">def</span> <span class="f">initialize</span>(title)
-    @title = title
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">greeting</span>
-    <span class="s">"Hello, #{@titel}"</span>
-  <span class="k">end</span>
-<span class="k">end</span>
-
-post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>)
-<span class="f">puts</span> post.<span class="f">greeting</span>
-<span class="f">p</span> post.<span class="f">greeting</span></code></pre>
-  <p class="ask">
-    รันด้วย <code>ruby typo.rb</code> แล้วรันอีกรอบด้วย <code>ruby -w typo.rb</code> (เปิด warning ทุกตัว)
-    · คิดว่าได้ error, warning หรือได้ข้อความอะไรออกมา?
-  </p>
-  <button class="reveal">เฉลย</button>
-  <div class="answer">
-    <pre><code><span class="c">$ ruby typo.rb</span>
-Hello,
-"Hello, "
-<span class="c"># exit code 0</span>
-
-<span class="c">$ ruby -w typo.rb</span>
-Hello,
-"Hello, "
-<span class="c"># exit code 0 — ไม่มี warning สักบรรทัด</span></code></pre>
-    <p>
-      <strong>ไม่ error และไม่มี warning ทั้งสองรอบ</strong> ·
-      <code>@titel</code> เป็นตัวแปรที่ไม่เคยถูกตั้งค่า เลยได้ <code>nil</code> ·
-      พอแทรก <code>nil</code> ลงใน string ด้วย <code>#{}</code> จะได้ string ว่าง
-      (ทวนเรื่อง nil ได้ใน<a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a>) ·
-      บรรทัด <code>puts</code> จึงดูเหมือนพิมพ์ "Hello, " เฉย ๆ ต้องใช้ <code>p</code> ถึงจะเห็นว่ามีช่องว่างตามหลัง
-    </p>
-    <p style="margin-bottom:0">
-      ถ้าทำแบบเดียวกันใน Go หรือ TypeScript จะ<strong>พังตั้งแต่ยังไม่ได้รัน</strong>:
-    </p>
-    <pre><code><span class="c">$ tsc --noEmit --strict typo.ts</span>
-typo.ts(9,27): error TS2551: Property 'titel' does not exist on type 'Post'. Did you mean 'title'?
-
-<span class="c">$ go run main.go</span>
-# command-line-arguments
-./main.go:10:23: p.Titel undefined (type Post has no field or method Titel)</code></pre>
-  </div>
-</div>
-
-<p>
-  สิ่งที่ได้จากตัวอย่างนี้: <strong>nil จาก <code>@ตัวแปร</code> ที่พิมพ์ผิดจะไม่พังตรงที่พิมพ์ผิด</strong>
-  แต่จะถูกส่งต่อไปเรื่อย ๆ จนไปพังที่อื่น ซึ่งมักอยู่ไกลจากจุดที่ผิดจริง ·
-  ตัวอย่างข้างล่างให้ method หนึ่งอ่าน <code>@author</code> ที่ไม่เคยถูกตั้งค่า แล้วเรียก <code>.upcase</code> ต่อ:
-</p>
-
-<pre><code><span class="c"># ivar.rb</span>
-<span class="k">class</span> <span class="n">Post</span>
-  <span class="f">attr_accessor</span> <span class="n">:title</span>
-
-  <span class="k">def</span> <span class="f">initialize</span>(title)
-    @title = title
-  <span class="k">end</span>
-
-  <span class="c"># @author ไม่เคยถูกตั้งค่า</span>
-  <span class="k">def</span> <span class="f">author_name</span>
-    @author.<span class="f">upcase</span>
-  <span class="k">end</span>
-<span class="k">end</span>
-
-<span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>).<span class="f">author_name</span></code></pre>
-
-<pre><code><span class="c">$ ruby ivar.rb</span>
-ivar.rb:11:in 'Post#author_name': undefined method 'upcase' for nil (NoMethodError)
-
-    @author.upcase
-           ^^^^^^^
-	from ivar.rb:15:in '&lt;main&gt;'</code></pre>
-
-<p>
-  error ข้างบนบอกว่า "<code>upcase</code> ใช้กับ nil ไม่ได้" แต่ไม่ได้บอกว่าต้นเหตุคือ <code>@author</code> ไม่เคยถูกตั้งค่า
-  ถ้าเจอ <code>undefined method '…' for nil</code> ใน Rails <strong>ให้สงสัยไว้ก่อนเลยว่าพิมพ์ชื่อ <code>@ตัวแปร</code> ผิด</strong>
-  (จะเจอบ่อยเป็นพิเศษใน<a href="./0102-rails-controller.html">บทเรียน 102</a>–<a href="./0103-rails-views-and-helpers.html">103</a> เพราะ controller ตั้ง <code>@post</code> แล้ว view อ่าน <code>@post</code> ถ้าสองฝั่งสะกดไม่ตรงกัน view ก็ได้ nil)
-</p>
-
-<div class="warn">
-  <p style="margin-bottom:0">
-    <strong>ตัวแปรธรรมดาที่ไม่มี <code>@</code> ไม่เป็นแบบนี้</strong> ·
-    ถ้าพิมพ์ <code>"Hello, #{titel}"</code> โดยไม่มี <code>@</code> จะพังทันทีด้วย
-    <code>undefined local variable or method 'titel' for main (NameError)</code> ·
-    มีแค่ตัวแปรที่ขึ้นต้นด้วย <code>@</code> เท่านั้นที่ได้ nil แบบเงียบ ๆ
-  </p>
-</div>
-
-<h2 id="sn-sec-4">4 · <code>Post.new("Hi")</code> กับ <code>Post.new</code> — จำนวน argument ต้องตรงกัน</h2>
-
-<p>
-  ถึง Ruby จะไม่สนใจเรื่อง type แต่<strong>สนใจจำนวน argument</strong> ·
-  <code>initialize(title)</code> ประกาศว่าต้องรับ 1 ตัว ถ้าเรียก <code>Post.new</code> โดยไม่ส่งอะไรไปจะพังทันที:
-</p>
-
-<pre><code><span class="c">$ ruby argerr.rb     # บรรทัด 7: Post.new("Hi") ผ่าน · บรรทัด 8: Post.new พัง</span>
-argerr.rb:2:in 'Post#initialize': wrong number of arguments (given 0, expected 1) (ArgumentError)
-
-    caller: argerr.rb:8
-    | Post.new
-          ^^^^
-    callee: argerr.rb:2
-    |   def initialize(title)
-            ^^^^^^^^^^
-	from argerr.rb:8:in '&lt;main&gt;'</code></pre>
-
-<p>
-  วิธีอ่าน error ตัวนี้: <code>given 0, expected 1</code> แปลว่าส่งมา 0 ตัวแต่ต้องการ 1 ตัว ·
-  <code>caller</code> คือบรรทัดที่เรียก ส่วน <code>callee</code> คือ method ที่ถูกเรียก ·
-  ให้สังเกตว่า Ruby รายงานว่า error เกิดใน <code>'Post#initialize'</code> ทั้งที่เราเขียน <code>new</code>
-  ซึ่งยืนยันว่า <code>new</code> ส่งต่อไปให้ <code>initialize</code> ·
-  ส่วน TypeScript จับ error เดียวกันนี้ได้ตั้งแต่ยังไม่รัน:
-  <code>error TS2554: Expected 1 arguments, but got 0.</code>
-</p>
-
-<h2 id="sn-sec-5">5 · <code>puts</code> กับ <code>p</code> — object พิมพ์ตัวเองออกมาเป็นอะไร</h2>
-
-<p>
-  ถ้าเอา object ทั้งตัวไปพิมพ์ จะเห็นว่า Ruby มีวิธีแปลง object เป็นข้อความอยู่สองแบบ:
-</p>
-
-<ul>
-  <li><code>to_s</code> สำหรับให้<strong>คนทั่วไปอ่าน</strong> · <code>puts</code> และ <code>"#{}"</code> เรียกตัวนี้</li>
-  <li><code>inspect</code> สำหรับให้<strong>โปรแกรมเมอร์ debug</strong> · <code>p</code> เรียกตัวนี้</li>
-</ul>
-
-<pre><code><span class="c"># tos.rb — ต่อจาก class Post ที่มีแค่ attr_accessor :title กับ initialize</span>
-post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>)
-<span class="f">puts</span> post
-<span class="f">p</span> post
-<span class="f">puts</span> <span class="s">"โพสต์: #{post}"</span>
-
-<span class="k">class</span> <span class="n">Post</span>          <span class="c"># เปิด class เดิมเพิ่ม method ได้ (Ruby ยอม)</span>
-  <span class="k">def</span> <span class="f">to_s</span>
-    <span class="s">"Post(#{@title})"</span>
-  <span class="k">end</span>
-<span class="k">end</span>
-
-<span class="f">puts</span> post
-<span class="f">p</span> post
-<span class="f">puts</span> <span class="s">"โพสต์: #{post}"</span></code></pre>
-
-<pre><code><span class="c">$ ruby tos.rb</span>
-#&lt;Post:0x0000000108a5bbb8&gt;
-#&lt;Post:0x0000000108a5bbb8 @title="Hi"&gt;
-โพสต์: #&lt;Post:0x0000000108a5bbb8&gt;
-Post(Hi)
-#&lt;Post:0x0000000108a5bbb8 @title="Hi"&gt;
-โพสต์: Post(Hi)</code></pre>
-
-<p>
-  ก่อนเขียน <code>to_s</code> เอง <code>puts</code> พิมพ์ได้แค่ชื่อ class กับที่อยู่ใน memory ซึ่งไม่ค่อยมีประโยชน์ ·
-  ส่วน <code>p</code> แสดง <code>@title="Hi"</code> ให้ด้วย จึง<strong>เหมาะกับการ debug มากกว่า</strong> ·
-  เมื่อเขียน <code>to_s</code> เองแล้ว ทั้ง <code>puts</code> และ <code>"#{}"</code> เปลี่ยนตาม แต่ <code>p</code> ยังแสดงเหมือนเดิม ·
-  คล้ายกับ <code>String()</code> ของ Go ที่ <code>fmt.Println</code> เรียกให้อัตโนมัติ
-</p>
-
-<p>
-  object ของ Rails เขียน <code>inspect</code> ไว้ให้แล้ว ลองดู Post ที่เป็น model จริง:
-</p>
-
-<pre><code><span class="c">$ bin/rails runner 'p Post.new(title: "Hi")'</span>
-#&lt;Post id: nil, title: "Hi", created_at: nil, updated_at: nil&gt;</code></pre>
-
-<h2 id="sn-sec-6">6 · Inheritance ด้วย <code>&lt;</code> และ <code>super</code></h2>
-
-<p>
-  Go ไม่มีการสืบทอด class ส่วน TS ใช้ <code>extends</code> · Ruby ใช้เครื่องหมาย <code>&lt;</code>
-  (อ่านว่า "เป็นลูกของ") และใช้ <code>super</code> เพื่อเรียก method ชื่อเดียวกันของ class แม่:
-</p>
-
-<pre><code><span class="c"># inherit.rb — ใช้ Post จากหัวข้อ 1</span>
 <span class="k">class</span> <span class="n">Recipe</span> &lt; <span class="n">Post</span>
   <span class="f">attr_accessor</span> <span class="n">:minutes</span>
-
-  <span class="k">def</span> <span class="f">initialize</span>(title, minutes)
-    <span class="k">super</span>(title)               <span class="c"># ให้ Post#initialize ตั้ง @title ให้</span>
-    @minutes = minutes
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">greeting</span>
-    <span class="k">super</span> + <span class="s">" (#{@minutes} นาที)"</span>  <span class="c"># เอาผลของ Post#greeting มาต่อท้าย</span>
-  <span class="k">end</span>
-<span class="k">end</span>
-
-r = <span class="n">Recipe</span>.<span class="f">new</span>(<span class="s">"ต้มยำ"</span>, <span class="n">15</span>)
-<span class="f">puts</span> r.<span class="f">greeting</span>
-<span class="f">puts</span> r.<span class="f">title</span>
-<span class="f">p</span> <span class="n">Recipe</span>.<span class="f">superclass</span>
-<span class="f">p</span> <span class="n">Recipe</span>.<span class="f">superclass</span>.<span class="f">superclass</span>
-<span class="f">p</span> r.<span class="f">is_a?</span>(<span class="n">Post</span>)</code></pre>
-
-<pre><code><span class="c">$ ruby inherit.rb</span>
-Hello, ต้มยำ (15 นาที)
-ต้มยำ
-Post
-Object
-true</code></pre>
-
-<p>
-  <code>Recipe</code> ได้ <code>title</code> มาจาก <code>Post</code> โดยไม่ต้องเขียน <code>attr_accessor :title</code> ซ้ำ ·
-  และ class ที่ไม่ได้เขียน <code>&lt;</code> จะเป็นลูกของ <code>Object</code> ให้อัตโนมัติ
-</p>
-
-<div class="warn">
-  <p>
-    <strong>กับดัก: <code>super</code> ที่ไม่มีวงเล็บกับ <code>super()</code> ทำงานต่างกัน</strong> ·
-    ถ้าเขียน <code>super</code> เฉย ๆ Ruby จะ<strong>ส่ง argument ทุกตัวที่ method ปัจจุบันได้รับต่อไปให้แม่</strong>
-    ถ้าเปลี่ยนบรรทัด <code>super(title)</code> ข้างบนเป็น <code>super</code> จะได้แบบนี้:
-  </p>
-  <pre style="margin-bottom:0"><code><span class="c">$ ruby zsuper.rb</span>
-zsuper.rb:2:in 'Post#initialize': wrong number of arguments (given 2, expected 1) (ArgumentError)
-
-    caller: zsuper.rb:9
-    callee: zsuper.rb:2
-    |   def initialize(title)
-            ^^^^^^^^^^
-	from zsuper.rb:9:in 'Recipe#initialize'
-	from zsuper.rb:14:in '&lt;main&gt;'</code></pre>
-  <p style="margin-bottom:0">
-    <code>given 2</code> หมายถึงทั้ง <code>title</code> และ <code>minutes</code> ถูกส่งต่อไปให้ <code>Post#initialize</code>
-    ซึ่งรับได้ตัวเดียว · ส่วน <code>greeting</code> เขียน <code>super</code> เฉย ๆ ได้ เพราะ method นั้นไม่มี argument อยู่แล้ว
-  </p>
-</div>
-
-<p>
-  ทีนี้ลองกลับไปอ่านกล่องท้ายสไลด์หน้า 28 อีกครั้ง:
-</p>
-
-<pre><code><span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>   <span class="c"># &lt; คือ inheritance</span></code></pre>
-
-<p>
-  ตอนนี้อ่านออกแล้วว่า <strong>model ของ Rails คือ class ธรรมดาที่เป็นลูกของ <code>ApplicationRecord</code></strong> ·
-  ถ้าเปิดโปรเจกต์ที่เพิ่งสร้างด้วย <code>rails new</code> จะเห็นว่า <code>ApplicationRecord</code> เองก็เป็นลูกของอีก class หนึ่ง:
-</p>
-
-<pre><code><span class="c"># app/models/application_record.rb (rails new สร้างให้)</span>
-<span class="k">class</span> <span class="n">ApplicationRecord</span> &lt; <span class="n">ActiveRecord::Base</span>
-  <span class="f">primary_abstract_class</span>
-<span class="k">end</span></code></pre>
-
-<pre><code><span class="c">$ bin/rails runner 'p Post.superclass; p ApplicationRecord.superclass'</span>
-ApplicationRecord(abstract)
-ActiveRecord::Base</code></pre>
-
-<p>
-  ความสามารถอย่างบันทึกลง database หรือค้นหาข้อมูลมาจาก <code>ActiveRecord::Base</code>
-  ซึ่งเป็นเรื่องของ Day 2 · <strong>ที่ต่างจากหัวข้อ 2</strong> คือ model ของ Rails
-  <strong>ไม่ต้องเขียน <code>attr_accessor :title</code></strong> เพราะ Rails อ่านชื่อ column จาก database แล้วสร้าง
-  <code>title</code> / <code>title=</code> ให้เอง · ยืนยันได้ด้วยการถามว่า method <code>title</code> มาจากไหน:
-</p>
-
-<pre><code><span class="c">$ bin/rails runner 'Post.new(title: "Hi"); p Post.instance_method(:title).owner'</span>
-Post::GeneratedAttributeMethods</code></pre>
-
-<p>
-  ชื่อ <code>GeneratedAttributeMethods</code> แปลว่า "method ของ attribute ที่ Rails สร้างให้"
-  และมันก็เป็น <strong>module</strong> ด้วย ซึ่งเป็นหัวข้อถัดไป
-</p>
-
-<h2 id="sn-sec-7">7 · Module + include — ยกโค้ดทั้งก้อนไปใส่ class</h2>
-
-<p>
-  ลองนึกว่าต้องการ method <code>slug</code> (แปลงชื่อเป็นแบบที่ใส่ใน URL ได้ เช่น <code>hello-ruby-world</code>)
-  ให้ใช้ได้ทั้ง <code>Post</code> และ <code>Recipe</code> และ class อื่นที่ไม่ได้เป็นแม่ลูกกันอีกหลายตัว ·
-  ถ้าใช้ inheritance ก็ต้องให้ทุก class มีแม่ตัวเดียวกัน ซึ่งไม่สมเหตุสมผล ·
-  Ruby แก้ปัญหานี้ด้วย <code>module</code> คือก้อนของ method ที่<strong>สร้าง object เองไม่ได้</strong>
-  แต่เอาไปใส่ class ไหนก็ได้ด้วย <code>include</code>
-</p>
-
-<p>นี่คือโค้ดจากสไลด์หน้า 29 ตามที่เขียนไว้ทุกตัวอักษร:</p>
-
-<pre><code><span class="k">module</span> <span class="n">Sluggable</span>
-  <span class="k">def</span> <span class="f">slug</span>
-    title.<span class="f">downcase</span>.<span class="f">tr</span>(<span class="s">" "</span>, <span class="s">"-"</span>)
-  <span class="k">end</span>
-<span class="k">end</span>
-
-<span class="k">class</span> <span class="n">Post</span>
-  <span class="k">include</span> <span class="n">Sluggable</span>
-<span class="k">end</span>
-
-<span class="n">Post</span>.<span class="f">new</span>.<span class="f">slug</span>      <span class="c"># ใช้ได้เลย</span></code></pre>
-
-<div class="warn">
-  <p>
-    <strong>ถ้าก็อปโค้ดนี้ไปรันตรง ๆ จะพัง</strong> ไม่ได้ "ใช้ได้เลย" อย่างที่ comment บอก:
-  </p>
-  <pre><code><span class="c">$ ruby slide29.rb</span>
-slide29.rb:3:in 'Sluggable#slug': undefined local variable or method 'title' for an instance of Post (NameError)
-
-    title.downcase.tr(" ", "-")
-    ^^^^^
-	from slide29.rb:11:in '&lt;main&gt;'</code></pre>
-  <p style="margin-bottom:0">
-    สาเหตุคือ <code>slug</code> เรียก method <code>title</code> แต่ <code>Post</code> ในสไลด์ไม่มี method นี้ ·
-    สไลด์ตั้งใจละส่วนนั้นไว้เพื่อให้โค้ดสั้น แต่ <strong>ส่วนที่ include สำเร็จจริงคือ <code>slug</code> ถูกเรียกได้</strong>
-    (error เกิด<em>ข้างใน</em> <code>'Sluggable#slug'</code> แปลว่าเข้าไปถึง method แล้ว) ·
-    ถ้าเติม <code>attr_accessor :title</code> แต่ยังเรียก <code>Post.new.slug</code> โดยไม่ตั้ง title ก็จะได้
-    <code>undefined method 'downcase' for nil</code> แทน ซึ่งเป็นกับดักเดียวกับหัวข้อ 3
-  </p>
-</div>
-
-<p>
-  เติม <code>title</code> ให้ Post แล้วรันใหม่ พร้อมถาม Ruby ว่า Post มีบรรพบุรุษเป็นใครบ้าง:
-</p>
-
-<pre><code><span class="c"># sluggable.rb</span>
-<span class="k">module</span> <span class="n">Sluggable</span>
-  <span class="k">def</span> <span class="f">slug</span>
-    title.<span class="f">downcase</span>.<span class="f">tr</span>(<span class="s">" "</span>, <span class="s">"-"</span>)
-  <span class="k">end</span>
-<span class="k">end</span>
-
-<span class="k">class</span> <span class="n">Post</span>
-  <span class="k">include</span> <span class="n">Sluggable</span>
-  <span class="f">attr_accessor</span> <span class="n">:title</span>
-
-  <span class="k">def</span> <span class="f">initialize</span>(title)
-    @title = title
-  <span class="k">end</span>
-<span class="k">end</span>
-
-post = <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hello Ruby World"</span>)
-<span class="f">p</span> post.<span class="f">slug</span>
-<span class="f">p</span> <span class="n">Post</span>.<span class="f">ancestors</span>
-<span class="f">p</span> <span class="n">Post</span>.<span class="f">include?</span>(<span class="n">Sluggable</span>)
-<span class="f">p</span> post.<span class="f">is_a?</span>(<span class="n">Sluggable</span>)
-<span class="f">p</span> <span class="n">Sluggable</span>.<span class="f">instance_methods</span>
-<span class="n">Sluggable</span>.<span class="f">new</span></code></pre>
-
-<pre><code><span class="c">$ ruby sluggable.rb</span>
-"hello-ruby-world"
-[Post, Sluggable, Object, Kernel, BasicObject]
-true
-true
-[:slug]
-sluggable.rb:23:in '&lt;main&gt;': undefined method 'new' for module Sluggable (NoMethodError)
-
-Sluggable.new
-         ^^^^</code></pre>
-
-<p>อ่านผลทีละบรรทัด:</p>
-
-<ul>
-  <li><code>"hello-ruby-world"</code> — <code>downcase</code> แปลงเป็นตัวเล็ก แล้ว <code>tr(" ", "-")</code> แทนช่องว่างด้วยขีด</li>
-  <li><code>[Post, Sluggable, Object, Kernel, BasicObject]</code> — นี่คือ<strong>ลำดับที่ Ruby ใช้หา method</strong>
-      · เมื่อเรียก <code>post.slug</code> Ruby จะหาใน <code>Post</code> ก่อน ถ้าไม่เจอก็ไปหาใน <code>Sluggable</code> แล้วต่อไปเรื่อย ๆ ทางขวา ·
-      ให้สังเกตว่า <strong>module ถูกแทรกไว้ระหว่าง class กับแม่ของมัน</strong> (<code>Kernel</code> ก็เป็น module ที่ <code>Object</code> include ไว้
-      และเป็นที่อยู่ของ <code>puts</code> กับ <code>p</code>)</li>
-  <li><code>is_a?(Sluggable)</code> เป็น <code>true</code> — object ที่ include module ถือว่า "เป็น" module นั้นด้วย</li>
-  <li><code>Sluggable.new</code> พัง — module สร้าง object เองไม่ได้ ทำได้แค่เอาไปใส่ class อื่น</li>
-</ul>
-
-<p>
-  <strong>และจุดที่สำคัญที่สุด:</strong> ข้างใน <code>slug</code> คำว่า <code>title</code> หมายถึง
-  <code>title</code> ของ <strong>object ที่เรียกมัน</strong> (คือ post ตัวนั้น) ·
-  module ไม่มีข้อมูลเป็นของตัวเอง แต่จะใช้ข้อมูลของ object ที่ include มันไปใช้
-</p>
-
-<h3 id="sn-sub-1">เทียบกับ Go และ TypeScript</h3>
-
-<p>
-  สไลด์หน้า 29 เทียบ module กับสองอย่างที่คุณรู้จักแล้ว ·
-  <strong>interface</strong> ของ Go และ TS เป็นแค่<em>รายการสิ่งที่ต้องมี</em> คนที่ implement ต้องเขียน method เองทุกตัว
-  (ทวน interface ของ Go ได้ใน<a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a>
-  และของ TS ใน<a href="../../fe-ts-fp/lessons/0064-interface-vs-type.html">บทเรียน 64</a>) ·
-  ส่วน <code>module</code> ของ Ruby <strong>มีโค้ดที่ทำงานได้จริงมาด้วย</strong> include แล้วใช้ได้ทันที
-  ซึ่งใกล้กับ <strong>struct embedding</strong> ของ Go มากกว่า
-  (ที่เคยใช้ตอน <code>suite.Suite</code> ใน<a href="../../day-7/lessons/0030-testcontainers-suite.html">บทเรียน 30</a>)
-</p>
-
-<pre><code><span class="c">// Go: struct embedding — รันจริงได้ hello-go-world</span>
-<span class="k">package</span> main
-
-<span class="k">import</span> (
-	<span class="s">"fmt"</span>
-	<span class="s">"strings"</span>
-)
-
-<span class="k">type</span> <span class="n">Sluggable</span> <span class="k">struct</span> {
-	Title <span class="n">string</span>
-}
-
-<span class="k">func</span> (s <span class="n">Sluggable</span>) <span class="f">Slug</span>() <span class="n">string</span> {
-	<span class="k">return</span> strings.<span class="f">ReplaceAll</span>(strings.<span class="f">ToLower</span>(s.Title), <span class="s">" "</span>, <span class="s">"-"</span>)
-}
-
-<span class="k">type</span> <span class="n">Post</span> <span class="k">struct</span> {
-	<span class="n">Sluggable</span> <span class="c">// ฝัง struct — ได้ Slug() มาใช้ฟรี</span>
-}
-
-<span class="k">func</span> <span class="f">main</span>() {
-	p := <span class="n">Post</span>{<span class="n">Sluggable</span>{Title: <span class="s">"Hello Go World"</span>}}
-	fmt.<span class="f">Println</span>(p.<span class="f">Slug</span>())
-}</code></pre>
-
-<p>
-  ฝั่ง TypeScript สไลด์เขียนว่า <code>class Post implements Timestamped</code> พร้อม comment <em>"ต้องเขียน method เองทุกตัว"</em> ·
-  ลองดูว่าถ้า <code>implements</code> แล้วไม่เขียน method เองจะเป็นยังไง:
-</p>
-
-<pre><code><span class="c">// implements.ts</span>
-<span class="k">interface</span> <span class="n">Sluggable</span> {
-  <span class="f">slug</span>(): <span class="n">string</span>
-}
-
-<span class="k">class</span> <span class="n">Post</span> <span class="k">implements</span> <span class="n">Sluggable</span> {
-  title = <span class="s">"Hello TS World"</span>
-  <span class="c">// ไม่ได้เขียน slug() เอง</span>
-}</code></pre>
-
-<pre><code><span class="c">$ tsc --noEmit --strict implements.ts</span>
-implements.ts(6,7): error TS2420: Class 'Post' incorrectly implements interface 'Sluggable'.
-  Property 'slug' is missing in type 'Post' but required in type 'Sluggable'.</code></pre>
-
-<p>
-  interface ไม่ได้ให้ <code>slug()</code> มาด้วย แค่บังคับว่าต้องมี ·
-  ตรงข้ามกับ <code>include Sluggable</code> ของ Ruby ที่ได้ <code>slug</code> มาใช้เลยโดยไม่ต้องเขียนเอง
-</p>
-
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr><th></th><th>Go interface / TS interface</th><th>Go struct embedding</th><th>Ruby module + include</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>มีโค้ดที่ทำงานได้มาด้วยไหม</td>
-      <td>ไม่มี · บอกแค่ชื่อ method</td>
-      <td>มี</td>
-      <td>มี</td>
-    </tr>
-    <tr>
-      <td>method ที่ได้มาเห็นข้อมูลของใคร</td>
-      <td>—</td>
-      <td>ของ <strong>struct ที่ถูกฝัง</strong> (receiver คือ <code>Sluggable</code> ไม่ใช่ <code>Post</code>) · Title ต้องอยู่ใน Sluggable</td>
-      <td>ของ <strong>object ที่ include</strong> · <code>title</code> ใน slug คือ title ของ Post</td>
-    </tr>
-    <tr>
-      <td>ถ้าไม่มีสิ่งที่ต้องใช้</td>
-      <td>compile ไม่ผ่าน</td>
-      <td>compile ไม่ผ่าน</td>
-      <td><strong>พังตอนรัน</strong> (NameError ในกล่องเตือนข้างบน)</td>
-    </tr>
-  </tbody>
-</table>
-</div>
-
-<div class="analogy">
-  <span class="label">🔌 เทียบให้เห็นภาพ</span>
-  <p>
-    <strong>interface</strong> เหมือน<strong>ใบประกาศรับสมัครงาน</strong> ที่เขียนว่า "ต้องขับรถเป็น"
-    คนที่มาสมัครต้องไปฝึกขับรถเอง ใบประกาศไม่ได้สอนอะไรให้
-  </p>
-  <p>
-    <strong>module</strong> เหมือน<strong>ปลั๊กอินที่เสียบเข้าเครื่องแล้วใช้ได้ทันที</strong>
-    · <code>include Sluggable</code> คือการเสียบปลั๊กอิน "ทำ slug ได้" เข้าไปใน Post
-    · class อื่นก็เสียบปลั๊กอินตัวเดียวกันได้ โดยไม่ต้องเป็นญาติกัน
-  </p>
-  <p style="margin-bottom:0">
-    <strong>ที่ไม่เหมือนกัน:</strong> ปลั๊กอินจริงมักทำงานได้ด้วยตัวเอง
-    แต่ module <strong>ต้องใช้ของจากเครื่องที่มันถูกเสียบ</strong> เช่น <code>Sluggable</code> ต้องการให้ Post มี <code>title</code>
-    ถ้าไม่มีก็พัง และ Ruby ไม่ได้ตรวจตอนเสียบ แต่<strong>จะพังตอนเรียกใช้ครั้งแรก</strong> ·
-    อีกข้อคือปลั๊กอินจริงถอดออกได้ แต่ module ที่ include ไปแล้วถอดออกไม่ได้
-  </p>
-</div>
-
-<p>
-  ถ้ามีสอง module ที่มี method <strong>ชื่อเดียวกัน</strong> แล้ว include ทั้งคู่ จะเกิดอะไรขึ้น ลองทายดู:
-</p>
-
-<div class="predict">
-<pre><code><span class="c"># predict2.rb</span>
-<span class="k">module</span> <span class="n">Sluggable</span>
-  <span class="k">def</span> <span class="f">label</span>
-    <span class="s">"จาก Sluggable"</span>
-  <span class="k">end</span>
-<span class="k">end</span>
-
-<span class="k">module</span> <span class="n">Timestamped</span>
-  <span class="k">def</span> <span class="f">label</span>
-    <span class="s">"จาก Timestamped"</span>
-  <span class="k">end</span>
-<span class="k">end</span>
-
-<span class="k">class</span> <span class="n">Post</span>
-  <span class="k">include</span> <span class="n">Sluggable</span>
-  <span class="k">include</span> <span class="n">Timestamped</span>
-<span class="k">end</span>
-
-<span class="f">puts</span> <span class="n">Post</span>.<span class="f">new</span>.<span class="f">label</span>
-<span class="f">p</span> <span class="n">Post</span>.<span class="f">ancestors</span></code></pre>
-  <p class="ask">
-    <code>label</code> ได้ค่าจาก module ไหน และ <code>Post.ancestors</code> เรียงลำดับยังไง?
-    (บางคนคิดว่าตัวที่ include ก่อนได้สิทธิ์ก่อน บางคนคิดว่า Ruby จะฟ้องว่าชื่อซ้ำ)
-  </p>
-  <button class="reveal">เฉลย</button>
-  <div class="answer">
-    <pre><code><span class="c">$ ruby predict2.rb</span>
-จาก Timestamped
-[Post, Timestamped, Sluggable, Object, Kernel, BasicObject]</code></pre>
-    <p>
-      <strong>module ที่ include ทีหลังจะถูกแทรกไว้ใกล้ class มากกว่า</strong> จึงถูกหาเจอก่อน ·
-      Ruby ไม่ฟ้องว่าชื่อซ้ำ แต่ใช้ตัวที่เจอก่อนตามลำดับใน <code>ancestors</code> ซึ่งอ่านจากซ้ายไปขวา
-    </p>
-    <p style="margin-bottom:0">
-      ถ้า <code>Post</code> เขียน <code>def label</code> เองด้วย ของ <code>Post</code> จะชนะเสมอ เพราะอยู่ซ้ายสุด
-      (ผมรันแยกแล้ว Post ที่มี <code>def label</code> ของตัวเองพิมพ์ "จาก class" ออกมา) ·
-      และถ้าใน method นั้นเรียก <code>super</code> ก็จะไปเรียก method ชื่อเดียวกันใน module ตัวถัดไปทางขวา
-      ซึ่งเป็นวิธีเดียวกับที่ภารกิจท้ายบทใช้
-    </p>
-  </div>
-</div>
-
-<div class="jargon">
-  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
-  <dl>
-    <dt>module</dt>
-    <dd>ก้อนของ method (และค่าคงที่) ที่สร้าง object เองไม่ได้ · ใช้ได้สองแบบคือเอาไปใส่ class (mixin) หรือใช้เป็น namespace เช่น <code>ActiveRecord::Base</code> ·
-        ถาม senior ได้ว่า <em>"method นี้ควรอยู่ใน module แยกหรือเขียนไว้ใน class ตรง ๆ ดีครับ"</em></dd>
-    <dt>mixin / <code>include</code></dt>
-    <dd>การเอา method ของ module ไปใส่ใน class ให้ instance ของ class นั้นใช้ได้ ·
-        พิมพ์บอก AI ได้ว่า <em>"แยก method slug ออกมาเป็น module แล้ว include ใน Post กับ Recipe ให้หน่อย"</em></dd>
-    <dt>ancestors / method lookup</dt>
-    <dd>รายการที่ Ruby ไล่หา method จากซ้ายไปขวา · ใช้ debug ได้เมื่อไม่แน่ใจว่า method ที่ถูกเรียกมาจากไหน ·
-        ใช้คู่กับ <code>Post.instance_method(:title).owner</code> ที่บอกว่า method นั้นอยู่ใน class/module ไหน ·
-        พิมพ์บอก AI ได้ว่า <em>"ช่วยดู Post.ancestors หน่อยว่า method save ที่ถูกเรียกจริงมาจาก module ไหน"</em></dd>
-    <dt><code>super</code></dt>
-    <dd>เรียก method ชื่อเดียวกันของตัวถัดไปใน <code>ancestors</code> (อาจเป็น class แม่หรือ module ก็ได้) ·
-        <code>super</code> เฉย ๆ ส่ง argument ทั้งหมดต่อไปด้วย ส่วน <code>super()</code> ไม่ส่งอะไรเลย ·
-        ถาม senior ได้ว่า <em>"ตรงนี้ควรเขียน super(title) ให้ชัด หรือ super เฉย ๆ ก็พอครับ"</em></dd>
-  </dl>
-</div>
-
-<h2 id="sn-sec-8">8 · Concern — module ของ Rails ที่มีโฟลเดอร์ให้เก็บ</h2>
-
-<p>
-  สไลด์หน้า 29 ปิดท้ายว่า <em>Rails เรียกสิ่งนี้ว่า Concern และวางไว้ที่ app/models/concerns/ กับ app/controllers/concerns/</em>
-  · ผมเปิดโปรเจกต์ที่เพิ่งสร้างด้วย <code>rails new</code> ดูแล้ว พบว่าทั้งสองโฟลเดอร์มีอยู่จริงตั้งแต่แรก โดยข้างในมีแค่ไฟล์ว่างชื่อ <code>.keep</code>
-  (ใส่ไว้เพื่อให้ git เก็บโฟลเดอร์ว่างได้):
-</p>
-
-<pre><code><span class="c">$ find app -path '*concerns*'</span>
-app/models/concerns
-app/models/concerns/.keep
-app/controllers/concerns
-app/controllers/concerns/.keep</code></pre>
-
-<p>
-  ลองย้าย <code>Sluggable</code> ไปไว้ในโฟลเดอร์นี้แบบที่ Rails ใช้จริง
-  (<code>Post</code> สร้างด้วย <code>bin/rails generate model Post title:string</code>
-  ซึ่งเป็นเรื่องของ Day 2 ตอนนี้ขอให้รู้แค่ว่ามี column <code>title</code>):
-</p>
-
-<pre><code><span class="c"># app/models/concerns/sluggable.rb</span>
-<span class="k">module</span> <span class="n">Sluggable</span>
-  <span class="k">extend</span> <span class="n">ActiveSupport::Concern</span>
-
-  <span class="k">def</span> <span class="f">slug</span>
-    title.<span class="f">downcase</span>.<span class="f">tr</span>(<span class="s">" "</span>, <span class="s">"-"</span>)
-  <span class="k">end</span>
-<span class="k">end</span>
-
-<span class="c"># app/models/post.rb</span>
-<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
-  <span class="k">include</span> <span class="n">Sluggable</span>
-<span class="k">end</span></code></pre>
-
-<pre><code><span class="c">$ bin/rails runner 'p Post.new(title: "Hello Ruby World").slug; p Post.ancestors.first(4); p Post.ancestors.size; p Post.include?(Sluggable)'</span>
-"hello-ruby-world"
-[Post(id: integer, title: string, created_at: datetime, updated_at: datetime), Sluggable, Post::GeneratedAssociationMethods, Post::GeneratedAttributeMethods]
-82
-true</code></pre>
-
-<p>สามเรื่องที่ควรสังเกต:</p>
-
-<ol>
-  <li><strong>ไม่ต้อง <code>require</code> ไฟล์ <code>sluggable.rb</code></strong> · Rails โหลดให้เองเพราะ
-      <code>app/models/concerns</code> อยู่ในรายการโฟลเดอร์ที่ Rails โหลดอัตโนมัติ (autoload path) ·
-      ไฟล์ชื่อ <code>sluggable.rb</code> ต้องมี <code>Sluggable</code> อยู่ข้างใน (ชื่อไฟล์กับชื่อ module ต้องตรงกัน ซึ่งจะเรียนใน<a href="./0099-rails-naming-and-explore.html">บทเรียน 99</a>) ·
-      และ<strong>ไม่ต้องเขียนเป็น <code>Concerns::Sluggable</code></strong> เพราะโฟลเดอร์ concerns ถูกนับเป็นจุดเริ่มต้น ไม่ใช่ namespace</li>
-  <li><strong><code>Post</code> ของจริงมีบรรพบุรุษ 82 ตัว</strong> ไม่ใช่ 5 ตัวเหมือน Post ของเรา ·
-      แต่ <code>Sluggable</code> ยังอยู่อันดับ 2 ถัดจาก Post เหมือนเดิม ส่วนที่เหลือคือ module ที่ Rails include มาให้</li>
-  <li><code>extend ActiveSupport::Concern</code> เป็นบรรทัดที่ concern ของ Rails นิยมเขียนไว้ ·
-      แต่ concern ง่าย ๆ ที่มีแค่ method ธรรมดาอย่างตัวนี้จะไม่มีบรรทัดนี้ก็ได้ (ผมลองลบออกแล้วรัน <code>slug</code> ก็ยังได้ <code>"hello-ruby-world"</code> เหมือนเดิม) ·
-      มันจะมีประโยชน์ตอนใช้ <code>included do … end</code> เพื่อใส่ของอย่าง <code>validates</code> หรือ <code>scope</code> ลงใน model
-      ซึ่งจะเจอใน Day 2</li>
-</ol>
-
-<div class="jargon">
-  <span class="label">🏷️ ศัพท์ที่เอาไปคุยต่อได้</span>
-  <dl>
-    <dt>Concern</dt>
-    <dd>module ของ Rails ที่เก็บไว้ใน <code>app/models/concerns/</code> หรือ <code>app/controllers/concerns/</code>
-        และมัก <code>extend ActiveSupport::Concern</code> · ใช้รวม method ที่หลาย model หรือหลาย controller ใช้ร่วมกัน ·
-        ถาม senior ได้ว่า <em>"logic นี้มีสาม model ใช้เหมือนกัน แยกเป็น concern ดีไหมครับ"</em></dd>
-    <dt>autoload path</dt>
-    <dd>โฟลเดอร์ที่ Rails โหลดไฟล์ให้เองตามชื่อ ไม่ต้อง <code>require</code> ·
-        ดูรายการทั้งหมดได้ด้วย <code>bin/rails runner 'pp ActiveSupport::Dependencies.autoload_paths'</code> ·
-        ถ้าเจอ <code>uninitialized constant</code> ใน Rails ให้เช็คก่อนว่าชื่อไฟล์กับชื่อ class ตรงกันไหม ·
-        ถาม senior ได้ว่า <em>"ไฟล์นี้ควรวางใน app/models/concerns หรือ lib ดีครับ ต้อง require เองไหม"</em></dd>
-  </dl>
-</div>
-
-<h2 id="sn-sec-9">9 · ทดสอบความเข้าใจ</h2>
-
-<div class="quiz" data-answer="2">
-  <p class="q">class นี้มี <code>attr_reader :title</code> อย่างเดียว · ถ้าสั่ง <code>post.title = "ใหม่"</code> จะเกิดอะไรขึ้น?</p>
-  <div class="opts">
-    <button class="opt">ค่า <code>@title</code> เปลี่ยนเป็น "ใหม่" ตามปกติ เพราะ reader อ่านและเขียนได้</button>
-    <button class="opt">ไม่มี error แต่ค่าไม่เปลี่ยน Ruby ทิ้งคำสั่งนั้นไปเงียบ ๆ</button>
-    <button class="opt">พังด้วย <code>NoMethodError</code> เพราะหา method ชื่อ <code>title=</code> ไม่เจอ</button>
-    <button class="opt">พังด้วย <code>FrozenError</code> เพราะ reader ทำให้ช่องนี้เป็น read-only</button>
-  </div>
-  <div class="explain">
-    <p>
-      ตัวเลือกที่ 3 ถูก · ผลรันจริงในหัวข้อ 2 คือ <code>undefined method 'title=' for an instance of Post (NoMethodError)</code> ·
-      <code>post.title = "ใหม่"</code> คือการเรียก method ชื่อ <code>title=</code> ซึ่ง <code>attr_reader</code> ไม่ได้สร้างให้
-    </p>
-    <p style="margin-bottom:0">
-      ตัวเลือกที่ 1 ผิดเพราะ reader สร้างแค่ getter · ตัวเลือกที่ 2 ผิดเพราะ Ruby ไม่ทิ้งคำสั่งไปเงียบ ๆ แต่พังทันที ·
-      ตัวเลือกที่ 4 ผิดเพราะ Ruby ไม่ได้ไปตรวจว่าช่องนี้แก้ได้ไหม แค่หา method ไม่เจอ (<code>FrozenError</code> มีอยู่จริง แต่ใช้กับ object ที่ถูก <code>freeze</code>) ·
-      <strong>จุดที่ต้องจำ:</strong> <code>=</code> หลังชื่อ method ก็เป็นส่วนหนึ่งของชื่อ method
-      ถ้าเห็น error ที่มี <code>'xxx='</code> แปลว่าไม่มี setter
-    </p>
-  </div>
-</div>
-
-<div class="quiz" data-answer="0">
-  <p class="q">ใน <code>initialize</code> ตั้ง <code>@title = title</code> แต่ใน method อื่นพิมพ์ผิดเป็น <code>@titel.upcase</code> · ผลจริงคืออะไร?</p>
-  <div class="opts">
-    <button class="opt">ได้ <code>NoMethodError</code> ที่บอกว่า <code>upcase</code> ใช้กับ nil ไม่ได้</button>
-    <button class="opt">ได้ <code>NameError</code> ที่บอกว่าไม่รู้จักตัวแปร <code>@titel</code></button>
-    <button class="opt">ได้ warning ว่า <code>@titel</code> ยังไม่ถูกตั้งค่า แล้วคืน string ว่าง</button>
-    <button class="opt">Ruby แก้ชื่อให้เป็น <code>@title</code> เอง เพราะมันเดาชื่อที่ใกล้เคียงได้</button>
-  </div>
-  <div class="explain">
-    <p>
-      ตัวเลือกที่ 1 ถูก · <code>@titel</code> ที่ไม่เคยถูกตั้งค่าได้ <code>nil</code> แบบเงียบ ๆ แล้วไปพังตอนเรียก <code>.upcase</code> ·
-      ผลรันจริงในหัวข้อ 3 คือ <code>undefined method 'upcase' for nil (NoMethodError)</code>
-    </p>
-    <p style="margin-bottom:0">
-      ตัวเลือกที่ 2 เป็นสิ่งที่จะเกิดกับตัวแปรธรรมดาที่<em>ไม่มี</em> <code>@</code> · ตัวเลือกที่ 3 ผิดเพราะแม้จะรันด้วย <code>ruby -w</code> ก็ไม่มี warning ·
-      ตัวเลือกที่ 4 ผิดเพราะ Ruby ไม่เคยแก้ชื่อให้เอง (มีแค่คำแนะนำ "Did you mean" ใน error บางประเภทเท่านั้น) ·
-      <strong>จุดที่ต้องจำ:</strong> เจอ <code>undefined method '…' for nil</code> ให้สงสัยไว้ก่อนว่าชื่อ <code>@ตัวแปร</code> สะกดผิด
-    </p>
-  </div>
-</div>
-
-<div class="quiz" data-answer="3">
-  <p class="q"><code>class Recipe &lt; Post</code> · ใน <code>Recipe#initialize(title, minutes)</code> เขียน <code>super</code> เฉย ๆ ส่วน <code>Post#initialize</code> รับแค่ <code>title</code> · ผลคืออะไร?</p>
-  <div class="opts">
-    <button class="opt">ทำงานปกติ เพราะ <code>super</code> ไม่ส่ง argument อะไรต่อไปเลย</button>
-    <button class="opt">ทำงานปกติ เพราะ Ruby เลือกส่งเฉพาะ argument ที่ชื่อตรงกับของแม่</button>
-    <button class="opt">พังด้วย <code>ArgumentError</code> (given 0, expected 1) เพราะไม่ได้ส่ง title</button>
-    <button class="opt">พังด้วย <code>ArgumentError</code> (given 2, expected 1) เพราะส่งต่อไปทั้งสองตัว</button>
-  </div>
-  <div class="explain">
-    <p>
-      ตัวเลือกที่ 4 ถูก · <code>super</code> ที่ไม่มีวงเล็บจะส่ง argument <strong>ทุกตัว</strong>ที่ method ปัจจุบันได้รับต่อไป ·
-      ผลรันจริงในหัวข้อ 6 คือ <code>wrong number of arguments (given 2, expected 1)</code>
-    </p>
-    <p style="margin-bottom:0">
-      ตัวเลือกที่ 1 และ 3 คิดว่า <code>super</code> เฉย ๆ ไม่ส่งอะไรต่อ ซึ่งเป็นการทำงานของ <code>super()</code> ที่มีวงเล็บว่าง
-      (และถ้าใช้ <code>super()</code> จริง ผลที่รันได้คือ <code>given 0, expected 1</code> ไม่ใช่ทำงานปกติแบบตัวเลือกที่ 1) ·
-      ตัวเลือกที่ 2 ผิดเพราะ Ruby ไม่ได้เลือก argument ตามชื่อ ·
-      <strong>จุดที่ต้องจำ:</strong> ใน <code>initialize</code> ของ class ลูก ให้เขียน <code>super(…)</code> และระบุ argument ให้ชัดเจนทุกครั้ง
-    </p>
-  </div>
-</div>
-
-<div class="quiz" data-answer="1">
-  <p class="q">ข้อไหนอธิบายความต่างระหว่าง <code>module</code> ของ Ruby กับ <code>interface</code> ของ Go/TS ได้ถูกต้องที่สุด?</p>
-  <div class="opts">
-    <button class="opt">module บอกแค่ชื่อ method ส่วน interface มีโค้ดที่ทำงานได้มาด้วย</button>
-    <button class="opt">module มีโค้ดที่ทำงานได้มาด้วย include แล้วเรียกใช้ได้ทันทีโดยไม่ต้องเขียนเอง</button>
-    <button class="opt">module สร้าง object ได้ด้วย <code>.new</code> แต่ interface สร้าง object ไม่ได้</button>
-    <button class="opt">module ตรวจตอน include ว่า class มีทุก method ที่ต้องใช้ ถ้าไม่ครบจะไม่ยอมให้ include</button>
-  </div>
-  <div class="explain">
-    <p>
-      ตัวเลือกที่ 2 ถูก · สไลด์หน้า 29 สรุปว่า "module พกโค้ดจริงมาด้วย" ซึ่งใกล้กับ struct embedding ของ Go มากกว่า interface
-    </p>
-    <p style="margin-bottom:0">
-      ตัวเลือกที่ 1 สลับกัน · ตัวเลือกที่ 3 ผิดเพราะ <code>Sluggable.new</code> พังด้วย <code>undefined method 'new' for module Sluggable</code> ·
-      ตัวเลือกที่ 4 ผิดเพราะ Ruby ไม่ได้ตรวจอะไรตอน include โค้ดในสไลด์ include ผ่านแต่ไปพังตอนเรียก <code>slug</code> ·
-      <strong>จุดที่ต้องจำ:</strong> module ให้โค้ดมาฟรี แต่<strong>ไม่ได้รับประกัน</strong>ว่า class มีของที่ module ต้องใช้ครบ จะรู้ก็ตอนรัน
-    </p>
-  </div>
-</div>
-
-<h2 id="sn-sec-10">10 · ภารกิจ — เขียน class + module แล้วพิสูจน์ด้วยเทส</h2>
-
-<div class="task">
-  <h3 id="sn-sub-2">🎯 ภารกิจ: Post, Recipe และ Sluggable</h3>
-  <p>เขียนทุกอย่างในไฟล์เดียวชื่อ <code>post_test.rb</code> แล้วรันด้วย <code>ruby post_test.rb</code>
-     (Ruby 4.0.9 มี minitest 6.0.6 ติดมาด้วย ไม่ต้องติดตั้งเพิ่ม และไม่ต้องใช้ Rails)</p>
-  <ol>
-    <li>เขียน <code>module Sluggable</code> ที่มี <code>slug</code> แบบในสไลด์หน้า 29</li>
-    <li>เขียน <code>class Post</code> ที่ include <code>Sluggable</code> และมี title ที่<strong>อ่านได้แต่แก้ไม่ได้</strong>จากข้างนอก
-        พร้อมเขียน <code>to_s</code> ให้คืน <code>"Post(ชื่อเรื่อง)"</code></li>
-    <li>เขียน <code>class Recipe &lt; Post</code> ที่รับ <code>title</code> กับ <code>minutes</code>
-        และเขียน <code>slug</code> ทับของเดิมโดย<strong>เรียก <code>super</code></strong> แล้วต่อท้ายด้วย <code>-15min</code></li>
-    <li>เขียนเทสด้วย minitest ให้ครบ 5 ข้อ: slug ของ Post · ตั้งค่า title แล้วต้องได้ <code>NoMethodError</code> ·
-        <code>"#{post}"</code> ต้องได้ <code>Post(Hi)</code> · slug ของ Recipe · และ <code>Recipe.ancestors.first(4)</code></li>
-    <li><strong>ทดสอบเทสของคุณเอง:</strong> เปลี่ยน <code>super(title)</code> ใน Recipe เป็น <code>super</code> เฉย ๆ
-        แล้วดูว่าเทสจับได้จริงไหม</li>
-  </ol>
-  <button class="reveal">เฉลย</button>
-  <div class="answer">
-    <pre><code><span class="c"># post_test.rb</span>
-<span class="f">require</span> <span class="s">"minitest/autorun"</span>
-
-<span class="k">module</span> <span class="n">Sluggable</span>
-  <span class="k">def</span> <span class="f">slug</span>
-    title.<span class="f">downcase</span>.<span class="f">tr</span>(<span class="s">" "</span>, <span class="s">"-"</span>)
-  <span class="k">end</span>
-<span class="k">end</span>
-
-<span class="k">class</span> <span class="n">Post</span>
-  <span class="k">include</span> <span class="n">Sluggable</span>
-  <span class="f">attr_reader</span> <span class="n">:title</span>          <span class="c"># อ่านได้ แก้ไม่ได้</span>
-
-  <span class="k">def</span> <span class="f">initialize</span>(title)
-    @title = title
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">to_s</span>
-    <span class="s">"Post(#{title})"</span>
-  <span class="k">end</span>
-<span class="k">end</span>
-
-<span class="k">class</span> <span class="n">Recipe</span> &lt; <span class="n">Post</span>
-  <span class="f">attr_reader</span> <span class="n">:minutes</span>
 
   <span class="k">def</span> <span class="f">initialize</span>(title, minutes)
     <span class="k">super</span>(title)
     @minutes = minutes
   <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">slug</span>
-    <span class="k">super</span> + <span class="s">"-#{minutes}min"</span>     <span class="c"># super ไปเรียก Sluggable#slug</span>
-  <span class="k">end</span>
 <span class="k">end</span>
 
-<span class="k">class</span> <span class="n">PostTest</span> &lt; <span class="n">Minitest::Test</span>
-  <span class="k">def</span> <span class="f">test_slug_from_module</span>
-    <span class="f">assert_equal</span> <span class="s">"hello-ruby-world"</span>, <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hello Ruby World"</span>).<span class="f">slug</span>
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">test_title_has_no_setter</span>
-    <span class="f">assert_raises</span>(<span class="n">NoMethodError</span>) { <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>).<span class="f">title</span> = <span class="s">"x"</span> }
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">test_to_s</span>
-    <span class="f">assert_equal</span> <span class="s">"Post(Hi)"</span>, <span class="s">"#{</span><span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Hi"</span>)<span class="s">}"</span>
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">test_recipe_slug_calls_super</span>
-    <span class="f">assert_equal</span> <span class="s">"tom-yum-15min"</span>, <span class="n">Recipe</span>.<span class="f">new</span>(<span class="s">"Tom Yum"</span>, <span class="n">15</span>).<span class="f">slug</span>
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">test_ancestors_order</span>
-    <span class="f">assert_equal</span> [<span class="n">Recipe</span>, <span class="n">Post</span>, <span class="n">Sluggable</span>, <span class="n">Object</span>], <span class="n">Recipe</span>.<span class="f">ancestors</span>.<span class="f">first</span>(<span class="n">4</span>)
-  <span class="k">end</span>
-<span class="k">end</span></code></pre>
-
-    <pre><code><span class="c">$ ruby post_test.rb --seed 20033</span>
-Run options: --seed 20033
-
-# Running:
-
-.....
-
-Finished in 0.000190s, 26315.7906 runs/s, 26315.7906 assertions/s.
-
-5 runs, 5 assertions, 0 failures, 0 errors, 0 skips</code></pre>
+recipe = <span class="n">Recipe</span>.<span class="f">new</span>(<span class="s">"Tom Yum Goong"</span>, <span class="n">15</span>)
+<span class="f">puts</span> recipe.greeting
+<span class="f">puts</span> recipe.slug
+<span class="f">puts</span> recipe.minutes</code></pre>
+<pre><code>$ ruby blog.rb
+Hello, Tom Yum Goong
+tom-yum-goong
+15</code></pre>
+    <p>
+      สังเกตว่า Recipe ใช้ <code>slug</code> ได้ทั้งที่ไม่ได้ include เอง — เพราะแม่ (Post) include ไว้แล้ว ลูกก็ได้ไปด้วย
+    </p>
 
     <p>
-      ข้อ 5 — เปลี่ยน <code>super(title)</code> เป็น <code>super</code> แล้วรันใหม่ ·
-      minitest สุ่มลำดับเทสทุกครั้งที่รัน (ตัวเลข <code>--seed</code> คือเลขสุ่มของรอบนั้น) ถ้าไม่ระบุ seed เอง
-      ตำแหน่งของ <code>E</code> และเวลาที่ใช้จะไม่ตรงกับข้างล่าง ซึ่งเป็นเรื่องปกติ:
+      <strong>ถ้าเจอ error นี้ แปลว่า…</strong> (ทุกอันรันจริงจาก blog.rb ข้างบน แล้วแก้ให้ผิดทีละจุด ·
+      วิธีอ่าน: บรรทัดแรกบอก<strong>ไฟล์:บรรทัด</strong>ที่พัง และชื่อ error ในวงเล็บท้ายสุด · บรรทัด <code>from</code> ข้างล่างบอกว่าถูกเรียกมาจากไหน)
     </p>
-    <pre><code><span class="c">$ ruby post_test.rb --seed 1</span>
-Run options: --seed 1
 
-# Running:
+<pre><code>blog.rb:4:in 'Sluggable#slug': undefined local variable or method 'title' for an instance of Recipe (NameError)
 
-.E...
+    title.downcase.tr(" ", "-")
+    ^^^^^
+Did you mean?  @title
+	from blog.rb:31:in '&lt;main&gt;'</code></pre>
+    <p>→ <strong>ลืม <code>attr_accessor :title</code></strong> ใน Post · slug หา method <code>title</code> ไม่เจอ (มีแค่ <code>@title</code> ข้างใน ซึ่ง Ruby ใบ้ให้ว่า "Did you mean? @title") ·
+      ก่อน error จะเห็น <code>Hello, Tom Yum Goong</code> พิมพ์ออกมาก่อนด้วย เพราะ greeting ใช้ <code>@title</code> ตรง ๆ ไม่ได้พึ่ง method <code>title</code></p>
 
-Finished in 0.000245s, 20408.1630 runs/s, 16326.5304 assertions/s.
+<pre><code>blog.rb:9:in '&lt;class:Post&gt;': uninitialized constant Post::Slugable (NameError)
 
-  1) Error:
-PostTest#test_recipe_slug_calls_super:
-ArgumentError: wrong number of arguments (given 2, expected 1)
-    post_test.rb:14:in 'Post#initialize'
-    post_test.rb:27:in 'Recipe#initialize'
-    post_test.rb:50:in 'PostTest#test_recipe_slug_calls_super'
+  include Slugable
+          ^^^^^^^^
+Did you mean?  Sluggable
+	from blog.rb:8:in '&lt;main&gt;'</code></pre>
+    <p>→ <strong>สะกดชื่อ module ผิด</strong> (ตก g ไปหนึ่งตัว) · <code>uninitialized constant</code> แปลว่า "ไม่รู้จักชื่อตัวใหญ่นี้"</p>
 
-5 runs, 4 assertions, 0 failures, 1 errors, 0 skips</code></pre>
-    <p style="margin-bottom:0">
-      เทสจับได้ และ stack trace ชี้ไปที่ <code>Recipe#initialize</code> ตรงจุดที่ผิดพอดี
-      (บรรทัด 27 คือ <code>super</code> ที่เราเพิ่งแก้) ·
-      ให้สังเกตว่าคำว่า <code>super</code> ใน <code>Recipe#slug</code> ไม่ได้ไปเรียก <code>Post#slug</code>
-      เพราะ Post ไม่มี slug ของตัวเอง Ruby จึงหาต่อไปตาม <code>ancestors</code> จนเจอใน <code>Sluggable</code> ·
-      ถ้าอยากลองต่อ ให้ถาม AI ว่า <em>"ถ้า Post เขียน def slug เองด้วย super ใน Recipe จะไปเจอตัวไหน"</em> แล้วรันพิสูจน์ด้วย <code>Recipe.ancestors</code>
+<pre><code>blog.rb:12:in 'Post#initialize': wrong number of arguments (given 2, expected 1) (ArgumentError)
+
+    caller: blog.rb:25
+    callee: blog.rb:12
+    |   def initialize(title)
+            ^^^^^^^^^^
+	from blog.rb:25:in 'Recipe#initialize'
+	from blog.rb:30:in '&lt;main&gt;'</code></pre>
+    <p>
+      → <strong>เขียน <code>super</code> เฉย ๆ ไม่มีวงเล็บ</strong> · Ruby ส่ง argument ทุกตัวของลูก (title และ minutes = 2 ตัว) ต่อไปให้แม่ ซึ่งรับได้ตัวเดียว ·
+      <code>caller: blog.rb:25</code> / <code>callee: blog.rb:12</code> บอกว่าบรรทัด 25 (ใน Recipe) เรียกไปหาบรรทัด 12 (ใน Post) ·
+      แก้เป็น <code>super(title)</code> · ถ้าเจอ <code>(given 0, expected 1)</code> แทน แปลว่าเรียก <code>Post.new</code> โดยไม่ได้ส่งชื่อเรื่องไป
     </p>
   </div>
 </div>
 
+<h2 id="sn-sec-10">10 · ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">เมื่อเขียน <code>Post.new("Hi")</code> Ruby เรียก method ไหนของ Post ให้อัตโนมัติ?</p>
+  <div class="opts">
+    <button class="opt"><code>new</code> ที่เราต้องเขียน <code>def new</code> ไว้ใน class เอง</button>
+    <button class="opt"><code>initialize</code> ที่เรา def ไว้ โดย <code>new</code> เป็นคนเรียกให้</button>
+    <button class="opt"><code>title</code> ที่ <code>attr_accessor</code> สร้างไว้ให้ตั้งแต่แรก</button>
+    <button class="opt"><code>greeting</code> เพราะเป็น method แรกที่ class มี</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · <code>new</code> สร้าง object เปล่าแล้วส่ง <code>"Hi"</code> ต่อให้ <code>initialize</code> ·
+      ถ้าเรียก <code>Post.new</code> โดยไม่ส่งอะไร error จะบอกว่าพังใน <code>'Post#initialize'</code> (given 0, expected 1) ซึ่งยืนยันว่า new ไปเรียก initialize
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิดเพราะ <code>new</code> มีให้ทุก class อยู่แล้ว เราเขียนแค่ <code>initialize</code> ·
+      ตัวเลือกที่ 3 ผิดเพราะ <code>title</code> ถูกเรียกเมื่อเราสั่ง <code>post.title</code> เท่านั้น ·
+      ตัวเลือกที่ 4 ผิดเพราะ Ruby ไม่ได้เรียก method ตามลำดับที่เขียน
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>Post.new(...)</code> = สร้าง object แล้วรัน <code>initialize(...)</code> · เหมือน <code>NewPost(...)</code> ของ Go</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">class Post มีแค่ <code>attr_reader :title</code> · ถ้าสั่ง <code>post.title = "ใหม่"</code> จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">title เปลี่ยนเป็น "ใหม่" ตามปกติ เพราะ reader ก็แก้ค่าได้</button>
+    <button class="opt">ไม่มี error แต่ค่าไม่เปลี่ยน Ruby ทิ้งคำสั่งนั้นไปเงียบ ๆ</button>
+    <button class="opt">พังด้วย NoMethodError เพราะไม่มี method ชื่อ <code>title=</code></button>
+    <button class="opt">ได้ nil กลับมา แล้ว @title กลายเป็นค่าว่าง</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · ผลรันจริงในหัวข้อ 3 คือ <code>undefined method 'title=' for an instance of Post (NoMethodError)</code> ·
+      <code>post.title = "ใหม่"</code> คือการเรียก method ชื่อ <code>title=</code> ซึ่ง <code>attr_reader</code> ไม่ได้สร้างให้ (สร้างแค่ <code>title</code>)
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิดเพราะ reader = อ่านอย่างเดียว ·
+      ตัวเลือกที่ 2 ผิดเพราะ Ruby ไม่ทิ้งคำสั่งเงียบ ๆ แต่พังทันที ·
+      ตัวเลือกที่ 4 ผิดเพราะโปรแกรมหยุดที่ error ไม่ได้ไปแตะ <code>@title</code> เลย
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> เห็น error ที่มีชื่อ method ลงท้ายด้วย <code>=</code> แปลว่าไม่มี setter → ใช้ <code>attr_accessor</code> แทน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ใน Rails ไฟล์ <code>app/models/post.rb</code> มีแค่ <code>class Post &lt; ApplicationRecord</code> กับ <code>end</code> · ทำไม <code>post.title</code> ถึงใช้ได้?</p>
+  <div class="opts">
+    <button class="opt">Rails อ่านคอลัมน์ของตาราง posts แล้วสร้าง method <code>title</code> ให้ตอนรัน</button>
+    <button class="opt">Rails แอบเขียน <code>attr_accessor :title</code> ลงในไฟล์ post.rb ให้ตอน generate</button>
+    <button class="opt">ทุก class ใน Ruby มี method <code>title</code> ติดมาตั้งแต่สร้าง</button>
+    <button class="opt"><code>ApplicationRecord</code> เขียน <code>attr_accessor :title</code> ไว้ให้ทุก model</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · ในหัวข้อ 6 <code>Post.column_names</code> มี <code>"title"</code> และ <code>respond_to?(:title)</code> ได้ <code>true</code> ·
+      แต่ <code>respond_to?(:author)</code> ได้ <code>false</code> เพราะตารางไม่มีคอลัมน์ author — method ตามคอลัมน์จริง
+    </p>
+    <p>
+      ตัวเลือกที่ 2 ผิดเพราะไฟล์ post.rb ว่างจริง ๆ ไม่มีอะไรถูกเขียนเพิ่ม ·
+      ตัวเลือกที่ 3 ผิดเพราะ class Post ของเราเองในหัวข้อ 3 ยัง NoMethodError อยู่เลยถ้าไม่มี attr_accessor ·
+      ตัวเลือกที่ 4 ผิดเพราะ ApplicationRecord ไม่รู้ว่าแต่ละ model มีช่องอะไร ต้องไปดูที่ตารางของ model นั้น
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> Go ต้องเขียน field ใน struct เอง · Rails อ่านช่องข้อมูลจากตารางในฐานข้อมูลให้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ข้อไหนอธิบาย module ได้ถูกต้อง?</p>
+  <div class="opts">
+    <button class="opt">module สร้าง object ได้ด้วย <code>Sluggable.new</code> เหมือน class</button>
+    <button class="opt"><code>include</code> จะตรวจก่อนว่า class มี <code>title</code> ครบหรือยัง</button>
+    <button class="opt">module ต้องใช้กับ <code>&lt;</code> แบบเดียวกับการสืบทอด class</button>
+    <button class="opt">module เก็บ method ไว้ให้หลาย class include ไปใช้ แต่ new เองไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · ในหัวข้อ 7 Post กับ Category include Sluggable ตัวเดียวกันได้ ·
+      ส่วน <code>Sluggable.new</code> พังด้วย <code>undefined method 'new' for module Sluggable</code>
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิดตามผลรันข้างบน ·
+      ตัวเลือกที่ 2 ผิดเพราะโค้ดสไลด์หน้า 29 include ผ่าน แต่ไปพังตอนเรียก <code>slug</code> (NameError) — Ruby ไม่ตรวจล่วงหน้า ·
+      ตัวเลือกที่ 3 ผิดเพราะ <code>&lt;</code> ใช้กับ class แม่ ส่วน module ใช้ <code>include</code>
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> สืบทอด (<code>&lt;</code>) = "เป็นชนิดหนึ่งของ" · include module = "ยืมความสามารถมาใช้"</p>
+  </div>
+</div>
+
 <p>
-  ติดตรงไหนหรืออยากรู้เพิ่ม ถามกลับได้เลย เช่น
-  <em>"ทำไม attr_accessor ถึงเขียนในตัว class ได้ ทั้งที่มันเป็น method"</em> หรือ
-  <em>"concern ต่างจาก class แม่ที่ใช้ร่วมกันยังไง ควรเลือกแบบไหนเมื่อไหร่"</em> ·
-  ส่วนเรื่องที่ module เป็นแค่ "สัญญาที่ไม่มีใครตรวจ" จะเชื่อมไปถึง duck typing ใน<a href="./0096-ruby-errors-and-duck-typing.html">บทเรียน 96</a>
+  ติดตรงไหนถามกลับได้เลย เช่น "ทำไม <code>attr_accessor</code> เขียนในตัว class ได้ ทั้งที่มันเป็น method" หรือ
+  "เมื่อไหร่ควรใช้ class แม่ เมื่อไหร่ควรใช้ module" · บทถัดไปจะดูว่าเมื่อโค้ดพัง Ruby จัดการ error ยังไง
 </p>
 
+<h2 id="sn-sec-11">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>29</td>
+      <td><code>Post.new.slug # ใช้ได้เลย</code></td>
+      <td>พังด้วย NameError เพราะ Post ในสไลด์ไม่มี <code>title</code> · ต้องเติม <code>attr_accessor :title</code> + <code>initialize</code> (หัวข้อ 7)</td>
+      <td>ใช่ ถ้าพิมพ์ตาม</td>
+    </tr>
+    <tr>
+      <td>28</td>
+      <td>@ตัวแปรที่ยังไม่เคยตั้ง อ่านแล้วได้ nil ไม่ error</td>
+      <td>ถูก · แต่แปลว่าสะกดชื่อผิดก็ไม่มีใครเตือน (หัวข้อ 4)</td>
+      <td>นิดหน่อย</td>
+    </tr>
+    <tr>
+      <td>29</td>
+      <td>module ใกล้เคียง embedding ของ Go</td>
+      <td>ใกล้ตรงที่ได้โค้ดมาฟรี · แต่ method ของ Go เห็นแค่ข้อมูลของ struct ที่ฝัง ส่วน module เห็นข้อมูลของ class ที่ include</td>
+      <td>ไม่ต้อง</td>
+    </tr>
+    <tr>
+      <td>ทั้งชุด</td>
+      <td>Ruby 4.0.6 · Rails 8.1.3</td>
+      <td>บทนี้ตรวจด้วย Ruby 4.0.9 · Rails 8.1.4 ผลเหมือนกัน</td>
+      <td>ไม่ต้อง</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
 <nav class="nav">
-  <a href="./0094-ruby-truthiness-and-nil.html">← บทเรียน 94 · Truthiness · nil · ||=</a>
+  <a href="./0094-ruby-truthiness-and-nil.html">← บทเรียน 94 · nil · จริง/เท็จ</a>
   <a href="../../index.html">🏠 หน้าแรก</a>
   <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 1</a>
-  <a href="./0096-ruby-errors-and-duck-typing.html">บทเรียน 96 → Error · duck typing · 6 กับดัก</a>
+  <a href="./0096-ruby-errors-and-duck-typing.html">บทเรียน 96 → Error · duck typing</a>
 </nav>
 
-<h2 id="sn-sec-11">อ้างอิง</h2>
+<h2 id="sn-sec-12">อ้างอิง</h2>
 <ul class="sources">
+  <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/modules_and_classes_rdoc.html#label-Classes">Ruby 4.0 — Modules and Classes</a> —
+      อ่านหัวข้อ <em>Classes</em> → <em>Inheritance</em> (เรื่อง <code>&lt;</code> และ <code>super</code>) แล้วย้อนขึ้นไปอ่าน <em>Modules</em> ·
+      หน้าเดียวอธิบายทั้งสองอย่าง เห็นความเหมือนและต่างชัด</li>
   <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/assignment_rdoc.html#label-Instance+Variables">Ruby 4.0 — Assignment: Instance Variables</a> —
-      <strong>อ่านหัวข้อ <em>Instance Variables</em> หัวข้อเดียว</strong> สั้นมาก ·
-      มีประโยค <em>"An uninitialized instance variable has a value of nil."</em> ที่ยืนยันกับดักในหัวข้อ 3 ·
-      ในหัวข้อถัดไป (<em>Class Variables</em>) จะเห็นว่าตัวแปร <code>@@</code> ที่ยังไม่ถูกตั้งค่ากลับพังด้วย NameError ต่างจาก <code>@</code></li>
-  <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/modules_and_classes_rdoc.html#label-Inheritance">Ruby 4.0 — Modules and Classes</a> —
-      <strong>อ่านหัวข้อ <em>Inheritance</em></strong> (เรื่อง <code>&lt;</code> และ <code>super</code>) แล้วย้อนกลับไปอ่าน <em>Module Definition</em> ·
-      หน้านี้อธิบายทั้ง class และ module ในที่เดียว จึงเห็นความเหมือนและต่างได้ชัด</li>
+      หัวข้อสั้น ๆ หัวข้อเดียว · มีประโยคยืนยันว่า @ตัวแปรที่ยังไม่ตั้งค่าได้ nil (กับดักในหัวข้อ 4)</li>
   <li><a href="https://docs.ruby-lang.org/en/4.0/Module.html#method-i-attr_accessor">Ruby 4.0 — Module#attr_accessor</a> —
-      <strong>ดูตัวอย่างใน <code>attr_accessor</code> แล้วเลื่อนไปดู <code>attr_reader</code> / <code>attr_writer</code> ที่อยู่ติดกัน</strong> ·
-      หน้าเดียวกันมี <code>#ancestors</code> และ <code>#include</code> ด้วย ·
-      ให้สังเกตว่าทั้งหมดเป็น method ของ class <code>Module</code> ซึ่งเป็นเหตุผลที่เรียกในตัว class ได้</li>
-  <li><a href="https://docs.ruby-lang.org/en/4.0/Object.html#method-i-inspect">Ruby 4.0 — Object#inspect</a> —
-      <strong>อ่านคำอธิบายของ <code>inspect</code> แล้วเทียบกับ <code>to_s</code> ในหน้าเดียวกัน</strong> ·
-      ตรงกับผลของ <code>puts</code> และ <code>p</code> ในหัวข้อ 5</li>
+      ดูตัวอย่างของ <code>attr_accessor</code> แล้วเลื่อนดู <code>attr_reader</code> / <code>attr_writer</code> ที่อยู่ติดกัน</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_basics.html#creating-active-record-models">Rails Guides — Active Record Basics: Creating Active Record Models</a> —
+      อ่านแค่หัวข้อนี้ · ยืนยันว่า <code>class Book &lt; ApplicationRecord</code> ว่าง ๆ ก็ผูกกับตาราง books และคอลัมน์กลายเป็น attribute (ตรงกับหัวข้อ 6) · ที่เหลือรอ Day 2</li>
   <li><a href="https://api.rubyonrails.org/classes/ActiveSupport/Concern.html">Rails API — ActiveSupport::Concern</a> —
-      <strong>อ่านแค่ตัวอย่างแรกที่เทียบ module ธรรมดากับ module ที่ใช้ <code>extend ActiveSupport::Concern</code></strong> ·
-      จะเห็นว่า Concern ช่วยให้เขียน <code>included do</code> และ <code>class_methods do</code> ได้สั้นลง ·
-      ส่วนเรื่อง module ที่พึ่งกัน (dependencies) ข้ามไปก่อนได้ ยังไม่ได้ใช้ใน Day 1</li>
-  <li><a href="https://guides.rubyonrails.org/autoloading_and_reloading_constants.html#config-autoload-paths">Rails Guides — Autoloading and Reloading Constants</a> —
-      <strong>อ่านหัวข้อ 3 <em>config.autoload_paths</em></strong> ที่บอกว่าโฟลเดอร์ใน autoload path เป็นจุดเริ่มต้นของชื่อ (ไม่ใช่ namespace) ·
-      แล้วดูหัวข้อ 13 <em>Autoloading and Engines</em> ที่รัน <code>ActiveSupport::Dependencies.autoload_paths</code> ให้ดูว่ามี
-      <code>app/models/concerns</code> อยู่ในรายการ ซึ่งตรงกับที่ผมรันในโปรเจกต์ wongnok_blog</li>
+      ดูแค่ตัวอย่างแรกพอให้รู้ว่า concern หน้าตาเป็น module · รายละเอียดอื่นข้ามไปก่อน</li>
+  <li><a href="https://go.dev/doc/effective_go#embedding">Effective Go — Embedding</a> —
+      ทวนการฝัง struct ของ Go เพื่อเทียบกับ <code>include</code> ในหัวข้อ 7</li>
 </ul>
 
 </main>
 
-<div class="scorebar">
-  <span class="count"></span>
-  <span class="track"><span class="fill"></span></span>
-  <span class="pct"></span>
-</div>
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
 
 </body>
 </html>

@@ -165,22 +165,22 @@
   var RAILS = [
     { key: 'rails-day-1', btn: 'Day 1', where: 'Rails Day 1',
       sheetLabel: 'Cheat sheet Rails Day 1', d: 201, lessons: [
-      { n: '90', f: 'rails-day-1/lessons/0090-ruby-and-rails-origins.html', t: 'Ruby กับ Rails คือใคร — ภาษา, framework และความเชื่อ 3 ข้อ' },
-      { n: '91', f: 'rails-day-1/lessons/0091-ruby-variables-objects-strings.html', t: 'ตัวแปร · ทุกอย่างเป็น object · string แทรกค่า' },
-      { n: '92', f: 'rails-day-1/lessons/0092-ruby-symbol-hash-enumerable.html', t: 'Symbol, Array, Hash และ Enumerable' },
-      { n: '93', f: 'rails-day-1/lessons/0093-ruby-blocks-and-methods.html', t: 'Block, method และ ? กับ !' },
-      { n: '94', f: 'rails-day-1/lessons/0094-ruby-truthiness-and-nil.html', t: 'Truthiness และ nil — 0 เป็นจริง' },
-      { n: '95', f: 'rails-day-1/lessons/0095-ruby-class-and-module.html', t: 'Class และ Module — mixin ที่มาของ concerns' },
-      { n: '96', f: 'rails-day-1/lessons/0096-ruby-errors-and-duck-typing.html', t: 'Error handling และ duck typing' },
-      { n: '97', f: 'rails-day-1/lessons/0097-ruby-before-rails.html', t: '5 เรื่องของ Ruby ก่อนเปิดโค้ด Rails' },
-      { n: '98', f: 'rails-day-1/lessons/0098-rails-new-and-structure.html', t: 'rails new และโครงสร้างโปรเจกต์' },
-      { n: '99', f: 'rails-day-1/lessons/0099-rails-naming-and-explore.html', t: 'naming convention และสำรวจโปรเจกต์' },
-      { n: '100', f: 'rails-day-1/lessons/0100-rails-boot-request-mvc.html', t: 'boot · วงจร request · MVC' },
-      { n: '101', f: 'rails-day-1/lessons/0101-rails-routing.html', t: 'Routing — config/routes.rb' },
-      { n: '102', f: 'rails-day-1/lessons/0102-rails-controller.html', t: 'Controller — params, render กับ redirect_to' },
-      { n: '103', f: 'rails-day-1/lessons/0103-rails-views-and-helpers.html', t: 'View — ERB, layout และ helper' },
+      { n: '90', f: 'rails-day-1/lessons/0090-ruby-and-rails-origins.html', t: 'Rails คืออะไร — ภาพรวมแบบร้านอาหาร' },
+      { n: '91', f: 'rails-day-1/lessons/0091-ruby-variables-objects-strings.html', t: 'ติดตั้ง Ruby · ตัวแปร · object · string' },
+      { n: '92', f: 'rails-day-1/lessons/0092-ruby-symbol-hash-enumerable.html', t: 'Array · Hash · Symbol และ map/select' },
+      { n: '93', f: 'rails-day-1/lessons/0093-ruby-blocks-and-methods.html', t: 'Method และ Block' },
+      { n: '94', f: 'rails-day-1/lessons/0094-ruby-truthiness-and-nil.html', t: 'nil และอะไรนับว่า "จริง"' },
+      { n: '95', f: 'rails-day-1/lessons/0095-ruby-class-and-module.html', t: 'Class และ Module — Post มาจากไหน' },
+      { n: '96', f: 'rails-day-1/lessons/0096-ruby-errors-and-duck-typing.html', t: 'เมื่อโค้ดพัง — rescue และ duck typing' },
+      { n: '97', f: 'rails-day-1/lessons/0097-ruby-before-rails.html', t: 'อ่านโค้ด Rails ไม่งง — 5 ไวยากรณ์' },
+      { n: '98', f: 'rails-day-1/lessons/0098-rails-new-and-structure.html', t: 'rails new — เดินดูโปรเจกต์ทีละห้อง' },
+      { n: '99', f: 'rails-day-1/lessons/0099-rails-naming-and-explore.html', t: 'กฎตั้งชื่อ — Post กับ posts' },
+      { n: '100', f: 'rails-day-1/lessons/0100-rails-boot-request-mvc.html', t: 'เปิดร้าน — server · request · MVC' },
+      { n: '101', f: 'rails-day-1/lessons/0101-rails-routing.html', t: 'Routing — URL ไหนไปหาใคร' },
+      { n: '102', f: 'rails-day-1/lessons/0102-rails-controller.html', t: 'Controller — params · render · redirect' },
+      { n: '103', f: 'rails-day-1/lessons/0103-rails-views-and-helpers.html', t: 'View — ERB · layout · helper' },
       { n: '104', f: 'rails-day-1/lessons/0104-rails-debug-and-console.html', t: 'debugger และ bin/rails console' },
-      { n: '105', f: 'rails-day-1/lessons/0105-rails-day1-lab.html', t: 'Lab 1 — สร้างแอปเอง เพิ่ม /about' }
+      { n: '105', f: 'rails-day-1/lessons/0105-rails-day1-lab.html', t: 'Lab 1 — สร้างแอปเองตั้งแต่ศูนย์' }
     ]}
   ];
 

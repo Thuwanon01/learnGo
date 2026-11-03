@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>บทเรียน 96 — Error handling และ duck typing — ช็อกที่สุดสำหรับคนมาจาก Go</title>
+<title>บทเรียน 96 — เมื่อโค้ดพัง — rescue แทน if err != nil และ duck typing</title>
 <link rel="stylesheet" href="../../assets/lesson.css">
 <script src="../../assets/quiz.js" defer></script>
 <script src="../../assets/nav.js" defer></script>
@@ -12,172 +12,45 @@
 
 <header>
   <p class="kicker">บทเรียน 96 · Rails · Day 1</p>
-  <h1>Error handling และ duck typing — ช็อกที่สุดสำหรับคนมาจาก Go</h1>
-  <p class="meta">~25 นาที · ควรผ่าน <a href="./0095-ruby-class-and-module.html">บทเรียน 95</a> (Class · Module) มาก่อน ·
-    และจำ <a href="../../day-2/lessons/0005-errors-and-shadowing.html">บทเรียน 05</a> (error ของ Go) ได้คร่าว ๆ</p>
+  <h1>เมื่อโค้ดพัง — rescue แทน if err != nil และ duck typing</h1>
+  <p class="meta">~20 นาที · ควรผ่าน <a href="./0093-ruby-blocks-and-methods.html">บทเรียน 93</a> (method) และ
+    <a href="./0095-ruby-class-and-module.html">บทเรียน 95</a> (class) มาก่อน ·
+    ถ้าจำ <a href="../../day-2/lessons/0005-errors-and-shadowing.html">บทเรียน 05</a> (error ของ Go) ได้คร่าว ๆ จะง่ายขึ้นมาก</p>
   <p class="standfirst">
-    9 วันที่ผ่านมาคุณเขียน <code>if err != nil { return err }</code> มาเป็นร้อยครั้ง
-    จนมือมันพิมพ์เองแล้ว
-    <br>มาถึง Ruby — <strong>บรรทัดนั้นหายไปหมด</strong> ไม่มีใครคืน error เป็นค่า
-    ไม่มี compiler มาจี้ให้เช็ค และไม่มี <code>interface</code> ให้ประกาศ
-    <br>สไลด์หน้า 30–32 เรียกเรื่องนี้ว่า <strong>"จุดช็อกที่สุดสำหรับคนมาจาก Go"</strong> —
-    บทนี้จะพาดูว่า Ruby จัดการ error แบบ <strong>"โยนขึ้นไปจนกว่าจะมีคนรับ"</strong> ยังไง ·
-    ถ้า<strong>ไม่มีใครรับ</strong>หน้าตาตอนโปรแกรมพังเป็นแบบไหน ·
-    duck typing ทำงานยังไงเมื่อไม่มี type ให้ตรวจ ·
-    แล้วปิดท้ายด้วย <strong>6 ข้อควรระวังจากสไลด์หน้า 32 — ทุกข้อรันพิสูจน์จริง</strong>
-    <br>(และมีข้อหนึ่งที่<strong>รันแล้วไม่ได้ผลอย่างที่สไลด์บอก</strong> — รออยู่ในหัวข้อ 7)
+    ตอนเขียน Go คุณพิมพ์ <code>if err != nil</code> จนชินมือ — แต่ใน Ruby บรรทัดนั้นไม่มีเลย
+    <br>อ่านจบบทนี้คุณจะ: <strong>อ่านข้อความ error ของ Ruby ออก</strong>ว่าพังที่ไหนเพราะอะไร ·
+    เขียน <code>begin</code> / <code>rescue</code> รับ error ได้ ·
+    โยน error เองด้วย <code>raise</code> ·
+    และเข้าใจ <strong>duck typing</strong> — เหตุผลที่ Ruby ไม่ต้องประกาศ interface แต่แลกมากับการพังตอนรัน
   </p>
 </header>
 
 <main>
 
 <div class="note">
-  <p><strong>🧰 ของที่ใช้ตรวจในบทนี้</strong></p>
-  <pre style="margin:0.5rem 0"><code><span class="c">$ ruby -v</span>
-ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
-<span class="c">$ bin/rails -v</span>
-Rails 8.1.4</code></pre>
+  <span class="label">🔁 ทวนก่อนเริ่ม</span>
+  <ul>
+    <li><strong>method</strong> — คำสั่งที่เราตั้งชื่อเองด้วย <code>def ชื่อ ... end</code> · บรรทัดสุดท้ายคือค่าที่ส่งคืน (<a href="./0093-ruby-blocks-and-methods.html">บท 93</a>)</li>
+    <li><strong>class และ <code>&lt;</code></strong> — class คือแม่พิมพ์ของ object · <code>class A &lt; B</code> แปลว่า A สืบทอดของทุกอย่างจาก B (<a href="./0095-ruby-class-and-module.html">บท 95</a>)</li>
+    <li><strong>nil</strong> — ค่าที่แปลว่า "ไม่มีค่า" เช่นหาของใน Hash ไม่เจอ (<a href="./0094-ruby-truthiness-and-nil.html">บท 94</a>)</li>
+    <li><strong>symbol</strong> <code>:title</code> — ชื่อสั้น ๆ ที่มีโคลอนนำหน้า ใช้เป็นป้ายชื่อ (<a href="./0092-ruby-symbol-hash-enumerable.html">บท 92</a>)</li>
+    <li><strong><code>#{}</code></strong> — เสียบค่าลงไปใน string เช่น <code>"คนละ #{x} บาท"</code> (<a href="./0091-ruby-variables-objects-strings.html">บท 91</a>)</li>
+  </ul>
   <p>
-    สไลด์ใช้ <strong>Ruby 4.0.6 · Rails 8.1.3</strong> — เครื่องที่ใช้ตรวจเป็นรุ่นแพตช์ถัดไป (4.0.9 · 8.1.4)
-    ซึ่งไม่ได้เปลี่ยนเรื่องที่บทนี้สอน
-    <br>· ทุกกล่องที่เป็นผลรัน <strong>ก็อปมาจากเครื่องจริง</strong> รวมถึงข้อความ error ทุกตัวอักษร
-    <br>· โค้ด Ruby ล้วนรันด้วย <code>ruby ชื่อไฟล์.rb</code> ใน terminal ที่ตั้งภาษาเป็น UTF-8 (ค่าปกติของ terminal บน Mac/Linux)
-    · ก็อปทั้งกล่องรวมบรรทัด comment ชื่อไฟล์บรรทัดแรก — เลขบรรทัดใน error จะได้ตรงกับในบท
-    <br>· ส่วนที่เป็น Rails รันในแอป <code>wongnok_blog</code> ที่สร้างตามสไลด์หน้า 40
-    (<code>rails new wongnok_blog --database=postgresql --css=tailwind</code>)
-    <br>· ฝั่งเปรียบเทียบใช้ Go 1.26.5 · TypeScript (<code>tsc</code>) 7.0.2 · Node 24.14.0
-    <br>· <strong>สิ่งเดียวที่ปรับก่อนเอามาโชว์</strong>: server ที่ใช้ตรวจรันอยู่พอร์ตอื่น (มีงานอื่นใช้เครื่องเดียวกัน)
-    ในบทนี้เขียน URL กลับเป็น <code>localhost:3000</code> ตามค่าปกติของ <code>bin/rails server</code> ·
-    และ model <code>Post</code> ที่ใช้ในหัวข้อ 5 สร้างไว้ล่วงหน้าใน sandbox (วิธีสร้างรอ Day 2) —
-    status code ข้อความ error และ log ไม่ได้แก้สักตัว
-  </p>
-  <p style="margin-bottom:0">
-    บทนี้แตะ Rails นิดหน่อยเพื่อให้เห็นว่า "เรื่องนี้ไปโผล่ตรงไหน" ตามที่สไลด์บอก —
-    <strong>model · <code>find</code> · view จะสอนจริงใน Day 2–3</strong> ตอนนี้ดูแค่ผลก็พอ
+    <strong>เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · Go 1.26.5
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — เป็นรุ่นแพตช์ใกล้กัน ไม่กระทบเรื่องในบทนี้) ·
+    โค้ด Ruby ทุกก้อนรันด้วย <code>ruby ชื่อไฟล์.rb</code> ใน terminal · ผลรันทุกกล่องก็อปจากเครื่องจริง
   </p>
 </div>
 
-<h2 id="sn-sec-1">1 · Go ส่ง error มาเป็น "ค่า" · Ruby "โยน" มันขึ้นไป</h2>
+<h2 id="sn-sec-1">1 · ทวน Go: error คือ "ค่า" ที่ส่งคืนมา</h2>
 
 <p>
-  เริ่มจากของที่คุณรู้แล้ว ใน Go ฟังก์ชันที่พังได้จะ<strong>คืน error กลับมาเป็นค่าตัวหนึ่ง</strong>
-  เหมือนคืน <code>int</code> คืน <code>string</code> — คนเรียกต้องหยิบขึ้นมาดูเองทุกครั้ง
-  ไม่ดู มันก็กองอยู่ตรงนั้นเฉย ๆ
+  เริ่มจากของที่คุณรู้แล้ว ตัวอย่างทั้งบทจะใช้เรื่องเดียวกัน: <strong>แบ่งบิลค่าอาหาร</strong> — ยอด 900 บาท หารกันกี่คน
+  <br>ใน Go ฟังก์ชันที่อาจพังจะคืนค่า<strong>สองตัว</strong>: ผลลัพธ์ กับ error
 </p>
 
-<p>
-  Ruby (และ TypeScript) ทำอีกแบบ: พอเกิดเรื่อง <strong>โค้ดจะหยุดตรงนั้นทันที</strong>
-  แล้วกระโดดออกจาก method ไปหา "คนรับ" ที่ใกล้ที่สุดข้างบน —
-  ถ้า method ที่เรียกมาไม่รับ ก็ขึ้นไปอีกชั้น ขึ้นไปเรื่อย ๆ
-  <br>ไม่มีบรรทัด <code>if err != nil</code> คั่นกลาง เพราะ<strong>ทางเดินของ error ไม่ได้ผ่านค่าที่ return</strong> เลย
-</p>
-
-<p>นี่คือสไลด์หน้า 30 วางเทียบกันสามภาษา:</p>
-
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr><th>Go</th><th>TypeScript</th><th>Ruby</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><pre style="margin:0"><code>v, err := <span class="f">doThing</span>()
-<span class="k">if</span> err != <span class="k">nil</span> {
-  <span class="k">return</span> err
-}
-
-<span class="c">// error เป็นค่า</span>
-<span class="c">// ต้องรับทุกชั้น</span>
-<span class="c">// ลืมไม่ได้ compiler เตือน</span></code></pre></td>
-      <td><pre style="margin:0"><code><span class="k">try</span> {
-  <span class="f">doThing</span>()
-} <span class="k">catch</span> (e) {
-  <span class="f">handle</span>(e)
-} <span class="k">finally</span> {
-  <span class="f">cleanup</span>()
-}</code></pre></td>
-      <td><pre style="margin:0"><code><span class="k">begin</span>
-  do_thing
-<span class="k">rescue</span> <span class="n">ArgumentError</span> =&gt; e
-  handle(e)
-<span class="k">rescue</span> =&gt; e
-  handle_any(e)
-<span class="k">ensure</span>
-  cleanup
-<span class="k">end</span></code></pre></td>
-    </tr>
-  </tbody>
-</table>
-</div>
-
-<p>
-  เทียบคำต่อคำ: <code>begin</code> ≈ <code>try</code> · <code>rescue</code> ≈ <code>catch</code> ·
-  <code>ensure</code> ≈ <code>finally</code> (และใกล้กับ <code>defer</code> ของ Go ใน
-  <a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a> — "ทางออกไหนก็ต้องผ่านตรงนี้")
-  <br>แต่มีจุดที่ Ruby <strong>เก่งกว่า TypeScript</strong>: <code>catch (e)</code> ของ TS รับได้ช่องเดียว
-  ต้องไปเขียน <code>if (e instanceof …)</code> แยกเอง ·
-  ส่วน Ruby <strong>เขียน <code>rescue</code> ได้หลายช่อง แต่ละช่องระบุ class ของ error ที่จะรับ</strong>
-</p>
-
-<p>
-  โค้ดในสไลด์เป็นโครงเฉย ๆ (ไม่มี <code>do_thing</code> จริง) ผมเลยเติมให้รันได้
-  แล้วลองทั้งสามกรณี — โยน <code>ArgumentError</code> · หารด้วยศูนย์ · และไม่พังเลย:
-</p>
-
-<pre><code><span class="c"># slide30.rb</span>
-<span class="k">def</span> <span class="f">do_thing</span>(kind)
-  <span class="k">raise</span> <span class="n">ArgumentError</span>, <span class="s">"จำนวนต้องมากกว่า 0"</span> <span class="k">if</span> kind == <span class="n">:arg</span>
-  <span class="n">10</span> / <span class="n">0</span> <span class="k">if</span> kind == <span class="n">:zero</span>
-  <span class="s">"ok"</span>
-<span class="k">end</span>
-
-[<span class="n">:arg</span>, <span class="n">:zero</span>, <span class="n">:fine</span>].<span class="f">each</span> <span class="k">do</span> |kind|
-  <span class="f">puts</span> <span class="s">"--- #{kind}"</span>
-  <span class="k">begin</span>
-    <span class="f">puts</span> do_thing(kind)
-  <span class="k">rescue</span> <span class="n">ArgumentError</span> =&gt; e
-    <span class="f">puts</span> <span class="s">"handle:     #{e.class} — #{e.message}"</span>
-  <span class="k">rescue</span> =&gt; e
-    <span class="f">puts</span> <span class="s">"handle_any: #{e.class} — #{e.message}"</span>
-  <span class="k">ensure</span>
-    <span class="f">puts</span> <span class="s">"cleanup"</span>
-  <span class="k">end</span>
-<span class="k">end</span></code></pre>
-
-<pre><code><span class="c">$ ruby slide30.rb</span>
---- arg
-handle:     ArgumentError — จำนวนต้องมากกว่า 0
-cleanup
---- zero
-handle_any: ZeroDivisionError — divided by 0
-cleanup
---- fine
-ok
-cleanup</code></pre>
-
-<p>อ่านผลทีละกรณี:</p>
-<ul>
-  <li><strong><code>:arg</code></strong> — <code>raise ArgumentError, "…"</code> คือการ<strong>โยน</strong> error ออกไป
-      (คำว่า <code>raise</code> = <code>throw</code> ของ TS) · ช่อง <code>rescue ArgumentError =&gt; e</code> ตรง class พอดี เลยรับไป ·
-      <code>=&gt; e</code> แปลว่า "เอา error ก้อนนั้นมาใส่ตัวแปรชื่อ <code>e</code>" จะได้เรียก <code>e.message</code> ได้</li>
-  <li><strong><code>:zero</code></strong> — <code>10 / 0</code> โยน <code>ZeroDivisionError</code> ออกมาเอง ไม่ใช่ <code>ArgumentError</code>
-      ช่องแรกเลยข้าม · ไปตกช่อง <code>rescue =&gt; e</code> ที่ไม่ระบุ class</li>
-  <li><strong><code>:fine</code></strong> — ไม่มีอะไรพัง ไม่เข้า <code>rescue</code> ช่องไหนเลย</li>
-  <li><strong>ทั้งสามกรณีพิมพ์ <code>cleanup</code></strong> — นั่นคืองานของ <code>ensure</code>: พังหรือไม่พังก็ต้องผ่าน</li>
-</ul>
-
-<p>
-  สังเกตอีกอย่าง: <strong>บรรทัด <code>"ok"</code> ไม่เคยถูกรันในกรณี <code>:arg</code></strong> ·
-  พอ <code>raise</code> แล้ว method หยุดทันที ไม่มีการ "คืนค่าว่าง + error" แบบ Go
-</p>
-
-<div class="warn">
-  <p><strong>⚠️ "ลืมไม่ได้ compiler เตือน" ของฝั่ง Go จริงแค่ครึ่งเดียว</strong></p>
-  <p>
-    สไลด์เขียนใต้โค้ด Go ว่า "ลืมไม่ได้ compiler เตือน" — ผมลองแล้ว
-    <strong>compiler เตือนเฉพาะตอนที่คุณตั้งชื่อตัวแปร <code>err</code> แล้วไม่ใช้</strong>:
-  </p>
-  <pre><code><span class="c">// main.go — รับ err มาแล้วไม่เช็ค (go.mod ตั้งชื่อ module ว่า go96)</span>
+<pre><code><span class="c">// main.go (Go)</span>
 <span class="k">package</span> main
 
 <span class="k">import</span> (
@@ -185,45 +58,92 @@ cleanup</code></pre>
 	<span class="s">"fmt"</span>
 )
 
-<span class="k">func</span> <span class="f">doThing</span>() (<span class="n">int</span>, <span class="n">error</span>) {
-	<span class="k">return</span> <span class="n">0</span>, errors.<span class="f">New</span>(<span class="s">"พัง"</span>)
+<span class="k">func</span> <span class="f">splitBill</span>(total, people <span class="n">int</span>) (<span class="n">int</span>, <span class="n">error</span>) {
+	<span class="k">if</span> people == <span class="n">0</span> {
+		<span class="k">return</span> <span class="n">0</span>, errors.<span class="f">New</span>(<span class="s">"จำนวนคนเป็น 0 ไม่ได้"</span>)
+	}
+	<span class="k">return</span> total / people, <span class="n">nil</span>
 }
 
 <span class="k">func</span> <span class="f">main</span>() {
-	v, err := <span class="f">doThing</span>()
-	fmt.<span class="f">Println</span>(v)
+	share, err := <span class="f">splitBill</span>(<span class="n">900</span>, <span class="n">0</span>)
+	<span class="k">if</span> err != <span class="n">nil</span> {
+		fmt.<span class="f">Println</span>(<span class="s">"แบ่งบิลไม่ได้:"</span>, err)
+		<span class="k">return</span>
+	}
+	fmt.<span class="f">Println</span>(<span class="s">"คนละ"</span>, share)
 }</code></pre>
-  <pre><code><span class="c">$ go build ./...</span>
-# go96
-./main.go:14:5: declared and not used: err</code></pre>
-  <p>
-    แต่ถ้าเขียน <code>doThing()</code> เฉย ๆ ทั้งบรรทัด หรือ <code>v, _ := doThing()</code>
-    <strong><code>go build</code> ผ่าน · <code>go vet</code> ก็ผ่าน · exit code = 0 ทั้งคู่</strong>
-  </p>
-  <p style="margin-bottom:0">
-    ประเด็นของสไลด์ยังถูก — ใน Go error <em>อยู่ตรงหน้า</em> ให้เห็นทุกครั้ง ต้องตั้งใจทิ้งมันถึงจะหาย ·
-    ส่วนใน Ruby <strong>คุณมองไม่เห็นเลยว่าบรรทัดไหนโยน error ได้บ้าง</strong> ต้องรู้เอาเองหรืออ่านเอกสาร
-  </p>
-</div>
+
+<pre><code>$ go run .
+แบ่งบิลไม่ได้: จำนวนคนเป็น 0 ไม่ได้</code></pre>
+
+<ul>
+  <li><code>(int, error)</code> — บอกว่าฟังก์ชันนี้คืนของสองอย่าง: ตัวเลข และ error</li>
+  <li><code>return 0, errors.New(...)</code> — มีปัญหา: คืนเลข 0 เป็นค่าหลอก ๆ พร้อม error ที่บอกว่าเพราะอะไร</li>
+  <li><code>return total / people, nil</code> — ไม่มีปัญหา: error เป็น <code>nil</code> (ไม่มี error)</li>
+  <li><code>if err != nil</code> — <strong>คนเรียกต้องเช็คเอง</strong>ทุกครั้ง ว่าที่ได้มามี error ติดมาไหม</li>
+</ul>
+
+<p>
+  สรุปง่าย ๆ: ใน Go error <strong>เดินทางมากับค่าที่ return</strong> เหมือนของชิ้นหนึ่ง ·
+  ใครได้รับก็ต้องหยิบขึ้นมาดูเอง แล้วตัดสินใจว่าจะจัดการเลย หรือ <code>return err</code> ส่งต่อให้ชั้นบน
+</p>
+
+<h2 id="sn-sec-2">2 · Ruby: error ถูก "โยน" ขึ้นไปจนกว่าจะมีคนรับ</h2>
+
+<p>
+  Ruby ไม่คืน error เป็นค่า · พอเกิดเรื่องผิดปกติ Ruby จะ<strong>หยุดบรรทัดนั้นทันที</strong>
+  แล้ว<strong>โยน</strong> error ออกไปหา "คนรับ" ที่อยู่ข้างบน
+  <br>"ข้างบน" คือ method ที่เรียกเรามา แล้วก็ method ที่เรียก method นั้นมาอีกที ไล่ขึ้นไปทีละชั้น ·
+  ถ้าไม่มีใครรับเลยสักชั้น — <strong>โปรแกรมหยุดทั้งตัว</strong>
+</p>
+
+<p>มาดูของจริง นี่คือการแบ่งบิลแบบ Ruby ที่ยังไม่มีใครรับ error:</p>
+
+<pre><code><span class="c"># crash.rb — แบ่งบิลร้านอาหาร</span>
+<span class="k">def</span> <span class="f">split_bill</span>(total, people)
+  total / people
+<span class="k">end</span>
+
+<span class="f">puts</span> <span class="s">"เริ่มคิดเงิน"</span>
+<span class="f">puts</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="n">3</span>)
+<span class="f">puts</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="n">0</span>)
+<span class="f">puts</span> <span class="s">"คิดเงินเสร็จ"</span></code></pre>
+
+<ul>
+  <li><code>def split_bill(total, people)</code> — method รับยอดเงินกับจำนวนคน · <strong>ไม่มีช่อง error</strong> เหมือน Go</li>
+  <li><code>total / people</code> — หารกัน · บรรทัดเดียวของ method จึงเป็นค่าที่คืน</li>
+  <li>บรรทัดล่าง ๆ เรียกสามครั้ง: หาร 3 คน · หาร 0 คน (จะพัง) · แล้วพิมพ์ว่าเสร็จ</li>
+</ul>
+
+<pre><code>$ ruby crash.rb
+เริ่มคิดเงิน
+300
+crash.rb:3:in 'Integer#/': divided by 0 (ZeroDivisionError)
+	from crash.rb:3:in 'Object#split_bill'
+	from crash.rb:8:in '&lt;main&gt;'
+$ echo $?
+1</code></pre>
+
+<p>
+  สังเกตว่า <strong>"คิดเงินเสร็จ" ไม่ถูกพิมพ์</strong> · พอหารด้วย 0 Ruby โยน error ออกมา
+  ไม่มีใครรับ โปรแกรมจึงหยุดตรงนั้น · <code>echo $?</code> ได้ 1 แปลว่า "จบแบบพัง" (0 = จบปกติ)
+</p>
 
 <div class="analogy">
-  <span class="label">🔥 เทียบให้เห็นภาพ — ใบแจ้งปัญหาแนบกล่อง กับ สัญญาณเตือนไฟไหม้</span>
+  <span class="label">🔔 เทียบให้เห็นภาพ — กล่องจดหมาย กับ กริ่งไฟไหม้</span>
   <p>
-    <strong>Go</strong> เหมือนโกดังที่พัสดุทุกกล่องมี<strong>ใบแจ้งปัญหาแนบมาด้วย</strong>
-    คนรับกล่องทุกคนต้องหยิบใบนั้นขึ้นมาอ่าน แล้วตัดสินใจเองว่าจัดการเลย หรือส่งต่อให้หัวหน้า ·
-    ใบอยู่ติดกล่องตลอด จะทิ้งก็ต้องตั้งใจทิ้ง
+    <strong>Go เหมือนตึกที่ทุกห้องมีกล่องจดหมาย</strong> — ข่าวร้ายมาเป็นจดหมายใส่กล่อง
+    คนในห้องต้องเปิดกล่องดูเองทุกครั้ง (<code>if err != nil</code>)
+    ถ้าไม่เปิดดู งานก็เดินต่อไปเหมือนไม่มีอะไรเกิดขึ้น
+    <br><strong>Ruby เหมือนกริ่งไฟไหม้</strong> — เกิดเรื่องที่ห้องไหน ทุกคนในห้องนั้นหยุดมือทันที
+    เสียงกริ่งดังขึ้นไปทีละชั้น จนกว่าจะเจอชั้นที่มีเจ้าหน้าที่ประจำ (<code>rescue</code>) มารับเรื่อง
+    · ถ้าดังไปถึงดาดฟ้าแล้วไม่มีใครรับ = อพยพทั้งตึก (โปรแกรมหยุด)
   </p>
   <p>
-    <strong>Ruby</strong> เหมือน<strong>สัญญาณเตือนไฟไหม้</strong> — เกิดเรื่องที่ห้องไหน ทุกคนในห้องนั้นหยุดงานทันที
-    แล้วเสียงสัญญาณดังขึ้นไปทีละชั้น จนกว่าจะเจอชั้นที่มี<strong>เจ้าหน้าที่ประจำ</strong> (<code>rescue</code>) รับเรื่อง ·
-    ระหว่างทาง ใครที่มี<strong>หน้าที่ปิดแก๊สก่อนออก</strong> (<code>ensure</code>) ก็ทำของตัวเองให้เสร็จ ·
-    ถ้าขึ้นไปจนถึงดาดฟ้าแล้วไม่มีเจ้าหน้าที่สักคน — <strong>อพยพทั้งตึก</strong> (โปรแกรมพัง)
-  </p>
-  <p style="margin-bottom:0">
-    <strong>ที่ไม่เหมือนกัน:</strong> เจ้าหน้าที่ดับเพลิงจริงรับเหตุได้ทุกแบบ แต่ <code>rescue</code> ของ Ruby
-    <strong>รับเฉพาะ "ชนิด" ที่ตัวเองระบุไว้</strong> — <code>rescue ArgumentError</code> จะปล่อย <code>ZeroDivisionError</code>
-    วิ่งผ่านหน้าไปเฉย ๆ เหมือนไม่ได้ยิน ·
-    และ <code>rescue =&gt; e</code> ที่ดูเหมือน "รับทุกอย่าง" ก็<strong>ไม่ได้รับทุกอย่างจริง</strong> (หัวข้อ 3 จะพิสูจน์)
+    <strong>ที่ไม่เหมือนกัน:</strong> กริ่งจริงทุกคนได้ยินพร้อมกัน แต่ error ของ Ruby
+    ขึ้นไปทีละชั้นตามลำดับที่ method เรียกกันมา · และเจ้าหน้าที่ใน Ruby
+    <strong>รับเฉพาะเรื่องที่ตัวเองระบุไว้</strong> (หัวข้อ 4) — ไม่ใช่รับได้ทุกเรื่อง
   </p>
 </div>
 
@@ -231,557 +151,513 @@ cleanup</code></pre>
   <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
   <dl>
     <dt>exception</dt>
-    <dd>object ที่แทน "เรื่องผิดปกติ" ซึ่งถูกโยนออกมาแล้วทำให้โค้ดหยุดเดินตามปกติ · ใน Ruby ทุกตัวเป็น object ของ class ตระกูล <code>Exception</code> ·
-        <strong>ถาม senior ได้ว่า “method นี้ raise อะไรได้บ้าง ที่นี่เขียนไว้ตรงไหน”</strong> — เพราะ Ruby ไม่มี signature บอก</dd>
-    <dt>raise / rescue / ensure</dt>
-    <dd>สามคำหลัก: <code>raise</code> = โยน (≈ <code>throw</code>) · <code>rescue</code> = รับ (≈ <code>catch</code>) ·
-        <code>ensure</code> = ทำเสมอไม่ว่าจะพังหรือไม่ (≈ <code>finally</code>) ·
-        <strong>พิมพ์บอก AI ได้ว่า “wrap this in begin/rescue and only rescue ArgumentError, let everything else propagate”</strong></dd>
-    <dt>propagate (error ลอยขึ้น)</dt>
-    <dd>การที่ exception ที่ไม่มีใครรับ วิ่งขึ้นไปหา method ที่เรียกมาทีละชั้น ·
-        ตรงข้ามกับ Go ที่คุณต้อง <code>return err</code> ส่งต่อเองทุกชั้น ·
-        <strong>ถาม senior ได้ว่า “error ตัวนี้ควรรับตรงนี้ หรือปล่อยให้ propagate ไปถึง controller”</strong></dd>
+    <dd>ชื่อเรียก error แบบที่ "ถูกโยน" ใน Ruby · มันเป็น object ตัวหนึ่ง มีชื่อชนิด (เช่น <code>ZeroDivisionError</code>) และข้อความ ·
+        <strong>ถาม senior ได้ว่า “method นี้ raise exception อะไรได้บ้าง”</strong> — เพราะ Ruby ไม่มีอะไรเขียนบอกไว้ที่หัว method เหมือน Go</dd>
+    <dt>raise (โยน) · propagate (ลอยขึ้น)</dt>
+    <dd><em>raise</em> คือการโยน exception ออกมา · <em>propagate</em> คือการที่มันลอยขึ้นไปหา method ที่เรียกมาทีละชั้นเอง
+        โดยเราไม่ต้องเขียน <code>return err</code> ส่งต่อ ·
+        <strong>พิมพ์บอก AI ได้ว่า “let this exception propagate up instead of handling it here”</strong></dd>
+    <dt>unhandled exception</dt>
+    <dd>exception ที่ลอยขึ้นไปจนสุดแล้วไม่มีใครรับ → โปรแกรมหยุด พิมพ์ข้อความ error และจบด้วย exit code 1 ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ควรปล่อยให้พัง หรือควรรับไว้”</strong></dd>
   </dl>
 </div>
 
-<h2 id="sn-sec-2">2 · ชุดเต็ม: error ของเราเอง · rescue หลายช่อง · <code>else</code> · <code>ensure</code></h2>
+<h2 id="sn-sec-3">3 · อ่านข้อความ error ให้ออก</h2>
 
 <p>
-  ใน Go คุณสร้าง error ของตัวเองด้วย struct ที่มี method <code>Error()</code>
-  แล้วเช็คด้วย <code>errors.As</code> (<a href="../../day-4/lessons/0012-error-architecture.html">บทเรียน 12</a>) ·
-  ใน Ruby ง่ายกว่านั้นมาก — <strong>ประกาศ class ใหม่ที่สืบทอดจาก <code>StandardError</code> สองบรรทัดจบ</strong>
-  แล้วเอาชื่อ class ไปใส่หลัง <code>rescue</code> ได้เลย
+  ข้อความ error ดูน่ากลัว แต่จริง ๆ มันบอกทุกอย่างที่ต้องรู้ · ลองแยกของ <code>crash.rb</code> ทีละท่อน:
 </p>
-
-<p>
-  ตัวอย่างนี้ใส่ของครบทุกชิ้น — มีช่อง <code>else</code> ที่สไลด์ไม่ได้โชว์ด้วย:
-</p>
-
-<pre><code><span class="c"># shop.rb</span>
-<span class="k">class</span> <span class="n">OutOfStockError</span> &lt; <span class="n">StandardError</span>
-<span class="k">end</span>
-
-<span class="k">def</span> <span class="f">buy</span>(stock, qty)
-  <span class="k">raise</span> <span class="n">ArgumentError</span>, <span class="s">"qty ต้องมากกว่า 0 (ได้ #{qty})"</span> <span class="k">unless</span> qty.<span class="f">positive?</span>
-  <span class="k">raise</span> <span class="n">OutOfStockError</span>, <span class="s">"เหลือแค่ #{stock} ชิ้น"</span> <span class="k">if</span> qty &gt; stock
-  stock - qty
-<span class="k">end</span>
-
-[[<span class="n">5</span>, <span class="n">2</span>], [<span class="n">5</span>, <span class="n">9</span>], [<span class="n">5</span>, <span class="n">0</span>]].<span class="f">each</span> <span class="k">do</span> |stock, qty|
-  <span class="k">begin</span>
-    left = buy(stock, qty)
-  <span class="k">rescue</span> <span class="n">OutOfStockError</span> =&gt; e
-    <span class="f">puts</span> <span class="s">"ของหมด: #{e.message}"</span>
-  <span class="k">rescue</span> <span class="n">ArgumentError</span> =&gt; e
-    <span class="f">puts</span> <span class="s">"ใส่ค่าผิด: #{e.message}"</span>
-  <span class="k">else</span>
-    <span class="f">puts</span> <span class="s">"ซื้อสำเร็จ เหลือ #{left}"</span>
-  <span class="k">ensure</span>
-    <span class="f">puts</span> <span class="s">"  (ปิดตะกร้า)"</span>
-  <span class="k">end</span>
-<span class="k">end</span>
-<span class="f">p</span> <span class="n">OutOfStockError</span>.<span class="f">ancestors</span>.<span class="f">take</span>(<span class="n">3</span>)</code></pre>
-
-<pre><code><span class="c">$ ruby shop.rb</span>
-ซื้อสำเร็จ เหลือ 3
-  (ปิดตะกร้า)
-ของหมด: เหลือแค่ 5 ชิ้น
-  (ปิดตะกร้า)
-ใส่ค่าผิด: qty ต้องมากกว่า 0 (ได้ 0)
-  (ปิดตะกร้า)
-[OutOfStockError, StandardError, Exception]</code></pre>
 
 <div class="table-wrap">
 <table>
-  <thead>
-    <tr><th>ช่อง</th><th>ทำงานเมื่อไหร่</th><th>เทียบกับ</th></tr>
-  </thead>
-  <tbody>
-    <tr><td><code>begin</code></td><td>เสมอ — โค้ดที่อาจพัง</td><td><code>try { }</code></td></tr>
-    <tr><td><code>rescue Xxx =&gt; e</code></td><td>เมื่อ error ที่โยนมา<strong>เป็น <code>Xxx</code> หรือลูกหลานของมัน</strong> · ไล่จากบนลงล่าง <strong>เข้าได้ช่องเดียว</strong></td><td><code>errors.As</code> ของ Go · <code>catch</code> + <code>instanceof</code> ของ TS</td></tr>
-    <tr><td><code>else</code></td><td><strong>เฉพาะตอนที่ไม่มีอะไรพังเลย</strong></td><td>TS ไม่มี · Go คือโค้ดที่อยู่ถัดจาก <code>if err != nil {…}</code></td></tr>
-    <tr><td><code>ensure</code></td><td>เสมอ ทั้งพังและไม่พัง — วิ่งเป็นอย่างสุดท้าย</td><td><code>finally</code> · <code>defer</code></td></tr>
-  </tbody>
+  <tr><th>ท่อน</th><th>แปลว่า</th></tr>
+  <tr><td><code>crash.rb:3</code></td><td>พังที่ไฟล์ <code>crash.rb</code> <strong>บรรทัด 3</strong> (นับบรรทัด comment แรกด้วย) — เปิดไฟล์ไปดูบรรทัดนี้ก่อนเลย</td></tr>
+  <tr><td><code>in 'Integer#/'</code></td><td>พังระหว่างทำ <code>/</code> (การหาร) ของตัวเลข · อ่านว่า "method <code>/</code> ของ class Integer" —
+      เครื่องหมาย <code>#</code> ในข้อความ error แค่คั่นชื่อ class กับชื่อ method · ใน Ruby แม้แต่ <code>/</code> ก็เป็น method ตัวหนึ่ง</td></tr>
+  <tr><td><code>divided by 0</code></td><td>ข้อความ — บอกเป็นภาษาคนว่าเกิดอะไร</td></tr>
+  <tr><td><code>(ZeroDivisionError)</code></td><td><strong>ชื่อชนิดของ error</strong> อยู่ในวงเล็บท้ายบรรทัดเสมอ · เอาไปใช้ตอน <code>rescue</code> ได้ (หัวข้อถัดไป)</td></tr>
+  <tr><td>บรรทัด <code>from ...</code></td><td>ทางที่ error ลอยขึ้นมา · อ่านบนลงล่าง = จากจุดพัง ย้อนไปหาคนที่เรียก ·
+      <code>'Object#split_bill'</code> คือ method ของเรา (method ที่เขียนนอก class Ruby นับเป็นของ <code>Object</code> — จำแค่นี้พอ) ·
+      <code>'&lt;main&gt;'</code> คือ "ตัวไฟล์เอง" ชั้นนอกสุด (บรรทัด 8 คือ <code>split_bill(900, 0)</code>)</td></tr>
 </table>
 </div>
 
 <p>
-  ทำไมต้องมี <code>else</code> ในเมื่อเขียนต่อท้ายใน <code>begin</code> ก็ได้?
-  เพราะ<strong>โค้ดใน <code>else</code> ไม่ได้อยู่ใต้ความคุ้มครองของ <code>rescue</code></strong> —
-  ถ้าบรรทัด "ซื้อสำเร็จ" ไปพังเอง มันจะไม่ถูกจับผิดช่องไปเป็น "ใส่ค่าผิด" ·
-  ช่วยให้ <code>begin</code> เหลือแค่บรรทัดที่<strong>ตั้งใจ</strong>จะคุ้มครองจริง ๆ
+  เคล็ดลับ: <strong>ดูวงเล็บท้ายบรรทัดแรกก่อน</strong> (พังเพราะอะไร) แล้ว<strong>ดูเลขบรรทัด</strong> (พังที่ไหน) ·
+  แค่สองอย่างนี้ก็แก้ได้เกินครึ่งแล้ว
 </p>
+
+<h2 id="sn-sec-4">4 · begin / rescue — ขึงคนรับ error</h2>
 
 <p>
-  มีเรื่องหนึ่งที่คนมาจาก Go จะสะดุด: ใน Ruby <strong>บรรทัดสุดท้ายคือค่าที่คืน</strong> (เรื่องนี้กลับมาอีกทีในข้อควรระวังหัวข้อ 7) ·
-  แล้วถ้ามี <code>else</code> กับ <code>ensure</code> ปนอยู่ บรรทัดไหนนับเป็น "บรรทัดสุดท้าย"?
+  ถ้าไม่อยากให้โปรแกรมหยุด เราต้อง "ขึงคนรับ" ไว้ตรงที่คิดว่าจะพัง
+  <br>ใส่โค้ดเสี่ยงไว้ระหว่าง <code>begin</code> กับ <code>rescue</code> แล้วเขียนว่าจะทำอะไรถ้าพัง:
 </p>
 
-<div class="predict">
-<pre><code><span class="c"># return_value.rb</span>
-<span class="k">def</span> <span class="f">save</span>
-  <span class="f">puts</span> <span class="s">"1. เริ่ม"</span>
-  result = <span class="f">Integer</span>(<span class="s">"12"</span>)
-<span class="k">rescue</span> <span class="n">ArgumentError</span>
-  <span class="f">puts</span> <span class="s">"2. rescue"</span>
-<span class="k">else</span>
-  <span class="f">puts</span> <span class="s">"3. else"</span>
-<span class="k">ensure</span>
-  <span class="f">puts</span> <span class="s">"4. ensure"</span>
-<span class="k">end</span>
-<span class="f">p</span> save</code></pre>
-  <p class="ask">พิมพ์อะไรออกมาบ้าง กี่บรรทัด แล้ว <code>p save</code> บรรทัดสุดท้ายได้ <code>12</code> หรือเปล่า?</p>
-  <button class="reveal">เฉลย</button>
-  <div class="answer">
-<pre><code><span class="c">$ ruby return_value.rb</span>
-1. เริ่ม
-3. else
-4. ensure
-nil</code></pre>
-    <p>
-      <code>Integer("12")</code> แปลงได้ ไม่พัง → ข้าม <code>rescue</code> → เข้า <code>else</code> → จบด้วย <code>ensure</code> ·
-      <strong>ค่าที่คืนไม่ใช่ <code>12</code> แต่เป็น <code>nil</code></strong>
-    </p>
-    <p style="margin-bottom:0">
-      เพราะพอมีช่อง <code>else</code> <strong>ค่าที่คืนจะมาจากบรรทัดสุดท้ายของ <code>else</code></strong>
-      ซึ่งคือ <code>puts</code> (และ <code>puts</code> คืน <code>nil</code> เสมอ) ·
-      ส่วน <code>ensure</code> <strong>ไม่เคยเป็นค่าที่คืน</strong> — ผมลองแยกอีกไฟล์ให้ method ที่มีแค่ <code>ensure</code>
-      ใส่ <code>99</code> ไว้บรรทัดท้ายของ <code>ensure</code> ผลที่ได้ยังเป็นค่าจากช่องหลัก (<code>12</code>) ไม่ใช่ <code>99</code>
-    </p>
-  </div>
-</div>
-
-<div class="quiz" data-answer="1">
-  <p class="q">โค้ดนี้พิมพ์อะไร?</p>
-<pre><code><span class="k">begin</span>
-  <span class="k">raise</span> <span class="n">ArgumentError</span>, <span class="s">"x"</span>
-<span class="k">rescue</span> =&gt; e
-  <span class="f">puts</span> <span class="s">"rescue =&gt; e จับก่อน: #{e.class}"</span>
-<span class="k">rescue</span> <span class="n">ArgumentError</span> =&gt; e
-  <span class="f">puts</span> <span class="s">"ไม่มีวันมาถึงตรงนี้"</span>
-<span class="k">end</span></code></pre>
-  <div class="opts">
-    <button class="opt">พิมพ์ "ไม่มีวันมาถึงตรงนี้" เพราะ Ruby เลือกช่องที่ระบุ class ตรงที่สุด</button>
-    <button class="opt">พิมพ์ "rescue =&gt; e จับก่อน: ArgumentError" เพราะไล่จากบนลงล่างแล้วเข้าช่องแรกที่ตรง</button>
-    <button class="opt">พิมพ์ทั้งสองบรรทัด เพราะ error ตรงกับทั้งสองช่อง เลยเข้าทีละช่องตามลำดับ</button>
-    <button class="opt">ไม่พิมพ์อะไร Ruby ไม่ยอมรัน เพราะช่องล่างไม่มีวันถูกใช้ จึงเป็น SyntaxError</button>
-  </div>
-  <div class="explain">
-    <p>
-      ตัวเลือกที่ 2 ถูก — รันจริงได้ <code>rescue =&gt; e จับก่อน: ArgumentError</code> บรรทัดเดียว ·
-      เอกสาร Ruby เขียนไว้ตรง ๆ ว่า exception จะถูกเทียบกับช่อง <code>rescue</code> <strong>จากบนลงล่าง และเข้าได้ครั้งเดียว</strong>
-      · <code>ArgumentError</code> เป็นลูกของ <code>StandardError</code> ช่องแรกเลยรับไปก่อน
-    </p>
-    <p>
-      ตัวเลือกที่ 1 ผิดเพราะ Ruby <strong>ไม่ได้หา "ช่องที่ตรงที่สุด"</strong> หาแค่ "ช่องแรกที่ตรง" ·
-      ตัวเลือกที่ 3 ผิดเพราะเข้าได้ช่องเดียว ไม่ไหลต่อเหมือน <code>case</code> ของบางภาษา ·
-      ตัวเลือกที่ 4 ผิดเพราะ Ruby รันได้ปกติ — ผมรันด้วย <code>ruby -w</code> (เปิด warning) ก็ไม่มีคำเตือนสักบรรทัด
-    </p>
-    <p style="margin-bottom:0">
-      <strong>จุดที่ต้องจำ:</strong> เรียง <code>rescue</code> จาก<strong>เฉพาะเจาะจง → กว้าง</strong> เสมอ ·
-      ถ้าเอาช่องกว้างขึ้นก่อน ช่องเฉพาะข้างล่างจะกลายเป็นโค้ดตายที่ไม่มีใครเตือน
-    </p>
-  </div>
-</div>
-
-<h2 id="sn-sec-3">3 · <code>rescue =&gt; e</code> ไม่ได้จับ "ทุกอย่าง"</h2>
-
-<p>
-  <code>rescue =&gt; e</code> ที่ไม่ระบุ class หน้าตาเหมือน <code>catch (e)</code> ของ TS ที่รับทุกอย่าง ·
-  แต่ Ruby ซ่อนกติกาไว้ข้อหนึ่ง: <strong>ถ้าไม่ระบุ class มันจะรับแค่ <code>StandardError</code> กับลูกหลาน</strong>
-  · ลองทายดูก่อนว่าโค้ดนี้จะเป็นยังไง
-</p>
-
-<div class="predict">
-<pre><code><span class="c"># predict.rb</span>
-<span class="k">def</span> <span class="f">load_report</span>
-  <span class="k">raise</span> <span class="n">NotImplementedError</span>, <span class="s">"ยังไม่ได้เขียน"</span>
+<pre><code><span class="c"># rescue1.rb</span>
+<span class="k">def</span> <span class="f">split_bill</span>(total, people)
+  total / people
 <span class="k">end</span>
 
 <span class="k">begin</span>
-  load_report
-<span class="k">rescue</span> =&gt; e
-  <span class="f">puts</span> <span class="s">"จับได้: #{e.class}"</span>
+  <span class="f">puts</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="n">0</span>)
+<span class="k">rescue</span>
+  <span class="f">puts</span> <span class="s">"แบ่งบิลไม่ได้"</span>
+<span class="k">end</span>
+<span class="f">puts</span> <span class="s">"คิดเงินเสร็จ"</span></code></pre>
+
+<pre><code>$ ruby rescue1.rb
+แบ่งบิลไม่ได้
+คิดเงินเสร็จ</code></pre>
+
+<ul>
+  <li><code>begin</code> — "เริ่มเขตคุ้มครอง" · โค้ดข้างในถ้าพัง จะไม่หลุดออกไปไกล</li>
+  <li><code>rescue</code> — "ถ้าในเขตพัง ให้กระโดดมาทำตรงนี้แทน" · บรรทัด <code>puts split_bill(...)</code> พังกลางทาง เลยไม่ได้พิมพ์อะไร</li>
+  <li><code>end</code> — ปิดเขต · จากนั้นโปรแกรมเดินต่อปกติ <strong>"คิดเงินเสร็จ" จึงถูกพิมพ์</strong></li>
+</ul>
+
+<p>
+  เทียบ Go: Go <strong>ไม่มีคู่คำนี้</strong> — ทุกจุดที่อาจพังต้องเขียน <code>if err != nil { ... }</code> ต่อท้ายทีละจุด ·
+  ใน Ruby เขียน <code>begin ... rescue</code> ครอบทีเดียว คลุมได้หลายบรรทัด
+  <br>ถ้าเคยเขียน TypeScript: <code>begin</code> ≈ <code>try</code> · <code>rescue</code> ≈ <code>catch</code> — คำต่างกันแต่หน้าที่เดียวกัน
+</p>
+
+<h3 id="sn-sub-1">รับเฉพาะชนิดที่อยากรับ</h3>
+
+<p>
+  ในชีวิตจริง error มีหลายแบบ และแต่ละแบบควรจัดการต่างกัน ·
+  Ruby ให้เขียน<strong>ชื่อชนิด</strong>ไว้หลัง <code>rescue</code> ได้ แล้วเขียนกี่ช่องก็ได้
+  <br>ตัวอย่างนี้จำนวนคนมาเป็น<strong>ข้อความ</strong> (เหมือนที่ผู้ใช้พิมพ์มาในฟอร์ม) จึงพังได้สองแบบ:
+</p>
+
+<pre><code><span class="c"># rescue2.rb — แยกรับทีละชนิด</span>
+<span class="k">def</span> <span class="f">split_bill</span>(total, people_text)
+  people = <span class="f">Integer</span>(people_text)   <span class="c"># แปลงข้อความเป็นตัวเลข</span>
+  total / people
+<span class="k">end</span>
+
+[<span class="s">"3"</span>, <span class="s">"0"</span>, <span class="s">"สาม"</span>].<span class="f">each</span> <span class="k">do</span> |text|
+  <span class="k">begin</span>
+    <span class="f">puts</span> <span class="s">"คนละ #{split_bill(900, text)} บาท"</span>
+  <span class="k">rescue</span> <span class="n">ZeroDivisionError</span>
+    <span class="f">puts</span> <span class="s">"จำนวนคนเป็น 0 ไม่ได้"</span>
+  <span class="k">rescue</span> <span class="n">ArgumentError</span> =&gt; e
+    <span class="f">puts</span> <span class="s">"อ่านจำนวนคนไม่ออก: #{e.message}"</span>
+  <span class="k">ensure</span>
+    <span class="f">puts</span> <span class="s">"  (ปิดบิล)"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>Integer(people_text)</code> — แปลงข้อความเป็นตัวเลข · หน้าตาเหมือนชื่อ class เพราะขึ้นต้นตัวใหญ่ แต่จริง ๆ เป็น method ธรรมดาที่ Ruby มีให้ ·
+      <code>"3"</code> ได้ 3 · แต่ <code>"สาม"</code> แปลงไม่ได้ จะ<strong>โยน <code>ArgumentError</code></strong> ("ค่าที่ส่งมาใช้ไม่ได้" — เคยเจอใน <a href="./0093-ruby-blocks-and-methods.html">บท 93</a>)</li>
+  <li><code>[...].each do |text| ... end</code> — วนทีละตัวในรายการ ตัวปัจจุบันชื่อ <code>text</code> (ทวน <a href="./0093-ruby-blocks-and-methods.html">บท 93</a>)</li>
+  <li><code>rescue ZeroDivisionError</code> — ช่องนี้<strong>รับเฉพาะ</strong>เรื่องหารด้วยศูนย์</li>
+  <li><code>rescue ArgumentError =&gt; e</code> — รับเฉพาะ ArgumentError · ท่อน <code>=&gt; e</code> แปลว่า
+      <strong>"เอา error ก้อนนั้นมาใส่ตัวแปรชื่อ <code>e</code>"</strong> จะได้เรียก <code>e.message</code> (ข้อความ) มาพิมพ์ได้ · ตั้งชื่ออื่นแทน <code>e</code> ก็ได้</li>
+  <li><code>ensure</code> — ทำเสมอ ไม่ว่าจะพังหรือไม่ (ละเอียดในหัวข้อ 6)</li>
+</ul>
+
+<pre><code>$ ruby rescue2.rb
+คนละ 300 บาท
+  (ปิดบิล)
+จำนวนคนเป็น 0 ไม่ได้
+  (ปิดบิล)
+อ่านจำนวนคนไม่ออก: invalid value for Integer(): "สาม"
+  (ปิดบิล)</code></pre>
+
+<p>
+  แต่ละรอบไปตกคนละช่อง: <code>"3"</code> ไม่พัง · <code>"0"</code> ตกช่อง ZeroDivisionError · <code>"สาม"</code> ตกช่อง ArgumentError
+  <br>Ruby <strong>ไล่ช่อง rescue จากบนลงล่าง แล้วเข้าช่องแรกที่ชนิดตรง</strong> — เข้าได้ช่องเดียว
+</p>
+
+<p>แล้วถ้า error ที่เกิด<strong>ไม่ตรงกับช่องไหนเลย</strong>ล่ะ?</p>
+
+<pre><code><span class="c"># only_one.rb — รับไว้แค่ชนิดเดียว</span>
+<span class="k">begin</span>
+  <span class="f">puts</span> <span class="n">900</span> / <span class="n">0</span>
+<span class="k">rescue</span> <span class="n">ArgumentError</span>
+  <span class="f">puts</span> <span class="s">"รับ ArgumentError ไว้"</span>
 <span class="k">end</span>
 <span class="f">puts</span> <span class="s">"ไปต่อ"</span></code></pre>
-  <p class="ask">จะพิมพ์ "จับได้: NotImplementedError" แล้วตามด้วย "ไปต่อ" ใช่ไหม?</p>
-  <button class="reveal">เฉลย</button>
-  <div class="answer">
-    <p><strong>ไม่ใช่ — โปรแกรมพังทั้งตัว</strong> ไม่พิมพ์ทั้ง "จับได้" และ "ไปต่อ":</p>
-<pre><code><span class="c">$ ruby predict.rb</span>
-predict.rb:3:in 'Object#load_report': ยังไม่ได้เขียน (NotImplementedError)
-	from predict.rb:7:in '&lt;main&gt;'
-<span class="c">$ echo $?</span>
-1</code></pre>
-    <p style="margin-bottom:0">
-      เพราะ <code>NotImplementedError</code> <strong>ไม่ได้เป็นลูกของ <code>StandardError</code></strong> —
-      ดูผังครอบครัวข้างล่าง · ชื่อมันฟังดูธรรมดามาก หลายคนใช้ <code>raise NotImplementedError</code>
-      เป็น "ที่คั่นไว้ก่อน" แล้วงงว่าทำไม <code>rescue</code> ไม่ทำงาน
-    </p>
-  </div>
-</div>
+
+<pre><code>$ ruby only_one.rb
+only_one.rb:3:in 'Integer#/': divided by 0 (ZeroDivisionError)
+	from only_one.rb:3:in '&lt;main&gt;'</code></pre>
 
 <p>
-  ผมเขียนสคริปต์สั้น ๆ ไล่ <code>.superclass</code> (class แม่) ขึ้นไปจนถึง <code>Exception</code> ให้ดูว่าแต่ละตัวอยู่บ้านไหน:
-</p>
-
-<pre><code><span class="c"># chain.rb</span>
-<span class="k">def</span> <span class="f">chain</span>(klass)
-  list = [klass]
-  list &lt;&lt; list.<span class="f">last</span>.<span class="f">superclass</span> <span class="k">while</span> list.<span class="f">last</span> != <span class="n">Exception</span>
-  list.<span class="f">join</span>(<span class="s">" &lt; "</span>)
-<span class="k">end</span>
-
-<span class="f">puts</span> chain(<span class="n">ArgumentError</span>)
-<span class="f">puts</span> chain(<span class="n">ZeroDivisionError</span>)
-<span class="f">puts</span> chain(<span class="n">NoMethodError</span>)
-<span class="f">puts</span> chain(<span class="n">NotImplementedError</span>)
-<span class="f">puts</span> chain(<span class="n">Interrupt</span>)
-<span class="f">puts</span> chain(<span class="n">SystemExit</span>)</code></pre>
-
-<pre><code><span class="c">$ ruby chain.rb</span>
-ArgumentError &lt; StandardError &lt; Exception
-ZeroDivisionError &lt; StandardError &lt; Exception
-NoMethodError &lt; NameError &lt; StandardError &lt; Exception
-NotImplementedError &lt; ScriptError &lt; Exception
-Interrupt &lt; SignalException &lt; Exception
-SystemExit &lt; Exception</code></pre>
-
-<p>
-  สามบรรทัดแรกผ่าน <code>StandardError</code> → <code>rescue =&gt; e</code> รับได้ ·
-  สามบรรทัดล่าง<strong>ไม่ผ่าน</strong> → รับไม่ได้ ·
-  <code>Interrupt</code> คือตอนคุณกด <kbd>Ctrl</kbd>+<kbd>C</kbd> และ <code>SystemExit</code> คือตอนเรียก <code>exit</code>
-  — Ruby ตั้งใจแยกไว้ เพื่อให้ <strong>"สั่งหยุดโปรแกรม" ไม่ถูกกลืนโดย <code>rescue</code> ธรรมดา</strong>
-</p>
-
-<p>แล้วถ้าดื้อเขียน <code>rescue Exception =&gt; e</code> ให้รับทุกอย่างจริง ๆ ล่ะ?</p>
-
-<pre><code><span class="c"># catch_all.rb</span>
-<span class="k">begin</span>
-  <span class="k">raise</span> <span class="n">NotImplementedError</span>, <span class="s">"ยังไม่ได้เขียน"</span>
-<span class="k">rescue</span> <span class="n">Exception</span> =&gt; e
-  <span class="f">puts</span> <span class="s">"rescue Exception จับได้: #{e.class}"</span>
-<span class="k">end</span>
-
-<span class="k">begin</span>
-  <span class="f">exit</span> <span class="n">1</span>
-<span class="k">rescue</span> <span class="n">Exception</span> =&gt; e
-  <span class="f">puts</span> <span class="s">"แม้แต่ exit ก็โดนจับ: #{e.class}"</span>
-<span class="k">end</span>
-<span class="f">puts</span> <span class="s">"โปรแกรมยังไม่ออก!"</span></code></pre>
-
-<pre><code><span class="c">$ ruby catch_all.rb; echo "exit code = $?"</span>
-rescue Exception จับได้: NotImplementedError
-แม้แต่ exit ก็โดนจับ: SystemExit
-โปรแกรมยังไม่ออก!
-exit code = 0</code></pre>
-
-<p>
-  <strong>สั่ง <code>exit 1</code> แล้วโปรแกรมไม่ยอมออก แถม exit code กลายเป็น 0</strong> —
-  ใน server จริง นี่คือ process ที่ปิดไม่ลง หรือสคริปต์ที่พังแต่รายงานว่าสำเร็จ ·
-  เพราะฉะนั้นกฎของทีม Ruby แทบทุกทีมคือ <strong>ห้าม <code>rescue Exception</code></strong>
-  · error ของเราเองให้สืบทอดจาก <code>StandardError</code> เสมอ
+  ช่อง rescue รอแค่ ArgumentError · ZeroDivisionError <strong>วิ่งผ่านหน้าไปเฉย ๆ</strong> แล้วไม่มีใครรับต่อ โปรแกรมเลยพัง ·
+  ไม่พิมพ์ทั้ง "รับ ArgumentError ไว้" และ "ไปต่อ"
 </p>
 
 <div class="analogy">
-  <span class="label">🪤 เทียบให้เห็นภาพ — ตาข่ายนิรภัยใต้นั่งร้าน</span>
+  <span class="label">📋 เทียบให้เห็นภาพ — ป้ายแผนรับมือที่ติดผนังครัว</span>
   <p>
-    <code>rescue =&gt; e</code> เหมือน<strong>ตาข่ายนิรภัยที่ขึงไว้ใต้นั่งร้าน</strong> —
-    ออกแบบมารับ "ของที่ร่วงลงมาระหว่างทำงาน" (<code>StandardError</code>): เครื่องมือหล่น อิฐหลุด คนพลาด ·
-    แต่<strong>ตั้งใจเว้นช่องไว้</strong>ให้ "คำสั่งเลิกงาน" (<code>exit</code>) กับ "เสียงไซเรนฉุกเฉิน" (<kbd>Ctrl</kbd>+<kbd>C</kbd>) ผ่านลงไปได้
-    · ถ้าคุณเอาผ้าใบปิดทุกช่อง (<code>rescue Exception</code>) ไซเรนดังแค่ไหนก็ไม่มีใครได้ยิน
+    ช่อง <code>rescue</code> แต่ละช่องเหมือน<strong>ป้ายแผนรับมือ</strong>ที่ติดผนังครัวไว้:
+    "ถ้าแก๊สหมด → โทรร้านแก๊ส" · "ถ้าลูกค้าแพ้อาหาร → เรียกผู้จัดการ"
+    <br>เกิดเรื่องขึ้น พนักงานอ่านป้ายจากบนลงล่าง เจอป้ายที่ตรงก็ทำตามป้ายนั้นแล้วจบ ·
+    เรื่องที่ไม่มีป้ายไหนเขียนไว้ ก็ต้องส่งต่อขึ้นไปให้ชั้นบน
   </p>
-  <p style="margin-bottom:0">
-    <strong>ที่ไม่เหมือนกัน:</strong> ตาข่ายจริงเห็นด้วยตาว่าช่องตรงไหนเปิด ·
-    แต่ใน Ruby <strong>คุณดูจากชื่อไม่ออกเลย</strong> — <code>NotImplementedError</code> ชื่อลงท้ายด้วย "Error"
-    เหมือนพวก <code>ArgumentError</code> ทุกอย่าง แต่ดันอยู่บ้าน <code>ScriptError</code> ·
-    วิธีเดียวที่แน่ใจคือ <strong>เช็คด้วย <code>.ancestors</code> หรือ <code>.superclass</code></strong> อย่างที่ทำข้างบน
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงใช้วิจารณญาณได้ เจอเรื่องคล้าย ๆ ก็ประยุกต์เอา ·
+    แต่ Ruby ดู<strong>ชื่อชนิดอย่างเดียว</strong> ไม่ตรงคือไม่รับ ·
+    และ <code>rescue</code> เปล่า ๆ ที่ไม่เขียนชนิด ดูเหมือน "รับทุกเรื่อง" แต่จริง ๆ รับแค่ "เรื่องทั่วไป" (หัวข้อ 5 จะเล่า)
+  </p>
+</div>
+
+<h2 id="sn-sec-5">5 · raise — โยน error เอง และสร้างชนิดของตัวเอง</h2>
+
+<p>
+  บางทีเราอยากเป็นคน<strong>โยนเอง</strong> เช่น ลูกค้าสั่งเมนูที่หมดแล้ว — โค้ดไม่ได้พังทางเทคนิค แต่ทำต่อไม่ได้ทางธุรกิจ
+  <br>นึกถึงกริ่งไฟไหม้ในหัวข้อ 2: <code>raise</code> คือ<strong>เราเดินไปกดกริ่งเอง</strong>เมื่อเห็นปัญหา ·
+  ใช้ <code>raise</code> และสร้าง<strong>ชนิด error ของเราเอง</strong>ได้ในสองบรรทัด:
+</p>
+
+<pre><code><span class="c"># raise.rb — โยน error เอง</span>
+<span class="k">class</span> <span class="n">OutOfStockError</span> &lt; <span class="n">StandardError</span>
+<span class="k">end</span>
+
+<span class="k">def</span> <span class="f">order</span>(menu, stock)
+  <span class="k">raise</span> <span class="n">OutOfStockError</span>, <span class="s">"#{menu} หมดแล้ว"</span> <span class="k">if</span> stock == <span class="n">0</span>
+  <span class="s">"ได้ #{menu} 1 จาน"</span>
+<span class="k">end</span>
+
+<span class="f">puts</span> <span class="f">order</span>(<span class="s">"ข้าวผัด"</span>, <span class="n">5</span>)
+<span class="k">begin</span>
+  <span class="f">puts</span> <span class="f">order</span>(<span class="s">"ต้มยำ"</span>, <span class="n">0</span>)
+<span class="k">rescue</span> <span class="n">OutOfStockError</span> =&gt; e
+  <span class="f">puts</span> <span class="s">"ขอโทษครับ: #{e.message}"</span>
+<span class="k">end</span></code></pre>
+
+<pre><code>$ ruby raise.rb
+ได้ ข้าวผัด 1 จาน
+ขอโทษครับ: ต้มยำ หมดแล้ว</code></pre>
+
+<ul>
+  <li><code>class OutOfStockError &lt; StandardError</code> + <code>end</code> — สร้าง<strong>ชนิด error ใหม่</strong> ชื่อ OutOfStockError
+      โดยสืบทอดจาก <code>StandardError</code> (แม่ของ error "ทั่วไป" ใน Ruby) · ข้างในว่างได้ เพราะได้ของทุกอย่างจากแม่มาแล้ว</li>
+  <li><code>raise ชนิด, "ข้อความ"</code> — โยน error ชนิดนั้นออกไป พร้อมข้อความ</li>
+  <li><code>... if stock == 0</code> — Ruby ให้เขียน <code>if</code> ไว้<strong>ท้ายบรรทัด</strong>ได้ อ่านว่า "ทำบรรทัดนี้ ถ้า stock เป็น 0"</li>
+  <li>พอ <code>raise</code> แล้ว method หยุดทันที — บรรทัด <code>"ได้ ... 1 จาน"</code> ไม่ถูกรันในรอบต้มยำ</li>
+  <li><code>rescue OutOfStockError =&gt; e</code> — รับชนิดที่เราเพิ่งสร้าง แบบเดียวกับหัวข้อ 4</li>
+</ul>
+
+<p>
+  เพราะ error ทุกชนิดคือ class ที่สืบทอดกันเป็นตระกูล (ทวน <code>&lt;</code> จาก <a href="./0095-ruby-class-and-module.html">บท 95</a>) ·
+  <code>rescue</code> ชนิดไหน ก็<strong>รับลูกหลานของชนิดนั้นด้วย</strong> — เช่น <code>rescue StandardError</code> รับ OutOfStockError ได้ เพราะมันเป็นลูกของ StandardError
+</p>
+
+<p>
+  เทียบ Go: เหมือน <code>errors.New("...")</code> หรือสร้าง struct ที่มี method <code>Error()</code> ·
+  ต่างกันที่ Go <em>คืน</em> error ออกไป ส่วน Ruby <em>โยน</em> มันออกไป
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ error ของเราเองให้ <code>&lt; StandardError</code> เสมอ</span>
+  <p>
+    <code>rescue</code> แบบไม่เขียนชนิด (และ <code>rescue =&gt; e</code>) <strong>รับเฉพาะตระกูล StandardError</strong> ·
+    ส่วน <code>Exception</code> คือแม่ใหญ่สุดที่ครอบเรื่องระดับระบบด้วย (เช่นการกด Ctrl+C สั่งหยุดโปรแกรม) จึงตั้งใจไม่ให้ rescue ธรรมดารับ ·
+    ถ้าเผลอให้ error ของเราสืบทอดจาก <code>Exception</code>:
+  </p>
+<pre><code><span class="c"># wrong_parent.rb — สืบทอดผิดแม่</span>
+<span class="k">class</span> <span class="n">PaymentError</span> &lt; <span class="n">Exception</span>
+<span class="k">end</span>
+
+<span class="k">begin</span>
+  <span class="k">raise</span> <span class="n">PaymentError</span>, <span class="s">"บัตรถูกปฏิเสธ"</span>
+<span class="k">rescue</span> =&gt; e
+  <span class="f">puts</span> <span class="s">"รับไว้แล้ว"</span>
+<span class="k">end</span></code></pre>
+<pre><code>$ ruby wrong_parent.rb
+wrong_parent.rb:6:in '&lt;main&gt;': บัตรถูกปฏิเสธ (PaymentError)</code></pre>
+  <p>ไม่ได้พิมพ์ "รับไว้แล้ว" — <code>rescue =&gt; e</code> ปล่อยผ่าน โปรแกรมพัง · แก้แค่เปลี่ยน <code>Exception</code> เป็น <code>StandardError</code></p>
+</div>
+
+<h3 id="sn-sub-2">ท่าย่อ: rescue ห้อยท้าย method (ไม่ต้องมี begin)</h3>
+
+<p>
+  ถ้าอยากคุ้มครอง<strong>ทั้ง method</strong> ไม่ต้องเขียน <code>begin</code> — เอา <code>rescue</code> ไปห้อยก่อน <code>end</code> ของ method ได้เลย ·
+  โค้ด Rails ใช้ท่านี้บ่อยมาก จำหน้าตาไว้:
+</p>
+
+<pre><code><span class="c"># method_rescue.rb — rescue ห้อยท้าย method (ไม่ต้องมี begin)</span>
+<span class="k">def</span> <span class="f">parse_people</span>(text)
+  <span class="f">Integer</span>(text)
+<span class="k">rescue</span> <span class="n">ArgumentError</span>
+  <span class="f">puts</span> <span class="s">"อ่านจำนวนคนไม่ออก ขอนับเป็น 1 คน"</span>
+  <span class="n">1</span>
+<span class="k">end</span>
+
+<span class="f">p</span> <span class="f">parse_people</span>(<span class="s">"4"</span>)
+<span class="f">p</span> <span class="f">parse_people</span>(<span class="s">"four"</span>)</code></pre>
+
+<pre><code>$ ruby method_rescue.rb
+4
+อ่านจำนวนคนไม่ออก ขอนับเป็น 1 คน
+1</code></pre>
+
+<p>
+  เขตคุ้มครองคือ "ทั้งตัว method" · ถ้าพัง ค่าบรรทัดสุดท้ายของช่อง rescue (<code>1</code>) จะกลายเป็นค่าที่ method คืน ·
+  (<code>p</code> คือพิมพ์ค่าออกมาแบบเห็นชนิดชัด ๆ — ทวน <a href="./0093-ruby-blocks-and-methods.html">บท 93</a>)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของการรับ error</span>
+  <dl>
+    <dt>begin / rescue / end</dt>
+    <dd>คู่คำที่ขึงเขตคุ้มครอง · ≈ <code>try</code> / <code>catch</code> ของ TypeScript ·
+        <strong>พิมพ์บอก AI ได้ว่า “wrap only the risky line in begin/rescue and rescue ZeroDivisionError only”</strong></dd>
+    <dt><code>rescue ชนิด =&gt; e</code></dt>
+    <dd>รับเฉพาะ error ชนิดนั้น แล้วเก็บตัว error ไว้ในตัวแปร <code>e</code> · ใช้ <code>e.message</code> ดูข้อความ · <code>e.class</code> ดูชนิด ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ควร rescue ชนิดไหน ให้แคบที่สุดเท่าที่ได้”</strong></dd>
+    <dt>StandardError · custom error</dt>
+    <dd>StandardError คือแม่ของ error ทั่วไป · custom error คือชนิดที่เราสร้างเองด้วย <code>class XxxError &lt; StandardError</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า “define a custom error class that inherits from StandardError”</strong></dd>
+    <dt>method-level rescue</dt>
+    <dd>เขียน <code>rescue</code> ห้อยท้าย method โดยไม่มี <code>begin</code> (คู่มือ Ruby เรียกว่า <em>begin-less exception handler</em>) ·
+        <strong>ถาม senior ได้ว่า “ทีมนี้ชอบ rescue ท้าย method หรือ begin ครอบเฉพาะบรรทัด”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · ensure — ทำเสมอ ไม่ว่าจะพังหรือไม่</h2>
+
+<p>
+  บางงานต้องทำ<strong>ทุกครั้ง</strong> ไม่ว่าทางจะราบรื่นหรือพังกลางทาง เช่น ปิดเตา ปิดไฟล์ ปิดการเชื่อมต่อ ·
+  ช่อง <code>ensure</code> มีไว้สำหรับงานแบบนี้ — ถ้าเคยใช้ <code>defer</code> ของ Go
+  (<a href="../../day-3/lessons/0008-defer.html">บทเรียน 08</a>) มันคือความคิดเดียวกัน: "ออกทางไหนก็ต้องผ่านตรงนี้"
+</p>
+
+<div class="analogy">
+  <span class="label">🔥 เทียบให้เห็นภาพ — ป้าย "ออกจากครัวต้องปิดแก๊ส"</span>
+  <p>
+    ประตูครัวมีป้ายติดไว้: <strong>"ใครออกจากครัว ต้องปิดแก๊สก่อนเสมอ"</strong> ·
+    ทำอาหารเสร็จเรียบร้อยก็ต้องปิด · ทำพังกลางทางแล้ววิ่งไปตามผู้จัดการก็ต้องปิด — ออกทางไหนก็ต้องผ่านป้ายนี้
+    <br><code>ensure</code> คือป้ายนั้น · <code>rescue</code> คือ "ถ้ามีปัญหาให้ทำอะไร" ส่วน <code>ensure</code> คือ "ไม่ว่ายังไงก็ทำ"
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงอาจลืมอ่านป้าย แต่ Ruby <strong>ไม่เคยลืม</strong> รันช่อง ensure ให้ทุกครั้ง ·
+    และ ensure ไม่ได้ "แก้" ปัญหา — ถ้าไม่มี rescue รับ error ก็ยังลอยต่อขึ้นไปหลังปิดแก๊สเสร็จ
   </p>
 </div>
 
 <div class="jargon">
-  <span class="label">🗣 ศัพท์ของบ้าน Exception</span>
+  <span class="label">🗣 ศัพท์ของ ensure</span>
   <dl>
-    <dt>StandardError</dt>
-    <dd>แม่ของ error "ทั่วไป" เกือบทั้งหมดที่โปรแกรมควรรับได้ — และเป็นสิ่งที่ <code>rescue</code> แบบไม่ระบุ class รับ ·
-        error ที่เราสร้างเองต้อง <code>&lt; StandardError</code> ·
-        <strong>พิมพ์บอก AI ได้ว่า “define a custom error class that inherits from StandardError, not Exception”</strong></dd>
-    <dt>exception hierarchy</dt>
-    <dd>ผังครอบครัวของ class error ทั้งหมด · <code>rescue Xxx</code> รับทั้ง <code>Xxx</code> และ<strong>ลูกหลาน</strong>ของมัน ·
-        <strong>ถาม senior ได้ว่า “ทีมนี้มี base error class ของตัวเองไหม เช่น <code>AppError &lt; StandardError</code> แล้วทุกตัวสืบจากมัน”</strong>
-        — ท่านี้ทำให้ <code>rescue AppError</code> รับ error ของแอปทั้งหมดได้ในบรรทัดเดียว</dd>
-    <dt>rescue Exception (anti-pattern)</dt>
-    <dd>การรับตั้งแต่รากของผัง ซึ่งกลืน <code>SystemExit</code> กับ <code>Interrupt</code> ไปด้วย ·
-        ถ้าเห็นในโค้ดรีวิว <strong>ทักได้เลยว่า “ตรงนี้ควรเป็น <code>rescue StandardError</code> หรือระบุ class ให้แคบกว่านี้ไหมครับ”</strong></dd>
+    <dt>ensure · cleanup</dt>
+    <dd><em>ensure</em> คือช่องที่รันเสมอ · งานในช่องนี้เรียกรวม ๆ ว่า <em>cleanup</em> (เก็บกวาด เช่นปิดไฟล์ ปิดการเชื่อมต่อ) ≈ <code>defer</code> ของ Go · ≈ <code>finally</code> ของ TypeScript ·
+        <strong>พิมพ์บอก AI ได้ว่า “put the cleanup in an ensure block so it runs even if this raises”</strong></dd>
   </dl>
 </div>
 
-<div class="quiz" data-answer="2">
-  <p class="q">ทีมคุณเขียน error ของตัวเองแบบนี้ แล้วรันโค้ดข้างล่าง ผลคืออะไร?</p>
-<pre><code><span class="k">class</span> <span class="n">PaymentError</span> &lt; <span class="n">Exception</span>
+<div class="predict">
+<pre><code><span class="c"># predict.rb</span>
+<span class="k">def</span> <span class="f">cook</span>
+  <span class="f">puts</span> <span class="s">"1. ตั้งกระทะ"</span>
+  <span class="k">raise</span> <span class="s">"แก๊สหมด"</span>
+  <span class="f">puts</span> <span class="s">"2. ผัดข้าว"</span>
 <span class="k">end</span>
 
 <span class="k">begin</span>
-  <span class="k">raise</span> <span class="n">PaymentError</span>, <span class="s">"card declined"</span>
+  <span class="f">cook</span>
+  <span class="f">puts</span> <span class="s">"3. เสิร์ฟ"</span>
 <span class="k">rescue</span> =&gt; e
-  <span class="f">puts</span> <span class="s">"จับได้"</span>
-<span class="k">end</span>
-<span class="f">puts</span> <span class="s">"ไปต่อ"</span></code></pre>
-  <div class="opts">
-    <button class="opt">พิมพ์ "จับได้" แล้ว "ไปต่อ" เพราะ <code>rescue =&gt; e</code> รับได้ทุกชนิด</button>
-    <button class="opt">พิมพ์ "ไปต่อ" อย่างเดียว เพราะ error ถูกกลืนหายไปเงียบ ๆ</button>
-    <button class="opt">โปรแกรมพังด้วย <code>card declined (PaymentError)</code> ไม่พิมพ์อะไรเลย</button>
-    <button class="opt">Ruby ไม่ยอมให้สืบทอดจาก <code>Exception</code> ตรง ๆ จึงพังตอนประกาศ class</button>
-  </div>
-  <div class="explain">
-    <p>ตัวเลือกที่ 3 ถูก — รันจริงได้แบบนี้:</p>
-<pre><code>payment.rb:5:in '&lt;main&gt;': card declined (PaymentError)</code></pre>
-    <p>
-      <code>PaymentError</code> สืบจาก <code>Exception</code> ตรง ๆ <strong>ข้าม <code>StandardError</code> ไป</strong>
-      · <code>rescue =&gt; e</code> รับแค่ <code>StandardError</code> เลยปล่อยผ่าน แล้วไม่มีใครรับต่อ โปรแกรมจึงจบด้วย exit code 1
-    </p>
-    <p>
-      ตัวเลือกที่ 1 คือความเข้าใจผิดหลักของหัวข้อนี้ ·
-      ตัวเลือกที่ 2 ผิดเพราะ Ruby <strong>ไม่เคยกลืน error เงียบ ๆ</strong> — ไม่มีคนรับคือพังดัง ๆ ·
-      ตัวเลือกที่ 4 ผิดเพราะการประกาศ class ผ่านไปได้ปกติ (Ruby ยอมให้ทำ แค่ไม่ควรทำ)
-    </p>
-    <p style="margin-bottom:0">
-      <strong>จุดที่ต้องจำ:</strong> error ของเราเอง <strong><code>&lt; StandardError</code> เสมอ</strong> ไม่ใช่ <code>&lt; Exception</code>
-    </p>
-  </div>
-</div>
-
-<h2 id="sn-sec-4">4 · <code>rescue</code> ระดับ method — ท่าที่จะเห็นใน Rails ทุกวัน</h2>
-
-<p>
-  ถ้า <code>begin</code> ครอบทั้งตัว method อยู่แล้ว Ruby ให้<strong>ตัด <code>begin</code> กับ <code>end</code> ทิ้งได้</strong>
-  แล้วเขียน <code>rescue</code> / <code>ensure</code> ห้อยท้าย method ตรง ๆ ·
-  โค้ดใน Rails เขียนท่านี้แทบทั้งหมด เพราะสั้นกว่าและอ่านง่ายกว่า:
-</p>
-
-<pre><code><span class="c"># parse_age.rb</span>
-<span class="k">def</span> <span class="f">parse_age</span>(text)
-  <span class="f">Integer</span>(text)
-<span class="k">rescue</span> <span class="n">ArgumentError</span> =&gt; e
-  <span class="f">puts</span> <span class="s">"แปลงไม่ได้: #{e.message}"</span>
-  <span class="n">0</span>
+  <span class="f">puts</span> <span class="s">"4. แจ้งลูกค้า: #{e.message}"</span>
 <span class="k">ensure</span>
-  <span class="f">puts</span> <span class="s">"ensure ของ parse_age"</span>
-<span class="k">end</span>
-
-<span class="f">p</span> parse_age(<span class="s">"42"</span>)
-<span class="f">p</span> parse_age(<span class="s">"forty"</span>)</code></pre>
-
-<pre><code><span class="c">$ ruby parse_age.rb</span>
-ensure ของ parse_age
-42
-แปลงไม่ได้: invalid value for Integer(): "forty"
-ensure ของ parse_age
-0</code></pre>
-
-<p>สามเรื่องที่ผลรันบอก:</p>
-<ul>
-  <li><strong><code>Integer("forty")</code> โยน <code>ArgumentError</code></strong> — ต่างจาก <code>"forty".to_i</code> ที่คืน <code>0</code> เงียบ ๆ ·
-      อยากให้พังดัง ๆ ใช้ <code>Integer()</code> · อยากได้ค่า default ใช้ <code>.to_i</code></li>
-  <li><strong>ค่าที่ <code>rescue</code> คืน (<code>0</code>) กลายเป็นค่าที่ method คืน</strong> — คนเรียกได้ <code>0</code> ไปใช้ต่อ ไม่รู้ด้วยซ้ำว่ามีอะไรพัง</li>
-  <li><strong>"ensure ของ parse_age" ขึ้นก่อน <code>42</code></strong> — เพราะ <code>ensure</code> วิ่งตอน method <em>กำลังจะออก</em>
-      ส่วน <code>p</code> พิมพ์ค่าหลังจาก method ออกไปแล้ว · คนมาจาก Go จะคุ้น: เหมือน <code>defer</code> ที่วิ่งก่อนค่า return ถึงมือคนเรียก</li>
-</ul>
-
-<h2 id="sn-sec-5">5 · ไม่มีใครรับ → โปรแกรมพัง (และใน Rails → หน้า error)</h2>
-
-<p>
-  ข้อควรระวังข้อที่ 2 ในสไลด์หน้า 32 บอกว่า <strong>"ลืมว่า exception ไม่มีใครบังคับให้รับ"</strong> ·
-  ใน Go ถ้าลืมเช็ค error โปรแกรมเดินต่อด้วยค่าเพี้ยน ๆ ·
-  ใน Ruby ถ้าลืม <code>rescue</code> — <strong>error ลอยขึ้นไปจนสุดทาง แล้ว Ruby หยุดโปรแกรมทั้งตัว</strong>
-  · มาดูหน้าตาตอนพังของจริงกัน เพราะคุณจะเห็นมันทุกวัน:
-</p>
-
-<pre><code><span class="c"># checkout.rb</span>
-<span class="k">def</span> <span class="f">load_price</span>(text)
-  <span class="f">Integer</span>(text)
-<span class="k">end</span>
-
-<span class="k">def</span> <span class="f">total</span>(items)
-  items.<span class="f">sum</span> { |t| load_price(t) }
-<span class="k">end</span>
-
-<span class="f">puts</span> <span class="s">"เริ่ม"</span>
-<span class="f">puts</span> total([<span class="s">"10"</span>, <span class="s">"20"</span>, <span class="s">"30baht"</span>])
-<span class="f">puts</span> <span class="s">"จบ"</span></code></pre>
-
-<pre><code><span class="c">$ ruby checkout.rb</span>
-เริ่ม
-checkout.rb:3:in 'Kernel#Integer': invalid value for Integer(): "30baht" (ArgumentError)
-
-  Integer(text)
-          ^^^^
-	from checkout.rb:3:in 'Object#load_price'
-	from checkout.rb:7:in 'block in Object#total'
-	from checkout.rb:7:in 'Array#sum'
-	from checkout.rb:7:in 'Object#total'
-	from checkout.rb:11:in '&lt;main&gt;'
-<span class="c">$ echo $?</span>
-1</code></pre>
-
-<p>อ่าน error ของ Ruby ให้เป็น — มันบอกทุกอย่างที่ต้องรู้:</p>
-<ul>
-  <li><strong>บรรทัดแรก</strong> = ที่เกิดเหตุ: ไฟล์ <code>checkout.rb</code> บรรทัด 3 (นับบรรทัด comment ชื่อไฟล์ด้วย) · ข้อความ · และ<strong>ชื่อ class ของ error ในวงเล็บท้ายสุด</strong></li>
-  <li><strong><code>^^^^</code></strong> = Ruby ชี้ให้เลยว่าค่าตัวไหนเป็นปัญหา (ตรงนี้คือ <code>text</code>)</li>
-  <li><strong>บรรทัด <code>from …</code></strong> เรียกว่า <em>backtrace</em> — ทางที่ error ลอยขึ้นมา <strong>อ่านจากบนลงล่าง = จากจุดเกิดเหตุย้อนไปหาคนเรียก</strong>
-      จนถึง <code>'&lt;main&gt;'</code> (ตัวไฟล์เอง)</li>
-  <li><strong>"จบ" ไม่ถูกพิมพ์</strong> · และ exit code เป็น <code>1</code> — ถ้านี่เป็นสคริปต์ใน CI งานนั้นจะแดงทันที</li>
-</ul>
-
-<p>
-  แล้วใน Rails ล่ะ? server ไม่ได้ดับทั้งตัวทุกครั้งที่มี request พัง —
-  <strong>Rails เป็นคนรับชั้นบนสุดให้</strong> แล้วแปลงเป็น HTTP response ·
-  ผมลองในแอป <code>wongnok_blog</code> ด้วย controller ที่เรียก <code>.title</code> บน <code>nil</code> (ลืมเช็คว่าหาโพสต์เจอไหม):
-</p>
-
-<pre><code><span class="c"># app/controllers/posts_controller.rb (บางส่วน)</span>
-<span class="k">def</span> <span class="f">latest</span>
-  post = <span class="n">Post</span>.<span class="f">find_by</span>(title: <span class="s">"ไม่มีโพสต์นี้"</span>)   <span class="c"># ได้ nil</span>
-  <span class="f">render</span> plain: post.<span class="f">title</span>
+  <span class="f">puts</span> <span class="s">"5. ปิดเตา"</span>
 <span class="k">end</span></code></pre>
-
-<pre><code><span class="c">$ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/posts/latest</span>
-500
-
-<span class="c"># log ของ server</span>
-Completed 500 Internal Server Error in 7ms (ActiveRecord: 4.7ms (1 query, 0 cached) | GC: 0.0ms)
-NoMethodError (undefined method 'title' for nil):</code></pre>
-
-<p>
-  นี่แหละคือ <strong>"error หลุดขึ้นไปถึงหน้าเว็บ"</strong> ที่สไลด์หน้า 32 เตือน — ผู้ใช้ได้หน้า 500
-</p>
-
-<h3 id="sn-sub-1">ปูไว้ก่อน: <code>rescue_from</code> — rescue ระดับ controller</h3>
-
-<p>
-  สไลด์หน้า 30 บอกว่าเรื่องนี้ "ไปโผล่ใน Rails" ที่บรรทัดนี้:
-  <code>rescue_from ActiveRecord::RecordNotFound, with: :render_404</code>
-  · อ่านว่า "ถ้า action ไหนใน controller นี้โยน <code>RecordNotFound</code> ออกมา ให้เรียก method <code>render_404</code> แทน" ·
-  มันคือ <code>rescue</code> ระดับ method ในหัวข้อ 4 แต่<strong>ขยายให้ครอบทุก action</strong> ทีเดียว
-</p>
-
-<p>
-  ผมลองสองรอบในแอปเดียวกัน · <code>Post.find(999)</code> คือการหาโพสต์ id 999 ซึ่งไม่มีอยู่
-  (<code>find</code> จะโยน <code>ActiveRecord::RecordNotFound</code> — เรื่อง <code>find</code> เต็ม ๆ รอ Day 2):
-</p>
-
-<div class="compare">
-  <div class="side bad">
-    <h4>ยังไม่มี <code>rescue_from</code></h4>
-<pre><code><span class="c">$ curl -s -o /dev/null -w '%{http_code}\n' \
-    http://localhost:3000/posts/999</span>
-404
-
-<span class="c"># log ของ server</span>
-Completed 404 Not Found in 5ms (…)
-ActiveRecord::RecordNotFound (Couldn't find Post with 'id'="999"):</code></pre>
-    <p style="margin-bottom:0">ในโหมด development ได้<strong>หน้า debug สีแดงของ Rails</strong> (หัวข้อ <code>ActiveRecord::RecordNotFound</code> · <code>in PostsController#show</code>)</p>
-  </div>
-  <div class="side good">
-    <h4>เพิ่ม <code>rescue_from</code> แล้ว</h4>
-<pre><code><span class="c">$ curl -s -i http://localhost:3000/posts/999</span>
-HTTP/1.1 404 Not Found
-content-type: text/plain; charset=utf-8
-<span class="c">… (ตัด header อื่นออก)</span>
-ไม่พบหน้าที่คุณหา
-
-<span class="c"># log ของ server (ตัดท้าย)</span>
-rescue_from handled ActiveRecord::RecordNotFound (Couldn't find Post with 'id'="999") - …</code></pre>
-    <p style="margin-bottom:0">ได้ข้อความที่<strong>เราเลือกเอง</strong> · log บอกชัดว่า <code>rescue_from</code> เป็นคนรับ</p>
-  </div>
-</div>
-
-<p>โค้ดที่เพิ่มใน <code>app/controllers/application_controller.rb</code> (controller แม่ของทุกตัว):</p>
-
-<pre><code><span class="k">class</span> <span class="n">ApplicationController</span> &lt; <span class="n">ActionController::Base</span>
-  <span class="c"># … สองบรรทัดเดิมที่ rails new สร้างไว้ …</span>
-
-  <span class="f">rescue_from</span> <span class="n">ActiveRecord::RecordNotFound</span>, with: <span class="n">:render_404</span>
-
-  <span class="k">private</span>
-
-  <span class="k">def</span> <span class="f">render_404</span>
-    <span class="f">render</span> plain: <span class="s">"ไม่พบหน้าที่คุณหา"</span>, status: <span class="n">:not_found</span>
-  <span class="k">end</span>
-<span class="k">end</span></code></pre>
-
-<div class="win">
-  <p style="margin-bottom:0">
-    <strong>✅ เรื่องที่สไลด์ไม่ได้บอก แต่รันแล้วเจอ:</strong> ถึงไม่มี <code>rescue_from</code>
-    Rails ก็ตอบ <strong>404 ให้อยู่แล้ว ไม่ใช่ 500</strong> — เพราะ Rails มีตาราง
-    <code>config.action_dispatch.rescue_responses</code> ที่จับคู่ <code>ActiveRecord::RecordNotFound</code> → <code>:not_found</code> ไว้ตั้งแต่ต้น ·
-    เพราะฉะนั้นเหตุผลจริงของ <code>rescue_from</code> ในสไลด์คือ <strong>"อยากเลือกหน้าตาของ 404 เอง"</strong>
-    ไม่ใช่ "กันไม่ให้เป็น 500" · ส่วน <code>NoMethodError</code> ที่ไม่อยู่ในตารางนั้นยังเป็น 500 อย่างที่เห็นข้างบน
+  <p class="ask">
+    ข้อ 1 ถึง 5 — ข้อไหนถูกพิมพ์ออกมาบ้าง? (<code>raise "ข้อความ"</code> แบบไม่บอกชนิด = โยน error ชนิดทั่วไปชื่อ <code>RuntimeError</code> ·
+    <code>rescue =&gt; e</code> = รับ error ทั่วไปทุกชนิด แล้วเก็บไว้ใน <code>e</code>)
   </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>$ ruby predict.rb
+1. ตั้งกระทะ
+4. แจ้งลูกค้า: แก๊สหมด
+5. ปิดเตา</code></pre>
+    <ul>
+      <li><strong>ข้อ 2 หายไป</strong> — พอ <code>raise</code> แล้ว method <code>cook</code> หยุดทันที บรรทัดที่เหลือไม่ได้รัน</li>
+      <li><strong>ข้อ 3 หายไป</strong> — error ลอยออกจาก <code>cook</code> มาถึงเขต <code>begin</code> แล้วกระโดดไปที่ <code>rescue</code> เลย ข้าม "เสิร์ฟ"</li>
+      <li><strong>ข้อ 5 มาเสมอ</strong> — นี่คืองานของ <code>ensure</code> · ถ้าไม่พัง (ลองลบบรรทัด <code>raise</code>) ก็ยังได้ "5. ปิดเตา" อยู่ดี</li>
+    </ul>
+  </div>
 </div>
 
-<h2 id="sn-sec-6">6 · Duck typing — ไม่ถามว่าเป็นใคร ถามแค่ว่า "ทำได้ไหม"</h2>
+<h2 id="sn-sec-7">7 · ข้อดีข้อเสีย: Go กับ Ruby</h2>
 
 <p>
-  สไลด์หน้า 31 เทียบเรื่อง "ของที่ต่างชนิดกัน แต่ใช้แทนกันได้" สามภาษา —
-  และคุณเคยเรียนสองภาษาแรกมาแล้ว:
+  ไม่มีแบบไหนดีกว่ากันทุกเรื่อง · ลองดูว่าแต่ละแบบแลกอะไรกับอะไร
+  <br>ก่อนอื่น ลองทำแบบ "ขี้เกียจเช็ค" ใน Go — ทิ้ง error ด้วย <code>_</code>:
+</p>
+
+<pre><code><span class="c">// Go: ทิ้ง error ด้วย _ แล้วไม่เช็ค</span>
+share, _ := <span class="f">splitBill</span>(<span class="n">900</span>, <span class="n">0</span>)
+fmt.<span class="f">Println</span>(<span class="s">"คนละ"</span>, share)</code></pre>
+
+<pre><code>$ go build ./...    # ผ่าน ไม่มีคำเตือน
+$ go run .
+คนละ 0</code></pre>
+
+<p>
+  โปรแกรม Go <strong>ไม่พัง แต่บอกว่าคนละ 0 บาท</strong> — ค่าผิดที่เดินต่อไปเงียบ ๆ ·
+  ถ้าเป็น Ruby เราได้เห็นแล้วว่ามัน<strong>พังดัง ๆ</strong> แทน
 </p>
 
 <div class="table-wrap">
 <table>
-  <thead>
-    <tr><th></th><th>Go</th><th>TypeScript</th><th>Ruby</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>เขียนยังไง</td>
-      <td><pre style="margin:0"><code><span class="k">type</span> <span class="n">Stringer</span> <span class="k">interface</span> {
-  <span class="f">String</span>() <span class="n">string</span>
-}</code></pre></td>
-      <td><pre style="margin:0"><code><span class="k">interface</span> <span class="n">HasTitle</span> {
-  title: <span class="n">string</span>
-}</code></pre></td>
-      <td><pre style="margin:0"><code><span class="c"># ไม่ประกาศอะไรเลย</span>
-<span class="k">def</span> <span class="f">show</span>(x)
-  <span class="f">puts</span> x.<span class="f">title</span>
-<span class="k">end</span></code></pre></td>
-    </tr>
-    <tr>
-      <td>ใครตรวจ · ตรวจเมื่อไหร่</td>
-      <td>compiler · ตอน build</td>
-      <td>compiler · ตอน compile (structural typing)</td>
-      <td><strong>ไม่มีใครตรวจล่วงหน้า</strong> · พังตอน<strong>รันถึงบรรทัดนั้นจริง</strong></td>
-    </tr>
-    <tr>
-      <td>เคยเรียนที่</td>
-      <td><a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a></td>
-      <td><a href="../../fe-ts-fp/lessons/0064-interface-vs-type.html">บทเรียน 64</a></td>
-      <td>บทนี้</td>
-    </tr>
-  </tbody>
+  <tr><th>เรื่อง</th><th>Go (error เป็นค่า)</th><th>Ruby (โยน exception)</th></tr>
+  <tr><td>รู้ไหมว่าบรรทัดไหนพังได้</td><td>✅ รู้ — ดูจาก <code>error</code> ที่หัวฟังก์ชัน</td><td>❌ ไม่รู้ — ต้องอ่านเอกสารหรือลองรัน</td></tr>
+  <tr><td>ลืมจัดการแล้วเกิดอะไร</td><td>เดินต่อด้วยค่าเพี้ยน ๆ (เช่น <code>คนละ 0</code>)</td><td>โปรแกรมหยุด พร้อมบอกว่าพังที่ไหน</td></tr>
+  <tr><td>ความยาวโค้ด</td><td>ยาว — <code>if err != nil</code> ทุกชั้น</td><td>สั้น — รับครั้งเดียวที่ชั้นที่จัดการได้จริง</td></tr>
+  <tr><td>ใครเตือนก่อนรัน</td><td>compiler เตือนบางกรณี</td><td>ไม่มีใครเตือน — ต้องพึ่ง test</td></tr>
 </table>
 </div>
 
+<h2 id="sn-sec-8">8 · ใน Rails: error ที่ไม่มีใครรับ = หน้า 500 (แต่ร้านไม่ปิด)</h2>
+
 <p>
-  ใน Go คุณ "ไม่ต้องเซ็นสัญญา" (ไม่ต้องเขียน <code>implements</code>) แต่<strong>ยังต้องมีสัญญาให้ compiler ถือไว้</strong> ·
-  Ruby ไปไกลกว่านั้นอีกขั้น — <strong>ไม่มีสัญญาเลย</strong> method <code>show</code> แค่เรียก <code>x.title</code>
-  ใครส่งอะไรมา ถ้าตอบ <code>.title</code> ได้ ก็ผ่าน ไม่สนว่าเป็น class อะไร:
+  แอป Rails ก็คือโค้ด Ruby · ถ้าโค้ดใน controller (หัวหน้าเชฟที่รับใบสั่ง — เจอละเอียดใน <a href="./0102-rails-controller.html">บท 102</a>)
+  โยน error แล้วไม่มีใครรับ <strong>Rails จะเป็นคนรับชั้นบนสุดให้เอง</strong>
+  แล้วตอบกลับไปเป็นหน้า error · server ไม่ดับ
 </p>
 
-<pre><code><span class="c"># duck.rb</span>
-<span class="k">class</span> <span class="n">Post</span>
-  <span class="k">def</span> <span class="f">initialize</span>(title)
-    <span class="n">@title</span> = title
-  <span class="k">end</span>
+<p>
+  ลองในแอป <code>wongnok_blog</code> (แอปบล็อกในสไลด์ — บทความหนึ่งชิ้นเรียกว่า <code>Post</code>) ·
+  ตอนนี้ยังไม่มี database (รอ Day 2) จึง<strong>จำลองบทความด้วย Hash</strong> แทน
+</p>
 
+<div class="note">
+  <span class="label">👀 ส่วนนี้แค่ดูผล ยังไม่ต้องพิมพ์ตาม</span>
+  <p>
+    การทำให้โค้ดนี้รันได้ต้องรู้เรื่อง route (พนักงานต้อนรับที่ชี้ว่า URL ไหนไปหาใคร — <a href="./0101-rails-routing.html">บท 101</a>)
+    และ controller (<a href="./0102-rails-controller.html">บท 102</a>) ก่อน · ตอนนี้ให้ดูแค่ว่า <strong>error ใน Rails หน้าตาเป็นยังไง</strong>
+  </p>
+</div>
+
+<p>ไฟล์ <code>app/controllers/posts_controller.rb</code>:</p>
+
+<pre><code><span class="k">class</span> <span class="n">PostsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="c"># จำลองบทความด้วย Hash (ของจริงจะอยู่ใน database — Day 2)</span>
+  <span class="n">POSTS</span> = { <span class="n">1</span> =&gt; <span class="s">"Rails วันแรก"</span> }
+
+  <span class="k">def</span> <span class="f">show</span>
+    title = <span class="n">POSTS</span>[params[<span class="n">:id</span>].<span class="f">to_i</span>]   <span class="c"># หาไม่เจอ → nil</span>
+    <span class="f">render</span> <span class="n">plain:</span> title.<span class="f">upcase</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>class PostsController &lt; ApplicationController</code> — controller ของบทความ สืบทอดจาก controller แม่ที่ <code>rails new</code> สร้างไว้ให้ (บท 102)</li>
+  <li><code>POSTS = { 1 =&gt; "Rails วันแรก" }</code> — Hash ที่มีบทความเลข 1 อยู่ชิ้นเดียว · ชื่อตัวใหญ่ล้วน = ค่าคงที่ (บท 91)</li>
+  <li><code>params[:id]</code> — เลขที่อยู่ใน URL เช่น <code>/posts/2</code> ได้ <code>"2"</code> (เหมือน "จานที่ 2" ในใบสั่ง — บท 102) · <code>.to_i</code> แปลงเป็นตัวเลข</li>
+  <li><code>render plain: ...</code> — ส่งข้อความกลับไปให้ browser (บท 102)</li>
+  <li><code>title.upcase</code> — ทำเป็นตัวพิมพ์ใหญ่ · <strong>ถ้า title เป็น nil จะพัง</strong> (nil ไม่มี <code>upcase</code>)</li>
+</ul>
+
+<p>เปิด server (<code>bin/rails server</code>) แล้วยิง request สามครั้ง: บทความที่มี → บทความที่ไม่มี → บทความที่มีอีกที</p>
+
+<pre><code>$ curl http://localhost:3000/posts/1
+RAILS วันแรก
+$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/posts/2
+500
+$ curl http://localhost:3000/posts/1
+RAILS วันแรก</code></pre>
+
+<pre><code><span class="c"># log ของ server ตอน /posts/2 (บางส่วน)</span>
+Completed 500 Internal Server Error in 0ms (ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+
+NoMethodError (undefined method 'upcase' for nil):
+
+app/controllers/posts_controller.rb:7:in 'PostsController#show'</code></pre>
+
+<ul>
+  <li><code>curl</code> — โปรแกรมส่ง request จาก terminal (เหมือนเปิด browser แต่ได้ผลเป็นข้อความ) ·
+      <code>-s -o /dev/null</code> = ไม่ต้องโชว์เนื้อหาหน้าเว็บ · <code>-w "%{http_code}\n"</code> = พิมพ์แค่รหัสสถานะ · <strong>500</strong> = "server พังเอง" (Internal Server Error) ·
+      ข้อความที่ส่งกลับไม่มีการขึ้นบรรทัดใหม่ท้าย ถ้าลองเองใน zsh อาจเห็น <code>%</code> ต่อท้าย <code>RAILS วันแรก</code> — ไม่ใช่ error</li>
+  <li>log บอกชนิด error · ข้อความ · และ<strong>ไฟล์กับบรรทัด</strong>ที่พัง — อ่านแบบเดียวกับหัวข้อ 3 · ตัวเลข <code>ms</code> ในบรรทัด Completed เป็นเวลาที่ใช้ (ของคุณจะต่างไปทุกครั้ง) ข้ามไปได้</li>
+  <li>request ที่สาม<strong>ยังได้คำตอบปกติ</strong> — พังแค่ request เดียว ร้านยังเปิดอยู่</li>
+  <li>ถ้าเปิดด้วย browser จะได้หน้า debug ของ Rails ชื่อ <em>Action Controller: Exception caught</em> (เฉพาะตอนพัฒนาในเครื่อง)</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🍳 เทียบให้เห็นภาพ — จานเสียหนึ่งจาน ร้านไม่ต้องปิด</span>
+  <p>
+    ลูกค้าสั่ง "บทความจานที่ 2" (request) · หัวหน้าเชฟ (controller) ไปเปิดตู้แล้วไม่เจอวัตถุดิบ
+    แต่ดันลงมือทำต่อ — ทำไม่ได้ ครัวโวยวายขึ้นมา (error)
+    <br>ผู้จัดการร้าน (Rails) เดินมารับเรื่อง ยกป้าย "ขออภัย ครัวมีปัญหา" ไปให้โต๊ะนั้น (หน้า 500) ·
+    โต๊ะอื่นที่สั่งจานที่ 1 ยังได้อาหารตามปกติ ร้านไม่ต้องปิด
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ผู้จัดการจริงอาจเสนอเมนูอื่นแทนหรือขอโทษอย่างสุภาพ ·
+    แต่ Rails ทำแค่ส่งหน้า error มาตรฐาน — ถ้าอยากได้คำตอบที่ดีกว่า เช่น "ไม่พบบทความนี้" (404)
+    <strong>เราต้องเขียนเอง</strong> · และ 500 ที่ได้ก็ไม่ได้บอกลูกค้าว่าพลาดตรงไหน (รายละเอียดอยู่ใน log ฝั่งร้านเท่านั้น)
+  </p>
+</div>
+
+<p>
+  ในโค้ด Rails จริง คุณจะเจอวิธี "ขึงคนรับให้ทุก action ทีเดียว" หน้าตาแบบนี้:
+  <code>rescue_from ActiveRecord::RecordNotFound, with: :render_404</code>
+  — อ่านว่า "ถ้า action ไหนโยน error ชนิด <em>หาข้อมูลไม่เจอ</em> ให้ไปเรียก method <code>render_404</code> แทน" ·
+  มันคือ <code>rescue</code> ที่ครอบทั้ง controller · ตอนนี้แค่จำหน้าตาไว้ ใช้จริงตอน Day 2
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ฝั่ง Rails</span>
+  <dl>
+    <dt>500 Internal Server Error</dt>
+    <dd>รหัสคำตอบที่แปลว่า "ฝั่ง server พังเอง ไม่ใช่ความผิดของคนขอ" · ใน Rails มักมาจาก exception ที่ไม่มีใครรับ ·
+        <strong>ถาม senior ได้ว่า “หน้า 500 นี้ ดู log ตรงไหนถึงจะเจอบรรทัดที่พัง”</strong></dd>
+    <dt>server log</dt>
+    <dd>ข้อความที่ <code>bin/rails server</code> พิมพ์ออกมาทุก request — บอกว่าใครขออะไร ได้รหัสอะไร และถ้าพังก็บอกชนิดกับบรรทัด ·
+        <strong>เวลาถาม AI ให้แปะ log ส่วนนี้ไปด้วยเสมอ</strong> ไม่ใช่แค่บอกว่า "ได้ 500"</dd>
+    <dt>rescue_from</dt>
+    <dd>คำสั่งของ controller ที่บอกว่า "error ชนิดนี้ ไม่ว่าเกิดใน action ไหน ให้ method นี้รับ" ·
+        <strong>พิมพ์บอก AI ได้ว่า “use rescue_from in ApplicationController to render a custom 404 page”</strong> (Day 2)</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9">9 · Duck typing — ไม่ถามว่าเป็นใคร ถามแค่ว่า "ทำได้ไหม"</h2>
+
+<p>
+  เปลี่ยนเรื่องนิดหนึ่ง แต่เกี่ยวกันมาก · ใน Go ถ้าอยากให้ฟังก์ชันรับ "ของอะไรก็ได้ที่มี Title()"
+  คุณต้องประกาศ <strong>interface</strong> ไว้ก่อน แล้ว compiler จะตรวจให้ตอน build
+  (ทวน <a href="../../day-4/lessons/0010-interface-and-duck-typing.html">บทเรียน 10</a>):
+</p>
+
+<pre><code><span class="c">// Go (บางส่วน — ไฟล์เต็มมี package, import และ type Menu ที่มี method Title())</span>
+<span class="k">type</span> <span class="n">HasTitle</span> <span class="k">interface</span> {
+	<span class="f">Title</span>() <span class="n">string</span>
+}
+
+<span class="k">func</span> <span class="f">show</span>(x <span class="n">HasTitle</span>) {
+	fmt.<span class="f">Println</span>(x.<span class="f">Title</span>())
+}
+
+<span class="c">// ... ใน main</span>
+<span class="f">show</span>(<span class="n">Menu</span>{})   <span class="c">// Menu มี Title() → ผ่าน</span>
+<span class="f">show</span>(<span class="n">42</span>)       <span class="c">// int ไม่มี Title() → build ไม่ผ่าน</span></code></pre>
+
+<pre><code>$ go build ./...
+# goduck
+./main.go:19:7: cannot use 42 (constant of type int) as HasTitle value in argument to show: int does not implement HasTitle (missing method Title)</code></pre>
+
+<p>
+  (<code># goduck</code> คือชื่อ package ของตัวอย่าง) · Go จับได้<strong>ก่อนรัน</strong> · โปรแกรมไม่มีโอกาสได้รันสักบรรทัด
+  <br>Ruby <strong>ไม่มี interface ให้ประกาศเลย</strong> · method แค่เรียก <code>x.title</code> ไปเฉย ๆ —
+  ใครส่งอะไรมา ถ้ามี <code>title</code> ก็ผ่าน ไม่สนว่าเป็น class อะไร:
+</p>
+
+<pre><code><span class="c"># duck.rb — ใครมี .title ก็ใช้ได้</span>
+<span class="k">class</span> <span class="n">Post</span>
   <span class="k">def</span> <span class="f">title</span>
-    <span class="n">@title</span>
+    <span class="s">"Rails วันแรก"</span>
   <span class="k">end</span>
 <span class="k">end</span>
 
-<span class="k">class</span> <span class="n">Recipe</span>
+<span class="k">class</span> <span class="n">Menu</span>
   <span class="k">def</span> <span class="f">title</span>
-    <span class="s">"ต้มยำกุ้ง"</span>
+    <span class="s">"ข้าวผัดกระเพรา"</span>
   <span class="k">end</span>
 <span class="k">end</span>
 
@@ -789,541 +665,420 @@ rescue_from handled ActiveRecord::RecordNotFound (Couldn't find Post with 'id'="
   <span class="f">puts</span> x.<span class="f">title</span>
 <span class="k">end</span>
 
-show(<span class="n">Post</span>.<span class="f">new</span>(<span class="s">"Rails วันแรก"</span>))
-show(<span class="n">Recipe</span>.<span class="f">new</span>)
+<span class="f">show</span>(<span class="n">Post</span>.<span class="f">new</span>)
+<span class="f">show</span>(<span class="n">Menu</span>.<span class="f">new</span>)
+<span class="f">show</span>(<span class="n">42</span>)</code></pre>
 
-<span class="f">p</span> <span class="n">Post</span>.<span class="f">new</span>(<span class="s">"x"</span>).<span class="f">respond_to?</span>(<span class="n">:title</span>)
+<ul>
+  <li><code>class Post</code> กับ <code>class Menu</code> — สอง class <strong>ไม่เกี่ยวกันเลย</strong> ไม่มีแม่ร่วม ไม่มี interface · แค่บังเอิญมี method ชื่อ <code>title</code> เหมือนกัน
+      (Post ตรงนี้เป็น class จำลองธรรมดา ไม่ใช่ Post ของ Rails)</li>
+  <li><code>def show(x)</code> — ไม่บอกเลยว่า <code>x</code> ต้องเป็นอะไร</li>
+  <li><code>Post.new</code> — สร้าง object จากแม่พิมพ์ Post (ทวน <a href="./0095-ruby-class-and-module.html">บท 95</a>)</li>
+</ul>
+
+<pre><code>$ ruby duck.rb
+Rails วันแรก
+ข้าวผัดกระเพรา
+duck.rb:15:in 'Object#show': undefined method 'title' for an instance of Integer (NoMethodError)
+
+  puts x.title
+        ^^^^^^
+	from duck.rb:20:in '&lt;main&gt;'</code></pre>
+
+<p>
+  สองบรรทัดแรก<strong>รันผ่านไปก่อน</strong> แล้วเพิ่งมาพังตอนถึง <code>show(42)</code> จริง ๆ ·
+  นี่คือความต่างที่สำคัญ: Go ตรวจ<strong>ตอน build</strong> · Ruby รู้ตัว<strong>ตอนรันถึงบรรทัดนั้น</strong>
+</p>
+
+<ul>
+  <li><code>for an instance of Integer</code> — "กับ object ที่เป็นตัวเลข (Integer)" · instance = object ที่สร้างจาก class (บท 95)</li>
+  <li>บรรทัด <code>puts x.title</code> กับ <code>^^^^^^</code> ข้างใต้ — Ruby ยกบรรทัดที่พังมาให้ดู แล้ว<strong>ขีดเส้นใต้จุดที่พัง</strong> (ตรง <code>.title</code>)</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🦆 เทียบให้เห็นภาพ — ร้องก๊าบ ๆ เดินแบบเป็ด ก็ถือว่าเป็นเป็ด</span>
+  <p>
+    ชื่อ duck typing มาจากสำนวน <strong>"ถ้ามันเดินเหมือนเป็ด ร้องก๊าบ ๆ เหมือนเป็ด ก็ถือว่ามันเป็นเป็ด"</strong>
+    <br>Ruby ไม่ขอดูใบรับรองว่าคุณ "เป็นเป็ดจริงไหม" (เป็น class อะไร) · ขอแค่ตอนที่ต้องร้อง คุณร้องได้ (มี method <code>title</code>) ก็พอ ·
+    Go ต่างออกไป: ต้องมีรายชื่อ "สิ่งที่เป็ดต้องทำได้" (interface) แล้ว compiler ตรวจทุกตัวก่อนปล่อยลงบ่อ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนดูเป็ดจริงตัดสินได้ตั้งแต่แรกเห็น ·
+    แต่ Ruby <strong>ไม่ดูก่อนเลย</strong> — ปล่อยทุกตัวลงบ่อ แล้วรู้ว่าตัวไหนไม่ใช่เป็ด
+    ก็ตอนสั่งให้ร้องแล้วมันร้องไม่ได้ (พังตอนรัน) · ถ้าอยากรู้ก่อน ต้องถามเอง (<code>respond_to?</code> ข้างล่าง) หรือเขียน test
+  </p>
+</div>
+
+<h3 id="sn-sub-3">respond_to? — ถามก่อนว่า "ทำได้ไหม"</h3>
+
+<p>ทุก object ใน Ruby มี method <code>respond_to?</code> ไว้ถามล่วงหน้าว่า "ตอบ method ชื่อนี้ได้ไหม":</p>
+
+<pre><code><span class="c"># respond.rb — ถามก่อนว่า "ทำได้ไหม"</span>
+<span class="k">class</span> <span class="n">Menu</span>
+  <span class="k">def</span> <span class="f">title</span>
+    <span class="s">"ข้าวผัดกระเพรา"</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="f">p</span> <span class="n">Menu</span>.<span class="f">new</span>.<span class="f">respond_to?</span>(<span class="n">:title</span>)
 <span class="f">p</span> <span class="n">42</span>.<span class="f">respond_to?</span>(<span class="n">:title</span>)
 
 <span class="k">def</span> <span class="f">safe_show</span>(x)
   <span class="k">if</span> x.<span class="f">respond_to?</span>(<span class="n">:title</span>)
-    <span class="f">puts</span> x.<span class="f">title</span>
+    <span class="f">puts</span> <span class="s">"หัวข้อ: #{x.title}"</span>
   <span class="k">else</span>
     <span class="f">puts</span> <span class="s">"(#{x.class} ไม่มี title)"</span>
   <span class="k">end</span>
 <span class="k">end</span>
 
-safe_show(<span class="n">Recipe</span>.<span class="f">new</span>)
-safe_show(<span class="n">42</span>)
+<span class="f">safe_show</span>(<span class="n">Menu</span>.<span class="f">new</span>)
+<span class="f">safe_show</span>(<span class="n">42</span>)</code></pre>
 
-show(<span class="n">42</span>)</code></pre>
-
-<pre><code><span class="c">$ ruby duck.rb</span>
-Rails วันแรก
-ต้มยำกุ้ง
+<pre><code>$ ruby respond.rb
 true
 false
-ต้มยำกุ้ง
-(Integer ไม่มี title)
-duck.rb:19:in 'Object#show': undefined method 'title' for an instance of Integer (NoMethodError)
-
-  puts x.title
-        ^^^^^^
-	from duck.rb:39:in '&lt;main&gt;'</code></pre>
+หัวข้อ: ข้าวผัดกระเพรา
+(Integer ไม่มี title)</code></pre>
 
 <ul>
-  <li><code>Post</code> กับ <code>Recipe</code> <strong>ไม่ได้เกี่ยวกันเลย</strong> ไม่มีแม่ร่วม ไม่มี interface — แต่ <code>show</code> ใช้ได้ทั้งคู่</li>
-  <li><code>respond_to?(:title)</code> = ถามล่วงหน้าว่า "object นี้ตอบ <code>.title</code> ได้ไหม" ได้ <code>true</code>/<code>false</code> ·
-      นี่คือที่สไลด์เขียนว่า <strong>"ตรวจตอน runtime เท่านั้น"</strong></li>
-  <li><strong>สังเกตว่า 6 บรรทัดแรกรันผ่านหมดก่อน</strong> โปรแกรมเพิ่งมาพังที่บรรทัด 39 ·
-      ใน Go หรือ TS บรรทัด <code>show(42)</code> จะ<strong>ไม่ผ่าน build ตั้งแต่แรก</strong> ไม่มีโอกาสได้รันสักบรรทัด</li>
+  <li><code>respond_to?(:title)</code> — ส่งชื่อ method เป็น symbol (<code>:title</code>) · ได้ <code>true</code> หรือ <code>false</code> · ชื่อลงท้าย <code>?</code> ตามธรรมเนียม "method ที่ตอบใช่/ไม่ใช่" (บท 93)</li>
+  <li><code>x.class</code> — ถามว่า object นี้เป็น class อะไร · 42 ได้ <code>Integer</code></li>
+  <li>ใช้แบบนี้ได้ แต่<strong>ไม่ต้องเขียนทุกที่</strong> — ส่วนใหญ่ปล่อยให้พังแล้วแก้ที่ต้นเหตุดีกว่า</li>
 </ul>
-
-<p>
-  ข้อความ <code>NoMethodError</code> จะเป็นสิ่งที่คุณเจอบ่อยที่สุดใน Ruby
-  โดยเฉพาะ<strong>เวอร์ชันที่เรียกบน <code>nil</code></strong> — และรูปแบบข้อความ<strong>เปลี่ยนไปจาก Ruby รุ่นเก่า</strong>
-  ถ้าไปค้นเจอในเว็บแล้วหน้าตาไม่เหมือนกัน อย่าตกใจ:
-</p>
-
-<pre><code><span class="c"># nil_title.rb</span>
-<span class="k">def</span> <span class="f">show</span>(x)
-  <span class="f">puts</span> x.<span class="f">title</span>
-<span class="k">end</span>
-show(<span class="k">nil</span>)</code></pre>
-
-<pre><code><span class="c">$ ruby nil_title.rb          # Ruby 4.0.9</span>
-nil_title.rb:3:in 'Object#show': undefined method 'title' for nil (NoMethodError)
-
-  puts x.title
-        ^^^^^^
-	from nil_title.rb:5:in '&lt;main&gt;'
-
-<span class="c">$ /usr/bin/ruby nil_title.rb # Ruby 2.6.10 ที่ติดมากับ macOS</span>
-nil_title.rb:3:in `show': undefined method `title' for nil:NilClass (NoMethodError)
-	from nil_title.rb:5:in `&lt;main&gt;'</code></pre>
-
-<p>
-  ต่างกันสามจุด: รุ่นใหม่ใช้ <code>'…'</code> แทน <code>`…'</code> · บอกชื่อ class หน้า method (<code>'Object#show'</code>) ·
-  และเขียน <code>for nil</code> / <code>for an instance of Integer</code> แทน <code>for nil:NilClass</code> ·
-  (บันทึกการเปลี่ยนแปลงของ Ruby 3.3 และ 3.4 ยืนยันเรื่องนี้ — ลิงก์อยู่ท้ายบท)
-  · ถ้าค้น Google ด้วยข้อความ error ให้ค้นเฉพาะส่วน <code>undefined method 'title' for nil</code> จะเจอทั้งของเก่าและใหม่
-</p>
-
-<div class="analogy">
-  <span class="label">🎟 เทียบให้เห็นภาพ — พนักงานตรวจตั๋วหน้าโรงหนัง</span>
-  <p>
-    duck typing เหมือน<strong>พนักงานหน้าโรงหนังที่ไม่ขอดูบัตรประชาชน</strong> —
-    ไม่สนว่าคุณเป็นใคร อายุเท่าไหร่ มาจากไหน ขอแค่<strong>ยื่นตั๋วได้</strong> (ตอบ <code>.title</code> ได้) ก็เข้าได้ ·
-    ชื่อมาจากสำนวน <em>"ถ้ามันเดินเหมือนเป็ด ร้องเหมือนเป็ด ก็ถือว่าเป็นเป็ด"</em>
-  </p>
-  <p style="margin-bottom:0">
-    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงตรวจตั๋ว<strong>ที่ประตู ก่อนคุณเข้า</strong> ·
-    แต่ Ruby ปล่อยทุกคนเข้าไปนั่งก่อน แล้วค่อยขอดูตั๋ว<strong>ตอนหนังกำลังจะเริ่มฉากที่ต้องใช้</strong>
-    — คนไม่มีตั๋วนั่งดูโฆษณาไปได้ตั้งหลายนาทีก่อนโดนเชิญออก (เหมือน 6 บรรทัดแรกของ <code>duck.rb</code> ที่รันผ่านไปก่อน) ·
-    <code>respond_to?</code> คือการ<strong>ขอดูตั๋วเองก่อน</strong> แต่ไม่มีใครบังคับให้ทำ ·
-    สไลด์จึงสรุปว่า <strong>"ต้องพึ่ง test แทน compiler"</strong>
-  </p>
-</div>
 
 <div class="jargon">
   <span class="label">🗣 ศัพท์ของ duck typing</span>
   <dl>
     <dt>duck typing</dt>
-    <dd>การตัดสินว่า object ใช้ได้หรือไม่จาก<strong>สิ่งที่มันทำได้</strong> (method ที่มี) ไม่ใช่จาก class ของมัน · และ Ruby ตรวจตอนรันจริงเท่านั้น ·
-        <strong>ถาม AI ได้ว่า “is this method relying on duck typing? what objects can I pass to it”</strong></dd>
-    <dt>NoMethodError</dt>
-    <dd>error ที่ได้เมื่อเรียก method ที่ object นั้นไม่มี · ตัวที่เจอบ่อยสุดคือ <code>undefined method '…' for nil</code>
-        ซึ่งแปลว่า "ตัวแปรนี้เป็น <code>nil</code> ทั้งที่คุณคิดว่ามีของ" (เรื่อง <code>nil</code> อยู่ใน <a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a>) ·
-        <strong>ถาม senior ได้ว่า “nil ตัวนี้มาจากไหน ควรกันที่ต้นทางหรือเช็คที่ปลายทาง”</strong></dd>
+    <dd>การตัดสินว่า object ใช้ได้ไหมจาก<strong>สิ่งที่มันทำได้</strong> (method ที่มี) ไม่ใช่จากชนิดของมัน ·
+        <strong>ถาม AI ได้ว่า “this method relies on duck typing — what objects can I pass to it?”</strong></dd>
+    <dt>runtime · compile time</dt>
+    <dd><em>compile time</em> = ตอน build ก่อนรัน (Go ตรวจ interface ตรงนี้) · <em>runtime</em> = ตอนโปรแกรมกำลังรันอยู่ (Ruby รู้ตรงนี้) ·
+        <strong>ถาม senior ได้ว่า “error นี้จับได้ตั้งแต่ compile time ไหม หรือต้องรอ runtime”</strong></dd>
     <dt>respond_to?</dt>
-    <dd>method ที่ทุก object มี ถามว่า "ตอบ method ชื่อนี้ได้ไหม" คืน <code>true</code>/<code>false</code> · ส่งชื่อเป็น Symbol (<code>:title</code>) ·
-        <strong>พิมพ์บอก AI ได้ว่า “guard this call with respond_to?(:title) instead of checking the class”</strong>
-        — การเช็ค <code>x.is_a?(Post)</code> จะทำลายข้อดีของ duck typing ทิ้ง</dd>
+    <dd>method ที่ทุก object มี ถามว่า "ตอบ method ชื่อนี้ได้ไหม" ·
+        <strong>พิมพ์บอก AI ได้ว่า “guard this call with respond_to?(:title) instead of checking the class”</strong></dd>
+    <dt>NoMethodError</dt>
+    <dd>error ที่ได้เมื่อเรียก method ที่ object นั้นไม่มี — ตัวที่คุณจะเจอบ่อยที่สุดใน Ruby (หัวข้อถัดไป) ·
+        <strong>ถาม senior ได้ว่า “NoMethodError ตัวนี้ ควรกันที่ต้นทางหรือเช็คที่ปลายทาง”</strong></dd>
   </dl>
 </div>
 
-<p>
-  แล้วใน Rails? สไลด์หน้า 31 ชี้ไปที่ <code>render partial: "post", object: anything_that_has_title</code> —
-  แปลว่า partial (ชิ้นส่วนของหน้าเว็บ) ที่เรียก <code>.title</code> ใช้ได้กับ<strong>ทุก object ที่มี <code>.title</code></strong>
-  ไม่ต้องเป็น <code>Post</code> · เรื่อง partial เต็ม ๆ รอ Day 3 ตอนนี้จำแค่ว่า <strong>view ของ Rails ใช้ duck typing ทั้งระบบ</strong>
-</p>
-
-<div class="quiz" data-answer="3">
-  <p class="q">ใน <code>duck.rb</code> ถ้าย้ายบรรทัด <code>show(42)</code> ขึ้นไปไว้<strong>บรรทัดแรกสุดของไฟล์</strong> (ก่อน <code>class Post</code>) จะเกิดอะไร?</p>
-  <div class="opts">
-    <button class="opt">Ruby ตรวจทั้งไฟล์ก่อนรัน เห็นว่า <code>Integer</code> ไม่มี <code>title</code> จึงไม่รันสักบรรทัด</button>
-    <button class="opt">พิมพ์ผลของบรรทัดอื่นครบก่อน แล้วค่อยพังด้วย <code>undefined method 'title'</code></button>
-    <button class="opt">ไม่พังเลย เพราะ <code>respond_to?</code> ที่อยู่ในไฟล์ช่วยกันไว้ให้ทุกการเรียก</button>
-    <button class="opt">พังทันทีที่บรรทัดแรกด้วย <code>undefined method 'show'</code> — ยังไปไม่ถึงเรื่อง <code>title</code></button>
-  </div>
-  <div class="explain">
-    <p>ตัวเลือกที่ 4 ถูก — ผมย้ายบรรทัดแล้วรันจริงได้แบบนี้:</p>
-<pre><code>duck_top.rb:1:in '&lt;main&gt;': undefined method 'show' for main (NoMethodError)
-
-show(42)
-^^^^</code></pre>
-    <p>
-      Ruby <strong>รันจากบนลงล่างทีละบรรทัด</strong> · <code>def show</code> เองก็เป็นแค่ "บรรทัดที่สร้าง method" —
-      ถ้ายังรันไม่ถึง method นั้นก็ยังไม่มีอยู่ · บรรทัดแรกจึงพังเพราะ<strong>ไม่รู้จัก <code>show</code></strong>
-      (<code>main</code> คือ object ระดับบนสุดของไฟล์) ไม่ได้ไปถึงการเรียก <code>.title</code> บน <code>42</code> เลย
-    </p>
-    <p>
-      ตัวเลือกที่ 1 คือพฤติกรรมของ Go/TS ไม่ใช่ Ruby — ไม่มีขั้นตรวจ type ก่อนรัน ·
-      ตัวเลือกที่ 2 ผิดเพราะพังแล้ว<strong>บรรทัดที่เหลือไม่ได้รัน</strong> ·
-      ตัวเลือกที่ 3 ผิดเพราะ <code>respond_to?</code> ป้องกันเฉพาะใน <code>safe_show</code> ที่เขียนเช็คไว้เท่านั้น
-    </p>
-    <p style="margin-bottom:0">
-      <strong>จุดที่ต้องจำ:</strong> ใน Ruby <strong>ลำดับบรรทัดคือทุกอย่าง</strong> — ทั้ง method ที่ยังไม่ถูกประกาศ
-      และ method ที่ object ไม่มี ล้วนรู้ตัวตอน<strong>รันถึงบรรทัดนั้นจริง</strong>เท่านั้น
-    </p>
-  </div>
-</div>
-
-<h2 id="sn-sec-7">7 · 6 ข้อควรระวังจากสไลด์หน้า 32 — พร้อมหลักฐานรันจริง</h2>
+<h2 id="sn-sec-10">10 · NoMethodError — error ที่จะเจอบ่อยที่สุด</h2>
 
 <p>
-  สไลด์หน้า 32 สรุปกับดักของคนมาจาก Go และ TypeScript ไว้หกข้อ ·
-  ผมไม่อยากให้คุณ "จำ" มันเป็นรายการ เลยรันพิสูจน์ทุกข้อให้เห็นกับตา (ข้อสุดท้ายผลไม่ตรงกับสไลด์ — อ่านให้ถึง):
+  error ที่มือใหม่ Ruby เจอบ่อยมาก คือเรียก method บน <code>nil</code> —
+  แปลว่า <strong>"ตัวแปรนี้ไม่มีค่า ทั้งที่คุณคิดว่ามี"</strong> · มักเกิดจากหาของไม่เจอมาตั้งแต่ก่อนหน้า:
 </p>
+
+<pre><code><span class="c"># nil_title.rb — ของที่หาไม่เจอ = nil</span>
+posts = { <span class="n">1</span> =&gt; <span class="s">"Rails วันแรก"</span> }   <span class="c"># จำลองบทความด้วย Hash</span>
+title = posts[<span class="n">2</span>]                  <span class="c"># ไม่มีบทความเลข 2 → ได้ nil</span>
+<span class="f">puts</span> title.<span class="f">upcase</span></code></pre>
+
+<pre><code>$ ruby nil_title.rb
+nil_title.rb:4:in '&lt;main&gt;': undefined method 'upcase' for nil (NoMethodError)
+
+puts title.upcase
+          ^^^^^^^</code></pre>
 
 <div class="table-wrap">
 <table>
-  <thead>
-    <tr><th>#</th><th>กับดัก</th><th>คนที่มาจาก</th><th>สไลด์บอกว่า</th><th>หลักฐาน</th></tr>
-  </thead>
-  <tbody>
-    <tr><td>1</td><td><code>if count</code> แล้วคิดว่า 0 ตกไป</td><td>TypeScript</td><td>ใน Ruby 0 เป็นจริง — ใช้ <code>count.positive?</code> หรือ <code>count.zero?</code></td><td>7.1</td></tr>
-    <tr><td>2</td><td>ลืมว่า exception ไม่มีใครบังคับให้รับ</td><td>Go</td><td>ไม่มี compiler เตือน — error หลุดขึ้นไปถึงหน้าเว็บ</td><td>หัวข้อ 5</td></tr>
-    <tr><td>3</td><td>หา type annotation ไม่เจอ เลยไม่กล้าแก้</td><td>ทั้งคู่</td><td>ต้องอ่าน test แทน type signature · และใช้ console ลองของจริง</td><td>7.2</td></tr>
-    <tr><td>4</td><td>เขียน <code>return</code> ผิดที่</td><td>ทั้งคู่</td><td>บรรทัดสุดท้ายคือค่าที่คืนอยู่แล้ว เผลอเติมบรรทัดต่อท้ายแล้วค่าเปลี่ยน</td><td>7.3</td></tr>
-    <tr><td>5</td><td>เขียน <code>for</code> loop แทน Enumerable</td><td>Go</td><td>โค้ดยาวกว่า 3 เท่าและคนรีวิวจะทัก</td><td>7.4</td></tr>
-    <tr><td>6</td><td>ตั้งชื่อไฟล์เป็น camelCase</td><td>TypeScript</td><td><code>blogPost.rb</code> จะทำให้ Rails หาไฟล์ไม่เจอ ต้องเป็น <code>blog_post.rb</code></td><td>7.5 ⚠️</td></tr>
-  </tbody>
+  <tr><th>ท่อน</th><th>แปลว่า</th></tr>
+  <tr><td><code>undefined method 'upcase'</code></td><td>"ไม่รู้จัก method ชื่อ upcase" · ชื่อในเครื่องหมาย <code>'...'</code> คือ method ที่เราพยายามเรียก</td></tr>
+  <tr><td><code>for nil</code></td><td>ของที่อยู่<strong>หน้าจุด</strong>เป็น nil · ถ้าเป็นของชนิดอื่นจะเขียนว่า <code>for an instance of Integer</code> (เป็นตัวเลข) แบบใน duck.rb</td></tr>
+  <tr><td><code>^^^^^^^</code></td><td>Ruby ขีดเส้นใต้ให้เลยว่าพังตรง <code>.upcase</code></td></tr>
 </table>
 </div>
 
-<h3 id="sn-sub-2">7.1 · เลข 0 เป็น "จริง"</h3>
+<p>
+  วิธีแก้: <strong>อย่าแก้ที่บรรทัดที่พัง</strong> · ถามว่า "ทำไม <code>title</code> ถึงเป็น nil" แล้วย้อนไปบรรทัดก่อนหน้า —
+  ที่นี่คือ <code>posts[2]</code> หาไม่เจอ · วิธีรับมือ nil ให้สวย ๆ อยู่ใน <a href="./0094-ruby-truthiness-and-nil.html">บท 94</a>
+</p>
 
-<div class="compare">
-  <div class="side">
-    <h4>TypeScript</h4>
-<pre><code><span class="k">const</span> count = <span class="n">0</span>;
-<span class="k">if</span> (count) { console.<span class="f">log</span>(<span class="s">"TS: เข้า if"</span>) }
-<span class="k">else</span> { console.<span class="f">log</span>(<span class="s">"TS: 0 ถือว่าเท็จ"</span>) }</code></pre>
-<pre><code><span class="c">$ node zero.ts</span>
-TS: 0 ถือว่าเท็จ</code></pre>
-  </div>
-  <div class="side">
-    <h4>Ruby</h4>
-<pre><code>count = <span class="n">0</span>
+<h2 id="sn-sec-11">11 · กับดักของคนที่มาจาก Go</h2>
+
+<p>
+  มือ Go ที่เพิ่งมา Ruby มักสะดุดเรื่องเดิม ๆ · เรื่อง "ไม่มีใครบังคับให้รับ error" คุณเห็นกับตาแล้วในหัวข้อ 2 และ 8 ·
+  เรื่อง "เขียน for loop แทน map/select" ทวนได้ใน <a href="./0092-ruby-symbol-hash-enumerable.html">บท 92</a> ·
+  ที่เหลือ 4 ข้อ รันให้ดูสั้น ๆ:
+</p>
+
+<h3 id="sn-sub-4">① เลข 0 นับว่า "จริง"</h3>
+
+<pre><code><span class="c"># zero.rb</span>
+count = <span class="n">0</span>
 <span class="k">if</span> count
-  <span class="f">puts</span> <span class="s">"Ruby: 0 ถือว่าจริง"</span>
+  <span class="f">puts</span> <span class="s">"0 ถือว่าจริง!"</span>
 <span class="k">end</span>
 <span class="f">p</span> count.<span class="f">zero?</span>
 <span class="f">p</span> count.<span class="f">positive?</span></code></pre>
-<pre><code><span class="c">$ ruby zero.rb</span>
-Ruby: 0 ถือว่าจริง
+
+<pre><code>$ ruby zero.rb
+0 ถือว่าจริง!
 true
 false</code></pre>
-  </div>
-</div>
 
 <p>
-  ใน Ruby มีแค่ <code>false</code> กับ <code>nil</code> เท่านั้นที่เป็นเท็จ — <code>0</code> · <code>""</code> · <code>[]</code> เป็นจริงหมด ·
-  รายละเอียดเต็มอยู่ใน <a href="./0094-ruby-truthiness-and-nil.html">บทเรียน 94</a>
+  ใน Ruby มีแค่ <code>false</code> กับ <code>nil</code> ที่นับว่าเท็จ · อยากเช็คว่าเป็นศูนย์ให้ถามตรง ๆ ด้วย <code>.zero?</code> หรือ <code>.positive?</code> (มากกว่า 0) ·
+  (ใน Go เขียน <code>if count</code> กับตัวเลขไม่ได้อยู่แล้ว · ข้อนี้คนจาก TypeScript โดนบ่อยกว่า)
 </p>
 
-<h3 id="sn-sub-3">7.2 · ไม่มี type ให้อ่าน — method รับอะไรก็ได้</h3>
+<h3 id="sn-sub-5">② บรรทัดสุดท้ายคือค่าที่คืน — เผลอเติมบรรทัดแล้วค่าเปลี่ยน</h3>
+
+<pre><code><span class="c"># last_line.rb</span>
+<span class="k">def</span> <span class="f">full_name</span>(first, last)
+  name = <span class="s">"#{first} #{last}"</span>
+  <span class="f">puts</span> <span class="s">"สร้างชื่อเสร็จแล้ว"</span>   <span class="c"># เผลอเติมบรรทัดนี้ต่อท้าย</span>
+<span class="k">end</span>
+
+<span class="f">p</span> <span class="f">full_name</span>(<span class="s">"สมชาย"</span>, <span class="s">"ใจดี"</span>)</code></pre>
+
+<pre><code>$ ruby last_line.rb
+สร้างชื่อเสร็จแล้ว
+nil</code></pre>
+
+<p>
+  คนจาก Go รอ <code>return name</code> แต่ Ruby คืน<strong>ค่าของบรรทัดสุดท้าย</strong> ซึ่งคือ <code>puts</code> → <code>nil</code> เสมอ ·
+  ไม่มี error ไม่มีคำเตือน — แล้ว nil ตัวนี้จะไปพังเป็น NoMethodError ที่อื่นทีหลัง
+</p>
+
+<h3 id="sn-sub-6">③ ไม่มี type บอก — ส่งผิดชนิดแล้วไม่พัง แต่ได้ผลแปลก</h3>
 
 <pre><code><span class="c"># no_types.rb</span>
 <span class="k">def</span> <span class="f">total</span>(price, qty)
   price * qty
 <span class="k">end</span>
 
-<span class="f">p</span> total(<span class="n">5</span>, <span class="n">3</span>)
-<span class="f">p</span> total(<span class="s">"5"</span>, <span class="n">3</span>)
-<span class="f">p</span> total([<span class="n">5</span>], <span class="n">3</span>)
-<span class="f">p</span> <span class="f">method</span>(<span class="n">:total</span>).<span class="f">parameters</span></code></pre>
+<span class="f">p</span> <span class="f">total</span>(<span class="n">5</span>, <span class="n">3</span>)
+<span class="f">p</span> <span class="f">total</span>(<span class="s">"5"</span>, <span class="n">3</span>)</code></pre>
 
-<pre><code><span class="c">$ ruby no_types.rb</span>
+<pre><code>$ ruby no_types.rb
 15
-"555"
-[5, 5, 5]
-[[:req, :price], [:req, :qty]]</code></pre>
+"555"</code></pre>
 
 <p>
-  ส่ง <code>"5"</code> เข้าไปแทน <code>5</code> — <strong>ไม่พังด้วยซ้ำ</strong> ได้ <code>"555"</code> เพราะ String ก็มี <code>*</code> (ทำซ้ำ) ·
-  นี่คือ duck typing ที่ทำงาน "ถูก" แต่ให้ผลผิด ·
-  และถ้าถาม Ruby ว่า method นี้รับอะไร (<code>.parameters</code>) ได้แค่<strong>ชื่อ</strong> ไม่มี type ·
-  นี่คือเหตุผลที่สไลด์บอกให้<strong>อ่าน test</strong> (test บอกว่าคนเขียนตั้งใจให้ส่งอะไรเข้าไป)
-  และ<strong>ลองของจริงใน console</strong> (<a href="./0104-rails-debug-and-console.html">บทเรียน 104</a>)
+  ส่ง <code>"5"</code> (ข้อความ) แทน <code>5</code> (ตัวเลข) — <strong>ไม่พังด้วยซ้ำ</strong> เพราะ string ก็มี <code>*</code> (แปลว่า "ทำซ้ำ 3 ครั้ง") ·
+  duck typing ทำงาน "ถูก" แต่ผลผิด · เมื่อไม่มี type ให้อ่าน วิธีรู้ว่า method รับอะไรคือ<strong>อ่าน test</strong> (โค้ดที่ทดสอบ method นั้น — Day 4)
+  และ<strong>ลองของจริงใน console</strong> (ครัวทดลองหลังร้าน — <a href="./0104-rails-debug-and-console.html">บท 104</a>)
 </p>
 
-<h3 id="sn-sub-4">7.3 · บรรทัดสุดท้ายคือค่าที่คืน</h3>
+<h3 id="sn-sub-7">④ ชื่อไฟล์ใน Rails — ใช้ snake_case</h3>
 
-<pre><code><span class="c"># last_line.rb</span>
-<span class="k">def</span> <span class="f">full_name</span>(first, last)
-  name = <span class="s">"#{first} #{last}"</span>
-  <span class="f">puts</span> <span class="s">"สร้างชื่อเสร็จแล้ว"</span>       <span class="c"># เผลอเติมบรรทัดนี้ต่อท้าย</span>
+<p>
+  ใน Go เราตั้งชื่อไฟล์อะไรก็ได้ แล้ว <code>import</code> เอาเอง · แต่ Rails <strong>หาไฟล์จากชื่อ</strong> โดยไม่ต้อง import
+  (เหมือนร้านแฟรนไชส์ที่ของทุกชิ้นต้องอยู่ช่องที่ตั้งชื่อไว้ — ละเอียดใน <a href="./0099-rails-naming-and-explore.html">บท 99</a>)
+  <br>กฎคือ class <code>BlogPost</code> ต้องอยู่ในไฟล์ <code>blog_post.rb</code> — ตัวเล็กทั้งหมด คั่นคำด้วย <code>_</code> เรียกว่า <em>snake_case</em> ·
+  ถ้าตั้งชื่อ <code>blogpost.rb</code> (ติดกันหมด) Rails จะฟ้อง <code>uninitialized constant BlogPost</code> = "หา BlogPost ไม่เจอ"
+</p>
+
+<h2 id="sn-sec-12">ภารกิจ</h2>
+
+<div class="task">
+  <h3 id="sn-sub-8">🎯 ภารกิจ: เครื่องแบ่งบิลที่ไม่ล้ม (~10 นาที)</h3>
+  <p>เริ่มจากโค้ดนี้ ซึ่งพังทันทีที่เจอ <code>"0"</code>:</p>
+<pre><code><span class="c"># bill.rb — ขั้นที่ 1: ยังไม่มีใครรับ error</span>
+<span class="k">def</span> <span class="f">split_bill</span>(total, people_text)
+  people = <span class="f">Integer</span>(people_text)
+  total / people
 <span class="k">end</span>
 
-result = full_name(<span class="s">"Somchai"</span>, <span class="s">"Jaidee"</span>)
-<span class="f">p</span> result
-
-<span class="k">def</span> <span class="f">full_name2</span>(first, last)
-  <span class="s">"#{first} #{last}"</span>
+<span class="f">puts</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"3"</span>)
+<span class="f">puts</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"0"</span>)
+<span class="f">puts</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"สาม"</span>)
+<span class="f">puts</span> <span class="s">"ร้านปิด"</span></code></pre>
+  <ol>
+    <li>สร้างไฟล์ <code>bill.rb</code> วางโค้ดข้างบน แล้วรัน <code>ruby bill.rb</code> — ควรเห็น <code>300</code> แล้วพังด้วย <code>(ZeroDivisionError)</code></li>
+    <li>แก้ <code>split_bill</code> ให้<strong>คืนข้อความ</strong>แทนตัวเลข: ถ้าสำเร็จคืน <code>"คนละ 300 บาท"</code>
+        (คำใบ้: เปลี่ยนบรรทัดสุดท้ายเป็น string ที่มี <code>#{total / people}</code> อยู่ข้างใน)</li>
+    <li>เพิ่ม <code>rescue</code> <strong>ห้อยท้าย method</strong> (หัวข้อ 5) สองช่อง:
+        หารด้วยศูนย์ → คืน <code>"จำนวนคนต้องมากกว่า 0"</code> ·
+        แปลงตัวเลขไม่ได้ → คืน <code>"อ่านจำนวนคนไม่ออก (ArgumentError)"</code> โดยดึงชื่อชนิดมาจาก <code>e.class</code></li>
+    <li>ต่อท้ายไฟล์ด้วยสามบรรทัดนี้ เพื่อเช็คตัวเอง — <strong>ต้องได้ <code>true</code> ทั้งสามบรรทัด</strong>:
+<pre><code><span class="f">p</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"3"</span>) == <span class="s">"คนละ 300 บาท"</span>
+<span class="f">p</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"0"</span>) == <span class="s">"จำนวนคนต้องมากกว่า 0"</span>
+<span class="f">p</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"สาม"</span>) == <span class="s">"อ่านจำนวนคนไม่ออก (ArgumentError)"</span></code></pre></li>
+  </ol>
+  <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong></p>
+  <ul>
+    <li><code>undefined local variable or method 'e' for main (NameError)</code> → คุณใช้ <code>e</code> แต่ลืมเขียน <code>=&gt; e</code> หลัง <code>rescue ArgumentError</code></li>
+    <li>ยังพังด้วย <code>invalid value for Integer(): "สาม" (ArgumentError)</code> → มีแค่ช่อง ZeroDivisionError ยังไม่มีช่องรับ ArgumentError</li>
+    <li><code>syntax errors found (SyntaxError)</code> พร้อมข้อความ <code>expected an `end` to close the `def` statement</code> → ลบ <code>end</code> ของ method ไปเผลอ ๆ ·
+        rescue ห้อยท้ายต้องอยู่<strong>ก่อน</strong> <code>end</code> ของ <code>def</code></li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c"># bill.rb — ขั้นที่ 2: มีคนรับแล้ว</span>
+<span class="k">def</span> <span class="f">split_bill</span>(total, people_text)
+  people = <span class="f">Integer</span>(people_text)
+  <span class="s">"คนละ #{total / people} บาท"</span>
+<span class="k">rescue</span> <span class="n">ZeroDivisionError</span>
+  <span class="s">"จำนวนคนต้องมากกว่า 0"</span>
+<span class="k">rescue</span> <span class="n">ArgumentError</span> =&gt; e
+  <span class="s">"อ่านจำนวนคนไม่ออก (#{e.class})"</span>
 <span class="k">end</span>
-<span class="f">p</span> full_name2(<span class="s">"Somchai"</span>, <span class="s">"Jaidee"</span>)</code></pre>
 
-<pre><code><span class="c">$ ruby last_line.rb</span>
-สร้างชื่อเสร็จแล้ว
-nil
-"Somchai Jaidee"</code></pre>
+<span class="f">puts</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"3"</span>)
+<span class="f">puts</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"0"</span>)
+<span class="f">puts</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"สาม"</span>)
+<span class="f">puts</span> <span class="s">"ร้านปิด"</span>
 
-<p>
-  คนมาจาก Go เขียนบรรทัดแรกเสร็จก็คิดว่า "ได้ชื่อแล้ว" แต่ Ruby ไม่ได้คืน <code>name</code> —
-  มันคืน<strong>ค่าของบรรทัดสุดท้าย</strong> ซึ่งคือ <code>puts</code> → <code>nil</code> ·
-  <strong>ไม่มี error ไม่มีคำเตือนตอนรันปกติ</strong> · ถ้ารันด้วย <code>ruby -w last_line.rb</code> จะมีคำใบ้เดียว:
-</p>
-<pre><code>last_line.rb:3: warning: assigned but unused variable - name</code></pre>
-<p>(การคืนค่าแบบนี้ไม่ใช่เรื่องเฉพาะ <code>else</code> ในหัวข้อ 2 — มันคือกติกาของทุก method · ทบทวนได้ที่ <a href="./0093-ruby-blocks-and-methods.html">บทเรียน 93</a>)</p>
-
-<h3 id="sn-sub-5">7.4 · <code>for</code> loop แบบ Go กับ Enumerable แบบ Ruby</h3>
-
-<pre><code><span class="c"># for_loop.rb</span>
-prices = [<span class="n">120</span>, <span class="n">45</span>, <span class="n">300</span>, <span class="n">80</span>]
-
-<span class="c"># แบบคนมาจาก Go</span>
-expensive = []
-<span class="k">for</span> price <span class="k">in</span> prices
-  <span class="k">if</span> price &gt; <span class="n">100</span>
-    expensive &lt;&lt; price * <span class="n">2</span>
-  <span class="k">end</span>
-<span class="k">end</span>
-<span class="f">p</span> expensive
-
-<span class="c"># แบบ Ruby</span>
-<span class="f">p</span> prices.<span class="f">select</span> { |price| price &gt; <span class="n">100</span> }.<span class="f">map</span> { |price| price * <span class="n">2</span> }
-
-<span class="f">p</span> price   <span class="c"># ตัวแปรของ for ยังอยู่หลังจบ loop</span>
-prices.<span class="f">each</span> { |x| }
-<span class="f">p</span> <span class="k">defined?</span>(x)</code></pre>
-
-<pre><code><span class="c">$ ruby for_loop.rb</span>
-[240, 600]
-[240, 600]
-80
-nil</code></pre>
-
-<p>
-  ผลเท่ากัน แต่แบบ <code>for</code> ใช้ 6 บรรทัด แบบ Enumerable ใช้บรรทัดเดียว
-  (สไลด์อ้างว่า "ยาวกว่า 3 เท่า" — ในตัวอย่างนี้ห่างกันมากกว่านั้นอีก) ·
-  และมี<strong>ของแถมที่สไลด์ไม่ได้บอก</strong>: ตัวแปร <code>price</code> ของ <code>for</code>
-  <strong>ยังค้างอยู่หลังจบ loop</strong> (ได้ <code>80</code> = ตัวสุดท้าย) ส่วน <code>x</code> ของ block หายไปตามที่ควร (<code>defined?</code> ได้ <code>nil</code>) ·
-  ทบทวน <code>select</code>/<code>map</code> ได้ที่ <a href="./0092-ruby-symbol-hash-enumerable.html">บทเรียน 92</a>
-</p>
-
-<h3 id="sn-sub-6">7.5 · ชื่อไฟล์ camelCase — ⚠️ รันแล้วไม่ได้ผลอย่างที่สไลด์บอก</h3>
-
-<p>
-  สไลด์บอกว่า <code>blogPost.rb</code> จะทำให้ Rails หาไฟล์ไม่เจอ · ผมลองในแอป <code>wongnok_blog</code> ทีละชื่อ
-  โดยใส่เนื้อไฟล์เหมือนกันทุกรอบ:
-</p>
-
-<pre><code><span class="k">class</span> <span class="n">BlogPost</span>
-  <span class="k">def</span> <span class="f">title</span>
-    <span class="s">"Rails วันแรก"</span>
-  <span class="k">end</span>
-<span class="k">end</span></code></pre>
-
-<p>แล้วรันสองคำสั่ง — <code>bin/rails runner</code> (รันโค้ดหนึ่งบรรทัดในแอป) กับ <code>bin/rails zeitwerk:check</code> (ตรวจว่าทุกไฟล์ชื่อตรงกับ class ข้างใน):</p>
-
-<pre><code><span class="c"># ① app/models/blogPost.rb  (camelCase แบบที่สไลด์เตือน)</span>
-<span class="c">$ bin/rails runner "p BlogPost.new.title"</span>
-"Rails วันแรก"
-<span class="c">$ bin/rails zeitwerk:check</span>
-Hold on, I am eager loading the application.
-All is good!
-
-<span class="c"># ② app/models/blogpost.rb  (ตัวเล็กติดกันหมด)</span>
-<span class="c">$ bin/rails runner "p BlogPost.new.title"</span>
-Please specify a valid ruby command or the path of a script to run.
-Run 'bin/rails runner -h' for help.
-
-uninitialized constant BlogPost
-<span class="c">$ bin/rails zeitwerk:check</span>
-Hold on, I am eager loading the application.
-expected file app/models/blogpost.rb to define constant Blogpost, but didn't
-
-<span class="c"># ③ app/models/blog_post.rb  (snake_case แบบที่ถูก)</span>
-<span class="c">$ bin/rails runner "p BlogPost.new.title"</span>
-"Rails วันแรก"
-<span class="c">$ bin/rails zeitwerk:check</span>
-Hold on, I am eager loading the application.
-All is good!</code></pre>
-
-<p>
-  <strong><code>blogPost.rb</code> ใช้ได้จริง</strong> (บน Rails 8.1.4) · ที่พังคือ <code>blogpost.rb</code> ·
-  เหตุผล: ตัวโหลดไฟล์ของ Rails (ชื่อ <strong>Zeitwerk</strong>) ทำงาน<strong>จากชื่อไฟล์ไปหาชื่อ class</strong>
-  ด้วยการเรียก <code>"ชื่อไฟล์".camelize</code> — และ <code>"blogPost".camelize</code> ได้ <code>"BlogPost"</code> พอดี
-  ส่วน <code>"blogpost".camelize</code> ได้ <code>"Blogpost"</code> (p ตัวเล็ก) ไม่ตรงกับ <code>BlogPost</code> ในไฟล์
-  · (คู่มือ Rails เขียนกติกานี้ไว้ — ลิงก์อยู่ท้ายบท)
-</p>
-
-<p>
-  <strong>แต่อย่าเพิ่งตั้งชื่อ camelCase นะ</strong> — เพราะส่วนอื่นของ Rails เดินทาง<strong>ทางกลับ</strong>
-  คือจากชื่อ class ไปหาชื่อไฟล์ด้วย <code>underscore</code> (<code>"BlogPost".underscore</code> = <code>"blog_post"</code>) ·
-  ตัวอย่างที่พังจริง: <strong>โฟลเดอร์ของ view</strong> · ผมสร้าง <code>BlogPostsController</code> ที่มี action <code>index</code>
-  แล้ววางไฟล์ view ไว้ใน <code>app/views/blogPosts/index.html.erb</code>:
-</p>
-
-<pre><code><span class="c"># view อยู่ใน app/views/blogPosts/</span>
-<span class="c">$ curl -s -o /dev/null -w '%{http_code}\n' -H 'Accept: text/html' http://localhost:3000/blog_posts</span>
-406
-<span class="c"># log ของ server</span>
-ActionController::MissingExactTemplate (BlogPostsController#index is missing a template for request formats: text/html):
-
-<span class="c"># ย้ายไป app/views/blog_posts/ แล้ว restart server</span>
-<span class="c">$ curl -s -o /dev/null -w '%{http_code}\n' -H 'Accept: text/html' http://localhost:3000/blog_posts</span>
-200
-<span class="c"># log ของ server</span>
-  Rendered blog_posts/index.html.erb within layouts/application (Duration: 0.1ms | GC: 0.0ms)</code></pre>
-
-<p>
-  และเครื่องมือของ Rails สร้างไฟล์เป็น snake_case เสมอ — ลองสั่งแบบ <code>--pretend</code> (แสดงเฉย ๆ ไม่สร้างจริง):
-</p>
-
-<pre><code><span class="c">$ bin/rails g model BlogPost title:string --pretend</span>
-      invoke  active_record
-      create    db/migrate/20261031170432_create_blog_posts.rb
-      create    app/models/blog_post.rb
-      invoke    test_unit
-      create      test/models/blog_post_test.rb
-      create      test/fixtures/blog_posts.yml</code></pre>
-
-<div class="warn">
-  <p style="margin-bottom:0">
-    <strong>สรุปข้อ 6 ตามผลรันจริง:</strong> ข้อสรุปของสไลด์ — <strong>"ต้องเป็น <code>blog_post.rb</code>"</strong> — ถูก ·
-    แต่เหตุผล "<code>blogPost.rb</code> หาไฟล์ไม่เจอ" <strong>ไม่ตรงกับผลรันบน Rails 8.1.4</strong> สำหรับไฟล์ model ·
-    ของที่พังจริงคือ<strong>ชื่อที่ตัดคำผิด</strong> (<code>blogpost.rb</code>) และ<strong>ชื่อโฟลเดอร์ view</strong> ·
-    ใช้ snake_case ทุกที่ตามที่ generator สร้างให้ แล้วจะไม่ต้องจำว่าตรงไหนรอด ตรงไหนพัง ·
-    กติกาตั้งชื่อเต็ม ๆ อยู่ใน <a href="./0099-rails-naming-and-explore.html">บทเรียน 99</a>
-  </p>
+<span class="c"># เช็คตัวเอง: ต้องได้ true ทั้งสามบรรทัด</span>
+<span class="f">p</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"3"</span>) == <span class="s">"คนละ 300 บาท"</span>
+<span class="f">p</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"0"</span>) == <span class="s">"จำนวนคนต้องมากกว่า 0"</span>
+<span class="f">p</span> <span class="f">split_bill</span>(<span class="n">900</span>, <span class="s">"สาม"</span>) == <span class="s">"อ่านจำนวนคนไม่ออก (ArgumentError)"</span></code></pre>
+<pre><code>$ ruby bill.rb
+คนละ 300 บาท
+จำนวนคนต้องมากกว่า 0
+อ่านจำนวนคนไม่ออก (ArgumentError)
+ร้านปิด
+true
+true
+true</code></pre>
+    <ul>
+      <li>ไม่ต้องมี <code>begin</code> เพราะ rescue ห้อยท้าย method คุ้มครองทั้งตัว method อยู่แล้ว</li>
+      <li>ค่าที่ method คืน = บรรทัดสุดท้ายของช่องที่ได้ทำ (ช่องปกติ หรือช่อง rescue ช่องใดช่องหนึ่ง)</li>
+      <li><strong>"ร้านปิด" ถูกพิมพ์แล้ว</strong> — ไม่มีอะไรหลุดออกมาจน program หยุด</li>
+      <li>ลองต่อ: ลบช่อง <code>rescue ZeroDivisionError</code> ออก แล้วดูว่า <code>"0"</code> ไปตกที่ไหน (คำใบ้: หัวข้อ 4)</li>
+    </ul>
+  </div>
 </div>
 
-<div class="quiz" data-answer="0">
-  <p class="q">จากผลรันในหัวข้อ 7.5 ทำไม <code>app/models/blogPost.rb</code> ที่มี <code>class BlogPost</code> ถึงผ่าน <code>zeitwerk:check</code> แต่ <code>blogpost.rb</code> ไม่ผ่าน?</p>
+<h2 id="sn-sec-13">แบบทดสอบ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">โค้ดนี้พิมพ์อะไรออกมา? (<code>;</code> ใช้แทนการขึ้นบรรทัดใหม่)<br><code>begin; puts 900 / 0; rescue ArgumentError; puts "รับไว้"; end; puts "ไปต่อ"</code></p>
   <div class="opts">
-    <button class="opt">Zeitwerk แปลงชื่อไฟล์เป็นชื่อ class ด้วย <code>camelize</code> · <code>blogPost</code> ได้ <code>BlogPost</code> แต่ <code>blogpost</code> ได้ <code>Blogpost</code></button>
-    <button class="opt">macOS ไม่สนตัวพิมพ์เล็กใหญ่ในชื่อไฟล์ ถ้าย้ายไปรันบน Linux แล้ว <code>blogPost.rb</code> จะพังทันที</button>
-    <button class="opt">Rails เปลี่ยนชื่อไฟล์ <code>blogPost.rb</code> ให้เป็น <code>blog_post.rb</code> เองตอนบูตแอป</button>
-    <button class="opt">Zeitwerk ค้นหา class ด้วยการเปิดอ่านทุกไฟล์ ไม่ได้ดูชื่อไฟล์เลย แต่ <code>blogpost</code> ถูกห้ามไว้</button>
+    <button class="opt">พิมพ์ "รับไว้" แล้วตามด้วย "ไปต่อ" เพราะมีช่อง rescue อยู่แล้ว</button>
+    <button class="opt">พิมพ์ "ไปต่อ" อย่างเดียว เพราะ error ถูกข้ามไปเงียบ ๆ</button>
+    <button class="opt">ไม่พิมพ์ทั้งสองคำ โปรแกรมพังด้วย ZeroDivisionError</button>
+    <button class="opt">ไม่ได้รันเลย Ruby ฟ้อง SyntaxError เพราะชนิดใน rescue ไม่ตรง</button>
   </div>
   <div class="explain">
     <p>
-      ตัวเลือกที่ 1 ถูก — ข้อความ error ของรอบ ② บอกตรง ๆ ว่า <code>expected file app/models/blogpost.rb to define constant Blogpost</code>
-      · Zeitwerk เดาชื่อ class <strong>จากชื่อไฟล์</strong> แล้วคาดหวังให้ไฟล์ประกาศ class ชื่อนั้น
+      ตัวเลือกที่ 3 ถูก — ตรงกับผลรันของ <code>only_one.rb</code> ในหัวข้อ 4 ·
+      ช่อง rescue รอแค่ ArgumentError แต่สิ่งที่เกิดคือ ZeroDivisionError จึงวิ่งผ่านไป แล้วไม่มีใครรับต่อ
     </p>
     <p>
-      ตัวเลือกที่ 2 ฟังดูมีเหตุผล แต่ลองคิดกลับ: ถ้า Rails ไปเปิดหาไฟล์ชื่อ <code>blog_post.rb</code> ต่อให้ระบบไฟล์ไม่สนตัวพิมพ์
-      <code>blogPost.rb</code> ก็ยัง<strong>ไม่ตรงอยู่ดีเพราะขาด <code>_</code></strong> · ที่รอบ ① ผ่านได้จึงมาจากทางเดียว คือ
-      Zeitwerk ไล่<strong>รายชื่อไฟล์ในโฟลเดอร์</strong> (ในซอร์สของ Zeitwerk 2.8.3 ใช้ <code>Dir.each_child</code>) แล้ว <code>camelize</code> ชื่อที่เจอ ·
-      ตัวเลือกที่ 3 ผิดเพราะ Rails ไม่แตะชื่อไฟล์ของคุณ (รอบ ① ไฟล์ยังชื่อ <code>blogPost.rb</code>) ·
-      ตัวเลือกที่ 4 ผิดเพราะ Zeitwerk ไม่ได้เปิดอ่านไฟล์เพื่อหา class — ถ้าเปิดอ่าน รอบ ② ก็ต้องผ่าน
+      ตัวเลือกที่ 1 ผิดเพราะ rescue <strong>ดูชื่อชนิด</strong> ไม่ใช่รับทุกเรื่อง ·
+      ตัวเลือกที่ 2 ผิดเพราะ Ruby ไม่เคยข้าม error เงียบ ๆ — ไม่มีคนรับคือพัง ·
+      ตัวเลือกที่ 4 ผิดเพราะ Ruby ไม่ตรวจล่วงหน้าว่าชนิดตรงไหม รันได้ปกติจนถึงตอนพัง
     </p>
-    <p style="margin-bottom:0">
-      <strong>จุดที่ต้องจำ:</strong> ใน Rails <strong>ชื่อไฟล์คือสัญญา</strong> ·
-      ใช้ snake_case ตามที่ generator สร้างให้ แล้วทั้งทางไป (<code>camelize</code>) และทางกลับ (<code>underscore</code>) จะตรงกันเสมอ
-    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> rescue ระบุชนิดไหน ก็รับแค่ชนิดนั้น (และลูกหลานของมัน) — นอกนั้นลอยผ่านไป</p>
   </div>
 </div>
 
-<h2 id="sn-sec-8">8 · ภารกิจ — แปลง error ให้มีความหมาย แล้วเขียน test พิสูจน์</h2>
-
-<div class="task">
-  <h3 id="sn-sub-7">🎯 ภารกิจ: <code>parse_qty</code></h3>
-  <p>
-    ช่องกรอก "จำนวนสินค้า" ของ <code>wongnok_blog</code> ส่งมาเป็นข้อความ · เขียนไฟล์ <code>qty.rb</code> ที่มี:
-  </p>
-  <ol>
-    <li>class <code>InvalidQuantityError</code> ของคุณเอง (สืบจากอะไร — ทบทวนหัวข้อ 3)</li>
-    <li>method <code>parse_qty(text)</code> ที่แปลงข้อความเป็นตัวเลขด้วย <code>Integer()</code> ·
-        ถ้า<strong>ไม่ใช่ตัวเลข</strong> หรือ<strong>ไม่มากกว่า 0</strong> ให้ <code>raise InvalidQuantityError</code> พร้อมข้อความที่บอกว่าผิดเพราะอะไร ·
-        ใช้ <strong>rescue ระดับ method</strong> (ไม่มี <code>begin</code>)</li>
-    <li>method <code>safe_qty(text)</code> ที่เรียก <code>parse_qty</code> แล้ว<strong>รับเฉพาะ <code>InvalidQuantityError</code></strong>
-        พิมพ์ข้อความแจ้งผู้ใช้ แล้วคืน <code>1</code> เป็นค่า default</li>
-    <li><strong>เขียน test พิสูจน์</strong> ใน <code>qty_test.rb</code> ด้วย Minitest (ติดมากับ Ruby — เป็นตัวเดียวกับที่ Rails ใช้ใน <code>test/</code>
-        · เรื่อง testing เต็ม ๆ อยู่ Day 4) ให้ครอบคลุม: ตัวเลขปกติ · ไม่ใช่ตัวเลข (เช็คข้อความด้วย) · ศูนย์ · และ <code>safe_qty</code> คืน 1</li>
-  </ol>
-  <p>คำใบ้: <code>assert_raises(ErrorClass) { … }</code> คืน error object ออกมา เอาไปเช็ค <code>.message</code> ต่อได้</p>
-  <button class="reveal">เฉลย</button>
-  <div class="answer">
-<pre><code><span class="c"># qty.rb</span>
-<span class="k">class</span> <span class="n">InvalidQuantityError</span> &lt; <span class="n">StandardError</span>
-<span class="k">end</span>
-
-<span class="k">def</span> <span class="f">parse_qty</span>(text)
-  qty = <span class="f">Integer</span>(text)
-  <span class="k">raise</span> <span class="n">InvalidQuantityError</span>, <span class="s">"จำนวนต้องมากกว่า 0 (ได้ #{qty})"</span> <span class="k">unless</span> qty.<span class="f">positive?</span>
-  qty
-<span class="k">rescue</span> <span class="n">ArgumentError</span>
-  <span class="k">raise</span> <span class="n">InvalidQuantityError</span>, <span class="s">"ไม่ใช่ตัวเลข: #{text}"</span>
-<span class="k">end</span>
-
-<span class="k">def</span> <span class="f">safe_qty</span>(text)
-  parse_qty(text)
-<span class="k">rescue</span> <span class="n">InvalidQuantityError</span> =&gt; e
-  <span class="f">puts</span> <span class="s">"แจ้งผู้ใช้: #{e.message}"</span>
-  <span class="n">1</span>
-<span class="k">end</span></code></pre>
-
-<pre><code><span class="c"># qty_test.rb</span>
-<span class="f">require</span> <span class="s">"minitest/autorun"</span>
-<span class="f">require_relative</span> <span class="s">"qty"</span>
-
-<span class="k">class</span> <span class="n">ParseQtyTest</span> &lt; <span class="n">Minitest::Test</span>
-  <span class="k">def</span> <span class="f">test_valid_number</span>
-    assert_equal <span class="n">3</span>, parse_qty(<span class="s">"3"</span>)
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">test_not_a_number</span>
-    error = assert_raises(<span class="n">InvalidQuantityError</span>) { parse_qty(<span class="s">"abc"</span>) }
-    assert_equal <span class="s">"ไม่ใช่ตัวเลข: abc"</span>, error.<span class="f">message</span>
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">test_zero</span>
-    assert_raises(<span class="n">InvalidQuantityError</span>) { parse_qty(<span class="s">"0"</span>) }
-  <span class="k">end</span>
-
-  <span class="k">def</span> <span class="f">test_safe_qty_falls_back_to_1</span>
-    assert_equal <span class="n">1</span>, safe_qty(<span class="s">"abc"</span>)
-  <span class="k">end</span>
-<span class="k">end</span></code></pre>
-
-<pre><code><span class="c">$ ruby qty_test.rb</span>
-Run options: --seed 9857
-
-# Running:
-
-แจ้งผู้ใช้: ไม่ใช่ตัวเลข: abc
-....
-
-Finished in 0.000229s, 17467.2491 runs/s, 21834.0614 assertions/s.
-
-4 runs, 5 assertions, 0 failures, 0 errors, 0 skips</code></pre>
-    <p>(เลข <code>--seed</code> กับเวลาจะไม่ตรงกับของคุณ — Minitest สุ่มลำดับ test ทุกครั้ง · ที่ต้องตรงคือบรรทัดสุดท้าย)</p>
-    <p>สามจุดที่ควรสังเกตในเฉลย:</p>
-    <ul>
-      <li><strong><code>raise</code> ข้างใน <code>rescue</code> ได้</strong> — แปลง <code>ArgumentError</code> ที่ไม่มีความหมายทางธุรกิจ
-          ให้เป็น <code>InvalidQuantityError</code> ที่คนอ่านเข้าใจ · คล้าย <code>fmt.Errorf("...: %w", err)</code> ของ Go ที่ห่อ error ให้มีบริบท</li>
-      <li><strong><code>InvalidQuantityError</code> ที่ raise ตอน <code>qty</code> เป็น 0 ไม่ถูก <code>rescue ArgumentError</code> ของตัวเองจับ</strong>
-          เพราะมันไม่ใช่ลูกของ <code>ArgumentError</code> — มันลอยออกไปหาคนเรียกตามที่ตั้งใจ</li>
-      <li><strong><code>safe_qty</code> รับแค่ <code>InvalidQuantityError</code></strong> ไม่ใช่ <code>rescue =&gt; e</code> —
-          ถ้าวันหนึ่ง <code>parse_qty</code> พังด้วยเรื่องอื่นที่ไม่คาดคิด มันจะ<strong>พังดัง ๆ ให้เห็น</strong> แทนที่จะกลายเป็น "1 ชิ้น" เงียบ ๆ</li>
-    </ul>
-    <p style="margin-bottom:0">
-      <strong>ลองทำต่อ:</strong> เปลี่ยน <code>&lt; StandardError</code> เป็น <code>&lt; Exception</code> แล้วรัน test ซ้ำ —
-      ทุกข้อยังผ่าน เพราะทุกที่ระบุชื่อ class ตรง ๆ · แล้วลองแก้ <code>safe_qty</code> ให้ใช้ <code>rescue =&gt; e</code> แทน
-      จะเห็นด้วยตาว่าทำไมหัวข้อ 3 ถึงสำคัญ
+<div class="quiz" data-answer="0">
+  <p class="q">โค้ดในช่อง <code>ensure</code> ถูกรันเมื่อไหร่?</p>
+  <div class="opts">
+    <button class="opt">ทุกครั้ง ทั้งตอนที่โค้ดพังและตอนที่โค้ดทำงานผ่านปกติ</button>
+    <button class="opt">เฉพาะตอนที่โค้ดใน begin พังและมีช่อง rescue รับไว้แล้ว</button>
+    <button class="opt">เฉพาะตอนที่โค้ดใน begin ทำงานผ่านไปได้โดยไม่มี error</button>
+    <button class="opt">เฉพาะตอนที่ error ไม่ตรงกับช่อง rescue ไหนเลยสักช่อง</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก — ใน <code>predict.rb</code> โค้ดพังกลางทาง ก็ยังได้ "5. ปิดเตา" ·
+      และใน <code>rescue2.rb</code> รอบ <code>"3"</code> ที่ไม่พังก็ได้ "(ปิดบิล)" เหมือนกัน
     </p>
+    <p>
+      ตัวเลือกที่ 2 กับ 3 แต่ละข้อถูกแค่ครึ่งเดียว · ตัวเลือกที่ 4 ผิดเพราะ ensure ไม่สนว่ามีคนรับหรือไม่ — มันทำเสมอ
+      (แม้ error จะลอยต่อขึ้นไป ensure ก็ทำก่อนออก)
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ensure ≈ <code>defer</code> ของ Go — "ออกทางไหนก็ต้องผ่านตรงนี้" · ใช้กับงานเก็บกวาด</p>
   </div>
 </div>
 
-<div class="win">
-  <p style="margin-bottom:0">
-    <strong>✅ ถ้าตอบสี่ข้อนี้ได้ แปลว่าบทนี้ผ่านแล้ว</strong>
-    <br>1. <code>rescue =&gt; e</code> ที่ไม่ระบุ class รับ error ตระกูลไหน แล้วยกตัวอย่าง error ที่มันรับไม่ได้หนึ่งตัว
-    <br>2. method ที่มี <code>else</code> คืนค่าจากช่องไหน — แล้ว <code>ensure</code> เคยเป็นค่าที่คืนไหม?
-    <br>3. ไม่มี <code>rescue_from</code> แล้ว <code>RecordNotFound</code> ใน Rails ได้ status อะไร · แล้วเขียน <code>rescue_from</code> ไปเพื่ออะไร?
-    <br>4. <code>blogPost.rb</code> กับ <code>blogpost.rb</code> — ตัวไหนพังใน Zeitwerk และเพราะอะไร?
-    <br>ติดข้อไหน หรือรันแล้วได้ผลไม่เหมือนในบท — <strong>ถามกลับมาได้เลย</strong> พร้อมแปะ output ที่ได้
-  </p>
+<div class="quiz" data-answer="3">
+  <p class="q">มี <code>def show(x); puts x.title; end</code> · ส่งอะไรเข้าไปแล้ว<strong>ไม่พัง</strong>?</p>
+  <div class="opts">
+    <button class="opt">เฉพาะ object ของ class ที่ชื่อ Post เพราะเป็นของหลักในแอปบล็อก</button>
+    <button class="opt">เฉพาะ object ที่ประกาศ interface ไว้ว่ามี title เหมือนใน Go</button>
+    <button class="opt">อะไรก็ได้ทุกอย่าง เพราะ Ruby ไม่ตรวจ type เลยจึงไม่มีวันพัง</button>
+    <button class="opt">object ไหนก็ได้ที่มี method ชื่อ title ไม่สนว่าเป็น class อะไร</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก — ใน <code>duck.rb</code> ทั้ง Post และ Menu ใช้ได้ ทั้งที่ไม่เกี่ยวกันเลย · นี่คือ duck typing
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิดเพราะ Ruby ไม่ดูชื่อ class · ตัวเลือกที่ 2 ผิดเพราะ Ruby ไม่มี interface ให้ประกาศ ·
+      ตัวเลือกที่ 3 ผิดครึ่งหนึ่ง — ไม่ตรวจก่อนรันก็จริง แต่<strong>พังตอนรัน</strong> ถ้าส่ง 42 เข้าไป (NoMethodError)
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> Ruby ถามแค่ "ทำได้ไหม" และถามตอนรันถึงบรรทัดนั้นเท่านั้น</p>
+  </div>
 </div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">เห็น <code>undefined method 'title' for nil (NoMethodError)</code> — ควรคิดอะไรเป็นอย่างแรก?</p>
+  <div class="opts">
+    <button class="opt">ลืมเขียน method title ไว้ใน class ต้องไปเพิ่ม def title ให้ครบ</button>
+    <button class="opt">ตัวแปรหน้า .title เป็น nil — ย้อนไปหาว่าของหายไปตั้งแต่บรรทัดไหน</button>
+    <button class="opt">Ruby รุ่นที่ใช้เก่าเกินไป จึงไม่รู้จัก method ที่ชื่อ title</button>
+    <button class="opt">ต้องครอบบรรทัดนั้นด้วย begin / rescue แล้ว error ก็จะหายไปเอง</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก — <code>for nil</code> บอกว่าของที่อยู่หน้าจุดคือ nil · ต้นเหตุมักอยู่บรรทัดก่อนหน้า
+      เช่น <code>posts[2]</code> ที่หาไม่เจอใน <code>nil_title.rb</code>
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิดเพราะปัญหาไม่ได้อยู่ที่ class — ถ้าตัวแปรมีของจริง title อาจทำงานได้ปกติ ·
+      ตัวเลือกที่ 3 ผิดเพราะไม่เกี่ยวกับรุ่น · ตัวเลือกที่ 4 แค่ซ่อนอาการ — nil ยังอยู่ และจะไปโผล่ที่อื่น
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> อ่าน error ส่วน <code>for ...</code> ให้ออก แล้วแก้ที่ต้นเหตุ ไม่ใช่ที่บรรทัดที่พัง</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-14">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (ลองแล้ว)</th><th>ต้องสนใจไหม</th></tr>
+  <tr><td>30</td><td>ใต้โค้ด Go: "ลืมไม่ได้ compiler เตือน"</td>
+      <td>compiler เตือนเฉพาะตอนรับ <code>err</code> มาแล้วไม่ใช้ (<code>declared and not used: err</code>) · ถ้าทิ้งด้วย <code>_</code> build ผ่าน และได้ <code>คนละ 0</code> (หัวข้อ 7)</td>
+      <td>นิดหน่อย — Go ก็ลืมได้ถ้าตั้งใจทิ้ง</td></tr>
+  <tr><td>30</td><td><code>do_thing</code> · <code>handle(e)</code> · <code>cleanup</code></td>
+      <td>เป็นชื่อสมมุติ รันตรง ๆ ไม่ได้ · บทนี้ใช้ตัวอย่างแบ่งบิลแทน</td><td>ไม่ต้อง</td></tr>
+  <tr><td>30</td><td><code>rescue_from ActiveRecord::RecordNotFound, with: :render_404</code></td>
+      <td>ถึงไม่เขียน rescue_from Rails ก็ตอบ 404 ให้ error ชนิดนี้อยู่แล้ว (ลองแล้ว) · rescue_from ใช้เมื่ออยากเลือกหน้าตาคำตอบเอง</td>
+      <td>ยังไม่ต้อง — Day 2</td></tr>
+  <tr><td>31</td><td><code>render partial: "post", object: anything_that_has_title</code></td>
+      <td>partial = ชิ้นส่วนของหน้าเว็บ (Day 3) · ใจความคือ view ใช้ได้กับทุก object ที่มี <code>.title</code> = duck typing</td>
+      <td>ยังไม่ต้อง</td></tr>
+  <tr><td>32</td><td>"<code>blogPost.rb</code> จะทำให้ Rails หาไฟล์ไม่เจอ"</td>
+      <td>Rails 8.1.4 โหลด <code>blogPost.rb</code> ได้ · ที่หาไม่เจอคือ <code>blogpost.rb</code> · ข้อสรุป "ใช้ <code>blog_post.rb</code>" ยังถูก</td>
+      <td>ใช้ snake_case ไว้ แล้วไม่ต้องจำข้อยกเว้น</td></tr>
+</table>
+</div>
+
+<p>ติดตรงไหน หรือรันแล้วได้ผลไม่เหมือนในบท — ถามกลับมาได้เลย พร้อมแปะข้อความ error ทั้งก้อนที่ได้</p>
 
 <nav class="nav">
-  <a href="./0095-ruby-class-and-module.html">← บทเรียน 95 · Class · Module · mixin</a>
+  <a href="./0095-ruby-class-and-module.html">← บทเรียน 95 · Class · Module</a>
   <a href="../../index.html">🏠 หน้าแรก</a>
   <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 1</a>
-  <a href="./0097-ruby-before-rails.html">บทเรียน 97 → 5 เรื่องก่อนเข้า Rails</a>
+  <a href="./0097-ruby-before-rails.html">บทเรียน 97 → อ่านโค้ด Rails ไม่งง</a>
 </nav>
 
-<h2 id="sn-sec-9">อ้างอิง</h2>
+<h2 id="sn-sec-15">อ้างอิง</h2>
 <ul class="sources">
   <li><a href="https://docs.ruby-lang.org/en/4.0/language/exceptions_md.html">Ruby 4.0 — Exceptions</a> —
-      <strong>อ่านหัวข้อ <em>Rescue Clauses</em> · <em>Else Clause</em> · <em>Ensure Clause</em> ต่อกันรวด</strong>
-      แล้วต่อด้วย <em>Begin-Less Exception Handlers</em> (คือ rescue ระดับ method ในหัวข้อ 4) และ <em>Custom Exceptions</em></li>
+      <strong>อ่านหัวข้อ <em>Unrescued Exceptions</em> (ตรงกับหัวข้อ 2) แล้วต่อด้วย <em>Rescued Exceptions</em></strong>
+      ซึ่งมีหัวข้อย่อย Rescue Clauses · Ensure Clause · Begin-Less Exception Handlers (= rescue ห้อยท้าย method) ·
+      ปิดด้วย <em>Custom Exceptions</em> ที่แนะนำให้สืบทอดจาก StandardError (หรือ RuntimeError ซึ่งเป็นลูกของมัน)</li>
   <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/exceptions_rdoc.html">Ruby 4.0 — Exception Handling (syntax)</a> —
-      สั้นมาก · <strong>หาประโยค <em>“By default, StandardError and its subclasses are rescued”</em></strong>
-      และย่อหน้าที่บอกว่า rescue ถูกเทียบ<strong>จากบนลงล่างและเข้าได้ครั้งเดียว</strong> — คือเฉลยของ quiz ข้อ 1 กับ 2</li>
-  <li><a href="https://docs.ruby-lang.org/en/4.0/Exception.html">Ruby 4.0 — class Exception</a> —
-      <strong>เลื่อนไปหัวข้อ <em>Built-In Exception Class Hierarchy</em></strong> ดูผังเต็มว่าใครอยู่ใต้ <code>StandardError</code>
-      ใครอยู่ใต้ <code>ScriptError</code> / <code>SignalException</code> (ตรงกับผลของ <code>chain.rb</code>)</li>
+      หน้าสั้น · <strong>หาประโยค “By default, StandardError and its subclasses are rescued”</strong>
+      ซึ่งเป็นหลักฐานของกล่องเตือนในหัวข้อ 5</li>
+  <li><a href="https://docs.ruby-lang.org/en/4.0/NoMethodError.html">Ruby 4.0 — class NoMethodError</a> —
+      ประโยคแรกของหน้าบอกว่ามันเกิดเมื่อ "เรียก method ที่ object นั้นไม่มี" พร้อมตัวอย่างสั้น ๆ — ชนิดเดียวกับหัวข้อ 9–10</li>
   <li><a href="https://docs.ruby-lang.org/en/4.0/Object.html#method-i-respond_to-3F">Ruby 4.0 — Object#respond_to?</a> —
-      อ่านคำอธิบายสั้น ๆ ของ method เดียว · สังเกตว่ารับชื่อ method เป็น Symbol หรือ String ก็ได้</li>
-  <li><a href="https://guides.rubyonrails.org/action_controller_advanced_topics.html#rescue-from">Rails Guides — Action Controller Advanced Topics: rescue_from</a> —
-      <strong>อ่านหัวข้อ <em>rescue_from</em> ทั้งหัวข้อ</strong> · ตัวอย่างแรกคือ
-      <code>rescue_from ActiveRecord::RecordNotFound, with: :record_not_found</code> — โครงเดียวกับสไลด์หน้า 30 ต่างแค่ชื่อ method ·
-      ตอนนี้อ่านพอให้เห็นภาพ ใช้จริงอีกทีตอน Day 2</li>
-  <li><a href="https://guides.rubyonrails.org/configuring.html#config-action-dispatch-rescue-responses">Rails Guides — Configuring: <code>config.action_dispatch.rescue_responses</code></a> —
-      <strong>ดูตารางในหัวข้อนี้</strong> จะเจอบรรทัด <code>"ActiveRecord::RecordNotFound" =&gt; :not_found</code>
-      ที่อธิบายว่าทำไมไม่มี <code>rescue_from</code> ก็ยังได้ 404 (กล่องสีเขียวในหัวข้อ 5)</li>
-  <li><a href="https://guides.rubyonrails.org/autoloading_and_reloading_constants.html#project-structure">Rails Guides — Autoloading and Reloading Constants: Project Structure</a> —
-      <strong>อ่านหัวข้อ 2 <em>Project Structure</em></strong> ที่บอกว่า Rails ใช้ <code>String#camelize</code> แปลงชื่อไฟล์เป็นชื่อ constant
-      — เป็นหลักฐานจากต้นทางของผลรันในหัวข้อ 7.5 · ถ้าสนใจต่อ อ่านหัวข้อ <em>Customizing Inflections</em> เรื่องชื่ออย่าง <code>HTMLParser</code></li>
-  <li><a href="https://docs.ruby-lang.org/en/3.4/NEWS_md.html#label-Compatibility+issues">Ruby 3.4 NEWS — Compatibility issues</a> และ
-      <a href="https://docs.ruby-lang.org/en/3.3/NEWS_md.html">Ruby 3.3 NEWS</a> —
-      <strong>ค้นคำว่า <em>backtick</em> ในหน้า 3.4 และ <em>NoMethodError</em> ในหน้า 3.3</strong>
-      จะเจอบันทึกว่าข้อความ error เปลี่ยนจาก <code>`…'</code> เป็น <code>'…'</code> และจาก <code>for nil:NilClass</code> เป็น <code>for an instance of …</code></li>
+      อ่านคำอธิบายของ method เดียว · สังเกตว่ารับชื่อ method เป็น symbol (<code>:title</code>)</li>
+  <li><a href="https://go.dev/blog/error-handling-and-go">Go Blog — Error handling and Go</a> —
+      <strong>อ่านช่วงต้นจนถึงตัวอย่าง <code>if err != nil</code></strong> เพื่อทวนฝั่ง Go ก่อนเทียบกับ Ruby</li>
+  <li><a href="https://guides.rubyonrails.org/action_controller_advanced_topics.html#rescue-from">Rails Guides — rescue_from</a> —
+      ตัวอย่างแรกคือ <code>rescue_from ActiveRecord::RecordNotFound, with: :record_not_found</code> โครงเดียวกับสไลด์หน้า 30 ·
+      ตอนนี้อ่านให้เห็นภาพพอ ใช้จริง Day 2</li>
 </ul>
 
 </main>
