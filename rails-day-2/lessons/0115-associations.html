@@ -1,0 +1,1039 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 115 — Association — บทความ ผู้เขียน คอมเมนต์ ผูกกันยังไง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 115 · Rails · Day 2</p>
+  <h1>Association — บทความ ผู้เขียน คอมเมนต์ ผูกกันยังไง</h1>
+  <p class="meta">~25 นาที (ลงมือใน console เยอะ) · ควรผ่าน <a href="./0107-console-crud.html">บทเรียน 107 (console CRUD + ข้อมูลตัวอย่าง)</a> และ
+    <a href="./0113-query-lazy-relation.html">บทเรียน 113 (query)</a> มาก่อน</p>
+  <p class="standfirst">
+    ในแอปบล็อกของเรา คอมเมนต์ต้องรู้ว่ามันอยู่ใต้บทความไหน · บทความต้องรู้ว่าใครเขียน
+    <br>บทนี้จะอธิบายว่าข้อมูลสองลิ้นชัก "ผูกกัน" ด้วยอะไร แล้วให้คุณจำ<strong>กฎข้อเดียว</strong>ที่ใช้ตัดสินได้ทุกกรณีว่าต้องเขียน <code>belongs_to</code> หรือ <code>has_many</code> ไว้ที่ไหน
+    <br>อ่านจบแล้วคุณจะสร้างคอมเมนต์ใต้บทความได้โดยไม่ต้องพิมพ์เลขที่บทความเอง · ตั้งชื่อทางลัดอย่าง "บทความที่เผยแพร่แล้วของคนนี้" ได้ ·
+    และ<strong>ติดป้าย (tag) ให้บทความ</strong>ได้ ซึ่งเป็นความสัมพันธ์แบบ "หลายต่อหลาย"
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้ทั้งหมด</p>
+  <ul>
+    <li><strong>ตาราง · แถว · คอลัมน์</strong> (<a href="./0106-active-record-intro.html">บท 106</a>) — ลิ้นชัก · แฟ้มหนึ่งแผ่น · ช่องบนแฟ้ม · ทุกแถวมีช่อง <code>id</code> เป็นเลขที่แฟ้ม</li>
+    <li><strong><code>find</code> · <code>find_by</code> · <code>create</code> · <code>new</code> · <code>persisted?</code></strong> (<a href="./0107-console-crud.html">บท 107</a>) — หาแฟ้ม · สร้างแล้วเก็บ · สร้างไว้ในมือ · "เก็บลงตู้แล้วหรือยัง"</li>
+    <li><strong><code>db/schema.rb</code></strong> (<a href="./0108-migration-basics.html">บท 108</a>) — แปลนตู้ฉบับล่าสุด บอกว่าแต่ละลิ้นชักมีช่องอะไร</li>
+    <li><strong><code>errors.full_messages</code></strong> (<a href="./0110-validations.html">บท 110</a>) — รายการเหตุผลที่แฟ้มถูกปฏิเสธ · เคยเห็น <code>"User must exist"</code> มาแล้ว</li>
+    <li><strong><code>pluck</code> · <code>count</code> · <code>size</code></strong> (<a href="./0113-query-lazy-relation.html">บท 113</a>) — ขอแค่บางช่อง · นับในตู้ · นับแบบเลือกวิธีเอง</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17 (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน)
+    <br><strong>📦 ข้อมูลตัวอย่าง:</strong> ใช้ตาราง <code>users</code> / <code>posts</code> / <code>comments</code> และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับ
+    <a href="./0107-console-crud.html">บท 107</a> หัวข้อ "เตรียมตู้ของวันที่ 2" (ผู้ใช้ 3 · บทความ 6 · คอมเมนต์ 7) ·
+    ถ้าเล่นบทอื่นจนข้อมูลเปลี่ยน ให้ <code>exit</code> ออกจาก console แล้วทำขั้นที่ 6 ของบท 107 อีกรอบ (<code>bin/rails db:migrate:reset</code> แล้ว <code>bin/rails db:seed</code>) เลขที่ต่าง ๆ จะได้ตรงกับในบท
+    <br>ผลรันทุกกล่องมาจากเครื่องจริง · เวลา (ms) · เลขที่อยู่ object (<code>0x0000…</code>) และวันเวลาของคุณจะไม่ตรงกับของผม
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · ข้อมูลที่ผูกกัน — ใบคอมเมนต์มีช่อง "เป็นของบทความเลขที่ …"</h2>
+
+<p>
+  แอปบล็อกเก็บของไว้ 3 ลิ้นชัก: ผู้ใช้ (<code>users</code>) · บทความ (<code>posts</code>) · คอมเมนต์ (<code>comments</code>) ·
+  คอมเมนต์ "น่ากินมาก" ต้องรู้ว่ามันอยู่ใต้บทความไหน และใครเป็นคนเขียน
+</p>
+
+<p>
+  วิธีที่ฐานข้อมูลใช้คือ<strong>ไม่ก๊อปบทความทั้งเรื่องมาไว้บนใบคอมเมนต์</strong> แต่จด<strong>แค่เลขที่</strong>ของบทความ (<code>id</code>) ไว้ในช่องหนึ่งบนใบคอมเมนต์ ·
+  ช่องนั้นชื่อ <code>post_id</code> แปลว่า "เป็นของบทความเลขที่ …"
+</p>
+
+<p>นี่คือหน้าตาจริงของสองลิ้นชักในแอปเรา (ตัดมาบางแถว บางช่อง):</p>
+
+<div class="diagram">ลิ้นชัก posts                   ลิ้นชัก comments
+┌─────┬──────────────────┐   ┌─────┬──────────────────────┬─────────┬─────────┐
+│ id  │ title            │   │ id  │ body                 │ post_id │ user_id │
+├─────┼──────────────────┤   ├─────┼──────────────────────┼─────────┼─────────┤
+│  1  │ ต้มยำกุ้งน้ำข้น       │   │  1  │ น่ากินมาก              │    1    │    2    │
+│  2  │ ส้มตำปูปลาร้า       │   │  2  │ ขอสูตรน้ำพริกเผาด้วย     │    1    │    3    │
+└─────┴──────────────────┘   │  3  │ เผ็ดแค่ไหนดี            │    2    │    3    │
+                             └─────┴──────────────────────┴─────────┴─────────┘
+post_id ของคอมเมนต์ 1 กับ 2 เป็น 1 → อยู่ใต้ "ต้มยำกุ้งน้ำข้น" · คอมเมนต์ 3 อยู่ใต้ "ส้มตำปูปลาร้า"</div>
+
+<p>
+  <strong>ทำไมช่องนี้อยู่บนใบคอมเมนต์ ไม่ใช่บนบทความ?</strong> บทความหนึ่งชิ้นมีคอมเมนต์ได้ 0 อัน 2 อัน หรือ 100 อัน — เราเพิ่มช่องบนแฟ้มบทความให้พอทุกกรณีไม่ได้ ·
+  แต่คอมเมนต์หนึ่งอันอยู่ใต้บทความ<strong>ได้แค่ชิ้นเดียวเสมอ</strong> แค่ช่องเดียวก็พอ
+  <br>ด้วยเหตุผลเดียวกัน บทความก็มีช่อง <code>user_id</code> = "เขียนโดยผู้ใช้เลขที่ …"
+</p>
+
+<div class="analogy">
+  <span class="label">📦 เทียบให้เห็นภาพ — พัสดุที่ห้องนิติของคอนโด</span>
+  <p>
+    พัสดุทุกกล่องที่วางบนชั้นห้องนิติมีเลขห้อง "1203" เขียนไว้ · ห้อง 1203 ไม่ต้องจดว่าตัวเองมีพัสดุกี่กล่อง
+    อยากรู้ว่าห้อง 1203 มีพัสดุอะไรบ้าง นิติก็ไล่หากล่องที่เขียนว่า "1203"
+    <br>ตู้แฟ้มของร้านเราก็เหมือนกัน: <strong>ใบคอมเมนต์มีช่อง "เป็นของบทความเลขที่ …"</strong> (<code>post_id</code>) ·
+    อยากรู้ว่าบทความเลข 1 มีคอมเมนต์อะไร คนดูแลสต็อกก็ไปลิ้นชัก comments หยิบทุกแผ่นที่ช่องนี้เขียนว่า 1
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนส่งของเขียน "ห้อง 9999" ทั้งที่ตึกมีแค่ 30 ชั้นก็ไม่มีใครห้าม ·
+    แต่ตู้ของเราตั้งกฎไว้ (foreign key — เดี๋ยวเห็นในหัวข้อ 2) ว่า<strong>เลขที่ต้องมีแฟ้มนั้นอยู่จริง</strong> ไม่งั้นไม่รับ ·
+    และเลขบนใบคอมเมนต์ไม่ใช่ตัวบทความ — ถ้าวันหนึ่งแฟ้มบทความถูกทิ้ง ใบคอมเมนต์ที่อ้างถึงจะเป็นยังไง อยู่ใน <a href="./0116-dependent-and-helpers.html">บท 116</a>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>primary key</dt>
+    <dd>ช่องที่เป็น "เลขที่แฟ้ม" ไม่ซ้ำกันในลิ้นชัก · ใน Rails คือช่อง <code>id</code> ที่สร้างให้เองทุกตาราง ·
+        <strong>ถาม senior ได้ว่า "ตารางนี้ใช้ id ธรรมดาเป็น primary key หรือใช้แบบอื่น"</strong></dd>
+    <dt>foreign key</dt>
+    <dd>ช่องที่เก็บเลขที่ของแฟ้มใน<strong>ลิ้นชักอื่น</strong> เช่น <code>comments.post_id</code> · ชื่อมักลงท้ายด้วย <code>_id</code> ·
+        คำเดียวกันยังใช้เรียก "กฎที่ตู้" ที่บังคับว่าเลขต้องมีอยู่จริงด้วย ·
+        <strong>พิมพ์บอก AI ได้ว่า "comments.post_id is a foreign key to posts.id"</strong></dd>
+    <dt>association</dt>
+    <dd>การบอก model ว่า "แฟ้มลิ้นชักนี้ผูกกับลิ้นชักนั้น" เพื่อให้ Rails สร้าง method อย่าง <code>comment.post</code> ให้ ·
+        <strong>ถาม senior ได้ว่า "Post กับ Comment ใน repo นี้ผูก association ไว้ครบสองฝั่งไหม"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">2 · กฎข้อเดียว: belongs_to อยู่ฝั่งที่มีคอลัมน์ _id</h2>
+
+<p>
+  ช่อง <code>_id</code> อยู่ตารางไหน เปิดดูได้ในแปลนตู้ <code>db/schema.rb</code> (บท 108) · นี่คือของจริงจากแอปเรา ตัดมาเฉพาะส่วนที่เกี่ยว:
+</p>
+
+<pre><code><span class="c"># db/schema.rb (ตัดมาบางส่วน)</span>
+  <span class="f">create_table</span> <span class="s">"comments"</span>, force: <span class="n">:cascade</span> <span class="k">do</span> |t|
+    t.<span class="f">text</span> <span class="s">"body"</span>
+    t.<span class="f">bigint</span> <span class="s">"post_id"</span>, null: <span class="k">false</span>
+    t.<span class="f">bigint</span> <span class="s">"user_id"</span>, null: <span class="k">false</span>
+    …
+  <span class="k">end</span>
+
+  <span class="f">create_table</span> <span class="s">"posts"</span>, force: <span class="n">:cascade</span> <span class="k">do</span> |t|
+    t.<span class="f">string</span> <span class="s">"title"</span>
+    …
+    t.<span class="f">bigint</span> <span class="s">"user_id"</span>, null: <span class="k">false</span>
+    …
+  <span class="k">end</span>
+
+  <span class="f">create_table</span> <span class="s">"users"</span>, force: <span class="n">:cascade</span> <span class="k">do</span> |t|
+    t.<span class="f">string</span> <span class="s">"name"</span>
+    t.<span class="f">string</span> <span class="s">"email"</span>
+    …
+  <span class="k">end</span>
+
+  <span class="f">add_foreign_key</span> <span class="s">"comments"</span>, <span class="s">"posts"</span>
+  <span class="f">add_foreign_key</span> <span class="s">"comments"</span>, <span class="s">"users"</span>
+  <span class="f">add_foreign_key</span> <span class="s">"posts"</span>, <span class="s">"users"</span></code></pre>
+
+<ul>
+  <li><code>t.bigint "post_id", null: false</code> — ลิ้นชัก comments มีช่อง <code>post_id</code> เก็บจำนวนเต็ม (<code>bigint</code> = จำนวนเต็มขนาดใหญ่ ใช้เก็บเลขที่) · <code>null: false</code> = ห้ามเว้นว่าง</li>
+  <li>ลิ้นชัก posts มีช่อง <code>user_id</code> · ลิ้นชัก users <strong>ไม่มีช่อง <code>_id</code> ของใครเลย</strong></li>
+  <li><code>add_foreign_key "comments", "posts"</code> — กฎที่ตัวตู้: "เลขใน <code>comments.post_id</code> ต้องเป็น <code>id</code> ที่มีอยู่จริงในลิ้นชัก posts"</li>
+  <li><code>…</code> คือส่วนที่ผมตัดออก (ช่องอื่นที่ไม่เกี่ยว เช่น <code>body</code> · <code>published</code> · ช่องเวลาสร้าง/แก้ และสารบัญ <code>t.index</code> ที่ช่วยให้ค้นเร็ว — บท 109)</li>
+  <li><code>force: :cascade</code> — ข้ามได้ แปลว่า "ถ้ามีลิ้นชักชื่อนี้อยู่แล้วให้รื้อทิ้งสร้างใหม่" ใช้ตอนตั้งตู้ใหม่จากแปลน (บท 108) · ไม่เกี่ยวกับความสัมพันธ์ในบทนี้</li>
+</ul>
+
+<p>ส่วน model ทั้งสามไฟล์ในแอปเราเขียนไว้แบบนี้ (ตั้งแต่บท 107):</p>
+
+<pre><code><span class="c"># app/models/comment.rb</span>
+<span class="k">class</span> <span class="n">Comment</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>   <span class="c"># comments มี post_id</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>   <span class="c"># comments มี user_id</span>
+<span class="k">end</span>
+
+<span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>   <span class="c"># posts มี user_id</span>
+  <span class="f">has_many</span> <span class="n">:comments</span> <span class="c"># post_id อยู่ฝั่ง comments</span>
+<span class="k">end</span>
+
+<span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>    <span class="c"># user_id อยู่ฝั่ง posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span> <span class="c"># user_id อยู่ฝั่ง comments</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  สังเกตว่าทุกบรรทัดตอบได้ด้วยกฎเดียว:
+  <strong>ตารางไหนมีช่อง <code>xxx_id</code> → model ของตารางนั้นเขียน <code>belongs_to :xxx</code></strong> ·
+  ฝั่งที่ถูกชี้ถึงเขียน <code>has_many</code> (มีได้หลายอัน)
+  <br><code>users</code> ไม่มีช่อง <code>_id</code> เลย → <code>User</code> จึงไม่มี <code>belongs_to</code> สักบรรทัด
+</p>
+
+<div class="win">
+  <p>✅ <strong>กฎข้อเดียวที่ต้องจำ: <code>belongs_to</code> อยู่ฝั่งที่มีคอลัมน์ <code>_id</code></strong> ·
+    สงสัยเมื่อไหร่ เปิด <code>db/schema.rb</code> หาว่าช่อง <code>_id</code> อยู่ใน <code>create_table</code> ไหน ตอบได้ทุกกรณี</p>
+</div>
+
+<h2 id="sn-sec-3">3 · ถามแฟ้มว่าเป็นของใคร — ลองใน console</h2>
+
+<p>
+  พอเขียน <code>belongs_to</code> / <code>has_many</code> ไว้แล้ว Rails สร้าง method ให้ฟรี · เปิด <code>bin/rails console</code> แล้วพิมพ์ตามทีละบรรทัด (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; comment = Comment.find(1)
+  Comment Load (2.2ms)  SELECT "comments".* FROM "comments" WHERE "comments"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Comment:0x0000000123e82ca8
+...
+wongnok-blog(dev):002&gt; comment.post_id
+=&gt; 1
+wongnok-blog(dev):003&gt; comment.post.title
+  Post Load (1.3ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; "ต้มยำกุ้งน้ำข้น"
+wongnok-blog(dev):004&gt; comment.user.name
+  User Load (1.1ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 2 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; "สมหญิง"</code></pre>
+
+<ul>
+  <li><code>...</code> ใต้ <code>=&gt;</code> — console ย่อผลเพราะเป็นบรรทัดตั้งตัวแปร (บท 107) · พิมพ์ <code>comment</code> เฉย ๆ ถ้าอยากดูเต็ม</li>
+  <li><code>comment.post_id</code> → <code>1</code> — แค่ตัวเลขในช่อง ยังไม่ได้ไปไหน (ไม่มี SQL)</li>
+  <li><code>comment.post</code> — method ที่ได้จาก <code>belongs_to :post</code> · Rails เอาเลข 1 ไปหาในลิ้นชัก posts ให้ ·
+      SQL <code>SELECT "posts".* FROM "posts" WHERE "posts"."id" = 1 LIMIT 1</code> แปลว่า
+      "ขอทุกช่องจากลิ้นชัก posts เฉพาะแผ่นที่ id เป็น 1 เอาแผ่นเดียวพอ"</li>
+  <li><code>comment.user.name</code> — แบบเดียวกัน แต่ใช้เลขในช่อง <code>user_id</code> (= 2 คือสมหญิง)</li>
+</ul>
+
+<p>ทีนี้ถามกลับทาง — จากบทความ ไปหาคอมเมนต์ทั้งหมด:</p>
+
+<pre><code>wongnok-blog(dev):005&gt; post = Post.find(1)
+  Post Load (1.0ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000124c2e618
+...
+wongnok-blog(dev):006&gt; post.comments
+  Comment Load (1.0ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = 1 /* loading for pp */ LIMIT 11 /*application='WongnokBlog'*/
+=&gt;
+[#&lt;Comment:0x0000000124c2c958
+  id: 1,
+  body: "น่ากินมาก",
+  post_id: 1,
+  user_id: 2,
+  created_at: "2026-11-04 12:02:56.246385000 +0000",
+  updated_at: "2026-11-04 12:02:56.246385000 +0000"&gt;,
+ #&lt;Comment:0x0000000124c2c818
+  id: 2,
+  body: "ขอสูตรน้ำพริกเผาด้วย",
+  post_id: 1,
+  user_id: 3,
+  created_at: "2026-11-04 12:02:56.250122000 +0000",
+  updated_at: "2026-11-04 12:02:56.250122000 +0000"&gt;]</code></pre>
+
+<ul>
+  <li><code>post.comments</code> — method ที่ได้จาก <code>has_many :comments</code> ·
+      SQL <code>WHERE "comments"."post_id" = 1</code> แปลว่า "ไปลิ้นชัก comments หยิบทุกแผ่นที่ช่อง post_id เขียนว่า 1" — ตรงกับภาพนิติไล่หากล่องที่เขียนเลขห้อง</li>
+  <li><code>/* loading for pp */ LIMIT 11</code> — console เติมเองเพื่อโชว์บนจอ (เหมือนบท 107) ไม่ใช่คำสั่งของคุณ</li>
+  <li><code>post.comments</code> เป็น relation (ใบเบิกของ — บท 113) จึงต่อ <code>.where</code> · <code>.order</code> · <code>.count</code> ได้อีก</li>
+</ul>
+
+<p>
+  <strong>เทียบกับ Go (GORM):</strong> บท 27 เราเขียน struct ให้ GORM ทีละช่อง · ถ้าจะผูกบทความกับคอมเมนต์ GORM ใช้ field สองแบบ (ผม compile และรันกับ Postgres จริงแล้ว):
+</p>
+
+<pre><code><span class="k">type</span> <span class="n">Post</span> <span class="k">struct</span> {
+    ID       <span class="n">uint</span>
+    Title    <span class="n">string</span>
+    Comments []<span class="n">Comment</span> <span class="c">// has many: ไม่มีคอลัมน์เพิ่มในตาราง posts</span>
+}
+
+<span class="k">type</span> <span class="n">Comment</span> <span class="k">struct</span> {
+    ID     <span class="n">uint</span>
+    Body   <span class="n">string</span>
+    PostID <span class="n">uint</span> <span class="c">// คอลัมน์ post_id อยู่ฝั่งนี้</span>
+    Post   <span class="n">Post</span> <span class="c">// belongs to</span>
+}
+
+<span class="c">// อยากได้คอมเมนต์มาด้วย ต้องสั่ง Preload เอง</span>
+db.<span class="f">Preload</span>(<span class="s">"Comments"</span>).<span class="f">First</span>(&amp;post, <span class="n">1</span>)</code></pre>
+
+<p>
+  กฎเดียวกันเป๊ะ: <code>PostID</code> อยู่ใน <code>Comment</code> · ต่างกันที่ GORM <strong>ไม่ไปหยิบให้ถ้าไม่สั่ง <code>Preload</code></strong>
+  (ผมลอง <code>db.First(&amp;post, 1)</code> เฉย ๆ ได้ <code>len(post.Comments)</code> เป็น 0) ·
+  Rails ไปหยิบให้เองตอนที่คุณใช้ <code>post.comments</code> ไม่ต้องสั่งล่วงหน้า — สะดวก แต่ก็เผลอไปตู้บ่อยเกินได้ (นั่นคือ N+1 ใน <a href="./0114-n-plus-one.html">บท 114</a>)
+</p>
+
+<h2 id="sn-sec-4">4 · ความสัมพันธ์ 5 แบบ — ใช้กฎเดียวกันทั้งหมด</h2>
+
+<p>
+  Rails มีคำสั่งผูกความสัมพันธ์ 5 แบบ · ทุกแบบตอบด้วยคำถามเดียว "ช่อง <code>_id</code> อยู่ตารางไหน"
+  (แถว <code>has_one</code> กับ habtm ไม่มีในแอปเรา เป็นตัวอย่างให้เห็นภาพเฉย ๆ):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ภาษาคน</th><th>ตัวอย่างในบล็อก</th><th>ช่อง <code>_id</code> อยู่ที่</th><th>ได้ method</th></tr></thead>
+  <tbody>
+    <tr><td><code>belongs_to</code></td><td>"ฉันเป็นของ…<strong>หนึ่ง</strong>ตัว"</td>
+        <td><code>Comment</code> เป็นของ <code>Post</code></td><td><code>comments.post_id</code> (ตารางตัวเอง)</td><td><code>comment.post</code></td></tr>
+    <tr><td><code>has_many</code></td><td>"ฉันมี…ได้<strong>หลาย</strong>ตัว"</td>
+        <td><code>Post</code> มีหลาย <code>Comment</code></td><td>ไม่มีในตารางตัวเอง (อยู่ที่ comments)</td><td><code>post.comments</code></td></tr>
+    <tr><td><code>has_one</code></td><td>"ฉันมี…ได้<strong>แค่ตัวเดียว</strong>"</td>
+        <td><code>User</code> มีหน้าโปรไฟล์ <code>Profile</code> หนึ่งหน้า</td><td><code>profiles.user_id</code> (อีกตาราง)</td><td><code>user.profile</code></td></tr>
+    <tr><td><code>has_many :through</code></td><td>"หลายต่อหลาย ผ่านตารางกลางที่<strong>มี model</strong>"</td>
+        <td><code>Post</code> ติดได้หลาย <code>Tag</code> · <code>Tag</code> อยู่ได้หลาย <code>Post</code></td><td>ตารางกลาง <code>taggings</code> มีทั้ง <code>post_id</code> และ <code>tag_id</code></td><td><code>post.tags</code></td></tr>
+    <tr><td><code>has_and_belongs_to_many</code><br>(เรียกย่อว่า habtm)</td><td>"หลายต่อหลาย ตารางกลางเปล่า ๆ <strong>ไม่มี model</strong>"</td>
+        <td>เหมือนแถวบน</td><td>ตารางกลาง <code>posts_tags</code></td><td><code>post.tags</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  คู่ที่คนสับสนบ่อยคือ <code>belongs_to</code> กับ <code>has_one</code> เพราะภาษาอังกฤษฟังคล้ายกัน ("โปรไฟล์เป็นของผู้ใช้" กับ "ผู้ใช้มีโปรไฟล์") ·
+  ไม่ต้องเดาจากความหมาย ใช้กฎ: ช่อง <code>user_id</code> อยู่ที่ <code>profiles</code> → <code>Profile belongs_to :user</code> · <code>User</code> เป็นฝั่ง <code>has_one</code>
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่ใช้คุยเรื่องรูปแบบความสัมพันธ์</span>
+  <dl>
+    <dt>one-to-many (1 ต่อหลาย)</dt>
+    <dd>หนึ่งบทความ หลายคอมเมนต์ · ในโค้ดคือคู่ <code>has_many</code> + <code>belongs_to</code> ·
+        <strong>ถาม senior ได้ว่า "Post กับ Comment เป็น one-to-many ใช่ไหม foreign key อยู่ที่ comments"</strong></dd>
+    <dt>one-to-one (1 ต่อ 1)</dt>
+    <dd>หนึ่งผู้ใช้ หนึ่งโปรไฟล์ · คู่ <code>has_one</code> + <code>belongs_to</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า "User has_one Profile, profiles table has user_id"</strong></dd>
+    <dt>many-to-many (หลายต่อหลาย)</dt>
+    <dd>บทความหลายชิ้น กับป้ายหลายป้าย · ต้องมีตารางกลางเสมอ (หัวข้อ 7) ·
+        <strong>ถาม senior ได้ว่า "many-to-many ตัวนี้ใช้ has_many :through หรือ habtm"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 · ของฟรีจาก has_many — สร้างคอมเมนต์โดยไม่ต้องเขียนเลขที่เอง</h2>
+
+<p>
+  <code>has_many :comments</code> บรรทัดเดียวให้ method มาเป็นสิบตัว · ตัวที่ใช้บ่อยที่สุดคือ<strong>สร้างคอมเมนต์ผ่านบทความ</strong>
+  ซึ่ง Rails เติม <code>post_id</code> ให้เอง · เปิด console ใหม่แล้วลอง (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find(1)
+  Post Load (1.3ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x00000001239e87b0
+...
+wongnok-blog(dev):002&gt; mana = User.find_by(name: "มานะ")
+  User Load (1.7ms)  SELECT "users".* FROM "users" WHERE "users"."name" = 'มานะ' LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;User:0x0000000123e6cbb0
+...
+wongnok-blog(dev):003&gt; c = post.comments.create(user: mana, body: "ใส่มะนาวเยอะ ๆ")
+  TRANSACTION (1.9ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Create (4.4ms)  INSERT INTO "comments" ("body", "post_id", "user_id", "created_at", "updated_at") VALUES ('ใส่มะนาวเยอะ ๆ', 1, 3, '2026-11-04 12:39:13.586700', '2026-11-04 12:39:13.586700') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.4ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Comment:0x00000001240458b0
+...
+wongnok-blog(dev):004&gt; c.post_id
+=&gt; 1</code></pre>
+
+<ul>
+  <li><code>post.comments.create(user: mana, body: "…")</code> — "สร้างคอมเมนต์ใต้บทความนี้ เขียนโดยมานะ แล้วเก็บลงตู้เลย" · <strong>เราไม่ได้พิมพ์ <code>post_id</code> สักตัว</strong></li>
+  <li><code>user: mana</code> — ส่ง object ผู้ใช้ไปทั้งตัว Rails หยิบเลขที่ (<code>id</code> = 3) ไปใส่ช่อง <code>user_id</code> ให้</li>
+  <li><code>INSERT INTO "comments" ("body", "post_id", "user_id", …) VALUES ('ใส่มะนาวเยอะ ๆ', 1, 3, …)</code> แปลว่า
+      "เก็บแฟ้มใหม่ลงลิ้นชัก comments: ช่อง body = ใส่มะนาวเยอะ ๆ · post_id = <strong>1</strong> · user_id = 3" — เลข 1 มาจาก <code>post</code> ที่เราถือไว้</li>
+  <li><code>BEGIN</code> / <code>COMMIT</code> — เปิดและปิดรอบการเก็บ (transaction — บท 111) ข้ามไปได้</li>
+</ul>
+
+<div class="predict">
+<pre><code><span class="c"># สไลด์หน้า 41 เขียนไว้แบบนี้ — ลองพิมพ์ต่อใน console เดิม</span>
+hi = Post.find(3).comments.create(body: <span class="s">"hi"</span>)
+hi.persisted?
+hi.errors.full_messages</code></pre>
+  <p class="ask">คอมเมนต์ "hi" จะถูกเก็บลงตู้ไหม? <code>persisted?</code> ได้อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — <strong>ไม่ถูกเก็บ</strong> และไม่มี error สีแดงเด้งขึ้นมาด้วย:</p>
+<pre><code>wongnok-blog(dev):005&gt; hi = Post.find(3).comments.create(body: "hi")
+  Post Load (2.5ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 3 LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Comment:0x0000000124152fa0
+...
+wongnok-blog(dev):006&gt; hi.persisted?
+=&gt; false
+wongnok-blog(dev):007&gt; hi.errors.full_messages
+=&gt; ["User must exist"]</code></pre>
+    <p>
+      ในแอปเรา <code>Comment</code> มี <code>belongs_to :user</code> ด้วย · <code>belongs_to</code> เพิ่มกฎ "ต้องมีเจ้าของ" ให้เองเสมอ (เจอแล้วในบท 110) ·
+      สไลด์มีแค่ <code>post</code> กับ <code>body</code> เลยผ่าน แต่ของเรา<strong>ต้องบอกผู้เขียนด้วย</strong> ·
+      สังเกตว่าไม่มี <code>INSERT</code> เลย (มีแค่ <code>SELECT</code> ของ <code>Post.find(3)</code>) — Rails ตรวจแล้วปฏิเสธก่อนจะเก็บลงตู้ · <code>create</code> ไม่มี <code>!</code> จึงคืนแฟ้มที่ไม่ผ่านให้เงียบ ๆ (บท 110)
+    </p>
+  </div>
+</div>
+
+<h3 id="sn-sub-1">ท่ายาว — เขียนเลขที่เอง</h3>
+
+<p>ถ้าไม่ใช้ <code>has_many</code> ก็สร้างคอมเมนต์ตรง ๆ ได้ แต่ต้องกรอกเลขเองทุกช่อง · เทียบสองแบบ:</p>
+
+<div class="compare">
+  <div class="side bad">
+<pre><code><span class="c"># ท่ายาว: กรอกเลขที่เอง</span>
+<span class="n">Comment</span>.<span class="f">create</span>(post_id: post.id,
+               user_id: mana.id,
+               body: <span class="s">"…"</span>)</code></pre>
+  </div>
+  <div class="side good">
+<pre><code><span class="c"># ท่าสั้น: ฝากผ่านบทความ</span>
+post.comments.<span class="f">create</span>(user: mana,
+                     body: <span class="s">"…"</span>)</code></pre>
+  </div>
+</div>
+
+<p>
+  ได้ <code>INSERT</code> หน้าตาเดียวกัน · แต่ท่ายาวมีที่ให้พลาดเพิ่มหนึ่งที่: ถ้าพิมพ์ <code>post_id: 2</code> ทั้งที่ตั้งใจจะใส่ 1
+  ก็เก็บได้สบาย ๆ เพราะบทความเลข 2 มีจริง <strong>ไม่มีใครฟ้อง</strong> คอมเมนต์ไปโผล่ผิดบทความ ·
+  ท่าสั้นพลาดแบบนี้ไม่ได้เลย เพราะเลขมาจากบทความที่ถืออยู่ในมือ
+  <br><strong>เทียบกับ Go:</strong> ใน GORM ของบท 27 เราก็ต้องเขียน <code>Comment{PostID: post.ID, …}</code> เอง — คือท่ายาวนี่แหละ
+</p>
+
+<p>
+  อีกเรื่องที่เห็นได้จาก log ของท่ายาว (ผลจริง · ผมเปิด console อีกหน้าต่างที่ใช้บทความเลข 2) ·
+  <strong>ท่อนนี้ดูอย่างเดียวพอ ไม่ต้องพิมพ์ตาม</strong> จะได้ไม่หลุดจาก console ของหัวข้อนี้:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find(2)
+  Post Load (1.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 2 LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000124c78d80
+...
+wongnok-blog(dev):002&gt; long = Comment.create(post_id: post.id, user_id: 1, body: "ท่ายาว")
+  TRANSACTION (2.0ms)  BEGIN /*application='WongnokBlog'*/
+  Post Load (3.8ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 2 LIMIT 1 /*application='WongnokBlog'*/
+  User Load (1.3ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+  Comment Create (2.6ms)  INSERT INTO "comments" ("body", "post_id", "user_id", "created_at", "updated_at") VALUES ('ท่ายาว', 2, 1, '2026-11-04 12:40:07.969344', '2026-11-04 12:40:07.969344') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.8ms)  COMMIT /*application='WongnokBlog'*/
+…</code></pre>
+
+<p>
+  ก่อน <code>INSERT</code> มี <code>SELECT</code> สองครั้ง — Rails เดินไปเช็คว่า "บทความเลข 2 มีจริงไหม · ผู้ใช้เลข 1 มีจริงไหม" ตามกฎของ <code>belongs_to</code> ·
+  ท่าสั้นไม่ต้องเช็ค เพราะเราส่งแฟ้มตัวจริงให้แล้ว
+  <br>และถ้าไม่บอกบทความเลย ก็โดนปฏิเสธแบบเดียวกับ "hi" ข้างบน (ผลจริง หน้าต่างเดียวกัน):
+</p>
+
+<pre><code>wongnok-blog(dev):003&gt; bad = Comment.create(user_id: 1, body: "ไม่มีบทความ")
+…
+wongnok-blog(dev):004&gt; bad.errors.full_messages
+=&gt; ["Post must exist"]</code></pre>
+
+<div class="analogy">
+  <span class="label">📂 เทียบให้เห็นภาพ — ยื่นใบคอมเมนต์ผ่านแฟ้มบทความ</span>
+  <p>
+    ท่าสั้นเหมือนคุณ<strong>หยิบแฟ้ม "ต้มยำกุ้งน้ำข้น" ขึ้นมา</strong>แล้วบอกคนดูแลสต็อกว่า "เพิ่มใบคอมเมนต์ใบนี้ให้แฟ้มนี้" —
+    เขาเห็นเลขที่บนแฟ้มที่คุณถืออยู่ ก็เขียนช่อง "เป็นของบทความเลขที่ 1" ให้เอง ·
+    ท่ายาวคือคุณเดินไปลิ้นชัก comments กรอกเลขที่เองจากความจำ — จำผิดหนึ่งตัวก็ไปผิดแฟ้ม
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ภาพนี้ชวนให้คิดว่าใบคอมเมนต์ถูก "เย็บติด" ไว้ในแฟ้มบทความ ·
+    ความจริงใบคอมเมนต์ยังอยู่ในลิ้นชัก comments ของมันเหมือนเดิม แค่มีเลข 1 อยู่ในช่อง <code>post_id</code> ·
+    ทุกครั้งที่เรียก <code>post.comments</code> Rails ต้องเดินไปค้นลิ้นชัก comments ใหม่ (เห็น SQL ทุกครั้ง)
+  </p>
+</div>
+
+<h3 id="sn-sub-2">build · count กับ size · comment_ids · &lt;&lt;</h3>
+
+<p>
+  กลับมาที่ console ของหัวข้อนี้ (ที่ยังมี <code>post</code> = บทความ 1 กับ <code>mana</code> อยู่ · เลขบรรทัดข้างล่างนับต่อจาก predict "hi" ถ้าข้าม predict ไป เลขของคุณจะน้อยกว่า 3 ไม่เป็นไร) ·
+  ถ้าปิดไปแล้ว พิมพ์แค่บรรทัด 001–002 ใหม่ <strong>อย่าพิมพ์ <code>create</code> ซ้ำ</strong> ไม่งั้นตัวเลขจะไม่ตรงกับข้างล่าง ·
+  ลองสร้างแบบ "ถือไว้ในมือก่อน" ด้วย <code>build</code> แล้วนับดู (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):008&gt; draft = post.comments.build(user: mana, body: "ยังไม่ได้เก็บ")
+=&gt;
+#&lt;Comment:0x0000000124151ce0
+...
+wongnok-blog(dev):009&gt; draft.post_id
+=&gt; 1
+wongnok-blog(dev):010&gt; draft.new_record?
+=&gt; true
+wongnok-blog(dev):011&gt; post.comments.count
+  Comment Count (2.9ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+=&gt; 3
+wongnok-blog(dev):012&gt; post.comments.size
+  Comment Count (2.6ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+=&gt; 4
+wongnok-blog(dev):013&gt; draft.save
+  TRANSACTION (1.3ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Create (2.7ms)  INSERT INTO "comments" ("body", "post_id", "user_id", "created_at", "updated_at") VALUES ('ยังไม่ได้เก็บ', 1, 3, '2026-11-04 12:39:29.596118', '2026-11-04 12:39:29.596118') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.4ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):014&gt; post.comments.count
+  Comment Count (1.5ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+=&gt; 4</code></pre>
+
+<ul>
+  <li><code>build</code> — เหมือน <code>new</code> ของบท 107 (สร้างไว้ในมือ ยังไม่ลงตู้) แต่<strong>เติม <code>post_id</code> ให้แล้ว</strong> · <code>new_record?</code> = <code>true</code> แปลว่ายังไม่ได้เก็บ</li>
+  <li><code>count</code> — ถามตู้เสมอ · SQL <code>SELECT COUNT(*) … WHERE post_id = 1</code> = "นับว่ามีกี่แผ่นที่ post_id เป็น 1" → 3 (2 อันจาก seeds + อันที่เพิ่งสร้าง)</li>
+  <li><code>size</code> — ได้ <strong>4</strong> เพราะนับ "ในตู้ 3 + ที่ถือในมือยังไม่เก็บ 1" · พอ <code>draft.save</code> แล้ว <code>count</code> ก็เป็น 4 ตาม</li>
+</ul>
+
+<p>อยากได้แค่เลขที่ของคอมเมนต์ทั้งหมดใต้บทความหนึ่ง ใช้ <code>comment_ids</code> (ผลจริง จากบทความเลข 5 ที่มี 3 คอมเมนต์ใน seeds):</p>
+
+<pre><code>wongnok-blog(dev):001&gt; Post.find(5).comment_ids
+  Post Load (1.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 5 LIMIT 1 /*application='WongnokBlog'*/
+  Comment Pluck (1.4ms)  SELECT "comments"."id" FROM "comments" WHERE "comments"."post_id" = 5 /*application='WongnokBlog'*/
+=&gt; [5, 6, 7]</code></pre>
+
+<p>
+  ชื่อ method มาจากชื่อความสัมพันธ์: <code>has_many :comments</code> → ตัด s เติม <code>_ids</code> → <code>comment_ids</code> ·
+  SQL ขอแค่ช่อง <code>id</code> เหมือน <code>pluck(:id)</code> ของบท 113
+</p>
+
+<p>สุดท้าย <code>&lt;&lt;</code> (อ่านว่า "ต่อท้าย" — เครื่องหมายเดียวกับที่ใช้เติมของลง array ใน Ruby) ใช้กับคอมเมนต์ที่สร้างไว้ก่อนแล้ว (ผลจริง พิมพ์ต่อใน console เดิมที่มี <code>post</code> กับ <code>mana</code>):</p>
+
+<pre><code>wongnok-blog(dev):015&gt; extra = Comment.new(user: mana, body: "ต่อท้ายด้วยลูกศร")
+=&gt;
+#&lt;Comment:0x0000000120b3e248
+...
+wongnok-blog(dev):016&gt; post.comments &lt;&lt; extra
+  TRANSACTION (2.0ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Create (3.9ms)  INSERT INTO "comments" ("body", "post_id", "user_id", "created_at", "updated_at") VALUES ('ต่อท้ายด้วยลูกศร', 1, 3, '2026-11-04 12:39:34.387864', '2026-11-04 12:39:34.387864') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (2.0ms)  COMMIT /*application='WongnokBlog'*/
+  Comment Load (1.5ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = 1 /* loading for pp */ LIMIT 11 /*application='WongnokBlog'*/
+=&gt;
+[#&lt;Comment:0x0000000120b3cd08
+…(console โชว์คอมเมนต์ทั้ง 5 อันของบทความนี้ ผมตัดออก)
+wongnok-blog(dev):017&gt; extra.persisted?
+=&gt; true</code></pre>
+
+<p>
+  <code>&lt;&lt;</code> ใส่ <code>post_id</code> ให้แล้ว<strong>เก็บลงตู้ทันที</strong> ไม่ต้อง <code>save</code> ต่อ — ต่างจาก <code>build</code> ที่ยังอยู่ในมือ ·
+  (บรรทัด <code>Comment Load … loading for pp</code> ท้ายสุดคือ console ไปหยิบรายการมาโชว์บนจอ เหมือนหัวข้อ 3) ·
+  สรุปเป็นตาราง:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ทำอะไร</th><th>ลงตู้ทันทีไหม</th></tr></thead>
+  <tbody>
+    <tr><td><code>post.comments</code></td><td>ใบเบิก "คอมเมนต์ทุกอันของบทความนี้" ต่อ <code>.where</code> / <code>.order</code> ได้</td><td>— (แค่อ่าน)</td></tr>
+    <tr><td><code>post.comments.create(…)</code></td><td>สร้างพร้อมเติม <code>post_id</code></td><td>✅ ลงเลย (ถ้าผ่านกฎ)</td></tr>
+    <tr><td><code>post.comments.build(…)</code></td><td>สร้างไว้ในมือพร้อมเติม <code>post_id</code></td><td>❌ ต้อง <code>save</code> เอง</td></tr>
+    <tr><td><code>post.comments &lt;&lt; c</code></td><td>เอาคอมเมนต์ที่มีอยู่มาผูกกับบทความนี้</td><td>✅ ลงเลย</td></tr>
+    <tr><td><code>post.comments.count</code></td><td>นับในตู้เสมอ</td><td>—</td></tr>
+    <tr><td><code>post.comments.size</code></td><td>นับในตู้ + ของในมือที่ยังไม่เก็บ</td><td>—</td></tr>
+    <tr><td><code>post.comment_ids</code></td><td>เลขที่คอมเมนต์ทั้งหมด</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong>สไลด์หน้า 41 มี <code>post.comments.clear</code> และ <code>post.comment_ids = [1, 2]</code></strong>
+    ("ตัดคอมเมนต์ทั้งหมดออกจากบทความนี้" กับ "ให้บทความนี้เหลือแค่คอมเมนต์ 1 และ 2") — ในแอปเราพิมพ์ตามแล้วพัง ไม่ต้องลองเอง ·
+    เพราะ "ตัดความสัมพันธ์" แปลว่าลบเลขในช่อง <code>post_id</code> ให้ว่าง แต่ตู้ของเราห้ามช่องนี้ว่าง (<code>null: false</code>) · ผลจริงจากบทความเลข 2 (ตัดบรรทัดยาวท้าย ๆ ออก):
+  </p>
+<pre><code>wongnok-blog(dev):003&gt; post.comments.clear
+  Comment Update All (1.7ms)  UPDATE "comments" SET "post_id" = NULL WHERE "comments"."post_id" = 2 /*application='WongnokBlog'*/
+(wongnok-blog):3:in '&lt;main&gt;': PG::NotNullViolation: ERROR:  null value in column "post_id" of relation "comments" violates not-null constraint (ActiveRecord::NotNullViolation)</code></pre>
+  <p><code>UPDATE … SET "post_id" = NULL</code> = "แก้ทุกแผ่นที่ post_id เป็น 2 ให้ช่องนี้ว่าง" → ตู้ปฏิเสธ ไม่มีอะไรเปลี่ยน · อยากลบคอมเมนต์จริง ๆ รอ <a href="./0116-dependent-and-helpers.html">บท 116</a></p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของ method ที่ได้ฟรี</span>
+  <dl>
+    <dt>association methods / collection methods</dt>
+    <dd>method ที่ Rails สร้างให้จาก <code>has_many</code> เช่น <code>create</code> · <code>build</code> · <code>&lt;&lt;</code> · <code>comment_ids</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า "create the comment through the association (post.comments.create) instead of setting post_id manually"</strong></dd>
+    <dt>build vs create</dt>
+    <dd><code>build</code> = สร้างในหน่วยความจำ ยังไม่ลง DB · <code>create</code> = สร้างแล้ว save เลย · มี <code>create!</code> ที่ระเบิดถ้าเก็บไม่ได้ด้วย ·
+        <strong>ถาม senior ได้ว่า "ตรงนี้ควร build ก่อนแล้วค่อย save หรือ create ไปเลย"</strong></dd>
+    <dt>required belongs_to</dt>
+    <dd><code>belongs_to</code> ใน Rails สมัยนี้บังคับว่าต้องมีของที่ชี้ถึงเสมอ ได้ error <code>"… must exist"</code> ·
+        ถ้าอยากยอมให้ไม่มีเจ้าของได้ เขียน <code>belongs_to :post, optional: true</code> (แอปเราไม่ได้ใช้) ·
+        <strong>ถาม senior ได้ว่า "comment ตัวนี้ควร optional: true ไหม หรือต้องมี post เสมอ"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · ตั้งชื่อทางลัด — "บทความที่เผยแพร่แล้วของคนนี้"</h2>
+
+<p>
+  หน้าโปรไฟล์ของผู้เขียนมักโชว์เฉพาะบทความที่เผยแพร่แล้ว · เขียนได้ว่า <code>mana.posts.where(published: true)</code> แต่ถ้าต้องพิมพ์ทุกที่ก็ยาวและลืมง่าย ·
+  Rails ให้<strong>ตั้งชื่อความสัมพันธ์ใหม่ที่มีเงื่อนไขติดมาด้วย</strong>ได้ · แก้ไฟล์ <code>app/models/user.rb</code> เพิ่มบรรทัดสุดท้าย:
+</p>
+
+<pre><code><span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+  <span class="f">has_many</span> <span class="n">:published_posts</span>, -&gt; { <span class="f">where</span>(published: <span class="k">true</span>) }, class_name: <span class="s">"Post"</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>:published_posts</code> — ชื่อใหม่ที่เราตั้งเอง จะได้ method <code>mana.published_posts</code></li>
+  <li><code>-&gt; { where(published: true) }</code> — <strong>lambda</strong> = ก้อนโค้ดที่เก็บไว้รันทีหลัง (เจอครั้งแรกใน <a href="./0112-callbacks-and-logic.html">บท 112</a> · ญาติของ block บท 93) ·
+      แปลว่า "จดวิธีกรองไว้ก่อน ยังไม่ต้องทำ" แล้ว Rails เอามาต่อท้ายทุกครั้งที่เรียก <code>published_posts</code></li>
+  <li>ทำไมต้องห่อ? ถ้าเขียน <code>where(…)</code> เปล่า ๆ Ruby จะพยายามรันมันทันทีตอนอ่านไฟล์ ซึ่งตอนนั้นยังไม่รู้ว่าเป็นผู้ใช้คนไหน ·
+      ผมลองแล้ว Rails ไม่รับ ได้ <code>NoMethodError</code></li>
+  <li><code>class_name: "Post"</code> — บอกว่าแฟ้มพวกนี้คือ <code>Post</code> · ต้องบอกเพราะ Rails เดา class จากชื่อ (บท 99): <code>published_posts</code> → <code>PublishedPost</code> ซึ่งไม่มี</li>
+</ul>
+
+<p>ถ้าลืม <code>class_name</code> จะเจอแบบนี้ตอนเรียกใช้ (ผลจริง ตัดบรรทัดยาวท้าย ๆ ออก):</p>
+
+<pre><code>wongnok-blog(dev):002&gt; mana.published_posts
+(wongnok-blog):2:in '&lt;main&gt;': Missing model class PublishedPost for the User#published_posts association. You can specify a different model class with the :class_name option. (NameError)</code></pre>
+
+<p>ใส่ <code>class_name</code> แล้วปิด console เปิดใหม่ (console ไม่เห็นไฟล์ที่แก้ระหว่างเปิดค้าง — บท 104) · ผลจริง:</p>
+
+<pre><code>wongnok-blog(dev):001&gt; mana = User.find_by(name: "มานะ")
+  User Load (2.0ms)  SELECT "users".* FROM "users" WHERE "users"."name" = 'มานะ' LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;User:0x0000000125c40ad8
+...
+wongnok-blog(dev):002&gt; mana.posts.pluck(:title)
+  Post Pluck (1.4ms)  SELECT "posts"."title" FROM "posts" WHERE "posts"."user_id" = 3 /*application='WongnokBlog'*/
+=&gt; ["ผัดกะเพราหมูสับ", "แกงเขียวหวานไก่"]
+wongnok-blog(dev):003&gt; mana.published_posts.pluck(:title)
+  Post Pluck (1.0ms)  SELECT "posts"."title" FROM "posts" WHERE "posts"."user_id" = 3 AND "posts"."published" = TRUE /*application='WongnokBlog'*/
+=&gt; ["ผัดกะเพราหมูสับ"]</code></pre>
+
+<p>
+  SQL บรรทัดที่สองแปลว่า "ขอแค่ช่อง title จากลิ้นชัก posts เฉพาะแผ่นที่ user_id เป็น 3 <strong>และ</strong> published เป็นจริง" ·
+  เงื่อนไขของเราไปต่อท้ายให้เอง · ได้ 1 เรื่อง เพราะ "แกงเขียวหวานไก่" ยังเป็นฉบับร่าง
+</p>
+
+<div class="analogy">
+  <span class="label">📝 เทียบให้เห็นภาพ — ใบเบิกแบบพิมพ์สำเร็จ</span>
+  <p>
+    บท 113 บอกว่า relation คือใบเบิกของที่ยังไม่ยื่น · <code>mana.posts</code> คือใบเบิกเปล่าที่เขียนไว้แค่ "ของมานะ" ·
+    <code>published_posts</code> เหมือนร้าน<strong>พิมพ์แบบฟอร์มใบเบิกไว้ล่วงหน้า</strong> มีบรรทัด "เฉพาะที่เผยแพร่แล้ว" ติดมาเลย ·
+    หยิบมาใช้เมื่อไหร่ก็ไม่ต้องเขียนเงื่อนไขเองอีก
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> แบบฟอร์มกระดาษพิมพ์ครั้งเดียวใช้ไปตลอด ·
+    แต่ lambda ถูก "รันใหม่" ทุกครั้งที่เรียก · และใบเบิกนี้ยังต่อเงื่อนไขได้อีก เช่น <code>mana.published_posts.order(:title)</code>
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ฝั่ง Go ที่ไม่มีของแบบนี้ให้ เราจะเขียนฟังก์ชันเล็ก ๆ อย่าง <code>PublishedPosts(db, userID)</code> ที่ใส่ <code>Where("published = ?", true)</code> ไว้ข้างใน แล้วเรียกฟังก์ชันนั้นทุกที่ ·
+  Rails ให้เขียนแค่บรรทัดเดียวใน model แล้วได้ method มาเลย
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของหัวข้อนี้</span>
+  <dl>
+    <dt>scoped association</dt>
+    <dd>ความสัมพันธ์ที่มีเงื่อนไขติดมา (<code>-&gt; { where(…) }</code>) · สไลด์หน้า 41 เรียกว่า "scope บน association" ·
+        <strong>พิมพ์บอก AI ได้ว่า "add a scoped has_many :published_posts on User with class_name Post"</strong></dd>
+    <dt>lambda (<code>-&gt; { }</code>)</dt>
+    <dd>block ที่เก็บไว้เรียกทีหลัง · Rails ใช้บ่อยกับของที่ต้อง "คิดใหม่ทุกครั้งที่เรียก" ·
+        <strong>ถาม senior ได้ว่า "ทำไมตรงนี้ต้องห่อด้วย lambda ไม่เขียน where ตรง ๆ"</strong></dd>
+    <dt><code>class_name</code></dt>
+    <dd>option ที่บอก Rails ว่าความสัมพันธ์นี้ชี้ไป model ไหน เมื่อชื่อที่ตั้งไม่ตรงกับชื่อ model ·
+        <strong>เห็น error "Missing model class …" ให้นึกถึง class_name ก่อน</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">7 · หลายต่อหลาย — ติดป้ายให้บทความด้วย has_many :through</h2>
+
+<p>
+  อยากให้บทความติดป้ายได้ เช่น "อาหารเผ็ด" · "สตรีทฟู้ด" · บทความหนึ่งติดได้หลายป้าย และป้ายหนึ่งก็อยู่ได้หลายบทความ ·
+  ช่อง <code>_id</code> จะอยู่ไหน? ใส่ <code>tag_id</code> ที่ posts ไม่ได้ (มีหลายป้าย) · ใส่ <code>post_id</code> ที่ tags ก็ไม่ได้ (อยู่หลายบทความ)
+</p>
+
+<p>
+  ทางออกคือ<strong>ลิ้นชักที่สามอยู่ตรงกลาง</strong> ชื่อ <code>taggings</code> (การติดป้าย) · แฟ้มหนึ่งแผ่นในลิ้นชักนี้คือ "หนึ่งคู่":
+  มีช่อง <code>post_id</code> และ <code>tag_id</code> · ติดสองป้ายให้บทความเดียว = สองแผ่น
+</p>
+
+<div class="diagram">posts                       taggings (ลิ้นชักกลาง)        tags
+┌─────┬─────────────────┐   ┌─────┬────────┬───────┐   ┌─────┬────────────┐
+│  1  │ ต้มยำกุ้งน้ำข้น      │   │ id  │ post_id│ tag_id│   │  1  │ อาหารเผ็ด   │
+│  2  │ ส้มตำปูปลาร้า      │   ├─────┼────────┼───────┤   │  2  │ สตรีทฟู้ด     │
+└─────┴─────────────────┘   │  1  │   1    │   1   │   └─────┴────────────┘
+                            │  2  │   1    │   2   │
+                            │  3  │   2    │   1   │
+                            └─────┴────────┴───────┘
+ใบจับคู่ 1–2: ต้มยำกุ้ง ติดป้าย "อาหารเผ็ด" กับ "สตรีทฟู้ด" · ใบที่ 3: ส้มตำ ติดป้าย "อาหารเผ็ด"</div>
+
+<div class="analogy">
+  <span class="label">🏷 เทียบให้เห็นภาพ — สมุดจับคู่ "แฟ้มไหนติดป้ายอะไร"</span>
+  <p>
+    ร้านมีลิ้นชักบทความกับลิ้นชักป้ายอยู่แล้ว · แทนที่จะเขียนชื่อป้ายลงบนแฟ้มบทความ (ซึ่งช่องไม่พอ)
+    ร้านเปิด<strong>ลิ้นชักที่สาม</strong>ไว้เก็บใบจับคู่ · ใบหนึ่งเขียนว่า "บทความเลขที่ 1 ติดป้ายเลขที่ 2" ·
+    อยากรู้ว่าบทความ 1 มีป้ายอะไร ก็ไล่ใบจับคู่ที่เขียนว่าบทความ 1 แล้วเดินไปหยิบป้ายตามเลข
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงต้องเดินสองลิ้นชักทีละรอบ ·
+    ฐานข้อมูลทำทั้งสองขั้นใน<strong>คำสั่ง SQL เดียว</strong> (JOIN — เดี๋ยวเห็นข้างล่าง) ·
+    และใบจับคู่ในตู้เป็นแฟ้มเต็มตัว มี <code>id</code> และช่องเวลาสร้าง — จะเติมช่องอื่นอย่าง "ใครเป็นคนติดป้าย" ก็ได้ ซึ่งเป็นเหตุผลที่เลือก <code>:through</code>
+  </p>
+</div>
+
+<h3 id="sn-sub-3">ลงมือ: สร้างป้ายกับใบจับคู่</h3>
+
+<p>ในโฟลเดอร์โปรเจกต์ สั่ง generator สองครั้ง (ผลจริง · เลขเวลาหน้าชื่อไฟล์ของคุณจะต่าง):</p>
+
+<pre><code>$ bin/rails generate model Tag name:string
+      invoke  active_record
+      create    db/migrate/20261104120348_create_tags.rb
+      create    app/models/tag.rb
+      invoke    test_unit
+      create      test/models/tag_test.rb
+      create      test/fixtures/tags.yml
+$ bin/rails generate model Tagging post:references tag:references
+      invoke  active_record
+      create    db/migrate/20261104120349_create_taggings.rb
+      create    app/models/tagging.rb
+      invoke    test_unit
+      create      test/models/tagging_test.rb
+      create      test/fixtures/taggings.yml</code></pre>
+
+<ul>
+  <li>ครั้งแรก: model <code>Tag</code> + ลิ้นชัก <code>tags</code> ที่มีช่อง <code>name</code></li>
+  <li>ครั้งที่สอง: model <code>Tagging</code> + ลิ้นชัก <code>taggings</code> · <code>post:references</code> = "ช่องที่ชี้ไปหาแฟ้มในลิ้นชัก posts" (แบบเดียวกับตอนสร้าง Comment ในบท 107)</li>
+  <li>บรรทัด <code>test_unit</code> กับไฟล์ใน <code>test/</code> — ไฟล์เปล่าสำหรับเขียน test (Day 4) · วันนี้ไม่ต้องแตะ</li>
+</ul>
+
+<p>เปิดดูของที่ generator เขียนให้ — ใบสั่งช่างกับ model ของ Tagging:</p>
+
+<pre><code><span class="c"># db/migrate/20261104120349_create_taggings.rb</span>
+<span class="k">class</span> <span class="n">CreateTaggings</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">create_table</span> <span class="n">:taggings</span> <span class="k">do</span> |t|
+      t.<span class="f">references</span> <span class="n">:post</span>, null: <span class="k">false</span>, foreign_key: <span class="k">true</span>
+      t.<span class="f">references</span> <span class="n">:tag</span>, null: <span class="k">false</span>, foreign_key: <span class="k">true</span>
+
+      t.<span class="f">timestamps</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="c"># app/models/tagging.rb</span>
+<span class="k">class</span> <span class="n">Tagging</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>
+  <span class="f">belongs_to</span> <span class="n">:tag</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  ตรงกับกฎเป๊ะ: ลิ้นชัก <code>taggings</code> มีช่อง <code>post_id</code> กับ <code>tag_id</code> → <code>Tagging</code> มี <code>belongs_to</code> สองบรรทัด
+  <br><code>t.references :post</code> = "ทำช่อง <code>post_id</code> ให้" (Rails เติม <code>_id</code> เอง) · <code>null: false</code> = ห้ามว่าง ·
+  <code>foreign_key: true</code> คือกฎที่ตู้ "เลขต้องมีจริง" · <code>t.timestamps</code> = ช่องเวลาสร้าง/แก้ · สั่งช่างลงมือ:
+</p>
+
+<pre><code>$ bin/rails db:migrate
+== 20261104120348 CreateTags: migrating =======================================
+-- create_table(:tags)
+   -&gt; 0.0080s
+== 20261104120348 CreateTags: migrated (0.0080s) ==============================
+
+== 20261104120349 CreateTaggings: migrating ===================================
+-- create_table(:taggings)
+   -&gt; 0.0097s
+== 20261104120349 CreateTaggings: migrated (0.0097s) ==========================</code></pre>
+
+<p>แล้วบอก <code>Post</code> ว่า "ป้ายของฉันหาได้โดยเดินผ่านใบจับคู่" · แก้ <code>app/models/post.rb</code> เพิ่มสองบรรทัดล่าง:</p>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+  <span class="f">has_many</span> <span class="n">:taggings</span>
+  <span class="f">has_many</span> <span class="n">:tags</span>, through: <span class="n">:taggings</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>has_many :taggings</code> — บทความมีใบจับคู่ได้หลายใบ (<code>post_id</code> อยู่ฝั่ง taggings · กฎเดิม)</li>
+  <li><code>has_many :tags, through: :taggings</code> — "ป้ายของฉัน = ป้ายที่ใบจับคู่ของฉันชี้ไป" · <strong>ต้องมีบรรทัด <code>has_many :taggings</code> ด้วย</strong> ไม่งั้น Rails ไม่รู้ว่าจะเดินผ่านอะไร</li>
+</ul>
+
+<p>เปิด console สร้างป้ายสองอัน แล้วติดให้บทความ (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):001&gt; spicy = Tag.create!(name: "อาหารเผ็ด")
+  TRANSACTION (0.9ms)  BEGIN /*application='WongnokBlog'*/
+  Tag Create (2.8ms)  INSERT INTO "tags" ("name", "created_at", "updated_at") VALUES ('อาหารเผ็ด', '2026-11-04 12:04:02.461063', '2026-11-04 12:04:02.461063') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (2.1ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Tag:0x000000012300b288
+...
+wongnok-blog(dev):002&gt; street = Tag.create!(name: "สตรีทฟู้ด")
+…
+wongnok-blog(dev):003&gt; post = Post.find(1)
+…
+wongnok-blog(dev):004&gt; post.tags &lt;&lt; spicy
+  TRANSACTION (1.0ms)  BEGIN /*application='WongnokBlog'*/
+  Tagging Create (2.2ms)  INSERT INTO "taggings" ("post_id", "tag_id", "created_at", "updated_at") VALUES (1, 1, '2026-11-04 12:04:02.496763', '2026-11-04 12:04:02.496763') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.3ms)  COMMIT /*application='WongnokBlog'*/
+  Tag Load (1.7ms)  SELECT "tags".* FROM "tags" INNER JOIN "taggings" ON "tags"."id" = "taggings"."tag_id" WHERE "taggings"."post_id" = 1 /* loading for pp */ LIMIT 11 /*application='WongnokBlog'*/
+=&gt;
+[#&lt;Tag:0x0000000122bcaa20
+  id: 1,
+  name: "อาหารเผ็ด",
+  created_at: "2026-11-04 12:04:02.461063000 +0000",
+  updated_at: "2026-11-04 12:04:02.461063000 +0000"&gt;]
+wongnok-blog(dev):005&gt; post.tags &lt;&lt; street
+…
+wongnok-blog(dev):006&gt; post.tags.pluck(:name)
+  Tag Pluck (1.0ms)  SELECT "tags"."name" FROM "tags" INNER JOIN "taggings" ON "tags"."id" = "taggings"."tag_id" WHERE "taggings"."post_id" = 1 /*application='WongnokBlog'*/
+=&gt; ["อาหารเผ็ด", "สตรีทฟู้ด"]
+wongnok-blog(dev):007&gt; Post.find(2).tags &lt;&lt; spicy
+…
+wongnok-blog(dev):008&gt; Tagging.pluck(:post_id, :tag_id)
+  Tagging Pluck (2.6ms)  SELECT "taggings"."post_id", "taggings"."tag_id" FROM "taggings" /*application='WongnokBlog'*/
+=&gt; [[1, 1], [1, 2], [2, 1]]</code></pre>
+
+<ul>
+  <li><code>post.tags &lt;&lt; spicy</code> — เราพูดถึงแค่บทความกับป้าย แต่ Rails <strong>สร้างใบจับคู่ให้เอง</strong>: <code>INSERT INTO "taggings" ("post_id", "tag_id", …) VALUES (1, 1, …)</code></li>
+  <li><code>Tagging.pluck(:post_id, :tag_id)</code> → <code>[[1, 1], [1, 2], [2, 1]]</code> — ขอสองช่องเลยได้เป็นคู่ <code>[เลขบทความ, เลขป้าย]</code> · ใบจับคู่ 3 ใบ ตรงกับแผนภาพข้างบน</li>
+  <li><code>…</code> คือบรรทัดที่ผมตัดออก หน้าตาเหมือนบรรทัดก่อนหน้า</li>
+</ul>
+
+<p>
+  <strong>อ่าน JOIN เป็นภาษาคน:</strong> <code>SELECT "tags"."name" FROM "tags" INNER JOIN "taggings" ON "tags"."id" = "taggings"."tag_id" WHERE "taggings"."post_id" = 1</code>
+  <br>= "เอาลิ้นชัก tags กับลิ้นชัก taggings มาวางคู่กัน · จับคู่แผ่นที่เลขป้ายตรงกัน (<code>tags.id</code> = <code>taggings.tag_id</code>) ·
+  เก็บเฉพาะคู่ที่ใบจับคู่เขียนว่าบทความ 1 · แล้วขอแค่ชื่อป้าย"
+  <br><code>JOIN</code> = ต่อสองลิ้นชักเข้าด้วยกันชั่วคราวตามเลขที่ตรงกัน · <code>INNER</code> = เอาเฉพาะแผ่นที่จับคู่ได้
+</p>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM ก็มีแบบหลายต่อหลาย โดยเขียน tag บน field เช่น <code>Tags []Tag `gorm:"many2many:post_tags;"`</code>
+  แล้ว GORM ทำตารางกลางให้ · ใกล้กับ habtm ข้างล่างมากกว่า เพราะไม่มี struct ของตารางกลางให้เราเห็น (ตัวอย่างจากเอกสาร GORM ไม่ได้รันในบทนี้)
+</p>
+
+<h3 id="sn-sub-4">through หรือ habtm — เลือกยังไง</h3>
+
+<p>
+  แบบที่ 5 ในตารางหัวข้อ 4 (<code>has_and_belongs_to_many</code>) ก็ทำหลายต่อหลายได้ โดย<strong>ไม่ต้องมี model ตรงกลาง</strong> ·
+  ผมลองในแอปทดลองแล้ว (ลองเสร็จลบทิ้ง): เขียน <code>has_and_belongs_to_many :tags</code> ใน <code>Post</code> แล้ว Rails ไปหาตารางกลางชื่อ <code>posts_tags</code> ให้เอง
+  ซึ่งเราต้องสร้างให้มีแค่ <code>post_id</code> กับ <code>tag_id</code> — คู่มือทางการบอกให้สร้างแบบไม่มี <code>id</code> และไม่มี model
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th><code>has_many :through</code> (ที่เราทำ)</th><th><code>has_and_belongs_to_many</code></th></tr></thead>
+  <tbody>
+    <tr><td>ตารางกลาง</td><td><code>taggings</code> (ตั้งชื่อเองได้)</td><td><code>posts_tags</code> (ชื่อสองตารางเรียงตามตัวอักษร)</td></tr>
+    <tr><td>มี model ตรงกลางไหม</td><td>มี (<code>Tagging</code>) ใส่ validation ได้ (บท 110)</td><td>ไม่มี</td></tr>
+    <tr><td>เติมช่องอื่นในใบจับคู่ได้ไหม</td><td>ได้ เช่น "ใครเป็นคนติด" · "ลำดับที่โชว์"</td><td>ไม่สะดวก — ไม่มี model ให้อ่าน/เขียนช่องพวกนั้น</td></tr>
+    <tr><td>เขียนกี่บรรทัด</td><td>มากกว่า (3 model)</td><td>น้อยกว่า</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สไลด์หน้า 40 สรุปไว้ดี: <strong>ถ้าตารางกลางมีโอกาสได้ช่องเพิ่มในอนาคต ให้ใช้ <code>:through</code> ตั้งแต่แรก</strong> ·
+  คู่มือทางการของ Rails ก็บอกว่า <code>:through</code> ยืดหยุ่นกว่า ใส่ validation และช่องเพิ่มได้ (ลิงก์ท้ายบท) · วันนี้รู้จัก habtm ไว้แค่อ่านโค้ดคนอื่นออกก็พอ
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของหลายต่อหลาย</span>
+  <dl>
+    <dt>join table</dt>
+    <dd>ตารางกลางที่เก็บคู่ของสองตาราง เช่น <code>taggings</code> · <code>posts_tags</code> ·
+        <strong>ถาม senior ได้ว่า "join table ตัวนี้ควรมี unique index คู่ post_id + tag_id ไหม จะได้ติดป้ายซ้ำไม่ได้"</strong></dd>
+    <dt>join model</dt>
+    <dd>model ของตารางกลาง (<code>Tagging</code>) · มีเฉพาะแบบ <code>:through</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า "use has_many :through with a Tagging join model, not has_and_belongs_to_many"</strong></dd>
+    <dt>JOIN (SQL)</dt>
+    <dd>คำสั่งให้ฐานข้อมูลต่อสองตารางตามเลขที่ตรงกันในคำสั่งเดียว · เห็นใน log เมื่อใช้ <code>:through</code> ·
+        <strong>อ่าน log แล้วเห็น INNER JOIN taggings = Rails กำลังเดินผ่านตารางกลางให้</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">ภารกิจ — ให้ป้ายรู้ว่าตัวเองอยู่บนบทความไหน (แบบฝึก Quiz 5 ของสไลด์)</h2>
+
+<div class="task">
+  <h3 id="sn-sub-5">🎯 ภารกิจ (~10 นาที) · ทำต่อจากหัวข้อ 7</h3>
+  <p>ตอนนี้ <code>post.tags</code> ใช้ได้แล้ว แต่ถามกลับทาง <code>spicy.posts</code> ยังไม่ได้ (ผลจริง):</p>
+<pre><code>wongnok-blog(dev):009&gt; spicy.posts
+(wongnok-blog):9:in '&lt;main&gt;': undefined method 'posts' for an instance of Tag (NoMethodError)</code></pre>
+  <ol>
+    <li><strong>ตอบบนกระดาษก่อน</strong> (สไลด์หน้า 44 ข้อ 2): คอลัมน์ <code>user_id</code> · <code>post_id</code> · <code>tag_id</code> อยู่ในตารางไหนบ้าง? (ตอบเป็นชื่อตาราง มีบางคอลัมน์อยู่มากกว่าหนึ่งตาราง)</li>
+    <li>เช็คคำตอบใน console ทีละตาราง: <code>Post.column_names</code> · <code>Comment.column_names</code> · <code>Tagging.column_names</code> · <code>User.column_names</code></li>
+    <li>ใช้กฎข้อเดียว เติม <code>app/models/tag.rb</code> (ตอนนี้มีแค่ <code>class Tag &lt; ApplicationRecord</code> กับ <code>end</code>) ให้ถาม <code>tag.posts</code> ได้ — ดูแบบจาก <code>post.rb</code> แล้วกลับด้าน</li>
+    <li>พิมพ์ <code>exit</code> ปิด console แล้วเปิดใหม่ จากนั้น:
+      <code>spicy = Tag.find_by(name: "อาหารเผ็ด")</code> แล้ว <code>spicy.posts.pluck(:title)</code></li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> <code>=&gt; ["ต้มยำกุ้งน้ำข้น", "ส้มตำปูปลาร้า"]</code> และ SQL ที่มี <code>INNER JOIN "taggings"</code></p>
+  <p><strong>ถ้าเจอ error แปลว่า…</strong></p>
+  <ul>
+    <li><code>undefined method 'posts' for an instance of Tag</code> → ยังไม่ได้เขียนใน <code>tag.rb</code> หรือยังไม่ได้ปิด–เปิด console ใหม่</li>
+    <li><code>Could not find the association :taggings in model Tag (ActiveRecord::HasManyThroughAssociationNotFoundError)</code> →
+        เขียน <code>through: :taggings</code> แต่ลืมเขียนบรรทัด <code>has_many :taggings</code> (Rails ไม่รู้ว่าจะเดินผ่านอะไร)</li>
+    <li><code>undefined method 'posts' for nil (NoMethodError)</code> → <code>find_by</code> หาไม่เจอ ได้ <code>nil</code> (คำว่า <code>for nil</code> คือใบ้) · ยังไม่ได้สร้างป้าย "อาหารเผ็ด" ตามหัวข้อ 7 หรือพิมพ์ชื่อผิด</li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>① คำตอบข้อ 2 ของสไลด์ — ผลจริงจาก console (บรรทัด 001 <code>Post.column_names</code> ยาวหลายบรรทัด ผมตัดออก — มี <code>"user_id"</code> อยู่ท้ายสุด · เลขบรรทัดของคุณจะต่างถ้าพิมพ์ต่อใน console เดิม):</p>
+<pre><code>wongnok-blog(dev):002&gt; Comment.column_names
+=&gt; ["id", "body", "post_id", "user_id", "created_at", "updated_at"]
+wongnok-blog(dev):003&gt; Tagging.column_names
+=&gt; ["id", "post_id", "tag_id", "created_at", "updated_at"]
+wongnok-blog(dev):004&gt; User.column_names
+=&gt; ["id", "name", "email", "created_at", "updated_at"]</code></pre>
+    <ul>
+      <li><code>user_id</code> อยู่ที่ <strong>posts</strong> และ <strong>comments</strong></li>
+      <li><code>post_id</code> อยู่ที่ <strong>comments</strong> และ <strong>taggings</strong></li>
+      <li><code>tag_id</code> อยู่ที่ <strong>taggings</strong> เท่านั้น · ส่วน <strong>users</strong> กับ <strong>tags</strong> ไม่มี <code>_id</code> ของใครเลย → ไม่มี <code>belongs_to</code></li>
+    </ul>
+    <p>② <code>app/models/tag.rb</code>:</p>
+<pre><code><span class="c"># app/models/tag.rb</span>
+<span class="k">class</span> <span class="n">Tag</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:taggings</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>, through: <span class="n">:taggings</span>
+<span class="k">end</span></code></pre>
+    <p>③ ผลจริงหลังเปิด console ใหม่:</p>
+<pre><code>wongnok-blog(dev):001&gt; spicy = Tag.find_by(name: "อาหารเผ็ด")
+  Tag Load (2.0ms)  SELECT "tags".* FROM "tags" WHERE "tags"."name" = 'อาหารเผ็ด' LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Tag:0x000000012716a6e8
+...
+wongnok-blog(dev):002&gt; spicy.posts.pluck(:title)
+  Post Pluck (3.1ms)  SELECT "posts"."title" FROM "posts" INNER JOIN "taggings" ON "posts"."id" = "taggings"."post_id" WHERE "taggings"."tag_id" = 1 /*application='WongnokBlog'*/
+=&gt; ["ต้มยำกุ้งน้ำข้น", "ส้มตำปูปลาร้า"]</code></pre>
+    <p>
+      SQL = "ต่อลิ้นชัก posts กับ taggings ตามเลขบทความ · เก็บคู่ที่ใบจับคู่เขียนว่าป้าย 1 · ขอแค่ชื่อเรื่อง" — กลับด้านกับของ <code>post.tags</code> เป๊ะ
+    </p>
+    <p>④ ข้อ 1 ของสไลด์ (เติมช่องว่าง) ตามแอปเรา:</p>
+<pre><code><span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+<span class="k">end</span>
+
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>                 <span class="c"># posts มี user_id</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>               <span class="c"># สไลด์มี dependent: :____ ต่อท้าย — เฉลยบท 116</span>
+  <span class="f">has_many</span> <span class="n">:taggings</span>
+  <span class="f">has_many</span> <span class="n">:tags</span>, through: <span class="n">:taggings</span>
+<span class="k">end</span></code></pre>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">จะเพิ่มปุ่ม "ถูกใจ" · ตาราง <code>likes</code> มีคอลัมน์ <code>post_id</code> กับ <code>user_id</code> · ใน <code>app/models/like.rb</code> ควรเขียนอะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>has_many :posts</code> กับ <code>has_many :users</code></button>
+    <button class="opt"><code>belongs_to :post</code> กับ <code>belongs_to :user</code></button>
+    <button class="opt"><code>has_one :post</code> กับ <code>has_one :user</code></button>
+    <button class="opt">ไม่ต้องเขียนอะไร ไปเขียนที่ <code>post.rb</code> แทน</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ตาราง likes มีช่อง <code>_id</code> สองช่อง → <code>Like</code> เขียน <code>belongs_to</code> สองบรรทัด แบบเดียวกับ <code>Tagging</code></p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะ <code>has_many</code> ใช้กับฝั่งที่<strong>ไม่มี</strong>ช่อง <code>_id</code> · การกดถูกใจหนึ่งครั้งเป็นของบทความเดียว ไม่ใช่หลายบทความ ·
+       ตัวเลือกที่ 3 ผิด เพราะ <code>has_one</code> หมายถึงช่อง <code>_id</code> อยู่อีกตาราง (เช่น <code>profiles.user_id</code>) ·
+       ตัวเลือกที่ 4 ผิด เพราะ <code>post.rb</code> ใส่ <code>has_many :likes</code> ได้ก็จริง แต่ฝั่ง <code>Like</code> ต้องมี <code>belongs_to</code> ด้วย ไม่งั้นถาม <code>like.post</code> ไม่ได้</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ช่อง <code>_id</code> อยู่ตารางไหน model นั้นเขียน <code>belongs_to</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ทำไม <code>post.comments.create(user: mana, body: "…")</code> ปลอดภัยกว่า <code>Comment.create(post_id: post.id, user_id: mana.id, body: "…")</code>?</p>
+  <div class="opts">
+    <button class="opt">เพราะท่าสั้นข้ามการตรวจกฎ (validation) ไปเลย จึงไม่มีวันพัง</button>
+    <button class="opt">เพราะท่ายาวไม่ได้บันทึกลงฐานข้อมูลจริง แค่สร้างไว้ในหน่วยความจำ</button>
+    <button class="opt">เพราะท่าสั้นสร้างคอมเมนต์ไว้ในตาราง posts ทำให้หาเจอเร็วกว่า</button>
+    <button class="opt">เพราะ Rails เติม post_id จากบทความที่ถืออยู่ให้เอง จึงใส่เลขผิดไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — ใน log เห็นว่า <code>post_id</code> = 1 มาจาก <code>post</code> ที่เราถือ · ท่ายาวพิมพ์ <code>post_id: 2</code> ผิดก็เก็บได้เงียบ ๆ เพราะบทความ 2 มีจริง</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะท่าสั้นยังตรวจกฎครบ — ตัวอย่าง "hi" ได้ <code>"User must exist"</code> ·
+       ตัวเลือกที่ 2 ผิด เพราะท่ายาวก็ <code>INSERT</code> ลงตู้จริง เห็นใน log ·
+       ตัวเลือกที่ 3 ผิด เพราะคอมเมนต์อยู่ในตาราง comments เสมอ แค่มีเลขบทความในช่อง <code>post_id</code></p>
+    <p><strong>จุดที่ต้องจำ:</strong> สร้างลูกผ่านแม่ (<code>post.comments.create</code>) แทนการกรอก <code>post_id</code> เอง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">บทความเลข 1 มีคอมเมนต์ในตู้ 3 อัน · พิมพ์ <code>draft = post.comments.build(user: mana, body: "x")</code> แล้วยังไม่ <code>save</code> · <code>post.comments.count</code> กับ <code>post.comments.size</code> ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>count</code> ได้ 3 · <code>size</code> ได้ 4</button>
+    <button class="opt"><code>count</code> ได้ 4 · <code>size</code> ได้ 4</button>
+    <button class="opt"><code>count</code> ได้ 4 · <code>size</code> ได้ 3</button>
+    <button class="opt"><code>count</code> ได้ 3 · <code>size</code> ได้ 3</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — ผลจริงในหัวข้อ 5: <code>count</code> ถามตู้ได้ 3 · <code>size</code> นับตู้ 3 + ที่ถือในมือ 1 = 4</p>
+    <p>ตัวเลือกที่ 2 ผิด เพราะ <code>build</code> ยังไม่ลงตู้ <code>count</code> จึงไม่เห็น ·
+       ตัวเลือกที่ 3 ผิด เพราะกลับด้าน — ตัวที่เห็นของในมือคือ <code>size</code> ·
+       ตัวเลือกที่ 4 ผิด เพราะ <code>size</code> รวมของที่ <code>build</code> ไว้ด้วย</p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>build</code> = อยู่ในมือ · <code>count</code> = ถามตู้อย่างเดียว · <code>size</code> = ตู้ + ในมือ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ทีมอยากเก็บว่า "ใครเป็นคนติดป้ายนี้ และติดเมื่อไหร่" ในความสัมพันธ์บทความ–ป้าย ควรเลือกแบบไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>has_and_belongs_to_many</code> เพราะเขียนสั้นกว่าและได้ช่องเพิ่มเหมือนกัน</button>
+    <button class="opt">ใส่คอลัมน์ <code>tag_id</code> ในตาราง posts แล้วเขียน <code>belongs_to :tag</code></button>
+    <button class="opt"><code>has_many :through</code> เพราะใบจับคู่มี model เติมช่องเพิ่มได้</button>
+    <button class="opt"><code>has_one :tag</code> เพราะแต่ละครั้งติดป้ายได้ทีละอันเท่านั้น</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — ข้อมูล "ใครติด · ติดเมื่อไหร่" เป็นของ<strong>ใบจับคู่</strong> · <code>:through</code> มี <code>Tagging</code> ที่เติมช่องได้ (และมีช่องเวลาสร้างให้แล้ว)</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะตารางกลางของ habtm ไม่มี model ให้อ่าน/เขียนช่องเพิ่ม (ตาราง <code>posts_tags</code> มีแค่ post_id กับ tag_id) ·
+       ตัวเลือกที่ 2 ผิด เพราะบทความหนึ่งมีหลายป้าย ช่องเดียวเก็บไม่พอ ·
+       ตัวเลือกที่ 4 ผิด เพราะ <code>has_one</code> คือมีได้แค่ตัวเดียวตลอดไป ไม่ใช่หลายต่อหลาย</p>
+    <p><strong>จุดที่ต้องจำ:</strong> หลายต่อหลาย + อาจมีช่องเพิ่ม → <code>has_many :through</code> ตั้งแต่แรก</p>
+  </div>
+</div>
+
+<div class="note">
+  <p>
+    <strong>💬 สรุป 3 บรรทัด</strong> ① ใบลูกจดเลขที่ของใบแม่ (<code>post_id</code>) · ② <code>belongs_to</code> อยู่ฝั่งที่มีคอลัมน์ <code>_id</code> ·
+    ③ หลายต่อหลายต้องมีลิ้นชักกลาง ใช้ <code>has_many :through</code>
+    <br>ยังงงตรงไหน เอาโค้ด model กับ <code>db/schema.rb</code> ของคุณไปถาม AI ได้เลย เช่น
+    "ช่วยอ่าน schema นี้แล้วบอกว่าแต่ละ model ควรมี belongs_to / has_many อะไรบ้าง และเพราะอะไร"
+    <br>บทหน้า: ถ้าลบบทความ "ต้มยำกุ้งน้ำข้น" ทิ้ง คอมเมนต์ 2 อันที่เขียนว่า "เป็นของบทความเลขที่ 1" จะเป็นยังไง?
+  </p>
+</div>
+
+<h2 id="sn-sec-10">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริงในแอปเรา</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>41</td><td><code>post.comments.create(body: "hi")</code></td>
+        <td>ไม่ถูกเก็บ ได้ <code>"User must exist"</code> เพราะ Comment ของเรามี <code>belongs_to :user</code> ด้วย · ต้องใส่ <code>user:</code></td><td>✅ ถ้าพิมพ์ตาม</td></tr>
+    <tr><td>41</td><td><code>post.comments.clear</code> · <code>post.comment_ids = [1, 2]</code></td>
+        <td>พังด้วย <code>ActiveRecord::NotNullViolation</code> เพราะพยายามตั้ง <code>post_id</code> เป็นว่าง แต่ตู้ห้ามว่าง</td><td>✅ อย่าใช้กับ belongs_to ที่บังคับ</td></tr>
+    <tr><td>41</td><td><code>has_many :approved_comments, -&gt; { where(approved: true) }</code></td>
+        <td>ตาราง comments ของเราไม่มีช่อง <code>approved</code> · พิมพ์ตามได้ <code>PG::UndefinedColumn</code> · บทนี้ใช้ <code>published_posts</code> แทน</td><td>แค่รู้</td></tr>
+    <tr><td>41</td><td><code>has_many :comments, dependent: :destroy</code></td>
+        <td>แอปเรายังไม่มี <code>dependent</code> · อธิบายในบท 116</td><td>ยังไม่ต้องเติม</td></tr>
+    <tr><td>40</td><td><code>has_one</code> · User → Profile</td>
+        <td>แอปเราไม่มี Profile · เป็นตัวอย่างให้เห็นภาพ</td><td>ไม่ต้อง</td></tr>
+    <tr><td>44</td><td>Quiz 5 ช่อง <code>dependent: :_______</code></td>
+        <td>เฉลยอยู่บท 116 · ภารกิจบทนี้ทำข้อ 1 (ส่วนอื่น) กับข้อ 2</td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0114-n-plus-one.html">← บทเรียน 114 · N+1 · includes</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0116-dependent-and-helpers.html">บทเรียน 116 → dependent · counter_cache</a>
+</nav>
+
+<h2 id="sn-sec-11">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/association_basics.html#belongs-to">Rails Guides — Active Record Associations · belongs_to</a>
+      — อ่านหัวข้อ belongs_to ถึง has_many และตัวอย่าง <code>"Author must exist"</code> ที่ตรงกับ <code>"Post must exist"</code> ของเรา</li>
+  <li><a href="https://guides.rubyonrails.org/association_basics.html#methods-added-by-has-many">Rails Guides — Methods Added by has_many</a>
+      — รายการ method ที่ได้ฟรีทั้งหมด (<code>build</code> · <code>create</code> · <code>&lt;&lt;</code> · <code>collection_singular_ids</code> · <code>clear</code>)</li>
+  <li><a href="https://guides.rubyonrails.org/association_basics.html#has-many-through-vs-has-and-belongs-to-many">Rails Guides — has_many :through vs has_and_belongs_to_many</a>
+      — ส่วนที่บอกว่าเมื่อไหร่ควรเลือกแบบไหน · และหัวข้อ <a href="https://guides.rubyonrails.org/association_basics.html#class-name">class_name</a> · <a href="https://guides.rubyonrails.org/association_basics.html#scopes">scopes</a></li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Associations/ClassMethods.html">Rails API — ActiveRecord::Associations::ClassMethods</a>
+      — เอกสารละเอียดของ <code>has_many</code> · <code>belongs_to</code> ทุก option · เปิดดูตอนอยากรู้ว่า option ไหนทำอะไร</li>
+  <li><a href="https://gorm.io/docs/belongs_to.html">GORM — Belongs To</a> · <a href="https://gorm.io/docs/has_many.html">GORM — Has Many</a> · <a href="https://gorm.io/docs/many_to_many.html">GORM — Many To Many</a>
+      — ฝั่ง Go ที่เทียบในหัวข้อ 3 และ 7 · ดูว่า field <code>PostID</code> + <code>Post</code> และ tag <code>many2many</code> ทำงานยังไง</li>
+  <li><a href="https://www.postgresql.org/docs/17/ddl-constraints.html#DDL-CONSTRAINTS-FK">PostgreSQL 17 — Foreign Keys</a>
+      — ฝั่งฐานข้อมูลของกฎ "เลขที่ต้องมีอยู่จริง" (<code>add_foreign_key</code>) · อ่านแค่ย่อหน้าแรกก็พอ</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

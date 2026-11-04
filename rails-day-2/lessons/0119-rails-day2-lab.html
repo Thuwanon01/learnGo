@@ -1,0 +1,1413 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 119 — Lab 2 — เติมของที่ scaffold ไม่ให้ แล้วเขียน prompt ให้ AI ทำได้ครบ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 119 · Rails · Day 2</p>
+  <h1>Lab 2 — เติมของที่ scaffold ไม่ให้ แล้วเขียน prompt ให้ AI ทำได้ครบ</h1>
+  <p class="meta">~25 นาทีอ่าน + ลงมือทำตามอีก ~50 นาที · ควรผ่าน
+    <a href="./0110-validations.html">บท 110</a> (validation) ·
+    <a href="./0111-four-layers-and-uniqueness.html">บท 111</a> (constraint) ·
+    <a href="./0114-n-plus-one.html">บท 114</a> (N+1) ·
+    <a href="./0116-dependent-and-helpers.html">บท 116</a> (dependent) ·
+    <a href="./0118-scaffold-reading.html">บท 118</a> (scaffold) มาก่อน</p>
+  <p class="standfirst">
+    บทนี้เป็น <strong>Lab ท้ายวัน</strong> — ไม่มีของใหม่ให้จำ แต่จะเอาทุกเรื่องของ Day 2 มาใช้จริงกับ<strong>แผนกใหม่หนึ่งแผนก: หมวดอาหาร (Category)</strong>
+    <br>เราจะสั่ง scaffold สร้างแผนกให้ทั้งชุด แล้วเติมของที่มันไม่ให้ทีละอย่าง: กฎตรวจแฟ้ม · กฎของตัวตู้ · ผูกกับบทความ · หน้ารายการที่ไม่เดินไปตู้หลายรอบ
+    · ระหว่างทาง<strong>จะทำให้พังโดยตั้งใจ</strong> เพื่อเห็นกับตาว่าด่านไหนกันอะไรได้
+    <br>อ่านจบแล้วคุณจะตรวจโค้ดที่เครื่อง (หรือ AI) เขียนให้ได้ว่าขาดอะไร และเขียน <strong>prompt</strong> (ข้อความสั่งงาน AI) ที่บอกครบตั้งแต่รอบแรก
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — Lab นี้ใช้คำพวกนี้ตลอด ถ้าข้อไหนไม่คุ้นให้กลับไปบทนั้นก่อน</p>
+  <ul>
+    <li><strong>migration</strong> = ใบสั่งช่างมาต่อเติมตู้ · <code>bin/rails db:migrate</code> = ให้ช่างลงมือ (<a href="./0108-migration-basics.html">บท 108</a>)</li>
+    <li><strong>validation</strong> = คนดูแลสต็อกตรวจแฟ้มก่อนเก็บ · <code>errors.full_messages</code> = รายการเหตุผลที่ไม่รับ (<a href="./0110-validations.html">บท 110</a>)</li>
+    <li><strong>constraint</strong> (เช่น <code>NOT NULL</code> · unique index) = ตัวตู้ที่ออกแบบให้ใส่แฟ้มผิดแบบไม่ได้เลย (<a href="./0111-four-layers-and-uniqueness.html">บท 111</a>)</li>
+    <li><strong>N+1</strong> = เดินไปตู้ทีละแผ่นหลายสิบรอบ · <code>includes</code> = เขียนใบเบิกทีเดียวหยิบมาทั้งตะกร้า (<a href="./0114-n-plus-one.html">บท 114</a>)</li>
+    <li><strong>scaffold</strong> = ชุดเปิดแผนกสำเร็จรูป ได้ model + migration + route + controller + view ในคำสั่งเดียว (<a href="./0118-scaffold-reading.html">บท 118</a>)</li>
+  </ul>
+  <p>
+    <strong>🍜 ข้อมูลตัวอย่าง:</strong> ทำในโปรเจกต์ <code>wongnok_blog</code> ของคุณเอง ที่มีตาราง users / posts / comments และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับ
+    <a href="./0107-console-crud.html">บท 107</a> (ผู้ใช้ 3 คน · บทความ 6 ชิ้น · คอมเมนต์ 7 อัน) · หมวดอาหารเราจะสร้างกันเองในบทนี้
+  </p>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน)
+  </p>
+  <p>
+    ผลรันทุกก้อนในบทนี้รันจริงแล้วก็อปมา · ค่าที่เปลี่ยนทุกครั้ง เช่น <strong>เวลา ms · เลข id · เลขวันเวลาหน้าชื่อไฟล์ migration · PID</strong>
+    ของคุณจะไม่ตรงกับของผม — เป็นเรื่องปกติ · path ยาว ๆ ของโฟลเดอร์ในเครื่องผมย่อเป็น <code>…</code>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">แผนที่ของ Lab: เปิดแผนกใหม่ แล้วเติมของที่ชุดสำเร็จรูปไม่ให้</h2>
+
+<p>
+  ร้านเรามีบทความ 6 ชิ้นแล้ว แต่ยังไม่มีการแบ่งหมวด · วันนี้เราจะเปิด<strong>แผนกหมวดอาหาร</strong> เช่น "อาหารไทย" "Street Food"
+  แล้วให้บทความแต่ละชิ้นอยู่ในหมวดได้
+  <br>แต่ละขั้นของ Lab ตรงกับเรื่องที่เรียนมาทั้งวัน:
+</p>
+
+<div class="diagram">ขั้น 0  เตรียมร้าน               เปิด server · เช็คว่าไม่มี Category ค้างจากบท 118
+  │
+ขั้น 1  scaffold                 ชุดเปิดแผนกสำเร็จรูป → ใช้ได้ทันที แต่รับฟอร์มว่าง ๆ ด้วย   (บท 118)
+  │
+ขั้น 2  validation               คนดูแลสต็อกเริ่มตรวจแฟ้ม → แต่ยังมีประตูข้าง         (บท 110)
+  │
+ขั้น 3  constraint               สั่งช่างปรับตัวตู้ → ช่างไม่ยอม เพราะในตู้มีแฟ้มเสีย    (บท 108 · 111)
+  │
+ขั้น 4  ทำพังโดยตั้งใจ             เข้าทางประตูข้างอีกรอบ → คราวนี้ตัวตู้ปฏิเสธ           (บท 111)
+  │
+ขั้น 5  ภารกิจ: ผูกกับบทความ      หมวดหนึ่งมีหลายบทความ · ห้ามลบหมวดที่ยังมีบทความ       (บท 115 · 116)
+  │
+ขั้น 6  ของแถม: หน้ารายการ         เรียง · จำกัดจำนวน · หยิบทีเดียวทั้งตะกร้า            (บท 113 · 114)
+  │
+ปิดท้าย  เขียน prompt ให้ AI ทำทั้งหมดนี้ได้ในรอบเดียว</div>
+
+<p>
+  ขั้นที่สำคัญที่สุดคือ <strong>ขั้น 2–4</strong> — สไลด์หน้า 57 บอกว่าจุดประสงค์ของ Lab นี้คือได้เห็นว่า
+  "ถ้าใส่ <code>NOT NULL</code> (กฎของตู้ว่าช่องนี้ห้ามว่าง) ครบ การบันทึกแบบข้ามการตรวจจะพังที่ชั้น DB ไม่ใช่ชั้น model"
+  · ภาษาคน: ต่อให้ใครหลบคนดูแลสต็อกได้ ตัวตู้ก็ยังไม่ยอมรับแฟ้มเสีย
+</p>
+
+<h2 id="sn-sec-2">ขั้น 0 — เตรียมร้านก่อนเริ่ม</h2>
+
+<p>
+  เปิด terminal สองแท็บในโฟลเดอร์ <code>wongnok_blog</code> · แท็บแรกเปิดร้าน แท็บที่สองไว้พิมพ์คำสั่ง (เหมือน <a href="../../rails-day-1/lessons/0105-rails-day1-lab.html">Lab 1</a>)
+</p>
+
+<pre><code><span class="c"># แท็บที่ 1 — เปิดร้าน (ปล่อยค้างไว้ทั้ง Lab)</span>
+$ bin/rails server
+
+<span class="c"># แท็บที่ 2 — เช็คว่างานเก่าถูกเก็บเข้า git หมดแล้ว (ไม่ขึ้นอะไรเลย = สะอาด)</span>
+$ git status --short</code></pre>
+
+<p>
+  ทำไมต้องสะอาด: ระหว่าง Lab เราจะใช้ <code>git diff</code> ดูว่าแต่ละขั้นเปลี่ยนอะไร · ถ้ามีของค้างจากบทก่อนจะปนกันจนอ่านไม่ออก
+  · ถ้ายังมีของค้าง ให้ <code>git add . &amp;&amp; git commit -m "ก่อน Lab 2"</code> ก่อน
+</p>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong>ถ้าเคยทำ <a href="./0118-scaffold-reading.html">บท 118</a> แล้วยังมี Category ค้างอยู่</strong> (มีไฟล์ <code>app/models/category.rb</code>)
+    คำสั่ง scaffold ในขั้น 1 จะไม่ยอมทำ · ผลจริง:
+  </p>
+  <pre><code>The name 'Category' is either already used in your application or reserved by Ruby on Rails. Please choose an alternative or use --skip-collision-check or --force to skip this check and run this generator again.</code></pre>
+  <p>
+    แปลว่า "ชื่อ Category มีคนใช้แล้ว" · รื้อของเก่าออกก่อน <strong>ตามลำดับนี้</strong>:
+    ① <code>bin/rails db:migrate:status</code> ถ้าบรรทัดล่างสุดคือ <code>up … Create categories</code> → สั่ง <code>bin/rails db:rollback</code> (ให้ช่างรื้อลิ้นชัก categories ออก)
+    ② <code>bin/rails destroy scaffold Category</code> (ลบไฟล์ทั้งชุดที่ scaffold สร้าง)
+    · ต้อง ① ก่อน ② เพราะ ② ลบไฟล์ migration ทิ้งด้วย — ลบไฟล์ก่อนแล้ว Rails จะไม่รู้ว่าต้องรื้ออะไร (กับดักเดียวกับ <a href="./0108-migration-basics.html">บท 108</a>)
+    <br>③ รื้อเสร็จ <code>git status --short</code> จะขึ้นรายการไฟล์ที่ถูกลบ (<code>D …</code>) เต็มจอ · commit อีกรอบด้วยคำสั่งเดียวกับข้างบน
+    (<code>git add . &amp;&amp; git commit -m "รื้อ Category ของบท 118"</code>) ให้กลับมาสะอาดก่อนเริ่มขั้น 1 — ไม่งั้น <code>git diff</code> ของขั้นต่อ ๆ ไปจะปนกับไฟล์ที่ลบ
+  </p>
+</div>
+
+<h2 id="sn-sec-3">ขั้น 1 — scaffold: ขอชุดเปิดแผนกสำเร็จรูปหนึ่งชุด</h2>
+
+<p>
+  สั่งคำสั่งเดียวกับสไลด์ · ขอแผนก <code>Category</code> ที่แฟ้มแต่ละแผ่นมีสองช่อง: <code>name</code> (ชื่อหมวด) กับ <code>slug</code>
+  (ชื่อสั้นภาษาอังกฤษสำหรับใส่ใน URL เช่น <code>street-food</code> — เคยเจอใน <a href="./0112-callbacks-and-logic.html">บท 112</a>) · ผลจริง:
+</p>
+
+<pre><code>$ bin/rails generate scaffold Category name:string slug:string
+      invoke  active_record
+      create    db/migrate/20261104120835_create_categories.rb
+      create    app/models/category.rb
+      invoke    test_unit
+      create      test/models/category_test.rb
+      create      test/fixtures/categories.yml
+      invoke  resource_route
+       route    resources :categories
+      invoke  scaffold_controller
+      create    app/controllers/categories_controller.rb
+      invoke    tailwindcss
+      create      app/views/categories
+      create      app/views/categories/index.html.erb
+      create      app/views/categories/edit.html.erb
+      create      app/views/categories/show.html.erb
+      create      app/views/categories/new.html.erb
+      create      app/views/categories/_form.html.erb
+      create      app/views/categories/_category.html.erb
+      invoke    resource_route
+      invoke    test_unit
+      create      test/controllers/categories_controller_test.rb
+      invoke    helper
+      create      app/helpers/categories_helper.rb
+      invoke      test_unit
+      invoke    jbuilder
+      create      app/views/categories/index.json.jbuilder
+      create      app/views/categories/show.json.jbuilder
+      create      app/views/categories/_category.json.jbuilder</code></pre>
+
+<p>ชุดเดียวกับที่อ่านทีละไฟล์ไปแล้วใน<a href="./0118-scaffold-reading.html">บท 118</a> (คราวนี้ไม่มีช่อง <code>description</code>) · ไม่ต้องอ่านทุกบรรทัด — ทวนแค่ว่าแต่ละกลุ่มคือใครในร้าน:</p>
+<ul>
+  <li><code>db/migrate/…_create_categories.rb</code> — ใบสั่งช่างต่อลิ้นชักใหม่ชื่อ categories (เลขหน้าชื่อไฟล์ของคุณจะต่าง)</li>
+  <li><code>app/models/category.rb</code> — คนดูแลสต็อกของแผนกนี้</li>
+  <li><code>route resources :categories</code> — พนักงานต้อนรับได้รายการใหม่ 8 เส้น (<a href="../../rails-day-1/lessons/0101-rails-routing.html">บท 101</a>)</li>
+  <li><code>categories_controller.rb</code> + <code>app/views/categories/*.html.erb</code> — หัวหน้าเชฟกับคนจัดจานของแผนก</li>
+  <li><code>test/…</code> · <code>*.json.jbuilder</code> — ไฟล์เทส กับแบบจัดจานเป็นข้อมูล JSON · วันนี้ยังไม่แตะ (เทสอยู่ Day 4) · <code>tailwindcss</code> โผล่เพราะเราสร้างแอปด้วย <code>--css=tailwind</code></li>
+</ul>
+
+<p>ต่อลิ้นชักจริง (ผลจริง):</p>
+
+<pre><code>$ bin/rails db:migrate
+== 20261104120835 CreateCategories: migrating =================================
+-- create_table(:categories)
+   -&gt; 0.0091s
+== 20261104120835 CreateCategories: migrated (0.0091s) ========================</code></pre>
+
+<p>เปิดดูใบสั่งช่างกับคนดูแลสต็อกที่ได้มา — นี่คือไฟล์จริงสองไฟล์ ไม่ได้ตัดอะไรออก:</p>
+
+<pre><code><span class="c"># db/migrate/20261104120835_create_categories.rb</span>
+<span class="k">class</span> <span class="n">CreateCategories</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">create_table</span> <span class="n">:categories</span> <span class="k">do</span> |t|
+      t.<span class="f">string</span> <span class="n">:name</span>
+      t.<span class="f">string</span> <span class="n">:slug</span>
+
+      t.<span class="f">timestamps</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="c"># app/models/category.rb</span>
+<span class="k">class</span> <span class="n">Category</span> &lt; <span class="n">ApplicationRecord</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>t.string :name</code> · <code>t.string :slug</code> — ต่อช่องสองช่องบนแฟ้ม · <strong>ไม่มี <code>null: false</code></strong> = ช่องนี้ว่างก็ได้</li>
+  <li><code>t.timestamps</code> — ต่อช่อง <code>created_at</code> กับ <code>updated_at</code> (เวลาสร้าง · เวลาแก้ล่าสุด) ให้เอง (<a href="./0108-migration-basics.html">บท 108</a>)</li>
+  <li><strong>ไม่มี index</strong> ที่ <code>slug</code> (index = ป้ายแท็บเรียงตัวอักษรในลิ้นชัก · <a href="./0109-safe-migrations.html">บท 109</a>)
+      และไม่มีกฎ "ห้ามซ้ำ" = slug ซ้ำกันกี่แผ่นตู้ก็รับ</li>
+  <li><code>class Category &lt; ApplicationRecord</code> แล้ว <code>end</code> เลย = <strong>คนดูแลสต็อกที่ไม่ตรวจอะไรเลย</strong></li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — ชุดเปิดแผนกใหม่จากแฟรนไชส์</span>
+  <p>
+    สำนักงานใหญ่ส่งชุดเปิดแผนกมาให้ครบ: ลิ้นชักเปล่าหนึ่งลิ้นชัก · พนักงานต้อนรับที่รู้เส้นทาง · เชฟ · คนจัดจาน · แบบฟอร์มสั่งของ
+    · เปิดร้านได้ทันทีในห้านาที
+    <br>แต่ชุดนี้<strong>ถูกออกแบบให้ใช้ได้กับทุกสาขาทั่วประเทศ</strong> — มันไม่รู้ว่าร้านเรามีกฎว่า "หมวดต้องมีชื่อ" "ชื่อ URL ห้ามซ้ำ" "ห้ามทิ้งหมวดที่ยังมีบทความ"
+    กฎพวกนั้นเราต้องติดเอง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ชุดจากแฟรนไชส์จริงมักมีคู่มือบอกว่า "ต้องตั้งค่าอะไรเพิ่ม" · scaffold ไม่บอกอะไรเลย
+    มันสร้างไฟล์เสร็จแล้วเงียบ — โค้ดที่ได้ดูครบ ใช้ได้จริง จนเราไม่รู้ตัวว่าขาด (เหมือนโค้ดจาก AI ที่บทนี้จะพูดถึงตอนท้าย)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ฝั่ง Go ไม่มีคำสั่งแบบนี้ — ใน Gin คุณเขียน handler ทีละตัว เขียน struct เอง และเขียน migration ของ goose เอง
+  (<a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a>) · ข้อดีคือทุกบรรทัดคุณตั้งใจเขียน · ข้อเสียคือช้า
+  · scaffold กลับกัน: เร็วมาก แต่ทุกบรรทัดที่ได้คือ "ค่าตั้งต้นที่ไม่มีกฎ" ที่เราต้องอ่านเองว่าขาดอะไร
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของขั้นนี้</span>
+  <dl>
+    <dt>scaffold</dt>
+    <dd>คำสั่งที่สร้าง model · migration · route · controller · view ของหนึ่งเรื่องให้ครบในคำสั่งเดียว (แปลตรงตัวว่า "นั่งร้าน" — โครงชั่วคราวที่ต้องเติมต่อ)
+      · พิมพ์บอก AI ได้ว่า "this was generated by rails scaffold, list what validations and DB constraints are missing" แล้วให้มันไล่ให้</dd>
+    <dt>generator · <code>bin/rails destroy</code></dt>
+    <dd>generator = คำสั่งตระกูล <code>bin/rails generate …</code> ที่เขียนไฟล์ให้ · <code>bin/rails destroy …</code> คือคำสั่งคู่กันที่ลบไฟล์ชุดเดียวกันทิ้ง
+      · ถาม senior ได้ว่า "ทีมเราใช้ scaffold ได้ไหม หรือให้เขียน controller เอง"</dd>
+  </dl>
+</div>
+
+<h3 id="sn-sub-1">ลองใช้แผนกใหม่ในเบราว์เซอร์</h3>
+
+<p>
+  ถ้าเปิดร้านค้างไว้ในแท็บแรก (ขั้น 0) เปิดได้เลย · ถ้ายังไม่ได้เปิด ผลตอนเปิดร้านจะหน้าตาแบบนี้ (ผลจริง · PID ของคุณจะต่าง):
+</p>
+
+<pre><code>$ bin/rails server
+=&gt; Booting Puma
+=&gt; Rails 8.1.4 application starting in development
+=&gt; Run `bin/rails server --help` for more startup options
+Puma starting in single mode...
+* Puma version: 8.0.2 ("Into the Arena")
+* Ruby version: ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]
+*  Min threads: 3
+*  Max threads: 3
+*  Environment: development
+*          PID: 55512
+* Listening on http://127.0.0.1:3000
+* Listening on http://[::1]:3000
+Use Ctrl-C to stop</code></pre>
+
+<p>เปิด <code>http://localhost:3000/categories</code> จะเห็นหัวข้อ <strong>Categories</strong> กับปุ่ม <strong>New category</strong> แล้วทำตามนี้ทีละข้อ:</p>
+
+<ol>
+  <li>กด New category · กรอก Name = <code>Street Food</code> · Slug = <code>street-food</code> · กด Create Category → เห็น <code>Category was successfully created.</code></li>
+  <li>สร้างอีกอัน: Name = <code>Dessert</code> · Slug = <code>dessert</code></li>
+  <li>กด Edit ที่ Dessert · เปลี่ยน Name เป็น <code>ขนมหวาน</code> · กด Update → แก้ได้</li>
+  <li>เปิดหน้า Dessert (กด Show) แล้วกด <strong>Destroy this category</strong> · ยืนยัน → หายไปจากรายการ</li>
+  <li><strong>สุดท้าย: กด New category แล้วกด Create เลย ไม่กรอกอะไรสักช่อง</strong></li>
+</ol>
+
+<p>
+  ข้อ 5 <strong>บันทึกผ่าน</strong> ได้ข้อความ successfully created เหมือนกัน · ในหน้ารายการมีหมวดหนึ่งอันที่ Name กับ Slug ว่างเปล่า
+  · ดูในสมุดบันทึกของแท็บที่เปิดร้าน จะเห็นบรรทัดนี้ (ผลจริง):
+</p>
+
+<pre><code>  Category Create (3.4ms)  INSERT INTO "categories" ("name", "slug", "created_at", "updated_at") VALUES ('', '', '2026-11-04 12:10:36.852251', '2026-11-04 12:10:36.852251') RETURNING "id" /*action='create',application='WongnokBlog',controller='categories'*/</code></pre>
+
+<p>
+  แปลเป็นภาษาคน: "ใส่แฟ้มใหม่ลงลิ้นชัก categories โดยช่อง name เป็น <code>''</code> (ข้อความว่าง) ช่อง slug เป็น <code>''</code> แล้วบอกเลข id ที่ได้กลับมา"
+</p>
+<ul>
+  <li><code>INSERT INTO "categories" (…)</code> = ใส่แฟ้มใหม่ลงลิ้นชักนี้ โดยกรอกช่องตามรายชื่อในวงเล็บ · <code>VALUES (…)</code> = ค่าของแต่ละช่องตามลำดับ (<a href="./0107-console-crud.html">บท 107</a>)</li>
+  <li><code>RETURNING "id"</code> = "ใส่เสร็จแล้วบอกเลขที่แฟ้มกลับมาด้วย" · <code>/*action='create',…*/</code> ท้ายบรรทัด = ป้ายที่ Rails แปะบอกว่ามาจาก controller ไหน ตู้ไม่สนใจ ข้ามได้ (<a href="./0113-query-lazy-relation.html">บท 113</a>)</li>
+</ul>
+<p>
+  สังเกตว่าฟอร์มส่งช่องที่ไม่ได้กรอกมาเป็น <code>''</code> <strong>ไม่ใช่ <code>nil</code></strong> — จำจุดนี้ไว้ จะกลับมาเจอในขั้น 2
+</p>
+
+<div class="win">
+  <p>✅ <strong>จบขั้น 1:</strong> scaffold ให้แผนกที่ใช้ได้จริงครบ 4 อย่าง (สร้าง · ดู · แก้ · ลบ) ภายในสองคำสั่ง — และ<strong>รับแฟ้มเปล่าโดยไม่บ่นสักคำ</strong>
+    · ตอนนี้ในลิ้นชักมีหมวด 2 แผ่น: Street Food กับแผ่นว่าง · commit ไว้ก่อน: <code>git add . &amp;&amp; git commit -m "scaffold Category"</code></p>
+</div>
+
+<h2 id="sn-sec-4">ขั้น 2 — validation: ให้คนดูแลสต็อกเริ่มตรวจแฟ้ม</h2>
+
+<p>
+  เปิด <code>app/models/category.rb</code> แล้วแทนที่ทั้งไฟล์ด้วยโค้ดนี้ · เป็นกฎจากสไลด์หน้า 54 ที่แก้จุดพังไปหนึ่งจุด (ดูกล่องเตือนใต้โค้ด):
+</p>
+
+<pre><code><span class="c"># app/models/category.rb</span>
+<span class="k">class</span> <span class="n">Category</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">before_validation</span> <span class="n">:fill_slug</span>
+
+  <span class="f">validates</span> <span class="n">:name</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">maximum:</span> <span class="n">80</span> }
+  <span class="f">validates</span> <span class="n">:slug</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">uniqueness:</span> <span class="k">true</span>,
+                   <span class="n">format:</span> { <span class="n">with:</span> <span class="s">/\A[a-z0-9-]+\z/</span> }
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">fill_slug</span>
+    <span class="k">self</span>.slug = name.<span class="f">to_s</span>.<span class="f">parameterize</span> <span class="k">if</span> slug.<span class="f">blank?</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>before_validation :fill_slug</code> — "ก่อนตรวจแฟ้มทุกครั้ง ให้เรียก method <code>fill_slug</code>" (callback · <a href="./0112-callbacks-and-logic.html">บท 112</a>)</li>
+  <li><code>validates :name, presence: true, length: { maximum: 80 }</code> — ชื่อห้ามว่าง และยาวไม่เกิน 80 ตัวอักษร (<a href="./0110-validations.html">บท 110</a>)</li>
+  <li><code>validates :slug, presence: true, uniqueness: true, …</code> — slug ห้ามว่าง · ห้ามซ้ำกับแผ่นอื่น · และต้องหน้าตาตรงแบบ</li>
+  <li><code>format: { with: /\A[a-z0-9-]+\z/ }</code> — ของในเครื่องหมาย <code>/…/</code> คือ "แบบของตัวอักษร" (regex) · แบบที่ยอมรับ: <code>\A</code> = ต้นข้อความ · <code>[a-z0-9-]+</code> = ตัวอังกฤษเล็ก ตัวเลข หรือขีด อย่างน้อยหนึ่งตัว · <code>\z</code> = ท้ายข้อความ
+      → "ทั้งข้อความต้องมีแค่ตัวพวกนี้" · <code>Street-Food</code> (มีตัวใหญ่) หรือ <code>ขนม</code> ไม่ผ่าน</li>
+  <li><code>private</code> — method ที่อยู่ใต้คำนี้ใช้กันเองภายในแฟ้ม คนนอกเรียกไม่ได้ (<a href="../../rails-day-1/lessons/0102-rails-controller.html">บท 102</a>)</li>
+  <li><code>self.slug = name.to_s.parameterize if slug.blank?</code> — "ถ้า slug ว่าง ให้เอาชื่อมาแปลงเป็น slug" · อ่านทีละท่อน:
+      <code>self.slug =</code> = เขียนลงช่อง slug ของแฟ้มแผ่นนี้ (ต้องมี <code>self.</code> · <a href="./0112-callbacks-and-logic.html">บท 112</a>)
+      · <code>to_s</code> = แปลงเป็นข้อความ (ถ้า name เป็น <code>nil</code> จะได้ <code>''</code> แทนการพัง)
+      · <code>parameterize</code> แปลง <code>"Noodle Soup"</code> เป็น <code>"noodle-soup"</code>
+      · <code>blank?</code> = ว่างไหม (<code>nil</code> หรือ <code>''</code> หรือมีแต่ช่องว่าง ได้ <code>true</code> หมด)</li>
+</ul>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong>สไลด์หน้า 54 เขียน <code>self.slug ||= name.to_s.parameterize</code> — พิมพ์ตามแล้วฟอร์มในเบราว์เซอร์ใช้ไม่ได้</strong>
+    · <code>||=</code> เติมให้เฉพาะตอน slug เป็น <code>nil</code> แต่ฟอร์มส่งช่องว่างมาเป็น <code>''</code> (เห็นในขั้น 1) จึงไม่เติม
+    · ผมลองกรอก Name = <code>Rice Bowl</code> เว้น Slug ว่าง กับเวอร์ชันของสไลด์ ได้หน้าฟอร์มเดิมพร้อมกล่องแดง (ผลจริง):
+  </p>
+  <pre><code>2 errors prohibited this category from being saved:
+Slug can't be blank
+Slug is invalid</code></pre>
+  <p>(ผลนี้คือตอนที่ลบแผ่นว่างของขั้น 1 ไปแล้ว — ถ้าแผ่นว่างยังอยู่ จะได้ <code>Slug has already been taken</code> เพิ่มอีกบรรทัด เพราะ slug <code>''</code> ซ้ำกับแผ่นนั้น)</p>
+  <p>ใช้ <code>if slug.blank?</code> แบบในโค้ดด้านบนแทน — <code>blank?</code> ถือว่าทั้ง <code>nil</code> และ <code>''</code> คือว่าง</p>
+</div>
+
+<h3 id="sn-sub-2">ลองกฎใหม่ใน console</h3>
+
+<p>
+  เปิดครัวทดลอง <code>bin/rails console</code> ในแท็บที่สอง · เริ่มจากถามแผ่นว่างที่สร้างไว้ในขั้น 1 ก่อน (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; old = Category.find_by(name: "")
+  Category Load (1.8ms)  SELECT "categories".* FROM "categories" WHERE "categories"."name" = '' LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x0000000126793610
+...
+wongnok-blog(dev):002&gt; old.valid?
+  Category Exists? (1.5ms)  SELECT 1 AS one FROM "categories" WHERE "categories"."slug" = '' AND "categories"."id" != 3 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):003&gt; old.errors.full_messages
+=&gt; ["Name can't be blank", "Slug can't be blank", "Slug is invalid"]
+wongnok-blog(dev):004&gt; old.destroy
+  TRANSACTION (1.6ms)  BEGIN /*application='WongnokBlog'*/
+  Category Destroy (3.7ms)  DELETE FROM "categories" WHERE "categories"."id" = 3 /*application='WongnokBlog'*/
+  TRANSACTION (1.7ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x0000000126793610
+ id: 3,
+ name: "",
+ slug: "",
+ created_at: "2026-11-04 12:10:36.852251000 +0000",
+ updated_at: "2026-11-04 12:10:36.852251000 +0000"&gt;</code></pre>
+
+<ul>
+  <li>บรรทัด 001 — <code>SELECT "categories".* … WHERE "categories"."name" = '' LIMIT 1</code> = "ขอแฟ้มทุกช่องจากลิ้นชัก categories เฉพาะแผ่นที่ชื่อเป็นข้อความว่าง เอาแผ่นแรกแผ่นเดียว"
+      · <code>=&gt; #&lt;Category…</code> ตามด้วย <code>...</code> คือ console ย่อผลให้สั้นเพราะเป็นการเก็บค่าลงตัวแปร (ไม่ได้พัง)</li>
+  <li>บรรทัด 002 — <code>Category Exists?</code> คือกฎ <code>uniqueness</code> ทำงาน: "มีแผ่น<em>อื่น</em> (<code>"id" != 3</code> = id ไม่ใช่ 3) ที่ slug เป็น <code>''</code> ไหม"
+      · <code>SELECT 1 AS one … LIMIT 1</code> = ไม่ต้องหยิบแฟ้มมา แค่ตอบว่า "มีสักแผ่นไหม" (<a href="./0113-query-lazy-relation.html">บท 113</a>)
+      · <code>valid?</code> ตอบ <code>false</code> = แฟ้มนี้ผิดกฎ</li>
+  <li>บรรทัด 003 — ผิดสามข้อ · <strong>แฟ้มนี้นอนอยู่ในตู้ตั้งแต่ขั้น 1</strong> — กฎใหม่ไม่ได้ย้อนไปตรวจแฟ้มเก่าให้ จะตรวจก็ต่อเมื่อมีคนสั่ง save หรือ valid?</li>
+  <li>บรรทัด 004 — ทิ้งแผ่นเสียนี้ (<code>DELETE FROM … WHERE id = 3</code> = "ดึงแฟ้มเลขที่ 3 ออกจากลิ้นชัก") · เลข id ของคุณอาจต่าง
+      · บรรทัด <code>TRANSACTION … BEGIN</code> / <code>COMMIT</code> ที่ห่ออยู่ อธิบายในก้อนถัดไป</li>
+</ul>
+
+<p>ต่อในครัวเดิม — ลองให้คนดูแลสต็อกตรวจแฟ้มใหม่หลายแบบ (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):005&gt; c = Category.new
+=&gt;
+#&lt;Category:0x00000001276a99d8
+...
+wongnok-blog(dev):006&gt; c.valid?
+  Category Exists? (2.5ms)  SELECT 1 AS one FROM "categories" WHERE "categories"."slug" = '' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):007&gt; c.errors.full_messages
+=&gt; ["Name can't be blank", "Slug can't be blank", "Slug is invalid"]
+wongnok-blog(dev):008&gt; noodle = Category.create(name: "Noodle Soup")
+  TRANSACTION (2.0ms)  BEGIN /*application='WongnokBlog'*/
+  Category Exists? (3.9ms)  SELECT 1 AS one FROM "categories" WHERE "categories"."slug" = 'noodle-soup' LIMIT 1 /*application='WongnokBlog'*/
+  Category Create (1.5ms)  INSERT INTO "categories" ("name", "slug", "created_at", "updated_at") VALUES ('Noodle Soup', 'noodle-soup', '2026-11-04 12:10:59.846018', '2026-11-04 12:10:59.846018') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.9ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x00000001276a8d58
+...
+wongnok-blog(dev):009&gt; noodle.slug
+=&gt; "noodle-soup"
+wongnok-blog(dev):010&gt; thai = Category.create(name: "อาหารไทย")
+  TRANSACTION (2.1ms)  BEGIN /*application='WongnokBlog'*/
+  Category Exists? (3.8ms)  SELECT 1 AS one FROM "categories" WHERE "categories"."slug" = '' LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (0.8ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x00000001276a7458
+...
+wongnok-blog(dev):011&gt; thai.errors.full_messages
+=&gt; ["Slug can't be blank", "Slug is invalid"]</code></pre>
+
+<ul>
+  <li>บรรทัด 008–009 — ไม่ได้ส่ง slug มา · callback เติมให้ก่อนตรวจ · ใน <code>INSERT</code> ช่อง slug เป็น <code>'noodle-soup'</code> แล้ว
+      · <code>BEGIN</code> … <code>COMMIT</code> = เปิดงานหนึ่งชุด แล้วยืนยันว่าลงตู้จริง (transaction · <a href="./0111-four-layers-and-uniqueness.html">บท 111</a>)</li>
+  <li>บรรทัด 010–011 — ชื่อภาษาไทยแปลงเป็น slug ได้<strong>ข้อความว่าง</strong> (<code>parameterize</code> เก็บไว้แค่ตัวอังกฤษ ตัวเลข ขีด และขีดล่าง <code>_</code> — เจอแล้วใน <a href="./0112-callbacks-and-logic.html">บท 112</a>)
+      · คราวนี้กฎ <code>presence</code> จับได้ · <code>ROLLBACK</code> = "ยกเลิก ไม่มีอะไรลงตู้" · หมวดภาษาไทยจึงต้องกรอก slug เอง</li>
+</ul>
+
+<pre><code>wongnok-blog(dev):012&gt; thai = Category.create(name: "อาหารไทย", slug: "thai-food")
+  TRANSACTION (2.2ms)  BEGIN /*application='WongnokBlog'*/
+  Category Exists? (4.3ms)  SELECT 1 AS one FROM "categories" WHERE "categories"."slug" = 'thai-food' LIMIT 1 /*application='WongnokBlog'*/
+  Category Create (1.5ms)  INSERT INTO "categories" ("name", "slug", "created_at", "updated_at") VALUES ('อาหารไทย', 'thai-food', '2026-11-04 12:11:01.069190', '2026-11-04 12:11:01.069190') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (2.3ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x00000001276a6558
+...
+wongnok-blog(dev):013&gt; thai.persisted?
+=&gt; true
+wongnok-blog(dev):014&gt; bad = Category.create(name: "Dessert", slug: "Dessert!!")
+  TRANSACTION (2.1ms)  BEGIN /*application='WongnokBlog'*/
+  Category Exists? (9.5ms)  SELECT 1 AS one FROM "categories" WHERE "categories"."slug" = 'Dessert!!' LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.6ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x00000001276a4d98
+...
+wongnok-blog(dev):015&gt; bad.errors.full_messages
+=&gt; ["Slug is invalid"]
+wongnok-blog(dev):016&gt; dup = Category.create(name: "ก๋วยเตี๋ยว", slug: "noodle-soup")
+  TRANSACTION (2.3ms)  BEGIN /*application='WongnokBlog'*/
+  Category Exists? (4.4ms)  SELECT 1 AS one FROM "categories" WHERE "categories"."slug" = 'noodle-soup' LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.5ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x00000001276a3fd8
+...
+wongnok-blog(dev):017&gt; dup.errors.full_messages
+=&gt; ["Slug has already been taken"]</code></pre>
+
+<ul>
+  <li>บรรทัด 012–013 — กรอก slug เองแล้วผ่าน · <code>persisted?</code> เป็น <code>true</code> = อยู่ในตู้แล้ว (<a href="./0107-console-crud.html">บท 107</a>)</li>
+  <li>บรรทัด 014–015 — <code>Dessert!!</code> มีตัวใหญ่กับเครื่องหมาย <code>!</code> → ไม่ตรงแบบ</li>
+  <li>บรรทัด 016–017 — slug <code>noodle-soup</code> มีแล้ว → <code>has already been taken</code> = "มีคนใช้แล้ว" · สังเกตว่ากฎนี้ทำงานด้วยการ<strong>ถามตู้ก่อน</strong> (<code>Category Exists?</code>) แล้วค่อยตัดสิน — จำไว้ ขั้น 4 จะเห็นว่าทำไมสำคัญ</li>
+</ul>
+
+<h3 id="sn-sub-3">ประตูข้าง: บันทึกโดยไม่ให้ตรวจ</h3>
+
+<p>
+  <code>save(validate: false)</code> = "เก็บแฟ้มนี้ลงตู้เลย ไม่ต้องผ่านคนดูแลสต็อก" (<a href="./0111-four-layers-and-uniqueness.html">บท 111</a> เรียกว่าประตูข้าง)
+  · โค้ดจริงที่ข้ามการตรวจแบบนี้มีหลายทาง เช่น สคริปต์ย้ายข้อมูล หรือ method อย่าง <code>update_column</code> · นี่คือคำสั่งในสไลด์หน้า 57:
+</p>
+
+<div class="predict">
+  <pre><code>wongnok-blog(dev):018&gt; x = Category.new(name: "x")
+wongnok-blog(dev):019&gt; x.save(validate: false)
+wongnok-blog(dev):020&gt; x.slug</code></pre>
+  <p class="ask">บรรทัด 019 ได้ <code>true</code> หรือ <code>false</code>? และบรรทัด 020 slug เป็นอะไร — <code>"x"</code> (callback เติมให้) หรืออย่างอื่น?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง:</p>
+    <pre><code>wongnok-blog(dev):018&gt; x = Category.new(name: "x")
+=&gt;
+#&lt;Category:0x00000001276a3218
+...
+wongnok-blog(dev):019&gt; x.save(validate: false)
+  TRANSACTION (1.9ms)  BEGIN /*application='WongnokBlog'*/
+  Category Create (3.2ms)  INSERT INTO "categories" ("name", "slug", "created_at", "updated_at") VALUES ('x', NULL, '2026-11-04 12:11:03.216417', '2026-11-04 12:11:03.216417') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (2.1ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):020&gt; x.slug
+=&gt; nil</code></pre>
+    <p>
+      <strong>เข้าตู้ได้ (<code>true</code>) และ slug เป็น <code>nil</code></strong> · ใน <code>INSERT</code> ช่อง slug เป็น <code>NULL</code> (คำของ SQL ที่แปลว่า "ไม่มีค่า" — ตรงกับ <code>nil</code> ของ Ruby)
+      <br>ทำไม callback ไม่เติม slug ให้: <code>before_validation</code> แปลว่า "ก่อน<strong>การตรวจ</strong>" — พอสั่งไม่ตรวจ จุดแวะนี้ก็ถูกข้ามไปด้วย
+      · ตอนนี้ในตู้มีแฟ้มที่ผิดกฎของเราหนึ่งแผ่น และคนดูแลสต็อกไม่รู้เรื่องเลย
+    </p>
+  </div>
+</div>
+
+<p>
+  สุดท้ายลองฟอร์มจริง: ในเบราว์เซอร์กด New category · Name = <code>Rice Bowl</code> · <strong>เว้น Slug ว่าง</strong> · กด Create
+  → ได้ <code>Category was successfully created.</code> และ Slug เป็น <code>rice-bowl</code> (นี่คือจุดที่เวอร์ชัน <code>||=</code> ของสไลด์พัง)
+  · ส่วนฟอร์มว่างทั้งสองช่องแบบขั้น 1 ตอนนี้จะได้กล่องแดงกลับมาแทน
+</p>
+
+<div class="win">
+  <p>✅ <strong>จบขั้น 2:</strong> ฟอร์มกับ console ตรวจแฟ้มได้แล้ว — แต่ประตูข้างยังเปิดอยู่ · ในลิ้นชักตอนนี้มี Street Food · Noodle Soup · อาหารไทย · Rice Bowl · และแผ่น <code>x</code> ที่ slug ว่าง
+    · <strong>อย่าเพิ่งลบแผ่น x</strong> ขั้นต่อไปต้องใช้</p>
+</div>
+
+<h2 id="sn-sec-5">ขั้น 3 — constraint: สั่งช่างปรับตัวตู้ (แล้วช่างไม่ยอม)</h2>
+
+<p>
+  ตอนนี้กฎอยู่ที่คนดูแลสต็อก (model) อย่างเดียว · เราจะให้<strong>ตัวตู้ (database)</strong> บังคับกฎเดียวกันด้วย: ช่อง name กับ slug ห้ามว่าง และ slug ห้ามซ้ำ
+  · ของพวกนี้เปลี่ยนรูปทรงตู้ จึงต้องทำผ่านใบสั่งช่าง (migration) · สร้างใบเปล่าก่อน (ผลจริง):
+</p>
+
+<pre><code>$ bin/rails generate migration AddConstraintsToCategories
+      invoke  active_record
+      create    db/migrate/20261104121132_add_constraints_to_categories.rb</code></pre>
+
+<p>เปิดไฟล์ที่ได้ (ชื่อไฟล์ของคุณขึ้นต้นด้วยเลขต่างจากผม) แล้วแทนที่ทั้งไฟล์ด้วยโค้ดนี้ · <strong>ไม่ต้องใส่บรรทัดคอมเมนต์ชื่อไฟล์</strong> — เลขบรรทัดใน error ด้านล่างนับจากโค้ดแบบนี้:</p>
+
+<pre><code><span class="k">class</span> <span class="n">AddConstraintsToCategories</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">change_column_null</span> <span class="n">:categories</span>, <span class="n">:name</span>, <span class="k">false</span>
+    <span class="f">change_column_null</span> <span class="n">:categories</span>, <span class="n">:slug</span>, <span class="k">false</span>
+    <span class="f">add_index</span> <span class="n">:categories</span>, <span class="n">:slug</span>, <span class="n">unique:</span> <span class="k">true</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li>บรรทัด 3 <code>change_column_null :categories, :name, false</code> — "ช่อง name ของลิ้นชัก categories: ว่างได้ไหม? → <code>false</code> ไม่ได้" = ใส่ <code>NOT NULL</code></li>
+  <li>บรรทัด 4 — แบบเดียวกันกับช่อง slug</li>
+  <li>บรรทัด 5 <code>add_index :categories, :slug, unique: true</code> — ติดป้ายแท็บเรียงตาม slug (<a href="./0109-safe-migrations.html">บท 109</a>) และ <code>unique: true</code> = "ป้ายเดียวกันห้ามมีสองแผ่น" · ตัวตู้จะตรวจเองทุกครั้งที่มีแฟ้มเข้า</li>
+</ul>
+
+<p>สั่งช่างลงมือ (ผลจริง):</p>
+
+<pre><code>$ bin/rails db:migrate
+== 20261104121132 AddConstraintsToCategories: migrating =======================
+-- change_column_null(:categories, :name, false)
+   -&gt; 0.0032s
+-- change_column_null(:categories, :slug, false)
+bin/rails aborted!
+StandardError: An error has occurred, this and all later migrations canceled: (StandardError)
+
+PG::NotNullViolation: ERROR:  column "slug" of relation "categories" contains null values
+…/db/migrate/20261104121132_add_constraints_to_categories.rb:4:in 'AddConstraintsToCategories#change'
+…/bin/rails:4:in '&lt;main&gt;'
+
+Caused by:
+ActiveRecord::NotNullViolation: PG::NotNullViolation: ERROR:  column "slug" of relation "categories" contains null values (ActiveRecord::NotNullViolation)
+…/db/migrate/20261104121132_add_constraints_to_categories.rb:4:in 'AddConstraintsToCategories#change'
+…/bin/rails:4:in '&lt;main&gt;'
+
+Caused by:
+PG::NotNullViolation: ERROR:  column "slug" of relation "categories" contains null values (PG::NotNullViolation)
+…/db/migrate/20261104121132_add_constraints_to_categories.rb:4:in 'AddConstraintsToCategories#change'
+…/bin/rails:4:in '&lt;main&gt;'
+Tasks: TOP => db:migrate
+(See full trace by running task with --trace)</code></pre>
+
+<p>อ่านทีละส่วน (ข้อความยาว แต่ใจความอยู่สามจุด):</p>
+<ul>
+  <li><code>-- change_column_null(:categories, :name, false)</code> <code>-&gt; 0.0032s</code> — งานแรกเสร็จ · งานที่สองไม่มีเวลาต่อท้าย = พังตรงนี้
+      · <code>this and all later migrations canceled</code> = "ใบนี้และใบที่ต่อคิวอยู่ถูกยกเลิกหมด"</li>
+  <li><code>PG::NotNullViolation: … column "slug" of relation "categories" contains null values</code> — ข้อความจาก PostgreSQL (<code>PG::</code> นำหน้า = มาจากตัวตู้):
+      "ช่อง slug ของลิ้นชัก categories มีแฟ้มที่ไม่มีค่าอยู่" (relation = ชื่อเรียกตารางของ PostgreSQL)</li>
+  <li><code>…add_constraints_to_categories.rb:4</code> — บรรทัด 4 ของใบสั่งช่าง คือบรรทัด slug พอดี · บรรทัด <code>…/bin/rails:4</code> ข้างล่างคือตัวคำสั่งที่เราพิมพ์ ข้ามได้ · ส่วน <code>Caused by:</code> คือข้อความเดียวกันที่ถูกห่อซ้ำหลายชั้น อ่านชั้นแรกพอ</li>
+</ul>
+
+<p>ตัวการคือแผ่น <code>x</code> จากประตูข้างในขั้น 2 · แล้วงานแรก (ช่อง name) ที่เสร็จไปแล้วล่ะ? ดูสถานะของใบสั่งช่าง (ผลจริง):</p>
+
+<pre><code>$ bin/rails db:migrate:status
+
+database: w119
+
+ Status   Migration ID    Migration Name
+--------------------------------------------------
+   up     20261104113601  Create posts
+   up     20261104113603  Add published and views to posts
+   up     20261104113604  Create users
+   up     20261104113606  Add user to posts
+   up     20261104113607  Create comments
+   up     20261104120835  Create categories
+  down    20261104121132  Add constraints to categories</code></pre>
+
+<p>
+  ใบสุดท้ายเป็น <code>down</code> = ยังไม่ได้ทำ · <strong>งานแรกที่เสร็จไปแล้วก็ถูกยกเลิกด้วย</strong>
+  เพราะ Rails ห่อทั้งใบสั่งช่างไว้ใน transaction (ทำทั้งหมด หรือไม่ทำเลย · <a href="./0111-four-layers-and-uniqueness.html">บท 111</a>) — ตู้กลับไปเหมือนก่อนสั่งทุกอย่าง
+  <br>(บรรทัด <code>database: w119</code> คือฐานข้อมูลทดลองของผม — ของคุณจะเป็นชื่อแบบ <code>wongnok_blog_development</code> · บรรทัด up ของคุณอาจมากกว่านี้ถ้าทำภารกิจของบทก่อน ๆ ไว้)
+</p>
+
+<div class="analogy">
+  <span class="label">🔨 เทียบให้เห็นภาพ — ช่างไม่ยอมเปลี่ยนลิ้นชัก เพราะในลิ้นชักมีแฟ้มที่ผิดแบบใหม่อยู่แล้ว</span>
+  <p>
+    เราสั่งช่างว่า "เปลี่ยนลิ้นชักให้รับเฉพาะแฟ้มที่มีป้ายชื่อ" · ช่างเปิดลิ้นชักดูก่อน เจอแฟ้ม x ที่ไม่มีป้าย
+    · ช่างตอบว่า "ผมทำไม่ได้ ถ้าเปลี่ยนแล้วแฟ้มนี้จะอยู่ในลิ้นชักไม่ได้ — ไปจัดการแฟ้มนี้ก่อน" แล้วเก็บเครื่องมือกลับ<strong>โดยรื้องานที่ทำไปครึ่งหนึ่งคืนด้วย</strong>
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ช่างจริงอาจบอกว่าเจอแฟ้มเสียกี่แผ่น แผ่นไหน · PostgreSQL บอกแค่ว่า "มี" ไม่บอกว่าแผ่นไหน — เราต้องไปค้นเอง (ทำต่อด้านล่าง)
+    · และบนร้านจริงที่ตารางใหญ่ การค้นแฟ้มเสียทั้งลิ้นชักอาจใช้เวลานาน (<a href="./0109-safe-migrations.html">บท 109</a>)
+  </p>
+</div>
+
+<p>หาแฟ้มที่ผิดกฎใหม่ แล้วจัดการก่อน (ผลจริง · เปิด console ใหม่ได้):</p>
+
+<pre><code>wongnok-blog(dev):001&gt; Category.columns_hash["name"].null
+=&gt; true
+wongnok-blog(dev):002&gt; Category.where(slug: nil).pluck(:id, :name)
+  Category Pluck (1.9ms)  SELECT "categories"."id", "categories"."name" FROM "categories" WHERE "categories"."slug" IS NULL /*application='WongnokBlog'*/
+=&gt; [[6, "x"]]
+wongnok-blog(dev):003&gt; Category.find_by(name: "x").destroy
+  Category Load (1.9ms)  SELECT "categories".* FROM "categories" WHERE "categories"."name" = 'x' LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (0.8ms)  BEGIN /*application='WongnokBlog'*/
+  Category Destroy (2.0ms)  DELETE FROM "categories" WHERE "categories"."id" = 6 /*application='WongnokBlog'*/
+  TRANSACTION (1.5ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x0000000125eeb300
+ id: 6,
+ name: "x",
+ slug: nil,
+ created_at: "2026-11-04 12:11:03.216417000 +0000",
+ updated_at: "2026-11-04 12:11:03.216417000 +0000"&gt;
+wongnok-blog(dev):004&gt; Category.where(slug: [nil, ""]).count
+  Category Count (1.3ms)  SELECT COUNT(*) FROM "categories" WHERE ("categories"."slug" = '' OR "categories"."slug" IS NULL) /*application='WongnokBlog'*/
+=&gt; 0</code></pre>
+
+<ul>
+  <li>บรรทัด 001 — <code>columns_hash["name"].null</code> = "ช่อง name ยังว่างได้ไหม" → <code>true</code> ยืนยันว่างานแรกถูกยกเลิกจริง (<a href="./0107-console-crud.html">บท 107</a>)</li>
+  <li>บรรทัด 002 — <code>WHERE "categories"."slug" IS NULL</code> = "เฉพาะแผ่นที่ช่อง slug ไม่มีค่า" (SQL ใช้ <code>IS NULL</code> ไม่ใช่ <code>= NULL</code>) · <code>pluck(:id, :name)</code> ขอแค่สองช่อง (<a href="./0113-query-lazy-relation.html">บท 113</a>) → เจอแผ่นเดียว</li>
+  <li>บรรทัด 003 — ทิ้งแผ่น x · <strong>ร้านจริงอย่าลบง่าย ๆ</strong> แฟ้มพวกนี้อาจเป็นข้อมูลของลูกค้า — ปกติจะ<strong>เติมค่าให้ถูก</strong> (เช่น ตั้ง slug ให้) แทน · ที่นี่ลบได้เพราะเป็นของทดลอง</li>
+  <li>บรรทัด 004 — เช็คซ้ำว่าไม่มีแผ่นที่ slug ว่างเหลือ · <code>COUNT(*)</code> = "นับว่ามีกี่แผ่น" · <code>OR</code> = "หรือ" · ส่ง array <code>[nil, ""]</code> ให้ <code>where</code> ได้ความหมายว่า "เป็นค่าใดค่าหนึ่งในนี้"</li>
+</ul>
+
+<p>สั่งช่างรอบสอง (ผลจริง):</p>
+
+<pre><code>$ bin/rails db:migrate
+== 20261104121132 AddConstraintsToCategories: migrating =======================
+-- change_column_null(:categories, :name, false)
+   -&gt; 0.0023s
+-- change_column_null(:categories, :slug, false)
+   -&gt; 0.0010s
+-- add_index(:categories, :slug, {unique: true})
+   -&gt; 0.0023s
+== 20261104121132 AddConstraintsToCategories: migrated (0.0057s) ==============</code></pre>
+
+<p>แปลนตู้ฉบับล่าสุดเปลี่ยนตาม · <code>git diff db/schema.rb</code> (ผลจริง · ตัดเฉพาะส่วนของ categories):</p>
+
+<pre><code>   create_table "categories", force: :cascade do |t|
+-    t.string "name"
+-    t.string "slug"
++    t.string "name", null: false
++    t.string "slug", null: false
+     t.datetime "created_at", null: false
+     t.datetime "updated_at", null: false
++    t.index ["slug"], name: "index_categories_on_slug", unique: true
+   end</code></pre>
+
+<p>
+  บรรทัด <code>-</code> คือของเดิม · <code>+</code> คือของใหม่ · ตอนนี้แปลนตู้เขียนชัดว่าสองช่องห้ามว่าง และมีป้ายแท็บ slug ที่ห้ามซ้ำ
+  (ใครเปิดไฟล์นี้ก็รู้กฎของตู้โดยไม่ต้องอ่าน model)
+</p>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ฝั่ง GORM คุณเขียนกฎของตู้ไว้ใน tag ของ struct แล้ว AutoMigrate สร้างให้ (<a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a>)
+  — ท่อนหนึ่งจาก struct (ไม่ใช่ไฟล์เต็ม):
+</p>
+
+<pre><code><span class="k">type</span> <span class="n">Category</span> <span class="k">struct</span> {
+    ID   <span class="n">uint</span>
+    Name <span class="n">string</span> <span class="s">`gorm:"not null"`</span>
+    Slug <span class="n">string</span> <span class="s">`gorm:"not null;uniqueIndex"`</span>
+}</code></pre>
+
+<p>
+  และใน goose คุณเขียน SQL ตรง ๆ ว่า <code>slug TEXT NOT NULL UNIQUE</code> (<a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a>)
+  · Rails ใช้คำต่างกัน แต่ปลายทางคือกฎเดียวกันในตัวตู้ PostgreSQL
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของขั้นนี้</span>
+  <dl>
+    <dt>NOT NULL constraint</dt>
+    <dd>กฎของตู้ว่า "ช่องนี้ต้องมีค่า" · ใส่ด้วย <code>null: false</code> ตอนสร้าง หรือ <code>change_column_null …, false</code> ทีหลัง
+      · <strong>ระวัง:</strong> <code>''</code> (ข้อความว่าง) ไม่ใช่ <code>NULL</code> — ตัวตู้รับ <code>''</code> ได้ ต้องพึ่ง <code>presence</code> ใน model กันอีกชั้น
+      · ถาม senior ได้ว่า "คอลัมน์นี้ควร NOT NULL ไหม และมีแถวเก่าที่เป็น null อยู่หรือเปล่า"</dd>
+    <dt>unique index</dt>
+    <dd>ป้ายแท็บที่ตัวตู้รับประกันว่าไม่มีค่าซ้ำ · คู่แท้ของ <code>validates … uniqueness: true</code>
+      · พิมพ์บอก AI ได้ว่า "add a unique index on categories.slug to back the uniqueness validation"</dd>
+    <dt>data cleanup · backfill</dt>
+    <dd>งานจัดการแฟ้มเก่าให้ถูกกฎใหม่<strong>ก่อน</strong>เปลี่ยนตู้ · cleanup = เก็บกวาด/ลบของเสีย · backfill = เติมค่าที่ขาดให้แถวเก่า
+      · ถาม senior ได้ว่า "ก่อนรัน migration นี้บน production ต้อง backfill แถวเก่าก่อนไหม"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">ขั้น 4 — ทำพังโดยตั้งใจอีกรอบ: คราวนี้ตัวตู้ปฏิเสธ</h2>
+
+<p>
+  คำสั่งเดิมจากสไลด์หน้า 57 ทุกตัวอักษร — แต่ตอนนี้ตู้มีกฎแล้ว · ผลจริง (ตรง <code>…</code> ผมตัดออกราว 20 บรรทัด: ข้อความเดิมซ้ำอีกรอบ กับรายการไฟล์ภายใน Rails ที่ขึ้นต้นด้วย <code>from</code> — ไม่ต้องอ่าน):
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; c = Category.new(name: "x")
+=&gt;
+#&lt;Category:0x00000001245398f8
+...
+wongnok-blog(dev):002&gt; c.save(validate: false)
+  TRANSACTION (1.4ms)  BEGIN /*application='WongnokBlog'*/
+  Category Create (4.0ms)  INSERT INTO "categories" ("name", "slug", "created_at", "updated_at") VALUES ('x', NULL, '2026-11-04 12:11:56.611483', '2026-11-04 12:11:56.611483') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.0ms)  ROLLBACK /*application='WongnokBlog'*/
+(wongnok-blog):2:in '&lt;main&gt;': PG::NotNullViolation: ERROR:  null value in column "slug" of relation "categories" violates not-null constraint (ActiveRecord::NotNullViolation)
+DETAIL:  Failing row contains (8, x, null, 2026-11-04 12:11:56.611483, 2026-11-04 12:11:56.611483).
+…
+wongnok-blog(dev):003&gt; c.persisted?
+=&gt; false</code></pre>
+
+<ul>
+  <li><code>INSERT … VALUES ('x', NULL, …)</code> — Rails ยังส่งคำสั่งไปเหมือนขั้น 2 ทุกอย่าง (model ไม่ได้ห้าม เพราะเราสั่งไม่ตรวจ)</li>
+  <li><code>ROLLBACK</code> แล้วตามด้วยข้อความแดง — <strong>ตัวตู้ปฏิเสธเอง</strong>: "ค่าว่างในช่อง slug ผิดกฎห้ามว่าง"
+      · <code>(wongnok-blog):2:in '&lt;main&gt;'</code> หน้าข้อความ = "พังที่คำสั่งบรรทัด 002 ของ console"</li>
+  <li><code>(ActiveRecord::NotNullViolation)</code> ในวงเล็บท้ายบรรทัด = ชื่อ error ฝั่ง Rails ที่เอาไปใช้กับ <code>rescue</code> ได้ (<a href="../../rails-day-1/lessons/0096-ruby-errors-and-duck-typing.html">บท 96</a>)</li>
+  <li><code>DETAIL: Failing row contains (8, x, null, …)</code> — แฟ้มที่ถูกปฏิเสธหน้าตาแบบนี้ · เลข 8 คือ id ที่ตู้จองไว้แล้วไม่ได้ใช้ (ของคุณจะต่าง)</li>
+  <li>บรรทัด 003 — <code>false</code> = ไม่มีอะไรลงตู้</li>
+</ul>
+
+<p>ลองประตูข้างกับกฎห้ามซ้ำด้วย — แอบใส่ slug ที่ Street Food ใช้อยู่แล้ว (ผลจริง · ตัดบรรทัด <code>from …</code> เหมือนเดิม):</p>
+
+<pre><code>wongnok-blog(dev):004&gt; twin = Category.new(name: "Street Food 2", slug: "street-food")
+=&gt;
+#&lt;Category:0x0000000124110b50
+...
+wongnok-blog(dev):005&gt; twin.save(validate: false)
+  TRANSACTION (1.4ms)  BEGIN /*application='WongnokBlog'*/
+  Category Create (3.6ms)  INSERT INTO "categories" ("name", "slug", "created_at", "updated_at") VALUES ('Street Food 2', 'street-food', '2026-11-04 12:11:57.541466', '2026-11-04 12:11:57.541466') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.0ms)  ROLLBACK /*application='WongnokBlog'*/
+(wongnok-blog):5:in '&lt;main&gt;': PG::UniqueViolation: ERROR:  duplicate key value violates unique constraint "index_categories_on_slug" (ActiveRecord::RecordNotUnique)
+DETAIL:  Key (slug)=(street-food) already exists.
+…
+wongnok-blog(dev):006&gt; Category.count
+  Category Count (1.2ms)  SELECT COUNT(*) FROM "categories" /*application='WongnokBlog'*/
+=&gt; 4</code></pre>
+
+<ul>
+  <li><code>duplicate key value violates unique constraint "index_categories_on_slug"</code> — "ค่านี้ซ้ำ ผิดกฎของป้ายแท็บ <code>index_categories_on_slug</code>" (ชื่อป้ายตรงกับใน schema.rb)</li>
+  <li><code>DETAIL: Key (slug)=(street-food) already exists.</code> — บอกตรง ๆ ว่าค่าไหนซ้ำ</li>
+  <li><code>Category.count</code> ได้ 4 = Street Food · Noodle Soup · อาหารไทย · Rice Bowl เท่าเดิม ไม่มีแผ่นแอบเข้า</li>
+</ul>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ข้อความ <code>duplicate key value violates unique constraint</code> คุณเคยเห็นแล้วตอนเขียน integration test ใน <a href="../../day-7/lessons/0029-integration-test.html">บท 29</a>
+  — ตัวอักษรเดียวกันเป๊ะ เพราะคนพูดคือ <strong>PostgreSQL</strong> ไม่ใช่ GORM หรือ Rails · framework แค่ห่อชื่อ error ของตัวเองไว้รอบ ๆ
+</p>
+
+<p>สรุปสองรอบของประตูข้างเทียบกัน:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>คำสั่ง</th><th>ก่อนมี constraint (ขั้น 2)</th><th>หลังมี constraint (ขั้น 4)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>Category.new(name: "x").save(validate: false)</code></td><td><code>true</code> · แฟ้ม slug ว่างเข้าตู้ · ไม่มีใครรู้</td><td><code>ActiveRecord::NotNullViolation</code> · ไม่มีอะไรลงตู้</td></tr>
+    <tr><td>slug ซ้ำผ่านประตูข้าง</td><td>(ไม่ได้ลอง แต่ไม่มีอะไรห้าม — ตู้ยังไม่มีป้ายแท็บ)</td><td><code>ActiveRecord::RecordNotUnique</code> · ไม่มีอะไรลงตู้</td></tr>
+    <tr><td>ใครเป็นคนห้าม</td><td>ไม่มี — คนดูแลสต็อกถูกสั่งให้หลบ</td><td>ตัวตู้ (PostgreSQL) — สั่งหลบไม่ได้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">🗄 เทียบให้เห็นภาพ — คนตรวจแฟ้ม กับ ลิ้นชักที่ออกแบบมาให้ใส่ผิดไม่ได้</span>
+  <p>
+    validation คือ<strong>คนดูแลสต็อกยืนหน้าตู้</strong> ตรวจแฟ้มทุกแผ่นที่เดินผ่านประตูหน้า · ตรวจเก่ง บอกเหตุผลเป็นภาษาคนได้ ("ไม่มีชื่อเรื่อง ไม่รับ")
+    แต่ถ้ามีใครเดินเข้าทางหลังร้าน (<code>save(validate: false)</code> · สคริปต์ย้ายข้อมูล · คนเปิด database ตรง ๆ) เขาก็ไม่เห็น
+    <br>constraint คือ<strong>ตัวลิ้นชักที่ทำร่องไว้พอดีกับแฟ้มที่มีป้ายเท่านั้น</strong> · แฟ้มไม่มีป้ายใส่ไม่ลงทางกายภาพ ไม่ว่าจะมาทางไหน
+    · ร้านที่ดีต้องมีทั้งสองอย่าง: คนตรวจไว้บอกลูกค้าดี ๆ · ลิ้นชักไว้รับประกัน
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ลิ้นชักจริงปฏิเสธแบบเงียบ ๆ (แค่ใส่ไม่ลง) · constraint ปฏิเสธแบบ<strong>ระเบิด</strong> — ถ้าโค้ดไม่ได้เตรียม <code>rescue</code> ไว้
+    ผู้ใช้จะเห็นหน้าแดง error 500 (หน้า "ระบบมีปัญหา" ของ server) แทนข้อความดี ๆ (วิธีรับมือดูใน <a href="./0111-four-layers-and-uniqueness.html">บท 111</a>) · นี่คือเหตุผลที่ยังต้องมี validation ไว้ข้างหน้าเสมอ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของขั้นนี้</span>
+  <dl>
+    <dt>constraint violation</dt>
+    <dd>"ทำผิดกฎของตู้" · ใน Rails โผล่เป็น <code>ActiveRecord::NotNullViolation</code> (ช่องว่างที่ห้ามว่าง) · <code>ActiveRecord::RecordNotUnique</code> (ค่าซ้ำ)
+      · <code>ActiveRecord::InvalidForeignKey</code> (อ้างถึงแฟ้มที่ไม่มีอยู่ · <a href="./0116-dependent-and-helpers.html">บท 116</a>)
+      · ถาม senior ได้ว่า "ถ้าโดน RecordNotUnique ตรงนี้ ทีมเราจะ rescue แล้วตอบผู้ใช้ว่าอะไร"</dd>
+    <dt>defense in depth</dt>
+    <dd>แนวคิด "กันหลายชั้น เผื่อชั้นหนึ่งหลุด" — validation ชั้นหนึ่ง constraint อีกชั้น
+      · พิมพ์บอก AI ได้ว่า "for every validation you add, also add the matching DB constraint in the migration"</dd>
+  </dl>
+</div>
+
+<div class="win">
+  <p>✅ <strong>จบขั้น 4 — นี่คือหัวใจของ Lab:</strong> คำสั่งเดียวกันทุกตัวอักษร ก่อนเติม constraint เข้าตู้ได้ หลังเติมพังที่ชั้น DB
+    · commit ไว้: <code>git add . &amp;&amp; git commit -m "Category validations + constraints"</code></p>
+</div>
+
+<h2 id="sn-sec-7">ภารกิจ: ขั้น 5 — ผูกหมวดกับบทความ แล้วห้ามลบหมวดที่ยังมีบทความ</h2>
+
+<p>
+  ตอนนี้หมวดยังลอยอยู่เฉย ๆ · เราอยากให้ "หมวดหนึ่งมีหลายบทความ" (<code>has_many</code> · <a href="./0115-associations.html">บท 115</a>)
+  และ<strong>ห้ามลบหมวดที่ยังมีบทความอยู่</strong> (<code>dependent: :restrict_with_error</code> · <a href="./0116-dependent-and-helpers.html">บท 116</a>)
+  · ขั้นนี้ทำเองก่อน แล้วค่อยกดดูเฉลย
+</p>
+
+<p>
+  เรื่องเดียวที่ต้องคิดก่อนเริ่ม: ช่อง "เป็นของหมวดเลขที่ …" ต้องอยู่บน<strong>ใบลูก</strong> (บทความ) ไม่ใช่ใบแม่ (หมวด) — เหมือน <code>user_id</code> ที่อยู่บน posts
+  · และบทความเดิม 6 ชิ้นในตู้<strong>ยังไม่มีหมวด</strong> · ถ้าสั่งช่างว่า "ช่องหมวดห้ามว่าง" จะเจอเรื่องเดียวกับขั้น 3 ทันที
+</p>
+
+<div class="task">
+  <h3 id="sn-sub-4">🎯 ภารกิจ Lab 2 · ขั้น 5 (~10 นาที)</h3>
+  <ol>
+    <li>สร้างใบสั่งช่าง: <code>bin/rails generate migration AddCategoryToPosts category:references</code> · เปิดไฟล์ดูว่า generator เขียนอะไรมาให้ · ลอง <code>bin/rails db:migrate</code> ตามที่ได้มาเลย แล้วอ่าน error</li>
+    <li>แก้ใบสั่งช่างให้บทความเดิมไม่พัง แล้ว migrate ใหม่จนผ่าน</li>
+    <li>ใน <code>app/models/category.rb</code> เพิ่ม <code>has_many :posts, dependent: :restrict_with_error</code> ไว้บนสุดของ class</li>
+    <li>ใน <code>app/models/post.rb</code> เพิ่ม <code>belongs_to :category</code> · แล้วใน console ลอง <code>Post.find_by(title: "ต้มยำกุ้งน้ำข้น").update(views: 121)</code> — ผ่านไหม? ถ้าไม่ผ่าน แก้ให้ผ่าน</li>
+    <li>ใน console ให้ ต้มยำกุ้งน้ำข้น กับ ส้มตำปูปลาร้า อยู่หมวด อาหารไทย · แล้วลอง <code>destroy</code> หมวดอาหารไทย · ดู <code>errors.full_messages</code></li>
+    <li>ในเบราว์เซอร์ กด Destroy ที่หมวด อาหารไทย · เห็นอะไร? แก้ action <code>destroy</code> ใน controller ให้ได้ข้อความแทนหน้าแดง</li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> ข้อ 5 <code>destroy</code> ได้ <code>false</code> และข้อความ <code>Cannot delete record because dependent posts exist</code> · หมวดยังอยู่ · ข้อ 6 หลังแก้ กลับมาหน้ารายการพร้อมข้อความเดียวกัน</p>
+  <p><strong>ถ้าเจอ error แปลว่า…</strong></p>
+  <ul>
+    <li><code>PG::NotNullViolation: ERROR: column "category_id" of relation "posts" contains null values</code> → ใบสั่งช่างยังมี <code>null: false</code> แต่บทความเดิมไม่มีหมวด (ข้อ 1–2)</li>
+    <li><code>["Category must exist"]</code> ตอน update บทความ → <code>belongs_to</code> บังคับว่าต้องมีหมวดเสมอ (<a href="./0115-associations.html">บท 115</a>) แต่บทความเดิมไม่มี (ข้อ 4)</li>
+    <li>หน้าแดง <code>ActiveRecord::RecordNotDestroyed</code> · <code>Failed to destroy Category with id=…</code> → controller ของ scaffold ใช้ <code>destroy!</code> · <code>!</code> = "ถ้าทำไม่ได้ให้ระเบิด" (<a href="./0110-validations.html">บท 110</a>) (ข้อ 6)</li>
+    <li><code>PG::UndefinedColumn: ERROR: column posts.category_id does not exist</code> → "ลิ้นชัก posts ไม่มีช่อง category_id" · เพิ่ม <code>has_many</code> ใน model แล้ว แต่ migration ยังไม่ผ่าน · กลับไปข้อ 2</li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ข้อ 1</strong> — ใบสั่งช่างที่ generator ให้มา (ไฟล์จริง ไม่ได้แก้):</p>
+    <pre><code><span class="k">class</span> <span class="n">AddCategoryToPosts</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_reference</span> <span class="n">:posts</span>, <span class="n">:category</span>, <span class="n">null:</span> <span class="k">false</span>, <span class="n">foreign_key:</span> <span class="k">true</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+    <p>รันตามนั้นเลย (ผลจริง):</p>
+    <pre><code>$ bin/rails db:migrate
+== 20261104121206 AddCategoryToPosts: migrating ===============================
+-- add_reference(:posts, :category, {null: false, foreign_key: true})
+bin/rails aborted!
+StandardError: An error has occurred, this and all later migrations canceled: (StandardError)
+
+PG::NotNullViolation: ERROR:  column "category_id" of relation "posts" contains null values
+…/db/migrate/20261104121206_add_category_to_posts.rb:3:in 'AddCategoryToPosts#change'
+…/bin/rails:4:in '&lt;main&gt;'
+…</code></pre>
+    <p>
+      ช่องใหม่ <code>category_id</code> ถูกต่อให้บทความเดิม 6 แผ่นด้วยค่าว่าง แล้ว <code>null: false</code> บอกว่าห้ามว่าง → ช่างไม่ยอม (เรื่องเดียวกับขั้น 3)
+    </p>
+    <p><strong>ข้อ 2</strong> — เปลี่ยน <code>null: false</code> เป็น <code>null: true</code> (บรรทัด 3):</p>
+    <pre><code>    <span class="f">add_reference</span> <span class="n">:posts</span>, <span class="n">:category</span>, <span class="n">null:</span> <span class="k">true</span>, <span class="n">foreign_key:</span> <span class="k">true</span></code></pre>
+    <pre><code>$ bin/rails db:migrate
+== 20261104121206 AddCategoryToPosts: migrating ===============================
+-- add_reference(:posts, :category, {null: true, foreign_key: true})
+   -&gt; 0.0063s
+== 20261104121206 AddCategoryToPosts: migrated (0.0064s) ======================</code></pre>
+    <p>
+      <code>null: true</code> = "บทความยังไม่มีหมวดก็ได้" · <code>foreign_key: true</code> ยังอยู่ = ถ้า<strong>มี</strong>หมวด ต้องเป็นหมวดที่มีอยู่จริง
+      · ใน <code>schema.rb</code> จะได้ช่อง <code>t.bigint "category_id"</code> ป้ายแท็บ <code>index_posts_on_category_id</code> และ <code>add_foreign_key "posts", "categories"</code>
+      · นี่คือท่า <strong>expand</strong> ของ <a href="./0109-safe-migrations.html">บท 109</a>: เปิดช่องใหม่ให้ว่างได้ก่อน → ค่อยเติมหมวดให้บทความทุกชิ้น → แล้วค่อยขันเป็น <code>NOT NULL</code> ทีหลังถ้าธุรกิจต้องการ
+    </p>
+    <p><strong>ข้อ 3–4</strong> — สอง model (ไฟล์เต็ม):</p>
+    <pre><code><span class="c"># app/models/category.rb</span>
+<span class="k">class</span> <span class="n">Category</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>, <span class="n">dependent:</span> <span class="n">:restrict_with_error</span>
+
+  <span class="f">before_validation</span> <span class="n">:fill_slug</span>
+
+  <span class="f">validates</span> <span class="n">:name</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">maximum:</span> <span class="n">80</span> }
+  <span class="f">validates</span> <span class="n">:slug</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">uniqueness:</span> <span class="k">true</span>,
+                   <span class="n">format:</span> { <span class="n">with:</span> <span class="s">/\A[a-z0-9-]+\z/</span> }
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">fill_slug</span>
+    <span class="k">self</span>.slug = name.<span class="f">to_s</span>.<span class="f">parameterize</span> <span class="k">if</span> slug.<span class="f">blank?</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">belongs_to</span> <span class="n">:category</span>, <span class="n">optional:</span> <span class="k">true</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+<span class="k">end</span></code></pre>
+    <p>
+      (<code>post.rb</code> ของคุณอาจมีบรรทัดอื่นเพิ่มจากภารกิจบทก่อน ๆ — เพิ่มแค่บรรทัด <code>belongs_to :category</code>)
+      · ก่อนใส่ <code>optional: true</code> ผลจริงเป็นแบบนี้ — <strong>บทความเดิมทุกชิ้นแก้อะไรไม่ได้เลย</strong> แม้แต่เพิ่มยอดวิว:
+    </p>
+    <pre><code>wongnok-blog(dev):001&gt; post = Post.find_by(title: "ต้มยำกุ้งน้ำข้น")
+  Post Load (1.5ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ต้มยำกุ้งน้ำข้น' LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000125bc0f40
+...
+wongnok-blog(dev):002&gt; post.update(views: 121)
+  TRANSACTION (1.5ms)  BEGIN /*application='WongnokBlog'*/
+  TRANSACTION (1.0ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):003&gt; post.errors.full_messages
+=&gt; ["Category must exist"]</code></pre>
+    <p>
+      <code>optional: true</code> = "บทความไม่มีหมวดก็ได้" · ปิดกฎ "ต้องมีเจ้าของ" ที่ <code>belongs_to</code> ใส่ให้เอง
+      · คู่มือทางการเตือนว่าเปิด optional แล้วควรมี foreign key ที่ DB คู่กัน — ซึ่งเรามีแล้วจากข้อ 2
+    </p>
+    <p><strong>ข้อ 5</strong> — ผลจริง (หลังใส่ <code>optional: true</code> · ถ้าเปิด console ค้างไว้ พิมพ์ <code>reload!</code> ก่อน):</p>
+    <pre><code>wongnok-blog(dev):001&gt; thai = Category.find_by(slug: "thai-food")
+  Category Load (2.4ms)  SELECT "categories".* FROM "categories" WHERE "categories"."slug" = 'thai-food' LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x0000000127611200
+...
+wongnok-blog(dev):002&gt; Post.find_by(title: "ต้มยำกุ้งน้ำข้น").update(category: thai)
+  Post Load (1.5ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ต้มยำกุ้งน้ำข้น' LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.7ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (3.8ms)  UPDATE "posts" SET "updated_at" = '2026-11-04 12:26:06.012675', "category_id" = 5 WHERE "posts"."id" = 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.8ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):003&gt; thai.posts &lt;&lt; Post.find_by(title: "ส้มตำปูปลาร้า")
+  Post Load (2.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ส้มตำปูปลาร้า' LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.7ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (3.4ms)  UPDATE "posts" SET "updated_at" = '2026-11-04 12:26:06.310574', "category_id" = 5 WHERE "posts"."id" = 2 /*application='WongnokBlog'*/
+  TRANSACTION (1.0ms)  COMMIT /*application='WongnokBlog'*/
+  Post Load (0.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."category_id" = 5 /* loading for pp */ LIMIT 11 /*application='WongnokBlog'*/
+=&gt;
+[#&lt;Post:0x00000001276be888
+  id: 1,
+  title: "ต้มยำกุ้งน้ำข้น",
+  …
+  category_id: 5&gt;,
+ #&lt;Post:0x00000001276be748
+  id: 2,
+  title: "ส้มตำปูปลาร้า",
+  …
+  category_id: 5&gt;]
+wongnok-blog(dev):004&gt; thai.posts.count
+  Post Count (3.1ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."category_id" = 5 /*application='WongnokBlog'*/
+=&gt; 2</code></pre>
+    <p>
+      (บรรทัด 003 ผมตัดช่องกลางของบทความสองชิ้นออกเป็น <code>…</code>) · <code>UPDATE … SET "category_id" = 5 WHERE "posts"."id" = 1</code> = "แก้แฟ้มบทความเลขที่ 1 ให้ช่องหมวดเป็น 5"
+      · <code>&lt;&lt;</code> = "ใส่บทความนี้เข้าหมวด" แล้ว UPDATE ให้ทันที (<a href="./0115-associations.html">บท 115</a>)
+      · บรรทัด <code>loading for pp</code> คือ console ไปหยิบรายการมาโชว์บนจอเฉย ๆ · จากนั้นลองทิ้งหมวด ใน console ใหม่ (ผลจริง):
+    </p>
+    <pre><code>wongnok-blog(dev):001&gt; thai = Category.find_by(slug: "thai-food")
+  Category Load (1.3ms)  SELECT "categories".* FROM "categories" WHERE "categories"."slug" = 'thai-food' LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Category:0x00000001259e35b0
+...
+wongnok-blog(dev):002&gt; thai.destroy
+  TRANSACTION (0.8ms)  BEGIN /*application='WongnokBlog'*/
+  Post Exists? (0.7ms)  SELECT 1 AS one FROM "posts" WHERE "posts"."category_id" = 5 LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (0.5ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):003&gt; thai.errors.full_messages
+=&gt; ["Cannot delete record because dependent posts exist"]</code></pre>
+    <p>
+      ก่อนทิ้ง Rails ถามตู้ก่อน: "มีบทความไหนที่ช่องหมวดเป็น 5 ไหม" (<code>Post Exists?</code>) · มี → <code>ROLLBACK</code> ไม่ทิ้ง · คืน <code>false</code> พร้อมเหตุผล
+      · ลองกับหมวด Rice Bowl ที่ไม่มีบทความ จะเห็น <code>Post Exists?</code> ตามด้วย <code>DELETE FROM "categories"</code> แล้ว <code>COMMIT</code> — ทิ้งได้ปกติ
+    </p>
+    <p><strong>ข้อ 6</strong> — กด Destroy ในเบราว์เซอร์ ได้หน้าแดง (ผลจริง · ส่วนหัวของหน้า):</p>
+    <pre><code>ActiveRecord::RecordNotDestroyed
+in CategoriesController#destroy
+Failed to destroy Category with id=5</code></pre>
+    <p>
+      เพราะ scaffold เขียน <code>@category.destroy!</code> · <code>!</code> = "ถ้าทิ้งไม่ได้ให้ระเบิด" · แก้ action <code>destroy</code> ใน <code>app/controllers/categories_controller.rb</code> เป็น:
+    </p>
+    <pre><code>  <span class="c"># DELETE /categories/1 or /categories/1.json</span>
+  <span class="k">def</span> <span class="f">destroy</span>
+    <span class="k">if</span> @category.<span class="f">destroy</span>
+      <span class="f">redirect_to</span> categories_path, <span class="n">notice:</span> <span class="s">"Category was successfully destroyed."</span>, <span class="n">status:</span> <span class="n">:see_other</span>
+    <span class="k">else</span>
+      <span class="f">redirect_to</span> categories_path, <span class="n">notice:</span> @category.errors.<span class="f">full_messages</span>.<span class="f">to_sentence</span>, <span class="n">status:</span> <span class="n">:see_other</span>
+    <span class="k">end</span>
+  <span class="k">end</span></code></pre>
+    <ul>
+      <li><code>if @category.destroy</code> — ไม่มี <code>!</code> → ทิ้งไม่ได้ก็แค่ได้ <code>false</code> ไม่ระเบิด</li>
+      <li><code>notice: …to_sentence</code> — <code>to_sentence</code> ต่อรายการข้อความเป็นประโยคเดียว · ฝากไปโชว์หน้าถัดไปครั้งเดียว (flash · <a href="../../rails-day-1/lessons/0102-rails-controller.html">บท 102</a>)
+          · ปกติข้อความ error ใช้ <code>alert:</code> แต่หน้า index ที่ scaffold ให้มาโชว์แค่ <code>notice</code> — ใช้ไปก่อน Day 3 ค่อยจัดหน้าตา</li>
+      <li><code>status: :see_other</code> — เลข 303 แบบที่ scaffold ใช้อยู่แล้ว · ทำให้เบราว์เซอร์เปิดหน้ารายการด้วย GET</li>
+      <li>เวอร์ชันนี้ตัดส่วนตอบ JSON ของ scaffold ออกเพื่อให้สั้น — ถ้าแอปของคุณต้องตอบ JSON ด้วย ให้คง <code>respond_to</code> (ส่วนที่แยกว่าจะตอบเป็นหน้าเว็บหรือ JSON) ไว้</li>
+    </ul>
+    <p>กด Destroy อีกครั้ง → กลับมาหน้ารายการ มีข้อความสีเขียวด้านบนว่า <code>Cannot delete record because dependent posts exist</code> (ผลจริง) · หมวดยังอยู่</p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของภารกิจ</span>
+  <dl>
+    <dt>nullable foreign key · <code>optional: true</code></dt>
+    <dd>ช่องอ้างอิงที่ว่างได้ (ยังไม่มีเจ้าของ) แต่ถ้ามีค่าต้องชี้ไปของที่มีจริง · ใช้ตอนเพิ่มความสัมพันธ์ให้ตารางที่มีข้อมูลเก่าอยู่แล้ว
+      · ถาม senior ได้ว่า "category_id ควรเป็น NOT NULL ในที่สุดไหม ถ้าใช่ จะ backfill บทความเก่าเมื่อไหร่"</dd>
+    <dt><code>restrict_with_error</code> กับ <code>restrict_with_exception</code></dt>
+    <dd>สองแบบของ "ห้ามทิ้งถ้ายังมีลูก" · <code>_with_error</code> = คืน <code>false</code> + ใส่เหตุผลใน errors (เหมาะกับหน้าเว็บ) · <code>_with_exception</code> = ระเบิด error
+      · พิมพ์บอก AI ได้ว่า "use dependent: :restrict_with_error and handle a false return from destroy in the controller, don't use destroy!"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">ขั้น 6 (ของแถม) — หน้ารายการ: เรียง · จำกัดจำนวน · หยิบทีเดียวทั้งตะกร้า</h2>
+
+<p>
+  scaffold ให้ <code>@categories = Category.all</code> = "เอาทุกแผ่น ไม่เรียง ไม่จำกัด" · ร้านเรามี 4 หมวดไม่เป็นไร แต่ถ้าวันหนึ่งมี 5,000 หมวดก็จะโหลดทั้งหมดในหน้าเดียว
+  · และเราอยากโชว์ว่าแต่ละหมวดมีกี่บทความ
+</p>
+
+<p>
+  เปิด <code>app/views/categories/_category.html.erb</code> (แบบจัดจานของหมวดหนึ่งแผ่น) · ไฟล์ที่ scaffold ให้มามี 10 บรรทัด
+  · เพิ่มกล่อง <strong>Posts</strong> สี่บรรทัดต่อจากกล่องของ Slug ให้ทั้งไฟล์เป็นแบบนี้ (ไม่มีบรรทัดคอมเมนต์ชื่อไฟล์ในไฟล์จริง):
+</p>
+
+<pre><code>&lt;div id="&lt;%= dom_id category %&gt;" class="w-full sm:w-auto my-5 space-y-5"&gt;
+  &lt;div&gt;
+    &lt;strong class="block font-medium mb-1"&gt;Name:&lt;/strong&gt;
+    &lt;%= category.name %&gt;
+  &lt;/div&gt;
+  &lt;div&gt;
+    &lt;strong class="block font-medium mb-1"&gt;Slug:&lt;/strong&gt;
+    &lt;%= category.slug %&gt;
+  &lt;/div&gt;
+  &lt;div&gt;                                              <span class="c">&lt;%# ← เพิ่ม %&gt;</span>
+    &lt;strong class="block font-medium mb-1"&gt;Posts:&lt;/strong&gt;
+    &lt;%= category.posts.size %&gt;
+  &lt;/div&gt;
+&lt;/div&gt;</code></pre>
+
+<ul>
+  <li>บรรทัด 10–13 คือของที่เพิ่ม · ไม่ต้องพิมพ์ <code>&lt;%# ← เพิ่ม %&gt;</code> (ใส่ไว้ชี้ให้ดูเฉย ๆ)</li>
+  <li><code>class="block font-medium mb-1"</code> = คำสั่งแต่งหน้าตาของ Tailwind · ก็อปจากกล่อง Slug ข้างบนมา จะได้หน้าตาเหมือนกัน</li>
+  <li><code>&lt;%= category.posts.size %&gt;</code> = "พิมพ์จำนวนบทความของหมวดนี้" (<code>size</code> · <a href="./0113-query-lazy-relation.html">บท 113</a>)</li>
+  <li>ไฟล์นี้เป็น partial (ชิ้นส่วนหน้าเว็บที่ใช้ซ้ำ · <a href="./0118-scaffold-reading.html">บท 118</a>) ถูกเรียก<strong>หนึ่งครั้งต่อหนึ่งหมวด</strong> — หน้า index วนทีละหมวดแล้วสั่ง <code>render category</code></li>
+</ul>
+
+<div class="predict">
+  <pre><code><span class="c"># controller ยังเป็นของ scaffold</span>
+<span class="k">def</span> <span class="f">index</span>
+  @categories = <span class="n">Category</span>.<span class="f">all</span>
+<span class="k">end</span></code></pre>
+  <p class="ask">ในตู้มีหมวด 3 แผ่น: Street Food · Noodle Soup · อาหารไทย (ถ้าคุณ<strong>ไม่ได้</strong>ลองลบ Rice Bowl ในเฉลยภารกิจข้อ 5 จะมี 4)
+    · เปิด <code>/categories</code> หนึ่งครั้ง สมุดบันทึกจะมีบรรทัด <code>Post Count</code> (นับบทความ) กี่บรรทัด?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงจากแท็บที่เปิดร้าน (ตอนรันของผมเหลือ 3 หมวด · ตัดบรรทัดที่ขึ้นต้นด้วย <code>Rendering</code> / <code>Rendered</code> ออก):</p>
+    <pre><code>Started GET "/categories" for ::1 at 2026-11-04 19:47:24 +0700
+Processing by CategoriesController#index as HTML
+  Category Exists? (1.7ms)  SELECT 1 AS one FROM "categories" LIMIT 1 /*action='index',application='WongnokBlog',controller='categories'*/
+  ↳ app/views/categories/index.html.erb:15
+  Category Load (1.0ms)  SELECT "categories".* FROM "categories" /*action='index',application='WongnokBlog',controller='categories'*/
+  ↳ app/views/categories/index.html.erb:16
+  Post Count (1.1ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."category_id" = 1 /*action='index',application='WongnokBlog',controller='categories'*/
+  ↳ app/views/categories/_category.html.erb:13
+  Post Count (0.8ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."category_id" = 4 /*action='index',application='WongnokBlog',controller='categories'*/
+  ↳ app/views/categories/_category.html.erb:13
+  Post Count (0.6ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."category_id" = 5 /*action='index',application='WongnokBlog',controller='categories'*/
+  ↳ app/views/categories/_category.html.erb:13
+Completed 200 OK in 14ms (Views: 8.6ms | ActiveRecord: 5.2ms (5 queries, 0 cached) | GC: 5.6ms)</code></pre>
+    <ul>
+      <li><strong><code>Post Count</code> 3 บรรทัด = หนึ่งบรรทัดต่อหนึ่งหมวด</strong> · ทั้งหน้าไปตู้ <code>5 queries</code> (ดูบรรทัด Completed)</li>
+      <li><code>Category Exists?</code> — มาจาก <code>if @categories.any?</code> ในหน้า index: "มีสักแผ่นไหม" · <code>Category Load</code> — หยิบหมวดทั้งหมด</li>
+      <li><code>↳ …_category.html.erb:13</code> — บอกว่าบรรทัดไหนในโค้ดสั่งให้ไปตู้ · (เลขคลาดได้หนึ่งบรรทัดเพราะวิธีที่ ERB แปลงไฟล์ — ของผม <code>size</code> อยู่บรรทัด 12)</li>
+      <li>นี่คือ N+1 ตัวเล็ก ๆ: 1 ครั้งหยิบหมวด + N ครั้งนับบทความ · 50 หมวดจะเป็น 52 ครั้ง · <strong>ดูจากโค้ดไม่เห็นเลย เห็นจาก log เท่านั้น</strong> (<a href="./0114-n-plus-one.html">บท 114</a>)</li>
+    </ul>
+  </div>
+</div>
+
+<p>แก้ action <code>index</code> ใน <code>app/controllers/categories_controller.rb</code>
+  (สไลด์หน้า 54 ตั้งชื่อ <code>order(:name)</code> ว่า <code>alphabetical</code> ไว้ใน model ก่อน — ผลเหมือนกัน ที่นี่เขียนตรง ๆ บรรทัดเดียวให้อ่านง่าย):</p>
+
+<pre><code>  <span class="k">def</span> <span class="f">index</span>
+    @categories = <span class="n">Category</span>.<span class="f">order</span>(<span class="n">:name</span>).<span class="f">includes</span>(<span class="n">:posts</span>).<span class="f">limit</span>(<span class="n">50</span>)
+  <span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>order(:name)</code> — เรียงตามชื่อ (<code>ORDER BY</code>) · <code>limit(50)</code> — เอาไม่เกิน 50 แผ่น (<code>LIMIT</code>) · <a href="./0113-query-lazy-relation.html">บท 113</a></li>
+  <li><code>includes(:posts)</code> — "หยิบบทความของทุกหมวดมาทีเดียวทั้งตะกร้า" (<a href="./0114-n-plus-one.html">บท 114</a>)</li>
+</ul>
+
+<p>เปิด <code>/categories</code> ใหม่ (ผลจริง · ตัดบรรทัด <code>Rendering</code> / <code>Rendered</code> ออก):</p>
+
+<pre><code>Started GET "/categories" for ::1 at 2026-11-04 19:47:25 +0700
+Processing by CategoriesController#index as HTML
+  Category Exists? (1.3ms)  SELECT 1 AS one FROM "categories" LIMIT 1 /*action='index',application='WongnokBlog',controller='categories'*/
+  ↳ app/views/categories/index.html.erb:15
+  Category Load (1.2ms)  SELECT "categories".* FROM "categories" ORDER BY "categories"."name" ASC LIMIT 50 /*action='index',application='WongnokBlog',controller='categories'*/
+  ↳ app/views/categories/index.html.erb:16
+  Post Load (1.0ms)  SELECT "posts".* FROM "posts" WHERE "posts"."category_id" IN (4, 1, 5) /*action='index',application='WongnokBlog',controller='categories'*/
+  ↳ app/views/categories/index.html.erb:16
+Completed 200 OK in 25ms (Views: 8.8ms | ActiveRecord: 13.6ms (3 queries, 0 cached) | GC: 1.1ms)</code></pre>
+
+<ul>
+  <li><code>ORDER BY "categories"."name" ASC LIMIT 50</code> — "เรียงตามชื่อจากน้อยไปมาก เอาไม่เกิน 50 แผ่น"</li>
+  <li><code>WHERE "posts"."category_id" IN (4, 1, 5)</code> — "ขอบทความทุกชิ้นที่ช่องหมวดเป็น 4 หรือ 1 หรือ 5" · <strong>ไปตู้ครั้งเดียว</strong> ได้บทความของทุกหมวด
+      · <code>Post Count</code> หายไปหมด เพราะของอยู่ในมือแล้ว <code>size</code> นับเองได้</li>
+  <li><code>3 queries</code> — ต่อให้มี 50 หมวดก็ยัง 3 · เวลา ms รอบนี้มากกว่ารอบก่อน เพราะข้อมูลน้อยมากและเวลาแกว่งทุกรอบ — ตัวเลขที่ต้องดูคือ<strong>จำนวนครั้ง</strong></li>
+</ul>
+
+<div class="note">
+  <p>
+    สไลด์หน้า 58 ขอ <strong>pagination</strong> (แบ่งหน้า: หน้า 1 แสดง 1–50 หน้า 2 แสดง 51–100) · Rails ไม่มีระบบแบ่งหน้าสำเร็จรูปในตัว ปกติทีมจะใช้ gem เพิ่ม
+    บทนี้จึงใช้ <code>limit(50)</code> แทน — กันไม่ให้หน้าระเบิดได้ แต่ยังกดไปหน้าถัดไปไม่ได้
+  </p>
+</div>
+
+<h2 id="sn-sec-9">เขียน prompt ให้ AI ทำทั้งหมดนี้ได้ในรอบเดียว</h2>
+
+<p>หัวข้อนี้มาจากโจทย์ข้อสุดท้ายของสไลด์ (Quiz 7) · ไม่มีอะไรต้องรัน — เป็นการเอาทุกขั้นที่ทำมาเขียนเป็นคำสั่งงาน</p>
+
+<p>
+  สไลด์หน้า 58 ยก prompt ที่คนส่วนใหญ่เขียนมาให้ดู:
+</p>
+
+<pre><code>"ช่วยสร้าง model Category ที่มีชื่อกับ slug ให้หน่อย"</code></pre>
+
+<p>
+  สไลด์อ้างว่าผลที่ได้มักเป็น model ที่มี <code>validates presence</code> สองบรรทัด กับ migration ที่ไม่มี constraint อะไรเลย
+  (ผมไม่ได้ลองส่งให้ AI ในบทนี้ — แต่ขั้น 1 เราเห็นแล้วว่า scaffold ให้น้อยกว่านั้นอีก)
+  · เหตุผลง่าย ๆ: prompt บอกแค่<strong>รูปร่าง</strong> (มีช่องอะไร) ไม่ได้บอก<strong>กฎของร้าน</strong> · ทั้ง scaffold และ AI ไม่รู้กฎที่เราไม่บอก
+</p>
+
+<div class="analogy">
+  <span class="label">📞 เทียบให้เห็นภาพ — โทรสั่งชุดเปิดแผนกจากสำนักงานใหญ่</span>
+  <p>
+    โทรไปบอกสำนักงานใหญ่ว่า "ส่งชุดแผนกหมวดอาหารมาหน่อย" → ได้ชุดมาตรฐานแบบขั้น 1: ลิ้นชัก เชฟ คนจัดจาน ใช้ได้ทันที
+    · แต่ไม่มีกฎของร้านเราสักข้อ เพราะเราไม่ได้บอก
+    <br>ถ้าอยากได้แบบที่ร้านเราใช้ ต้องบอกเป็นข้อ ๆ: "แฟ้มไม่มีชื่อห้ามเข้าลิ้นชัก · ป้ายห้ามซ้ำ · ห้ามทิ้งหมวดที่ยังมีบทความ · …"
+    · ยิ่งบอกกฎครบ ยิ่งได้ของถูกตั้งแต่รอบแรก — และเราเอารายการเดียวกันนี้ไว้<strong>ตรวจรับของ</strong>ได้ด้วย
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานสำนักงานใหญ่ที่ดีมักถามกลับว่า "ชื่อหมวดซ้ำได้ไหมครับ" · AI ส่วนใหญ่<strong>ไม่ถาม</strong> มันเดาค่าที่พบบ่อยแล้วเขียนออกมามั่นใจมาก
+    · และของจากสำนักงานใหญ่มีคนรับผิดชอบ แต่โค้ดจาก AI คนรับผิดชอบคือคนที่กด merge (รวมโค้ดเข้าโปรเจกต์หลัก) — คือเรา · ต้องรันตรวจเองแบบที่ทำมาทั้ง Lab
+  </p>
+</div>
+
+<div class="predict">
+  <p class="ask">
+    <strong>โจทย์:</strong> ก่อนกดเฉลย เขียน prompt ของคุณเองลงในโน้ตหรือแชท — ใช้ทุกอย่างที่เพิ่งทำใน Lab นี้ (ขั้น 1–6) ใส่เงื่อนไขให้มากที่สุด
+    · ไม่จำกัดความยาว · ภาษาไทยได้ · แล้วค่อยเทียบกับตัวอย่าง
+  </p>
+  <button class="reveal">ดูตัวอย่าง prompt</button>
+  <div class="answer">
+    <p>
+      ตัวอย่างที่ผมเขียนจากของที่ทำใน Lab นี้ + รายการในสไลด์หน้า 58 (<strong>ไม่ได้ลองส่งให้ AI จริงในบทนี้</strong> — เป็นตัวอย่างวิธีเขียน ไม่ใช่สูตรที่รับประกันผล):
+    </p>
+    <pre><code>ช่วยเพิ่มหมวดอาหาร (Category) ให้แอป Rails 8.1 ชื่อ wongnok_blog (PostgreSQL)
+โดยเริ่มจาก bin/rails generate scaffold Category name:string slug:string แล้วเติมให้ครบตามนี้
+
+กฎของข้อมูล (ต้องมีทั้งใน model และใน migration ทุกข้อ)
+1. name กับ slug ห้ามว่าง — validates presence ใน model และ null: false ที่ DB
+2. slug ห้ามซ้ำ — validates uniqueness ใน model และ unique index ที่ DB
+3. slug รับได้แค่ a-z 0-9 และขีด (-) — ใช้ format validation
+4. name ยาวไม่เกิน 80 ตัวอักษร
+5. ถ้าไม่ได้กรอก slug ให้สร้างจาก name อัตโนมัติด้วย before_validation
+   ระวัง: ฟอร์มส่งช่องว่างมาเป็น "" ไม่ใช่ nil ให้เช็คด้วย blank? ไม่ใช่ ||=
+   ถ้าชื่อเป็นภาษาไทยจนสร้าง slug ไม่ได้ ให้ขึ้น error ไม่ใช่บันทึกค่าว่าง
+
+ความสัมพันธ์
+6. Category has_many :posts — เพิ่ม category_id ให้ posts แบบว่างได้ (null: true)
+   เพราะบทความเดิมยังไม่มีหมวด แต่ต้องมี foreign key และ index
+   Post belongs_to :category, optional: true
+7. ห้ามลบหมวดที่ยังมีบทความ — dependent: :restrict_with_error
+   และแก้ destroy ใน controller ไม่ให้ใช้ destroy! ถ้าลบไม่ได้ให้กลับหน้ารายการพร้อมข้อความ
+
+หน้ารายการ (index)
+8. เรียงตามชื่อ · แบ่งหน้าหรืออย่างน้อย limit 50
+9. หน้ารายการโชว์จำนวนบทความของแต่ละหมวด — ใช้ includes(:posts) กัน N+1
+
+อื่น ๆ
+10. ข้อความ error เป็นภาษาไทยผ่าน i18n (ไฟล์ใน config/locales)
+11. ใช้ params.expect ของ Rails 8 ไม่ใช่ require/permit
+12. ถ้า migration ไหนจะพังเพราะข้อมูลเก่า (เช่น NOT NULL กับแถวที่เป็น null) ให้เตือนก่อน
+    และบอกวิธีจัดการข้อมูลเก่า
+
+ส่งกลับมาเป็น: รายชื่อไฟล์ที่สร้าง/แก้ · โค้ดเต็มของแต่ละไฟล์ · คำสั่งที่ต้องรันตามลำดับ
+· และคำสั่งใน bin/rails console ที่ใช้พิสูจน์ว่ากฎแต่ละข้อทำงานจริง
+(รวมถึง save(validate: false) ที่ต้องพังที่ชั้น DB)</code></pre>
+    <p>สามสิ่งที่ทำให้ prompt นี้ต่างจากประโยคเดียวของสไลด์:</p>
+    <ul>
+      <li><strong>บอกบริบท</strong> — Rails เวอร์ชันไหน DB อะไร มีข้อมูลเก่าอยู่แล้ว (AI จะได้ไม่ใส่ <code>null: false</code> ที่พังแบบภารกิจข้อ 1)</li>
+      <li><strong>บอกกฎเป็นคู่</strong> — ทุกกฎระบุว่าต้องอยู่ทั้ง model และ DB · ข้อ 5 บอกกับดักที่เราเจอเองด้วย</li>
+      <li><strong>บอกวิธีตรวจรับ</strong> — ขอคำสั่งพิสูจน์ใน console มาด้วย · เราจะได้รันตรวจแทนการเชื่อว่า "ดูครบแล้ว"</li>
+    </ul>
+    <p>
+      ข้อ 10 (i18n = ระบบแปลข้อความเป็นหลายภาษาของ Rails · ข้อความ <code>can't be blank</code> จะกลายเป็นภาษาไทย) กับการแบ่งหน้าในข้อ 8
+      เราไม่ได้ทำใน Lab นี้ — ใส่ไว้เพราะสไลด์ขอ · ได้โค้ดกลับมาแล้วต้องรันตรวจเองเหมือนข้ออื่น
+    </p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของการสั่งงาน AI</span>
+  <dl>
+    <dt>prompt · context</dt>
+    <dd>prompt = ข้อความที่เราพิมพ์สั่ง AI · context = ข้อมูลรอบตัวที่ AI ต้องรู้ถึงจะทำถูก (เวอร์ชัน · DB · ข้อมูลเก่า · กฎของธุรกิจ)
+      · ถาม senior ได้ว่า "ทีมเรามี prompt ตั้งต้นสำหรับงาน model ใหม่ไหม"</dd>
+    <dt>acceptance criteria</dt>
+    <dd>รายการ "งานนี้ถือว่าเสร็จเมื่อ…" ที่ตรวจได้จริงทีละข้อ · ในตัวอย่างคือข้อ 1–12 + คำสั่งพิสูจน์
+      · พิมพ์บอก AI ได้ว่า "here are the acceptance criteria; for each one, show me how to verify it in the console"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-10">กลับมาที่ 3 ประโยคของวัน</h2>
+
+<p>
+  ตอนเช้า (สไลด์หน้า 3) ผู้สอนบอกว่าถ้าจำได้แค่ 3 อย่าง ให้จำสามประโยคนี้ · สไลด์หน้า 59 กลับมาถามอีกครั้ง
+  · Lab นี้ทำให้คุณเห็นทั้งสามประโยคกับมือแล้ว:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ประโยค</th><th>ในร้านอาหาร</th><th>เห็นกับมือใน Lab ตรงไหน</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>① <strong>schema เปลี่ยนได้โดยไม่ต้องดับแอป</strong><br><small>expand → migrate → contract · เพราะโค้ดกับ DB ไม่มีวันเปลี่ยนพร้อมกันเป๊ะ</small></td>
+      <td>ปรับปรุงร้านโดยไม่ปิดร้าน: ต่อลิ้นชักใหม่ก่อน → ย้ายแฟ้ม → ค่อยรื้อของเก่า</td>
+      <td>ภารกิจข้อ 1–2: <code>category_id</code> ต้องเริ่มแบบ <code>null: true</code> (expand) · เติมหมวดให้บทความ (migrate) · ค่อยขันเป็น NOT NULL ทีหลัง · ขั้น 3: เปลี่ยนตู้ทั้งที่มีแฟ้มเสียค้าง = ช่างไม่ยอม</td>
+    </tr>
+    <tr>
+      <td>② <strong>validation ใน model ไม่ใช่การรับประกัน</strong><br><small>ต้องมี constraint ที่ DB คู่กัน · เพราะ "ตรวจ" กับ "เขียน" เป็นสองคำสั่งแยกกัน</small></td>
+      <td>คนดูแลสต็อกตรวจเก่ง แต่คนเข้าทางหลังร้านเขาไม่เห็น · ลิ้นชักที่ทำร่องไว้กันได้ทุกทาง</td>
+      <td>ขั้น 2: <code>save(validate: false)</code> เข้าตู้ได้ · ขั้น 4: คำสั่งเดียวกันพังที่ DB · และกฎ uniqueness <strong>ถามตู้ก่อน</strong> (<code>Category Exists?</code>) แล้วค่อยเขียน — สองจังหวะ มีช่องว่างตรงกลาง (<a href="./0111-four-layers-and-uniqueness.html">บท 111</a>)</td>
+    </tr>
+    <tr>
+      <td>③ <strong>N+1 ไม่ได้อ่านจากโค้ด อ่านจาก log</strong><br><small>includes / preload / eager_load · เพราะ ORM ซ่อน SQL เก่งจนลืมว่าทุกบรรทัดคือการถาม DB</small></td>
+      <td>เดินไปตู้ทีละแผ่นหลายสิบรอบ · ดูจากใบเบิกไม่รู้ ต้องเปิดสมุดบันทึกการเบิกของ</td>
+      <td>ขั้น 6: โค้ด <code>category.posts.size</code> บรรทัดเดียวดูไม่มีพิษภัย · log บอกว่า 5 query · เติม <code>includes</code> เหลือ 3 และไม่โตตามจำนวนหมวด</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-11">Checklist ท้ายวัน — ควรเข้าใจอะไรแล้ว</h2>
+
+<p>ติ๊กในใจทีละข้อ · ข้อไหนลังเล กลับไปบทนั้น 5 นาทีก่อนเข้า Day 3:</p>
+
+<ul>
+  <li>☐ อธิบายได้ว่า Active Record คือ "แฟ้มที่เดินเข้าลิ้นชักเองได้" และต่างจาก Data Mapper ยังไง (<a href="./0106-active-record-intro.html">106</a>)</li>
+  <li>☐ สร้าง อ่าน แก้ ลบ ใน console ได้ และแปล SQL ที่ console โชว์เป็นภาษาคนได้ (<a href="./0107-console-crud.html">107</a>)</li>
+  <li>☐ เขียน migration · migrate · rollback ได้ และรู้ว่า <code>schema.rb</code> คือแปลนตู้ฉบับล่าสุด (<a href="./0108-migration-basics.html">108</a>)</li>
+  <li>☐ รู้ว่า migration แบบไหนอาจทำร้านค้าง และเปลี่ยนชื่อคอลัมน์แบบ expand → migrate → contract (<a href="./0109-safe-migrations.html">109</a>)</li>
+  <li>☐ ใส่ validation · อ่าน <code>errors.full_messages</code> · รู้ว่า <code>save</code> กับ <code>save!</code> ต่างกันยังไง (<a href="./0110-validations.html">110</a>)</li>
+  <li>☐ <strong>ใส่ constraint คู่กับ validation ทุกครั้ง</strong> และอธิบายได้ว่าทำไม uniqueness อย่างเดียวกันซ้ำไม่ได้ (<a href="./0111-four-layers-and-uniqueness.html">111</a> + Lab นี้)</li>
+  <li>☐ รู้ว่า callback เหมาะกับงานแบบไหน และงานไหนควรย้ายออกไป (<a href="./0112-callbacks-and-logic.html">112</a>)</li>
+  <li>☐ เปิด log แล้วนับได้ว่าหน้าหนึ่งไปตู้กี่ครั้ง และแก้ N+1 ด้วย <code>includes</code> (<a href="./0113-query-lazy-relation.html">113</a>–<a href="./0114-n-plus-one.html">114</a>)</li>
+  <li>☐ ผูก <code>belongs_to</code> / <code>has_many</code> ได้ และเลือก <code>dependent</code> จากกฎของธุรกิจ (<a href="./0115-associations.html">115</a>–<a href="./0116-dependent-and-helpers.html">116</a>)</li>
+  <li>☐ อธิบายได้ว่า <code>params.expect</code> กันอะไร และไม่ได้กันอะไร (<a href="./0117-rest-and-strong-params.html">117</a>)</li>
+  <li>☐ อ่านไฟล์ที่ scaffold (หรือ AI) เขียนให้ แล้วบอกได้ว่าขาดอะไร ด้วย checklist 8 ข้อ (<a href="./0118-scaffold-reading.html">118</a> + Lab นี้)</li>
+</ul>
+
+<h2 id="sn-sec-12">การบ้าน (ไม่บังคับ แต่ทำแล้วดี)</h2>
+
+<p>จากสไลด์หน้า 60 — เลือกทำตามแรงที่เหลือ:</p>
+
+<ol>
+  <li><strong>ทำ Lab นี้ให้จบ</strong> ถ้ายังค้างขั้นไหน · commit ทุกขั้นที่ผ่าน</li>
+  <li><strong>เอา prompt ที่เขียนในหัวข้อ "เขียน prompt ให้ AI" ไปลองกับ AI จริง</strong> ในโปรเจกต์ทดลอง (อย่าลองในโปรเจกต์ที่ทำ Lab ไว้แล้ว เพราะ Category มีอยู่แล้ว)
+      แล้วตรวจของที่ได้ด้วย checklist 8 ข้อของ <a href="./0118-scaffold-reading.html">บท 118</a> · จดว่าข้อไหน AI ทำครบ ข้อไหนต้องสั่งซ้ำ</li>
+  <li><strong>ลอง gem สองตัวที่สไลด์แนะนำ</strong> ในโปรเจกต์ของคุณเอง (บทนี้<strong>ไม่ได้ติดตั้งและไม่ได้รัน</strong> — ข้อมูลด้านล่างมาจากเอกสารของ gem):
+    <ul>
+      <li><a href="https://github.com/flyerhzm/bullet">bullet</a> — คอยดูระหว่างที่เราเปิดหน้าเว็บ ถ้าเจอ N+1 จะเตือน (เช่นใน log หรือกล่องแจ้งเตือนในเบราว์เซอร์) · เหมือนมีคนยืนนับว่าเราเดินไปตู้กี่รอบ</li>
+      <li><a href="https://github.com/MiniProfiler/rack-mini-profiler">rack-mini-profiler</a> — แปะป้ายเล็ก ๆ ที่มุมหน้าเว็บ บอกว่าหน้านี้ใช้เวลาเท่าไร และกดดู SQL ที่ยิงได้</li>
+      <li>วิธีติดตั้งอยู่ใน README ของแต่ละตัว (แก้ <code>Gemfile</code> แล้ว <code>bundle install</code> · <a href="../../rails-day-1/lessons/0098-rails-new-and-structure.html">บท 98</a>) · ติดตั้งแล้วเปิดหน้า <code>/categories</code> ลองสลับมี/ไม่มี <code>includes</code> ดู</li>
+    </ul>
+  </li>
+  <li><strong>พิมพ์ <code>bin/rails routes</code></strong> ดูทั้งโปรเจกต์ · นับว่ามีกี่เส้นที่มาจาก <code>resources</code> ที่เพิ่มในวันนี้</li>
+</ol>
+
+<p><strong>เตรียมก่อนวันถัดไป</strong> (สไลด์หน้า 60): โปรเจกต์ <code>wongnok_blog</code> รันได้และมีข้อมูลตัวอย่างพอสมควร · PostgreSQL ที่โปรเจกต์ใช้เปิดอยู่ (<code>bin/rails db:migrate:status</code> ขึ้นตารางได้ = ใช้ได้) · พักผ่อนให้พอ — สไลด์บอกว่าวันถัดไปเขียนโค้ดเยอะกว่าวันนี้มาก</p>
+
+<h2 id="sn-sec-13">Day 3 จะเจออะไร</h2>
+
+<p>
+  Day 2 ทำให้<strong>ห้องเก็บของ</strong>แน่นหนา · Day 3 กลับไปที่<strong>หน้าร้าน</strong> — ทำให้มันเป็นแอปที่คนใช้จริง · หัวข้อจากสไลด์หน้า 60 (แค่ให้รู้ว่ารออยู่ ยังไม่ต้องเข้าใจ):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>หัวข้อ</th><th>ภาษาคนสั้น ๆ</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>View layer</td><td>คนจัดจานแบบจริงจัง — ทำไมแอปแบบ Rails ไม่ต้องมีชั้น API แยก</td></tr>
+    <tr><td>CSS + asset pipeline</td><td>แต่งหน้าตา และวิธีที่ Rails จัดการไฟล์ CSS/JS</td></tr>
+    <tr><td>Hotwire / Turbo</td><td>เปลี่ยนแค่บางส่วนของหน้าโดยไม่ต้องโหลดใหม่ทั้งหน้า</td></tr>
+    <tr><td>Stimulus</td><td>JavaScript ชิ้นเล็ก ๆ ที่ HTML เป็นคนเรียกใช้</td></tr>
+    <tr><td>Background jobs</td><td>งานที่ทำทีหลังได้ ไม่ให้ลูกค้ายืนรอ เช่น ส่งอีเมล</td></tr>
+    <tr><td>Rich text</td><td>ช่องเขียนบทความที่มีตัวหนา ลิงก์ รูป — และกรองของอันตรายออก</td></tr>
+    <tr><td>ไฟล์ + object storage</td><td>อัปโหลดรูปประกอบบทความ เก็บไว้ที่อื่นนอก database</td></tr>
+    <tr><td>Caching</td><td>เก็บจานที่จัดเสร็จแล้วไว้เสิร์ฟซ้ำ ไม่ต้องทำใหม่ทุกครั้ง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ส่วน Day 4 คือเรื่องคน: login ด้วย Keycloak · ใครทำอะไรได้ (authorization — ข้อ 8 ของ checklist ที่ strong params กันไม่ได้) · การเขียนเทส</p>
+
+<h2 id="sn-sec-14">Quiz ท้ายวัน</h2>
+
+<p>สี่ข้อทวนทั้งวันผ่านของที่เพิ่งทำใน Lab · เฉลยทุกข้อพิสูจน์ด้วยผลรันในบทนี้ หรือเหตุผลที่ตรวจแล้วในบทก่อน</p>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อ 1 · หลังเติม migration ในขั้น 3 แล้ว (slug เป็น NOT NULL) สั่ง <code>Category.new(name: "x").save(validate: false)</code> — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">ได้ <code>true</code> · แฟ้มเข้าตู้โดย slug เป็น <code>nil</code> เหมือนขั้น 2</button>
+    <button class="opt">ได้ <code>false</code> · ไม่มี error · ดูเหตุผลได้ใน <code>errors</code></button>
+    <button class="opt">ระเบิด <code>ActiveRecord::NotNullViolation</code> · ไม่มีอะไรลงตู้</button>
+    <button class="opt">ได้ <code>true</code> · callback เติม slug เป็น <code>"x"</code> ให้ก่อน</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 3 ถูก · ผลจริงในขั้น 4: <code>PG::NotNullViolation: ERROR: null value in column "slug" … (ActiveRecord::NotNullViolation)</code> แล้ว <code>c.persisted?</code> เป็น <code>false</code></p>
+    <p>
+      ตัวเลือกที่ 1 คือผลของขั้น 2 ตอนตู้ยังไม่มีกฎ · ตัวเลือกที่ 2 คือพฤติกรรมของ <strong>validation</strong> (คืน false เงียบ ๆ) แต่เราสั่งข้ามการตรวจไปแล้ว คนที่ปฏิเสธคือตัวตู้ซึ่งตอบด้วยการระเบิด ·
+      ตัวเลือกที่ 4 ผิดเพราะ <code>before_validation</code> ถูกข้ามไปพร้อมการตรวจ — ใน INSERT ช่อง slug เป็น <code>NULL</code>
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> validation ข้ามได้ · constraint ข้ามไม่ได้ — นี่คือประโยคที่ ② ของวัน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อ 2 · หน้า <code>/categories</code> มี 3 หมวด แต่ละหมวดโชว์ <code>category.posts.size</code> · หลังเปลี่ยน controller เป็น <code>Category.order(:name).includes(:posts).limit(50)</code> — ใน log มีบรรทัดที่ไปหยิบ<strong>บทความ</strong>กี่บรรทัด?</p>
+  <div class="opts">
+    <button class="opt">1 บรรทัด · หยิบบทความของทุกหมวดด้วย <code>IN (…)</code> ครั้งเดียว</button>
+    <button class="opt">3 บรรทัด · หนึ่งบรรทัดต่อหนึ่งหมวด เหมือนก่อนแก้</button>
+    <button class="opt">0 บรรทัด · <code>size</code> นับเองได้โดยไม่ต้องไปตู้เลย</button>
+    <button class="opt">4 บรรทัด · หนึ่งครั้งหยิบทั้งหมด บวกหนึ่งครั้งต่อหมวด</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 1 ถูก · ผลจริงในขั้น 6: <code>Post Load … WHERE "posts"."category_id" IN (4, 1, 5)</code> บรรทัดเดียว · ทั้งหน้า <code>3 queries</code></p>
+    <p>
+      ตัวเลือกที่ 2 คือผลก่อนเติม <code>includes</code> (<code>Post Count</code> 3 บรรทัด) ·
+      ตัวเลือกที่ 3 ผิดครึ่งเดียว — <code>size</code> ไม่ต้องไปตู้<em>ตอนนับ</em> เพราะบทความอยู่ในมือแล้ว แต่ต้องไปหยิบมาก่อนหนึ่งครั้ง ·
+      ตัวเลือกที่ 4 คือหยิบซ้ำซ้อน — หยิบทั้งตะกร้าแล้วยังเดินไปตู้ทีละหมวดอีก ถ้าเป็นแบบนั้น <code>includes</code> ก็ไม่ได้ช่วยอะไร (ผลจริงไม่มีบรรทัดรายหมวดเลย)
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> แก้ N+1 แล้วจำนวนครั้งต้อง<strong>ไม่โตตามจำนวนแถว</strong> · ตรวจด้วยการนับใน log ไม่ใช่ด้วยการอ่านโค้ด — ประโยคที่ ③</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 3 · ร้านเปิดอยู่ตลอด ไม่อยากปิดเลย · อยากเปลี่ยนชื่อช่อง <code>name</code> ของ categories เป็น <code>title</code> · ลำดับไหนปลอดภัย?</p>
+  <div class="opts">
+    <button class="opt"><code>rename_column</code> บรรทัดเดียว แล้ว deploy โค้ดใหม่ทันทีหลังจากนั้น</button>
+    <button class="opt">เพิ่ม <code>title</code> และเขียนทั้งสองช่อง → ก็อปข้อมูลเก่าแล้วอ่านจาก <code>title</code> → เลิกใช้แล้วลบ <code>name</code></button>
+    <button class="opt">ลบ <code>name</code> ก่อน → เพิ่ม <code>title</code> → ให้ผู้ใช้กรอกชื่อหมวดใหม่ทั้งหมด</button>
+    <button class="opt">deploy โค้ดที่อ่าน <code>title</code> ก่อน แล้วค่อยรัน <code>rename_column</code> ตามทีหลัง</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · นี่คือ expand → migrate → contract จาก <a href="./0109-safe-migrations.html">บท 109</a> — ทุกช่วงระหว่างทาง โค้ดเก่าก็ใช้ได้ โค้ดใหม่ก็ใช้ได้</p>
+    <p>
+      ตัวเลือกที่ 1 มีช่วงที่ตู้เปลี่ยนแล้วแต่แอปยังเป็นโค้ดเก่า → โค้ดเก่าหาช่อง <code>name</code> ไม่เจอ · ตัวเลือกที่ 4 กลับด้านกัน มีช่วงที่โค้ดใหม่หาช่อง <code>title</code> ไม่เจอ
+      (บท 109 อธิบายว่าช่วงนี้หนีไม่พ้น เพราะ migrate กับ restart แอปเกิดคนละจังหวะ) · ตัวเลือกที่ 3 ข้อมูลหายทั้งหมด
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ไม่มี deploy ไหนที่โค้ดกับตู้เปลี่ยนพร้อมกันเป๊ะ — ต้องมีช่วงที่ของเก่ากับของใหม่อยู่ด้วยกันได้ · ประโยคที่ ①</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ข้อ 4 · <code>Category</code> มี <code>has_many :posts, dependent: :restrict_with_error</code> · หมวด อาหารไทย มีบทความ 2 ชิ้น · สั่ง <code>thai.destroy</code> — ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">หมวดหาย บทความ 2 ชิ้นถูกลบตามไปด้วย</button>
+    <button class="opt">หมวดหาย บทความ 2 ชิ้นเหลือ ช่องหมวดกลายเป็นว่าง</button>
+    <button class="opt">ระเบิด error ทันที ต้องใช้ <code>rescue</code> รับ</button>
+    <button class="opt">ได้ <code>false</code> หมวดยังอยู่ และมีเหตุผลใน <code>errors</code></button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 4 ถูก · ผลจริงในภารกิจข้อ 5: <code>thai.destroy</code> → <code>false</code> · <code>thai.errors.full_messages</code> → <code>["Cannot delete record because dependent posts exist"]</code></p>
+    <p>
+      ตัวเลือกที่ 1 คือ <code>dependent: :destroy</code> · ตัวเลือกที่ 2 คือ <code>dependent: :nullify</code> (<a href="./0116-dependent-and-helpers.html">บท 116</a>) ·
+      ตัวเลือกที่ 3 คือ <code>restrict_with_exception</code> — หรือการเรียก <code>destroy!</code> แบบ controller ของ scaffold ซึ่งเราเห็นหน้าแดง <code>RecordNotDestroyed</code> ในภารกิจข้อ 6
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> จะเลือก dependent แบบไหน คำตอบมาจากกฎของธุรกิจ ไม่ใช่จาก scaffold หรือ AI · และถ้าใช้ <code>restrict_with_error</code> ต้องเช็คผลของ <code>destroy</code> ใน controller ด้วย</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-15">ถามกลับได้เลย</h2>
+
+<p>
+  ถ้า migration ของคุณพังด้วยข้อความที่ไม่มีในบทนี้ หรือ AI เขียนโค้ดมาแล้วคุณไม่แน่ใจว่าครบ — นั่นคือของดีที่สุดที่จะเอาไปถาม senior หรือ AI
+  · ส่งไปสามอย่าง: <strong>ข้อความ error บรรทัดแรก · ไฟล์ migration หรือ model ที่เกี่ยว · ผลของ <code>git diff</code></strong>
+  · ถ้าเป็นเรื่องช้า แนบ log ของ request นั้นทั้งก้อน (จาก <code>Started GET</code> ถึง <code>Completed</code>) — คนช่วยจะนับ query ได้ทันที
+</p>
+
+<h2 id="sn-sec-16">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>54</td><td><code>before_validation { self.slug ||= name.to_s.parameterize }</code></td><td>ฟอร์มส่ง slug ว่างมาเป็น <code>""</code> → <code>||=</code> ไม่เติม → <code>Slug can't be blank</code></td><td>สนใจ — ใช้ <code>if slug.blank?</code> (ขั้น 2)</td></tr>
+    <tr><td>57</td><td>เติม validation → เขียน migration NOT NULL + unique → ทำ <code>save(validate: false)</code></td><td>ถ้าลองประตูข้าง<em>ก่อน</em>รัน migration แผ่นที่แอบเข้าจะทำให้ migration พัง</td><td>สนใจ — บทนี้ตั้งใจให้เจอ แล้วสอนวิธีจัดการ (ขั้น 3)</td></tr>
+    <tr><td>54 · 57</td><td><code>has_many :posts, dependent: :restrict_with_error</code></td><td>posts ยังไม่มี <code>category_id</code> · ต้อง migration <code>null: true</code> + <code>optional: true</code> · และ <code>destroy!</code> ของ scaffold ให้หน้าแดง</td><td>สนใจ — ภารกิจขั้น 5</td></tr>
+    <tr><td>58</td><td>ให้ขอ <code>params.expect</code> ของ Rails 8 ใน prompt</td><td>scaffold ของ Rails 8.1 เขียน <code>params.expect(category: [ :name, :slug ])</code> ให้อยู่แล้ว</td><td>แค่รู้ไว้ — ยังควรใส่ใน prompt เผื่อ AI ใช้แบบเก่า</td></tr>
+    <tr><td>58</td><td>index action ขอ pagination</td><td>Rails ไม่มีระบบแบ่งหน้าสำเร็จรูปในตัว ปกติใช้ gem เพิ่ม · บทนี้ใช้ <code>limit(50)</code> แทน</td><td>แค่รู้ไว้</td></tr>
+    <tr><td>60</td><td>ใส่ gem bullet กับ rack-mini-profiler</td><td>บทนี้ไม่ได้ติดตั้ง · ไม่ได้รัน · ไม่มีผลรันของสองตัวนี้ในบท</td><td>ทำเองได้ในโปรเจกต์ของคุณ (การบ้านข้อ 3)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0118-scaffold-reading.html">← บทเรียน 118 · scaffold</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+</nav>
+
+<h2 id="sn-sec-17">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/command_line.html#generating-scaffolds">Rails Guides — The Rails Command Line</a> —
+      <strong>อ่านหัวข้อ 4.4 <em>Generating Scaffolds</em></strong> รายการไฟล์ที่ scaffold สร้าง ตรงกับผลในขั้น 1</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_validations.html#uniqueness">Rails Guides — Active Record Validations</a> —
+      <strong>อ่านหัวข้อ 2.10 <em>uniqueness</em> ย่อหน้าที่ขึ้นต้นว่า "This validation does not create a uniqueness constraint in the database"</strong>
+      คู่มือทางการเขียนเองว่าต้องมี unique index คู่กัน · แล้วดู <a href="https://guides.rubyonrails.org/active_record_validations.html#skipping-validations">หัวข้อ 1.4 <em>Skipping Validations</em></a> รายการคำสั่งที่ข้ามการตรวจ (มี <code>save(validate: false)</code>)</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_migrations.html#changing-columns">Rails Guides — Active Record Migrations</a> —
+      <strong>อ่านหัวข้อ 3.4 <em>Changing Columns</em> ย่อหน้าของ <code>change_column_null</code></strong> ที่เตือนว่าต้องแน่ใจว่าแถวเก่าไม่เป็น null ก่อน (ขั้น 3)
+      · และ <a href="https://guides.rubyonrails.org/active_record_migrations.html#transactions">หัวข้อ 4.1.1 <em>Transactions</em></a> ที่อธิบายว่าทำไมงานครึ่งแรกถูกยกเลิกด้วย</li>
+  <li><a href="https://guides.rubyonrails.org/association_basics.html#belongs-to">Rails Guides — Active Record Associations</a> —
+      <strong>อ่านหัวข้อ 2.1 <em>belongs_to</em> ย่อหน้าที่พูดถึง <code>optional: true</code></strong> (ภารกิจข้อ 4) แล้วต่อด้วย
+      <a href="https://guides.rubyonrails.org/association_basics.html#dependent">หัวข้อ 8.1.2 <em>:dependent</em></a> เทียบ <code>:restrict_with_error</code> กับ <code>:restrict_with_exception</code> (quiz ข้อ 4)</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#n-1-queries-problem">Rails Guides — Active Record Query Interface</a> —
+      <strong>อ่านหัวข้อ 16.1 <em>N + 1 Queries Problem</em> และ 16.2 <em>includes</em></strong> ตัวอย่างทางการแบบเดียวกับขั้น 6</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveSupport/Inflector.html#method-i-parameterize">Rails API — ActiveSupport::Inflector#parameterize</a> —
+      ตัวอย่างการแปลงข้อความเป็น slug (ทำไมชื่อภาษาไทยได้ข้อความว่าง)</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

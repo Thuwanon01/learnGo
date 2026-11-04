@@ -1,0 +1,1311 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 111 — 4 ชั้นป้องกันข้อมูล — ทำไมกฎในโมเดลยังกันอีเมลซ้ำไม่ได้</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 111 · Rails · Day 2</p>
+  <h1>4 ชั้นป้องกันข้อมูล — ทำไมกฎในโมเดลยังกันอีเมลซ้ำไม่ได้</h1>
+  <p class="meta">~25 นาที (ยาวกว่าบทอื่นนิดหนึ่ง เพราะมีการทดลองจริง 3 อย่าง) · ควรผ่าน
+    <a href="./0108-migration-basics.html">บท 108</a> (migration) และ
+    <a href="./0110-validations.html">บท 110</a> (validation) มาก่อน</p>
+  <p class="standfirst">
+    บทที่แล้วเราใส่กฎใน model ไว้ตรวจข้อมูลก่อนเก็บ — บทนี้จะพิสูจน์ด้วยมือตัวเองว่า<strong>กฎพวกนั้นยังมีรูรั่ว</strong>
+    สองรู: มี<strong>ประตูข้าง</strong>ที่ข้ามการตรวจได้ และ<strong>คนสองคนกดสมัครพร้อมกัน</strong>ก็ได้อีเมลซ้ำ
+    <br>อ่านจบแล้วคุณจะรู้ว่าข้อมูลถูกกันได้ 4 ด่าน ด่านไหนทำอะไร · ใส่ <strong>กฎที่ตัว database</strong>
+    (ห้ามว่าง · ห้ามซ้ำ · ตัวเลขต้องอยู่ในช่วงที่กำหนด — ชื่อจริงของมันคือ NOT NULL · unique index · CHECK เดี๋ยวรู้จักทีละตัว) คู่กับกฎใน model ได้เอง ·
+    และพอ AI เขียน <code>uniqueness: true</code> มาให้ คุณจะรู้ว่าต้องถามหาอะไรต่อ
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — บทนี้ใช้คำพวกนี้ตลอด ถ้าข้อไหนไม่คุ้นให้กลับไปบทนั้นก่อน</p>
+  <ul>
+    <li><strong>validation · <code>validates</code></strong> = กฎใน model ที่คนดูแลสต็อกใช้ตรวจแฟ้มก่อนเก็บ ·
+        <code>valid?</code> ถามว่าผ่านไหม · <code>errors.full_messages</code> ขอเหตุผลที่ไม่ผ่านเป็นประโยค (<a href="./0110-validations.html">บท 110</a>)</li>
+    <li><strong><code>save</code> vs <code>save!</code></strong> = ไม่ผ่านแล้วคืน <code>false</code> เงียบ ๆ · ไม่ผ่านแล้ว<strong>ระเบิด</strong> (โยน error) — กฎ <code>!</code> (<a href="./0110-validations.html">บท 110</a>)</li>
+    <li><strong>migration · <code>bin/rails db:migrate</code></strong> = ใบสั่งช่างมาดัดแปลงตู้ · สั่งให้ช่างลงมือ (<a href="./0108-migration-basics.html">บท 108</a>)</li>
+    <li><strong>SQL ใน console</strong> = บรรทัดที่ Rails พิมพ์ให้ดูทุกครั้งที่เดินไปตู้ — สมุดบันทึกการเบิกของ (<a href="./0107-console-crud.html">บท 107</a>)</li>
+    <li><strong>index</strong> = สารบัญ/ป้ายแท็บในลิ้นชัก ช่วยให้หาแฟ้มเจอเร็ว (<a href="./0109-safe-migrations.html">บท 109</a>) — บทนี้จะใช้มันอีกแบบ คือ "กันซ้ำ"</li>
+  </ul>
+  <p>
+    <strong>📋 model ที่บทนี้เริ่มต้น = model ตอนจบบท 110:</strong>
+    <code>Post</code> มีกฎ title ห้ามว่าง/ยาวไม่เกิน 120 · views ห้ามติดลบ (<code>numericality</code>) · บทความที่เผยแพร่ต้องมีเนื้อหา ·
+    <code>User</code> มีกฎ name ห้ามว่าง · email ห้ามว่างและต้องหน้าตาเป็นอีเมล (<code>format</code>) ·
+    ทุกกฎยังอยู่<strong>ในโค้ด Ruby อย่างเดียว</strong> ในตู้ยังไม่มีกฎพวกนี้เลย
+  </p>
+  <p>
+    <strong>🍜 ข้อมูลตัวอย่าง:</strong> ใช้ตาราง <code>users</code> · <code>posts</code> · <code>comments</code> และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับ<a href="./0107-console-crud.html">บท 107</a>
+    (สมชาย · สมหญิง · มานะ และบทความอาหาร 6 ชิ้น) · บทนี้จะ<strong>แก้ model และเพิ่ม migration</strong>หลายไฟล์ —
+    แนะนำให้ <code>git add . &amp;&amp; git commit -m "ก่อนบท 111"</code> ไว้ก่อน จะได้ย้อนกลับได้
+  </p>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน)
+  </p>
+  <p>
+    ผลรันทุกก้อนรันจริงแล้วก็อปมา · ค่าที่เปลี่ยนทุกครั้ง เช่น <strong>เวลา ms · เลข id · เลขหน้าชื่อไฟล์ migration · เวลาที่บันทึก</strong>
+    ของคุณจะไม่ตรงกับของผม — เป็นเรื่องปกติ · path ยาว ๆ ในเครื่องผมย่อเป็น <code>…</code>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">ประโยคเดียวของบทนี้</h2>
+
+<p>
+  <strong>กฎใน model (validation) ไม่ใช่การรับประกัน — ของสำคัญต้องมีกฎที่ตัว database คู่กันเสมอ</strong>
+  <br>นี่คือประโยคหลักข้อ ② ของ Day 2 (สไลด์หน้า 3 และ 59) · ทั้งบทนี้คือการพิสูจน์ประโยคนี้ด้วยผลรันจริง
+</p>
+
+<p>
+  ทำไมต้องพิสูจน์? เพราะพอเขียน <code>validates :email, uniqueness: true</code> ("อีเมลห้ามซ้ำ") แล้วลองสมัครซ้ำใน console
+  มันก็ฟ้องจริง ๆ — คนส่วนใหญ่เลยเชื่อว่า "กันแล้ว" · บทนี้จะทำให้เห็นว่ามันหลุดได้ <strong>ตอนไหน</strong> และ<strong>ปิดยังไง</strong>
+</p>
+
+<h2 id="sn-sec-2">ข้อมูลผิด ๆ ถูกกันได้ 4 ด่าน</h2>
+
+<p>
+  ข้อมูลหนึ่งชิ้น (เช่น อีเมลที่ลูกค้ากรอกตอนสมัคร) เดินจากเบราว์เซอร์ไปถึง database ผ่านด่านได้ 4 ด่าน
+  · แต่ละด่านกันได้คนละแบบ — <strong>ด่านที่อยู่ใกล้ลูกค้า บริการดี</strong> (บอกเร็ว บอกสวย) ·
+  <strong>ด่านที่อยู่ลึก รับประกันได้จริง</strong> (ข้ามไม่ได้)
+</p>
+
+<div class="diagram">ลูกค้ากรอกฟอร์มสมัครสมาชิก แล้วกดส่ง
+   │
+   ▼
+① ป้ายหน้าร้าน      HTML: required · type="email"
+   เบราว์เซอร์เตือน "กรอกช่องนี้ก่อน" ทันที · แต่ใครส่งด้วย curl จะไม่ผ่านป้ายนี้เลย
+   │
+   ▼
+② พนักงานต้อนรับ    controller: params.expect(user: [:name, :email])
+   รับเฉพาะช่องที่อยู่บนแบบฟอร์ม ช่องที่แอบเขียนเพิ่มถูกตัดทิ้ง · ไม่ได้ดูว่าค่าในช่องถูกไหม
+   │
+   ▼
+③ คนดูแลสต็อก       model: validates :email, uniqueness: true
+   ตรวจแล้วบอกเหตุผลเป็นภาษาคน "Email has already been taken" · แต่มีประตูข้าง
+   │
+   ▼
+④ ตัวตู้             database: NOT NULL · unique index · CHECK · foreign key
+   ใส่ผิดแบบไม่ได้เลย ไม่ว่ามาทางไหน · แต่ตอบเป็น error ภาษาเครื่อง ลูกค้าอ่านไม่รู้เรื่อง
+   │
+   ▼
+แฟ้มเข้าลิ้นชัก users</div>
+
+<ul>
+  <li>ด่าน ② <strong>strong parameters</strong> (<code>params.expect</code>) แค่รู้ชื่อไว้ก่อน — <a href="./0117-rest-and-strong-params.html">บท 117</a> สอนละเอียด · บทนี้โฟกัสด่าน ① ③ ④</li>
+  <li>ด่าน ④ คำว่า <strong>constraint</strong> แปลตรง ๆ ว่า "ข้อบังคับ" — คือกฎที่เขียนไว้<strong>ในตัวตาราง</strong>ของ database เอง ไม่ใช่ในโค้ด Ruby</li>
+  <li>สี่ชื่อในกล่อง ④ ภาษาคน: <strong>NOT NULL</strong> = ช่องนี้ห้ามว่าง · <strong>unique index</strong> = ช่องนี้ห้ามซ้ำกับแผ่นอื่น ·
+      <strong>CHECK</strong> = เงื่อนไขที่เราเขียนเอง เช่น "ต้อง ≥ 0" · <strong>foreign key</strong> = เลขที่อ้างถึงแฟ้มอื่น ต้องมีแฟ้มนั้นอยู่จริง — บทนี้ได้ลองครบทุกตัว</li>
+</ul>
+
+<p>
+  ใน Go ที่เคยเรียน คุณเคยเห็นทั้งด่าน ③ และ ④ มาแล้วโดยไม่รู้ตัว:
+  <code>binding:"required"</code> ของ Gin (<a href="../../day-8/lessons/0039-gin-binding-middleware.html">บท 39</a>) คือ<strong>ด่าน ③</strong> — โค้ดเราตรวจเอง ·
+  ส่วน <code>gorm:"unique"</code> ใน struct (<a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a>) พอสั่ง <code>AutoMigrate</code>
+  GORM จะไป<strong>สร้างกฎห้ามซ้ำที่ตัวตาราง</strong> — นั่นคือ<strong>ด่าน ④</strong>
+</p>
+
+<pre><code><span class="c">// Go — สองบรรทัดนี้อยู่คนละด่านกัน</span>
+Title <span class="k">string</span> <span class="s">`json:"title" binding:"required"`</span>   <span class="c">// ด่าน ③ Gin ตรวจในโค้ด</span>
+Email <span class="k">string</span> <span class="s">`gorm:"unique"`</span>                    <span class="c">// ด่าน ④ GORM สร้างกฎในตาราง</span></code></pre>
+
+<p>
+  ข้อความในเครื่องหมาย <code>`…`</code> ท้ายแต่ละช่องของ struct คือ <strong>tag</strong> (ป้ายกำกับที่ library อ่าน) ·
+  สองบรรทัดหน้าตาเหมือนกัน แต่ <code>binding</code> ถูกอ่านโดย Gin ตอนรับ request · <code>gorm</code> ถูกอ่านโดย GORM ตอนสร้างตาราง
+</p>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — ร้านอาหารที่มี 4 ด่าน</span>
+  <p>
+    ① <strong>ป้ายหน้าร้าน</strong> เขียนว่า "กรุณากรอกชื่อในใบสั่ง" — ลูกค้าส่วนใหญ่ทำตาม แต่คนที่เดินเข้าทางหลังร้านไม่เห็นป้ายนี้เลย
+    <br>② <strong>พนักงานต้อนรับ</strong> รับเฉพาะช่องที่อยู่บนแบบฟอร์ม ใครแอบเขียน "ขอฟรี" ไว้ขอบกระดาษ ตัดทิ้ง
+    <br>③ <strong>คนดูแลสต็อก</strong> ตรวจแฟ้มก่อนเก็บ ไม่ผ่านก็บอกเหตุผลสุภาพ ๆ "ไม่มีชื่อเรื่อง ไม่รับครับ"
+    <br>④ <strong>ตัวตู้</strong> ออกแบบมาให้ใส่แฟ้มผิดแบบไม่ได้ทางกายภาพ — ไม่ว่าใครถือแฟ้มมา ทางประตูไหน ก็ยัดไม่เข้า
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ป้ายหน้าร้านจริงอย่างน้อยก็ติดอยู่ที่ร้านเรา ·
+    แต่ด่าน ① ของแอปอยู่ใน<strong>เบราว์เซอร์ของลูกค้า</strong> — เราควบคุมไม่ได้เลย ลูกค้าจะลบป้ายทิ้งก็ได้ ส่วนด่าน ② ③ คือโค้ดของเราเอง
+    <br>และตัวตู้จริงไม่พูด แต่ตู้ของเรา "พูด" ได้ — แค่พูดเป็นภาษาเครื่อง (<code>PG::UniqueViolation</code>) ที่ลูกค้าอ่านไม่รู้เรื่อง
+    เราจึงยังต้องมีคนดูแลสต็อกไว้แปลเป็นภาษาคน
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของภาพรวม</span>
+  <dl>
+    <dt>validation (application-level)</dt>
+    <dd>กฎที่โค้ดของเราตรวจเอง (ด่าน ③) · บอกเหตุผลเป็นภาษาคนได้ แต่เลี่ยงได้ ·
+        <strong>ถาม senior ได้ว่า "กฎนี้มีแค่ validation หรือมี constraint ที่ DB ด้วย"</strong></dd>
+    <dt>database constraint</dt>
+    <dd>กฎที่ตัว database บังคับ (ด่าน ④) เช่น <code>NOT NULL</code> · <code>UNIQUE</code> · <code>CHECK</code> · <code>FOREIGN KEY</code> ·
+        ข้ามไม่ได้แม้ยิง SQL ตรง · <strong>พิมพ์บอก AI ได้ว่า "add a database constraint to match this validation"</strong></dd>
+    <dt>defense in depth</dt>
+    <dd>แนวคิด "ป้องกันหลายชั้น ชั้นหนึ่งพลาด อีกชั้นยังกันอยู่" · ไม่ได้แปลว่าทุกชั้นต้องเก่งเท่ากัน แต่ละชั้นมีหน้าที่ของมัน</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">เตรียมแผนกสมัครสมาชิก (ก็อปวางได้เลย)</h2>
+
+<p>
+  จะทดลองด่าน ① ได้ ต้องมีฟอร์มก่อน · เพิ่มไฟล์ 3 ไฟล์นี้ในแอป <code>wongnok_blog</code> ของคุณ —
+  route · controller · view แบบเดียวกับ Lab ของ Day 1 (<a href="../../rails-day-1/lessons/0105-rails-day1-lab.html">บท 105</a>)
+</p>
+
+<p><strong>① route</strong> — แก้ <code>config/routes.rb</code> ให้มีบรรทัด <code>resources</code> นี้ (บรรทัดอื่นในไฟล์คงไว้ได้):</p>
+
+<pre><code>Rails.application.routes.<span class="f">draw</span> <span class="k">do</span>
+  <span class="f">resources</span> <span class="n">:users</span>, <span class="n">only:</span> [<span class="n">:new</span>, <span class="n">:create</span>, <span class="n">:show</span>]
+<span class="k">end</span></code></pre>
+
+<p>
+  <code>resources :users</code> ให้ 8 เส้นแบบ<a href="../../rails-day-1/lessons/0101-rails-routing.html">บท 101</a> ·
+  <code>only: [...]</code> = "เอาแค่ 3 เส้นนี้" — หน้าฟอร์ม (<code>new</code>) · รับฟอร์ม (<code>create</code>) · หน้าดูผล (<code>show</code>)
+</p>
+
+<p><strong>② controller</strong> — ไฟล์ใหม่ <code>app/controllers/users_controller.rb</code>:</p>
+
+<pre><code><span class="k">class</span> <span class="n">UsersController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">new</span>
+    @user = <span class="n">User</span>.<span class="f">new</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">create</span>
+    @user = <span class="n">User</span>.<span class="f">new</span>(user_params)
+    <span class="k">if</span> @user.<span class="f">save</span>
+      <span class="f">redirect_to</span> @user
+    <span class="k">else</span>
+      <span class="f">render</span> <span class="n">:new</span>, <span class="n">status:</span> <span class="n">:unprocessable_content</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">show</span>
+    @user = <span class="n">User</span>.<span class="f">find</span>(params[<span class="n">:id</span>])
+  <span class="k">end</span>
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">user_params</span>
+    params.<span class="f">expect</span>(<span class="n">user:</span> [<span class="n">:name</span>, <span class="n">:email</span>])
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>new</code> — เตรียมแฟ้มเปล่าหนึ่งแผ่นวางบนถาด (<code>@user</code>) ให้ view เอาไปทำฟอร์ม</li>
+  <li><code>create</code> — สร้างแฟ้มจากของที่ลูกค้ากรอก · <code>if @user.save</code> = ถ้าเก็บได้ พาไปหน้าดูผล (<code>redirect_to @user</code> — Rails แปลง user เป็น URL <code>/users/เลข id</code> ให้เอง)
+      ถ้าเก็บไม่ได้ (คืน <code>false</code>) ให้<strong>แสดงฟอร์มเดิมอีกรอบ</strong>พร้อมเหตุผล</li>
+  <li><code>status: :unprocessable_content</code> = ตอบกลับด้วยรหัส <strong>422</strong> แปลว่า "ข้อมูลที่ส่งมาใช้ไม่ได้" (รหัส HTTP แบบ<a href="../../day-8/lessons/0034-http-status-code.html">บท 34</a>) ·
+      ชื่อเดียวกับที่<a href="./0110-validations.html">บท 110</a> ใช้ · สไลด์เขียนชื่อเก่า <code>:unprocessable_entity</code> ซึ่งยังได้ 422 แต่ขึ้นคำเตือน deprecated</li>
+  <li><code>user_params</code> — <strong>ด่าน ②</strong> · "จากของที่ส่งมา รับเฉพาะ <code>name</code> กับ <code>email</code> ในกลุ่ม <code>user</code>" ·
+      <code>private</code> = method ใต้บรรทัดนี้เรียกจากนอก class ไม่ได้ (ทวน<a href="../../rails-day-1/lessons/0102-rails-controller.html">บท 102</a> · ทำไม <code>user_params</code> ต้องมี ละเอียด<a href="./0117-rest-and-strong-params.html">บท 117</a>)</li>
+</ul>
+
+<p><strong>③ view</strong> — ไฟล์ใหม่ <code>app/views/users/new.html.erb</code> (หน้าฟอร์ม) และ <code>app/views/users/show.html.erb</code> (หน้าดูผล):</p>
+
+<pre><code>&lt;h1&gt;สมัครสมาชิก&lt;/h1&gt;
+
+&lt;% @user.errors.full_messages.each do |message| %&gt;
+  &lt;p class="error"&gt;&lt;%= message %&gt;&lt;/p&gt;
+&lt;% end %&gt;
+
+&lt;%= form_with model: @user do |f| %&gt;
+  &lt;%= f.text_field :name, required: true %&gt;
+  &lt;%= f.email_field :email, required: true %&gt;
+  &lt;%= f.submit "สมัคร" %&gt;
+&lt;% end %&gt;</code></pre>
+
+<pre><code>&lt;p&gt;สมัครแล้ว: &lt;%= @user.name %&gt; (&lt;%= @user.email %&gt;)&lt;/p&gt;</code></pre>
+
+<ul>
+  <li>ก้อนบน — วนพิมพ์เหตุผลที่ไม่ผ่านทีละบรรทัด (ถ้าไม่มี ก็ไม่พิมพ์อะไร)</li>
+  <li><code>form_with model: @user</code> — ตัวช่วยสร้างฟอร์มให้ตรงกับ model (ละเอียด Day 3) · ส่งไปที่ <code>POST /users</code> ให้เอง</li>
+  <li><code>required: true</code> — <strong>ด่าน ①</strong> · บอกเบราว์เซอร์ว่า "ช่องนี้ห้ามว่าง" · <code>email_field</code> ได้ <code>type="email"</code> ให้ด้วย</li>
+</ul>
+
+<p>เปิด server (<code>bin/rails server</code> แบบ Day 1) แล้วดู HTML ที่ได้ (ผมใช้ <code>curl</code> ดึงมา ตัดมาเฉพาะส่วนฟอร์ม):</p>
+
+<pre><code><span class="c">$ curl -s http://localhost:3000/users/new</span>
+<span class="c">…</span>
+&lt;form action="/users" accept-charset="UTF-8" method="post"&gt;&lt;input type="hidden" name="authenticity_token" value="FfDTTtzF…" /&gt;
+  &lt;input required="required" type="text" name="user[name]" id="user_name" /&gt;
+  &lt;input required="required" type="email" name="user[email]" id="user_email" /&gt;
+  &lt;input type="submit" name="commit" value="สมัคร" data-disable-with="สมัคร" /&gt;
+&lt;/form&gt;</code></pre>
+
+<p>
+  เห็น <code>required="required"</code> ทั้งสองช่อง · ชื่อช่องเป็น <code>user[name]</code> · <code>user[email]</code> (นี่คือ "กลุ่ม user" ที่ <code>params.expect</code> พูดถึง)
+  · ส่วน <code>authenticity_token</code> เดี๋ยวได้เจอในหัวข้อถัดไป
+</p>
+
+<h2 id="sn-sec-4">ด่าน ① ป้ายหน้าร้าน — เบราว์เซอร์กันได้ curl ข้ามได้</h2>
+
+<p>
+  เปิด <code>http://localhost:3000/users/new</code> ในเบราว์เซอร์แล้วกด "สมัคร" ทั้งที่ยังว่าง —
+  เบราว์เซอร์<strong>ไม่ยอมส่ง</strong> แต่ขึ้นกล่องเตือนใต้ช่อง (เบราว์เซอร์ที่ผมใช้ตรวจ ตั้งภาษาอังกฤษ ขึ้นว่า <code>Please fill out this field.</code> — ของคุณอาจเป็นภาษาไทย)
+  · ผมเช็ค log ของ server แล้ว ไม่มีใบสั่ง <code>POST</code> เข้ามาเลย — ป้ายหน้าร้านทำงานจริง
+</p>
+
+<p>
+  แต่ป้ายนี้อยู่<strong>ในเบราว์เซอร์</strong> · ถ้าส่งด้วยโปรแกรมอื่นที่ไม่อ่าน HTML เช่น <code>curl</code> ก็ไม่มีใครเตือน
+  · ลองส่งอีเมลว่างตรง ๆ หนึ่งบรรทัด:
+</p>
+
+<pre><code><span class="c">$ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/users -d "user[name]=ghost" -d "user[email]="</span>
+422</code></pre>
+
+<ul>
+  <li><code>-d "ชื่อ=ค่า"</code> — ส่งข้อมูลแบบฟอร์ม (curl จะใช้ <code>POST</code> ให้เอง) · <code>user[email]=</code> คืออีเมลว่าง</li>
+  <li><code>-o /dev/null -w '%{http_code}\n'</code> — ทิ้งหน้าเว็บ พิมพ์แค่รหัสตอบกลับ</li>
+</ul>
+
+<p>ได้ 422 — แต่ไม่ใช่เพราะอีเมลว่าง · ดูใน log ของ server:</p>
+
+<pre><code>Can't verify CSRF token authenticity.
+ActionController::InvalidAuthenticityToken (Can't verify CSRF token authenticity.):</code></pre>
+
+<p>
+  Rails ฝัง<strong>รหัสลับ</strong> (<code>authenticity_token</code>) ไว้ในฟอร์มทุกใบ แล้วเช็คว่าใบสั่งที่ส่งกลับมามีรหัสนี้ไหม
+  — กันเว็บอื่นแอบส่งฟอร์มแทนเรา (เรื่องนี้ชื่อ <strong>CSRF</strong> เคยเห็นใน<a href="../../rails-day-1/lessons/0103-rails-views-and-helpers.html">บท 103</a> · ไม่ใช่การตรวจข้อมูล)
+  · ถ้าเอารหัสจากหน้าฟอร์มมาด้วย ก็ส่งได้ — ใช้สองคำสั่ง:
+</p>
+
+<pre><code><span class="c">$ TOKEN=$(curl -s -c jar.txt http://localhost:3000/users/new | grep -o 'name="authenticity_token" value="[^"]*"' | cut -d'"' -f4)</span>
+<span class="c">$ curl -s -i -b jar.txt http://localhost:3000/users -d "authenticity_token=$TOKEN" -d "user[name]=ghost" -d "user[email]="</span>
+HTTP/1.1 422 Unprocessable Content
+<span class="c">…</span>
+  &lt;p class="error"&gt;Email can&amp;#39;t be blank&lt;/p&gt;
+  &lt;p class="error"&gt;Email is invalid&lt;/p&gt;
+<span class="c">…</span></code></pre>
+
+<ul>
+  <li>บรรทัดแรก — เปิดหน้าฟอร์ม เก็บ <strong>cookie</strong> (บัตรสมาชิกที่เว็บฝากไว้ · บท 103) ลงไฟล์ <code>jar.txt</code> (<code>-c</code>) แล้วตัดเอาเฉพาะรหัสลับใส่ตัวแปร <code>TOKEN</code> · ไม่ต้องเข้าใจทุกตัวอักษร</li>
+  <li>บรรทัดสอง — ส่งฟอร์มพร้อม cookie (<code>-b</code>) และรหัสลับ · <code>-i</code> = พิมพ์หัวของคำตอบให้ดูด้วย</li>
+  <li>ได้ <code>422</code> พร้อมหน้าฟอร์มที่มีเหตุผลสองบรรทัด · <code>&amp;#39;</code> คือเครื่องหมาย <code>'</code> ในแบบที่ HTML เขียน (เบราว์เซอร์จะโชว์เป็น <code>can't</code>)</li>
+</ul>
+
+<p>ส่วนใน log ของ server มีบรรทัดนี้ (เวลาของคุณจะต่าง):</p>
+
+<pre><code>Started POST "/users" for ::1 at 2026-11-04 19:19:02 +0700
+<span class="c">…</span>
+Completed 422 Unprocessable Content in 6ms (Views: 1.2ms | ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.3ms)</code></pre>
+
+<p>
+  <code>Started POST "/users"</code> = <strong>ใบสั่งเดินทะลุป้ายหน้าร้านเข้ามาถึงครัวแล้ว</strong> — ป้าย <code>required</code> ไม่ได้กันอะไรเลย เพราะใบสั่งไม่ได้ผ่านเบราว์เซอร์ ·
+  ที่อีเมลว่างไม่ถูกเก็บ เป็นเพราะ<strong>ด่าน ③</strong> (กฎ <code>presence</code> · <code>format</code> ของ email ที่ใส่ไว้ในบท 110) ตีกลับให้
+</p>
+
+<p>
+  ถ้าไม่มีด่าน ③ ล่ะ? ผมลองใส่ <code>#</code> หน้าบรรทัด <code>validates</code> ทั้งสองของ User ชั่วคราว แล้วส่งสองคำสั่งเดิม — ได้
+  <code>HTTP/1.1 302 Found</code> กับ <code>location: http://localhost:3000/users/4</code> = <strong>เก็บสำเร็จ</strong> · user อีเมลว่างเข้าตู้ไปจริง
+  (ผมลบทิ้งแล้วเอา <code>#</code> ออกตามเดิม ไม่ต้องลองตาม) · <strong>ด่าน ① มีไว้ให้ลูกค้าดี ๆ สะดวก ไม่ได้มีไว้กันคนตั้งใจ</strong>
+</p>
+
+<h2 id="sn-sec-5">ด่าน ③ คนดูแลสต็อก — มีประตูข้างชื่อ <code>save(validate: false)</code></h2>
+
+<p>
+  ด่าน ③ ดูแข็งแรงกว่า เพราะอยู่ในโค้ดของเราเอง ไม่ว่าส่งมาจากเบราว์เซอร์หรือ curl ก็ต้องผ่าน <code>save</code> เหมือนกัน
+  · แต่ Rails มี<strong>คำสั่งที่จงใจข้ามการตรวจ</strong>ให้ใช้ด้วย — ตัวที่เห็นชัดที่สุดคือ <code>save(validate: false)</code>
+  ("เก็บเลย ไม่ต้องตรวจ")
+</p>
+
+<p>
+  Post ของคุณมีกฎ "ต้องมีชื่อเรื่อง" อยู่แล้วจาก<a href="./0110-validations.html">บท 110</a> — ไม่ต้องแก้อะไร · บรรทัดที่เกี่ยวกับการทดลองนี้คือ:
+</p>
+
+<pre><code><span class="c"># app/models/post.rb (ตัดมาเฉพาะบรรทัดที่เกี่ยว · กฎอื่นจากบท 110 คงไว้)</span>
+  <span class="f">validates</span> <span class="n">:title</span>, presence: <span class="k">true</span>, length: { maximum: <span class="n">120</span> }</code></pre>
+
+<div class="predict">
+  <p>ใน <code>bin/rails console</code> — สร้างบทความของสมชายที่<strong>ไม่มีชื่อเรื่อง</strong> แล้วลองเก็บสองแบบ:</p>
+  <pre><code>somchai = <span class="n">User</span>.<span class="f">find_by</span>(<span class="n">name:</span> <span class="s">"สมชาย"</span>)
+post = <span class="n">Post</span>.<span class="f">new</span>(<span class="n">user:</span> somchai)
+post.<span class="f">save</span>
+post.<span class="f">save</span>(<span class="n">validate:</span> <span class="k">false</span>)</code></pre>
+  <p class="ask"><code>save</code> คืน <code>false</code> แน่ ๆ (ไม่มีชื่อเรื่อง) — แล้ว <code>save(validate: false)</code> ล่ะ? แฟ้มแผ่นนี้เข้าตู้ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>เข้าตู้</strong> — ทั้งที่ไม่มีชื่อเรื่อง · ผลจริง (ผมพิมพ์ <code>valid?</code> · <code>errors.full_messages</code> และอ่านค่ากลับเพิ่มให้ดูด้วย):</p>
+    <pre><code>wongnok-blog(dev):001&gt; somchai = User.find_by(name: "สมชาย")
+  User Load (1.5ms)  SELECT "users".* FROM "users" WHERE "users"."name" = 'สมชาย' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;User … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):002&gt; post = Post.new(user: somchai)
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):003&gt; post.valid?
+=&gt; false
+wongnok-blog(dev):004&gt; post.errors.full_messages
+=&gt; ["Title can't be blank"]
+wongnok-blog(dev):005&gt; post.save
+=&gt; false
+wongnok-blog(dev):006&gt; post.save(validate: false)
+  TRANSACTION (1.2ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (3.2ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id") VALUES (NULL, NULL, '2026-11-04 11:46:08.959402', '2026-11-04 11:46:08.959402', FALSE, 0, 1) RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.4ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):007&gt; post.id
+=&gt; 8
+wongnok-blog(dev):008&gt; Post.find(post.id).title
+  Post Load (2.0ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 8 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; nil</code></pre>
+    <p>อ่าน SQL ทีละบรรทัดเป็นภาษาคน:</p>
+    <ul>
+      <li><code>SELECT "users".* FROM "users" WHERE "users"."name" = 'สมชาย' LIMIT 1</code> —
+          "ขอแฟ้ม<strong>ทุกช่อง</strong> (<code>SELECT … *</code>) จากลิ้นชัก users (<code>FROM</code>) เฉพาะแผ่นที่ช่อง name เป็น สมชาย (<code>WHERE</code>) เอาแค่แผ่นเดียว (<code>LIMIT 1</code>)"</li>
+      <li><code>BEGIN</code> … <code>COMMIT</code> — "เริ่มงานชุดหนึ่ง" … "ยืนยันว่าเก็บจริง" (คือ <strong>transaction</strong> — อธิบายท้ายบท)</li>
+      <li><code>INSERT INTO "posts" (…) VALUES (NULL, NULL, …, 1)</code> — "ใส่แฟ้มแผ่นใหม่ลงลิ้นชัก posts ช่องตามลำดับในวงเล็บแรก ค่าตามวงเล็บที่สอง" ·
+          ช่องแรก (title) เป็น <code>NULL</code> = <strong>ไม่มีค่า</strong> (คือ <code>nil</code> ฝั่ง Ruby) · ช่องสุดท้าย (user_id) เป็น 1 = สมชาย ·
+          <code>RETURNING "id"</code> = "เก็บเสร็จแล้วบอกเลขที่แฟ้มกลับมาด้วย" (บท 107)</li>
+      <li>ท่อน <code>/*application='WongnokBlog'*/</code> ท้ายทุกบรรทัด — ป้ายที่ Rails แปะบอกว่าคำสั่งมาจากแอปไหน ไม่ต้องสนใจ</li>
+    </ul>
+    <p>
+      <code>save(validate: false)</code> คืน <code>true</code> · อ่านกลับมาได้ <code>title</code> เป็น <code>nil</code> —
+      <strong>คนดูแลสต็อกถูกข้าม และตัวตู้ก็ไม่ว่าอะไร</strong> เพราะช่อง title ในตาราง posts ไม่ได้ตั้งกฎห้ามว่างไว้
+      · เลข id ของคุณจะต่างไป
+    </p>
+    <p>ลบของทดลองทิ้งก่อนไปต่อ: <code>Post.where(title: nil).destroy_all</code> (<code>destroy_all</code> = ลบทุกแผ่นที่ค้นเจอ)</p>
+  </div>
+</div>
+
+<p>
+  ทีนี้ลองแบบเดียวกัน แต่<strong>ไม่ใส่ผู้เขียน</strong> — <code>Post.new</code> เปล่า ๆ เหมือนในสไลด์หน้า 28:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.new
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):002&gt; post.save(validate: false)
+  TRANSACTION (2.0ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (5.6ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id") VALUES (NULL, NULL, '2026-11-04 12:04:59.481696', '2026-11-04 12:04:59.481696', FALSE, 0, NULL) RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (0.7ms)  ROLLBACK /*application='WongnokBlog'*/
+(wongnok-blog):2:in '&lt;main&gt;': PG::NotNullViolation: ERROR:  null value in column "user_id" of relation "posts" violates not-null constraint (ActiveRecord::NotNullViolation)
+DETAIL:  Failing row contains (9, null, null, 2026-11-04 12:04:59.481696, 2026-11-04 12:04:59.481696, f, 0, null).
+<span class="c">… (บรรทัดยาว ๆ ที่ขึ้นต้นด้วย from … และข้อความเดิมซ้ำอีกรอบ ตัดออก)</span></code></pre>
+
+<ul>
+  <li>Rails ข้ามการตรวจจริง แล้วส่ง <code>INSERT</code> ไปที่ตู้ — ช่อง user_id เป็น <code>NULL</code></li>
+  <li><strong>ตู้ปฏิเสธ</strong>: <code>null value in column "user_id" … violates not-null constraint</code> = "ช่อง user_id ห้ามว่าง แต่คุณส่งค่าว่างมา"</li>
+  <li><code>ROLLBACK</code> = "ยกเลิกงานชุดนี้ ไม่เก็บอะไรเลย" · ฝั่ง Ruby ได้ error ชื่อ <code>ActiveRecord::NotNullViolation</code>
+      · <code>(wongnok-blog):2</code> หน้า error = "พังที่คำสั่งบรรทัดที่ 2 ที่พิมพ์ใน console"</li>
+  <li><code>DETAIL: Failing row contains (…)</code> = หน้าตาของแฟ้มที่ถูกปฏิเสธ · ตัวเลขแรก (ของผมคือ 9) เป็น id ที่ตู้จองไว้ให้แล้วแต่ไม่ได้ใช้ — บทความถัดไปจะข้ามเลขนี้ไป เป็นเรื่องปกติ</li>
+</ul>
+
+<p>
+  ทำไมรอบนี้ตู้กันได้ แต่รอบที่แล้วไม่กัน? เพราะตอน<a href="./0107-console-crud.html">บท 107</a> สร้างช่อง user_id
+  (<code>generate migration AddUserToPosts user:references</code>) generator ใส่ <code>null: false</code> ไว้ให้ (ดูใน <code>db/schema.rb</code>: <code>t.bigint "user_id", null: false</code>) ·
+  ส่วนช่อง title ไม่ได้ใส่ — นี่คือ <strong>NOT NULL</strong>: กฎ "ช่องนี้ห้ามว่าง" ที่เขียนไว้ในตัวตาราง
+</p>
+
+<p>
+  <code>save(validate: false)</code> ไม่ใช่ประตูข้างบานเดียว · เอกสารทางการของ Rails ระบุคำสั่งที่<strong>ข้าม validation</strong>ไว้เป็นรายการ
+  (Rails Guides — Active Record Validations หัวข้อ 1.4) ตัวที่จะเจอบ่อย:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ทำอะไร</th><th>เจอที่ไหนบ่อย</th></tr></thead>
+  <tbody>
+    <tr><td><code>save(validate: false)</code></td><td>เก็บโดยไม่ตรวจ</td><td>script แก้ข้อมูล · โค้ดที่ AI เขียนให้ "ผ่าน" ไว้ก่อน</td></tr>
+    <tr><td><code>update_column</code> · <code>update_columns</code></td><td>แก้ช่องตรง ๆ ไม่ตรวจ</td><td>แก้ข้อมูลทีละแถวใน console</td></tr>
+    <tr><td><code>update_all</code></td><td>แก้หลายแถวทีเดียว ไม่ตรวจ</td><td>ล้างข้อมูลทั้งตาราง (ภารกิจท้ายบทจะได้ใช้)</td></tr>
+    <tr><td><code>insert_all</code> · <code>upsert_all</code></td><td>ใส่หลายแถวทีเดียว ไม่ตรวจ</td><td>นำเข้าข้อมูลจากไฟล์</td></tr>
+    <tr><td>SQL ตรง ๆ</td><td>ไม่ผ่าน Rails เลย</td><td>เปิด <code>psql</code> (โปรแกรมพิมพ์ SQL ตรง ๆ ของ PostgreSQL) หรือโปรแกรมอื่นที่ต่อ database เดียวกัน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทั้งหมดนี้<strong>เดินอ้อมคนดูแลสต็อกได้ แต่อ้อมตัวตู้ไม่ได้</strong> — ถ้าตู้มีกฎ
+  · นั่นคือเหตุผลที่ของสำคัญต้องมีด่าน ④
+</p>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — ประตูหลังร้าน กับลิ้นชักที่มีช่องบังคับ</span>
+  <p>
+    คนดูแลสต็อกยืนตรวจแฟ้มอยู่หน้าห้องเก็บของ · แต่ร้านมี<strong>ประตูหลัง</strong>ที่พนักงานบางคนถือแฟ้มเดินเข้าไปเสียบลิ้นชักเองได้เลย ไม่ผ่านโต๊ะตรวจ
+    <br>ลิ้นชัก posts ทำช่อง "ผู้เขียน" เป็น<strong>ช่องบังคับ</strong>ไว้ (แฟ้มที่ช่องนี้ว่าง เสียบไม่ลง) แต่ช่อง "ชื่อเรื่อง" ไม่ได้ทำ ·
+    แฟ้มไร้ชื่อเรื่องจึงเข้าทางประตูหลังได้ ส่วนแฟ้มไร้ผู้เขียนเข้าไม่ได้ไม่ว่าทางไหน
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ประตูหลังร้านจริงเป็นเรื่องผิดปกติ · ใน Rails คำสั่งพวกนี้<strong>ตั้งใจทำไว้ให้ใช้</strong>
+    (เช่น แก้ข้อมูลทีละมาก ๆ ให้เร็ว) ไม่ใช่ช่องโหว่ — ปัญหาคือคนใช้มักลืมว่ามันไม่ผ่านโต๊ะตรวจ
+  </p>
+</div>
+
+<p>
+  เทียบ Go: ใน GORM ถ้าเขียน SQL เองด้วย <code>db.Exec("INSERT INTO …")</code> ก็ข้ามทุกอย่างในโค้ด Go ไปเหมือนกัน ·
+  กฎที่เหลืออยู่คือกฎที่อยู่ในตาราง เช่น tag <code>gorm:"not null"</code> ที่ GORM ใส่ให้ตอนสร้างตาราง (ด่าน ④)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของด่าน ③ และ ④</span>
+  <dl>
+    <dt>NOT NULL constraint</dt>
+    <dd>กฎที่ตารางบอกว่า "ช่องนี้ห้ามเป็น NULL (ไม่มีค่า)" · ใน migration เขียน <code>null: false</code> · พังแล้วได้ <code>ActiveRecord::NotNullViolation</code> ·
+        <strong>ถาม senior ได้ว่า "คอลัมน์นี้ presence อย่างเดียว หรือมี NOT NULL ด้วย"</strong></dd>
+    <dt>skip validations / bypass</dt>
+    <dd>คำสั่งที่เก็บลง database โดยไม่รัน validation · <strong>พิมพ์บอก AI ได้ว่า "don't use update_column or save(validate: false) here, I want validations to run"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6"><code>uniqueness: true</code> — กฎที่ดูเหมือนกันอีเมลซ้ำได้</h2>
+
+<p>
+  ประตูข้างยังพอเข้าใจได้ — "ก็คนจงใจข้ามนี่" · แต่เรื่องต่อไปน่ากลัวกว่า: <strong>ไม่มีใครข้ามอะไรเลย ใช้ <code>save</code> ธรรมดา แต่ข้อมูลก็ยังซ้ำ</strong>
+  · ใส่กฎ "อีเมลห้ามซ้ำ" ให้ User ก่อน — เพิ่มบรรทัดสุดท้าย<strong>บรรทัดเดียว</strong>ต่อจากกฎของบท 110 (ไฟล์ <code>app/models/user.rb</code>):
+</p>
+
+<pre><code><span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">validates</span> <span class="n">:name</span>, presence: <span class="k">true</span>
+  <span class="f">validates</span> <span class="n">:email</span>, presence: <span class="k">true</span>, format: { with: <span class="s">/\A[^@\s]+@[^@\s]+\z/</span> }
+  <span class="f">validates</span> <span class="n">:email</span>, <span class="n">uniqueness:</span> <span class="k">true</span>   <span class="c"># ← บรรทัดใหม่ของบทนี้</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  <code>uniqueness: true</code> = "อีเมลนี้ต้องไม่ซ้ำกับแฟ้มอื่นในลิ้นชัก users" · จะเขียนรวมกับบรรทัดบน
+  (<code>presence: true, format: …, uniqueness: true</code>) ก็ได้ผลเหมือนกัน — แยกบรรทัดไว้ให้เห็นชัดว่าอันไหนใหม่
+</p>
+
+<p>ลองสมัครด้วยอีเมลของสมชายใน console — กฎทำงานดี:</p>
+
+<pre><code>wongnok-blog(dev):001&gt; user = User.new(name: "สมชายตัวปลอม", email: "somchai@example.com")
+=&gt; #&lt;User … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):002&gt; user.save
+  TRANSACTION (1.6ms)  BEGIN /*application='WongnokBlog'*/
+  User Exists? (4.3ms)  SELECT 1 AS one FROM "users" WHERE "users"."email" = 'somchai@example.com' LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.9ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):003&gt; user.errors.full_messages
+=&gt; ["Email has already been taken"]</code></pre>
+
+<p>
+  ดูบรรทัด <code>User Exists?</code> ให้ดี — นี่คือ<strong>วิธีที่ uniqueness ตรวจ</strong>:
+  <code>SELECT 1 AS one FROM "users" WHERE "users"."email" = 'somchai@example.com' LIMIT 1</code>
+  = "เปิดลิ้นชัก users หาแผ่นที่อีเมลเป็นอันนี้ ถ้าเจอสักแผ่นให้ตอบเลข 1 กลับมา" · เจอ → ไม่ผ่าน → ไม่ส่ง <code>INSERT</code>
+</p>
+
+<p>
+  ปัญหาอยู่ตรงนี้: <strong>"ถามตู้" กับ "เก็บแฟ้ม" เป็นสองคำสั่งแยกกัน</strong> และมีช่องว่างระหว่างสองคำสั่งเสมอ
+  · ถ้ามีอีกคนแทรกเข้ามาในช่องว่างนั้นพอดี — ทั้งสองคนจะได้คำตอบว่า "ยังไม่มีใครใช้" ทั้งคู่
+</p>
+
+<div class="diagram">สองคนกดสมัครด้วยอีเมล nan@example.com ห่างกันแค่เสี้ยววินาที
+
+t1  A ─ ถามตู้ "มีใครใช้ nan@example.com ไหม"       (SELECT)
+t2  B ─ ถามตู้คำถามเดียวกัน                        (SELECT)
+t3  A ─ ตู้ตอบ "ไม่มี" → ผ่านการตรวจ (valid? = true)
+t4  B ─ ตู้ตอบ "ไม่มี" → ผ่านการตรวจ (valid? = true)   ← ตอนที่ถาม ยังไม่มีใครเก็บแฟ้มจริง ๆ
+t5  A ─ เก็บแฟ้ม (INSERT) สำเร็จ
+t6  B ─ เก็บแฟ้ม (INSERT) สำเร็จด้วย                ✗ ลิ้นชักมีอีเมลซ้ำ 2 แผ่น
+
+validation ทำงาน "ถูก" ทั้งสองคน — แค่ข้อมูลที่มันเห็นตอน t3 · t4 เก่าไปแล้วตอน t5 · t6</div>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — ลูกค้าสองคนโทรจองโต๊ะเดียวกัน</span>
+  <p>
+    ร้านมีโต๊ะริมหน้าต่างตัวเดียว · ลูกค้าสองคนโทรเข้ามาพร้อมกัน พนักงานสองคนรับสายคนละเครื่อง
+    <br>ทั้งคู่<strong>เปิดสมุดจองดูพร้อมกัน</strong> — "โต๊ะริมหน้าต่างคืนนี้ ว่างครับ" · แล้วทั้งคู่ก็เขียนชื่อลูกค้าของตัวเองลงไป
+    <br>คืนนั้นลูกค้าสองคนมาถึงโต๊ะเดียวกัน — พนักงานไม่มีใครผิด แต่<strong>ระบบ "ดูก่อนแล้วค่อยเขียน" ผิด</strong>
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริง พนักงานคนที่สองยังมีโอกาสเห็นว่ามีชื่อเพิ่งเขียนลงไป ·
+    ในแอป สองคำขอวิ่งพร้อมกันเร็วระดับมิลลิวินาที ไม่มีใครเห็นใคร
+    <br>และในเครื่องเรา (คนใช้คนเดียว) แทบไม่เกิดเลย — มันจะโผล่ตอน<strong>มีคนใช้จริงเยอะ ๆ</strong> หรือตอนลูกค้า<strong>กดปุ่ม "สมัคร" สองครั้งรัว ๆ</strong>
+  </p>
+</div>
+
+<p>
+  ถ้าจำ<a href="../../day-6/lessons/0024-data-race-mutex.html">บท 24</a> ของ Go ได้ — นี่คือเรื่องเดียวกับ <code>counter++</code>
+  ที่สอง goroutine ทำพร้อมกันแล้วตัวเลขหาย: <strong>อ่าน → คิด → เขียนกลับ</strong> โดยมีคนอื่นแทรกกลางทางได้ ·
+  ต่างกันแค่บท 24 แย่งตัวแปรในหน่วยความจำ ส่วนบทนี้แย่งแถวใน database
+</p>
+
+<h3 id="sn-sub-1">ลองให้เกิดจริง: สองโปรแกรมสมัครพร้อมกัน</h3>
+
+<p>
+  ช่องว่างจริงสั้นแค่เสี้ยววินาที ตาเปล่าจับไม่ทัน · ผมจึงเขียนสคริปต์ที่<strong>แทรกการรอ 2 วินาที</strong>ไว้ระหว่าง "ตรวจ" กับ "เก็บ"
+  เพื่อขยายช่องว่างให้เห็น · สร้างไฟล์ <code>race.rb</code> ไว้ที่โฟลเดอร์บนสุดของแอป (ที่เดียวกับ <code>Gemfile</code>):
+</p>
+
+<pre><code><span class="c"># race.rb — จำลองคนสองคนสมัครด้วยอีเมลเดียวกันในเวลาเดียวกัน</span>
+$stdout.sync = <span class="k">true</span>
+name = <span class="n">ARGV</span>[<span class="n">0</span>]
+<span class="n">User</span>.<span class="f">after_validation</span> <span class="k">do</span>
+  <span class="f">puts</span> <span class="s">"#{name}: ตรวจแล้ว ไม่มีใครใช้อีเมลนี้ → รอ 2 วินาที"</span>
+  <span class="f">sleep</span> <span class="n">2</span>
+<span class="k">end</span>
+
+user = <span class="n">User</span>.<span class="f">new</span>(<span class="n">name:</span> name, <span class="n">email:</span> <span class="s">"nan@example.com"</span>)
+<span class="f">puts</span> <span class="s">"#{name}: save ได้ #{user.save}"</span></code></pre>
+
+<ul>
+  <li><code>$stdout.sync = true</code> — ให้ <code>puts</code> พิมพ์ออกจอทันที (ไม่งั้นโปรแกรมจะเก็บไว้พิมพ์ทีเดียวตอนจบ ลำดับบรรทัดจะดูเพี้ยน)</li>
+  <li><code>ARGV[0]</code> — คำแรกที่พิมพ์ต่อท้ายคำสั่ง · เราจะส่ง <code>A</code> กับ <code>B</code> ไว้แยกว่าใครเป็นใคร</li>
+  <li><code>User.after_validation do … end</code> — "ทุกครั้งที่ตรวจเสร็จ ให้ทำสิ่งนี้ก่อนเก็บ" (เรียกว่า <strong>callback</strong> · เจอละเอียด<a href="./0112-callbacks-and-logic.html">บท 112</a>)
+      · ใช้แค่แทรก <code>sleep 2</code> และมีผลเฉพาะตอนรันสคริปต์นี้ <strong>ไม่ได้แก้ model</strong></li>
+  <li><code>user.save</code> — <code>save</code> ธรรมดา ไม่ได้ข้ามอะไรเลย: ตรวจ (SELECT) → รอ 2 วินาที → เก็บ (INSERT)</li>
+  <li><code>"#{name}: …"</code> — แทรกค่าตัวแปรในข้อความ (<a href="../../rails-day-1/lessons/0091-ruby-variables-objects-strings.html">บท 91</a>)</li>
+</ul>
+
+<p>สั่งรันสองตัวพร้อมกัน แล้วนับว่าได้อีเมลนี้กี่แถว:</p>
+
+<pre><code><span class="c">$ bin/rails runner race.rb A &amp; bin/rails runner race.rb B &amp; wait</span>
+B: ตรวจแล้ว ไม่มีใครใช้อีเมลนี้ → รอ 2 วินาที
+A: ตรวจแล้ว ไม่มีใครใช้อีเมลนี้ → รอ 2 วินาที
+B: save ได้ true
+A: save ได้ true
+<span class="c">$ bin/rails runner 'p User.where(email: "nan@example.com").pluck(:id, :name, :email)'</span>
+[[6, "B", "nan@example.com"], [7, "A", "nan@example.com"]]</code></pre>
+
+<ul>
+  <li><code>bin/rails runner ไฟล์</code> — รันไฟล์ Ruby ในแอปโดยไม่ต้องเปิด console</li>
+  <li><code>&amp;</code> ท้ายคำสั่ง = "ปล่อยให้รันไป ไม่ต้องรอ" (สองตัวจึงวิ่งพร้อมกัน) · <code>wait</code> = "รอทุกตัวที่ปล่อยไปให้จบก่อน"
+      · terminal ของคุณอาจพิมพ์บรรทัดอย่าง <code>[1] 12345</code> เพิ่ม — เป็นเลขงานของ shell ไม่ต้องสนใจ</li>
+  <li><strong>ทั้งสองคนผ่านการตรวจ ทั้งสองคนเก็บได้</strong> → อีเมลเดียวกัน 2 แถว · ใครพิมพ์ก่อน (A หรือ B) สลับกันได้ทุกรอบ</li>
+  <li><code>pluck(:id, :name, :email)</code> = ขอเฉพาะสามช่องนี้ของทุกแถวที่ค้นเจอ (เจอละเอียด<a href="./0113-query-lazy-relation.html">บท 113</a>)</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของเรื่องนี้</span>
+  <dl>
+    <dt>race condition</dt>
+    <dd>ผลลัพธ์ขึ้นกับว่าใครทำเสร็จก่อนใคร · ทดสอบทีละคนผ่านเสมอ แต่ใช้จริงพร้อมกันแล้วพัง ·
+        <strong>ถาม senior ได้ว่า "ตรงนี้มี race condition ไหม ถ้าสอง request มาพร้อมกัน"</strong></dd>
+    <dt>check-then-act</dt>
+    <dd>รูปแบบ "ตรวจก่อน แล้วค่อยทำ" ที่เป็นต้นเหตุของ race condition · <code>validates uniqueness</code> คือ check-then-act ·
+        <strong>พิมพ์บอก AI ได้ว่า "this uniqueness check is check-then-act, how do we make the database enforce it?"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">ทางแก้: ให้ตัวตู้เป็นคนตัดสิน — unique index</h2>
+
+<p>
+  แก้ race condition ด้วยการตรวจให้ "เร็วขึ้น" ไม่ได้ — ช่องว่างยังอยู่ · ทางแก้คือให้<strong>คนที่เก็บแฟ้ม</strong> (database) เป็นคนตรวจเอง
+  <strong>ในจังหวะเดียวกับที่เก็บ</strong> ไม่มีช่องว่างให้ใครแทรก · เครื่องมือที่ database มีให้คือ <strong>unique index</strong>
+</p>
+
+<p>
+  <strong>index</strong> (ภาษาคน) = สารบัญที่ database ทำไว้ให้ช่องหนึ่ง เรียงตามตัวอักษร เพื่อหาเจอเร็วโดยไม่ต้องไล่ทีละแผ่น
+  (<a href="./0109-safe-migrations.html">บท 109</a> พูดถึงเรื่องความเร็ว) · <strong>unique index</strong> = สารบัญที่มีกฎเพิ่มว่า
+  "<strong>ชื่อหนึ่งมีได้ช่องเดียว</strong>" — ใครจะใส่แฟ้มที่อีเมลซ้ำกับในสารบัญ ตู้ปฏิเสธทันที
+</p>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — ป้ายแท็บในลิ้นชักที่มีช่องเดียวต่อชื่อ</span>
+  <p>
+    ลองนึกถึงลิ้นชัก users ที่ติดป้ายแท็บเรียงตามอีเมล <strong>หนึ่งแท็บใส่แฟ้มได้แผ่นเดียว</strong>
+    <br>พนักงานสองคนถือแฟ้ม <code>nan@example.com</code> มาพร้อมกัน · คนแรกเสียบลงแท็บได้ · คนที่สองเสียบไม่ลง เพราะแท็บนั้นมีแฟ้มแล้ว
+    — ไม่ต้องมีใครเปิดสมุดตรวจก่อน <strong>ตัวลิ้นชักตัดสินเอง ณ วินาทีที่เสียบ</strong>
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานคนที่สองในชีวิตจริงเห็นเองว่าแท็บเต็ม แล้วเดินกลับไปบอกลูกค้าได้ ·
+    ในแอป database แค่โยน error กลับมา (<code>ActiveRecord::RecordNotUnique</code>) — <strong>ถ้าโค้ดเราไม่รับ ลูกค้าจะเห็นหน้า error</strong>
+    (เรื่องนี้แก้ในหัวข้อถัดไป)
+  </p>
+</div>
+
+<h3 id="sn-sub-2">ขั้น 1 — สร้าง migration</h3>
+
+<pre><code><span class="c">$ bin/rails generate migration AddUniqueIndexToUsers</span>
+      invoke  active_record
+      create    db/migrate/20261104114726_add_unique_index_to_users.rb</code></pre>
+
+<p>เปิดไฟล์ที่ได้ (เลขหน้าชื่อไฟล์ของคุณจะต่าง) แล้วเติมบรรทัด <code>add_index</code> — โค้ดเดียวกับสไลด์หน้า 26:</p>
+
+<pre><code><span class="k">class</span> <span class="n">AddUniqueIndexToUsers</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_index</span> <span class="n">:users</span>, <span class="n">:email</span>, <span class="n">unique:</span> <span class="k">true</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  <code>add_index :users, :email, unique: true</code> = "ทำสารบัญให้ช่อง email ของลิ้นชัก users และห้ามซ้ำ"
+  · เทียบ goose (<a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a>) คือ SQL <code>CREATE UNIQUE INDEX … ON users (email)</code> ที่ Rails เขียนให้
+</p>
+
+<h3 id="sn-sub-3">ขั้น 2 — <code>db:migrate</code> แล้วพัง (ตั้งใจ)</h3>
+
+<pre><code><span class="c">$ bin/rails db:migrate</span>
+== 20261104114726 AddUniqueIndexToUsers: migrating ============================
+-- add_index(:users, :email, {unique: true})
+bin/rails aborted!
+StandardError: An error has occurred, this and all later migrations canceled: (StandardError)
+
+PG::UniqueViolation: ERROR:  could not create unique index "index_users_on_email"
+DETAIL:  Key (email)=(nan@example.com) is duplicated.
+…/db/migrate/20261104114726_add_unique_index_to_users.rb:3:in 'AddUniqueIndexToUsers#change'
+<span class="c">… (Caused by: ซ้ำอีกสองรอบ ตัดออก)</span></code></pre>
+
+<p>
+  <code>could not create unique index</code> · <code>Key (email)=(nan@example.com) is duplicated</code>
+  = "ทำสารบัญห้ามซ้ำไม่ได้ เพราะ<strong>ตอนนี้มีอีเมลนี้ซ้ำอยู่แล้ว</strong>" — แถวซ้ำจากการทดลองเมื่อกี้นั่นเอง
+  · บรรทัด <code>this and all later migrations canceled</code> = "ใบสั่งช่างใบนี้และใบหลังจากนี้ยกเลิกหมด" — ตู้ยังเหมือนเดิม ใบนี้ยังไม่ถูกเซ็นรับ แก้แล้วสั่งใหม่ได้
+  · ช่างไม่ยอมติดป้ายแท็บแบบช่องเดียว ในเมื่อมีสองแผ่นยัดอยู่ช่องเดียวกันแล้ว · <code>:3</code> คือบรรทัดที่ 3 ของไฟล์ migration (บรรทัด <code>add_index</code>)
+</p>
+
+<div class="warn">
+  <span class="label">⚠️ ในแอปจริง ขั้นนี้คือจุดที่คนติด</span>
+  <p>
+    ถ้าแอปเปิดใช้มาสักพักโดยมีแค่ <code>uniqueness: true</code> <strong>อาจมีอีเมลซ้ำซ่อนอยู่แล้วโดยไม่มีใครรู้</strong> ·
+    migration นี้จะพังจนกว่าจะล้างของซ้ำก่อน — และการตัดสินว่า "เก็บแถวไหน ลบแถวไหน" เป็นเรื่องของเจ้าของข้อมูล ไม่ใช่ของโค้ด
+  </p>
+</div>
+
+<h3 id="sn-sub-4">ขั้น 3 — หาของซ้ำ ล้างทิ้ง แล้ว migrate ใหม่</h3>
+
+<p>ใน console — หาว่าอีเมลไหนซ้ำ แล้วดูว่าซ้ำกี่แถว:</p>
+
+<pre><code>wongnok-blog(dev):001&gt; User.group(:email).having("COUNT(*) &gt; 1").count
+  User Count (0.9ms)  SELECT COUNT(*) AS "count_all", "users"."email" AS "users_email" FROM "users" GROUP BY "users"."email" HAVING (COUNT(*) &gt; 1) /*application='WongnokBlog'*/
+=&gt; {"nan@example.com" =&gt; 2}
+wongnok-blog(dev):002&gt; User.where(email: "nan@example.com").pluck(:id, :name)
+  User Pluck (1.7ms)  SELECT "users"."id", "users"."name" FROM "users" WHERE "users"."email" = 'nan@example.com' /*application='WongnokBlog'*/
+=&gt; [[6, "B"], [7, "A"]]</code></pre>
+
+<ul>
+  <li>บรรทัด 001 — <code>group(:email)</code> "จัดแฟ้มเป็นกองตามอีเมล" · <code>having("COUNT(*) &gt; 1")</code> "เอาเฉพาะกองที่มีมากกว่า 1 แผ่น" ·
+      <code>.count</code> "นับแต่ละกอง" (<code>COUNT(*)</code> ใน SQL = นับจำนวนแถว · group เจอละเอียด<a href="./0113-query-lazy-relation.html">บท 113</a>)</li>
+  <li>SQL ของบรรทัด 001 ภาษาคน: "นับแฟ้ม (<code>COUNT(*)</code>) แยกกองตามอีเมล (<code>GROUP BY</code>) เอาเฉพาะกองที่นับได้เกิน 1 (<code>HAVING</code>)" ·
+      <code>AS "count_all"</code> แค่ตั้งชื่อเล่นให้ผลลัพธ์ ไม่ต้องสนใจ</li>
+  <li>ผลเป็น hash: อีเมล <code>nan@example.com</code> มี 2 แถว · บรรทัด 002 ดูว่าเป็น id ไหนบ้าง
+      (SQL: "ขอแค่ช่อง id กับ name จากลิ้นชัก users เฉพาะแผ่นที่อีเมลเป็นอันนี้")</li>
+</ul>
+
+<p>
+  ลบแถวที่ไม่ต้องการ: <code>User.find(7).destroy</code> (ใส่เลข id ของ<strong>คุณ</strong>) · แล้ว migrate ใหม่ — รอบนี้ผ่าน:
+</p>
+
+<pre><code><span class="c">$ bin/rails db:migrate</span>
+== 20261104114726 AddUniqueIndexToUsers: migrating ============================
+-- add_index(:users, :email, {unique: true})
+   -&gt; 0.0054s
+== 20261104114726 AddUniqueIndexToUsers: migrated (0.0055s) ===================</code></pre>
+
+<p>ใน <code>db/schema.rb</code> (แปลนตู้ฉบับล่าสุด) ส่วนของตาราง users มีบรรทัดใหม่:</p>
+
+<pre><code>    t.<span class="f">index</span> [<span class="s">"email"</span>], <span class="n">name:</span> <span class="s">"index_users_on_email"</span>, <span class="n">unique:</span> <span class="k">true</span></code></pre>
+
+<h3 id="sn-sub-5">ขั้น 4 — แข่งกันอีกรอบ</h3>
+
+<p>
+  ลบแถว <code>nan@example.com</code> ที่เหลือก่อน (ไม่งั้นรอบนี้ validation จะเห็นแถวเก่าแล้วไม่ผ่านทั้งคู่):
+  <code>User.where(email: "nan@example.com").destroy_all</code> · แล้วรันคำสั่งเดิม:
+</p>
+
+<pre><code><span class="c">$ bin/rails runner race.rb A &amp; bin/rails runner race.rb B &amp; wait</span>
+B: ตรวจแล้ว ไม่มีใครใช้อีเมลนี้ → รอ 2 วินาที
+A: ตรวจแล้ว ไม่มีใครใช้อีเมลนี้ → รอ 2 วินาที
+B: save ได้ true
+…/activerecord-8.1.4/lib/active_record/connection_adapters/postgresql/database_statements.rb:152:in 'PG::Connection#exec': PG::UniqueViolation: ERROR:  duplicate key value violates unique constraint "index_users_on_email" (ActiveRecord::RecordNotUnique)
+DETAIL:  Key (email)=(nan@example.com) already exists.
+
+<span class="c">… (บรรทัด from … ตัดออก)</span>
+	from …/race.rb:10:in '&lt;main&gt;'
+<span class="c">…</span>
+<span class="c">$ bin/rails runner 'p User.where(email: "nan@example.com").pluck(:id, :name)'</span>
+[[8, "B"]]</code></pre>
+
+<ul>
+  <li>สองคนยัง<strong>ผ่านการตรวจทั้งคู่</strong>เหมือนเดิม — validation ไม่ได้ฉลาดขึ้น</li>
+  <li>แต่ตอนเก็บ <strong>ตู้รับแค่คนแรก</strong> · คนที่สองได้ <code>duplicate key value violates unique constraint "index_users_on_email"</code>
+      = "ค่านี้ซ้ำกับที่มีในสารบัญห้ามซ้ำ" · ฝั่ง Ruby เป็น error ชื่อ <strong><code>ActiveRecord::RecordNotUnique</code></strong></li>
+  <li><code>race.rb:10</code> = บรรทัดที่ 10 ของ <code>race.rb</code> (นับคอมเมนต์บรรทัดแรกด้วย) คือบรรทัด <code>puts</code> สุดท้ายที่เรียก <code>user.save</code> ·
+      A จึง<strong>ไม่ได้พิมพ์</strong> "save ได้ …" เพราะระเบิดก่อนถึงตอนพิมพ์</li>
+  <li>บรรทัดยาว ๆ ที่ขึ้นต้นด้วย <code>…/activerecord-8.1.4/…</code> = ที่อยู่ไฟล์ข้างใน Rails ที่ error เกิด · ไม่ต้องอ่าน ให้มองหาชื่อ error ในวงเล็บท้ายบรรทัด</li>
+  <li>ผลสุดท้าย: <strong>เหลือแถวเดียว</strong> · รอบนี้ B ชนะ — ของคุณอาจเป็น A</li>
+</ul>
+
+<p>
+  เทียบ Go: <code>gorm:"unique"</code> ของ<a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a> ทำแบบนี้มาตั้งแต่แรก — GORM สร้างกฎที่ตู้ ไม่ได้ตรวจในโค้ด ·
+  ส่วน Rails แยกสองอย่างออกจากกัน: <code>validates … uniqueness</code> (ด่าน ③) กับ <code>add_index … unique: true</code> (ด่าน ④) — <strong>ต้องใส่เองทั้งสองที่</strong>
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของทางแก้</span>
+  <dl>
+    <dt>unique index</dt>
+    <dd>สารบัญของคอลัมน์ที่ห้ามมีค่าซ้ำ · database ตรวจตอนเก็บ ไม่มีช่องว่างให้แทรก ·
+        <strong>ถาม senior ได้ว่า "uniqueness ตัวนี้มี unique index ใน migration รองรับไหม"</strong></dd>
+    <dt><code>ActiveRecord::RecordNotUnique</code></dt>
+    <dd>error ที่ Rails โยนเมื่อตู้ปฏิเสธค่าซ้ำ (เบื้องหลังคือ <code>PG::UniqueViolation</code> ของ PostgreSQL) ·
+        <strong>พิมพ์บอก AI ได้ว่า "rescue ActiveRecord::RecordNotUnique and show a form error instead of a 500"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">ด่านสุดท้ายต้องมีคนรับ — <code>rescue</code> ใน controller (สไลด์หน้า 26)</h2>
+
+<p>
+  ตอนนี้ตู้กันอีเมลซ้ำได้แน่นอนแล้ว · แต่ถ้าคนที่สองแพ้การแข่ง ลูกค้าจะได้ error ภาษาเครื่อง
+  — ต้องมีคน<strong>รับ error นั้นแล้วแปลเป็นข้อความในฟอร์ม</strong> · สไลด์หน้า 26 ให้โค้ด controller ไว้แบบนี้:
+</p>
+
+<pre><code>  <span class="k">def</span> <span class="f">create</span>
+    @user = <span class="n">User</span>.<span class="f">new</span>(user_params)
+    @user.<span class="f">save!</span>
+    <span class="f">redirect_to</span> @user
+  <span class="k">rescue</span> <span class="n">ActiveRecord</span>::<span class="n">RecordNotUnique</span>
+    @user.errors.<span class="f">add</span>(<span class="n">:email</span>, <span class="s">"ถูกใช้ไปแล้ว"</span>)
+    <span class="f">render</span> <span class="n">:new</span>, <span class="n">status:</span> <span class="n">:unprocessable_entity</span>
+  <span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>@user.save!</code> — เก็บแบบมี <code>!</code>: ไม่ผ่านแล้ว<strong>ระเบิด</strong> (<a href="./0110-validations.html">บท 110</a>)</li>
+  <li><code>rescue ActiveRecord::RecordNotUnique</code> — "ถ้าระหว่างทางมี error ชนิดนี้ ให้กระโดดมาทำตรงนี้แทน" (<code>rescue</code> แบบ<a href="../../rails-day-1/lessons/0096-ruby-errors-and-duck-typing.html">บท 96</a>
+      · เขียนใน <code>def</code> ได้เลยโดยไม่ต้องมี <code>begin</code>)</li>
+  <li><code>@user.errors.add(:email, "ถูกใช้ไปแล้ว")</code> — <strong>เติมเหตุผลเอง</strong>ลงในรายการ error ของช่อง email · view จะพิมพ์ออกมาเป็น <code>Email ถูกใช้ไปแล้ว</code></li>
+  <li><code>render :new, status: :unprocessable_entity</code> — แสดงฟอร์มเดิมอีกรอบพร้อมรหัส 422 (ชื่อเก่าของ <code>:unprocessable_content</code> · โค้ดฉบับแก้ข้างล่างใช้ชื่อใหม่)</li>
+</ul>
+
+<div class="predict">
+  <p>เอาโค้ดของสไลด์ไปแทน <code>create</code> เดิม (model User ยังมี <code>validates :email, uniqueness: true</code>) ·
+    แล้วสมัครด้วยอีเมล <code>somchai@example.com</code> <strong>ธรรมดา ๆ คนเดียว ไม่ได้แข่งกับใคร</strong></p>
+  <p class="ask">ลูกค้าจะเห็นฟอร์มพร้อมข้อความ "Email ถูกใช้ไปแล้ว" ใช่ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่ใช่ — ได้หน้า error แทนฟอร์ม</strong> · ผลจริง (ข้อความบนหน้าที่ได้ ตัดมาเฉพาะหัว):</p>
+    <pre><code>ActiveRecord::RecordInvalid in UsersController#create
+Validation failed: Email has already been taken</code></pre>
+    <p>และใน log ของ server:</p>
+    <pre><code>Completed 422 Unprocessable Content in 7ms (ActiveRecord: 6.5ms (1 query, 0 cached) | GC: 0.0ms)
+ActiveRecord::RecordInvalid (Validation failed: Email has already been taken):</code></pre>
+    <p>
+      เกิดอะไรขึ้น: กรณีปกติ (99%) <strong>validation จับได้ก่อน</strong> → <code>save!</code> ระเบิดด้วย <code>ActiveRecord::RecordInvalid</code>
+      (error ของ "ไม่ผ่านการตรวจ") · แต่ <code>rescue</code> ดักไว้แค่ <code>RecordNotUnique</code> (error ของ "ตู้ปฏิเสธ") — <strong>คนละชนิด ไม่มีใครรับ</strong>
+    </p>
+    <p>
+      หน้าที่เห็นนี้คือหน้า error แบบละเอียดของโหมด development · ผมลองปิดโหมดละเอียด (ตั้งให้ทำตัวแบบเว็บจริง) แล้วลูกค้าจะเห็นหน้าสำเร็จรูป
+      <code>The change you wanted was rejected (422 Unprocessable Entity)</code> — <strong>ไม่ใช่ฟอร์มเดิม ข้อมูลที่กรอกไว้หายหมด</strong>
+    </p>
+  </div>
+</div>
+
+<p>
+  แก้ให้ครบสองกรณี: ใช้ <code>if @user.save</code> แบบเดิม (รับกรณี 99% ที่ validation จับได้)
+  <strong>แล้วเติม <code>rescue</code> ของสไลด์ต่อท้าย</strong> (รับ 1% ที่แพ้การแข่ง) — <code>create</code> ใน <code>app/controllers/users_controller.rb</code> กลายเป็น
+  (99% กับ 1% เป็นตัวเลขเปรียบเทียบว่า "แทบทุกครั้ง" กับ "นาน ๆ ครั้ง" ไม่ใช่สถิติจริง):
+</p>
+
+<pre><code>  <span class="k">def</span> <span class="f">create</span>
+    @user = <span class="n">User</span>.<span class="f">new</span>(user_params)
+    <span class="k">if</span> @user.<span class="f">save</span>
+      <span class="f">redirect_to</span> @user
+    <span class="k">else</span>
+      <span class="f">render</span> <span class="n">:new</span>, <span class="n">status:</span> <span class="n">:unprocessable_content</span>     <span class="c"># 99%: validation จับได้</span>
+    <span class="k">end</span>
+  <span class="k">rescue</span> <span class="n">ActiveRecord</span>::<span class="n">RecordNotUnique</span>
+    @user.errors.<span class="f">add</span>(<span class="n">:email</span>, <span class="s">"ถูกใช้ไปแล้ว"</span>)             <span class="c"># 1%: แพ้การแข่ง ตู้ปฏิเสธ</span>
+    <span class="f">render</span> <span class="n">:new</span>, <span class="n">status:</span> <span class="n">:unprocessable_content</span>
+  <span class="k">end</span></code></pre>
+
+<p>ผลจริงทั้งสองกรณี (HTML ที่ได้ ตัดมาเฉพาะบรรทัดข้อความ error · บรรทัด <code>HTTP 422</code> คือรหัสตอบกลับที่ผมให้ curl พิมพ์ต่อท้าย):</p>
+
+<pre><code><span class="c"># กรณี 99% — สมัครด้วย somchai@example.com ตามปกติ</span>
+  &lt;p class="error"&gt;Email has already been taken&lt;/p&gt;
+HTTP 422
+
+<span class="c"># กรณี 1% — จำลองการแพ้แข่ง ด้วยการปิดบรรทัด validates :email, uniqueness: true ใน user.rb ชั่วคราว (ใส่ # ข้างหน้า)</span>
+  &lt;p class="error"&gt;Email ถูกใช้ไปแล้ว&lt;/p&gt;
+HTTP 422</code></pre>
+
+<p>
+  ทั้งสองกรณีลูกค้าได้<strong>ฟอร์มเดิม</strong>พร้อมข้อความ และอีเมลที่กรอกไว้ยังอยู่ในช่อง ·
+  ข้อความกรณี 1% เป็นภาษาไทยเพราะเราเขียนเองใน <code>errors.add</code> ส่วนกรณี 99% เป็นข้อความสำเร็จรูปของ Rails ·
+  <strong>อย่าลืมเอา <code>#</code> หน้า validates ออก</strong>หลังลอง ·
+  ทำไมปิด validation แล้วได้ผลเหมือน "แพ้แข่ง"? เพราะทั้งสองแบบคือ "คนดูแลสต็อกไม่ได้จับ แฟ้มไปชนสารบัญห้ามซ้ำที่ตู้"
+</p>
+
+<h2 id="sn-sec-9">ทำไมต้องมีทั้งสามอย่าง — และ pattern เดียวกันใช้ได้ทุกเรื่อง</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ของ</th><th>อยู่ด่าน</th><th>หน้าที่</th><th>ถ้าไม่มี</th></tr></thead>
+  <tbody>
+    <tr><td><code>add_index … unique: true</code></td><td>④ ตัวตู้</td><td><strong>รับประกัน</strong> ข้ามไม่ได้</td><td>อีเมลซ้ำหลุดเข้าตู้ได้ (race · ประตูข้าง)</td></tr>
+    <tr><td><code>validates … uniqueness</code></td><td>③ คนดูแลสต็อก</td><td>ข้อความภาษาคน ใน 99% ของเวลา</td><td>ยังกันได้ (rescue รับ) แต่ลูกค้าเห็นปัญหาไม่พร้อมกัน — เช่น ลืมกรอกชื่อ + อีเมลซ้ำ จะเห็นแค่ "ชื่อว่าง" ก่อน แก้ชื่อแล้วส่งใหม่ถึงรู้ว่าอีเมลซ้ำ</td></tr>
+    <tr><td><code>rescue … RecordNotUnique</code></td><td>controller</td><td>รับ 1% ที่หลุด ไม่ให้เป็นหน้า error</td><td>คนที่แพ้การแข่งเห็นหน้า error</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  เรื่องอีเมลเป็นแค่ตัวอย่างเดียว · <strong>กฎสำคัญทุกข้อ ให้ใส่เป็นคู่: ด่าน ③ ไว้บอกสวย + ด่าน ④ ไว้รับประกัน</strong> (สไลด์หน้า 26):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กฎที่อยากได้</th><th>ด่าน ③ ใน model</th><th>ด่าน ④ ใน migration</th><th>ตู้ปฏิเสธแล้วได้ error</th></tr></thead>
+  <tbody>
+    <tr><td>ห้ามว่าง</td><td><code>validates :name, presence: true</code></td><td><code>null: false</code> · <code>change_column_null</code></td><td><code>ActiveRecord::NotNullViolation</code></td></tr>
+    <tr><td>ห้ามซ้ำ</td><td><code>validates :email, uniqueness: true</code></td><td><code>add_index … unique: true</code></td><td><code>ActiveRecord::RecordNotUnique</code></td></tr>
+    <tr><td>ต้องมีเจ้าของจริง</td><td><code>belongs_to :post</code> (ตรวจให้เอง)</td><td><code>foreign_key: true</code></td><td><code>ActiveRecord::InvalidForeignKey</code></td></tr>
+    <tr><td>ตัวเลขห้ามติดลบ</td><td><code>validates :views, numericality: { greater_than_or_equal_to: 0 }</code></td><td><code>add_check_constraint</code></td><td><code>ActiveRecord::CheckViolation</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ลองแถวที่ 3 กับ 4 ให้เห็นจริงสั้น ๆ</p>
+
+<h3 id="sn-sub-6">ต้องมีเจ้าของจริง — <code>belongs_to</code> คู่กับ foreign key</h3>
+
+<p>
+  <strong>foreign key</strong> (ภาษาคน) = ช่อง "เป็นของบทความเลขที่ …" บนใบคอมเมนต์ <strong>พร้อมกฎของตู้</strong>ว่าเลขนั้นต้องมีอยู่จริงในลิ้นชัก posts
+  (<a href="./0115-associations.html">บท 115</a> สอนละเอียด) · ตาราง comments มีกฎนี้แล้วตั้งแต่สร้าง (<code>post:references</code> ตอน <code>generate model Comment</code> ใน<a href="./0107-console-crud.html">บท 107</a>) — ลองแปะใบคอมเมนต์ให้บทความเลขที่ 9999 ที่ไม่มีอยู่จริง:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; comment = Comment.new(body: "ลอย ๆ", post_id: 9999, user_id: 1)
+=&gt; #&lt;Comment … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):002&gt; comment.valid?
+  Post Load (2.8ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 9999 LIMIT 1 /*application='WongnokBlog'*/
+  User Load (1.6ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):003&gt; comment.errors.full_messages
+=&gt; ["Post must exist"]
+wongnok-blog(dev):004&gt; comment.save(validate: false)
+  TRANSACTION (3.0ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Create (7.8ms)  INSERT INTO "comments" ("body", "post_id", "user_id", "created_at", "updated_at") VALUES ('ลอย ๆ', 9999, 1, '2026-11-04 12:05:17.216739', '2026-11-04 12:05:17.216739') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.3ms)  ROLLBACK /*application='WongnokBlog'*/
+(wongnok-blog):4:in '&lt;main&gt;': PG::ForeignKeyViolation: ERROR:  insert or update on table "comments" violates foreign key constraint "fk_rails_2fd19c0db7" (ActiveRecord::InvalidForeignKey)
+DETAIL:  Key (post_id)=(9999) is not present in table "posts".
+<span class="c">…</span></code></pre>
+
+<ul>
+  <li>ด่าน ③: <code>belongs_to :post</code> ใน model ไปเปิดลิ้นชัก posts หาเลข 9999 ให้เอง ไม่เจอ → <code>Post must exist</code> (บทความต้องมีอยู่จริง)
+      · บรรทัด <code>User Load</code> คือ <code>belongs_to :user</code> ไปหา user เลข 1 ด้วย — เจอ ผ่าน</li>
+  <li>ด่าน ④: ข้ามการตรวจไปแล้ว ตู้ก็ยังปฏิเสธ — <code>Key (post_id)=(9999) is not present in table "posts"</code> = "เลข 9999 ไม่มีในลิ้นชัก posts"</li>
+  <li><code>fk_rails_2fd19c0db7</code> = ชื่อกฎที่ Rails ตั้งให้อัตโนมัติ ไม่ต้องจำ</li>
+</ul>
+
+<h3 id="sn-sub-7">ตัวเลขห้ามติดลบ — <code>numericality</code> คู่กับ CHECK</h3>
+
+<p>
+  <strong>CHECK constraint</strong> = กฎของตู้ที่เราเขียนเงื่อนไขเองได้ เช่น "ช่อง views ต้อง ≥ 0" · สร้าง migration ใหม่:
+</p>
+
+<pre><code><span class="c">$ bin/rails generate migration AddViewsCheckToPosts</span></code></pre>
+
+<pre><code><span class="k">class</span> <span class="n">AddViewsCheckToPosts</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_check_constraint</span> <span class="n">:posts</span>, <span class="s">"views &gt;= 0"</span>, <span class="n">name:</span> <span class="s">"views_not_negative"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>add_check_constraint :posts, "views &gt;= 0"</code> — "ลิ้นชัก posts: ทุกแผ่นต้องมีช่อง views มากกว่าหรือเท่ากับ 0" · ข้อความในเครื่องหมายคำพูดคือเงื่อนไขแบบ SQL</li>
+  <li><code>name: "views_not_negative"</code> — ตั้งชื่อกฎเอง จะได้อ่าน error รู้เรื่อง</li>
+</ul>
+
+<pre><code><span class="c">$ bin/rails db:migrate</span>
+== 20261104114930 AddViewsCheckToPosts: migrating =============================
+-- add_check_constraint(:posts, "views &gt;= 0", {name: "views_not_negative"})
+   -&gt; 0.0016s
+== 20261104114930 AddViewsCheckToPosts: migrated (0.0016s) ====================</code></pre>
+
+<p>
+  Post มีกฎ <code>numericality</code> ของ views อยู่แล้วจากบท 110 — ถ้าเปิดไว้ คนดูแลสต็อกจะตีกลับก่อนถึงตู้ เราจะไม่เห็นตู้ทำงาน ·
+  <strong>ปิดชั่วคราว</strong>ด้วยการใส่ <code>#</code> หน้าบรรทัดนี้ใน <code>app/models/post.rb</code>:
+</p>
+
+<pre><code>  <span class="c"># validates :views, numericality: { greater_than_or_equal_to: 0 }</span></code></pre>
+
+<p>เปิด console แล้วลองแก้ยอดวิวของต้มยำกุ้งเป็น −5:</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find_by(title: "ต้มยำกุ้งน้ำข้น")
+  Post Load (1.9ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ต้มยำกุ้งน้ำข้น' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):002&gt; post.views = -5
+=&gt; -5
+wongnok-blog(dev):003&gt; post.save
+  TRANSACTION (1.2ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (3.1ms)  UPDATE "posts" SET "updated_at" = '2026-11-04 11:49:49.463438', "views" = -5 WHERE "posts"."id" = 1 /*application='WongnokBlog'*/
+  TRANSACTION (0.9ms)  ROLLBACK /*application='WongnokBlog'*/
+(wongnok-blog):3:in '&lt;main&gt;': PG::CheckViolation: ERROR:  new row for relation "posts" violates check constraint "views_not_negative" (ActiveRecord::CheckViolation)
+<span class="c">…</span></code></pre>
+
+<p>
+  <code>UPDATE "posts" SET "views" = -5 WHERE "posts"."id" = 1</code> = "ในลิ้นชัก posts แก้ช่อง views เป็น −5 เฉพาะแผ่นเลขที่ 1" ·
+  ตู้ปฏิเสธด้วยกฎชื่อ <code>views_not_negative</code> · ฝั่ง Ruby ได้ <code>ActiveRecord::CheckViolation</code> — <strong>กันได้ แต่เป็นภาษาเครื่อง</strong>
+  · ทีนี้<strong>เอา <code>#</code> ออก</strong> ให้ด่าน ③ กลับมา จะได้ข้อความภาษาคน:
+</p>
+
+<pre><code>  <span class="f">validates</span> <span class="n">:views</span>, <span class="n">numericality:</span> { <span class="n">greater_than_or_equal_to:</span> <span class="n">0</span> }</code></pre>
+
+<p>เปิด console ใหม่ (หรือพิมพ์ <code>reload!</code> แบบ<a href="../../rails-day-1/lessons/0104-rails-debug-and-console.html">บท 104</a> — console เก่ายังจำ model ฉบับเดิม) แล้วพิมพ์ชุดเดิม:</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find_by(title: "ต้มยำกุ้งน้ำข้น")
+  Post Load (0.8ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ต้มยำกุ้งน้ำข้น' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):002&gt; post.views = -5
+=&gt; -5
+wongnok-blog(dev):003&gt; post.save
+=&gt; false
+wongnok-blog(dev):004&gt; post.errors.full_messages
+=&gt; ["Views must be greater than or equal to 0"]</code></pre>
+
+<p>
+  รอบนี้ไม่มี SQL เลย — คนดูแลสต็อกตีกลับตั้งแต่ก่อนเดินไปตู้ · <strong>คู่นี้แหละที่ต้องการ</strong>: ผ่านโค้ดเรา → ได้ข้อความสวย ·
+  เลี่ยงโค้ดเรา → ตู้ยังกัน
+</p>
+
+<h2 id="sn-sec-10">transaction — ทั้งหมด หรือไม่ทำเลย (และทำไมต้องใช้ <code>!</code>)</h2>
+
+<p>
+  บางงานมีหลายขั้นที่<strong>ต้องสำเร็จพร้อมกัน</strong> เช่น โอนเงิน = หักบัญชีเรา + เพิ่มบัญชีเพื่อน · ถ้าหักแล้วแต่เพิ่มไม่สำเร็จ เงินหายไปเฉย ๆ
+  · <strong>transaction</strong> คือการบอก database ว่า "คำสั่งชุดนี้ ให้นับเป็นงานเดียว — สำเร็จทั้งหมด หรือยกเลิกทั้งหมด"
+</p>
+
+<ul>
+  <li><code>BEGIN</code> = เริ่มงานชุด · <code>COMMIT</code> = ยืนยัน เก็บจริงทั้งชุด · <code>ROLLBACK</code> = ยกเลิก ย้อนทุกอย่างในชุดกลับเหมือนไม่เคยทำ</li>
+  <li>คุณเห็นสามคำนี้มาตลอดบท เพราะ <code>save</code> ทุกครั้งห่อตัวเองด้วย transaction อยู่แล้ว · ใน Rails เขียนเองได้ด้วย <code>ActiveRecord::Base.transaction do … end</code>
+      (<code>ActiveRecord::Base</code> = แม่ของ <code>ApplicationRecord</code> ที่เห็นใน<a href="./0106-active-record-intro.html">บท 106</a> · ทุกคำสั่งใน block นี้นับเป็นงานชุดเดียว)</li>
+  <li><strong>กฎของ Rails: ใน block นี้ ถ้ามี error ระเบิดออกมา → ROLLBACK · ถ้าจบปกติ → COMMIT</strong></li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — โอนเงินผ่านแอปธนาคาร</span>
+  <p>
+    คุณโอน 200 บาทให้เพื่อน · ธนาคารหักบัญชีคุณ แล้วไปเพิ่มบัญชีเพื่อน — ถ้าระบบล่มกลางทาง ธนาคาร<strong>คืนเงินให้คุณทั้งก้อน</strong>
+    เหมือนไม่เคยกดโอน · ไม่มีทางที่เงินจะออกจากบัญชีคุณไปแล้วหายกลางอากาศ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ธนาคารรู้เองว่าขั้นไหนพัง · แต่ Rails รู้ว่า "พัง" ก็ต่อเมื่อมี <strong>error ระเบิด</strong>ออกมาเท่านั้น
+    — ถ้าใช้ <code>update</code> (ไม่มี <code>!</code>) ที่คืน <code>false</code> เงียบ ๆ Rails ถือว่า "ไม่มีอะไรพัง" แล้ว COMMIT ตามปกติ
+  </p>
+</div>
+
+<p>
+  ลองกับข้อมูลเรา — <strong>สมมติยอดวิวเป็นเงิน</strong>: โอน 200 วิวจากข้าวมันไก่ (มี 85) ไปให้ส้มตำ (มี 340) ·
+  ข้าวมันไก่มีไม่พอ หักแล้วจะติดลบ → กฎ <code>numericality</code> ที่เพิ่งเปิดกลับมาต้องไม่ยอม · แบบแรกใช้ <code>update</code> <strong>ไม่มี <code>!</code></strong>:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; from = Post.find_by(title: "ข้าวมันไก่ประตูน้ำ"); from.views
+  Post Load (1.9ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ข้าวมันไก่ประตูน้ำ' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 85
+wongnok-blog(dev):002&gt; to = Post.find_by(title: "ส้มตำปูปลาร้า"); to.views
+  Post Load (1.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ส้มตำปูปลาร้า' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 340
+wongnok-blog(dev):003* ActiveRecord::Base.transaction do
+wongnok-blog(dev):004*   to.update(views: to.views + 200)
+wongnok-blog(dev):005*   from.update(views: from.views - 200)
+wongnok-blog(dev):006&gt;   end
+  TRANSACTION (1.8ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (3.8ms)  UPDATE "posts" SET "updated_at" = '2026-11-04 11:51:01.908179', "views" = 540 WHERE "posts"."id" = 2 /*application='WongnokBlog'*/
+  TRANSACTION (1.7ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):007&gt; from.reload.views
+  Post Load (1.6ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 3 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 85
+wongnok-blog(dev):008&gt; to.reload.views
+  Post Load (3.1ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 2 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 540</code></pre>
+
+<ul>
+  <li>บรรทัด 001–002 — หยิบบทความสองชิ้นมา · <code>;</code> = เขียนสองคำสั่งในบรรทัดเดียว · console แสดงผลของคำสั่งหลัง (ยอดวิว)</li>
+  <li>บรรทัด 003–006 — พิมพ์ทีละบรรทัดแล้วกด Enter ได้เลย · <code>*</code> หลังเลขบรรทัดแปลว่า "block ยังเปิดค้างอยู่ พิมพ์ต่อได้" ·
+      พอพิมพ์ <code>end</code> ครบ บรรทัดนั้นกลับเป็น <code>&gt;</code> แล้ว console ก็รันทั้งก้อน (ช่องว่างหน้าบรรทัด console จัดให้เอง)</li>
+  <li>ส้มตำ <code>update</code> ผ่าน → <code>UPDATE … "views" = 540</code> · ข้าวมันไก่ <code>update</code> <strong>ไม่ผ่านการตรวจ</strong> → คืน <code>false</code> ไม่ส่ง SQL</li>
+  <li>ไม่มี error ระเบิด → Rails <strong>COMMIT</strong> · <code>reload</code> = อ่านค่าใหม่จากตู้ · ผล: <strong>ข้าวมันไก่ยังมี 85 แต่ส้มตำได้ 540</strong> — วิว 200 โผล่ขึ้นมาจากอากาศ</li>
+</ul>
+
+<p>
+  คืนยอดส้มตำเป็น 340 ก่อน (<code>to.update!(views: 340)</code>) · แล้ว<strong>เปิด console ใหม่</strong> พิมพ์บรรทัด 001–002 เหมือนเดิม
+  (ได้ 85 กับ 340) จากนั้นลองแบบที่สอง ใช้ <code>update!</code> <strong>มี <code>!</code></strong>:
+</p>
+
+<pre><code>wongnok-blog(dev):003* ActiveRecord::Base.transaction do
+wongnok-blog(dev):004*   to.update!(views: to.views + 200)
+wongnok-blog(dev):005*   from.update!(views: from.views - 200)
+wongnok-blog(dev):006&gt;   end
+  TRANSACTION (1.3ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (3.1ms)  UPDATE "posts" SET "updated_at" = '2026-11-04 11:51:37.913352', "views" = 540 WHERE "posts"."id" = 2 /*application='WongnokBlog'*/
+  TRANSACTION (0.8ms)  ROLLBACK /*application='WongnokBlog'*/
+(wongnok-blog):5:in 'block in &lt;main&gt;': Validation failed: Views must be greater than or equal to 0 (ActiveRecord::RecordInvalid)
+	from (wongnok-blog):3:in '&lt;main&gt;'
+wongnok-blog(dev):007&gt; from.reload.views
+  Post Load (2.9ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 3 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 85
+wongnok-blog(dev):008&gt; to.reload.views
+  Post Load (2.1ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 2 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 340</code></pre>
+
+<ul>
+  <li>ส้มตำยังถูก <code>UPDATE</code> เป็น 540 เหมือนเดิม — <strong>แต่ยังไม่ได้ COMMIT</strong></li>
+  <li>บรรทัด 5 (<code>from.update!</code>) ไม่ผ่าน → <strong>ระเบิด</strong> <code>ActiveRecord::RecordInvalid</code> → Rails <strong>ROLLBACK</strong> ทั้งชุด</li>
+  <li>ผล: ส้มตำกลับเป็น <strong>340</strong> · ข้าวมันไก่ 85 — เหมือนไม่เคยโอน ✔</li>
+</ul>
+
+<p>
+  เทียบ Go: <code>db.Transaction</code> ของ GORM (<a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a>) ใช้กฎ "<strong>คืน <code>error</code> = rollback · คืน <code>nil</code> = commit</strong>" ·
+  ใน Rails สัญญาณเดียวกันคือ "<strong>ระเบิด = rollback · จบปกติ = commit</strong>" — <code>update</code> ที่คืน <code>false</code> เหมือนฟังก์ชัน Go ที่ลืม <code>return err</code>
+  (สไลด์หน้า 23 ส่วนล่างจึงเขียนว่า ใน transaction ต้องใช้ตัวที่มี <code>!</code>)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของ transaction</span>
+  <dl>
+    <dt>transaction · atomic</dt>
+    <dd>กลุ่มคำสั่งที่นับเป็นงานเดียว สำเร็จทั้งหมดหรือไม่สำเร็จเลย (atomic = แบ่งครึ่งไม่ได้) ·
+        <strong>ถาม senior ได้ว่า "สองขั้นนี้ต้องอยู่ใน transaction เดียวกันไหม"</strong></dd>
+    <dt>commit · rollback</dt>
+    <dd>ยืนยันเก็บจริง · ย้อนกลับทั้งชุด · <strong>พิมพ์บอก AI ได้ว่า "use save! / update! inside the transaction so a validation failure triggers a rollback"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-11">Checklist ตรวจงาน AI (และงานตัวเอง)</h2>
+
+<p>เวลา AI (หรือเพื่อน หรือตัวคุณเอง) ส่งโค้ด model มา ไล่ถามทีละข้อ:</p>
+
+<ol>
+  <li><strong>เห็น <code>uniqueness: true</code></strong> → "แล้ว <strong>unique index</strong> ใน migration อยู่ไหน" (สไลด์หน้า 26 บอกว่านี่คือคำถามแรก)</li>
+  <li><strong>เห็น <code>presence: true</code></strong> → "คอลัมน์นี้มี <code>null: false</code> ไหม"</li>
+  <li><strong>เห็น <code>belongs_to</code></strong> → "migration มี <code>foreign_key: true</code> ไหม"</li>
+  <li><strong>เห็นกฎตัวเลข</strong> (<code>numericality</code>) ที่สำคัญเรื่องเงิน/จำนวน → "มี CHECK constraint ไหม"</li>
+  <li><strong>เห็น unique index</strong> → "controller <code>rescue ActiveRecord::RecordNotUnique</code> ไว้ไหม หรือคนที่แพ้แข่งจะเห็นหน้า error"</li>
+  <li><strong>เห็น <code>save!</code> ใน controller</strong> → "ถ้า validation ไม่ผ่าน ใครรับ <code>RecordInvalid</code>"</li>
+  <li><strong>เห็น <code>transaction do</code></strong> → "ข้างในใช้ตัวที่มี <code>!</code> หรือยัง ไม่งั้นไม่ rollback"</li>
+</ol>
+
+<h2 id="sn-sec-12">ภารกิจ: ใส่คู่ "ห้ามว่าง" ให้ชื่อผู้ใช้</h2>
+
+<div class="task">
+  <h3 id="sn-sub-8">🎯 ภารกิจ 111 · presence + NOT NULL ให้ <code>users.name</code> (~10 นาที)</h3>
+  <p>ตอนนี้ช่อง <code>name</code> ของ users มีกฎ <code>presence</code> ในโค้ดแล้ว (บท 110) แต่<strong>ในตู้ยังว่างได้</strong> · ใส่ด่าน ④ ให้ครบคู่ตาม pattern ของบทนี้</p>
+  <ol>
+    <li>ใน console สร้างผู้ใช้ที่<strong>ไม่มีชื่อ</strong>ไว้หนึ่งคน (จำลองข้อมูลเก่าที่หลุดเข้ามาแล้ว):
+        <code>User.new(email: "noname@example.com").save(validate: false)</code> → ควรได้ <code>true</code></li>
+    <li>สร้าง migration: <code>bin/rails generate migration ChangeUsersNameNotNull</code> แล้วเขียนใน <code>def change</code> ว่า
+        <code>change_column_null :users, :name, false</code> ("ช่อง name ของ users: ห้ามเป็น null")</li>
+    <li><code>bin/rails db:migrate</code> — <strong>ควรพัง</strong> · อ่าน error แล้วเดาว่าเพราะอะไร</li>
+    <li>ใน console แก้ข้อมูลเก่าให้มีชื่อ (ใบ้: <code>User.where(name: nil)</code> หาแถวที่ชื่อว่าง แล้วต่อด้วย <code>update_all(name: "…")</code> จากตารางประตูข้าง)
+        แล้ว <code>bin/rails db:migrate</code> อีกรอบ จนผ่าน · ดูใน <code>db/schema.rb</code> ว่าบรรทัด <code>t.string "name"</code> เปลี่ยนไปยังไง</li>
+    <li>ลองประตูข้างอีกรอบ: <code>User.new(email: "ghost2@example.com").save(validate: false)</code> → ตู้ต้องปฏิเสธ</li>
+    <li>ลองทางปกติ: <code>user = User.new(email: "ghost2@example.com")</code> แล้ว <code>user.save</code> กับ <code>user.errors.full_messages</code> →
+        กฎ <code>presence</code> จากบท 110 ต้องให้ข้อความภาษาคน (ถ้าข้ามบท 110 มา ให้เติม <code>validates :name, presence: true</code> ใน <code>app/models/user.rb</code> ก่อน)</li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> ข้อ 3 พัง · ข้อ 4 migrate ผ่าน และ schema.rb มี <code>null: false</code> · ข้อ 5 ได้ <code>ActiveRecord::NotNullViolation</code> · ข้อ 6 ได้ <code>false</code> และ <code>["Name can't be blank"]</code></p>
+  <p><strong>ถ้าเจอ error แปลว่า…</strong></p>
+  <ul>
+    <li><code>PG::NotNullViolation: ERROR:  column "name" of relation "users" contains null values</code> ตอน migrate →
+        มีแถวเก่าที่ชื่อว่างอยู่ ตู้ยังตั้งกฎ "ห้ามว่าง" ไม่ได้ (นี่คือข้อ 3 ที่ตั้งใจให้พัง)</li>
+    <li><code>PG::UniqueViolation: ERROR:  duplicate key value violates unique constraint "index_users_on_email"</code> ·
+        <code>Key (email)=(…) already exists</code> ตอนทำข้อ 1 หรือ 5 → อีเมลนี้มีในตู้แล้ว (เช่น รันข้อ 1 ซ้ำสองรอบ) — unique index จากบทนี้ทำงาน · เปลี่ยนอีเมลในคำสั่งเป็นอันใหม่</li>
+    </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>② ไฟล์ migration (เลขหน้าชื่อไฟล์ของคุณจะต่าง):</p>
+    <pre><code><span class="k">class</span> <span class="n">ChangeUsersNameNotNull</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">change_column_null</span> <span class="n">:users</span>, <span class="n">:name</span>, <span class="k">false</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+    <p>③ migrate รอบแรก — พังเพราะผู้ใช้ที่สร้างในข้อ 1:</p>
+    <pre><code><span class="c">$ bin/rails db:migrate</span>
+== 20261104115159 ChangeUsersNameNotNull: migrating ===========================
+-- change_column_null(:users, :name, false)
+bin/rails aborted!
+StandardError: An error has occurred, this and all later migrations canceled: (StandardError)
+
+PG::NotNullViolation: ERROR:  column "name" of relation "users" contains null values
+…/db/migrate/20261104115159_change_users_name_not_null.rb:3:in 'ChangeUsersNameNotNull#change'
+<span class="c">…</span></code></pre>
+    <p>④ ใส่ชื่อให้แถวที่ว่าง แล้ว migrate ใหม่:</p>
+    <pre><code>wongnok-blog(dev):001&gt; User.where(name: nil).count
+  User Count (1.5ms)  SELECT COUNT(*) FROM "users" WHERE "users"."name" IS NULL /*application='WongnokBlog'*/
+=&gt; 1
+wongnok-blog(dev):002&gt; User.where(name: nil).update_all(name: "ไม่ระบุชื่อ")
+  User Update All (2.3ms)  UPDATE "users" SET "name" = 'ไม่ระบุชื่อ' WHERE "users"."name" IS NULL /*application='WongnokBlog'*/
+=&gt; 1</code></pre>
+    <ul>
+      <li><code>WHERE "users"."name" IS NULL</code> = "เฉพาะแผ่นที่ช่อง name ไม่มีค่า" (SQL ใช้ <code>IS NULL</code> ไม่ใช่ <code>= NULL</code>)</li>
+      <li><code>update_all</code> แก้ทุกแถวที่ค้นเจอทีเดียว — และ<strong>ข้าม validation</strong> (อยู่ในตารางประตูข้างข้างบน) ซึ่งตรงนี้คือสิ่งที่ต้องการ
+          · จะลบทิ้งแทนก็ได้ (<code>destroy_all</code>) — แล้วแต่ว่าข้อมูลเก่ามีค่าแค่ไหน</li>
+    </ul>
+    <pre><code><span class="c">$ bin/rails db:migrate</span>
+== 20261104115159 ChangeUsersNameNotNull: migrating ===========================
+-- change_column_null(:users, :name, false)
+   -&gt; 0.0031s
+== 20261104115159 ChangeUsersNameNotNull: migrated (0.0031s) ==================</code></pre>
+    <p>ใน <code>db/schema.rb</code> บรรทัดของ name กลายเป็น <code>t.string "name", null: false</code></p>
+    <p>⑤ ประตูข้างโดนตู้กัน:</p>
+    <pre><code>wongnok-blog(dev):001&gt; User.new(email: "ghost2@example.com").save(validate: false)
+  TRANSACTION (0.7ms)  BEGIN /*application='WongnokBlog'*/
+  User Create (2.2ms)  INSERT INTO "users" ("name", "email", "created_at", "updated_at") VALUES (NULL, 'ghost2@example.com', '2026-11-04 11:52:24.180852', '2026-11-04 11:52:24.180852') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (0.5ms)  ROLLBACK /*application='WongnokBlog'*/
+(wongnok-blog):1:in '&lt;main&gt;': PG::NotNullViolation: ERROR:  null value in column "name" of relation "users" violates not-null constraint (ActiveRecord::NotNullViolation)
+<span class="c">…</span></code></pre>
+    <p>⑥ <code>app/models/user.rb</code> ตอนจบบทนี้ (กฎ name มีมาตั้งแต่บท 110 · ภารกิจนี้ไม่ต้องแก้ไฟล์นี้):</p>
+    <pre><code><span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">validates</span> <span class="n">:name</span>, presence: <span class="k">true</span>
+  <span class="f">validates</span> <span class="n">:email</span>, presence: <span class="k">true</span>, format: { with: <span class="s">/\A[^@\s]+@[^@\s]+\z/</span> }
+  <span class="f">validates</span> <span class="n">:email</span>, <span class="n">uniqueness:</span> <span class="k">true</span>
+<span class="k">end</span></code></pre>
+    <pre><code>wongnok-blog(dev):001&gt; user = User.new(email: "ghost2@example.com")
+=&gt; #&lt;User … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):002&gt; user.save
+  TRANSACTION (2.0ms)  BEGIN /*application='WongnokBlog'*/
+  User Exists? (3.9ms)  SELECT 1 AS one FROM "users" WHERE "users"."email" = 'ghost2@example.com' LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (0.7ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):003&gt; user.errors.full_messages
+=&gt; ["Name can't be blank"]</code></pre>
+    <p>
+      สังเกต: Rails ยังไปถามตู้เรื่องอีเมลซ้ำ (<code>User Exists?</code>) แม้ชื่อจะว่างแล้ว — เพราะมัน<strong>ตรวจทุกกฎให้ครบก่อน</strong> แล้วค่อยบอกผลรวม
+      · แต่ไม่มี <code>INSERT</code> เลย คนดูแลสต็อกตีกลับก่อนถึงตู้ · คู่ presence + NOT NULL ครบแล้ว
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-13">Quiz</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 1 · model มี <code>validates :email, uniqueness: true</code> แต่ <strong>ไม่มี</strong> unique index · ลูกค้าสองคนกดสมัครด้วยอีเมลเดียวกันในเสี้ยววินาทีเดียวกัน — เกิดอะไรได้?</p>
+  <div class="opts">
+    <button class="opt">คนที่สองโดนตีกลับเสมอ เพราะ validation ตรวจทุกครั้งก่อนเก็บ</button>
+    <button class="opt">อาจเก็บได้ทั้งคู่ เพราะตอนที่ตรวจ ยังไม่มีใครเก็บแฟ้มลงตู้</button>
+    <button class="opt">database ปฏิเสธคนที่สองเอง เพราะ validation ส่งกฎไปให้ตู้แล้ว</button>
+    <button class="opt">โดนตีกลับทั้งคู่ เพราะ Rails เห็นว่ามีคำขอซ้ำกันเข้ามา</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · การทดลอง <code>race.rb</code> รอบแรกได้อีเมลเดียวกัน 2 แถวจริง — ทั้งคู่ "ถามตู้" ก่อนที่ใครจะ "เก็บแฟ้ม"</p>
+    <p>
+      ตัวเลือกที่ 1 ถูกแค่ตอนสมัคร<strong>ทีละคน</strong> — validation ตรวจจริง แต่ตรวจกับข้อมูล ณ ตอนที่ถาม ·
+      ตัวเลือกที่ 3 ผิด — <code>validates</code> อยู่ในโค้ด Ruby ล้วน ๆ ไม่ได้ไปสร้างอะไรในตู้ (ต่างจาก <code>gorm:"unique"</code>) ·
+      ตัวเลือกที่ 4 ผิด — Rails ไม่รู้เลยว่ามีอีกคำขอวิ่งอยู่ แต่ละคำขอทำงานแยกกัน
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> "ตรวจ" กับ "เขียน" เป็นสองจังหวะ มีช่องว่างเสมอ · ปิดช่องว่างได้ที่ database เท่านั้น</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อ 2 · ใน <code>ActiveRecord::Base.transaction do … end</code> มีสองบรรทัด: บรรทัดแรก <code>update</code> ผ่าน · บรรทัดที่สอง <code>update</code> (ไม่มี <code>!</code>) ไม่ผ่าน validation — จบแล้วใน database เป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">ยกเลิกทั้งสองบรรทัด เพราะอยู่ใน transaction เดียวกัน</button>
+    <button class="opt">ขึ้น error แล้วไม่มีอะไรถูกเก็บเลยสักบรรทัด</button>
+    <button class="opt">บรรทัดแรกถูกเก็บจริง บรรทัดที่สองไม่ถูกเก็บ</button>
+    <button class="opt">ทั้งสองบรรทัดถูกเก็บ เพราะ transaction ข้ามการตรวจ</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 3 ถูก · การโอนวิวแบบแรกได้ <code>COMMIT</code> — ส้มตำเป็น 540 ข้าวมันไก่ยัง 85</p>
+    <p>
+      ตัวเลือกที่ 1 คือสิ่งที่<em>อยากให้เป็น</em> แต่ Rails ROLLBACK เฉพาะเมื่อมี error <strong>ระเบิด</strong> · <code>update</code> คืน <code>false</code> เงียบ ๆ ไม่นับ ·
+      ตัวเลือกที่ 2 คือผลของ <code>update!</code> (แบบที่สอง) ไม่ใช่ <code>update</code> ·
+      ตัวเลือกที่ 4 ผิด — transaction ไม่ได้ปิด validation · บรรทัดที่สองไม่ผ่านจึงไม่มี SQL ส่งไปเลย
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ใน transaction ใช้ <code>save!</code> · <code>update!</code> · <code>create!</code> เสมอ — "ระเบิด = rollback"</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อ 3 · เพิ่ม migration <code>add_index :users, :email, unique: true</code> แล้ว <code>db:migrate</code> พังด้วย <code>could not create unique index … Key (email)=(…) is duplicated</code> — ต้องทำอะไร?</p>
+  <div class="opts">
+    <button class="opt">หาแถวที่อีเมลซ้ำ ตัดสินว่าเก็บแถวไหน ล้างที่เหลือ แล้ว migrate ใหม่</button>
+    <button class="opt">ลบบรรทัด <code>validates … uniqueness</code> ใน model ออกก่อน แล้ว migrate ใหม่</button>
+    <button class="opt">เปลี่ยนเป็น <code>unique: false</code> เพราะตารางนี้มีข้อมูลซ้ำอยู่แล้ว ใส่ไม่ได้</button>
+    <button class="opt">สั่ง <code>bin/rails db:migrate</code> ซ้ำอีกรอบ เพราะครั้งแรกอาจชนกับคนอื่น</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 1 ถูก · ในบทนี้หาด้วย <code>User.group(:email).having("COUNT(*) &gt; 1").count</code> ลบแถวเกิน แล้ว migrate ผ่าน</p>
+    <p>
+      ตัวเลือกที่ 2 ผิด — validation อยู่ในโค้ด ไม่เกี่ยวกับการสร้าง index ในตู้เลย ลบไปก็พังเหมือนเดิม ·
+      ตัวเลือกที่ 3 ได้ index ธรรมดาที่<strong>ไม่กันซ้ำ</strong> — ไม่ได้แก้ปัญหาที่ตั้งใจแก้ ·
+      ตัวเลือกที่ 4 ผิด — error บอกชัดว่าข้อมูลในตารางซ้ำ รันกี่รอบก็ซ้ำเท่าเดิม
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ตู้ตั้งกฎใหม่ไม่ได้ ถ้าของที่อยู่ในตู้ตอนนี้ผิดกฎนั้นอยู่แล้ว (ใช้กับ <code>null: false</code> และ CHECK ด้วย — ภารกิจเจอแบบเดียวกัน)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ข้อ 4 · อยากได้กฎ "ยอดวิวห้ามติดลบ" ที่ทั้ง<strong>ข้ามไม่ได้</strong>และ<strong>ลูกค้าอ่านเข้าใจ</strong> — ควรใส่อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>numericality</code> ใน model อย่างเดียว เพราะทุกคำขอผ่าน model อยู่แล้ว</button>
+    <button class="opt">CHECK constraint ใน migration อย่างเดียว เพราะตู้กันได้ทุกทางแล้ว</button>
+    <button class="opt"><code>min="0"</code> ในช่อง HTML อย่างเดียว เพราะกันตั้งแต่หน้าฟอร์ม</button>
+    <button class="opt"><code>numericality</code> ใน model คู่กับ CHECK constraint ใน migration</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 4 ถูก · ในบทนี้: มีแค่ CHECK → ได้ <code>ActiveRecord::CheckViolation</code> ภาษาเครื่อง · เติม numericality → ได้ <code>Views must be greater than or equal to 0</code></p>
+    <p>
+      ตัวเลือกที่ 1 ผิด — <code>update_column</code> · <code>update_all</code> · SQL ตรง ข้ามการตรวจของ model ได้ (ตารางประตูข้าง) ·
+      ตัวเลือกที่ 2 <strong>กันได้จริง</strong> แต่ลูกค้าได้หน้า error แทนข้อความ — ขาดครึ่ง "อ่านเข้าใจ" ·
+      ตัวเลือกที่ 3 คือด่าน ① — curl ข้ามได้ด้วยคำสั่งสองบรรทัดแบบที่ทำในบทนี้
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ของสำคัญต้องกัน 2 ชั้น — ด่าน ③ ให้ข้อความสวย + ด่าน ④ ให้การรับประกัน</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-14">ถามกลับได้เลย</h2>
+
+<p>
+  ถ้าลองแล้วผลไม่ตรงกับในบท (เช่น <code>race.rb</code> ไม่ได้อีเมลซ้ำ หรือ migrate ผ่านทั้งที่ควรพัง) —
+  ส่งสามอย่างไปถาม senior หรือ AI: <strong>คำสั่งที่พิมพ์ · ผลที่ได้ทั้งก้อน · ส่วนของ users ใน <code>db/schema.rb</code></strong>
+  · ส่วนใหญ่คำตอบอยู่ใน schema.rb ว่าตู้มีกฎอะไรอยู่จริง
+</p>
+
+<h2 id="sn-sec-15">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>26</td><td>controller ใช้ <code>@user.save!</code> แล้ว <code>rescue</code> แค่ <code>RecordNotUnique</code></td><td>อีเมลซ้ำแบบปกติ (validation จับได้) ได้ <code>RecordInvalid</code> ที่ไม่มีใครรับ → หน้า error แทนฟอร์ม</td><td><strong>สนใจ</strong> — ใช้ <code>if @user.save</code> + rescue แบบในบทนี้</td></tr>
+    <tr><td>26</td><td>เรียก <code>user_params</code></td><td>สไลด์ไม่ได้แสดงว่านิยามไว้ที่ไหน · ต้องเขียน method นี้เอง (<code>params.expect</code>)</td><td>สนใจถ้าพิมพ์ตาม — ไม่งั้นได้ <code>NameError</code> · ละเอียดบท 117</td></tr>
+    <tr><td>21</td><td>ด่าน HTML "ข้ามได้ด้วย curl 1 บรรทัด"</td><td>ฟอร์มของ Rails มีรหัสกัน CSRF · curl บรรทัดเดียวได้ 422 ต้องใช้สองคำสั่ง (เอารหัสก่อน)</td><td>ไม่ต้อง — แก่นเหมือนเดิม: ด่าน ① ข้ามได้</td></tr>
+    <tr><td>28 ข้อ 4</td><td><code>Post.new</code> แล้ว <code>save(validate: false)</code> "เขียนลง DB ได้เลย"</td><td>ในแอปเรา posts.user_id เป็น NOT NULL → ตู้ปฏิเสธ · ต้องใส่ <code>user:</code> ก่อนถึงจะเห็นว่าเขียนได้</td><td>สนใจ — เป็นตัวอย่างที่ดีของด่าน ④ ด้วย</td></tr>
+    <tr><td>28 ลองต่อ</td><td>"ล้างของทดสอบทิ้ง" <code>Post.where("title LIKE ?", "%console%")</code></td><td>บรรทัดนี้แค่<strong>ค้น</strong> ไม่ได้ลบ · ต้องต่อท้าย <code>.destroy_all</code></td><td>สนใจถ้าพิมพ์ตาม — ของทดสอบยังอยู่</td></tr>
+    <tr><td>25</td><td>สอง request ห่างกัน 2 มิลลิวินาที</td><td>บทนี้ขยายช่องว่างเป็น 2 วินาทีด้วย <code>sleep</code> ใน <code>race.rb</code> เพื่อให้เห็นด้วยตา</td><td>ไม่ต้อง — กลไกเดียวกัน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0110-validations.html">← บทเรียน 110 · Validation</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0112-callbacks-and-logic.html">บทเรียน 112 → Callbacks · business logic</a>
+</nav>
+
+<h2 id="sn-sec-16">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_validations.html#skipping-validations">Rails Guides — Active Record Validations · 1.4 Skipping Validations</a> —
+      <strong>อ่านรายการคำสั่งทั้งหมด</strong> ที่เก็บลง database โดยไม่ตรวจ (ต้นทางของตาราง "ประตูข้าง")
+      แล้วต่อด้วย <a href="https://guides.rubyonrails.org/active_record_validations.html#uniqueness">หัวข้อ 2.10 uniqueness</a>
+      ย่อหน้าที่บอกว่าต้องสร้าง unique index ที่ database เสมอ</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Validations/ClassMethods.html#method-i-validates_uniqueness_of-concurrency-and-integrity">Rails API — validates_uniqueness_of · Concurrency and integrity</a> —
+      <strong>อ่านหัวข้อย่อยนี้ทั้งหัวข้อ</strong> เอกสารทางการอธิบาย race condition แบบเดียวกับการทดลอง <code>race.rb</code> และบอกให้รับ <code>ActiveRecord::RecordNotUnique</code></li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Transactions/ClassMethods.html#module-activerecord-transactions-classmethods-exception-handling-and-rolling-back">Rails API — Active Record Transactions · Exception handling and rolling back</a> —
+      <strong>อ่านย่อหน้าแรกของหัวข้อนี้</strong> ที่บอกว่า exception คือสัญญาณ rollback (เหตุผลที่ต้องใช้ <code>!</code>)</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/ConnectionAdapters/SchemaStatements.html#method-i-add_check_constraint">Rails API — add_check_constraint</a> ·
+      <a href="https://api.rubyonrails.org/classes/ActiveRecord/ConnectionAdapters/SchemaStatements.html#method-i-change_column_null">change_column_null</a> ·
+      <a href="https://api.rubyonrails.org/classes/ActiveRecord/ConnectionAdapters/SchemaStatements.html#method-i-add_index-creating-a-unique-index">add_index · Creating a unique index</a> —
+      <strong>ดูตัวอย่างโค้ดสั้น ๆ ใต้แต่ละ method</strong> ที่ใช้ใน migration ของบทนี้</li>
+  <li><a href="https://www.postgresql.org/docs/17/ddl-constraints.html">PostgreSQL 17 — 5.5 Constraints</a> —
+      <strong>อ่าน 5.5.1 Check Constraints กับ 5.5.2 Not-Null Constraints</strong> ว่าตู้ฝั่ง PostgreSQL บังคับกฎยังไง (ข้ามไปส่วน unique และ foreign key ถ้ายังไม่ต้องการ)</li>
+  <li><a href="https://guides.rubyonrails.org/security.html#cross-site-request-forgery-csrf">Rails Guides — Security · 4 Cross-Site Request Forgery (CSRF)</a> —
+      <strong>อ่านแค่ย่อหน้าแรก</strong> ถ้าอยากรู้ว่ารหัส <code>authenticity_token</code> ที่ทำให้ curl บรรทัดเดียวได้ 422 มีไว้ทำไม</li>
+  <li><a href="https://gorm.io/docs/models.html#tags">GORM — Declaring Models · Fields Tags</a> —
+      <strong>ดูตาราง tag แถว <code>unique</code> · <code>not null</code> · <code>check</code></strong> เพื่อเทียบว่า GORM วางกฎพวกนี้ไว้ที่ตัวตาราง (ด่าน ④)</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

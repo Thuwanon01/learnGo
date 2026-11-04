@@ -1,0 +1,1012 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 110 — Validation — คนดูแลสต็อกตรวจแฟ้มก่อนเก็บ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 110 · Rails · Day 2</p>
+  <h1>Validation — คนดูแลสต็อกตรวจแฟ้มก่อนเก็บ</h1>
+  <p class="meta">~20 นาที · ควรผ่าน <a href="./0107-console-crud.html">บทเรียน 107 (console CRUD)</a> มาก่อน ·
+    ใช้ของจาก <a href="../../rails-day-1/lessons/0102-rails-controller.html">บท 102</a> และ <a href="../../rails-day-1/lessons/0093-ruby-blocks-and-methods.html">บท 93</a> ด้วย</p>
+  <p class="standfirst">
+    ตอนนี้แอปบล็อกของเรารับบทความที่<strong>ไม่มีชื่อเรื่อง</strong>ลงฐานข้อมูลได้หน้าตาเฉย ไม่มีใครห้าม
+    <br>บทนี้คุณจะ<strong>เขียนกฎให้ model ตรวจข้อมูลก่อนบันทึก</strong> เช่น "ชื่อเรื่องห้ามว่าง" แล้วลองในครัวทดลอง (console) ว่าข้อมูลผิดโดนตีกลับยังไง
+    <br>อ่านจบแล้วคุณจะ: ใช้กฎสำเร็จรูป 5 แบบเป็น · เขียนกฎของร้านเราเองได้ · ไม่ตกกับดักตัว <code>s</code> ตัวเดียว ·
+    และเลือกได้ว่าเมื่อไหร่ใช้ <code>save</code> เมื่อไหร่ใช้ <code>save!</code>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้ทั้งหมด</p>
+  <ul>
+    <li><strong>model <code>Post</code></strong> (บท 106) — class ใน <code>app/models/post.rb</code> เปรียบเป็น<strong>คนดูแลสต็อก</strong>ที่รู้ว่าแฟ้มบทความเก็บลิ้นชักไหน</li>
+    <li><strong><code>new</code> · <code>save</code> · <code>create</code> · <code>persisted?</code></strong> (บท 107) — สร้างแฟ้มในมือ · เอาเข้าตู้ · ทำสองอย่างรวดเดียว · ถามว่า "อยู่ในตู้แล้วหรือยัง"</li>
+    <li><strong><code>post.errors.full_messages</code> · <code>User must exist</code></strong> (บท 107) — ตอน save บทความที่ไม่มีผู้เขียนแล้วได้ <code>false</code> เราถามด้วยคำสั่งนี้ว่า "ไม่รับเพราะอะไร" · บทนี้คือเรื่องเต็มของมัน</li>
+    <li><strong>console</strong> (บท 104) — ครัวทดลองหลังร้าน เปิดด้วย <code>bin/rails console</code> · แก้ไฟล์ใน <code>app/</code> แล้วต้องพิมพ์ <code>reload!</code> ก่อนลองใหม่</li>
+    <li><strong><code>!</code> ท้ายชื่อ method</strong> (บท 93) — ป้าย "ระวัง ตัวนี้อันตรายกว่าตัวที่ไม่มี <code>!</code>"</li>
+    <li><strong><code>render</code> · <code>redirect_to</code> · 422</strong> (บท 102 · บท 100) — ยกจานให้เลย · ชี้ไปเคาน์เตอร์อื่น · status "ข้อมูลที่ส่งมาใช้ไม่ได้"</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17 (สไลด์ใช้ 4.0.6 · 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน) ·
+    <strong>ข้อมูลตัวอย่าง:</strong> ตาราง users / posts / comments และ seeds ชุดเดียวกับที่สร้างไว้ใน<a href="./0107-console-crud.html">บท 107</a>
+    (สมชาย · สมหญิง · มานะ · บทความ 6 ชิ้น) ·
+    ผลรันทุกกล่องมาจากเครื่องจริง · เวลา ms · เลข <code>0x…</code> · เลข id · วันเวลาใน SQL ของคุณจะไม่ตรงกับของผม
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · ตอนนี้ตู้รับทุกอย่าง — ปัญหาที่ validation มาแก้</h2>
+
+<p>
+  ลองเปิด console แล้วสร้างบทความที่ชื่อเรื่องเป็นข้อความว่าง (<code>""</code>) ดู · model <code>Post</code> ตอนนี้ยังไม่มีกฎอะไรเลยนอกจาก <code>belongs_to :user</code> กับ <code>has_many :comments</code>:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; p = <span class="n">Post</span>.<span class="f">create</span>(title: <span class="s">""</span>, user: <span class="n">User</span>.<span class="f">first</span>)
+  User Load (1.1ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (0.6ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (1.8ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id") VALUES ('', NULL, '2026-11-04 11:52:45.670994', '2026-11-04 11:52:45.670994', FALSE, 0, 1) RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.3ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x00000001245443c0
+...
+wongnok-blog(dev):002&gt; p.<span class="f">persisted?</span>
+=&gt; true</code></pre>
+
+<p>อ่านสมุดบันทึกการเบิกของ (log ของ SQL) ทีละบรรทัด:</p>
+<ul>
+  <li><code>User Load (1.1ms)</code> · <code>Post Create (1.8ms)</code> = ป้ายหัวบรรทัดบอกว่า model ไหนทำอะไร (โหลด · สร้าง) และใช้เวลากี่มิลลิวินาที</li>
+  <li><code>SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1</code> = "<strong>ขอดู</strong> (SELECT) แฟ้มทุกช่อง (<code>*</code>) จากลิ้นชัก users เรียงตามเลข id จากน้อยไปมาก เอาแผ่นแรกแผ่นเดียว (<code>LIMIT 1</code>)" — คือ <code>User.first</code> (ได้สมชาย)</li>
+  <li><code>BEGIN</code> … <code>COMMIT</code> = "เริ่มงาน … ยืนยันงาน" · ของที่อยู่ระหว่างสองบรรทัดนี้ถูกเขียนลงตู้จริง</li>
+  <li><code>INSERT INTO "posts" (…) VALUES ('', NULL, …)</code> = "<strong>ใส่แฟ้มแผ่นใหม่</strong>ลงลิ้นชัก posts · ช่อง title เป็นข้อความว่าง (<code>''</code>) · ช่อง body ว่างเปล่า (<code>NULL</code>)" ·
+      INSERT คือคำสั่ง "เพิ่มแถวใหม่" ของ SQL · <code>RETURNING "id"</code> ท้ายบรรทัด = "ใส่เสร็จแล้วบอกเลขที่แฟ้มกลับมาด้วย"</li>
+  <li><code>/*application='WongnokBlog'*/</code> ท้ายทุกบรรทัด = ป้ายที่ Rails แปะบอกว่า SQL มาจากแอปไหน — ข้ามได้</li>
+  <li><code>=&gt;</code> ตามด้วย <code>...</code> = console ย่อผลยาว ๆ ให้เอง เวลาบรรทัดนั้นเป็นการใส่ค่าให้ตัวแปร (<code>p = …</code>)</li>
+</ul>
+
+<p>
+  บทความที่ไม่มีชื่อเรื่องเข้าตู้ไปเรียบร้อย · หน้ารายการบทความจะมีบรรทัดที่ไม่มีชื่อเรื่องโผล่มาให้ผู้อ่านงง
+  <br>ลบทิ้งก่อนไปต่อด้วย <code>p.destroy</code> (บท 107) · แล้วเราจะหาคนมายืนตรวจแฟ้มก่อนเข้าตู้
+</p>
+
+<p>
+  <strong>validation</strong> คือ<strong>กฎที่ model ตรวจข้อมูลก่อนบันทึก</strong> · ถ้าผิดกฎข้อไหน Rails <strong>ไม่ยอมเขียนลงฐานข้อมูล</strong> แล้วจดไว้ว่าผิดอะไร
+  เพื่อเอาไปบอกผู้ใช้ได้ · กฎเขียนไว้ใน model ที่เดียว จึงตรวจทุกทางที่ข้อมูลผ่าน model — หน้าเว็บ · console · seeds
+</p>
+
+<div class="analogy">
+  <span class="label">🗂 เทียบให้เห็นภาพ — คนดูแลสต็อกตรวจแฟ้มก่อนเก็บ</span>
+  <p>
+    model <code>Post</code> คือ<strong>คนดูแลสต็อก</strong>ที่ฝังอยู่ในแฟ้มทุกแผ่น พาแฟ้มเดินเข้าตู้เอง (<a href="./0106-active-record-intro.html">บท 106</a>) · ตอนนี้เขารับทุกแผ่นที่ยื่นมา แม้จะเป็นกระดาษเปล่า
+    <br>validation คือ<strong>รายการตรวจ</strong>ที่เราแปะไว้บนโต๊ะเขา: "ช่องชื่อเรื่องห้ามว่าง" · ถ้าแฟ้มไม่ผ่าน เขา<strong>ส่งคืนพร้อมโน้ตสีเหลือง</strong>บอกว่าผิดข้อไหน ไม่เดินไปตู้เลย
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนดูแลสต็อกจริงเห็นแฟ้มแปลก ๆ แล้วสงสัยเองได้ ·
+    Rails <strong>ตรวจเฉพาะข้อที่เขียนไว้ในรายการ</strong> ไม่มีสามัญสำนึก ไม่เขียนกฎ = ไม่ตรวจ ·
+    และคนดูแลสต็อกคนนี้<strong>ยืนอยู่หน้าประตูบานเดียว</strong> — ใครเดินอ้อมไปทางหลังร้าน (มีทางเลี่ยงจริง เดี๋ยวดูใน<a href="./0111-four-layers-and-uniqueness.html">บท 111</a>) เขาไม่เห็น
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ใน Gin (<a href="../../day-8/lessons/0039-gin-binding-middleware.html">บท 39</a>) เราติด tag <code>binding:"required"</code> บน struct ที่รับข้อมูลจาก request ·
+  การตรวจเกิดที่ <strong>handler</strong> ตอน <code>c.ShouldBindJSON(&amp;in)</code> · โค้ดทางอื่นที่สร้างข้อมูล (สคริปต์ · งานเบื้องหลัง) ต้องตรวจเองอีกรอบ
+  <br>Rails ย้ายกฎไปไว้ที่ <strong>model</strong> · ใครก็ตามที่บันทึกผ่าน <code>Post</code> โดนตรวจด้วยกฎชุดเดียวกัน
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Go (Gin) — กฎอยู่บน struct ของ request</h4>
+<pre><code><span class="k">type</span> <span class="n">PostInput</span> <span class="k">struct</span> {
+    Title <span class="k">string</span> <span class="s">`json:"title" binding:"required"`</span>
+}
+
+<span class="c">// ตรวจตอน handler อ่าน body</span>
+<span class="k">var</span> in <span class="n">PostInput</span>
+<span class="k">if</span> err := c.<span class="f">ShouldBindJSON</span>(&amp;in); err != <span class="k">nil</span> {
+    c.<span class="f">JSON</span>(<span class="n">400</span>, gin.H{<span class="s">"error"</span>: err.<span class="f">Error</span>()})
+    <span class="k">return</span>
+}</code></pre>
+  </div>
+  <div class="side">
+    <h4>Rails — กฎอยู่ใน model</h4>
+<pre><code><span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">validates</span> <span class="n">:title</span>, presence: <span class="k">true</span>
+<span class="k">end</span>
+
+<span class="c"># ตรวจทุกครั้งที่ save / create</span>
+<span class="c"># ไม่ว่าเรียกจากหน้าเว็บ console หรือ seeds</span></code></pre>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>validation</dt>
+    <dd>กฎตรวจข้อมูลที่ model ทำก่อนบันทึก · ไม่ผ่าน = ไม่เขียนลงฐานข้อมูล + มีรายการปัญหาให้โชว์ ·
+        <strong>ถาม senior ได้ว่า "กฎข้อนี้ควรเป็น validation ใน model หรือเช็คใน controller"</strong> (คำตอบส่วนใหญ่คือ model)</dd>
+    <dt>INSERT · BEGIN · COMMIT</dt>
+    <dd>INSERT = คำสั่ง SQL "เพิ่มแถวใหม่" · BEGIN/COMMIT = เริ่มงาน/ยืนยันงาน (transaction — กลุ่มคำสั่งที่ "ทำทั้งหมดหรือไม่ทำเลย" · บท 111 ใช้จริง) ·
+        <strong>เวลาส่ง log ให้ AI ดู พิมพ์ได้ว่า "this INSERT ran even though title is empty — which validation should stop it?"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">2 · กฎแรก — <code>validates :title, presence: true</code></h2>
+
+<p>เปิดไฟล์ model แล้วเพิ่มบรรทัดเดียว:</p>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">validates</span> <span class="n">:title</span>, presence: <span class="k">true</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>validates</code> = "ขอตั้งกฎสำเร็จรูปให้ช่องนี้" · เป็น method ที่ <code>ApplicationRecord</code> ให้มา (เรียกในตัว class ได้เลย แบบเดียวกับ <code>belongs_to</code>)</li>
+  <li><code>:title</code> = ชื่อช่องที่จะตรวจ (symbol — บท 92)</li>
+  <li><code>presence: true</code> = ชื่อกฎ "<strong>ต้องมีของ</strong>" · ว่าง (<code>nil</code>) · ข้อความว่าง (<code>""</code>) · ช่องว่างล้วน ไม่ผ่านทั้งหมด ·
+      เป็น hash ท้าย argument ที่ไม่ต้องใส่ปีกกา (บท 97)</li>
+</ul>
+
+<p>
+  ทีนี้ลองในครัวทดลอง · ถ้า console เปิดค้างไว้ พิมพ์ <code>reload!</code> ก่อน (ไม่งั้นมันยังใช้ model ฉบับเก่า) ·
+  ผมเปิด console ใหม่แล้วพิมพ์ 5 บรรทัดนี้:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; p = <span class="n">Post</span>.<span class="f">new</span>
+=&gt; #&lt;Post:0x00000001244bf300 id: nil, title: nil, body: nil, created_at: nil, updated_at: nil, published: false, views: 0, user_id: nil&gt;
+wongnok-blog(dev):002&gt; p.<span class="f">valid?</span>
+=&gt; false
+wongnok-blog(dev):003&gt; p.errors.<span class="f">full_messages</span>
+=&gt; ["User must exist", "Title can't be blank"]
+wongnok-blog(dev):004&gt; p.errors[<span class="n">:title</span>]
+=&gt; ["can't be blank"]
+wongnok-blog(dev):005&gt; p.errors[<span class="n">:user</span>]
+=&gt; ["must exist"]</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัด</th><th>แปลเป็นภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>p = Post.new</code></td>
+        <td>สร้างแฟ้มเปล่าในมือ (ยังไม่เข้าตู้) · ทุกช่องเป็น <code>nil</code> ยกเว้น <code>published: false</code> กับ <code>views: 0</code> ที่ตารางตั้งค่าเริ่มต้นไว้ (บท 108)</td></tr>
+    <tr><td><code>p.valid?</code></td>
+        <td>"ช่วยตรวจตามรายการหน่อย ผ่านไหม" · ได้ <code>false</code> = ไม่ผ่าน · <strong>ตรวจอย่างเดียว ไม่บันทึก</strong> · ไม่มี SQL โผล่เลย เพราะยังไม่มีใครเดินไปตู้</td></tr>
+    <tr><td><code>p.errors.full_messages</code></td>
+        <td>"ขอดูโน้ตสีเหลืองทั้งหมด เป็นประโยคเต็ม" · ได้ array (รายการ) ของข้อความภาษาอังกฤษ · ชื่อช่องขึ้นต้นประโยคให้เอง</td></tr>
+    <tr><td><code>p.errors[:title]</code></td>
+        <td>"ขอดูเฉพาะโน้ตของช่อง title" · ได้ข้อความแบบไม่มีชื่อช่องนำหน้า · หน้าฟอร์มใช้ท่านี้โชว์ error ใต้ช่องที่ผิด</td></tr>
+    <tr><td><code>p.errors[:user]</code></td>
+        <td>"ขอดูเฉพาะโน้ตของผู้เขียน" · ได้ <code>"must exist"</code> = ยังไม่ได้บอกว่าใครเขียน (โน้ตข้อนี้มาจากไหน ดูย่อหน้าถัดไป)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>สังเกต: เราเขียนกฎแค่ข้อเดียว แต่ได้ error สองข้อ</strong> · <code>"User must exist"</code> มาจากไหน?
+  <br>มาจาก <code>belongs_to :user</code> ซึ่ง<strong>แอบเพิ่มกฎ "ต้องมีผู้เขียน" ให้เอง</strong> (ตัวเดียวกับที่เจอในบท 107) · บทความทุกชิ้นต้องเป็นของ user สักคน
+  (เรื่อง belongs_to ละเอียดใน<a href="./0115-associations.html">บท 115</a>) ·
+  ถ้าเปิดสไลด์หน้า 23 จะเห็นแค่ <code>["Title can't be blank"]</code> เพราะตัวอย่างในสไลด์ไม่มี <code>belongs_to</code>
+</p>
+
+<p>
+  <strong>เทียบกับ Go:</strong> <code>p.errors</code> คล้าย <code>err</code> ที่ <code>ShouldBindJSON</code> คืนมา แต่ต่างกันตรงที่ Rails <strong>ไม่ได้คืนออกมา</strong> —
+  มัน<strong>ติดอยู่กับแฟ้มเอง</strong> · ใครถือ <code>p</code> อยู่ก็เปิดดูได้ภายหลัง (ซึ่ง view จะใช้ประโยชน์จากตรงนี้ในหัวข้อ 7)
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># model ยังเป็นแบบข้างบน (presence: true ที่ title)</span>
+wongnok-blog(dev):001&gt; q = <span class="n">Post</span>.<span class="f">new</span>(title: <span class="s">"   "</span>, user: <span class="n">User</span>.<span class="f">first</span>)
+wongnok-blog(dev):002&gt; q.<span class="f">valid?</span>
+<span class="c">#                          ↑ ชื่อเรื่องเป็นช่องว่างสามตัว · มีผู้เขียนแล้ว</span></code></pre>
+  <p class="ask">คิดว่าได้ <code>true</code> หรือ <code>false</code>? (ใบ้: บท 94 — <code>.presence</code> กับข้อความที่มีแต่ช่องว่าง)</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>wongnok-blog(dev):001&gt; q = Post.new(title: "   ", user: User.first)
+  User Load (1.3ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Post:0x000000012635cab0 id: nil, title: "   ", body: nil, created_at: nil, updated_at: nil, published: false, views: 0, user_id: 1&gt;
+wongnok-blog(dev):002&gt; q.valid?
+=&gt; false
+wongnok-blog(dev):003&gt; q.errors.full_messages
+=&gt; ["Title can't be blank"]</code></pre>
+    <p>
+      ได้ <code>false</code> · <code>presence: true</code> ใช้เกณฑ์เดียวกับ <code>.presence</code> ในบท 94 คือ "<strong>ว่าง (blank)</strong>" ซึ่งรวมข้อความที่มีแต่ช่องว่างด้วย ·
+      ช่องว่างสามตัวจึงนับว่าไม่มีชื่อเรื่อง · และรอบนี้เหลือ error ข้อเดียว เพราะใส่ผู้เขียนให้แล้ว (<code>user_id: 1</code>)
+    </p>
+  </div>
+</div>
+
+<div class="predict">
+<pre><code>wongnok-blog(dev):001&gt; <span class="n">Post</span>.<span class="f">new</span>.errors.<span class="f">full_messages</span>
+<span class="c">#                      ↑ ยังไม่ได้สั่ง valid? หรือ save เลย</span></code></pre>
+  <p class="ask">แฟ้มเปล่าแบบนี้ผิดกฎแน่ ๆ · คิดว่าจะได้ error กี่ข้อ?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>wongnok-blog(dev):001&gt; Post.new.errors.full_messages
+=&gt; []</code></pre>
+    <p>
+      ได้ array ว่าง · <strong>โน้ตสีเหลืองถูกเขียนตอนตรวจเท่านั้น</strong> (ตอน <code>valid?</code> · <code>save</code> · <code>create</code>) ·
+      แฟ้มที่ยังไม่มีใครตรวจจึงไม่มีโน้ต แม้จะผิดกฎเต็มไปหมด · ถ้าเห็น <code>errors</code> ว่างทั้งที่คิดว่าควรมี ให้ถามตัวเองก่อนว่า "ตรวจไปหรือยัง"
+    </p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>validates</code> · <code>presence</code></dt>
+    <dd><code>validates :ช่อง, ชื่อกฎ: ค่า</code> = ตั้งกฎสำเร็จรูป · <code>presence</code> = ห้ามว่าง (รวมช่องว่างล้วน) ·
+        <strong>พิมพ์บอก AI ได้ว่า "add presence validation on Post#title and show me the error message in the console"</strong></dd>
+    <dt><code>valid?</code> · <code>errors</code> · <code>full_messages</code></dt>
+    <dd><code>valid?</code> = ตรวจโดยไม่บันทึก · <code>errors</code> = รายการปัญหาที่ติดอยู่กับ object · <code>full_messages</code> = แปลงเป็นประโยคเต็ม ·
+        <strong>เวลาบันทึกไม่ผ่านแล้วไม่รู้ทำไม ถาม senior ได้ว่า "ขอดู errors.full_messages ของ object นี้หน่อย"</strong> — เกือบทุกครั้งคำตอบอยู่ในนั้น</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">3 · คลังกฎสำเร็จรูป — 5 แบบที่ใช้บ่อย</h2>
+
+<p>
+  Rails มีกฎสำเร็จรูปให้เลือกหลายแบบ <strong>ไม่ต้องจำครบ</strong> แค่รู้ว่ามี — เวลาอ่านโค้ดที่ AI เขียนมาจะได้รู้ว่าแต่ละบรรทัดตรวจอะไร
+  <br>ผมเขียนกฎลง Post 4 ข้อ กับ User 1 ข้อ (ใช้ช่องที่มีจริงในตารางของเรา):
+</p>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">validates</span> <span class="n">:title</span>, presence: <span class="k">true</span>
+  <span class="f">validates</span> <span class="n">:title</span>, length: { in: <span class="n">5</span>..<span class="n">120</span> }
+  <span class="f">validates</span> <span class="n">:views</span>, numericality: { greater_than_or_equal_to: <span class="n">0</span> }
+  <span class="f">validates</span> <span class="n">:published</span>, inclusion: { in: [<span class="k">true</span>, <span class="k">false</span>] }
+<span class="k">end</span>
+
+<span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">validates</span> <span class="n">:email</span>, format: { with: <span class="s">/\A[^@\s]+@[^@\s]+\z/</span> }
+<span class="k">end</span></code></pre>
+
+<p>
+  สังเกตว่ากฎเหล่านี้มี<strong>ปีกกาซ้อนอีกชั้น</strong> เช่น <code>length: { in: 5..120 }</code> — ชื่อกฎอยู่หน้า <code>:</code> ส่วนในปีกกาคือ<strong>รายละเอียดของกฎ</strong> ("ยาวเท่าไหร่ถึงผ่าน") ·
+  ต่างจาก <code>presence: true</code> ที่ไม่มีรายละเอียดอะไรให้บอก แค่ "เปิดใช้"
+</p>
+
+<p>
+  แล้วลองทีละกฎใน console (<code>reload!</code> ก่อนถ้าเปิดค้างไว้) ·
+  ผมเขียน 3 คำสั่งในบรรทัดเดียวคั่นด้วย <code>;</code> (สร้างแฟ้ม ; ตรวจ ; ดูโน้ต) — console โชว์แค่ผลของคำสั่งสุดท้าย:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; u = <span class="n">User</span>.<span class="f">first</span>
+  User Load (1.4ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;User:0x0000000122633cb0
+...
+wongnok-blog(dev):002&gt; p = <span class="n">Post</span>.<span class="f">new</span>(user: u, title: <span class="s">"ลาบ"</span>); p.<span class="f">valid?</span>; p.errors.<span class="f">full_messages</span>
+=&gt; ["Title is too short (minimum is 5 characters)"]
+wongnok-blog(dev):003&gt; p = <span class="n">Post</span>.<span class="f">new</span>(user: u, title: <span class="s">"ลาบหมูทอด"</span>, views: <span class="n">-5</span>); p.<span class="f">valid?</span>; p.errors.<span class="f">full_messages</span>
+=&gt; ["Views must be greater than or equal to 0"]
+wongnok-blog(dev):004&gt; p = <span class="n">Post</span>.<span class="f">new</span>(user: u, title: <span class="s">"ลาบหมูทอด"</span>, views: <span class="s">"เยอะมาก"</span>); p.<span class="f">valid?</span>; p.errors.<span class="f">full_messages</span>
+=&gt; ["Views is not a number"]
+wongnok-blog(dev):005&gt; p = <span class="n">Post</span>.<span class="f">new</span>(user: u, title: <span class="s">"ลาบหมูทอด"</span>, published: <span class="k">nil</span>); p.<span class="f">valid?</span>; p.errors.<span class="f">full_messages</span>
+=&gt; ["Published is not included in the list"]
+wongnok-blog(dev):006&gt; x = <span class="n">User</span>.<span class="f">new</span>(email: <span class="s">"somchai.example.com"</span>); x.<span class="f">valid?</span>; x.errors.<span class="f">full_messages</span>
+=&gt; ["Email is invalid"]
+wongnok-blog(dev):007&gt; x = <span class="n">User</span>.<span class="f">new</span>(email: <span class="s">"som chai@example.com"</span>); x.<span class="f">valid?</span>; x.errors.<span class="f">full_messages</span>
+=&gt; ["Email is invalid"]
+wongnok-blog(dev):008&gt; x = <span class="n">User</span>.<span class="f">new</span>(email: <span class="s">"somchai@example.com"</span>); x.<span class="f">valid?</span>
+=&gt; true</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กฎ</th><th>ตรวจอะไร (ภาษาคน)</th><th>ข้อความที่ได้จริง</th></tr></thead>
+  <tbody>
+    <tr><td><code>presence: true</code></td><td>ห้ามว่าง</td><td><code>Title can't be blank</code></td></tr>
+    <tr><td><code>length: { in: 5..120 }</code></td>
+        <td>ยาว 5 ถึง 120 ตัวอักษร · <code>5..120</code> คือช่วงตัวเลข (range) "ตั้งแต่ 5 ถึง 120" · ใช้ <code>maximum:</code> หรือ <code>minimum:</code> อย่างเดียวก็ได้</td>
+        <td><code>Title is too short (minimum is 5 characters)</code></td></tr>
+    <tr><td><code>numericality: { greater_than_or_equal_to: 0 }</code></td>
+        <td>ต้องเป็นตัวเลข และ ≥ 0 · ส่งข้อความที่ไม่ใช่ตัวเลขมาก็โดนจับ (ของที่มาจากฟอร์มเว็บเป็นข้อความเสมอ ผู้ใช้จึงพิมพ์ "เยอะมาก" ส่งมาได้จริง)</td>
+        <td><code>Views must be greater than or equal to 0</code> · <code>Views is not a number</code></td></tr>
+    <tr><td><code>inclusion: { in: [true, false] }</code></td>
+        <td>ค่าต้องเป็นหนึ่งในรายการนี้เท่านั้น · ใช้กับช่องที่มีตัวเลือกจำกัด เช่น สถานะ</td>
+        <td><code>Published is not included in the list</code></td></tr>
+    <tr><td><code>format: { with: /…/ }</code></td>
+        <td>หน้าตาข้อความต้องตรงแบบที่กำหนด (regex — อธิบายข้างล่าง)</td>
+        <td><code>Email is invalid</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>อ่าน regex ของอีเมลเป็นภาษาคน</strong> — regex คือ "แบบฟอร์มของข้อความ" เขียนไว้ระหว่าง <code>/ … /</code> (บท 104 เคยเห็นผ่านตา):
+</p>
+
+<div class="diagram">/ \A    [^@\s]+    @    [^@\s]+    \z /
+    │       │        │       │        │
+    │       │        │       │        └─ จบข้อความตรงนี้ (ห้ามมีอะไรต่อ)
+    │       │        │       └────────── ตัวอักษรอะไรก็ได้ที่ไม่ใช่ @ และไม่ใช่ช่องว่าง · 1 ตัวขึ้นไป
+    │       │        └────────────────── ต้องมี @ ตรงนี้หนึ่งตัว
+    │       └─────────────────────────── ตัวอักษรอะไรก็ได้ที่ไม่ใช่ @ และไม่ใช่ช่องว่าง · 1 ตัวขึ้นไป
+    └─────────────────────────────────── เริ่มต้นข้อความตรงนี้</div>
+
+<p>
+  แปลรวม: "<strong>มีอะไรสักอย่าง @ มีอะไรสักอย่าง · ไม่มีช่องว่าง · มี @ ตัวเดียว</strong>" ·
+  <code>[^…]</code> = "ตัวไหนก็ได้ที่<strong>ไม่ใช่</strong>ของในวงเล็บ" · <code>\s</code> = ช่องว่าง · <code>+</code> = หนึ่งตัวขึ้นไป ·
+  กฎนี้กันพิมพ์ผิดแบบโจ่งแจ้งได้ <strong>แต่ไม่ได้รับประกันว่าอีเมลมีอยู่จริง</strong>
+</p>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong>สองจุดที่พิมพ์ตามแล้วพัง</strong>
+    <br><strong>(1) สไลด์หน้า 22 เขียน <code>numericality: { greater_than: 0 }</code> ที่ <code>views</code></strong> — ตาราง posts ตั้ง views เริ่มต้นเป็น 0 ·
+    ใส่กฎนี้แล้ว<strong>บทความใหม่ทุกชิ้นบันทึกไม่ได้</strong> ผมลองแล้วได้ <code>["Views must be greater than 0"]</code> · ใช้ <code>greater_than_or_equal_to: 0</code> แทน
+    <br><strong>(2) ถ้า AI เขียน regex ด้วย <code>^</code> กับ <code>$</code></strong> แทน <code>\A</code> กับ <code>\z</code> · Rails ไม่ยอมโหลด model เลย:
+    <code>The provided regular expression is using multiline anchors (^ or $), which may present a security risk. Did you mean to use \A and \z, …? (ArgumentError)</code>
+    — Rails กันไว้เพราะ <code>^ $</code> หมายถึง "ต้นบรรทัด/ท้ายบรรทัด" ข้อความหลายบรรทัดจึงแอบผ่านได้ · แก้เป็น <code>\A … \z</code>
+  </p>
+</div>
+
+<p>
+  <strong>เกร็ดสำหรับภาษาไทย:</strong> <code>length</code> นับ<strong>ทุกตัวอักษรรวมสระบนล่างและวรรณยุกต์</strong> ·
+  ใน console <code>"กุ้ง".length</code> ได้ <code>4</code> (ก · ุ · ้ · ง) ไม่ใช่ 2 อย่างที่ตาเห็น · ตั้งค่าต่ำสุดสำหรับชื่อเรื่องไทยเผื่อไว้หน่อย
+</p>
+
+<p>
+  <strong>อีกหนึ่งกับดัก:</strong> ทำไม <code>published</code> ใช้ <code>inclusion</code> ไม่ใช้ <code>presence</code>?
+  เพราะใน Rails <code>false</code> นับว่า "ว่าง" — ผมลอง <code>validates :published, presence: true</code> แล้วสร้างบทความ draft (<code>published: false</code>) ได้
+  <code>["Published can't be blank"]</code> · ช่อง true/false จึงใช้ <code>inclusion: { in: [true, false] }</code> แทน
+</p>
+
+<div class="analogy">
+  <span class="label">📏 เทียบให้เห็นภาพ — กล่องเครื่องมือตรวจของแฟรนไชส์</span>
+  <p>
+    แฟรนไชส์ส่งกล่องเครื่องมือตรวจมาให้ทุกสาขา: <strong>ไม้บรรทัด</strong> (<code>length</code> — ยาวเกินไหม) ·
+    <strong>เครื่องคิดเลข</strong> (<code>numericality</code> — เป็นตัวเลขไหม ติดลบไหม) · <strong>รายการตัวเลือก</strong> (<code>inclusion</code> — อยู่ในรายการไหม) ·
+    <strong>แผ่นแม่แบบเจาะรู</strong> (<code>format</code> — วางทาบแล้วตรงแบบไหม) · คนดูแลสต็อกหยิบเครื่องมือตามที่เราสั่งในรายการ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> เครื่องมือจริงตรวจของจริง (เช่น ไม้บรรทัดวัดความยาวกระดาษ) ·
+    เครื่องมือของ Rails <strong>ตรวจแค่หน้าตาของข้อมูล</strong> — อีเมลที่ผ่าน <code>format</code> อาจไม่มีใครใช้อยู่จริง ·
+    และมันวัด "ตัวอักษร" แบบคอมพิวเตอร์ ไม่ใช่แบบที่ตาคนเห็น (ดู <code>"กุ้ง".length</code> ด้านบน)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> กฎพวกนี้คือ tag ของ <code>validator</code> ที่ Gin ใช้ในบท 39 แบบเดียวกัน —
+  <code>binding:"min=1,max=20"</code> ≈ <code>length</code> / <code>numericality</code> · <code>binding:"oneof=draft live"</code> ≈ <code>inclusion</code> ·
+  ต่างกันที่ Go เขียนเป็นข้อความใน tag ส่วน Rails เขียนเป็น hash ที่ Ruby อ่านเข้าใจ
+</p>
+
+<p>
+  กฎหลายข้อของช่องเดียวกันรวมเป็นบรรทัดเดียวได้ เช่น <code>validates :title, presence: true, length: { maximum: 120 }</code> · ผลเหมือนเขียนแยกสองบรรทัด
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>validation helpers (<code>length</code> · <code>numericality</code> · <code>inclusion</code> · <code>format</code>)</dt>
+    <dd>ชื่อเรียกรวมของกฎสำเร็จรูปที่ Rails มีให้ (ในโค้ดของ Rails อยู่ใน module ชื่อ <code>HelperMethods</code> · ในคู่มือ Rails อยู่หมวด <em>Validations</em>) ·
+        <strong>พิมพ์บอก AI ได้ว่า "use built-in Rails validation helpers instead of a custom method if one exists"</strong> เวลา AI เขียน if เช็คเองยาว ๆ</dd>
+    <dt>regex · <code>\A</code> <code>\z</code></dt>
+    <dd>regex (regular expression) = รูปแบบข้อความ · <code>\A</code> <code>\z</code> = ต้น/ท้ายข้อความทั้งก้อน ·
+        <strong>ถาม senior ได้ว่า "regex ตัวนี้ anchor ด้วย \A กับ \z หรือยัง"</strong> — คำถามสั้น ๆ ที่จับบั๊กความปลอดภัยได้จริง</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · กฎของร้านเราเอง — <code>validate</code> + <code>errors.add</code></h2>
+
+<p>
+  บางกฎไม่มีของสำเร็จรูป เช่นกฎของร้านเรา: "<strong>บทความที่จะเผยแพร่ ต้องมีเนื้อหา</strong> (draft ไม่มีเนื้อหาได้)" ·
+  กฎแบบนี้เขียนเป็น method ธรรมดาแล้วบอก Rails ว่า "ตอนตรวจ ให้เรียก method นี้ด้วย"
+  <br>ผมเปลี่ยน <code>app/models/post.rb</code> เป็นแบบนี้ (เอากฎทดลองในหัวข้อ 3 ออก เหลือที่ใช้จริง):
+</p>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">validates</span> <span class="n">:title</span>, presence: <span class="k">true</span>, length: { maximum: <span class="n">120</span> }
+  <span class="f">validates</span> <span class="n">:views</span>, numericality: { greater_than_or_equal_to: <span class="n">0</span> }
+  <span class="f">validate</span> <span class="n">:body_needed_to_publish</span>
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">body_needed_to_publish</span>
+    <span class="k">return</span> <span class="k">unless</span> published
+    <span class="k">if</span> body.<span class="f">blank?</span>
+      errors.<span class="f">add</span>(<span class="n">:body</span>, <span class="s">"ต้องมีเนื้อหาก่อนเผยแพร่"</span>)
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัด</th><th>แปลเป็นภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>validate :body_needed_to_publish</code></td>
+        <td><strong>ไม่มี s</strong> · "ตอนตรวจ ให้เรียก method ชื่อนี้ด้วย" (ส่งชื่อ method เป็น symbol แบบเดียวกับ <code>before_action</code> ในบท 102)</td></tr>
+    <tr><td><code>private</code></td>
+        <td>method ข้างล่างใช้ได้แค่ภายใน class · คนนอกเรียก <code>post.body_needed_to_publish</code> ไม่ได้ (บท 102)</td></tr>
+    <tr><td><code>return unless published</code></td>
+        <td>"ถ้า<strong>ไม่ได้</strong>จะเผยแพร่ ก็จบ ไม่ต้องตรวจต่อ" · <code>unless</code> (คำใหม่) = "ถ้า<strong>ไม่</strong>…" ตรงข้ามกับ <code>if</code> · <code>return unless x</code> อ่านว่า "ออกจาก method เลย ถ้า x ไม่จริง" · <code>published</code> คือค่าในช่อง published ของแฟ้มนี้</td></tr>
+    <tr><td><code>if body.blank?</code></td>
+        <td>"ถ้าช่องเนื้อหาว่าง" · <code>blank?</code> คือเกณฑ์ "ว่าง" ตัวเดียวกับที่ <code>presence</code> ใช้ (บท 94)</td></tr>
+    <tr><td><code>errors.add(:body, "…")</code></td>
+        <td><strong>แปะโน้ตสีเหลืองเอง</strong>ที่ช่อง body · แค่นี้แฟ้มก็ถือว่าไม่ผ่านแล้ว ไม่ต้อง return true/false</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code>wongnok-blog(dev):001&gt; p = <span class="n">Post</span>.<span class="f">new</span>(user: <span class="n">User</span>.<span class="f">first</span>, title: <span class="s">"ลาบหมูทอด"</span>, published: <span class="k">true</span>)
+  User Load (1.3ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Post:0x0000000124b069e8 id: nil, title: "ลาบหมูทอด", body: nil, created_at: nil, updated_at: nil, published: true, views: 0, user_id: 1&gt;
+wongnok-blog(dev):002&gt; p.<span class="f">valid?</span>
+=&gt; false
+wongnok-blog(dev):003&gt; p.errors.<span class="f">full_messages</span>
+=&gt; ["Body ต้องมีเนื้อหาก่อนเผยแพร่"]
+wongnok-blog(dev):004&gt; p.body = <span class="s">"สูตรลาบทอดกรอบ ๆ"</span>
+=&gt; "สูตรลาบทอดกรอบ ๆ"
+wongnok-blog(dev):005&gt; p.<span class="f">valid?</span>
+=&gt; true</code></pre>
+
+<p>
+  ได้ <code>"Body ต้องมีเนื้อหาก่อนเผยแพร่"</code> — Rails <strong>เติมชื่อช่องภาษาอังกฤษนำหน้าให้เอง</strong>เสมอ จึงได้ประโยคครึ่งไทยครึ่งอังกฤษ ·
+  ตอนนี้ยอมรับไปก่อน · การแปลข้อความ error ทั้งระบบเป็นไทยมีกลไกของมันเอง (ชื่อเรียก I18n) ซึ่งไม่อยู่ในบทนี้
+</p>
+
+<div class="analogy">
+  <span class="label">📋 เทียบให้เห็นภาพ — กฎเฉพาะของสาขาเรา</span>
+  <p>
+    กฎสำเร็จรูป (<code>validates</code>) คือ<strong>รายการตรวจมาตรฐานจากแฟรนไชส์</strong> เช่น "ห้ามว่าง" "ไม่เกิน 120 ตัว" — ทุกสาขาใช้เหมือนกัน ·
+    <code>validate :ชื่อmethod</code> คือ<strong>กฎที่ร้านเราเขียนเพิ่มเอง</strong>ติดไว้บนโต๊ะคนดูแลสต็อก: "แฟ้มที่จะขึ้นหน้าร้าน ต้องมีสูตรแนบ" ·
+    <code>errors.add</code> คือมือที่เขียนโน้ตสีเหลืองแปะคืน
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> กฎที่ร้านเขียนเองบนกระดาษ คนอ่านแล้วตีความได้ · method ของเรา Rails <strong>เรียกตามชื่อเป๊ะ ๆ</strong> ·
+    สะกดชื่อใน <code>validate</code> ไม่ตรงกับ <code>def</code> แม้ตัวเดียว ได้ <code>NoMethodError</code> ตอนตรวจ ·
+    และ method ต้อง<strong>แปะโน้ตเอง</strong> — แค่ return <code>false</code> ไม่มีผลอะไรเลย
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>custom validation method</dt>
+    <dd>method ของเราเองที่ลงทะเบียนด้วย <code>validate :ชื่อ</code> แล้วเรียก <code>errors.add</code> เมื่อผิดกฎ ·
+        <strong>พิมพ์บอก AI ได้ว่า "write a custom validation method: a published post must have a body; use errors.add on :body"</strong></dd>
+    <dt><code>errors.add</code></dt>
+    <dd>เพิ่มปัญหาหนึ่งข้อให้ช่องที่ระบุ · มีปัญหาแม้ข้อเดียว <code>valid?</code> ก็เป็น <code>false</code> ·
+        <strong>ถาม senior ได้ว่า "error ข้อนี้ควรผูกกับช่องไหน ให้ฟอร์มโชว์ใต้ช่องที่ถูก"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 · กับดักตัว s ตัวเดียว — <code>validates</code> กับ <code>validate</code></h2>
+
+<p>
+  สองคำนี้หน้าตาเกือบเหมือนกัน แต่คนละงาน:
+</p>
+<ul>
+  <li><code>validate<strong>s</strong> :title, presence: true</code> — มี s = "<strong>ใช้กฎสำเร็จรูป</strong>กับช่อง title"</li>
+  <li><code>validate :body_needed_to_publish</code> — ไม่มี s = "<strong>เรียก method ของเรา</strong>ชื่อนี้"</li>
+</ul>
+
+<p>
+  สไลด์หน้า 22 บอกว่าพิมพ์สลับกัน "ไม่ error แค่กฎไม่ทำงานเฉย ๆ" · ผมลองทุกแบบใน Rails 8.1.4 แล้ว<strong>ผลจริงไม่ตรงกับสไลด์ทั้งหมด</strong> ·
+  ไฟล์ทดลองหน้าตาแบบนี้ (เปลี่ยนแค่บรรทัดที่ 6 ทีละแบบ):
+</p>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">validate</span> <span class="n">:title</span>, presence: <span class="k">true</span>
+<span class="k">end</span></code></pre>
+
+<p>แล้วสั่ง <code>p = Post.new(user: User.first, title: ""); p.valid?</code> ใน console ใหม่ · ผล (ตัดมาแค่บรรทัดแรกของ error · บรรทัดที่เหลือชี้เข้าไปในโค้ดของ Rails):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัดที่ 6 เขียนว่า</th><th>ผลจริง</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>validate :title, presence: true</code><br>(ลืม s)</td>
+        <td><code>app/models/post.rb:6:in '&lt;class:Post&gt;': Unknown key: :presence. Valid keys are: :on, :if, :unless, :prepend, :except_on. Perhaps you meant to call `validates` instead of `validate`? (ArgumentError)</code></td>
+        <td><strong>Rails จับได้</strong> และใบ้ให้ด้วยว่า "หมายถึง validates หรือเปล่า" · โหลด model ไม่ได้เลย เปิดหน้าเว็บจะได้ 500</td></tr>
+    <tr><td><code>validates :title, presense: true</code><br>(สะกดชื่อกฎผิด)</td>
+        <td><code>app/models/post.rb:6:in '&lt;class:Post&gt;': Unknown validator: 'PresenseValidator' (ArgumentError)</code></td>
+        <td>Rails หากฎชื่อนี้ไม่เจอ · ดูชื่อในวงเล็บแล้วจะเห็นตัวสะกดที่ผิด</td></tr>
+    <tr><td><code>validate :title</code><br>(ลืม s และลืมชื่อกฎ)</td>
+        <td><code>=&gt; true</code></td>
+        <td>⚠️ <strong>เงียบสนิท — อันนี้แหละอันตรายจริง</strong> · Rails เข้าใจว่า "เรียก method ชื่อ title เป็นกฎ" ·
+            method <code>title</code> มีอยู่แล้ว (อ่านค่าช่อง title) แต่ไม่เคยแปะโน้ต · ชื่อเรื่องว่างจึงผ่านฉลุย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ตัวเลข <code>:6</code> ใน error คือ<strong>บรรทัดที่ 6 ของไฟล์</strong> · นับบรรทัดคอมเมนต์ <code># app/models/post.rb</code> เป็นบรรทัดที่ 1 ด้วย ·
+  <code>in '&lt;class:Post&gt;'</code> = "เกิดตอนกำลังอ่านตัว class Post" (ยังไม่ได้อยู่ใน method ไหน) ·
+  ส่วน <code>Valid keys are: :on, :if, …</code> คือตัวเลือกเสริมที่ <code>validate</code> รับได้ ยังไม่ต้องรู้จัก ·
+  error สองแบบแรกเด้งขึ้น<strong>ตอนที่ Rails โหลด model ครั้งแรก</strong> (ครั้งแรกที่พิมพ์คำว่า <code>Post</code>) ไม่ใช่ตอน <code>valid?</code>
+</p>
+
+<p>
+  <strong>บทเรียนจากตาราง:</strong> Rails รุ่นนี้ช่วยจับการพิมพ์ผิดส่วนใหญ่ให้แล้ว แต่แบบที่สามหลุดได้เสมอ ·
+  เขียนกฎเสร็จ <strong>ลองให้มันพังหนึ่งครั้งเสมอ</strong> (สร้างของผิดกฎแล้วดูว่า <code>valid?</code> เป็น <code>false</code> จริง)
+</p>
+
+<p>
+  อีกทางคือถาม model ตรง ๆ ว่า "ช่อง title มีกฎอะไรบ้าง" ด้วย <code>Post.validators_on(:title)</code> · ผมลองกับไฟล์สองแบบ (console ใหม่ทุกรอบ):
+</p>
+
+<pre><code><span class="c"># แบบที่ 3 — บรรทัดที่ 6 เป็น validate :title (ตัวที่เงียบ)</span>
+wongnok-blog(dev):001&gt; <span class="n">Post</span>.<span class="f">validators_on</span>(<span class="n">:title</span>)
+=&gt; []
+
+<span class="c"># แบบที่ถูก — บรรทัดที่ 6 เป็น validates :title, presence: true</span>
+wongnok-blog(dev):001&gt; <span class="n">Post</span>.<span class="f">validators_on</span>(<span class="n">:title</span>)
+=&gt; [#&lt;ActiveRecord::Validations::PresenceValidator:0x0000000124832e10 @attributes=[:title], @options={}&gt;]</code></pre>
+
+<ul>
+  <li><code>[]</code> = array ว่าง = "<strong>ช่อง title ไม่มีกฎตรวจเลยสักข้อ</strong>" — จับแบบที่สามได้ทันทีโดยไม่ต้องลองสร้างแฟ้ม</li>
+  <li><code>PresenceValidator</code> = "ตัวตรวจ presence" (validator แปลว่า ตัวตรวจ) · <code>@attributes=[:title]</code> = ตรวจช่อง title · <code>@options={}</code> = ไม่มีรายละเอียดเพิ่ม</li>
+  <li>อยากเห็นกฎ<strong>ทุกช่อง</strong>ใช้ <code>Post.validators</code> (ไม่มี <code>_on</code>) · จะเห็นตัวตรวจของ user ที่ <code>belongs_to</code> เพิ่มให้ปนอยู่ด้วย</li>
+</ul>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ใน Go ถ้าเรียกฟังก์ชันที่ไม่มีอยู่ <code>go build</code> ไม่ผ่านตั้งแต่ก่อนรัน ·
+  Ruby ไม่มีขั้น build — ความผิดพวกนี้<strong>รู้ตอนรันเท่านั้น</strong> และแบบที่สามไม่ผิดไวยากรณ์เลยสักตัว จึงไม่มีใครเตือนได้
+</p>
+
+<div class="analogy">
+  <span class="label">🪧 เทียบให้เห็นภาพ — ป้ายสั่งงานสองแบบที่เขียนคล้ายกัน</span>
+  <p>
+    <code>validates :title, presence: true</code> = ป้าย "<strong>ตรวจช่อง title ด้วยเครื่องมือ presence</strong>" ·
+    <code>validate :body_needed_to_publish</code> = ป้าย "<strong>เรียกพนักงานชื่อ body_needed_to_publish มาตรวจ</strong>"
+    <br><code>validate :title</code> จึงอ่านว่า "เรียกพนักงานชื่อ title มาตรวจ" · พนักงานชื่อนี้มีจริง แต่หน้าที่ของเขาคือ<strong>อ่านชื่อเรื่องออกเสียง</strong>เฉย ๆ
+    ไม่เคยแปะโน้ตตีกลับใคร แฟ้มจึงผ่านทุกแผ่น
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริง หัวหน้าเห็นป้ายแปลก ๆ แล้วถามได้ว่า "หมายถึงอะไร" ·
+    Rails ถามกลับได้แค่ตอนที่ป้ายผิดรูปจนอ่านไม่ออก (สองแบบแรก) · ป้ายที่<strong>ถูกรูปแต่ผิดความหมาย</strong> Rails ทำตามทันทีโดยไม่สงสัย
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>validates</code> vs <code>validate</code></dt>
+    <dd>มี s = ใช้ validator สำเร็จรูป · ไม่มี s = ลงทะเบียน custom method ·
+        <strong>เวลาให้ AI ตรวจโค้ด พิมพ์ได้ว่า "check every validate/validates line: is any validate called with a column name instead of a method?"</strong></dd>
+    <dt><code>Post.validators</code></dt>
+    <dd>รายชื่อกฎทั้งหมดที่ model มีจริงตอนนี้ (รวมกฎที่ <code>belongs_to</code> เพิ่มให้) · <code>Post.validators_on(:title)</code> = เฉพาะช่องเดียว ·
+        <strong>ถาม senior ได้ว่า "ขอเช็ค validators_on(:email) หน่อย ว่ากฎที่คิดว่ามี มีอยู่จริงไหม"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · <code>save</code> กับ <code>save!</code> — ตีกลับเงียบ ๆ หรือกดกริ่ง</h2>
+
+<p>
+  ถึงตอนนี้เราใช้ <code>valid?</code> เพื่อ<strong>ถาม</strong>อย่างเดียว · ของจริงเราใช้ <code>save</code> ซึ่ง<strong>ตรวจก่อนแล้วค่อยบันทึก</strong> ·
+  Rails มีสองแบบ ต่างกันที่ "<strong>ถ้าไม่ผ่าน จะบอกเรายังไง</strong>" · ใช้ model ฉบับหัวข้อ 4 เปิด console ใหม่:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; p = <span class="n">Post</span>.<span class="f">new</span>(title: <span class="s">""</span>, user: <span class="n">User</span>.<span class="f">first</span>)
+  User Load (2.4ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Post:0x00000001239cec48 id: nil, title: "", body: nil, created_at: nil, updated_at: nil, published: false, views: 0, user_id: 1&gt;
+wongnok-blog(dev):002&gt; p.<span class="f">save</span>
+=&gt; false
+wongnok-blog(dev):003&gt; p.<span class="f">save!</span>
+(wongnok-blog):3:in '&lt;main&gt;': Validation failed: Title can't be blank (ActiveRecord::RecordInvalid)
+wongnok-blog(dev):004&gt; p.title = <span class="s">"ลาบหมูทอด"</span>
+=&gt; "ลาบหมูทอด"
+wongnok-blog(dev):005&gt; p.<span class="f">save</span>
+  TRANSACTION (1.9ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (5.0ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id") VALUES ('ลาบหมูทอด', NULL, '2026-11-04 11:55:23.124491', '2026-11-04 11:55:23.124491', FALSE, 0, 1) RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.3ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true</code></pre>
+
+<ul>
+  <li><code>p.save</code> → <code>false</code> · <strong>ไม่มีบรรทัด INSERT เลย</strong> คนดูแลสต็อกตีกลับก่อนเดินไปถึงตู้ · โค้ดเราต้องเช็คเองว่าได้ <code>true</code> หรือ <code>false</code></li>
+  <li><code>p.save!</code> → <strong>โยน error</strong> ชื่อ <code>ActiveRecord::RecordInvalid</code> พร้อมข้อความ <code>Validation failed: …</code> บอกว่าผิดข้อไหน ·
+      <code>(wongnok-blog):3:in '&lt;main&gt;'</code> = "เกิดที่บรรทัดที่ 3 ที่พิมพ์ใน console · ไม่ได้อยู่ใน method ไหน" · ถ้าไม่มีใคร <code>rescue</code> (บท 96) โปรแกรมหยุดตรงนั้น</li>
+  <li>แก้ชื่อเรื่องแล้ว <code>p.save</code> อีกรอบ → ผ่าน เห็น BEGIN · INSERT · COMMIT แล้วได้ <code>true</code></li>
+</ul>
+
+<p><code>create</code> (= <code>new</code> + <code>save</code> รวดเดียว) ก็มีคู่แบบเดียวกัน · ต่อใน console เดิม:</p>
+
+<pre><code>wongnok-blog(dev):006&gt; <span class="n">Post</span>.<span class="f">create</span>(title: <span class="s">""</span>, user: <span class="n">User</span>.<span class="f">first</span>)
+  User Load (2.2ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Post:0x000000012245e750 id: nil, title: "", body: nil, created_at: nil, updated_at: nil, published: false, views: 0, user_id: 1&gt;
+wongnok-blog(dev):007&gt; <span class="n">Post</span>.<span class="f">create!</span>(title: <span class="s">""</span>, user: <span class="n">User</span>.<span class="f">first</span>)
+  User Load (2.5ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+(wongnok-blog):7:in '&lt;main&gt;': Validation failed: Title can't be blank (ActiveRecord::RecordInvalid)</code></pre>
+
+<p>
+  <code>create</code> ที่ไม่ผ่าน<strong>ไม่ได้คืน false</strong> — คืนแฟ้มที่<strong>ยังไม่เข้าตู้</strong>มาให้ (สังเกต <code>id: nil</code>) ·
+  ถ้าไม่เช็คต่อ จะไม่รู้เลยว่าไม่ได้บันทึก · ส่วน <code>create!</code> ระเบิดทันทีแบบเดียวกับ <code>save!</code>
+</p>
+
+<p>
+  ทวนบท 93: ที่นั่น <code>!</code> แปลว่า "<strong>ระวัง ตัวนี้อันตรายกว่า</strong>" (เช่น <code>upcase!</code> เขียนทับของเดิม) ·
+  ใน Rails ความ "อันตรายกว่า" มีความหมายเดียวทั้งระบบคือ <strong>"ถ้าทำไม่ได้ ให้ระเบิด"</strong> — ใช้กับคู่อื่นด้วย เช่น <code>update</code> / <code>update!</code> · <code>find_by</code> / <code>find_by!</code>:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; <span class="n">User</span>.<span class="f">find_by</span>(email: <span class="s">"nobody@example.com"</span>)
+  User Load (1.5ms)  SELECT "users".* FROM "users" WHERE "users"."email" = 'nobody@example.com' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):002&gt; <span class="n">User</span>.<span class="f">find_by!</span>(email: <span class="s">"nobody@example.com"</span>)
+  User Load (2.0ms)  SELECT "users".* FROM "users" WHERE "users"."email" = 'nobody@example.com' LIMIT 1 /*application='WongnokBlog'*/
+(wongnok-blog):2:in '&lt;main&gt;': Couldn't find User with [WHERE "users"."email" = $1] (ActiveRecord::RecordNotFound)</code></pre>
+
+<p>
+  SQL บรรทัดนี้แปลว่า "ขอแฟ้มผู้ใช้ทุกช่อง (<code>*</code>) <strong>เฉพาะแผ่นที่</strong> (<code>WHERE</code>) ช่อง email ตรงกับ nobody@example.com · เอาแค่แผ่นเดียว (<code>LIMIT 1</code>)" ·
+  (<code>$1</code> ในข้อความ error = ช่องที่ Rails เว้นไว้ให้ใส่ค่าอีเมล ไม่ได้แปลว่าค้นหาคำว่า $1) ·
+  หาไม่เจอทั้งคู่ แต่ <code>find_by</code> คืน <code>nil</code> เงียบ ๆ ส่วน <code>find_by!</code> โยน <code>RecordNotFound</code> (ตัวเดียวกับที่ <code>rescue_from</code> ในบท 96 รับไปทำหน้า 404)
+</p>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM ในบท 27 มีแบบเดียว คือ <code>db.Create(&amp;post)</code> คืน object ที่มี <code>.Error</code> ให้เราเช็คเอง —
+  ซึ่งบท 27 เตือนว่า "ลืมเช็คได้ง่ายมาก" · <code>save</code> ของ Rails ก็นิสัยเดียวกัน (ไม่เช็คค่า = ไม่รู้) ·
+  ส่วน <code>save!</code> คล้ายการ <code>panic</code> ใน Go ที่หยุดโปรแกรมเว้นแต่มีคนดักรับ
+</p>
+
+<div class="analogy">
+  <span class="label">🔔 เทียบให้เห็นภาพ — ส่งคืนพร้อมโน้ต กับ กดกริ่งหยุดครัว</span>
+  <p>
+    <strong><code>save</code></strong> = คนดูแลสต็อกตรวจแล้วไม่ผ่าน ก็<strong>ส่งแฟ้มคืนพร้อมโน้ตสีเหลือง</strong> ตอบสั้น ๆ ว่า "ไม่รับ" (<code>false</code>) ·
+    คนส่งต้องเปิดโน้ตอ่านเองว่าผิดอะไร · เหมาะกับงานที่<strong>คาดไว้แล้วว่าผิดได้บ่อย</strong> เช่น ลูกค้ากรอกฟอร์มไม่ครบ
+    <br><strong><code>save!</code></strong> = ตรวจไม่ผ่านแล้ว<strong>กดกริ่งฉุกเฉิน</strong> ทั้งครัวหยุด · เหมาะกับงานที่<strong>ไม่ควรผิดเลย</strong> ถ้าผิดแปลว่ามีบั๊ก
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> กริ่งในครัวจริงดังแล้วทุกคนได้ยิน · <code>save!</code> ระเบิดแล้ว<strong>มีคนดักรับได้</strong> (<code>rescue</code> · บท 96) ถ้าดักไว้ ครัวไม่หยุด ·
+    และ <code>save</code> ที่คืน <code>false</code> ถ้าเราไม่เช็คค่า มัน<strong>เงียบจริง ๆ</strong> ไม่มีใครรู้เลยว่าแฟ้มไม่ได้เข้าตู้
+  </p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>ไม่มี <code>!</code> (<code>save</code> · <code>create</code> · <code>find_by</code>)</th><th>มี <code>!</code> (<code>save!</code> · <code>create!</code> · <code>find_by!</code>)</th></tr></thead>
+  <tbody>
+    <tr><td>ถ้าไม่ได้</td><td>คืน <code>false</code> / แฟ้มที่ไม่ได้เข้าตู้ / <code>nil</code></td><td>โยน error (<code>RecordInvalid</code> / <code>RecordNotFound</code>)</td></tr>
+    <tr><td>ใช้เมื่อ</td><td>ข้อมูลมาจาก<strong>ฟอร์มที่ผู้ใช้กรอก</strong> · ผิดเป็นเรื่องปกติ · อยากโชว์ error กลับไปที่หน้าจอ</td>
+        <td><strong>seeds · สคริปต์ · งานเบื้องหลัง</strong> (Day 3) · ข้อมูลที่เราเขียนเอง ถ้าผิดคือบั๊ก · อยากให้หยุดดัง ๆ</td></tr>
+    <tr><td>ตัวอย่างในแอปเรา</td><td><code>if @post.save</code> ใน controller (หัวข้อถัดไป)</td><td><code>db/seeds.rb</code> ใช้ <code>User.create!</code> · <code>posts.create!</code> ทุกบรรทัด</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  มีอีกที่หนึ่งที่ต้องใช้ <code>!</code> คือใน <strong>transaction</strong> (กลุ่มคำสั่งที่ "บันทึกทั้งหมดหรือไม่บันทึกเลย") ·
+  transaction จะยกเลิกทั้งก้อนก็ต่อเมื่อมี error ระเบิดออกมา · <code>save</code> ที่แค่คืน <code>false</code> ไม่ทำให้ยกเลิก — รายละเอียดใน<a href="./0111-four-layers-and-uniqueness.html">บท 111</a>
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>bang method (<code>save!</code> · <code>create!</code> · <code>find_by!</code>)</dt>
+    <dd>method ที่มี <code>!</code> · ใน Active Record หมายถึง "ทำไม่ได้แล้วโยน exception" ·
+        <strong>ถาม senior ได้ว่า "ตรงนี้ควรใช้ save หรือ save! — ผิดแล้วเป็น input ผู้ใช้หรือเป็นบั๊ก"</strong></dd>
+    <dt><code>ActiveRecord::RecordInvalid</code> · <code>RecordNotFound</code></dt>
+    <dd>ชื่อ error ที่ <code>save!</code>/<code>create!</code> และ <code>find_by!</code>/<code>find</code> โยนออกมา ·
+        <strong>เวลาเจอใน log พิมพ์บอก AI ได้ว่า "seeds failed with ActiveRecord::RecordInvalid: Validation failed: … — which record and which rule?"</strong></dd>
+  </dl>
+</div>
+
+<p>
+  บทความ "ลาบหมูทอด" ที่เพิ่งบันทึกไว้อยู่ในตู้จริงแล้ว · จะเก็บไว้หรือลบด้วย <code>Post.where(title: "ลาบหมูทอด").destroy_all</code> ก็ได้
+  (ผมลองแล้ว เห็น <code>DELETE FROM "posts" WHERE …</code> = "ลบแฟ้มแผ่นที่…" · แล้ว <code>Post.count</code> กลับเป็น 6)
+</p>
+
+<h2 id="sn-sec-7">7 · ใน controller — <code>if @post.save … else render :new</code></h2>
+
+<p>
+  ฟอร์ม "เขียนบทความใหม่" คืองานแบบ "ผู้ใช้กรอก ผิดได้บ่อย" จึงใช้ <code>save</code> แบบไม่มี <code>!</code> ·
+  นี่คือ action <code>create</code> ที่บท 102 ให้อ่านล่วงหน้า · ตอนนี้รันได้จริงแล้ว (ผมเขียน route · controller · view ทดลองใน sandbox แล้วยิง request ดู):
+</p>
+
+<pre><code><span class="c"># app/controllers/posts_controller.rb (ตัดมาเฉพาะ action create)</span>
+<span class="k">def</span> <span class="f">create</span>
+  @post = <span class="n">Post</span>.<span class="f">new</span>(post_params)
+  @post.user = <span class="n">User</span>.<span class="f">first</span>   <span class="c"># ชั่วคราว: ยังไม่มีระบบ login</span>
+  <span class="k">if</span> @post.<span class="f">save</span>
+    <span class="f">redirect_to</span> @post, notice: <span class="s">"สร้างบทความแล้ว"</span>
+  <span class="k">else</span>
+    <span class="f">render</span> <span class="n">:new</span>, status: <span class="n">:unprocessable_content</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัด</th><th>แปลเป็นภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>@post = Post.new(post_params)</code></td>
+        <td>สร้างแฟ้มจากของที่ผู้ใช้กรอก · <code>post_params</code> = method ที่หยิบเฉพาะช่องที่อนุญาต (เขียนด้วย <code>params.expect</code> — ละเอียดใน<a href="./0117-rest-and-strong-params.html">บท 117</a>) · วางบนถาด <code>@</code> ให้ view ใช้ได้</td></tr>
+    <tr><td><code>@post.user = User.first</code></td>
+        <td>ใส่ผู้เขียนให้ ไม่งั้นโดน <code>User must exist</code> · ของจริงจะเป็น "คนที่ login อยู่" (Day 4)</td></tr>
+    <tr><td><code>if @post.save</code></td>
+        <td>ตรวจตามกฎแล้วบันทึก · ได้ <code>true</code> เข้า <code>if</code> · ได้ <code>false</code> เข้า <code>else</code></td></tr>
+    <tr><td><code>redirect_to @post, …</code></td>
+        <td>สำเร็จ → พาไปหน้าบทความนั้น (<code>/posts/เลข id</code>) · กด refresh แล้วไม่ส่งฟอร์มซ้ำ (บท 102)</td></tr>
+    <tr><td><code>render :new, status: :unprocessable_content</code></td>
+        <td>ไม่ผ่าน → <strong>โชว์ฟอร์มเดิม</strong> ด้วย <code>@post</code> ตัวเดิมที่มีทั้งของที่ผู้ใช้พิมพ์และโน้ตสีเหลือง (<code>@post.errors</code>) · ตอบ status 422 · <code>render :new</code> ไม่ได้รัน <code>def new</code> (บท 102)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ผมส่งฟอร์มที่ชื่อเรื่องว่าง · log ของ server (ตัดบรรทัดที่ไม่เกี่ยวและวงเล็บท้าย <code>Completed</code> ออก):</p>
+
+<pre><code>Started POST "/posts" for ::1 at 2026-11-04 18:50:27 +0700
+Processing by PostsController#create as */*
+  Parameters: {"authenticity_token" =&gt; "[FILTERED]", "post" =&gt; {"title" =&gt; "", "body" =&gt; "x"}}
+  User Load (0.6ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*action='create',application='WongnokBlog',controller='posts'*/
+  Rendered posts/new.html.erb within layouts/application (Duration: 0.5ms | GC: 0.0ms)
+Completed 422 Unprocessable Content in 14ms</code></pre>
+
+<ul>
+  <li><code>for ::1</code> = request มาจากเครื่องตัวเอง (<code>::1</code> คือ localhost อีกแบบ) · <code>as */*</code> = ผมยิงด้วย <code>curl</code> ไม่ได้กดจาก browser — ของคุณอาจเห็นคำอื่นตรงนี้</li>
+  <li><code>"authenticity_token" =&gt; "[FILTERED]"</code> = รหัสลับที่ฟอร์มของ Rails แนบมาให้เองทุกครั้ง กันเว็บอื่นแอบส่งฟอร์มแทนเรา · Rails ซ่อนค่าไว้ใน log · ไม่ต้องทำอะไรกับมัน</li>
+  <li><code>"post" =&gt; {"title" =&gt; "", …}</code> = ผู้ใช้ส่งชื่อเรื่องว่างมาจริง</li>
+  <li>มีแค่ SELECT หา User · <strong>ไม่มี INSERT</strong> — validation ตีกลับก่อนถึงตู้</li>
+  <li><code>Rendered posts/new.html.erb</code> + <code>Completed 422</code> = เข้า <code>else</code> · โชว์ฟอร์มเดิม</li>
+</ul>
+
+<p>
+  แล้วโน้ตสีเหลืองไปโผล่บนหน้าเว็บได้ยังไง? · คนจัดจาน (view) เปิดดูโน้ตที่ติดมากับ <code>@post</code> แล้ววนเขียนเป็นรายการ ·
+  นี่คือส่วนบนของ view ฟอร์มที่ผมใช้ทดลอง:
+</p>
+
+<pre><code><span class="c">&lt;%# app/views/posts/new.html.erb (ตัดมาเฉพาะส่วนโชว์ error) %&gt;</span>
+&lt;% <span class="k">if</span> @post.errors.<span class="f">any?</span> %&gt;
+  &lt;ul&gt;
+    &lt;% @post.errors.<span class="f">full_messages</span>.<span class="f">each</span> <span class="k">do</span> |message| %&gt;
+      &lt;li&gt;&lt;%= message %&gt;&lt;/li&gt;
+    &lt;% <span class="k">end</span> %&gt;
+  &lt;/ul&gt;
+&lt;% <span class="k">end</span> %&gt;</code></pre>
+
+<ul>
+  <li><code>&lt;%# … %&gt;</code> = comment ของ ERB ไม่โผล่บนหน้าเว็บ · <code>&lt;% %&gt;</code> = รันโค้ดเฉย ๆ · <code>&lt;%= %&gt;</code> = รันแล้วเอาผลไปแปะบนหน้า (บท 103)</li>
+  <li><code>@post.errors.any?</code> = "มีโน้ตอย่างน้อยหนึ่งข้อไหม" · ไม่มี = ไม่ต้องวาดรายการเลย (ตอนเปิดฟอร์มครั้งแรกจึงไม่เห็นกล่อง error)</li>
+  <li><code>.each do |message|</code> = วนทีละประโยค (บท 93) · แต่ละประโยคกลายเป็นหนึ่งบรรทัด <code>&lt;li&gt;</code></li>
+</ul>
+
+<p>
+  ผลจริงเมื่อส่งฟอร์มแบบเดียวกัน (ชื่อเรื่องว่าง · เนื้อหา <code>x</code>): หน้าที่ได้กลับมามีรายการบรรทัดเดียว <strong>Title can't be blank</strong> ·
+  และช่องเนื้อหายังมีคำว่า <code>x</code> ที่ผมพิมพ์ไว้ — เพราะ <code>render</code> ใช้ <code>@post</code> ตัวเดิมที่ยังถือของที่ผู้ใช้กรอก
+</p>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong>สไลด์หน้า 23 เขียน <code>status: :unprocessable_entity</code></strong> (ชื่อเก่า บท 100/102 เคยเตือน) · ผมลองใส่ใน controller นี้แล้ว
+    ยังได้ 422 เหมือนกัน และ <strong>log ไม่มีคำเตือนอะไรเลย</strong> เพราะ Rails 8.1.4 แอบแปลงเป็นชื่อใหม่ให้เอง ·
+    แต่ Rack (ชิ้นส่วนที่ Rails ใช้คุยกับ Puma) ประกาศเลิกใช้ชื่อนี้แล้ว ถ้าเรียกผ่าน Rack ตรง ๆ จะเห็น
+    <code>warning: Status code :unprocessable_entity is deprecated and will be removed in a future version of Rack. Please use :unprocessable_content instead.</code>
+    · เขียนใหม่ให้ใช้ <code>:unprocessable_content</code> ไว้ก่อน
+  </p>
+</div>
+
+<h2 id="sn-sec-8">8 · validation เป็นประตูหน้า ไม่ใช่กำแพง</h2>
+
+<p>
+  ทุกอย่างในบทนี้ทำงาน<strong>เฉพาะตอนที่ข้อมูลเดินผ่าน model</strong> · มีทางเลี่ยงอยู่จริง เช่น <code>save(validate: false)</code> ที่บันทึกโดยไม่ตรวจอะไรเลย ·
+  หรือ SQL ที่ยิงตรงเข้าฐานข้อมูลโดยไม่ผ่าน Rails
+  <br>นี่คือประโยคหลักข้อที่สองของวัน: <strong>validation ใน model ให้ข้อความ error สวย ๆ กับผู้ใช้ แต่ไม่ใช่การรับประกัน</strong> ·
+  ของสำคัญต้องมีกฎที่ตัวตู้ (ฐานข้อมูล) คู่กันด้วย — ลองทางเลี่ยงพวกนี้จริง ๆ ใน<a href="./0111-four-layers-and-uniqueness.html">บท 111</a>
+</p>
+
+<h2 id="sn-sec-9">ภารกิจ — ตั้งกฎให้ User</h2>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ (~10 นาที)</h3>
+  <p>ทำให้ผู้ใช้ทุกคน<strong>ต้องมีชื่อ</strong> และ<strong>ต้องมีอีเมลที่หน้าตาถูก</strong> · ใช้แอปเดียวกับที่ลองมาทั้งบท (ตาราง users มีช่อง <code>name</code> กับ <code>email</code> อยู่แล้ว):</p>
+  <ol>
+    <li>เปิด <code>app/models/user.rb</code> · ถ้ายังไม่ได้พิมพ์ตามหัวข้อ 3 ให้เพิ่มบรรทัด <code>validates :email, format: { with: /\A[^@\s]+@[^@\s]+\z/ }</code> ก่อน ·
+        แล้ว<strong>เพิ่มกฎ <code>presence</code> ให้ <code>:name</code></strong> · และ<strong>รวม <code>presence</code> เข้ากับ <code>format</code> ของ <code>:email</code></strong> ในบรรทัดเดียว (ท่ารวมกฎท้ายหัวข้อ 3)</li>
+    <li>เปิด <code>bin/rails console</code> (ถ้าเปิดค้างอยู่ พิมพ์ <code>reload!</code>) แล้วพิมพ์ทีละบรรทัด:
+<pre><code>u = User.new(name: "", email: "mana.example.com")
+u.valid?
+u.errors.full_messages
+User.create!(name: "ใหม่", email: "")
+User.all.all?(&amp;:valid?)</code></pre></li>
+  </ol>
+  <p>บรรทัดสุดท้าย <code>User.all.all?(&amp;:valid?)</code> แปลว่า "ผู้ใช้ทุกคนในตู้ ผ่านกฎใหม่หมดไหม" (<code>&amp;:valid?</code> = เรียก <code>valid?</code> กับทุกตัว · ท่าเดียวกับ <code>.map(&amp;:title)</code> ในบท 92 · <code>all?</code> = "จริงทุกตัวไหม") — กันไม่ให้กฎใหม่ทำให้ข้อมูลเก่ากลายเป็นของผิดกฎ</p>
+  <p><strong>ควรเห็น:</strong> <code>valid?</code> เป็น <code>false</code> · <code>full_messages</code> มี 2 ข้อ (ชื่อว่าง · อีเมลผิดรูป) ·
+     <code>create!</code> ระเบิดด้วย <code>RecordInvalid</code> ที่บอก 2 ปัญหาของ email · บรรทัดสุดท้ายได้ <code>true</code></p>
+
+  <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong></p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>เห็นอะไร</th><th>แปลว่า</th></tr></thead>
+    <tbody>
+      <tr><td><code>u.valid?</code> ได้ <code>true</code> ทั้งที่แก้ไฟล์แล้ว</td>
+          <td>console ยังใช้ model ฉบับเก่า → พิมพ์ <code>reload!</code> (ขึ้น <code>Reloading...</code>) แล้วสร้าง <code>u</code> ใหม่ · ผมลองแล้ว ไม่ reload ผลไม่เปลี่ยนจริง</td></tr>
+      <tr><td><code>User.create!</code> ไม่ระเบิด แต่คืนผู้ใช้ที่มีเลข id ออกมา</td>
+          <td>กฎยังไม่ทำงาน (สาเหตุเดียวกับแถวบน) และ<strong>ผู้ใช้อีเมลว่างเข้าตู้ไปแล้ว 1 คน</strong> → <code>reload!</code> แล้วลบทิ้งด้วย <code>User.where(name: "ใหม่").destroy_all</code></td></tr>
+      <tr><td><code>Unknown key: :presence. … Perhaps you meant to call `validates` instead of `validate`? (ArgumentError)</code></td>
+          <td>ลืมตัว s → แก้ <code>validate</code> เป็น <code>validates</code></td></tr>
+      <tr><td><code>Unknown validator: 'PresenseValidator' (ArgumentError)</code></td>
+          <td>สะกดชื่อกฎผิด → ดูชื่อในวงเล็บ (ตัวที่ถูกคือ <code>presence</code>)</td></tr>
+      <tr><td><code>The provided regular expression is using multiline anchors (^ or $) …</code></td>
+          <td>regex ใช้ <code>^</code> <code>$</code> → เปลี่ยนเป็น <code>\A</code> <code>\z</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code><span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">validates</span> <span class="n">:name</span>, presence: <span class="k">true</span>
+  <span class="f">validates</span> <span class="n">:email</span>, presence: <span class="k">true</span>, format: { with: <span class="s">/\A[^@\s]+@[^@\s]+\z/</span> }
+<span class="k">end</span></code></pre>
+    <p>ผลรันจริง (ต่อจาก console ที่ <code>reload!</code> แล้ว):</p>
+<pre><code>wongnok-blog(dev):003&gt; reload!
+Reloading...
+=&gt; nil
+wongnok-blog(dev):004&gt; u = User.new(name: "", email: "mana.example.com")
+=&gt; #&lt;User:0x0000000123e3a548 id: nil, name: "", email: "[FILTERED]", created_at: nil, updated_at: nil&gt;
+wongnok-blog(dev):005&gt; u.valid?
+=&gt; false
+wongnok-blog(dev):006&gt; u.errors.full_messages
+=&gt; ["Name can't be blank", "Email is invalid"]
+wongnok-blog(dev):007&gt; User.create!(name: "ใหม่", email: "")
+(wongnok-blog):7:in '&lt;main&gt;': Validation failed: Email can't be blank, Email is invalid (ActiveRecord::RecordInvalid)
+wongnok-blog(dev):008&gt; User.all.all?(&amp;:valid?)
+  User Load (3.4ms)  SELECT "users".* FROM "users" /*application='WongnokBlog'*/
+=&gt; true</code></pre>
+    <ul>
+      <li>email ที่เป็น <code>""</code> โดน<strong>สองกฎพร้อมกัน</strong> (ว่าง + ไม่ตรงแบบ) · Rails ตรวจครบทุกข้อแล้วรายงานทีเดียว ไม่ได้หยุดที่ข้อแรก</li>
+      <li><code>email: "[FILTERED]"</code> = Rails ซ่อนค่าอีเมลตอนโชว์ object ให้เอง (กันข้อมูลส่วนตัวหลุดลง log) · ค่าจริงยังอยู่ครบ</li>
+      <li>เลขบรรทัด <code>:003</code>–<code>:008</code> ของคุณอาจไม่ตรง ขึ้นกับว่าพิมพ์อะไรไปก่อน</li>
+      <li>ยังไม่ได้กันอีเมลซ้ำ (สมชายสองคนใช้อีเมลเดียวกันได้) — นั่นคือเรื่องของ<a href="./0111-four-layers-and-uniqueness.html">บท 111</a> ที่กฎใน model อย่างเดียวกันไม่อยู่</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. Post มี <code>belongs_to :user</code> และ <code>validates :title, presence: true</code> · พิมพ์ <code>p = Post.new(title: "ลาบหมูทอด")</code> (ไม่ได้ใส่ผู้เขียน) แล้ว <code>p.save</code> จะได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">true · บันทึกสำเร็จ เพราะชื่อเรื่องครบตามกฎข้อเดียวที่เราเขียนเอง</button>
+    <button class="opt">false · errors มี "User must exist" เพราะ belongs_to เพิ่มกฎให้เอง</button>
+    <button class="opt">โยน RecordInvalid ทันที เพราะ save ทุกตัวระเบิดเมื่อข้อมูลไม่ครบ</button>
+    <button class="opt">true แต่ฐานข้อมูลปฏิเสธทีหลัง เพราะช่อง user_id ห้ามว่างที่ตาราง</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · ผมลองแล้วได้ <code>=&gt; false</code> และ <code>p.errors.full_messages</code> เป็น <code>["User must exist"]</code> · ไม่มี SQL โผล่เลยสักบรรทัด (ไม่มี INSERT) — คนดูแลสต็อกตีกลับก่อนเดินไปตู้</p>
+    <p>ตัวเลือกที่ 1 ผิด — <code>belongs_to</code> แอบเพิ่มกฎ "ต้องมีผู้เขียน" ไว้ให้ แม้เราไม่ได้เขียน ·
+       ตัวเลือกที่ 3 ผิด — <code>save</code> ไม่มี <code>!</code> แค่คืน <code>false</code> ไม่ระเบิด ·
+       ตัวเลือกที่ 4 ผิด — validation ตีกลับก่อนถึงฐานข้อมูล ฐานข้อมูลจึงไม่ได้เห็นแฟ้มนี้เลย</p>
+    <p><strong>จุดที่ต้องจำ:</strong> บันทึกไม่ผ่านแล้วงง ให้ดู <code>errors.full_messages</code> ก่อน · กฎบางข้อมาจาก <code>belongs_to</code> ไม่ได้มาจากบรรทัดที่เราเขียน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. เพื่อนเขียน <code>validate :title</code> (ไม่มี s และไม่มี <code>presence: true</code>) ไว้ใน Post · <code>Post.new(user: User.first, title: "").valid?</code> ได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">ArgumentError ตอนโหลด model เพราะ Rails เตือนทุกครั้งที่ลืมตัว s</button>
+    <button class="opt">false พร้อม "Title can't be blank" เพราะ Rails เดาว่าอยากตรวจช่อง title</button>
+    <button class="opt">NoMethodError เพราะ Post ไม่มี method ชื่อ title ให้ Rails เรียกใช้</button>
+    <button class="opt">true · Rails เรียก method title เป็นกฎ แต่มันไม่เคยแปะ error เลยผ่าน</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 4 ถูก · ผมลองแล้วได้ <code>=&gt; true</code> · <code>validate :ชื่อ</code> = "เรียก method ชื่อนี้ตอนตรวจ" · <code>title</code> เป็น method อ่านค่าช่องที่มีอยู่แล้ว มันคืนค่าออกมาเฉย ๆ ไม่ได้เรียก <code>errors.add</code></p>
+    <p>ตัวเลือกที่ 1 ผิด — Rails เตือนเฉพาะตอนเขียน <code>validate :title, presence: true</code> (มีชื่อกฎต่อท้าย) · แบบไม่มีชื่อกฎ Rails ไม่มีเบาะแสให้จับ ·
+       ตัวเลือกที่ 2 ผิด — Rails ไม่เดาใจ ทำตามที่เขียนเป๊ะ ๆ ·
+       ตัวเลือกที่ 3 ผิด — <code>title</code> มีอยู่จริง เพราะ Rails สร้าง method ให้ทุกคอลัมน์ (บท 106)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> เขียนกฎเสร็จ ลองให้มันพังหนึ่งครั้งเสมอ · มี s = กฎสำเร็จรูป · ไม่มี s = เรียก method ของเรา</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">3. ใน <code>db/seeds.rb</code> ถ้าบรรทัดไหนสร้างผู้ใช้ไม่ผ่านกฎ อยากให้รู้ทันทีตอนรัน · ควรเขียนแบบไหน?</p>
+  <div class="opts">
+    <button class="opt">User.create(…) · เพราะคืน object มาให้ แล้วค่อยเปิด errors ดูทีหลังได้</button>
+    <button class="opt">User.new(…) · เพราะยังไม่บันทึก จึงไม่มีทางผิดพลาดได้เลยสักบรรทัด</button>
+    <button class="opt">User.create!(…) · เพราะไม่ผ่านแล้วระเบิด หยุดสคริปต์ และบอกว่าผิดกฎข้อไหน</button>
+    <button class="opt">User.find_by!(…) · เพราะมี ! เหมือนกัน จึงตรวจกฎให้ก่อนสร้างผู้ใช้ใหม่</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 3 ถูก · seeds เป็นข้อมูลที่เราเขียนเอง ผิดแปลว่าบั๊ก · <code>create!</code> โยน <code>Validation failed: …</code> ทันที (seeds ของแอปเราก็ใช้ <code>create!</code> ทุกบรรทัด)</p>
+    <p>ตัวเลือกที่ 1 ผิด — <code>create</code> ที่ไม่ผ่านคืนแฟ้มที่ <code>id: nil</code> มาเงียบ ๆ สคริปต์วิ่งต่อจนจบโดยไม่มีใครเปิด errors ดู ·
+       ตัวเลือกที่ 2 ผิด — <code>new</code> ไม่บันทึกอะไรเลย seeds จึงไม่ได้ข้อมูล ·
+       ตัวเลือกที่ 4 ผิด — <code>find_by!</code> คือ "หา" ไม่ใช่ "สร้าง" · <code>!</code> แปลว่าหาไม่เจอให้ระเบิด</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ผิดเป็นเรื่องปกติ (ฟอร์มผู้ใช้) → ไม่มี <code>!</code> แล้วเช็คผล · ผิดคือบั๊ก (seeds · สคริปต์) → มี <code>!</code> ให้ระเบิดดัง ๆ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">4. ใน action <code>create</code> ถ้า <code>@post.save</code> ได้ <code>false</code> ทำไมถึง <code>render :new, status: :unprocessable_content</code> แทนที่จะ <code>redirect_to</code> ไปหน้าฟอร์ม?</p>
+  <div class="opts">
+    <button class="opt">render ใช้ @post ตัวเดิม ฟอร์มจึงมีของที่ผู้ใช้พิมพ์ไว้และ errors ให้โชว์</button>
+    <button class="opt">redirect_to ใช้กับ POST ไม่ได้เลย Rails โยน error ทุกครั้งที่ลองเรียกใช้</button>
+    <button class="opt">render :new เรียก def new ซ้ำ จึงได้ @post ตัวใหม่ที่ว่างสะอาดพร้อมให้กรอก</button>
+    <button class="opt">status 422 สั่งให้ browser กรอกฟอร์มให้อัตโนมัติจากข้อมูลที่ส่งไปรอบก่อน</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 1 ถูก · <code>@post</code> ที่ save ไม่ผ่านยังถือทั้งค่าที่ผู้ใช้กรอกและ <code>@post.errors</code> · render ส่งต่อให้ view ใน request เดิม ผู้ใช้เห็นว่าผิดตรงไหนโดยไม่ต้องพิมพ์ใหม่</p>
+    <p>ตัวเลือกที่ 2 ผิด — action ที่รับ POST redirect ได้ปกติ (ตอนสำเร็จเราก็ redirect) แต่ redirect = request ใหม่ <code>@post</code> กับ errors หายหมด (บท 102) ·
+       ตัวเลือกที่ 3 ผิด — <code>render :new</code> แค่ใช้ไฟล์ view ชื่อ new ไม่ได้รัน <code>def new</code> ·
+       ตัวเลือกที่ 4 ผิด — 422 แค่บอกว่า "ข้อมูลใช้ไม่ได้" ค่าในฟอร์มมาจาก <code>@post</code> ไม่ได้มาจาก browser</p>
+    <p><strong>จุดที่ต้องจำ:</strong> save สำเร็จ → redirect · save ไม่ผ่าน → render ฟอร์มเดิมพร้อม 422 · ใช้ <code>:unprocessable_content</code> ไม่ใช่ชื่อเก่า</p>
+  </div>
+</div>
+
+<p>
+  <strong>ถามกลับได้เลย</strong> — ถ้าบันทึกไม่ผ่านแล้วไม่รู้ทำไม ให้ก็อปผลของ <code>p.errors.full_messages</code> และไฟล์ model มาถาม ·
+  สองอย่างนี้บอกเกือบทุกอย่างว่ากฎข้อไหนตีกลับ และกฎนั้นมาจากบรรทัดไหน
+</p>
+
+<h2 id="sn-sec-11">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>22</td><td><code>validates :views, numericality: { greater_than: 0 }</code></td>
+        <td>views เริ่มต้นเป็น 0 → บทความใหม่ทุกชิ้นได้ <code>Views must be greater than 0</code></td>
+        <td><strong>ใช่</strong> — ใช้ <code>greater_than_or_equal_to: 0</code></td></tr>
+    <tr><td>22</td><td>พิมพ์ <code>validate</code> แทน <code>validates</code> "ไม่ error แค่กฎไม่ทำงาน"</td>
+        <td><code>validate :title, presence: true</code> ได้ <code>ArgumentError</code> พร้อมใบ้ · แบบที่เงียบจริงคือ <code>validate :title</code> (ไม่มีชื่อกฎ)</td>
+        <td>รู้ไว้ — หัวข้อ 5</td></tr>
+    <tr><td>22</td><td>ใช้ช่อง <code>slug</code> · <code>status</code> · <code>terms</code> · <code>published_at</code></td>
+        <td>ตาราง posts ของเราไม่มีช่องเหล่านี้ · บทนี้ลองกฎเดียวกันกับช่องที่มีจริง</td>
+        <td>ไม่ต้อง</td></tr>
+    <tr><td>23</td><td><code>p.errors.full_messages # =&gt; ["Title can't be blank"]</code></td>
+        <td>แอปเรามี <code>belongs_to :user</code> จึงได้ <code>"User must exist"</code> เพิ่มมาด้วย</td>
+        <td>รู้ไว้ — หัวข้อ 2</td></tr>
+    <tr><td>23</td><td><code>status: :unprocessable_entity</code></td>
+        <td>ยังได้ 422 · Rails 8.1.4 แปลงให้เงียบ ๆ แต่ Rack ประกาศเลิกใช้ชื่อนี้แล้ว · ชื่อใหม่ <code>:unprocessable_content</code></td>
+        <td><strong>ใช่</strong> — เขียนชื่อใหม่</td></tr>
+    <tr><td>28</td><td><code>p.save(validate: false)</code> · และ <code>Post.where("title LIKE ?", "%console%")</code> "ล้างของทดสอบทิ้ง"</td>
+        <td><code>save(validate: false)</code> สอนใน<a href="./0111-four-layers-and-uniqueness.html">บท 111</a> · <code>where</code> แค่<strong>ค้น</strong> ไม่ได้ลบ ต้องต่อ <code>.destroy_all</code></td>
+        <td>รู้ไว้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0109-safe-migrations.html">← บทเรียน 109 · Migration ที่ปลอดภัย</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0111-four-layers-and-uniqueness.html">บทเรียน 111 → 4 ชั้นป้องกัน · uniqueness</a>
+</nav>
+
+<h2 id="sn-sec-12">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_validations.html#validation-triggers">Rails Guides — Active Record Validations</a> —
+      อ่าน <em>Validation Triggers</em> (method ไหนตรวจ · ไหนไม่ตรวจ) · <em>Checking Validity</em> (<code>valid?</code>) ·
+      แล้วข้ามไปหมวด <em>Validations</em> ดูกฎ <em>presence · length · format · numericality · inclusion</em> ทีละตัว</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_validations.html#custom-methods">Rails Guides — Custom Methods</a> —
+      วิธีเขียน <code>validate :ชื่อmethod</code> + <code>errors.add</code> · ต่อด้วย <em>Working with Validation Errors</em> ถ้าอยากรู้ว่า <code>errors</code> ทำอะไรได้อีก</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Validations.html#method-i-save-21">Rails API — ActiveRecord::Validations</a> —
+      ดู <code>save</code> · <code>save!</code> · <code>valid?</code> สั้น ๆ ว่าแต่ละตัวคืนอะไร และ <code>save!</code> โยน <code>RecordInvalid</code></li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveModel/Validations/ClassMethods.html#method-i-validate">Rails API — ActiveModel::Validations::ClassMethods</a> —
+      เทียบ <code>validate</code> กับ <code>validates</code> ในหน้าเดียว · รายการ options ที่ <code>validate</code> รับ (<code>:on</code> · <code>:if</code> · <code>:unless</code> …) คือที่มาของ error "Unknown key"</li>
+  <li><a href="https://github.com/go-playground/validator">go-playground/validator</a> —
+      ตัวตรวจที่อยู่เบื้องหลัง <code>binding:"required"</code> ของ Gin (บท 39) · ดูรายชื่อ tag ใน README เทียบกับกฎสำเร็จรูปของ Rails</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 106 — Active Record คืออะไร — แฟ้มที่เดินเข้าลิ้นชักเองได้</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 106 · Rails · Day 2</p>
+  <h1>Active Record คืออะไร — แฟ้มที่เดินเข้าลิ้นชักเองได้</h1>
+  <p class="meta">~20 นาที (รวมภารกิจ) · บทแรกของ Day 2 · ควรผ่าน <a href="../../rails-day-1/lessons/0099-rails-naming-and-explore.html">บทเรียน 99 (Post กับ posts)</a>
+    และ <a href="../../rails-day-1/lessons/0104-rails-debug-and-console.html">บทเรียน 104 (console)</a> มาก่อน ·
+    มีเทียบกับ GORM จาก <a href="../../day-6/lessons/0027-project-layout-gorm.html">บทเรียน 27</a></p>
+  <p class="standfirst">
+    Day 1 เราทำเว็บที่ข้อความทุกตัวเขียนตายตัวในโค้ด · Day 2 ทั้งวันคือเรื่อง<strong>ข้อมูลที่เก็บไว้จริง</strong>
+    <br>อ่านจบบทนี้ คุณจะตอบได้ว่าทำไม <code>class Post &lt; ApplicationRecord</code> ที่ว่างเปล่าถึงรู้จักช่อง <code>title</code> ·
+    อ่านโค้ด Rails ที่บันทึกบทความแล้วเทียบกับ GORM ได้ทีละบรรทัด ·
+    และเข้าใจว่า "Active Record" คือ<strong>วิธีคิด</strong>แบบหนึ่ง ที่มีทั้งข้อดีและราคาที่ต้องจ่าย
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้</p>
+  <ul>
+    <li><strong>model <code>Post</code></strong> (บท 99) — class ในไฟล์ <code>app/models/post.rb</code> · <code>Post</code> = บทความหนึ่งชิ้น · <code>posts</code> = ชื่อตารางที่เก็บบทความหลายชิ้น</li>
+    <li><strong><code>class Post &lt; ApplicationRecord</code></strong> (บท 95, 99) — Post <em>สืบทอด</em>จาก ApplicationRecord คือได้ความสามารถทุกอย่างของแม่แบบกลางนี้มาใช้ฟรี</li>
+    <li><strong><code>Post.new(title: "…")</code></strong> (บท 97, 99) — สร้างบทความหนึ่งชิ้นไว้ในมือ ยังไม่ได้บันทึกที่ไหน</li>
+    <li><strong><code>bin/rails console</code></strong> (บท 104) — ครัวทดลองหลังร้าน พิมพ์คำสั่ง Ruby ทีละบรรทัดโดยแอปทั้งตัวโหลดไว้แล้ว</li>
+    <li><strong>GORM</strong> (บท 27) — ตัวช่วยของ Go ที่แปลง struct เป็นคำสั่งฐานข้อมูลให้ เช่น <code>db.Create(&amp;user)</code></li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17 · Go 1.26 + GORM v1.31.2
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน) · ผลรันทุกกล่องก็อปมาจากเครื่องจริง ·
+    เวลา (ms) · วันเวลา · เลข <code>0x…</code> ของคุณจะไม่ตรงกับในบท
+  </p>
+  <p>
+    <strong>🗂 ข้อมูลตัวอย่าง:</strong> บทนี้ใช้แค่ตาราง <code>posts</code> ที่มีช่อง <code>title</code> กับ <code>body</code> ·
+    สร้างด้วยคำสั่งเดียวกับบท 99 (<code>bin/rails generate model Post title:string body:text</code> แล้ว <code>bin/rails db:migrate</code>) ·
+    ถ้าในเครื่องคุณยังไม่มี ภารกิจท้ายบทพาสร้างทีละขั้น — อ่านเนื้อหาตามไปก่อนได้เลย
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · ทำไมทั้งวันพูดเรื่องข้อมูล</h2>
+
+<p>
+  สไลด์หน้าแรกของ Day 2 เปิดด้วยประโยคนี้:
+  <strong>"แอปพังเพราะโค้ดผิด แก้ 10 นาที · แอปพังเพราะข้อมูลผิด แก้เป็นอาทิตย์"</strong>
+</p>
+
+<p>
+  โค้ดผิดแก้ง่าย เพราะแก้ไฟล์เดียวแล้ว deploy ใหม่ (เอาโค้ดใหม่ขึ้นเครื่องที่ให้บริการจริง) ทุกคนได้โค้ดที่ถูกทันที ·
+  แต่ข้อมูลผิด<strong>ถูกเก็บลงไปแล้ว</strong> อาจเป็นพันรายการ และบางรายการมีคนใช้ต่อไปแล้วด้วย
+  <br>เช่น ระบบยอมให้สมัครด้วยอีเมลซ้ำมาหลายเดือน · วันที่รู้ตัว คุณต้องไล่ดูทีละคู่ว่าบัญชีไหนของจริง แล้วรวมบทความของสองบัญชีเข้าด้วยกัน
+</p>
+
+<div class="analogy">
+  <span class="label">🍲 เทียบให้เห็นภาพ — สูตรผิด กับ ของเสียเข้าตู้</span>
+  <p>
+    <strong>โค้ดผิด</strong> = สูตรอาหารพิมพ์ผิด ใส่เกลือ 5 ช้อน · แก้สูตรแล้ว จานถัดไปก็ถูก จานที่เสิร์ฟไปแล้วก็จบไป
+    <br><strong>ข้อมูลผิด</strong> = รับวัตถุดิบเสียเข้าห้องเก็บของไปแล้ว ปนอยู่กับของดีหลายร้อยกล่อง ·
+    ต้องไล่เปิดทีละกล่อง และบางกล่องถูกเอาไปปรุงแล้วด้วย
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ของเสียในร้านจริงยังดมหรือดูออก ·
+    ข้อมูลผิดใน database <strong>หน้าตาปกติทุกอย่าง</strong> — อีเมลซ้ำสองแถวก็เป็นแค่ข้อความธรรมดาสองบรรทัด ไม่มีอะไรเตือน
+    จนวันที่ลูกค้าล็อกอินแล้วเข้าผิดบัญชี
+  </p>
+</div>
+
+<p>
+  ทั้ง Day 2 จึงพูดเรื่องเดียว: <strong>ทำยังไงให้ข้อมูลที่เข้าห้องเก็บของถูกตั้งแต่แรก</strong> และดึงออกมาใช้ได้เร็ว ·
+  บทนี้เริ่มจากรู้จัก "คนดูแลสต็อก" ของ Rails ก่อน ว่าเขาทำงานยังไง
+</p>
+
+<h2 id="sn-sec-2">2 · แผนที่ของวันนี้</h2>
+
+<p>ไม่ต้องจำ แค่ดูว่าทั้งวันจะเดินไปทางไหน · ทุกบทใช้ภาพร้านอาหารชุดเดิมจาก Day 1 แล้วต่อยอดที่ "ห้องเก็บของ":</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บท</th><th>เรื่อง</th><th>ในร้านอาหาร</th></tr></thead>
+  <tbody>
+    <tr><td>106</td><td>Active Record คืออะไร (บทนี้)</td><td>แฟ้มที่เดินเข้าลิ้นชักเองได้</td></tr>
+    <tr><td><a href="./0107-console-crud.html">107</a></td><td>สร้าง อ่าน แก้ ลบ ใน console</td><td>ลองหยิบ-เก็บแฟ้มในครัวทดลอง</td></tr>
+    <tr><td><a href="./0108-migration-basics.html">108</a>–<a href="./0109-safe-migrations.html">109</a></td><td>แก้หน้าตาตาราง (migration) โดยไม่ทำแอปค้าง</td><td>ใบสั่งช่างต่อเติมตู้ · ปรับปรุงร้านโดยไม่ปิดร้าน</td></tr>
+    <tr><td><a href="./0110-validations.html">110</a>–<a href="./0111-four-layers-and-uniqueness.html">111</a></td><td>กฎตรวจข้อมูล (validation) · กฎที่ตัว database</td><td>คนดูแลสต็อกตรวจแฟ้ม · ตู้ที่ใส่แฟ้มผิดแบบไม่ได้เลย</td></tr>
+    <tr><td><a href="./0112-callbacks-and-logic.html">112</a></td><td>ขั้นตอนอัตโนมัติ (callbacks) · โค้ดควรอยู่ไหน</td><td>ขั้นตอนอัตโนมัติก่อน/หลังเก็บแฟ้ม</td></tr>
+    <tr><td><a href="./0113-query-lazy-relation.html">113</a>–<a href="./0114-n-plus-one.html">114</a></td><td>ค้นข้อมูล (query) · โค้ดที่ไปหา database บ่อยเกิน (N+1)</td><td>ใบเบิกของ · เดินไปตู้ 101 รอบ</td></tr>
+    <tr><td><a href="./0115-associations.html">115</a>–<a href="./0116-dependent-and-helpers.html">116</a></td><td>บทความ ผู้เขียน คอมเมนต์ผูกกัน</td><td>ช่อง "เป็นของบทความเลขที่ …" บนใบคอมเมนต์</td></tr>
+    <tr><td><a href="./0117-rest-and-strong-params.html">117</a></td><td>เส้นทางมาตรฐาน (REST) · กันลูกค้าแอบกรอกช่องเกิน</td><td>พนักงานต้อนรับรับเฉพาะช่องบนแบบฟอร์ม</td></tr>
+    <tr><td><a href="./0118-scaffold-reading.html">118</a>–<a href="./0119-rails-day2-lab.html">119</a></td><td>โค้ดชุดสำเร็จรูป (scaffold) · Lab 2</td><td>ชุดเปิดแผนกสำเร็จรูป แล้วเติมกฎของร้านเรา</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>สไลด์หน้า 3 บอกว่าถ้าจำได้แค่ 3 อย่าง ให้จำสามประโยคนี้ (ยังไม่ต้องเข้าใจตอนนี้ บท 119 จะกลับมาถามอีกที):</p>
+<ol>
+  <li><strong>แก้หน้าตาตารางได้โดยไม่ต้องปิดแอป</strong> — ทำทีละขั้น: ต่อของใหม่ก่อน → ย้ายข้อมูล → ค่อยรื้อของเก่า (บท 109)</li>
+  <li><strong>กฎตรวจข้อมูลในโค้ด Rails ยังไม่ใช่การรับประกัน</strong> — ต้องมีกฎที่ตัว database คู่กันด้วย (บท 111)</li>
+  <li><strong>โค้ดที่ไปหา database บ่อยเกินจำเป็น ดูจากโค้ดไม่ออก ต้องดูจาก log</strong> (บท 114)</li>
+</ol>
+
+<h2 id="sn-sec-3">3 · ตู้แฟ้มของร้าน — database · ตาราง · แถว · คอลัมน์ · SQL</h2>
+
+<p>
+  ก่อนไปต่อ ต้องมีคำพื้นฐานห้าคำ · <strong>database</strong> คือโปรแกรมที่เก็บข้อมูลให้อยู่ถาวร ปิดแอปแล้วข้อมูลไม่หาย ·
+  แอปของเราใช้ PostgreSQL ตัวเดียวกับที่เคยใช้กับ Go
+</p>
+
+<p>
+  ข้างใน database แบ่งเป็น<strong>ตาราง</strong> (table) ตามชนิดของข้อมูล เช่นตาราง <code>posts</code> เก็บบทความ ·
+  ข้อมูลหนึ่งชิ้นคือ<strong>แถว</strong> (row) หนึ่งแถว · แต่ละแถวมีช่องเหมือนกันทุกแถว เรียกว่า<strong>คอลัมน์</strong> (column)
+</p>
+
+<p>นี่คือหน้าตาตาราง <code>posts</code> หลังบันทึกบทความไปสองชิ้น (ตัวอย่างจากเครื่องตรวจ · ตัดเวลาให้สั้น):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>id</th><th>title</th><th>body</th><th>created_at</th><th>updated_at</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>ต้มยำกุ้งน้ำข้น</td><td>เปรี้ยว เผ็ด หอมสมุนไพร</td><td>2026-11-04 11:45</td><td>2026-11-04 11:45</td></tr>
+    <tr><td>2</td><td>ส้มตำปูปลาร้า</td><td><em>(ว่าง — NULL)</em></td><td>2026-11-04 11:46</td><td>2026-11-04 11:46</td></tr>
+  </tbody>
+</table>
+</div>
+
+<ul>
+  <li>หัวตาราง (<code>id</code> · <code>title</code> · …) คือ<strong>คอลัมน์</strong> · หนึ่งบรรทัดข้างล่างคือ<strong>แถว</strong> = บทความหนึ่งชิ้น</li>
+  <li><code>id</code> = เลขประจำแถวที่ database แจกให้เอง ไม่ซ้ำกัน · <code>created_at</code> / <code>updated_at</code> = เวลาสร้าง / แก้ล่าสุด (มาจาก <code>t.timestamps</code> ในบท 99)</li>
+  <li>แถวที่ 2 ไม่ได้ใส่ body · ช่องนั้นจึงว่าง · database เรียกค่าว่างแบบนี้ว่า <strong>NULL</strong> (ฝั่ง Ruby เห็นเป็น <code>nil</code>)</li>
+</ul>
+
+<p>
+  เราไม่ได้เปิดตารางด้วยมือ · ทุกครั้งที่อยากได้ข้อมูล ต้อง<strong>สั่งเป็นภาษาเฉพาะของ database</strong> ชื่อ <strong>SQL</strong> ·
+  เช่นคำสั่งนี้ (Rails "ยิง" คือส่งคำสั่งนี้ไปให้ database เองตอนเราพิมพ์ <code>Post.count</code> — เดี๋ยวเห็นของจริงในหัวข้อ 4):
+</p>
+
+<pre><code><span class="k">SELECT</span> <span class="f">COUNT</span>(*) <span class="k">FROM</span> <span class="s">"posts"</span></code></pre>
+
+<ul>
+  <li><code>SELECT</code> = "ขอดู / ขอหยิบ" · เป็นคำขึ้นต้นของคำสั่งที่<strong>อ่าน</strong>ข้อมูล ไม่ได้แก้อะไร</li>
+  <li><code>COUNT(*)</code> = "นับจำนวนแถว" (<code>*</code> = ทุกแถว ไม่เลือกคอลัมน์)</li>
+  <li><code>FROM "posts"</code> = "จากตาราง posts" · เครื่องหมาย <code>" "</code> ครอบ = บอก database ว่านี่คือ<strong>ชื่อ</strong>ตาราง ไม่ใช่คำสั่ง</li>
+  <li>รวมเป็นภาษาคน: <strong>"นับว่าในลิ้นชัก posts มีแฟ้มกี่แผ่น"</strong></li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🗄 เทียบให้เห็นภาพ — ตู้เก็บแฟ้มในห้องเก็บของ</span>
+  <p>
+    <strong>database</strong> = ตู้เก็บแฟ้มทั้งตู้ · <strong>ตาราง posts</strong> = ลิ้นชักที่ติดป้าย "posts" ·
+    <strong>แถว</strong> = แฟ้มหนึ่งแผ่น (บทความหนึ่งชิ้น) · <strong>คอลัมน์</strong> = ช่องที่พิมพ์ไว้บนแบบฟอร์มของแฟ้ม (ช่องหัวข้อ · ช่องเนื้อหา) ·
+    <strong>SQL</strong> = ภาษาที่คนดูแลสต็อกใช้สั่งตู้ "หยิบแผ่นที่ …" "นับให้หน่อย"
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ลิ้นชักจริงใส่กระดาษหน้าตาไหนก็ได้ ·
+    แต่ตารางบังคับให้<strong>ทุกแถวมีช่องชุดเดียวกันเป๊ะ</strong> — บทความที่ไม่มีเนื้อหาก็ยังมีช่อง body แค่ช่องว่าง (NULL) ·
+    และไม่มีใครเปิดลิ้นชักด้วยมือได้ ทุกอย่างต้องผ่านคำสั่ง SQL
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>database · table · row · column</dt>
+    <dd>ตู้ · ลิ้นชัก · แฟ้มหนึ่งแผ่น · ช่องบนแฟ้ม · ในทีมมักเรียก row ว่า "record" ด้วย ·
+        <strong>ถาม senior ได้ว่า "ตาราง posts ตอนนี้มีกี่ row แล้ว และมี column อะไรบ้าง"</strong> — คำถามแรกที่ควรถามเวลาเข้าโปรเจกต์ใหม่</dd>
+    <dt>SQL · query</dt>
+    <dd>SQL = ภาษาที่ใช้สั่ง database (อ่านว่า เอส-คิว-แอล หรือ ซีเควล) · query = คำสั่ง SQL หนึ่งคำสั่ง ·
+        <strong>พิมพ์บอก AI ได้ว่า "explain this SQL line by line in plain words"</strong> แล้วแปะบรรทัดจาก log ไปทั้งบรรทัด</dd>
+    <dt>NULL</dt>
+    <dd>ค่าว่างในช่องของ database · ฝั่ง Ruby เห็นเป็น <code>nil</code> · <strong>ถาม senior ได้ว่า "ช่องนี้ปล่อยให้ NULL ได้ไหม"</strong> — เป็นคำถามสำคัญมากในบท 111</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">4 · คำถามจากบท 99 — class ว่างเปล่า แต่รู้จัก title</h2>
+
+<p>
+  บท 99 เราเห็นว่า <code>app/models/post.rb</code> มีแค่สองบรรทัด แต่ <code>post.title</code> ใช้ได้ ·
+  คำตอบสั้น ๆ คือ <strong>Post ไปถามตาราง posts เองว่ามีคอลัมน์อะไร</strong> แล้วสร้าง method ตามนั้น ·
+  วันนี้ดูให้ชัดขึ้นโดยวางเทียบกับ GORM ที่เคยเขียนในบท 27 (โค้ดจากสไลด์หน้า 5 ปรับให้ตรงกับตาราง posts ของเรา)
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Go + GORM</h4>
+<pre><code><span class="c">// 1) ต้องประกาศทุกช่องเอง</span>
+<span class="k">type</span> <span class="n">Post</span> <span class="k">struct</span> {
+	ID        <span class="n">uint</span>
+	Title     <span class="n">string</span>
+	Body      <span class="n">string</span>
+	CreatedAt time.<span class="n">Time</span>
+	UpdatedAt time.<span class="n">Time</span>
+}
+
+<span class="c">// 2) สร้าง 3) ยื่นให้ db บันทึก 4) เช็ค err เอง</span>
+p := <span class="n">Post</span>{Title: <span class="s">"ต้มยำกุ้งน้ำข้น"</span>, Body: <span class="s">"เปรี้ยว เผ็ด หอมสมุนไพร"</span>}
+<span class="k">if</span> err := db.<span class="f">Create</span>(&amp;p).Error; err != <span class="k">nil</span> {
+	<span class="k">return</span> err
+}</code></pre>
+  </div>
+  <div class="side">
+    <h4>Ruby + Active Record</h4>
+<pre><code><span class="c"># 1) ไม่ประกาศช่องเลย</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+<span class="k">end</span>
+
+<span class="c"># 2) สร้าง 3) สั่งตัวมันเองให้บันทึก</span>
+post = <span class="n">Post</span>.<span class="f">new</span>(title: <span class="s">"ต้มยำกุ้งน้ำข้น"</span>, body: <span class="s">"เปรี้ยว เผ็ด หอมสมุนไพร"</span>)
+post.<span class="f">save!</span></code></pre>
+  </div>
+</div>
+
+<p>
+  ฝั่ง Go ตัดมาจากไฟล์ที่มี <code>package main</code> + <code>import</code> ครบ และ <code>go build</code> ผ่าน ผมรันกับ PostgreSQL ตัวเดียวกันจริง ·
+  สไลด์ตั้งชื่อตัวแปรว่า <code>p</code> · ผมใช้ <code>post</code> ฝั่ง Ruby เพราะ <code>p</code> เป็นชื่อคำสั่งพิมพ์ค่าที่เราใช้มาตั้งแต่บท 93 อ่านแล้วจะงง
+</p>
+
+<p>เทียบทีละงาน:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>งาน</th><th>Go + GORM</th><th>Rails</th></tr></thead>
+  <tbody>
+    <tr><td>บอกว่าบทความมีช่องอะไร</td><td>เขียนเองใน <code>struct</code> ทุกช่อง</td><td><strong>ไม่เขียน</strong> · Rails ไปถามตาราง posts ตอนรัน</td></tr>
+    <tr><td>สร้างบทความหนึ่งชิ้น (ยังไม่บันทึก)</td><td><code>p := Post{Title: …}</code></td><td><code>post = Post.new(title: …)</code></td></tr>
+    <tr><td>บันทึก</td><td><code>db.Create(&amp;p)</code> — <strong>ยื่นบทความให้ <code>db</code></strong> เป็นคนบันทึก (<code>&amp;p</code> = ส่งตัวจริงไป GORM จึงเติม ID กลับมาให้ได้)</td><td><code>post.save!</code> — <strong>สั่งบทความตัวเอง</strong>ให้บันทึก</td></tr>
+    <tr><td>ถ้าบันทึกไม่ได้</td><td>ได้ <code>.Error</code> กลับมา ต้องเขียน <code>if err != nil</code> เอง</td><td><code>save!</code> โยน error ออกมาเอง (<code>!</code> = "ถ้าทำไม่ได้ให้ระเบิด" · แบบไม่มี <code>!</code> รอบท 110)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>มาดูแถวแรกด้วยตาตัวเอง (บท 97 เคยลองแบบเดียวกันมาแล้ว) · เปิด <code>bin/rails console</code> แล้วถามว่า Post รู้จักช่องอะไรบ้าง:</p>
+
+<pre><code>wongnok-blog(dev):001&gt; Post.column_names
+=&gt; ["id", "title", "body", "created_at", "updated_at"]</code></pre>
+
+<p>
+  <code>column_names</code> = "บอกชื่อคอลัมน์ทั้งหมดของตารางเรา" · ได้กลับมาเป็น Array ของข้อความ ·
+  ไม่มีชื่อไหนเขียนอยู่ใน <code>post.rb</code> เลย · ทั้งห้าชื่อมาจากตาราง posts ใน database ล้วน ๆ
+</p>
+
+<div class="analogy">
+  <span class="label">📋 เทียบให้เห็นภาพ — พิมพ์แบบฟอร์มเอง กับ ลอกแบบจากลิ้นชัก</span>
+  <p>
+    <strong>ร้าน Go</strong> (เปิดร้านเองตั้งแต่ศูนย์): เราต้องพิมพ์แบบฟอร์มแฟ้มเองว่ามีช่องหัวข้อ ช่องเนื้อหา … (นั่นคือ <code>struct</code>) แล้วหวังว่าตรงกับลิ้นชัก ·
+    <strong>ร้าน Rails</strong> (แฟรนไชส์): คนดูแลสต็อกของ Post เดินไปเปิดลิ้นชัก posts ดูว่าแฟ้มในนั้นมีช่องอะไร แล้วทำแฟ้มเปล่าตามแบบนั้นให้เลย ·
+    ลิ้นชักมีช่องเพิ่ม แฟ้มก็มีช่องเพิ่มเอง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงเห็นแบบฟอร์มตั้งแต่ก่อนเริ่มงาน ·
+    Rails ไปดูลิ้นชัก<strong>ตอนโปรแกรมรัน</strong> ไม่ใช่ตอนเราเขียนโค้ด — ถ้าพิมพ์ชื่อช่องที่ลิ้นชักไม่มี จะรู้ตัวตอนรันเท่านั้น (ลองทายในกล่องท้ายหัวข้อนี้)
+  </p>
+</div>
+
+<p>ต่อด้วยแถวที่สองและสาม — สร้างบทความ แล้วสั่งบันทึก (ผลจริง · <code>0x…</code> คือที่อยู่ในหน่วยความจำ ของคุณจะต่าง):</p>
+
+<pre><code>wongnok-blog(dev):002&gt; post = Post.new(title: "ต้มยำกุ้งน้ำข้น", body: "เปรี้ยว เผ็ด หอมสมุนไพร")
+=&gt;
+#&lt;Post:0x000000012595f3c8
+...
+wongnok-blog(dev):003&gt; post
+=&gt;
+#&lt;Post:0x000000012595f3c8
+ id: nil,
+ title: "ต้มยำกุ้งน้ำข้น",
+ body: "เปรี้ยว เผ็ด หอมสมุนไพร",
+ created_at: nil,
+ updated_at: nil&gt;
+wongnok-blog(dev):004&gt; post.id
+=&gt; nil
+wongnok-blog(dev):005&gt; post.save!
+  TRANSACTION (0.9ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (2.7ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at") VALUES ('ต้มยำกุ้งน้ำข้น', 'เปรี้ยว เผ็ด หอมสมุนไพร', '2026-11-04 12:25:36.162255', '2026-11-04 12:25:36.162255') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.0ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):006&gt; post.id
+=&gt; 1
+wongnok-blog(dev):007&gt; Post.count
+  Post Count (3.1ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 1</code></pre>
+
+<p>
+  บรรทัด <code>...</code> หลัง <code>post = Post.new(…)</code> ไม่ใช่ error · console ย่อผลของบรรทัดที่มี <code>=</code> ให้สั้นลงเอง ·
+  อยากเห็นครบ ให้พิมพ์ชื่อตัวแปรเปล่า ๆ (<code>post</code>) อย่างบรรทัด 003
+</p>
+
+<p>อ่านทีละบรรทัด:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัด</th><th>แปลเป็นภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>Post.new(…)</code> → <code>id: nil</code></td>
+        <td>สร้างแฟ้มเปล่าแล้วกรอกช่องในมือ · <strong>ยังไม่ได้เข้าลิ้นชัก</strong> จึงยังไม่มีเลขแฟ้ม (<code>id</code> เป็น <code>nil</code>) · ยังไม่มี SQL สักบรรทัด</td></tr>
+    <tr><td><code>TRANSACTION … BEGIN</code></td>
+        <td>"เริ่มงานชุดหนึ่ง" · Rails ห่องานบันทึกไว้ในชุด ถ้าพังกลางทางจะไม่มีอะไรค้างครึ่ง ๆ (เรียกว่า transaction = ทำทั้งหมดหรือไม่ทำเลย · ละเอียดในบท 111)</td></tr>
+    <tr><td><code>Post Create (2.7ms)</code></td>
+        <td>ป้ายที่ Rails แปะหน้าบรรทัด: "คนดูแลสต็อกของ Post กำลังสร้างแถว ใช้เวลา 2.7 มิลลิวินาที" · ข้างหลังคือ SQL ที่ยิงจริง</td></tr>
+    <tr><td><code>INSERT INTO "posts" (…) VALUES (…)</code></td>
+        <td><code>INSERT INTO</code> = "ใส่แถวใหม่ลงตาราง" · วงเล็บแรก = ช่องที่จะกรอก (ชื่อช่องอยู่ใน <code>" "</code>) · <code>VALUES</code> = ค่าที่กรอกเรียงตามลำดับช่อง (ค่าที่เป็นข้อความอยู่ใน <code>' '</code>) ·
+            ภาษาคน: <strong>"ใส่แฟ้มใหม่ลงลิ้นชัก posts กรอกหัวข้อ เนื้อหา เวลาสร้าง เวลาแก้ ตามนี้"</strong> · สังเกตว่า Rails เติมเวลาให้เอง</td></tr>
+    <tr><td><code>RETURNING "id"</code></td>
+        <td>"ใส่เสร็จแล้วบอกเลขแฟ้มกลับมาด้วย" · นี่คือเหตุที่หลังบันทึก <code>post.id</code> กลายเป็น <code>1</code></td></tr>
+    <tr><td><code>/*application='WongnokBlog'*/</code></td>
+        <td>คอมเมนต์ที่ Rails แปะท้าย SQL บอกว่าแอปไหนส่งมา · database ไม่สนใจ · ข้ามได้</td></tr>
+    <tr><td><code>TRANSACTION … COMMIT</code> → <code>=&gt; true</code></td>
+        <td>"ยืนยันงานชุดนี้" · ข้อมูลเข้าตู้จริงแล้ว · <code>save!</code> ตอบ <code>true</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ผมเปิดโหมดโชว์ SQL ของ GORM (<code>db.Debug()</code>) แล้วรันโค้ดฝั่งซ้าย ·
+  ได้ SQL <strong>หน้าตาเกือบเหมือนกันทุกตัวอักษร</strong> (ผลจริง ตัด path ด้านหน้าออก):
+</p>
+
+<pre><code>2026/11/04 18:48:29 …/gormdemo/main.go:30
+[7.862ms] [rows:1] INSERT INTO "posts" ("title","body","created_at","updated_at") VALUES ('ต้มยำกุ้งน้ำข้น','เปรี้ยว เผ็ด หอมสมุนไพร','2026-11-04 18:48:29.883','2026-11-04 18:48:29.883') RETURNING "id"
+saved id: 1</code></pre>
+
+<p>
+  บรรทัดแรก = วันเวลา + ไฟล์และบรรทัดในโค้ด Go ที่สั่ง · <code>[7.862ms]</code> = ใช้เวลาเท่าไร · <code>[rows:1]</code> = ใส่ไป 1 แถว ·
+  <code>saved id: 1</code> คือบรรทัดที่โปรแกรม Go ของผมพิมพ์เองหลังบันทึกเสร็จ
+</p>
+
+<p>
+  แปลว่า <strong>ทั้งสองฝั่งทำงานเดียวกันเป๊ะ</strong>: แปลงคำสั่งในภาษาโปรแกรมเป็น SQL แล้วส่งให้ PostgreSQL ·
+  ตัวแปลงแบบนี้เรียกว่า ORM (เจอคำนี้ในบท 27) · ที่ต่างกันคือ<strong>ใครถือคำสั่งบันทึก</strong> — หัวข้อถัดไป
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># ตาราง posts ของเรามีแค่ id title body created_at updated_at</span>
+<span class="c"># สไลด์หน้า 5 เขียนแบบนี้ (มีช่อง user_id ด้วย)</span>
+wongnok-blog(dev):001&gt; Post.new(title: "Hello", user_id: 1)</code></pre>
+  <p class="ask">ตารางของเราไม่มีช่อง <code>user_id</code> · คิดว่าได้ Post ที่ไม่มี user_id · ได้ error · หรือ Rails สร้างช่องให้เอง?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>(wongnok-blog):1:in '&lt;main&gt;': unknown attribute 'user_id' for Post. (ActiveModel::UnknownAttributeError)
+
+      raise UnknownAttributeError.new(self, name)
+      ^^^^^
+…/attribute_methods.rb:512:in 'ActiveModel::AttributeMethods#method_missing': undefined method 'user_id=' for an instance of Post (NoMethodError)
+	from …</code></pre>
+    <p>
+      ได้ error ตั้งแต่ <code>Post.new</code> ยังไม่ทันถึง <code>save!</code> ·
+      <code>unknown attribute 'user_id' for Post</code> = "Post ไม่รู้จักช่องชื่อ user_id" (attribute = ช่องของข้อมูลฝั่ง model)
+      <br>บรรทัดล่างบอกเหตุผลลึกกว่านั้น: <code>undefined method 'user_id='</code> — Rails สร้าง method สำหรับกรอกค่า<strong>เฉพาะช่องที่มีในตารางจริง</strong> ·
+      ไม่มีช่อง ก็ไม่มี method ให้กรอก · และ Rails <strong>ไม่สร้างช่องในตารางให้เอง</strong> (นั่นเป็นงานของ migration — บท 108)
+    </p>
+    <p>ฝั่ง GORM ก็คล้ายกัน: ผมลองใส่ <code>UserID uint</code> ใน struct ทั้งที่ตารางไม่มีช่องนี้ · <code>go build</code> ผ่าน แต่พังตอนยิง INSERT ด้วย <code>ERROR: column "user_id" of relation "posts" does not exist</code> ·
+       ทั้งสองฝั่งรู้ว่าช่องไม่ตรงก็ต่อเมื่อไปถึงตาราง · ช่อง <code>user_id</code> จะมาในบทถัด ๆ ไปของ Day 2 ตอนมีตาราง users</p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>ORM (Object-Relational Mapping)</dt>
+    <dd>ตัวแปลงระหว่าง object ในโค้ดกับแถวในตาราง · GORM คือ ORM ของ Go · Active Record คือ ORM ของ Rails ·
+        <strong>ถาม senior ได้ว่า "ขอดู SQL ที่ ORM ยิงจริงหน่อย"</strong> — ใน Rails ดูได้จาก log ของ console หรือ server เลย</dd>
+    <dt>attribute</dt>
+    <dd>ช่องของข้อมูลฝั่ง model (<code>post.title</code>) · ตรงกับคอลัมน์ฝั่งตาราง · ใน Rails มาจากตารางตอนรัน ไม่ได้ประกาศในไฟล์ ·
+        <strong>พิมพ์บอก AI ได้ว่า "I get ActiveModel::UnknownAttributeError for user_id — does the posts table have that column?"</strong></dd>
+    <dt>bang method (<code>save!</code>)</dt>
+    <dd>method ที่ชื่อลงท้ายด้วย <code>!</code> · ใน Active Record แปลว่า "ทำไม่ได้ให้โยน error" · <code>save</code> ไม่มี <code>!</code> ตอบ <code>true</code>/<code>false</code> แทน (บท 110) ·
+        <strong>ถาม senior ได้ว่า "ตรงนี้ทีมใช้ save หรือ save! — อยากให้พังดัง ๆ หรือเช็คผลเอง"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 · Active Record คือชื่อ "วิธีคิด" ไม่ใช่แค่ชื่อของใน Rails</h2>
+
+<p>
+  คำว่า Active Record ที่เห็นในชื่อ <code>ActiveRecord::Base</code> จริง ๆ เป็น<strong>ชื่อ pattern</strong> — แบบแผนการออกแบบที่มีคนตั้งชื่อไว้ให้คุยกันรู้เรื่อง ·
+  Rails Guides เล่าว่า Martin Fowler เป็นคนอธิบาย pattern นี้ไว้ในหนังสือ <em>Patterns of Enterprise Application Architecture</em>
+  (สไลด์หน้า 6 อ้างว่าหนังสือออกปี 2002 ก่อน Rails 2 ปี)
+</p>
+
+<p>แก่นของ pattern นี้มีประโยคเดียว:</p>
+
+<p><strong>object หนึ่งตัว = หนึ่งแถวในตาราง · และ object ตัวนั้นรู้วิธีอ่าน เขียน ลบ ตัวเองลง database</strong></p>
+
+<p>
+  ดังนั้น <code>post</code> หนึ่งตัวไม่ได้ถือแค่ข้อมูล · มันถือของห้าอย่างไว้ในตัว (สไลด์หน้า 6) ซึ่งเราจะได้ลงมือทีละอย่างทั้งวัน:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ของที่ <code>post</code> แบกไว้</th><th>ตัวอย่าง</th><th>เจอในบท</th></tr></thead>
+  <tbody>
+    <tr><td>ข้อมูล — ค่าของแต่ละช่อง</td><td><code>post.title</code></td><td>บทนี้ · 107</td></tr>
+    <tr><td>การเดินทางไป database — บันทึก ลบ โหลดใหม่</td><td><code>post.save!</code> · <code>post.destroy</code></td><td>107</td></tr>
+    <tr><td>กฎตรวจข้อมูล</td><td>"ไม่มีหัวข้อ ไม่รับ"</td><td>110</td></tr>
+    <tr><td>ขั้นตอนอัตโนมัติก่อน/หลังบันทึก</td><td>"ติดป้ายก่อนเข้าตู้ทุกครั้ง"</td><td>112</td></tr>
+    <tr><td>วิธีหาข้อมูลที่เกี่ยวข้อง</td><td><code>post.comments</code></td><td>115</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">📄 เทียบให้เห็นภาพ — แฟ้มที่เดินเข้าลิ้นชักเองได้</span>
+  <p>
+    ในร้าน Rails <strong>คนดูแลสต็อกฝังอยู่ในแฟ้มทุกแผ่น</strong> · แฟ้มบทความหนึ่งแผ่นรู้ว่าตัวเองมีช่องอะไร ·
+    สั่ง <code>post.save!</code> แฟ้มก็เดินเข้าลิ้นชัก posts เอง · สั่ง <code>post.destroy</code> ก็เดินออกไปทิ้งเอง ·
+    ไม่ต้องมีใครถือไปให้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> แฟ้มไม่ได้ "เดิน" ไปจริง — <code>save!</code> แค่แปลเป็นคำสั่ง SQL (<code>INSERT INTO …</code>) แล้วยื่นให้ PostgreSQL ทำ ·
+    และกระดาษจริงเป็นแฟ้มได้แม้ไม่มีตู้ · แต่ <code>Post</code> <strong>ต้องมีตู้ก่อนถึงจะสร้างแฟ้มเปล่าได้</strong> เพราะต้องไปดูช่องจากลิ้นชัก (หัวข้อ 7 พิสูจน์ให้ดู)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>pattern (design pattern)</dt>
+    <dd>วิธีแก้ปัญหาที่คนใช้ซ้ำกันบ่อยจนตั้งชื่อเรียกได้ · พูดชื่อเดียวแล้วทั้งทีมเห็นภาพตรงกัน ·
+        ได้ยินคำว่า "Active Record" ให้ดูบริบท: คุยเรื่องออกแบบ = ชื่อ pattern · คุยเรื่อง Rails = ส่วนของ Rails ที่คุยกับ database
+        (เป็น gem จริงชื่อ <code>activerecord</code> อยู่ในใบเสร็จ <code>Gemfile.lock</code> ของคุณ — บท 98)</dd>
+    <dt>Active Record pattern</dt>
+    <dd>object หนึ่งตัวแทนหนึ่งแถว และมี method บันทึก/ลบตัวเอง (<code>post.save!</code>) ·
+        <strong>พิมพ์บอก AI ได้ว่า "explain the difference between the Active Record and Data Mapper patterns with a Rails example"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">6 · อีกสายหนึ่ง: Data Mapper — แฟ้มเป็นกระดาษเปล่า มีพนักงานคลังแยก</h2>
+
+<p>
+  Active Record ไม่ใช่ทางเดียว · สไลด์หน้า 7 แบ่งโลกของ ORM เป็นสองสาย ด้วยคำถามข้อเดียว:
+  <strong>"ใครควรเป็นคนที่รู้เรื่อง database"</strong>
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Active Record — แฟ้มรู้เอง</h4>
+<pre><code>post   ← ถือข้อมูล + รู้วิธีเก็บตัวเอง
+ │
+ │  post.save!
+ ▼
+ตาราง posts</code></pre>
+  </div>
+  <div class="side">
+    <h4>Data Mapper — มีคนกลาง</h4>
+<pre><code>post   ← ถือแค่ข้อมูล ไม่รู้จัก database
+ │
+ │  ยื่นให้
+ ▼
+mapper ← พนักงานคลัง: repo.save(post)
+ │
+ ▼
+ตาราง posts</code></pre>
+  </div>
+</div>
+
+<p>
+  ฝั่งขวา <code>post</code> เป็นกระดาษเปล่าธรรมดา · งานบันทึก/ค้นหาทั้งหมดอยู่ที่ "พนักงานคลัง" อีกตัว (มักเรียกว่า mapper หรือ repository) ·
+  <code>repo.save(post)</code> ข้างบนเป็นแค่ภาพประกอบ ไม่ใช่โค้ดของ library ไหน
+</p>
+
+<p>
+  <strong>เทียบกับ Go:</strong> คุณเคยทำหน้าตาแบบขวามาแล้วในบท 27 — struct <code>User</code> ใน <code>model.go</code> ถือแค่ข้อมูล ·
+  ส่วน <code>repository.go</code> เป็นคนเดียวที่เรียก GORM (<code>r.db.WithContext(ctx).First(&amp;u, id)</code>) ·
+  struct ไม่มีวันสั่ง save ตัวเอง
+</p>
+
+<div class="analogy">
+  <span class="label">🧑‍💼 เทียบให้เห็นภาพ — พนักงานคลังที่ถือแฟ้มไปเก็บให้</span>
+  <p>
+    ร้านแบบ Data Mapper: แฟ้มบทความเป็น<strong>กระดาษเปล่าที่กรอกข้อมูลอย่างเดียว</strong> ไม่รู้ว่าตู้อยู่ไหน ·
+    มี<strong>พนักงานคลังแยก</strong>หนึ่งคน คอยรับแฟ้มไปเก็บ ไปหยิบ ไปทิ้ง · ร้านแบบ Active Record ไม่มีพนักงานคนนี้ เพราะแฟ้มทำเองได้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริง การมีพนักงานเพิ่มหนึ่งคนแปลว่าต้องจ้างเพิ่ม ·
+    ในโค้ด "พนักงานคลัง" คือ<strong>ไฟล์และโค้ดที่ต้องเขียนเพิ่ม</strong> (ข้อเสียที่สไลด์บอกว่า "ไฟล์เยอะกว่า") ·
+    แลกกับการที่กระดาษเปล่าเอาไปทดสอบหรือใช้ที่อื่นได้โดยไม่ต้องมีตู้
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>Data Mapper · repository</dt>
+    <dd>แยก object ข้อมูลล้วนออกจากตัวที่คุยกับ database · repository คือชื่อเรียกตัวกลางที่พบบ่อย (บท 27 ใช้คำนี้) ·
+        <strong>ถาม senior ได้ว่า "โปรเจกต์นี้ให้ model คุยกับ database ตรง ๆ หรือผ่าน repository"</strong> — ตอบคำถามนี้ได้ จะรู้ทันทีว่าโค้ดบันทึกข้อมูลอยู่ไฟล์ไหน</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">7 · ราคาที่ต้องจ่าย</h2>
+
+<p>
+  ข้อดีของ Active Record เห็นแล้ว: <strong>เขียนสั้น เริ่มเร็ว ของทุกอย่างอยู่ที่เดียว</strong> · สไลด์หน้า 6 บอกราคาที่ต้องจ่ายไว้สามข้อ · แปลเป็นภาษาคน:
+</p>
+
+<ul>
+  <li><strong>model อ้วนขึ้นเรื่อย ๆ</strong> — กฎตรวจข้อมูล ขั้นตอนอัตโนมัติ วิธีค้นหา ทุกอย่างมากองที่ <code>post.rb</code> · โปรเจกต์อายุสองปี ไฟล์นี้อาจยาวหลายร้อยบรรทัด (บท 112 คุยว่าจะย้ายไปไว้ไหน)</li>
+  <li><strong>ทดสอบยากกว่า</strong> — แค่สร้างแฟ้มเปล่าก็ต้องมี database แล้ว (ผลจริงข้างล่าง)</li>
+  <li><strong>ย้ายไปใช้ database แบบอื่นยากกว่า</strong> — เพราะโค้ดทั้งแอปเรียก Active Record ตรง ๆ ไม่มีคนกลางคั่น</li>
+</ul>
+
+<p>ข้อสองพิสูจน์ได้ · ผมชี้ <code>DATABASE_URL</code> ไปที่ database ชื่อ <code>w106_nope</code> ที่ไม่มีอยู่จริง แล้วสั่งแค่ <code>Post.new</code> (ยังไม่ save) · ผลจริง ตัดบรรทัดคำแนะนำที่ตามมาออก:</p>
+
+<pre><code>$ bin/rails runner 'p Post.new(title: "x")'
+…/postgresql_adapter.rb:63:in 'ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.new_client': Database not found: w106_nope. Available database configurations can be found in config/database.yml. (ActiveRecord::NoDatabaseError)</code></pre>
+
+<p>
+  <code>bin/rails runner '…'</code> = รันโค้ด Ruby บรรทัดเดียวโดยโหลดแอปให้ก่อน (บท 99) ·
+  ผลคือพังตั้งแต่ <code>Post.new</code> เพราะ Post ต้องไปถามตารางก่อนว่ามีช่องอะไร ·
+  ฝั่ง Go <code>Post{Title: "x"}</code> สร้างได้เสมอ ไม่ต้องมี database เลย
+</p>
+
+<p>
+  Rails <strong>ยอมรับข้อเสียพวกนี้โดยตั้งใจ</strong> แลกกับความเร็วในการเขียน · ไม่ใช่ว่าแบบไหนถูกแบบไหนผิด ·
+  แค่ต้องรู้ว่าจ่ายอะไรไป จะได้ไม่แปลกใจตอนเทสต์ต้องเปิด database (Day 4)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>fat model</dt>
+    <dd>model ที่มีโค้ดกองอยู่มากเกินไปจนอ่านยาก · คำนี้ได้ยินบ่อยในทีม Rails ·
+        <strong>ถาม senior ได้ว่า "Post เริ่ม fat แล้ว ทีมเราแยกโค้ดออกไปไว้ที่ไหน"</strong></dd>
+    <dt>coupled to the database (ผูกกับ database)</dt>
+    <dd>โค้ดที่ทำงานไม่ได้ถ้าไม่มี database · Active Record model เป็นแบบนี้โดยธรรมชาติ ·
+        <strong>พิมพ์บอก AI ได้ว่า "this Rails model test needs the database — is that expected or can I avoid it?"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">8 · ApplicationRecord และการเดาชื่อตาราง</h2>
+
+<p>
+  ทวนบท 99 สั้น ๆ: <code>Post &lt; ApplicationRecord &lt; ActiveRecord::Base</code> (เขียนย่อให้เห็นว่าใครสืบทอดจากใคร ไม่ใช่โค้ดที่พิมพ์ได้จริง) ·
+  <code>ActiveRecord::Base</code> คือของจาก Rails ที่คุยกับ database ได้ทุกอย่าง · <code>ApplicationRecord</code> คือแม่แบบกลางของแอปเรา
+  ไว้ใส่ของที่ <strong>model ทุกตัว</strong>ต้องมี (ตอนนี้ยังว่าง) · Post จึงได้ความสามารถทั้งหมดมาฟรีผ่านการสืบทอด
+</p>
+
+<p>
+  เหลือคำถามเดียว: <strong>Post รู้ได้ยังไงว่าต้องไปถามตาราง posts</strong> · คำตอบคือกฎตั้งชื่อจากบท 99 —
+  Rails เอาชื่อ class มาทำเป็นตัวเล็กแล้วเติมพหูพจน์ · Post → <code>posts</code> · ถ้าตั้งชื่อ class ไม่ตามตาราง จะเกิดอะไร?
+  ลองสร้าง class ชื่อ <code>Article</code> (บทความเหมือนกัน แต่คนละคำ) ในโปรเจกต์ที่มีแค่ตาราง posts
+  (ผลจริงข้างล่าง ตัดบรรทัด <code>from …</code> ยาว ๆ ท้าย error ออก):
+</p>
+
+<pre><code><span class="c"># app/models/article.rb</span>
+<span class="k">class</span> <span class="n">Article</span> &lt; <span class="n">ApplicationRecord</span>
+<span class="k">end</span></code></pre>
+
+<pre><code>wongnok-blog(dev):001&gt; Article.table_name
+=&gt; "articles"
+wongnok-blog(dev):002&gt; Article.count
+  Article Count (46.2ms)  SELECT COUNT(*) FROM "articles" /*application='WongnokBlog'*/
+(wongnok-blog):2:in '&lt;main&gt;': PG::UndefinedTable: ERROR:  relation "articles" does not exist (ActiveRecord::StatementInvalid)
+LINE 1: SELECT COUNT(*) FROM "articles" /*application='WongnokBlog'*...
+                             ^</code></pre>
+
+<ul>
+  <li><code>table_name</code> = "ชื่อตารางที่ฉันจะไปหา" · Rails เดาว่า <code>articles</code> ตามกฎ</li>
+  <li><code>SELECT COUNT(*) FROM "articles"</code> = "นับแฟ้มในลิ้นชัก articles" · แต่ตู้ไม่มีลิ้นชักนี้</li>
+  <li><code>relation "articles" does not exist</code> = PostgreSQL ตอบว่า "ไม่มีตารางชื่อ articles" (relation = คำที่ PostgreSQL ใช้เรียกตาราง) ·
+      สังเกตว่า console เปิดได้ปกติ และ <code>table_name</code> ก็ตอบได้ · <strong>พังตอนไปหาตารางจริงครั้งแรก</strong></li>
+</ul>
+
+<p>ถ้าอยากใช้ชื่อ class ที่ไม่ตามกฎจริง ๆ (เช่น ต่อกับตารางเก่าที่ตั้งชื่อไว้ก่อนแล้ว) ให้บอกชื่อตารางเองหนึ่งบรรทัด:</p>
+
+<pre><code><span class="c"># app/models/article.rb</span>
+<span class="k">class</span> <span class="n">Article</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="k">self</span>.<span class="f">table_name</span> = <span class="s">"posts"</span>
+<span class="k">end</span></code></pre>
+
+<pre><code>wongnok-blog(dev):001&gt; Article.table_name
+=&gt; "posts"
+wongnok-blog(dev):002&gt; Article.count
+  Article Count (37.6ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 2
+wongnok-blog(dev):003&gt; Article.first.title
+  Article Load (3.4ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt; "ต้มยำกุ้งน้ำข้น"</code></pre>
+
+<ul>
+  <li><code>self.table_name = "posts"</code> — <code>self</code> ในตัว class คือ "class นี้เอง" · หน้าตาเหมือน <code>post.title = "…"</code> ในบท 97 แต่ตั้งค่าให้ทั้ง class ·
+      บรรทัดนี้แปลว่า "Article ใช้ตาราง posts นะ ไม่ต้องเดา"</li>
+  <li><code>Article.first</code> = "ขอแถวแรก" · SQL ที่ได้:
+      <code>SELECT "posts".*</code> = ขอทุกช่องของแถวจากตาราง posts · <code>ORDER BY "posts"."id" ASC</code> = เรียงตามช่อง id ของตาราง posts (<code>"posts"."id"</code> อ่านว่า "ช่อง id ใน posts") จากน้อยไปมาก (ASC = น้อยไปมาก) ·
+      <code>LIMIT 1</code> = เอาแค่แถวเดียว · ภาษาคน: <strong>"เรียงแฟ้มในลิ้นชัก posts ตามเลขที่ แล้วหยิบแผ่นแรกมา"</strong></li>
+  <li><code>Article.count</code> ได้ 2 เพราะตอนนั้นตาราง posts ในเครื่องตรวจมีบทความ 2 ชิ้น (ตารางในหัวข้อ 3)</li>
+</ul>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM ก็เดาชื่อตารางแบบเดียวกัน (บท 27: <code>User</code> → <code>users</code>) · และถ้าชื่อไม่ตามกฎ ให้เขียน method <code>TableName()</code>
+  (ผมรันแล้ว ได้แถวจากตาราง posts จริง) · GORM จะเรียก method นี้ถามเองว่า "Article ใช้ตารางไหน":
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Go + GORM</h4>
+<pre><code><span class="k">type</span> <span class="n">Article</span> <span class="k">struct</span> {
+	ID    <span class="n">uint</span>
+	Title <span class="n">string</span>
+}
+
+<span class="k">func</span> (<span class="n">Article</span>) <span class="f">TableName</span>() <span class="n">string</span> { <span class="k">return</span> <span class="s">"posts"</span> }</code></pre>
+  </div>
+  <div class="side">
+    <h4>Rails</h4>
+<pre><code><span class="k">class</span> <span class="n">Article</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="k">self</span>.<span class="f">table_name</span> = <span class="s">"posts"</span>
+<span class="k">end</span></code></pre>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🏷 เทียบให้เห็นภาพ — ป้ายลิ้นชักของร้านแฟรนไชส์</span>
+  <p>
+    ร้านแฟรนไชส์ (Convention over Configuration — บท 90) ตั้งกฎว่า <strong>แฟ้มชื่ออะไร ลิ้นชักติดป้ายชื่อนั้นเป็นพหูพจน์</strong> ·
+    คนดูแลสต็อกของแฟ้ม Post จึงเดินไปลิ้นชัก "posts" ได้เลยโดยไม่ต้องถาม ·
+    ถ้าร้านเราซื้อตู้เก่ามาที่ติดป้ายไว้แล้ว ก็แปะโน้ตบอกคนดูแลสต็อกทีเดียว (<code>self.table_name</code>)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงหาลิ้นชักไม่เจอจะเดินกลับมาถาม ·
+    Rails <strong>ไม่ตรวจล่วงหน้าเลย</strong> — เปิดแอปได้ปกติ แล้วไปพังตอนมีคนใช้ Article ครั้งแรก ·
+    และ Rails ไม่ได้รู้ความหมายของคำ — Article กับ Post แปลว่าบทความเหมือนกัน แต่สำหรับ Rails เป็นแค่ตัวอักษรคนละชุด
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>table_name · naming convention</dt>
+    <dd>ชื่อตารางที่ model ใช้ · ปกติ Rails เดาจากชื่อ class ตามกฎตั้งชื่อ · เขียน <code>self.table_name = "…"</code> เมื่อชื่อไม่ตามกฎ ·
+        <strong>พิมพ์บอก AI ได้ว่า "map this Rails model to an existing legacy table named tbl_article"</strong> — legacy = ของเก่าที่มีอยู่ก่อนแล้วแก้ไม่ได้</dd>
+    <dt><code>relation "…" does not exist</code></dt>
+    <dd>PostgreSQL หาตารางชื่อนี้ไม่เจอ · สาเหตุบ่อยสุดคือยังไม่ได้ <code>db:migrate</code> หรือชื่อ class ไม่ตรงกับชื่อตาราง ·
+        <strong>ถาม senior ได้ว่า "ตาราง articles ควรมีอยู่แล้ว หรือผมต้องรัน migration ก่อน"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9">9 · ของฟรีที่มากับ model สองบรรทัด</h2>
+
+<p>
+  <code>class Post &lt; ApplicationRecord</code> + <code>end</code> ทำให้ได้ method พวกนี้มาโดยไม่ต้องเขียนอะไรเพิ่ม (สไลด์หน้า 8) ·
+  <strong>ไม่ต้องจำ</strong> · แค่รู้ว่า "มีของแบบนี้อยู่" เวลาสั่ง AI หรืออ่านโค้ดที่ AI เขียนมา จะได้ไม่งงว่ามาจากไหน · ลงมือจริงในบท 107
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กลุ่ม</th><th>method</th><th>ภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td>สร้าง / บันทึก</td><td><code>Post.new</code> · <code>Post.create</code> · <code>post.save!</code> · <code>post.update</code> · <code>post.destroy</code></td>
+        <td>ทำแฟ้มใหม่ (ยังไม่เก็บ) · ทำแล้วเก็บทันที · เก็บ · แก้แล้วเก็บ · ทิ้ง</td></tr>
+    <tr><td>ค้นหา</td><td><code>Post.find(1)</code> · <code>Post.find_by(…)</code> · <code>Post.where(…)</code> · <code>Post.first</code> / <code>Post.last</code> · <code>Post.all</code></td>
+        <td>หยิบแผ่นเลขที่ 1 · หยิบแผ่นแรกที่ตรงเงื่อนไข · หยิบทุกแผ่นที่ตรงเงื่อนไข · แผ่นแรก/สุดท้าย · ทุกแผ่น</td></tr>
+    <tr><td>ถามสถานะของแฟ้ม</td><td><code>post.new_record?</code> · <code>post.persisted?</code></td>
+        <td>ยังไม่เข้าตู้ใช่ไหม · เข้าตู้แล้วใช่ไหม</td></tr>
+    <tr><td>ถามตัวตาราง</td><td><code>Post.count</code> · <code>Post.column_names</code> · <code>Post.table_name</code> · <code>Post.columns_hash</code></td>
+        <td>มีกี่แผ่น · มีช่องอะไร · ลิ้นชักชื่ออะไร · ช่องแต่ละช่องเป็นชนิดไหน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  method ที่ลงท้ายด้วย <code>?</code> ตอบ <code>true</code>/<code>false</code> เสมอ (กฎเดียวกับ <code>nil?</code> ในบท 94) ·
+  ส่วนที่ขึ้นต้นด้วย <code>Post.</code> คือถาม<strong>ทั้งลิ้นชัก</strong> · ที่ขึ้นต้นด้วย <code>post.</code> คือถาม<strong>แฟ้มแผ่นเดียว</strong>
+  <br>ยังมีอีกเยอะ (กฎตรวจข้อมูลบท 110 · วิธีค้นแบบละเอียดบท 113) ค่อย ๆ เจอทีละบท
+</p>
+
+<h2 id="sn-sec-10">ภารกิจ — ถาม Post ว่ามันรู้อะไรเกี่ยวกับตัวเองบ้าง</h2>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ (~10 นาที)</h3>
+  <p>ทำในโปรเจกต์ <code>wongnok_blog</code> ของคุณจาก <a href="../../rails-day-1/lessons/0105-rails-day1-lab.html">Lab 1 (บท 105)</a> · <strong>เก็บโปรเจกต์นี้ไว้ บท 107 ใช้ต่อ</strong></p>
+  <ol>
+    <li>เปิด terminal ในโฟลเดอร์ <code>wongnok_blog</code> · ตั้ง <code>DATABASE_URL</code> ให้ชี้ PostgreSQL ของคุณแบบเดียวกับบท 105 (<code>export DATABASE_URL=…</code>)</li>
+    <li>ดูว่ามี model Post หรือยัง: <code>ls -1F app/models</code> · ถ้าเห็น <code>post.rb</code> แล้ว ข้ามข้อ 3</li>
+    <li>สร้างตาราง posts ด้วยคำสั่งเดียวกับบท 99:
+<pre><code>bin/rails generate model Post title:string body:text
+bin/rails db:migrate</code></pre></li>
+    <li>เปิด <code>bin/rails console</code> แล้วพิมพ์ทีละบรรทัด:
+<pre><code>Post.table_name
+Post.column_names
+Post.columns_hash["body"].type
+Post.count</code></pre></li>
+    <li>ตอบในใจ: ช่องไหนใน <code>column_names</code> ที่คุณ<strong>ไม่ได้สั่ง</strong>ตอน generate · และแต่ละช่องมาจากไหน</li>
+  </ol>
+  <p>
+    <strong>ควรเห็น:</strong> <code>"posts"</code> · Array 5 ชื่อ <code>["id", "title", "body", "created_at", "updated_at"]</code> · <code>:text</code> ·
+    และ <code>0</code> (ถ้าเพิ่งสร้างตาราง ยังไม่มีบทความ)
+  </p>
+  <p>
+    <code>columns_hash</code> คือ Hash (บท 92) ที่ใช้ชื่อช่องเป็นกุญแจ แล้วได้ข้อมูลของช่องนั้นกลับมา · <code>.type</code> = "ช่องนี้เก็บของชนิดไหน" ·
+    <code>:text</code> = ข้อความยาว ตรงกับที่สั่ง <code>body:text</code> ไว้
+  </p>
+
+  <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong> (ข้อความจริงจากเครื่องตรวจ · ตัดบรรทัด <code>from …</code> ยาว ๆ ออก)</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>เห็นอะไร</th><th>แปลว่า</th></tr></thead>
+    <tbody>
+      <tr><td><code>PG::UndefinedTable: ERROR:  relation "posts" does not exist (ActiveRecord::StatementInvalid)</code></td>
+          <td>มีไฟล์ <code>post.rb</code> แล้วแต่ยังไม่มีลิ้นชักในตู้ → ลืม <code>bin/rails db:migrate</code> (ข้อ 3)</td></tr>
+      <tr><td><code>undefined method 'colum_names' for class Post (NoMethodError)</code> ตามด้วย <code>Did you mean?  column_names</code></td>
+          <td>พิมพ์ชื่อ method ผิด · Ruby เดาคำที่ถูกให้แล้วในบรรทัด <code>Did you mean?</code></td></tr>
+      <tr><td><code>uninitialized constant Pots (NameError)</code> ตามด้วย <code>Did you mean?  Post</code></td>
+          <td>พิมพ์ชื่อ class ผิด (หรือยังไม่มีไฟล์ <code>app/models/post.rb</code> เลย ถ้าข้อความเป็น <code>constant Post</code>)</td></tr>
+      <tr><td><code>Database not found: … (ActiveRecord::NoDatabaseError)</code></td>
+          <td>ชี้ไปถูกเครื่องแล้ว แต่ยังไม่มี database ชื่อนั้น → <code>bin/rails db:prepare</code> แบบบท 105</td></tr>
+      <tr><td><code>connection to server on socket "/tmp/.s.PGSQL.5432" failed</code></td>
+          <td>terminal หน้าต่างนี้ยังไม่ได้ <code>export DATABASE_URL=…</code> หรือ PostgreSQL ไม่ได้เปิดอยู่ (error ตัวเดียวกับที่เจอในบท 98)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงจากเครื่องตรวจ (เลขเวลาหน้าชื่อไฟล์ migration · เวลา s/ms ของคุณจะต่าง):</p>
+<pre><code>$ ls -1F app/models
+application_record.rb
+concerns/
+
+$ bin/rails generate model Post title:string body:text
+      invoke  active_record
+      create    db/migrate/20261104114505_create_posts.rb
+      create    app/models/post.rb
+      invoke    test_unit
+      create      test/models/post_test.rb
+      create      test/fixtures/posts.yml
+
+$ bin/rails db:migrate
+== 20261104114505 CreatePosts: migrating ======================================
+-- create_table(:posts)
+   -&gt; 0.0034s
+== 20261104114505 CreatePosts: migrated (0.0034s) =============================
+
+$ bin/rails console
+Loading development environment (Rails 8.1.4)
+wongnok-blog(dev):001&gt; Post.table_name
+=&gt; "posts"
+wongnok-blog(dev):002&gt; Post.column_names
+=&gt; ["id", "title", "body", "created_at", "updated_at"]
+wongnok-blog(dev):003&gt; Post.columns_hash["body"].type
+=&gt; :text
+wongnok-blog(dev):004&gt; Post.count
+  Post Count (3.2ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 0</code></pre>
+    <ul>
+      <li>ข้อ 5: สั่งไปแค่ <code>title</code> กับ <code>body</code> แต่ได้มา 5 ช่อง ·
+          <code>id</code> — Rails เติมให้ทุกตารางเอง (เลขประจำแถว) · <code>created_at</code> / <code>updated_at</code> — มาจากบรรทัด <code>t.timestamps</code> ในไฟล์ migration ที่ generate สร้าง (บท 99)</li>
+      <li><code>post.rb</code> ยังมีแค่สองบรรทัดเหมือนเดิม · ทุกคำตอบใน console มาจากตาราง posts ใน database</li>
+      <li><code>Post.count</code> เป็นคำถามเดียวที่ยิง SQL ให้เห็นใน log (<code>SELECT COUNT(*) FROM "posts"</code> = "นับแฟ้มในลิ้นชัก posts") ·
+          อีกสามคำถามเป็นเรื่องหน้าตาของตาราง Rails ไปถามไว้ครั้งเดียวแล้วจำไว้ และไม่ได้โชว์คำถามนั้นใน log</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">1. ช่างเพิ่มช่อง <code>views</code> ลงตาราง posts ด้วย migration (ใบสั่งช่างมาต่อเติมตู้ — บท 108) โดย<strong>ไม่แตะ</strong> <code>app/models/post.rb</code> เลย · เปิด console ใหม่แล้วสั่ง <code>Post.column_names</code> จะเห็นอะไร?</p>
+  <div class="opts">
+    <button class="opt">เห็นช่องเดิม 5 ช่อง เพราะต้องเขียนชื่อ views เพิ่มใน post.rb ก่อน</button>
+    <button class="opt">เห็น views เพิ่มเป็นช่องที่ 6 เพราะ Rails อ่านช่องจากตารางตอนรัน</button>
+    <button class="opt">error ทันที เพราะ post.rb กับตารางไม่ตรงกันแล้ว Rails ไม่ยอมรัน</button>
+    <button class="opt">เห็น views ก็ต่อเมื่อสั่ง generate model Post ใหม่อีกรอบหนึ่ง</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · ผมลองจริง: เพิ่มช่องด้วย migration แล้ว <code>Post.column_names</code> ได้ <code>["id", "title", "body", "created_at", "updated_at", "views"]</code> ทั้งที่ <code>post.rb</code> ยังมีแค่สองบรรทัด</p>
+    <p>ตัวเลือกที่ 1 ผิด — นั่นคือวิธีของ Go ที่ต้องเพิ่ม field ใน struct เอง · Rails ไม่มีรายชื่อช่องในไฟล์ model ให้แก้ ·
+       ตัวเลือกที่ 3 ผิด — ไม่มีอะไร "ไม่ตรงกัน" เพราะ post.rb ไม่ได้บอกช่องไว้ตั้งแต่แรก ·
+       ตัวเลือกที่ 4 ผิด — generate สร้างไฟล์ใหม่ ไม่เกี่ยวกับการอ่านช่องจากตาราง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ใน Rails ตารางคือที่เดียวที่บอกว่า model มีช่องอะไร · อยากรู้ ให้ถาม <code>Post.column_names</code> ไม่ใช่เปิด post.rb</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">2. โค้ดแบบไหนตรงกับ Active Record pattern?</p>
+  <div class="opts">
+    <button class="opt">post ถือแค่ข้อมูล แล้วยื่นให้ repo.save(post) เป็นคนบันทึกลงตาราง</button>
+    <button class="opt">เขียนคำสั่ง SQL INSERT เองทุกครั้ง แล้วส่งให้ database โดยตรง</button>
+    <button class="opt">เก็บ post เป็น Hash ธรรมดา แล้วเขียนลงไฟล์ JSON ทีละบรรทัดเอง</button>
+    <button class="opt">post ถือข้อมูลเอง และสั่ง post.save! ให้มันบันทึกตัวเองลงตารางได้</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 4 ถูก · แก่นของ Active Record คือ object หนึ่งตัว = หนึ่งแถว และ<strong>รู้วิธีบันทึกตัวเอง</strong> (แฟ้มเดินเข้าลิ้นชักเอง)</p>
+    <p>ตัวเลือกที่ 1 ผิด — นั่นคือ Data Mapper (มีพนักงานคลังแยก) ·
+       ตัวเลือกที่ 2 ผิด — นั่นคือไม่ใช้ ORM เลย เขียน SQL ด้วยมือ ·
+       ตัวเลือกที่ 3 ผิด — ไม่มี database และไม่มี object ที่รู้วิธีเก็บตัวเอง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> แยกสองสายด้วยคำถามเดียว "ใครถือคำสั่ง save" · ตัวข้อมูลเอง = Active Record · คนกลาง = Data Mapper</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. สร้าง <code>app/models/article.rb</code> ที่มีแค่ <code>class Article &lt; ApplicationRecord</code> กับ <code>end</code> · database มีแต่ตาราง posts · สั่ง <code>Article.count</code> จะได้อะไร?</p>
+  <div class="opts">
+    <button class="opt">error relation "articles" does not exist เพราะ Rails เดาชื่อตาราง articles</button>
+    <button class="opt">จำนวนบทความใน posts เพราะ Rails รู้ว่า Article แปลว่าบทความเหมือนกัน</button>
+    <button class="opt">ได้ 0 เพราะ Rails สร้างตาราง articles เปล่า ๆ ให้เองโดยอัตโนมัติ</button>
+    <button class="opt">error ตั้งแต่เปิด console เพราะ Article ไม่มีไฟล์ migration ของตัวเอง</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 1 ถูก · ผลจริง: <code>SELECT COUNT(*) FROM "articles"</code> แล้วได้ <code>PG::UndefinedTable: ERROR:  relation "articles" does not exist</code> · แก้ด้วย <code>self.table_name = "posts"</code></p>
+    <p>ตัวเลือกที่ 2 ผิด — Rails ไม่รู้ความหมายของคำ รู้แค่กฎตัดต่อตัวอักษร ·
+       ตัวเลือกที่ 3 ผิด — Rails ไม่สร้างตารางให้เอง ตารางเกิดจาก migration เท่านั้น ·
+       ตัวเลือกที่ 4 ผิด — console เปิดได้ปกติ และ <code>Article.table_name</code> ยังตอบ <code>"articles"</code> ได้ · พังตอนไปหาตารางจริงครั้งแรก</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ชื่อ class → ชื่อตาราง ตามกฎ · ชื่อไม่ตามกฎ ต้องบอกด้วย <code>self.table_name</code> (Go ใช้ <code>TableName()</code>)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">4. ใน Go <code>Post{Title: "x"}</code> สร้างได้แม้ไม่มี database · แต่ Rails <code>Post.new(title: "x")</code> ตอนยังไม่มี database ได้ <code>ActiveRecord::NoDatabaseError</code> · เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">เพราะ Ruby ทำงานช้ากว่า Go จึงต้องเตรียม database รอไว้ล่วงหน้าเสมอ</button>
+    <button class="opt">เพราะ Post.new บันทึกลง database ทันทีที่สร้าง โดยไม่ต้องรอ save!</button>
+    <button class="opt">เพราะ Post ต้องไปถามตารางก่อนว่ามีช่องอะไร object จึงผูกกับ database</button>
+    <button class="opt">เพราะ Rails ไม่ยอมให้สร้าง object ชนิดใดเลยถ้ายังต่อ database ไม่ได้</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 3 ถูก · ช่องของ Post อยู่ในตาราง ไม่ได้อยู่ในไฟล์ · สร้างแฟ้มเปล่ายังต้องไปดูลิ้นชักก่อน · นี่คือ "ราคา" ข้อ "ทดสอบยาก" ของ Active Record</p>
+    <p>ตัวเลือกที่ 1 ผิด — ไม่เกี่ยวกับความเร็ว · ตัวเลือกที่ 2 ผิด — ผลจริงในหัวข้อ 4 เห็นว่าหลัง <code>Post.new</code> ยังได้ <code>id: nil</code> และไม่มี SQL INSERT จนกว่าจะ <code>save!</code> ·
+       ตัวเลือกที่ 4 ผิด — object ทั่วไปอย่าง <code>"abc"</code> หรือ Hash สร้างได้ปกติ · มีแค่ model ที่ต้องรู้จักตาราง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> Active Record แลกความสั้นกับการผูกติด database · object ข้อมูลกับการเก็บข้อมูลแยกกันไม่ออก</p>
+  </div>
+</div>
+
+<p>
+  <strong>ถามกลับได้เลย</strong> — ถ้าผลใน console ของคุณไม่ตรงกับในบท ให้ก็อปบรรทัดที่พิมพ์พร้อมผลทั้งก้อน (รวมบรรทัด SQL ถ้ามี) มาถาม ·
+  ข้อความ error บรรทัดแรกกับชื่อ error ในวงเล็บท้ายบรรทัด บอกได้เกือบทุกครั้งว่าพังที่ตู้ ที่ลิ้นชัก หรือที่การพิมพ์
+</p>
+
+<h2 id="sn-sec-12">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>5</td><td><code>Post.new(title: "Hello", user_id: 1)</code></td>
+        <td>ตาราง posts ตอนนี้ยังไม่มีช่อง <code>user_id</code> → <code>ActiveModel::UnknownAttributeError</code></td>
+        <td><strong>ใช่</strong> ถ้าพิมพ์ตาม — ตัด <code>user_id</code> ออกก่อน</td></tr>
+    <tr><td>5</td><td>"Post ไปถามตารางเอง … ตอน app เริ่มทำงาน"</td>
+        <td>ในโหมด development ผมเช็คแล้ว Rails ไปถามตอนใช้ Post ครั้งแรก ไม่ใช่ตอนเปิดแอป · แก่นเหมือนกัน: ถามตอนรัน ไม่ใช่ตอนเขียนโค้ด</td>
+        <td>ไม่ต้อง</td></tr>
+    <tr><td>5</td><td>ตัวแปรชื่อ <code>p</code></td>
+        <td>ใช้ได้ แต่ชนกับชื่อคำสั่งพิมพ์ <code>p</code> (บท 93) · บทนี้ใช้ <code>post</code></td>
+        <td>ไม่ต้อง</td></tr>
+    <tr><td>6</td><td>"Active Record ไม่ใช่ชื่อ gem"</td>
+        <td>ชื่อมาจาก pattern จริง แต่ Rails ก็มี gem ชื่อ <code>activerecord</code> (<code>activerecord (8.1.4)</code> ใน Gemfile.lock)</td>
+        <td>ไม่ต้อง — แค่อย่างงเวลาเห็นชื่อ gem</td></tr>
+    <tr><td>6</td><td>Martin Fowler · หนังสือปี 2002 · "มาก่อน Rails 2 ปี"</td>
+        <td>Rails Guides ยืนยันว่า pattern มาจากหนังสือของ Fowler · ปีไม่ได้ตรวจในบทนี้</td>
+        <td>ไม่ต้อง</td></tr>
+    <tr><td>7</td><td>จัด GORM ไว้ฝั่ง Active Record</td>
+        <td>ในโค้ดหน้า 5 struct ของ GORM ไม่ได้ save ตัวเอง ต้องยื่นให้ <code>db.Create(&amp;p)</code> · การจัดกลุ่มแบบนี้เถียงกันได้</td>
+        <td>ไม่ต้อง — ดูที่ "ใครถือคำสั่ง save" ดีกว่าจำป้าย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="../../rails-day-1/lessons/0105-rails-day1-lab.html">← บทเรียน 105 · Lab 1</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0107-console-crud.html">บทเรียน 107 → CRUD ใน console</a>
+</nav>
+
+<h2 id="sn-sec-13">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_basics.html#the-active-record-pattern">Rails Guides — Active Record Basics</a> —
+      อ่านหัวข้อ 1 <em>What is Active Record?</em> (pattern ของ Fowler · ORM) และหัวข้อ 2.1 <em>Naming Conventions</em> (Post → posts)</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_basics.html#overriding-the-naming-conventions">Rails Guides — Overriding the Naming Conventions</a> —
+      ตัวอย่าง <code>self.table_name = "…"</code> แบบหัวข้อ 8</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/ModelSchema/ClassMethods.html#method-i-column_names">Rails API — ActiveRecord::ModelSchema::ClassMethods</a> —
+      ดู <code>column_names</code> กับ <code>table_name</code> ที่ใช้ในภารกิจ</li>
+  <li><a href="https://gorm.io/docs/conventions.html#TableName">GORM — Conventions</a> —
+      หัวข้อ <em>Pluralized Table Name</em> กับ <em>TableName</em> (ฝั่ง Go ของหัวข้อ 8)</li>
+  <li><a href="https://gorm.io/docs/create.html">GORM — Create</a> —
+      ตัวอย่าง <code>db.Create(&amp;user)</code> และการเช็ค <code>result.Error</code> ที่เทียบในหัวข้อ 4</li>
+  <li><a href="https://rubygems.org/gems/activerecord">RubyGems — activerecord</a> —
+      หน้าของ gem ที่ทำงานตาม pattern นี้ใน Rails (ดูเลขรุ่นให้ตรงกับ Gemfile.lock ของคุณ)</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

@@ -328,6 +328,7 @@ GROUP_ID = {
     "fe-nextjs-app": 104,
     "fe-agentic": 105,
     "rails-day-1": 201,
+    "rails-day-2": 202,
 }
 
 

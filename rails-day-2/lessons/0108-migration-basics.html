@@ -1,0 +1,935 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 108 — Migration — ใบสั่งช่างต่อเติมตู้ และแปลนตู้ฉบับล่าสุด</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 108 · Rails · Day 2</p>
+  <h1>Migration — ใบสั่งช่างต่อเติมตู้ และแปลนตู้ฉบับล่าสุด</h1>
+  <p class="meta">~25 นาที (บทนี้ลงมือเยอะ) · ควรผ่าน <a href="./0107-console-crud.html">บทเรียน 107</a> (มีตาราง users · posts · comments ในเครื่องแล้ว) มาก่อน</p>
+  <p class="standfirst">
+    เวลาจะเพิ่มช่องใหม่ในตาราง เช่น "คำโปรยใต้ชื่อบทความ" เราไม่เข้าไปแก้ฐานข้อมูลด้วยมือ
+    แต่<strong>เขียนเป็นไฟล์หนึ่งไฟล์</strong> แล้วให้ Rails ลงมือให้ — ไฟล์นั้นเรียกว่า <strong>migration</strong>
+    <br>อ่านจบบทนี้ คุณจะ: เพิ่มคอลัมน์ด้วย migration ได้เอง · ถอยกลับได้ · อ่านออกว่า <code>db/migrate/</code> กับ <code>db/schema.rb</code> ต่างกันยังไง ·
+    รู้ว่า Rails จำได้ยังไงว่าทำอะไรไปแล้ว · และรู้จักกับดักอันดับหนึ่งของมือใหม่: <strong>แก้ไฟล์ migration ที่รันไปแล้ว</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>ตาราง · แถว · คอลัมน์</strong> (บท 106) — ลิ้นชักในตู้เก็บแฟ้ม · แฟ้มหนึ่งแผ่น · ช่องบนแฟ้ม</li>
+    <li><strong>model <code>Post</code></strong> (บท 99, 106) — คนดูแลสต็อกของลิ้นชัก <code>posts</code> · ช่องต่าง ๆ ของ Post ไม่ได้เขียนในไฟล์ model แต่ Rails อ่านจากตารางตอนรัน</li>
+    <li><strong><code>bin/rails db:migrate</code></strong> (บท 99) — สั่งให้ "ช่าง" ลงมือทำตามใบสั่งที่ยังไม่ได้ทำ · <strong><code>db:rollback</code></strong> — ถอยใบล่าสุดออก (เคยใช้ในภารกิจบท 99)</li>
+    <li><strong>console</strong> (บท 104, 107) — ครัวทดลองหลังร้าน พิมพ์ Ruby ทีละบรรทัดได้</li>
+    <li><strong>goose</strong> (บท 31 ฝั่ง Go) — เครื่องมือ migration ที่เราเคยใช้กับ PostgreSQL · ไฟล์ <code>.sql</code> มีท่อน Up กับ Down</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17</strong>
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน ใช้แทนกันได้)</p>
+  <p>📦 ตัวอย่างในบทนี้ใช้แอป <code>wongnok_blog</code> ที่มีตาราง users / posts / comments และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับ<a href="./0107-console-crud.html">บท 107</a> ·
+    ผลทุกก้อนรันจริงแล้วก็อปมา · <strong>ตัวเลขหน้าชื่อไฟล์ migration (เช่น <code>20261104114634</code>) และเวลา (<code>0.0033s</code>) ของคุณจะไม่ตรงกับในบท</strong> เพราะมันคือวันเวลาที่คุณสั่ง</p>
+</div>
+
+<h2 id="sn-sec-1">ปัญหา: ร้าน 5 สาขา ช่างต่อเติมตู้แบบปากเปล่า</h2>
+
+<p>
+  <strong>schema</strong> คือ "หน้าตาของฐานข้อมูล" — มีตารางอะไร แต่ละตารางมีคอลัมน์ชื่ออะไร เก็บข้อมูลชนิดไหน ·
+  โค้ดของเราพึ่ง schema ตลอด เช่น ถ้าโค้ดอ่าน <code>post.subtitle</code> แต่ตารางไม่มีคอลัมน์ <code>subtitle</code> แอปพังทันที
+</p>
+<p>
+  ปัญหาคือ schema <strong>อยู่ในฐานข้อมูล ไม่ได้อยู่ในโค้ด</strong> · สไลด์หน้า 12 ยกสถานการณ์ให้: ทีม 5 คน · เครื่อง 5 เครื่อง · ฐานข้อมูลของเว็บจริง 1 ตัว
+</p>
+<ul>
+  <li>พี่ A เพิ่มคอลัมน์ในเครื่องตัวเองด้วยโปรแกรมจัดการฐานข้อมูล (คลิก ๆ เอา) แล้ว push (ส่งโค้ดขึ้นที่เก็บกลางของทีม) โค้ดที่ใช้คอลัมน์นั้น</li>
+  <li>พี่ B ดึงโค้ดมา → ในเครื่องพี่ B ไม่มีคอลัมน์นั้น → แอปพัง · ไม่มีใครบอก</li>
+  <li>ขึ้นเว็บจริงก็ลืมเพิ่มคอลัมน์อีก → เว็บล่ม</li>
+  <li>สามเดือนผ่านไป มีคนถาม "คอลัมน์นี้ใครเพิ่ม เพิ่มทำไม" — ไม่มีใครตอบได้</li>
+</ul>
+<p>
+  (เครื่องของเราแต่ละคนเรียกว่า <em>development</em> · เว็บจริงที่ลูกค้าใช้อยู่เรียกว่า <em>production</em> · แต่ละที่มีฐานข้อมูลของตัวเองแยกกัน)
+</p>
+<p>
+  <strong>migration</strong> แก้ทุกข้อด้วยวิธีเดียว: ทุกการเปลี่ยน schema ต้องเขียนเป็น<strong>ไฟล์หนึ่งไฟล์</strong>เก็บใน git ·
+  ใครดึงโค้ดไปก็ได้ไฟล์ไปด้วย สั่ง <code>bin/rails db:migrate</code> ทีเดียว ฐานข้อมูลในเครื่องเขาก็หน้าตาเหมือนของเรา ·
+  และ <code>git log</code> (ดูประวัติ commit) ตอบได้ว่าใครเพิ่ม เพิ่มเมื่อไหร่ (คำว่า "ทำไม" ตอบได้ถ้าเขียน commit message ดี)
+</p>
+
+<div class="analogy">
+  <span class="label">🏪 เทียบให้เห็นภาพ — แฟรนไชส์ 5 สาขา ช่างต่อเติมตู้เก็บแฟ้ม</span>
+  <p>
+    ร้านเรามี 5 สาขา ทุกสาขาต้องมีตู้เก็บแฟ้ม (ฐานข้อมูล) หน้าตาเหมือนกันเป๊ะ เพราะพนักงาน (โค้ด) ย้ายสาขาไปมาแล้วต้องหาของเจอที่เดิม ·
+    ถ้าสาขาหนึ่งเรียกช่างมาเพิ่มช่องบนแฟ้มแบบ<strong>บอกปากเปล่า</strong> สาขาอื่นไม่มีทางรู้ · ตู้แต่ละสาขาค่อย ๆ ไม่เหมือนกัน
+  </p>
+  <p>
+    migration คือ<strong>ใบสั่งช่าง</strong> — ทุกการต่อเติมต้องเขียนเป็นใบ มีวันที่ มีลำดับ เก็บรวมในแฟ้มกลางของแฟรนไชส์ (git) ·
+    สาขาไหนอยากเป็นปัจจุบัน ก็ไล่ทำใบที่ยังไม่ได้ทำจนครบ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ช่างจริงอ่านใบสั่งแล้วตีความเองได้ ("น่าจะหมายถึงลิ้นชักนี้") ·
+    แต่ Rails ทำตามที่เขียนเป๊ะ ๆ ไม่เดาให้ — เขียนให้ลบช่องไหน ข้อมูลในช่องนั้นหายจริง ไม่มีใครทักสักคำ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>schema</dt>
+    <dd>หน้าตาของฐานข้อมูล: มีตารางอะไร คอลัมน์อะไร ชนิดไหน · ไม่รวมตัวข้อมูลข้างใน ·
+        <strong>ถาม senior ได้ว่า “PR นี้เปลี่ยน schema ไหม ถ้าเปลี่ยนมี migration มาด้วยหรือยัง”</strong></dd>
+    <dt>migration</dt>
+    <dd>ไฟล์หนึ่งไฟล์ = การเปลี่ยน schema หนึ่งครั้ง · อยู่ใน <code>db/migrate/</code> · เก็บใน git เหมือนโค้ด ·
+        <strong>พิมพ์บอก AI ได้ว่า “write a Rails migration that adds a subtitle string column to posts”</strong></dd>
+    <dt>environment · production</dt>
+    <dd>ชุดเครื่อง + ฐานข้อมูลแต่ละที่: <em>development</em> = เครื่องเรา (ครัวทดลอง) · <em>production</em> = เว็บจริง หรือ<strong>ร้านจริงที่ลูกค้ากำลังนั่งกินอยู่</strong> ·
+        (ระหว่างกลางบางทีมมี <em>staging</em> = ร้านซ้อมก่อนเปิดจริง) · ฐานข้อมูลแต่ละ environment แยกกัน ต้องสั่ง migrate แยกกัน · <em>deploy</em> = เอาโค้ดชุดใหม่ขึ้นร้านจริง ·
+        <strong>ถาม senior ได้ว่า “ตอน deploy ขึ้น production ใครเป็นคนสั่ง db:migrate หรือมันรันเอง”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">เทียบกับ goose ที่เคยใช้ใน Go</h2>
+
+<p>
+  ใน<a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a> คุณเขียน migration ของ Go ด้วย goose มาแล้ว · แนวคิดเหมือนกันทุกอย่าง ต่างแค่ภาษาที่เขียน:
+  goose ให้เขียน <strong>SQL ตรง ๆ สองท่อน</strong> (ทำ · ย้อน) ส่วน Rails ให้เขียน <strong>Ruby ท่อนเดียว</strong> แล้วมันคิดวิธีย้อนให้เอง
+</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>Go · goose — <code>…_add_subtitle_to_posts.sql</code></h4>
+<pre><code><span class="c">-- +goose Up</span>
+<span class="k">ALTER TABLE</span> posts <span class="k">ADD COLUMN</span> subtitle <span class="n">VARCHAR</span>;
+
+<span class="c">-- +goose Down</span>
+<span class="k">ALTER TABLE</span> posts <span class="k">DROP COLUMN</span> subtitle;</code></pre>
+    <p>เขียนเองทั้งขาไป (Up) และขากลับ (Down) · ลืมเขียน Down = ย้อนไม่ได้</p>
+  </div>
+  <div class="side">
+    <h4>Rails — <code>…_add_subtitle_to_posts.rb</code></h4>
+<pre><code><span class="k">class</span> <span class="n">AddSubtitleToPosts</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:subtitle</span>, <span class="n">:string</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+    <p>เขียนแค่ขาไปใน <code>change</code> · Rails รู้เองว่าขากลับของ <code>add_column</code> คือ <code>remove_column</code></p>
+  </div>
+</div>
+
+<p>อ่านฝั่ง goose ทีละบรรทัด (SQL แปลเป็นภาษาคน):</p>
+<ul>
+  <li><code>-- +goose Up</code> / <code>-- +goose Down</code> — ป้ายบอก goose ว่าท่อนไหนขาไป ท่อนไหนขากลับ (<code>--</code> คือคอมเมนต์ของ SQL)</li>
+  <li><code>ALTER TABLE posts ADD COLUMN subtitle VARCHAR;</code> — <strong>"ขอดัดแปลงลิ้นชัก posts: เพิ่มช่องชื่อ subtitle เก็บข้อความ"</strong> ·
+      <code>ALTER TABLE</code> = ดัดแปลงตาราง · <code>ADD COLUMN</code> = เพิ่มคอลัมน์ · <code>VARCHAR</code> = ข้อความ (ตรงกับ <code>:string</code> ของ Rails)</li>
+  <li><code>ALTER TABLE posts DROP COLUMN subtitle;</code> — <strong>"ขอดัดแปลงลิ้นชัก posts: รื้อช่อง subtitle ทิ้ง"</strong> · <code>DROP</code> = รื้อทิ้ง</li>
+</ul>
+<p>ฝั่ง Rails อ่านทีละคำในหัวข้อถัดไป · ตอนนี้ดูแค่ว่ามันสั้นกว่า และไม่มีท่อนขากลับ
+  (ไฟล์ goose ผมเขียนให้ดูเทียบ ไม่ได้รันในบทนี้ · ไฟล์ Rails คือไฟล์ที่ Rails สร้างให้จริง — เดี๋ยวได้สร้างเอง)</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เรื่อง</th><th>goose (บท 31)</th><th>Rails</th></tr></thead>
+  <tbody>
+    <tr><td>ไฟล์อยู่ไหน</td><td><code>migrations/*.sql</code></td><td><code>db/migrate/*.rb</code></td></tr>
+    <tr><td>สร้างไฟล์ใหม่</td><td><code>goose create add_x sql</code></td><td><code>bin/rails generate migration AddXToY</code></td></tr>
+    <tr><td>ทำใบที่ค้าง</td><td><code>goose up</code></td><td><code>bin/rails db:migrate</code></td></tr>
+    <tr><td>ถอยหนึ่งใบ</td><td><code>goose down</code></td><td><code>bin/rails db:rollback</code></td></tr>
+    <tr><td>ดูว่าใบไหนทำแล้ว</td><td><code>goose status</code> (Pending / วันที่)</td><td><code>bin/rails db:migrate:status</code> (down / up)</td></tr>
+    <tr><td>สมุดจดในฐานข้อมูล</td><td>ตาราง <code>goose_db_version</code></td><td>ตาราง <code>schema_migrations</code></td></tr>
+    <tr><td>แปลนตู้ฉบับล่าสุด</td><td>ไม่มี</td><td><code>db/schema.rb</code> (Rails เขียนให้เอง — หัวข้อถัดไป)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ส่วน <code>AutoMigrate</code> ของ GORM (<a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a>) ไม่ใช่ migration แบบนี้ —
+  มันดู struct แล้ว "เติมของที่ขาด" อย่างเดียว ไม่มีไฟล์ ไม่มีประวัติ (บท 31 เห็นแล้วว่าเปลี่ยนชื่อ field แล้วได้คอลัมน์ว่างเพิ่มมาเฉย ๆ)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>up · down · change</dt>
+    <dd><em>up</em> = ขาไป (ทำตามใบ) · <em>down</em> = ขากลับ (รื้อออก) · <code>change</code> = method เดียวที่ Rails อ่านได้ทั้งสองทาง ·
+        Rails ยังให้เขียน <code>def up</code> / <code>def down</code> แยกแบบ goose ได้ด้วย ใช้ตอนที่ Rails เดาขากลับเองไม่ได้ (บท 109) ·
+        <strong>ถาม senior ได้ว่า “migration ตัวนี้ควรเขียน change หรือแยก up/down”</strong></dd>
+    <dt>reversible (ย้อนกลับได้)</dt>
+    <dd>migration ที่ถอยกลับได้โดยไม่พัง · <code>add_column</code> · <code>create_table</code> ย้อนเองได้ ·
+        <strong>พิมพ์บอก AI ได้ว่า “make sure this migration is reversible”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">เปิดแฟ้มใบสั่งช่าง: <code>db/migrate/</code> ของจริง</h2>
+
+<p>ในแอปที่ทำต่อจากบท 107 มีใบสั่งช่างอยู่ 5 ใบ · ลองสั่ง <code>ls</code> ดู (ผลจริง):</p>
+
+<pre><code><span class="c">$ ls db/migrate</span>
+20261104113601_create_posts.rb
+20261104113603_add_published_and_views_to_posts.rb
+20261104113604_create_users.rb
+20261104113606_add_user_to_posts.rb
+20261104113607_create_comments.rb</code></pre>
+
+<ul>
+  <li>ตัวเลข 14 หลักข้างหน้าคือ <strong>วันเวลาที่สร้างไฟล์</strong> อ่านว่า ปี 2026 · เดือน 11 · วันที่ 04 · 11:36:01 (เวลาสากล UTC — เวลาไทยต้องบวก 7 ชั่วโมง เลขเลยไม่ตรงนาฬิกาในเครื่อง ไม่ต้องตกใจ)</li>
+  <li>เพราะเรียงตามเวลา <code>ls</code> จึงเรียงตามลำดับที่สร้างให้เอง และ <strong>Rails ก็ทำตามลำดับนี้</strong> — ตาราง posts ต้องเกิดก่อน ถึงจะเพิ่มคอลัมน์ให้มันได้</li>
+  <li>ตัวเลขนี้ยังเป็น <strong>เลขประจำตัว</strong>ของใบนั้นด้วย (Rails เรียกว่า <em>version</em>) — จำไว้ อีกสองหัวข้อจะเห็นมันในฐานข้อมูล</li>
+  <li>ส่วนหลังตัวเลข เช่น <code>add_published_and_views_to_posts</code> คือชื่อใบ อ่านเป็นภาษาอังกฤษได้: "เพิ่ม published กับ views ให้ posts"</li>
+</ul>
+
+<p>เปิดใบที่สองดู — ใบที่เพิ่มสองช่องให้ตาราง posts:</p>
+
+<pre><code><span class="c"># db/migrate/20261104113603_add_published_and_views_to_posts.rb</span>
+<span class="k">class</span> <span class="n">AddPublishedAndViewsToPosts</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:published</span>, <span class="n">:boolean</span>, <span class="n">default:</span> <span class="k">false</span>, <span class="n">null:</span> <span class="k">false</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:views</span>, <span class="n">:integer</span>, <span class="n">default:</span> <span class="n">0</span>, <span class="n">null:</span> <span class="k">false</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>class AddPublishedAndViewsToPosts</code> — ชื่อ class ตรงกับชื่อไฟล์ (กฎตั้งชื่อ บท 99) · ห้ามมีสองใบชื่อซ้ำกัน</li>
+  <li><code>&lt; ActiveRecord::Migration[8.1]</code> — สืบทอดความสามารถ "แก้ตู้" มาจาก Rails · <code>[8.1]</code> = เขียนตามกติกาของ Rails รุ่น 8.1</li>
+  <li><code>def change</code> — สิ่งที่ใบนี้สั่งให้ทำ</li>
+  <li><code>add_column :posts, :published, :boolean</code> — เพิ่มคอลัมน์ในตาราง <code>posts</code> ชื่อ <code>published</code> เก็บค่า จริง/เท็จ</li>
+  <li><code>default: false</code> — แฟ้มที่ไม่ได้บอกค่ามา ให้เป็น <code>false</code> (ยังไม่เผยแพร่) · รวมถึงแฟ้มเก่าที่มีอยู่แล้วในลิ้นชักด้วย</li>
+  <li><code>null: false</code> — ห้ามว่าง (ห้ามเป็น <code>nil</code>) · เป็นกฎที่ตัวตู้บังคับเอง เรื่องเต็มอยู่บท 111</li>
+  <li>บรรทัดที่สองเหมือนกัน แต่เป็นตัวเลข (<code>:integer</code>) ชื่อ <code>views</code> เริ่มที่ 0</li>
+</ul>
+
+<h2 id="sn-sec-4">schema.rb — แปลนตู้ฉบับล่าสุด</h2>
+
+<p>
+  ถ้าอยากรู้ว่า "ตอนนี้ตาราง posts มีช่องอะไรบ้าง" ต้องไล่อ่านใบสั่งทั้ง 5 ใบแล้วรวมในหัวเอง — เหนื่อย ·
+  Rails เลยเขียนไฟล์ <code>db/schema.rb</code> ให้ทุกครั้งที่ migrate เสร็จ: <strong>สรุปหน้าตาฐานข้อมูล ณ ตอนนี้</strong> ไว้ในไฟล์เดียว
+</p>
+
+<p>ไฟล์จริงของแอปเรา (ตัดคอมเมนต์ภาษาอังกฤษ 11 บรรทัดแรกออก — ใจความคือ "ไฟล์นี้สร้างอัตโนมัติ อย่าแก้เอง ให้ใช้ migration และควร commit เข้า git"):</p>
+
+<pre><code><span class="c"># db/schema.rb (ตัดคอมเมนต์ด้านบนออก)</span>
+<span class="n">ActiveRecord::Schema</span>[<span class="n">8.1</span>].<span class="f">define</span>(<span class="n">version:</span> <span class="n">2026_11_04_113607</span>) <span class="k">do</span>
+  <span class="c"># These are extensions that must be enabled in order to support this database</span>
+  <span class="f">enable_extension</span> <span class="s">"pg_catalog.plpgsql"</span>
+
+  <span class="f">create_table</span> <span class="s">"comments"</span>, <span class="n">force:</span> <span class="n">:cascade</span> <span class="k">do</span> |t|
+    t.<span class="f">text</span> <span class="s">"body"</span>
+    t.<span class="f">bigint</span> <span class="s">"post_id"</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">bigint</span> <span class="s">"user_id"</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">datetime</span> <span class="s">"created_at"</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">datetime</span> <span class="s">"updated_at"</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">index</span> [<span class="s">"post_id"</span>], <span class="n">name:</span> <span class="s">"index_comments_on_post_id"</span>
+    t.<span class="f">index</span> [<span class="s">"user_id"</span>], <span class="n">name:</span> <span class="s">"index_comments_on_user_id"</span>
+  <span class="k">end</span>
+
+  <span class="f">create_table</span> <span class="s">"posts"</span>, <span class="n">force:</span> <span class="n">:cascade</span> <span class="k">do</span> |t|
+    t.<span class="f">string</span> <span class="s">"title"</span>
+    t.<span class="f">text</span> <span class="s">"body"</span>
+    t.<span class="f">datetime</span> <span class="s">"created_at"</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">datetime</span> <span class="s">"updated_at"</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">boolean</span> <span class="s">"published"</span>, <span class="n">default:</span> <span class="k">false</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">integer</span> <span class="s">"views"</span>, <span class="n">default:</span> <span class="n">0</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">bigint</span> <span class="s">"user_id"</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">index</span> [<span class="s">"user_id"</span>], <span class="n">name:</span> <span class="s">"index_posts_on_user_id"</span>
+  <span class="k">end</span>
+
+  <span class="f">create_table</span> <span class="s">"users"</span>, <span class="n">force:</span> <span class="n">:cascade</span> <span class="k">do</span> |t|
+    t.<span class="f">string</span> <span class="s">"name"</span>
+    t.<span class="f">string</span> <span class="s">"email"</span>
+    t.<span class="f">datetime</span> <span class="s">"created_at"</span>, <span class="n">null:</span> <span class="k">false</span>
+    t.<span class="f">datetime</span> <span class="s">"updated_at"</span>, <span class="n">null:</span> <span class="k">false</span>
+  <span class="k">end</span>
+
+  <span class="f">add_foreign_key</span> <span class="s">"comments"</span>, <span class="s">"posts"</span>
+  <span class="f">add_foreign_key</span> <span class="s">"comments"</span>, <span class="s">"users"</span>
+  <span class="f">add_foreign_key</span> <span class="s">"posts"</span>, <span class="s">"users"</span>
+<span class="k">end</span></code></pre>
+
+<p>อ่านทีละส่วน:</p>
+<ul>
+  <li><code>version: 2026_11_04_113607</code> — เลขของใบสั่งช่าง<strong>ใบล่าสุด</strong>ที่ทำแล้ว (ตรงกับ <code>…113607_create_comments.rb</code>) · ขีด <code>_</code> แค่ช่วยให้อ่านง่าย</li>
+  <li><code>enable_extension "pg_catalog.plpgsql"</code> (และคอมเมนต์ภาษาอังกฤษข้างบนมัน ที่แปลว่า "ส่วนเสริมที่ต้องเปิดไว้ให้ฐานข้อมูลนี้ทำงานได้") — ส่วนเสริมมาตรฐานของ PostgreSQL ที่ Rails จดไว้ให้ · ไม่ต้องสนใจ</li>
+  <li><code>create_table "posts", force: :cascade do |t|</code> — สร้างตาราง posts · <code>force: :cascade</code> = "ถ้ามีตารางชื่อนี้อยู่แล้วให้รื้อทิ้งสร้างใหม่" (ใช้ตอนสร้างฐานข้อมูลใหม่จากแปลน)</li>
+  <li><code>|t|</code> — block ที่รู้จักจาก Day 1 · <code>t</code> คือ "ลิ้นชักที่กำลังสร้าง" · ทุกบรรทัด <code>t.อะไร "ชื่อ"</code> ข้างใน = เพิ่มช่องหนึ่งช่องให้ลิ้นชักนั้น</li>
+  <li><code>t.string "title"</code> · <code>t.text "body"</code> — คอลัมน์ข้อความสั้น กับข้อความยาว · บรรทัดพวกนี้มาจากใบแรก <code>CreatePosts</code></li>
+  <li><code>published</code> · <code>views</code> — มาจากใบที่สอง · <code>user_id</code> — มาจากใบที่สี่ <code>AddUserToPosts</code> · <strong>แปลนรวมทุกใบไว้ในตารางเดียว ไม่สนว่ามาจากใบไหน</strong></li>
+  <li><code>t.bigint</code> = ตัวเลขจำนวนเต็มขนาดใหญ่ (ใช้เก็บเลข id ของแถวอื่น) · <code>t.datetime</code> = วันและเวลา · <code>t.boolean</code> = จริง/เท็จ · <code>t.integer</code> = จำนวนเต็ม</li>
+  <li><code>created_at</code> · <code>updated_at</code> — เวลาสร้าง/แก้ล่าสุด Rails ใส่ให้เองทุกตาราง (มาจากบรรทัด <code>t.timestamps</code> ในใบ create)</li>
+  <li><strong>ไม่เห็นคอลัมน์ <code>id</code></strong> — Rails สร้างให้ทุกตารางโดยอัตโนมัติ เลยไม่ต้องเขียน</li>
+  <li><code>t.index [...]</code> — สารบัญที่ช่วยให้หาแฟ้มตามช่องนั้นได้เร็ว (index — เรื่องเต็มบท 109)</li>
+  <li><code>add_foreign_key "posts", "users"</code> — กฎของตู้ว่า <code>user_id</code> ในแฟ้มบทความต้องชี้ไปหาผู้ใช้ที่มีอยู่จริง (foreign key — บท 115)</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">📒 เทียบให้เห็นภาพ — แฟ้มใบสั่งช่าง กับ แปลนตู้ฉบับล่าสุด</span>
+  <p>
+    <code>db/migrate/</code> = <strong>แฟ้มใบสั่งช่างทุกใบตั้งแต่วันเปิดร้าน</strong> เรียงตามวันที่ · ตอบคำถาม "ตู้นี้ถูกต่อเติมอะไรมาบ้าง ใครสั่ง เมื่อไหร่"
+  </p>
+  <p>
+    <code>db/schema.rb</code> = <strong>แปลนตู้ฉบับล่าสุด</strong> เหมือนถ่ายรูปตู้ตอนนี้แปะไว้ · ตอบคำถาม "ตอนนี้ตู้หน้าตาเป็นยังไง" ·
+    ช่างวาดแปลนใหม่ให้ทุกครั้งที่ทำงานเสร็จ (ทุก <code>db:migrate</code>) — <strong>เราไม่วาดเอง</strong>
+  </p>
+  <p>
+    สองอย่างนี้ไม่ซ้ำซ้อนกัน ตอบคนละคำถาม · และเปิดสาขาใหม่ก็ไม่ต้องไล่ทำใบสั่งย้อนไป 5 ปี แค่สร้างตู้ตามแปลนล่าสุดทีเดียว (หัวข้อ "เพื่อนใหม่เข้าทีม" ข้างล่าง)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> รูปถ่ายตู้จริงถ่ายจาก<em>ตู้</em> · แต่ schema.rb เขียนจาก<strong>ฐานข้อมูลในเครื่องคุณ</strong>ตอนที่ migrate เสร็จ ·
+    ถ้าฐานข้อมูลในเครื่องคุณมีของแปลก ๆ (เช่นตารางที่ลองสร้างเล่นแล้วลืมลบ) มันก็ไปโผล่ใน schema.rb ด้วย — ก่อน commit จึงต้องเปิดดูว่าที่เปลี่ยนมีแค่ที่ตั้งใจ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>schema.rb · schema dump</dt>
+    <dd>ไฟล์สรุปหน้าตาฐานข้อมูลล่าสุด · Rails "dump" (เทออกมาเป็นไฟล์) ให้ทุกครั้งหลัง migrate · <strong>ห้ามแก้มือ แต่ต้อง commit</strong> ·
+        <strong>ถาม senior ได้ว่า “schema.rb ใน PR นี้มีบรรทัดที่ไม่เกี่ยวกับ migration ของผมโผล่มา ควรทำยังไง”</strong></dd>
+    <dt>snapshot กับ history</dt>
+    <dd>snapshot = ภาพถ่าย ณ ตอนนี้ (schema.rb) · history หรือ event log = รายการทุกครั้งที่เปลี่ยน (db/migrate/) ·
+        <strong>พิมพ์บอก AI ได้ว่า “read db/schema.rb to see the current columns, don't guess from the migrations”</strong> — AI จะได้ไม่เดาคอลัมน์ผิด</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">schema_migrations — สมุดเซ็นรับงานช่าง</h2>
+
+<p>
+  คำถามต่อมา: สั่ง <code>db:migrate</code> ซ้ำสิบรอบ ทำไม Rails ไม่เพิ่มคอลัมน์ <code>published</code> ซ้ำสิบรอบ?
+  <br>เพราะในฐานข้อมูลมีตารางลับอีกตัวชื่อ <code>schema_migrations</code> เก็บ<strong>เลขประจำตัวของใบที่ทำไปแล้ว</strong> ใบละหนึ่งแถว ·
+  ก่อนทำใบไหน Rails เปิดดูตารางนี้ก่อน ถ้ามีเลขนั้นแล้วก็ข้าม
+</p>
+
+<p>
+  ดูข้างในด้วย console (<code>bin/rails console</code>) · บรรทัดนี้ยาวหน่อย เพราะ <code>schema_migrations</code> ไม่มี model ให้เรียกแบบ <code>Post.all</code>
+  เลยต้องส่งคำสั่ง SQL ไปตรง ๆ (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; ActiveRecord::Base.connection.execute(<span class="s">"SELECT * FROM schema_migrations ORDER BY version"</span>).to_a
+   (60.2ms)  SELECT * FROM schema_migrations ORDER BY version /*application='WongnokBlog'*/
+=&gt;
+[{<span class="s">"version"</span> =&gt; <span class="s">"20261104113601"</span>},
+ {<span class="s">"version"</span> =&gt; <span class="s">"20261104113603"</span>},
+ {<span class="s">"version"</span> =&gt; <span class="s">"20261104113604"</span>},
+ {<span class="s">"version"</span> =&gt; <span class="s">"20261104113606"</span>},
+ {<span class="s">"version"</span> =&gt; <span class="s">"20261104113607"</span>}]</code></pre>
+
+<ul>
+  <li><code>ActiveRecord::Base.connection</code> — สายตรงไปฐานข้อมูล · <code>.execute("…")</code> — ส่งคำสั่ง SQL ไปทั้งก้อน · <code>.to_a</code> — แปลงผลเป็น array ให้อ่านง่าย</li>
+  <li><code>SELECT * FROM schema_migrations ORDER BY version</code> — คำสั่ง SQL แปลเป็นภาษาคน: <strong>"ขอทุกช่อง (<code>*</code>) ของทุกแผ่น จากลิ้นชัก <code>schema_migrations</code> เรียงตามช่อง version จากน้อยไปมาก"</strong> ·
+      <code>SELECT</code> = ขอดู · <code>FROM</code> = จากลิ้นชักไหน · <code>ORDER BY</code> = เรียงตามอะไร</li>
+  <li>บรรทัด <code>(60.2ms) SELECT …</code> — console โชว์ SQL ที่ยิงจริงพร้อมเวลา (ของคุณจะได้เลขอื่น) · ท่อน <code>/*application='WongnokBlog'*/</code> คือป้ายที่ Rails แปะท้าย SQL บอกว่ามาจากแอปไหน ไม่ต้องสนใจ</li>
+  <li>ผลคือ 5 แถว ช่องเดียวชื่อ <code>version</code> · <strong>ตัวเลขตรงกับหน้าชื่อไฟล์ทั้ง 5 ใบใน <code>db/migrate/</code></strong> = ทำครบทุกใบแล้ว</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">✍️ เทียบให้เห็นภาพ — สมุดเซ็นรับงานช่างที่แขวนไว้ข้างตู้</span>
+  <p>
+    แต่ละสาขามีสมุดแขวนข้างตู้ ช่างทำใบไหนเสร็จก็จดเลขใบนั้นลงสมุด ·
+    ช่างคนใหม่มาถึง เปิดแฟ้มใบสั่ง (<code>db/migrate/</code>) เทียบกับสมุด (<code>schema_migrations</code>) → ใบไหนยังไม่มีในสมุด ทำเฉพาะใบนั้น
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ช่างจริงเห็นใบสั่งที่ถูกแก้ข้อความก็อาจสงสัย ·
+    แต่ Rails <strong>ดูแค่เลขหน้าใบ ไม่อ่านเนื้อหาซ้ำ</strong> — เลขอยู่ในสมุดแล้วคือ "ทำแล้ว" จบ ต่อให้เนื้อหาในใบเปลี่ยนไปหมดก็ตาม (กับดักท้ายบท)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> นี่คือตาราง <code>goose_db_version</code> ของ goose ในบท 31 นั่นเอง · ของ goose มีหลายช่อง (<code>version_id</code> · <code>is_applied</code> · <code>tstamp</code>)
+  ส่วนของ Rails มีช่องเดียวคือ <code>version</code> — มีแถว = ทำแล้ว · ไม่มีแถว = ยังไม่ทำ
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>schema_migrations · migration version</dt>
+    <dd>ตารางที่ Rails จดว่าทำ migration ใบไหนไปแล้ว · version = ตัวเลข 14 หลักหน้าชื่อไฟล์ ·
+        <strong>ถาม senior ได้ว่า “migration ตัวนี้ขึ้น up แล้วบน staging หรือยัง เช็คจาก schema_migrations ได้ไหม”</strong></dd>
+    <dt>pending migration</dt>
+    <dd>ใบสั่งที่มีไฟล์แล้วแต่ยังไม่ได้ทำ (เลขยังไม่อยู่ในสมุด) · Rails จะไม่ยอมเปิดหน้าเว็บในเครื่องเราจนกว่าจะ migrate (เจอในภารกิจ) ·
+        <strong>พิมพ์บอก AI ได้ว่า “I got ActiveRecord::PendingMigrationError after pulling, what should I run?”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">ลงมือ: เพิ่มคำโปรยใต้ชื่อบทความ</h2>
+
+<p>
+  โจทย์: บทความแต่ละชิ้นอยากมี <strong>คำโปรยสั้น ๆ</strong> ใต้ชื่อเรื่อง เช่น "ต้มยำกุ้งน้ำข้น" — "สูตรเข้มข้นแบบร้านดัง" ·
+  ต้องเพิ่มคอลัมน์ <code>subtitle</code> (ข้อความสั้น) ในตาราง posts
+</p>
+
+<p>
+  <strong>ก่อนเริ่ม: commit ของที่ได้จากบท 107 ไว้ก่อน</strong> · ขั้น ③ จะใช้ <code>git diff</code> ดูว่า schema.rb เปลี่ยนตรงไหน
+  ซึ่งเทียบกับ commit ล่าสุด — ถ้า schema.rb ยังไม่เคย commit มันจะไม่โชว์อะไรเลย
+  (<code>&amp;&amp;</code> = ทำคำสั่งแรกสำเร็จแล้วค่อยทำคำสั่งถัดไป เหมือนบท 105):
+</p>
+
+<pre><code><span class="c">$ git add . &amp;&amp; git commit -m "schema และ seeds จากบท 107"</span>
+<span class="c">…(ผลของ commit ตัดออก)…</span>
+<span class="c">$ git status</span>
+On branch main
+nothing to commit, working tree clean</code></pre>
+
+<p><code>nothing to commit, working tree clean</code> = "ไม่มีอะไรค้าง ทุกอย่างบันทึกแล้ว" — ต่อจากนี้ทุกอย่างที่เปลี่ยนจะเห็นใน <code>git diff</code> · <code>git status</code> ·
+  (ถ้า <code>git commit</code> ตอบ <code>nothing to commit</code> ตั้งแต่แรก = คุณ commit ไว้แล้ว ไปต่อได้เลย · บรรทัด <code>On branch main</code> ของคุณอาจเป็น <code>master</code> ไม่ต่างกัน)</p>
+
+<h3 id="sn-sub-1">① ให้ Rails เขียนใบสั่งให้</h3>
+
+<pre><code><span class="c">$ bin/rails generate migration AddSubtitleToPosts subtitle:string</span>
+      invoke  active_record
+      create    db/migrate/20261104114634_add_subtitle_to_posts.rb</code></pre>
+
+<ul>
+  <li><code>generate migration</code> — "เขียนใบสั่งช่างเปล่า ๆ ให้หนึ่งใบ" · เหมือน <code>generate model</code> ในบท 99 แต่สร้างแค่ไฟล์ migration ไฟล์เดียว</li>
+  <li><code>AddSubtitleToPosts</code> — ชื่อใบ · <strong>ตั้งชื่อตามแบบ <code>Add…To…</code> แล้ว Rails เดาเนื้อหาให้</strong>: Add = เพิ่มคอลัมน์ · To<strong>Posts</strong> = ในตาราง posts</li>
+  <li><code>subtitle:string</code> — ชื่อคอลัมน์ : ชนิดข้อมูล (string = ข้อความสั้น)</li>
+  <li><code>invoke active_record</code> — Rails บอกว่า "ส่งงานให้ส่วน Active Record (บท 106) เป็นคนเขียนไฟล์" · ไม่ต้องทำอะไร</li>
+  <li><code>create db/migrate/20261104114634_…</code> — ได้ไฟล์ใหม่ เลขข้างหน้าคือเวลาที่คุณสั่ง</li>
+</ul>
+
+<p>เปิดไฟล์ที่ได้ — Rails เขียนเนื้อหาให้ครบแล้ว ไม่ต้องพิมพ์อะไรเพิ่ม:</p>
+
+<pre><code><span class="c"># db/migrate/20261104114634_add_subtitle_to_posts.rb</span>
+<span class="k">class</span> <span class="n">AddSubtitleToPosts</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:subtitle</span>, <span class="n">:string</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  ตอนนี้ <strong>มีแค่ใบสั่ง ยังไม่มีช่างลงมือ</strong> · ฐานข้อมูลยังไม่มีคอลัมน์ subtitle · และ <code>schema.rb</code> ยังไม่เปลี่ยนสักตัวอักษร
+</p>
+
+<div class="predict">
+<pre><code><span class="c">$ bin/rails db:migrate:status</span></code></pre>
+  <p class="ask"><code>db:migrate:status</code> = "ขอดูว่าใบไหนทำแล้ว ใบไหนยัง" · หลัง generate แต่ยังไม่ migrate — ใบใหม่จะขึ้นว่าอะไร? และขึ้นไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — ใบใหม่ขึ้นแล้ว สถานะ <code>down</code>:</p>
+<pre><code>database: w108
+
+ Status   Migration ID    Migration Name
+--------------------------------------------------
+   up     20261104113601  Create posts
+   up     20261104113603  Add published and views to posts
+   up     20261104113604  Create users
+   up     20261104113606  Add user to posts
+   up     20261104113607  Create comments
+  down    20261104114634  Add subtitle to posts</code></pre>
+    <ul>
+      <li><code>database: w108</code> — ชื่อฐานข้อมูลที่เครื่องผมใช้ตรวจ · ของคุณน่าจะเป็น <code>wongnok_blog_development</code></li>
+      <li><code>up</code> = ทำแล้ว (เลขอยู่ในสมุด schema_migrations) · <code>down</code> = มีไฟล์แต่ยังไม่ได้ทำ</li>
+      <li>Rails สร้างรายการนี้จาก<strong>สองที่รวมกัน</strong>: ไฟล์ใน <code>db/migrate/</code> กับ แถวใน schema_migrations</li>
+    </ul>
+  </div>
+</div>
+
+<h3 id="sn-sub-2">② สั่งช่างลงมือ: <code>db:migrate</code></h3>
+
+<pre><code><span class="c">$ bin/rails db:migrate</span>
+== 20261104114634 AddSubtitleToPosts: migrating ===============================
+-- add_column(:posts, :subtitle, :string)
+   -&gt; 0.0033s
+== 20261104114634 AddSubtitleToPosts: migrated (0.0033s) ======================</code></pre>
+
+<ul>
+  <li><code>== … migrating</code> — เริ่มทำใบนี้ · <strong>ทำแค่ใบที่ down</strong> อีก 5 ใบที่ up แล้วข้ามไปเงียบ ๆ</li>
+  <li><code>-- add_column(…)</code> — คำสั่งที่ทำ · <code>-&gt; 0.0033s</code> — ใช้เวลา 0.0033 วินาที (ตารางเล็กมาก เลยเร็ว — ตารางที่มีเป็นล้านแถวจะเป็นอีกเรื่อง บท 109)</li>
+  <li><code>migrated</code> — เสร็จ · Rails จดเลข <code>20261104114634</code> ลง schema_migrations แล้ว<strong>เขียน schema.rb ใหม่</strong>ให้ทันที</li>
+</ul>
+
+<h3 id="sn-sub-3">③ แปลนตู้เปลี่ยนตรงไหน</h3>
+
+<p>ใช้ <code>git diff</code> ดูว่า schema.rb ต่างจากก่อน migrate ยังไง (ผลจริง ตัดบรรทัดที่ไม่เปลี่ยนรอบ ๆ ออกบางส่วน):</p>
+
+<pre><code><span class="c">$ git diff db/schema.rb</span>
+-ActiveRecord::Schema[8.1].define(version: 2026_11_04_113607) do
++ActiveRecord::Schema[8.1].define(version: 2026_11_04_114634) do
+…
+     t.boolean "published", default: false, null: false
+     t.integer "views", default: 0, null: false
+     t.bigint "user_id", null: false
++    t.string "subtitle"
+     t.index ["user_id"], name: "index_posts_on_user_id"
+   end</code></pre>
+
+<ul>
+  <li><code>git diff ไฟล์</code> = ดูว่าไฟล์ต่างจากตอน commit ล่าสุดตรงไหน · บรรทัดขึ้นต้น <code>-</code> = ของเดิมที่หายไป · <code>+</code> = ของใหม่</li>
+  <li><code>version</code> เลื่อนจาก <code>…113607</code> เป็น <code>…114634</code> = ใบล่าสุดคือใบ subtitle</li>
+  <li><code>+ t.string "subtitle"</code> — คอลัมน์ใหม่ต่อท้ายตาราง posts · <strong>มีสองบรรทัดนี้เท่านั้น</strong> = ตรงกับที่ตั้งใจ พร้อม commit</li>
+</ul>
+
+<p>เช็คสถานะอีกรอบ — ใบ subtitle กลายเป็น <code>up</code> (ผลจริง ตัดบรรทัดบนออก):</p>
+
+<pre><code><span class="c">$ bin/rails db:migrate:status</span>
+…
+   up     20261104113607  Create comments
+   up     20261104114634  Add subtitle to posts</code></pre>
+
+<h3 id="sn-sub-4">④ เรียกช่างมารื้อ: <code>db:rollback</code></h3>
+
+<pre><code><span class="c">$ bin/rails db:rollback</span>
+== 20261104114634 AddSubtitleToPosts: reverting ===============================
+-- remove_column(:posts, :subtitle, :string)
+   -&gt; 0.0040s
+== 20261104114634 AddSubtitleToPosts: reverted (0.0046s) ======================</code></pre>
+
+<ul>
+  <li><code>reverting</code> — กำลังย้อนใบล่าสุด (ใบเดียว)</li>
+  <li><code>remove_column(:posts, :subtitle, :string)</code> — <strong>เราไม่ได้เขียนบรรทัดนี้</strong> Rails กลับด้าน <code>add_column</code> ใน <code>change</code> ให้เอง</li>
+  <li><code>reverted</code> — เสร็จ · Rails ลบเลขใบนี้ออกจาก schema_migrations และเขียน schema.rb ใหม่ (บรรทัด subtitle หายไป <code>git diff</code> กลับมาว่างเปล่า)</li>
+</ul>
+
+<p>สถานะตอนนี้กลับเป็น <code>down</code> — <strong>ไฟล์ยังอยู่</strong> แค่ยังไม่ได้ทำ (ผลจริง):</p>
+
+<pre><code><span class="c">$ bin/rails db:migrate:status</span>
+…
+   up     20261104113607  Create comments
+  down    20261104114634  Add subtitle to posts</code></pre>
+
+<div class="warn">
+  <p>⚠️ <strong>rollback ลบข้อมูลในคอลัมน์นั้นทิ้งจริง</strong> · ผมลองใส่คำโปรย <code>"อร่อยมาก"</code> ให้ทั้ง 6 บทความ แล้ว rollback → migrate กลับมาใหม่ ·
+    คอลัมน์กลับมา แต่ค่าทุกแผ่นเป็น <code>nil</code> หมด · ในเครื่องตัวเองไม่เป็นไร แต่บน production = ข้อมูลลูกค้าหาย</p>
+</div>
+
+<div class="analogy">
+  <span class="label">🔨 เทียบให้เห็นภาพ — เรียกช่างมารื้องานใบล่าสุด</span>
+  <p>
+    rollback = เรียกช่างกลับมารื้อสิ่งที่ใบล่าสุดต่อเติมไว้ แล้วขีดเลขใบนั้นออกจากสมุด · ใบสั่งยังอยู่ในแฟ้ม พร้อมทำใหม่เมื่อสั่ง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ช่างจริงรื้อช่องออกจากแฟ้มแล้ว ของที่เขียนในช่องนั้นอาจถ่ายเอกสารเก็บไว้ได้ ·
+    rollback ไม่เก็บอะไรไว้ให้เลย ข้อมูลในช่องหายไปพร้อมช่อง · และถ้าใบสั่งถูกแก้ไขไปแล้ว ช่างจะรื้อ "ตามใบที่แก้" ไม่ใช่ตามสิ่งที่ต่อเติมจริง (กับดักท้ายบท)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>migration generator</dt>
+    <dd>คำสั่ง <code>bin/rails generate migration ชื่อ คอลัมน์:ชนิด</code> ที่เขียนไฟล์ให้ · ชื่อแบบ <code>AddXToY</code> / <code>RemoveXFromY</code> / <code>CreateY</code> ได้เนื้อหาให้เลย ·
+        <strong>พิมพ์บอก AI ได้ว่า “give me the rails generate migration command for adding a subtitle string to posts”</strong></dd>
+    <dt>migrate · rollback · migration status</dt>
+    <dd>migrate = ทำใบที่ down · rollback = ย้อนใบล่าสุด · status = ดูว่าใบไหน up/down ·
+        <strong>ถาม senior ได้ว่า “ก่อนเปิด PR ผมควรลอง rollback แล้ว migrate ใหม่ให้ดูว่าย้อนได้จริงไหม”</strong> — ทีมส่วนใหญ่ชอบคำถามนี้</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">คลังคำที่เขียนใน <code>change</code> ได้</h2>
+
+<p>ไม่ต้องจำ — ให้รู้ว่ามีคำอะไรบ้าง แล้วกลับมาเปิดตารางนี้ (หรือ cheat sheet) ตอนใช้:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ภาษาคน · ในร้านอาหาร</th><th>ตัวอย่าง</th></tr></thead>
+  <tbody>
+    <tr><td><code>create_table</code></td><td>ต่อลิ้นชักใหม่ทั้งลิ้นชัก (ตารางใหม่)</td><td><code>create_table :tags do |t| … end</code></td></tr>
+    <tr><td><code>drop_table</code></td><td>รื้อลิ้นชักทิ้งทั้งลิ้นชัก <strong>พร้อมแฟ้มข้างใน</strong></td><td><code>drop_table :tags</code></td></tr>
+    <tr><td><code>add_column</code></td><td>เพิ่มช่องบนแฟ้ม</td><td><code>add_column :posts, :subtitle, :string</code></td></tr>
+    <tr><td><code>remove_column</code></td><td>ลบช่องบนแฟ้ม (ของที่เขียนในช่องหายด้วย)</td><td><code>remove_column :posts, :subtitle, :string</code></td></tr>
+    <tr><td><code>rename_column</code></td><td>เปลี่ยนชื่อช่อง ข้อมูลยังอยู่</td><td><code>rename_column :posts, :body, :content</code></td></tr>
+    <tr><td><code>add_index</code></td><td>ติดป้ายสารบัญให้หาตามช่องนี้เร็วขึ้น (บท 109)</td><td><code>add_index :posts, :subtitle</code></td></tr>
+    <tr><td><code>add_reference</code></td><td>เพิ่มช่อง "เป็นของ … เลขที่" เช่น <code>user_id</code> (บท 115)</td><td><code>add_reference :posts, :user, null: false, foreign_key: true</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สไลด์หน้า 14 มีคำอื่นอีก เช่น <code>rename_table</code> (เปลี่ยนชื่อลิ้นชัก) · <code>remove_index</code> (แกะป้ายสารบัญออก) — ไม่ต้องจำตอนนี้ ·
+  คำที่ใช้ตั้งกฎให้ตัวตู้ (เช่น "ช่องนี้ห้ามว่าง") จะได้ใช้จริงในบท 111
+</p>
+
+<p>และชื่อใบแบบไหน generator เดาเนื้อหาให้ได้ — ผมลองสั่งทีละแบบ (ผลจริง ตัดมาเฉพาะบรรทัดใน <code>change</code>):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สั่ง <code>bin/rails generate migration …</code></th><th>ได้ใน <code>change</code></th></tr></thead>
+  <tbody>
+    <tr><td><code>AddSubtitleToPosts subtitle:string</code></td><td><code>add_column :posts, :subtitle, :string</code></td></tr>
+    <tr><td><code>RemoveSubtitleFromPosts subtitle:string</code></td><td><code>remove_column :posts, :subtitle, :string</code></td></tr>
+    <tr><td><code>CreateTags name:string</code></td><td><code>create_table :tags do |t|</code> + <code>t.string :name</code> + <code>t.timestamps</code></td></tr>
+    <tr><td><code>AddSlugToPosts slug:string:index</code></td><td><code>add_column :posts, :slug, :string</code> + <code>add_index :posts, :slug</code></td></tr>
+    <tr><td><code>AddCategoryToPosts category:references</code></td><td><code>add_reference :posts, :category, null: false, foreign_key: true</code></td></tr>
+    <tr><td><code>AddReadingMinutesPosts reading_minutes:integer</code> (ลืมคำว่า To)</td><td><strong>ว่างเปล่า</strong> — <code>def change</code> กับ <code>end</code> เฉย ๆ ไม่มี error</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แถวสุดท้ายสำคัญ: ชื่อผิดแบบ generator <strong>ไม่ฟ้อง</strong> แค่ให้ใบเปล่า · ถ้าไม่เปิดดูแล้วสั่ง migrate ไปเลย ก็จะ "สำเร็จ" โดยไม่ได้เพิ่มอะไร ·
+  <strong>เปิดไฟล์ดูทุกครั้งหลัง generate</strong> ·
+  (ส่วน <code>AddSubtitleToPost</code> ที่ลืม s ไม่เป็นไร ผมลองแล้ว Rails ยังเติม <code>:posts</code> ให้ถูก)
+</p>
+
+<h2 id="sn-sec-8">คำสั่ง db: ที่ใช้บ่อย และอันไหนห้ามแตะบนร้านจริง</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ทำอะไร (ภาษาคน)</th><th>บนเครื่องเรา</th><th>บน production</th></tr></thead>
+  <tbody>
+    <tr><td><code>bin/rails db:migrate</code></td><td>ทำทุกใบที่ down ตามลำดับ แล้วเขียน schema.rb ใหม่</td><td>ใช้บ่อย</td><td>ใช้ตอน deploy (ตามขั้นตอนของทีม)</td></tr>
+    <tr><td><code>bin/rails db:rollback</code></td><td>ย้อนใบล่าสุด 1 ใบ</td><td>ใช้ได้</td><td><strong>อันตราย</strong> — ข้อมูลในช่องที่ถูกรื้อหายจริง</td></tr>
+    <tr><td><code>bin/rails db:rollback STEP=3</code></td><td>ย้อน 3 ใบล่าสุด (เปลี่ยนเลขได้)</td><td>ใช้ได้</td><td><strong>อันตราย</strong></td></tr>
+    <tr><td><code>bin/rails db:migrate:status</code></td><td>ดูว่าใบไหน up / down · แค่ดู ไม่เปลี่ยนอะไร</td><td>ใช้บ่อย</td><td>ปลอดภัย</td></tr>
+    <tr><td><code>bin/rails db:prepare</code></td><td>ฐานข้อมูลยังไม่มี → สร้าง + โหลด schema.rb + ใส่ seeds · มีอยู่แล้ว → ทำใบที่ down</td><td>ใช้ตอนเพิ่ง clone โปรเจกต์</td><td>บางทีมให้ระบบ deploy เรียกให้</td></tr>
+    <tr><td><code>bin/rails db:seed</code></td><td>รัน <code>db/seeds.rb</code> ใส่ข้อมูลตัวอย่าง · <strong>สั่งซ้ำ = ข้อมูลเบิ้ล</strong> (ผมลองแล้ว ได้ 6 users จาก 3)</td><td>ใช้ได้ระวังเบิ้ล</td><td>แล้วแต่ทีม</td></tr>
+    <tr><td><code>bin/rails db:reset</code></td><td>ลบฐานข้อมูลทิ้งทั้งก้อน → สร้างใหม่จาก schema.rb → ใส่ seeds</td><td>ใช้ตอนอยากเริ่มใหม่สะอาด ๆ</td><td><strong>ห้ามเด็ดขาด</strong> — ลบข้อมูลลูกค้าทั้งร้าน</td></tr>
+    <tr><td><code>bin/rails db:migrate:reset</code></td><td>ตัวที่ใช้ในบท 107 · ลบฐานข้อมูลทิ้ง → สร้างใหม่ → <strong>ไล่ทำใบสั่งทุกใบตั้งแต่ใบแรก</strong> (จอขึ้น <code>== … migrating</code> ครบทุกใบ) · ไม่ใส่ seeds ให้</td><td>ใช้ตอนอยากเช็คว่าใบสั่งทุกใบยังทำต่อกันได้</td><td><strong>ห้ามเด็ดขาด</strong> — เหมือน <code>db:reset</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  วิธีจำง่าย ๆ: production คือ<strong>ร้านจริงที่ลูกค้ากำลังนั่งกินอยู่</strong> · คำสั่งไหน "รื้อ" หรือ "ล้าง" ห้ามทำบนร้านจริง ·
+  บนร้านจริงถ้าใบสั่งผิด ให้<strong>เขียนใบใหม่มาแก้</strong> ไม่ย้อนใบเก่า (กับดักท้ายบท)
+</p>
+
+<h2 id="sn-sec-9">เพื่อนใหม่เข้าทีม: ทำไม schema.rb ต้อง commit</h2>
+
+<p>
+  เพื่อนใหม่ clone โปรเจกต์ไป เครื่องเขามีไฟล์ครบ แต่ฐานข้อมูลยังว่างเปล่า · สไลด์หน้า 12 บอกว่า <code>bin/rails db:prepare</code> จบ — จริง ·
+  ผมลองกับฐานข้อมูลใหม่เอี่ยม (ผลจริง):
+</p>
+
+<pre><code><span class="c">$ bin/rails db:prepare</span>
+Created database 'w108_new'</code></pre>
+
+<p>
+  ขึ้นบรรทัดเดียว — <strong>ไม่มีบรรทัด <code>== … migrating</code> สักใบ</strong> (<code>w108_new</code> คือชื่อฐานข้อมูลทดลองของผม) ·
+  แต่ตารางครบ status ขึ้น <code>up</code> ทั้ง 5 ใบ และข้อมูลตัวอย่างครบ (นับด้วย <code>bin/rails runner</code> แบบบท 107 ได้ users 3 · posts 6 · comments 7)
+</p>
+<p>
+  เพราะบนฐานข้อมูลใหม่ Rails <strong>ไม่ไล่ทำใบสั่งทีละใบ แต่สร้างตู้ตามแปลน schema.rb ทีเดียว</strong> ·
+  จดเลขทุกใบลงสมุดให้ แล้วค่อยรัน seeds
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># ฐานข้อมูลใหม่อีกก้อน คราวนี้สั่งแยกทีละขั้น</span>
+<span class="c">$ bin/rails db:create</span>
+Created database 'w108_new'
+<span class="c">$ bin/rails db:migrate</span></code></pre>
+  <p class="ask">ฐานข้อมูลว่าง มีใบสั่ง 5 ใบ · สั่ง <code>db:migrate</code> แล้วจอจะขึ้น <code>== … migrating</code> 5 ก้อนเหมือนตอนเพิ่ม subtitle ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — <strong>ไม่ขึ้นอะไรเลยสักบรรทัด</strong> · แต่ตารางครบ status <code>up</code> ทั้ง 5 ใบ (และไม่มีข้อมูลตัวอย่าง เพราะ migrate ไม่รัน seeds)</p>
+    <p>
+      ตั้งแต่ Rails 8.0 <code>db:migrate</code> บนฐานข้อมูลเปล่า (ยังไม่มีสมุด schema_migrations) ก็<strong>สร้างตู้ตามแปลน schema.rb ก่อน</strong>เหมือนกัน ·
+      ใบสั่งทุกใบเลยถือว่าทำแล้ว ไม่มีอะไรให้พิมพ์ (บันทึกการเปลี่ยนแปลงของ Rails ยืนยัน — ลิงก์ท้ายบท)
+    </p>
+    <p>
+      ผมลองย้าย schema.rb ออกไปชั่วคราว แล้วทำแบบเดิม — คราวนี้ขึ้น <code>== … migrating</code> ครบ 5 ใบ เพราะไม่มีแปลนให้ใช้ ·
+      ส่วน <code>db:migrate:reset</code> ที่ใช้ในบท 107 ตั้งใจไล่ทำทุกใบใหม่ จึงเห็นครบ 5 ใบเหมือนกัน (ผมลองแล้ว)
+    </p>
+    <p><strong>ข้อสรุป:</strong> เครื่องใหม่ทุกเครื่องสร้างฐานข้อมูลจาก <strong>schema.rb</strong> ไม่ใช่จากใบสั่ง ·
+      ถ้าลืม commit schema.rb หรือ commit ฉบับเก่า เพื่อนจะได้ตู้ไม่ตรงกับเรา</p>
+  </div>
+</div>
+
+<div class="win">
+  <p>✅ ดังนั้นทุกครั้งที่สร้าง migration ใหม่ <strong>commit สองไฟล์คู่กันเสมอ</strong>: ไฟล์ใน <code>db/migrate/</code> (ประวัติ) + <code>db/schema.rb</code> ที่ Rails เขียนให้หลัง migrate (แปลนล่าสุด)</p>
+</div>
+
+<h2 id="sn-sec-10">กับดัก: แก้ไฟล์ migration ที่รันไปแล้ว</h2>
+
+<p>
+  สมมติเราสั่ง <code>db:migrate</code> ให้ใบ subtitle กลับมาเป็น <code>up</code> แล้ว · จากนั้นนึกได้ว่า "อยากให้ค้นหาตาม subtitle ได้เร็วด้วย"
+  มือใหม่ส่วนใหญ่จะเปิดไฟล์เดิมแล้วเติมบรรทัด <code>add_index</code> ลงไป:
+</p>
+
+<pre><code><span class="c"># db/migrate/20261104114634_add_subtitle_to_posts.rb — แก้หลังจาก migrate ไปแล้ว</span>
+<span class="k">class</span> <span class="n">AddSubtitleToPosts</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:subtitle</span>, <span class="n">:string</span>
+    <span class="f">add_index</span> <span class="n">:posts</span>, <span class="n">:subtitle</span>      <span class="c"># ← เติมบรรทัดนี้</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<div class="predict">
+<pre><code><span class="c">$ bin/rails db:migrate</span></code></pre>
+  <p class="ask">สั่ง migrate หลังแก้ไฟล์ — จะเห็น <code>-- add_index(:posts, :subtitle)</code> ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — <strong>ไม่มีอะไรขึ้นเลย ไม่มี error</strong> · <code>schema.rb</code> ไม่เปลี่ยน · ไม่มี index</p>
+    <p>เพราะเลข <code>20261104114634</code> อยู่ในสมุด schema_migrations แล้ว Rails ถือว่า "ทำแล้ว" จบ ไม่เปิดอ่านเนื้อหาใหม่ (คู่มือของ Rails ก็เขียนไว้แบบนี้ — ลิงก์ท้ายบท)</p>
+  </div>
+</div>
+
+<p>แย่กว่านั้น: ถ้าคิดว่า "งั้น rollback แล้ว migrate ใหม่" ตอนนี้เลย — <strong>rollback พัง</strong> (ผลจริง ตัดบรรทัดที่ไม่จำเป็นเป็น <code>…</code>):</p>
+
+<pre><code><span class="c">$ bin/rails db:rollback</span>
+== 20261104114634 AddSubtitleToPosts: reverting ===============================
+-- remove_index(:posts, :subtitle)
+bin/rails aborted!
+StandardError: An error has occurred, this and all later migrations canceled: (StandardError)
+
+No indexes found on posts with the options provided.
+…
+Tasks: TOP =&gt; db:rollback</code></pre>
+
+<ul>
+  <li>Rails ย้อน<strong>ตามไฟล์ที่แก้แล้ว</strong>: บรรทัดสุดท้ายคือ <code>add_index</code> → ขากลับคือ <code>remove_index</code> → ทำก่อน</li>
+  <li>แต่ index นั้น<strong>ไม่เคยถูกสร้างจริง</strong> (ข้อที่แล้ว) → <code>No indexes found on posts</code> = "หา index ใน posts ไม่เจอ"</li>
+  <li><code>bin/rails aborted!</code> — คำสั่งหยุดกลางทาง · <code>this and all later migrations canceled</code> — ยกเลิกทั้งใบ ไม่มีอะไรเปลี่ยน · ใบยังเป็น <code>up</code> ค้างอยู่</li>
+  <li><code>Tasks: TOP =&gt; db:rollback</code> — บรรทัดท้ายบอกแค่ว่าพังระหว่างคำสั่ง <code>db:rollback</code> · ใจความอยู่บรรทัด <code>No indexes found…</code> ข้างบน</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ ถ้าเจอแบบนี้: <strong>แก้ไฟล์กลับให้เหมือนตอนที่รันไปก่อนเสมอ</strong> (ลบบรรทัด <code>add_index</code> ออก) แล้วค่อยเลือกวิธี ① หรือ ② ข้างล่าง ·
+    ถ้าปล่อยบรรทัดนั้นค้างไว้แล้วไปทำวิธีที่ ② เครื่องเพื่อนที่ยังไม่เคยรันทั้งสองใบจะสร้างสารบัญซ้ำสองรอบแล้วพัง
+    (ผมลองแล้ว ได้ <code>PG::DuplicateTable: ERROR:  relation "index_posts_on_subtitle" already exists</code> = "มีสารบัญชื่อนี้อยู่แล้ว")</p>
+</div>
+
+<p><strong>วิธีที่ถูก มีสองทาง เลือกตามว่าใบนี้ไปถึงใครแล้ว</strong> (ทั้งสองทางเริ่มจากไฟล์ใบเดิมที่ยังไม่ได้แก้):</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>① ยังไม่ push ยังไม่มีใครเอาไปรัน — rollback <em>ก่อน</em> แล้วค่อยแก้</h4>
+<pre><code><span class="c">$ bin/rails db:rollback      # ไฟล์ยังเป็นแบบเดิม → ผ่าน</span>
+<span class="c"># ค่อยเติม add_index ในไฟล์</span>
+<span class="c">$ bin/rails db:migrate</span>
+== 20261104114634 AddSubtitleToPosts: migrating ===
+-- add_column(:posts, :subtitle, :string)
+   -&gt; 0.0021s
+-- add_index(:posts, :subtitle)
+   -&gt; 0.0025s
+== 20261104114634 AddSubtitleToPosts: migrated (0.0047s) ===</code></pre>
+    <p>ลำดับสำคัญ: <strong>ถอยก่อน แก้ทีหลัง</strong> · ใช้ได้แค่บนเครื่องตัวเอง</p>
+  </div>
+  <div class="side good">
+    <h4>② push ไปแล้ว หรือขึ้นร้านจริงแล้ว — เขียนใบใหม่</h4>
+<pre><code><span class="c">$ bin/rails generate migration AddIndexToPostsSubtitle</span>
+      create    db/migrate/20261104115037_add_index_to_posts_subtitle.rb
+<span class="c"># ได้ change เปล่า → พิมพ์ add_index :posts, :subtitle เอง</span>
+<span class="c">$ bin/rails db:migrate</span>
+== 20261104115037 AddIndexToPostsSubtitle: migrating ===
+-- add_index(:posts, :subtitle)
+   -&gt; 0.0063s
+== 20261104115037 AddIndexToPostsSubtitle: migrated (0.0063s) ===</code></pre>
+    <p>ใบเก่าไม่แตะ · ทุกเครื่องได้ใบใหม่ไปทำต่อเอง · <strong>ปลอดภัยเสมอ</strong></p>
+  </div>
+</div>
+
+<p>(ผลทั้งสองฝั่งรันจริง · ผมตัดเส้น <code>=====</code> ท้ายบรรทัดให้สั้นลง และตัดบรรทัด <code>invoke active_record</code> ออก เพื่อให้พอดีกล่อง · ชื่อ <code>AddIndexToPostsSubtitle</code> ไม่ตรงแบบที่ generator เดาได้ จึงได้ใบเปล่า ต้องพิมพ์บรรทัดเอง)</p>
+
+<div class="analogy">
+  <span class="label">📝 เทียบให้เห็นภาพ — แก้ใบสั่งที่ช่างเซ็นรับไปแล้ว</span>
+  <p>
+    ใบสั่งที่จดในสมุดแล้ว = ช่างทำเสร็จแล้ว · ถ้าเราแอบแก้ข้อความในใบ ช่างไม่กลับมาทำเพิ่ม เพราะเลขใบอยู่ในสมุดแล้ว ·
+    ที่แย่คือ<strong>อีก 4 สาขาที่ยังไม่ได้ทำใบนี้ จะทำตามใบที่แก้</strong> — ตู้สาขาเราไม่มีสารบัญ แต่สาขาอื่นมี · ตู้ไม่เหมือนกันอีกแล้ว
+  </p>
+  <p>
+    วิธีที่ถูกคือ<strong>ออกใบสั่งใบใหม่</strong> "ติดสารบัญเพิ่ม" · ทุกสาขาได้ใบเดียวกัน ทำตามลำดับเดียวกัน
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในชีวิตจริงใบสั่งที่ถูกแก้มักมีรอยลบให้เห็น · ไฟล์ migration ไม่มีรอยอะไรเลย
+    ถ้าไม่มีใครเปิด <code>git log</code> ของไฟล์นั้นดู ก็ไม่มีใครรู้ว่าใบถูกแก้
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>edit a migration that already ran</dt>
+    <dd>กับดักคลาสสิก · ผล: ไม่มีอะไรเกิดในเครื่องเรา + เครื่องอื่นได้ผลต่างจากเรา + rollback อาจพัง ·
+        <strong>ประโยคที่ได้ยินใน code review บ่อย: “อย่าแก้ migration เดิม เขียนไฟล์ใหม่”</strong> — ถ้า AI เสนอให้แก้ไฟล์เก่า ให้พิมพ์ตอบว่า “that migration already ran, write a new one instead”</dd>
+    <dt>schema drift</dt>
+    <dd>อาการที่ฐานข้อมูลแต่ละเครื่อง/แต่ละ environment ค่อย ๆ ไม่ตรงกันโดยไม่มีใครรู้ตัว — ผลของการแก้ใบเก่าหรือแก้ฐานข้อมูลด้วยมือ (เคยเจอคำนี้ในบท 31) ·
+        <strong>ถาม senior ได้ว่า “สงสัยว่าเครื่องผมกับ staging drift กัน เช็คยังไงดี”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-11">เก็บกวาดก่อนไปบทหน้า</h2>
+
+<p>
+  บทหลังจากนี้ใช้ตาราง posts แบบเดิม (ไม่มี subtitle) · ดูก่อนว่าคุณหยุดอยู่ตรงไหน:
+</p>
+<ul>
+  <li><strong>ทำแค่ถึงขั้น ④</strong> (ใบ subtitle เป็น <code>down</code> อยู่) → สั่ง <code>bin/rails destroy migration AddSubtitleToPosts</code> คำสั่งเดียวพอ</li>
+  <li><strong>ทำวิธีที่ ② มาจนมีสองใบใหม่</strong> → ย้อนสองใบแล้วลบไฟล์ทิ้ง ตามนี้ (ผลจริง):</li>
+</ul>
+
+<pre><code><span class="c">$ bin/rails db:rollback STEP=2</span>
+== 20261104115037 AddIndexToPostsSubtitle: reverting ==========================
+-- remove_index(:posts, :subtitle)
+   -&gt; 0.0069s
+== 20261104115037 AddIndexToPostsSubtitle: reverted (0.0083s) =================
+
+== 20261104114634 AddSubtitleToPosts: reverting ===============================
+-- remove_column(:posts, :subtitle, :string)
+   -&gt; 0.0027s
+== 20261104114634 AddSubtitleToPosts: reverted (0.0028s) ======================
+
+<span class="c">$ bin/rails destroy migration AddIndexToPostsSubtitle</span>
+      invoke  active_record
+      remove    db/migrate/20261104115037_add_index_to_posts_subtitle.rb
+<span class="c">$ bin/rails destroy migration AddSubtitleToPosts</span>
+      invoke  active_record
+      remove    db/migrate/20261104114634_add_subtitle_to_posts.rb</code></pre>
+
+<ul>
+  <li><code>STEP=2</code> — ย้อนสองใบล่าสุด · ย้อนจาก<strong>ใบใหม่สุดก่อน</strong> (index ออกก่อน แล้วค่อยรื้อคอลัมน์)</li>
+  <li><code>destroy migration ชื่อ</code> — ตรงข้ามกับ generate: ลบไฟล์ที่ generate สร้าง (เหมือน <code>destroy model</code> ในบท 99)</li>
+  <li><strong>ลำดับต้องเป็น rollback ก่อน แล้วค่อย destroy</strong> · สลับกัน = ลบใบสั่งทิ้งทั้งที่ช่างยังไม่ได้รื้อ (ดูในภารกิจ)</li>
+  <li>ถ้าคุณทำวิธีที่ ① (มีใบเดียวที่มีทั้ง add_column และ add_index) ให้สั่ง <code>bin/rails db:rollback</code> ครั้งเดียว แล้ว <code>bin/rails destroy migration AddSubtitleToPosts</code></li>
+  <li>เสร็จแล้ว <code>git status</code> ต้องว่าง · <code>db:migrate:status</code> เหลือ <code>up</code> 5 ใบเหมือนตอนเริ่ม</li>
+</ul>
+
+<div class="task">
+  <h3 id="sn-sub-5">🎯 ภารกิจ — เพิ่มช่อง "เวลาอ่าน (นาที)" แล้วถอยออก (~10 นาที)</h3>
+  <p>ทำในแอป <code>wongnok_blog</code> ของคุณ (สถานะเริ่มต้น: <code>db:migrate:status</code> ขึ้น <code>up</code> 5 ใบ · <code>git status</code> ว่าง)</p>
+  <ol>
+    <li>สร้างใบสั่ง: <code>bin/rails generate migration AddReadingMinutesToPosts reading_minutes:integer</code> แล้ว<strong>เปิดไฟล์ดู</strong>ว่าใน <code>change</code> มีบรรทัดอะไร</li>
+    <li><code>bin/rails db:migrate:status</code> — ใบใหม่ขึ้นว่าอะไร</li>
+    <li><code>bin/rails db:migrate</code> แล้ว <code>git diff db/schema.rb</code> — บรรทัดที่ขึ้นต้น <code>+</code> มีอะไรบ้าง</li>
+    <li><code>bin/rails runner 'p Post.column_names'</code> — มี <code>"reading_minutes"</code> อยู่ท้ายสุดไหม (<code>runner</code> = รัน Ruby หนึ่งบรรทัดในแอป ไม่ต้องเปิด console)</li>
+    <li>เก็บกวาด: <code>bin/rails db:rollback</code> → <code>bin/rails destroy migration AddReadingMinutesToPosts</code> → <code>git status</code> ต้องว่าง</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ข้อ 3 schema.rb เปลี่ยนกี่จุด? และถ้าข้อ 5 สลับเอา destroy ขึ้นก่อน rollback จะเกิดอะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>สิ่งที่ควรเห็น</strong> (ผลจริงจากเครื่องที่ใช้ตรวจ · เลขของคุณต่าง):</p>
+    <ul>
+      <li>ข้อ 1 — ได้ <code>add_column :posts, :reading_minutes, :integer</code> บรรทัดเดียว</li>
+      <li>ข้อ 2 — บรรทัดสุดท้ายเป็น <code>down    …  Add reading minutes to posts</code></li>
+      <li>ข้อ 3 — จอขึ้น <code>-- add_column(:posts, :reading_minutes, :integer)</code> · schema.rb เปลี่ยน <strong>2 จุด</strong>: เลข <code>version</code> และบรรทัด <code>+    t.integer "reading_minutes"</code></li>
+      <li>ข้อ 4 — <code>["id", "title", "body", "created_at", "updated_at", "published", "views", "user_id", "reading_minutes"]</code> · model Post ได้ช่องใหม่ทันทีโดยไม่ต้องแก้ไฟล์ model (Rails อ่านจากตาราง บท 106)</li>
+      <li>ข้อ 5 — rollback ขึ้น <code>remove_column(:posts, :reading_minutes, :integer)</code> · destroy ขึ้น <code>remove db/migrate/…</code> · <code>git status</code> ว่าง</li>
+    </ul>
+    <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong><code>Could not generate field 'reading_minutes' with unknown type 'integr'.</code></strong> — พิมพ์ชนิดข้อมูลผิด (ผมลองพิมพ์ผิดแบบนี้แล้ว ได้ข้อความนี้จริง) · ไม่มีไฟล์ถูกสร้าง สั่งใหม่ให้ถูกได้เลย</li>
+      <li><strong>ไฟล์ที่ได้มี <code>def change</code> ว่างเปล่า</strong> — ชื่อใบผิดแบบ เช่นลืมคำว่า <code>To</code> · <code>destroy</code> ทิ้งแล้ว generate ใหม่ หรือพิมพ์ <code>add_column</code> เอง</li>
+      <li><strong>เปิดหน้าเว็บแล้วเจอ <code>ActiveRecord::PendingMigrationError</code> · <code>Migrations are pending. To resolve this issue, run: bin/rails db:migrate</code></strong> —
+          มีใบที่ยัง down อยู่ (ข้าม ข้อ 3 ไป) · Rails ไม่ยอมเปิดหน้าเว็บในเครื่องเราจนกว่าจะ migrate · ทำตามที่มันบอก</li>
+      <li><strong><code>db:migrate:status</code> ขึ้น <code>up  …  ********** NO FILE **********</code></strong> และ rollback ขึ้น
+          <code>ActiveRecord::UnknownMigrationVersionError</code> · <code>No migration with version number …</code> —
+          คุณ destroy ก่อน rollback: สมุดบอกว่าทำแล้ว แต่ใบสั่งหายไป ช่างเลยไม่รู้จะรื้อยังไง (ผมลองแล้ว ได้สองข้อความนี้จริง) ·
+          แก้: สร้างไฟล์ใบเดิมกลับมา<strong>ด้วยเลขเดิมเป๊ะ</strong> (<code>db/migrate/&lt;เลขที่ขึ้นใน status&gt;_add_reading_minutes_to_posts.rb</code> เนื้อหาตามข้อ 1) → rollback → destroy</li>
+    </ul>
+    <p>ติดตรงไหน หรือผลของคุณไม่ตรงกับที่เขียนไว้ <strong>ถามกลับมาได้เลย</strong> พร้อมแปะสิ่งที่จอขึ้นมาทั้งก้อน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">อยากรู้ว่า "ตอนนี้ตาราง posts มีคอลัมน์อะไรบ้าง" ให้เร็วที่สุด ควรเปิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">ไฟล์ <code>app/models/post.rb</code></button>
+    <button class="opt">ไฟล์ <code>db/schema.rb</code></button>
+    <button class="opt">ไฟล์ migration ใบล่าสุดใน <code>db/migrate/</code></button>
+    <button class="opt">ตาราง <code>schema_migrations</code> ในฐานข้อมูล</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — schema.rb คือแปลนตู้ฉบับล่าสุด รวมผลของทุกใบสั่งไว้ที่เดียว</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะไฟล์ model ไม่ได้เขียนรายชื่อคอลัมน์ไว้ (Rails อ่านจากตารางตอนรัน) ·
+       ตัวเลือกที่ 3 ผิด เพราะใบล่าสุดบอกแค่สิ่งที่เปลี่ยนครั้งล่าสุด ไม่ใช่ทั้งตาราง ·
+       ตัวเลือกที่ 4 ผิด เพราะ schema_migrations เก็บแค่เลขใบที่ทำแล้ว ไม่มีชื่อคอลัมน์</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ตอนนี้หน้าตาเป็นยังไง → schema.rb · เปลี่ยนมายังไง → db/migrate/ · ทำใบไหนแล้ว → schema_migrations</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">สั่ง <code>bin/rails db:migrate</code> ซ้ำหลายรอบ ทำไมคอลัมน์ไม่ถูกเพิ่มซ้ำ?</p>
+  <div class="opts">
+    <button class="opt">Rails เทียบไฟล์ migration กับ <code>schema.rb</code> แล้วข้ามบรรทัดที่มีแล้ว</button>
+    <button class="opt">Rails ดูวันที่แก้ไฟล์ล่าสุด ถ้าเก่ากว่าเมื่อวานจะข้ามไป</button>
+    <button class="opt">Rails ดูเลขหน้าชื่อไฟล์ ถ้ามีในตาราง <code>schema_migrations</code> แล้วจะข้าม</button>
+    <button class="opt">PostgreSQL ปฏิเสธการเพิ่มคอลัมน์ซ้ำเอง Rails แค่ไม่โชว์ error</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — schema_migrations คือสมุดเซ็นรับงาน เลขใบอยู่ในสมุด = ทำแล้ว ข้าม</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะบนฐานข้อมูลที่มีสมุดแล้ว Rails ไม่ได้เอา schema.rb มาเทียบทีละบรรทัด (มันแค่เขียน schema.rb ใหม่หลังทำเสร็จ · schema.rb ถูกใช้ตอนสร้างฐานข้อมูลใหม่เท่านั้น) ·
+       ตัวเลือกที่ 2 ผิด เพราะ Rails ไม่สนวันที่แก้ไฟล์ — นี่แหละเหตุผลที่แก้ไฟล์เก่าแล้วไม่มีผล ·
+       ตัวเลือกที่ 4 ผิด เพราะ Rails ไม่ได้ส่งคำสั่งไปเลยตั้งแต่แรก (จอว่างเปล่า ไม่ใช่ error ที่ถูกซ่อน)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> Rails ดูแค่ "เลขใบอยู่ในสมุดไหม" ไม่อ่านเนื้อหาใบซ้ำ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">migration เพิ่มคอลัมน์ของคุณ push ไปแล้ว และขึ้นเว็บจริงไปแล้ว · เพิ่งเห็นว่าลืม <code>add_index</code> ควรทำอย่างไร?</p>
+  <div class="opts">
+    <button class="opt">สร้าง migration ใบใหม่ที่มี <code>add_index</code> แล้ว push ตามไป</button>
+    <button class="opt">เติม <code>add_index</code> ลงไฟล์เดิม แล้วสั่ง <code>db:migrate</code> อีกรอบ</button>
+    <button class="opt">สั่ง <code>db:rollback</code> บนเว็บจริงก่อน แล้วค่อยแก้ไฟล์เดิม</button>
+    <button class="opt">เติม <code>t.index</code> ลงใน <code>db/schema.rb</code> ด้วยมือ แล้ว commit</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — ใบใหม่ไม่แตะของเดิม ทุกเครื่องทุก environment ได้ไปทำต่อตามลำดับเดียวกัน</p>
+    <p>ตัวเลือกที่ 2 ผิด เพราะใบนี้ up แล้ว migrate ซ้ำไม่เกิดอะไร (เห็นแล้วในกับดัก) และเครื่องอื่นจะได้ผลต่างจากเรา ·
+       ตัวเลือกที่ 3 ผิด เพราะ rollback บนร้านจริงรื้อคอลัมน์ทิ้งพร้อมข้อมูลลูกค้า ·
+       ตัวเลือกที่ 4 ผิด เพราะ schema.rb เป็นไฟล์ที่ Rails เขียน ไม่ได้สร้าง index จริงในฐานข้อมูล และจะถูกเขียนทับรอบหน้า</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ใบที่ออกจากเครื่องเราไปแล้ว = แก้ด้วยใบใหม่เสมอ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">คำสั่งไหน<strong>ห้ามรัน</strong>บน production (ร้านจริงที่ลูกค้ากำลังใช้) มากที่สุด?</p>
+  <div class="opts">
+    <button class="opt"><code>bin/rails db:migrate:status</code></button>
+    <button class="opt"><code>bin/rails generate migration AddXToPosts</code></button>
+    <button class="opt"><code>bin/rails db:migrate</code></button>
+    <button class="opt"><code>bin/rails db:reset</code></button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — <code>db:reset</code> ลบฐานข้อมูลทั้งก้อนแล้วสร้างใหม่จาก schema.rb + seeds = ข้อมูลลูกค้าหายหมดทั้งร้าน</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะ status แค่ดู ไม่เปลี่ยนอะไร ·
+       ตัวเลือกที่ 2 ผิด เพราะ generate แค่สร้างไฟล์ในเครื่อง ไม่แตะฐานข้อมูล (และปกติไม่มีใครสั่งบนเครื่อง production) ·
+       ตัวเลือกที่ 3 ผิด เพราะ migrate คือขั้นตอนปกติตอน deploy · แค่ต้องระวังว่าใบนั้นทำร้านค้างหรือเปล่า (เรื่องของบท 109)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> คำสั่งที่ "รื้อ" หรือ "ล้าง" (<code>reset</code> · <code>rollback</code>) ใช้ได้แค่ในครัวทดลอง</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-12">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>15</td><td><code>db:prepare</code> = "สร้าง DB + รัน migration ที่ขาด"</td><td>บนฐานข้อมูลใหม่: สร้าง + <strong>โหลด schema.rb</strong> + ใส่ seeds ไม่ไล่ทำใบทีละใบ · ฐานข้อมูลที่มีตารางแล้ว: ถึงจะทำใบที่ขาด</td><td><strong>สนใจ</strong> — เหตุผลที่ schema.rb ต้อง commit</td></tr>
+    <tr><td>14</td><td>แก้ไฟล์ที่รันแล้ว → "ต้อง rollback ก่อน หรือเขียนไฟล์ใหม่ทับ"</td><td>ต้อง rollback <strong>ก่อนแก้</strong> · แก้ก่อนแล้วค่อย rollback = พัง (<code>No indexes found…</code>) · "ไฟล์ใหม่" คือเพิ่มใบใหม่ ไม่ใช่เขียนทับใบเดิม</td><td><strong>สนใจมาก</strong></td></tr>
+    <tr><td>14</td><td><code>SELECT * FROM schema_migrations;</code> พร้อมผลเป็นตาราง</td><td>ผลหน้าตาแบบนั้นได้จากโปรแกรม psql (เปิดด้วย <code>bin/rails dbconsole</code> ถ้ามี psql ในเครื่อง) · บทนี้ใช้ console ส่ง SQL แทน ข้อมูลเหมือนกัน</td><td>ไม่ต้อง</td></tr>
+    <tr><td>13</td><td>ตัวอย่าง schema มี <code>published_at</code> · ใบ <code>RemoveSubtitle</code></td><td>เป็นตัวอย่างของสไลด์ · แอปเราใช้ <code>published</code> (จริง/เท็จ) และไม่มีใบ RemoveSubtitle</td><td>ไม่ต้อง</td></tr>
+    <tr><td>12</td><td>เครื่องใหม่เข้าทีม: <code>bin/rails db:prepare</code> จบ</td><td>จริง · แต่ต้องเปิด PostgreSQL ไว้ก่อน และ schema.rb ใน git ต้องเป็นฉบับล่าสุด</td><td>สนใจนิดหน่อย</td></tr>
+    <tr><td>15</td><td>ไม่ได้บอกว่า <code>db:seed</code> สั่งซ้ำแล้วเป็นยังไง</td><td>สั่งซ้ำ = ข้อมูลเบิ้ล (seeds ของเราไม่ได้เช็คว่ามีอยู่แล้ว)</td><td>สนใจ — ใช้ <code>db:reset</code> ในเครื่องตัวเองแทนถ้าอยากเริ่มใหม่</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0107-console-crud.html">← บทเรียน 107 · CRUD ใน console</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0109-safe-migrations.html">บทเรียน 109 → Migration ที่ปลอดภัย</a>
+</nav>
+
+<h2 id="sn-sec-13">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_migrations.html#generating-migration-files">Rails Guides — Active Record Migrations § Generating Migration Files</a> —
+      <strong>อ่านหัวข้อย่อย Adding Columns กับ Removing Columns</strong> · ยืนยันว่าชื่อ <code>AddXToY</code> / <code>RemoveXFromY</code> ทำให้ generator เขียนเนื้อหาให้</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_migrations.html#rails-migration-version-control">Rails Guides — § Rails Migration Version Control</a> —
+      ย่อหน้าสั้น ๆ อธิบายว่า schema_migrations เก็บเลขจากชื่อไฟล์ · อ่านต่อ <a href="https://guides.rubyonrails.org/active_record_migrations.html#changing-existing-migrations">§ Changing Existing Migrations</a>
+      ที่บอกตรง ๆ ว่าแก้ไฟล์ที่รันแล้ว Rails "will do nothing" และควรเขียนใบใหม่</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_migrations.html#preparing-the-database">Rails Guides — § Preparing the Database</a> และ
+      <a href="https://guides.rubyonrails.org/active_record_migrations.html#schema-dumps-and-source-control">§ Schema Dumps and Source Control</a> —
+      db:prepare บนฐานข้อมูลใหม่ทำอะไร และทำไม "strongly recommended" ให้ commit schema.rb</li>
+  <li><a href="https://github.com/rails/rails/blob/v8.0.0/activerecord/CHANGELOG.md">Rails — activerecord/CHANGELOG.md (v8.0.0)</a> —
+      <strong>ค้นคำว่า "fresh database"</strong> · บรรทัดที่ยืนยันว่า db:migrate บนฐานข้อมูลใหม่โหลด schema ก่อน (เหตุผลที่ predict ข้างบนจอว่าง)</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/ConnectionAdapters/SchemaStatements.html">Rails API — SchemaStatements</a> —
+      รายการคำที่ใช้ใน <code>change</code> ครบทุกตัว · ดูแค่ <code>add_column</code> · <code>remove_column</code> · <code>rename_column</code> · <code>add_index</code> พอ</li>
+  <li><a href="https://github.com/pressly/goose">pressly/goose (GitHub)</a> —
+      เครื่องมือ migration ของ Go ที่ใช้ในบท 31 · ดูตัวอย่างไฟล์ <code>-- +goose Up</code> / <code>Down</code> ใน README เทียบกับ <code>change</code> ของ Rails</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

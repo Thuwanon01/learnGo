@@ -1,0 +1,1071 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 117 — REST ใน Rails — resources, ช่องโหว่ mass assignment และ params.expect</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 117 · Rails · Day 2</p>
+  <h1>REST ใน Rails — resources, ช่องโหว่ mass assignment และ params.expect</h1>
+  <p class="meta">~20–25 นาที (มีส่วนที่ยิง request จริงหลายรอบ) · ควรผ่าน <a href="../../rails-day-1/lessons/0101-rails-routing.html">บทเรียน 101 (Routing)</a> ·
+    <a href="../../rails-day-1/lessons/0103-rails-views-and-helpers.html">บท 103 (CSRF)</a> และ <a href="./0115-associations.html">บท 115 (Association)</a> มาก่อน</p>
+  <p class="standfirst">
+    บทนี้มีสองครึ่ง · <strong>ครึ่งแรก</strong>ต่อจาก <code>resources :posts</code> ของบท 101: ทำยังไงเมื่อเมนูมาตรฐาน 7 อย่างไม่พอ หรือมากเกินไป
+    และทำยังไงให้ URL บอกได้ว่า "คอมเมนต์นี้เป็นของบทความเลขไหน"
+    <br><strong>ครึ่งหลัง</strong>คือเรื่องความปลอดภัย: ฟอร์มของเรามีแค่ 2 ช่อง แต่คนร้าย<strong>แอบส่งช่องที่ 3, 4, 5 มาได้</strong> ·
+    คุณจะได้ลองเจาะแอปตัวเองจริง ๆ ให้ยอดวิวกลายเป็น 999999 แล้วปิดช่องนั้นด้วยบรรทัดเดียว
+    <br>อ่านจบแล้วคุณจะเขียน route แบบซ้อนกันได้ · อ่าน <code>bin/rails routes</code> ออก · และเขียน <code>params.expect</code> ที่กันช่องแปลกปลอมได้
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้ทั้งหมด</p>
+  <ul>
+    <li><strong><code>resources :posts</code></strong> (<a href="../../rails-day-1/lessons/0101-rails-routing.html">บท 101</a>) — บรรทัดเดียวใน <code>config/routes.rb</code> ที่ได้ "เซ็ตเมนูมาตรฐาน" ของแผนกบทความ ·
+        <code>bin/rails routes -c posts</code> = พิมพ์รายการของพนักงานต้อนรับเฉพาะแผนก posts</li>
+    <li><strong><code>params</code></strong> (<a href="../../rails-day-1/lessons/0102-rails-controller.html">บท 102</a>) — กล่องรวมของทุกอย่างที่ลูกค้าส่งมากับใบสั่ง · ใช้เหมือน Hash · ค่าข้างในเป็นข้อความเสมอ</li>
+    <li><strong><code>private</code></strong> (บท 102) — method ที่อยู่ใต้คำนี้ไม่ใช่เมนู route ชี้มาหาไม่ได้ ใช้ได้แค่ใน class</li>
+    <li><strong>CSRF token / บัตรคิว</strong> (<a href="../../rails-day-1/lessons/0103-rails-views-and-helpers.html">บท 103</a>) — ใบสั่งที่เปลี่ยนข้อมูล (POST · PATCH · DELETE) ต้องแนบรหัสที่ได้จากหน้าเว็บของเรา ไม่งั้นได้ 422</li>
+    <li><strong><code>post.comments</code> · <code>save!</code></strong> (<a href="./0115-associations.html">บท 115</a> · <a href="./0110-validations.html">บท 110</a>) — คอมเมนต์ทั้งหมดของบทความนี้ · บันทึก ถ้าไม่ได้ให้ระเบิด</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17 (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน)
+    <br><strong>📦 ข้อมูลตัวอย่าง:</strong> ใช้ตาราง <code>users</code> / <code>posts</code> / <code>comments</code> และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับ
+    <a href="./0107-console-crud.html">บท 107</a> หัวข้อ "เตรียมตู้ของวันที่ 2" (สมชาย · สมหญิง · มานะ · บทความ 6 ชิ้น · คอมเมนต์ 7 อัน) ·
+    ผลรันทุกกล่องมาจากเครื่องจริงที่เปิด server พอร์ต 3000 · เวลา ms · เลข <code>0x…</code> · วันเวลาใน log ของคุณจะไม่ตรงกับของผม ·
+    ผลในบทรันกับตารางสามลิ้นชักแบบบท 107 เปล่า ๆ — ถ้าแอปของคุณยังมีของจาก<a href="./0116-dependent-and-helpers.html">บท 116</a>
+    (ช่อง <code>comments_count</code> · <code>counter_cache</code> · <code>touch</code>) บรรทัด <code>INSERT INTO "posts"</code> จะมีช่อง <code>comments_count</code> เพิ่ม
+    และตอนสร้างคอมเมนต์จะมีบรรทัด <code>UPDATE "posts"</code> ตามมาอีกบรรทัด — ไม่ใช่ error
+  </p>
+</div>
+
+<h2 id="sn-sec-1">ทวน — REST และ <code>resources :posts</code> คือ 7 เมนูมาตรฐาน วางข้าง Gin ทีละแถว</h2>
+
+<p>
+  <strong>REST</strong> คือคำที่คุณเจอแล้วในฝั่ง Go (<a href="../../day-8/lessons/0033-rest-resource-method.html">บท 33</a>) · ภาษาคน: ตั้งชื่อ URL เป็น<strong>ชื่อของ</strong> (คำนาม เช่น <code>/posts</code>)
+  แล้วให้ verb (<code>GET</code> · <code>POST</code> · <code>PATCH</code> · <code>DELETE</code>) บอกว่าจะ<strong>ทำอะไร</strong>กับของนั้น · ไม่ตั้ง URL เป็นคำกริยาอย่าง <code>/deletePost</code>
+</p>
+<p>
+  ในร้านเรา REST คือกฎแฟรนไชส์ที่ให้ทุกแผนกรับใบสั่งรูปแบบเดียวกัน: <strong>ชื่อแผนก + เลขจาน (ถ้ามี) + อยากทำอะไร</strong> ·
+  "ของหนึ่งชนิดที่มี URL ของตัวเอง" (บทความ · คอมเมนต์) เรียกว่า <strong>resource</strong> — ที่มาของชื่อคำสั่ง <code>resources</code>
+</p>
+
+<p>
+  ในบท 101 เราพิมพ์ <code>resources :posts</code> บรรทัดเดียว แล้ว Rails ลงรายการให้พนักงานต้อนรับครบชุด ·
+  สไลด์หน้า 46 นับได้ <strong>7 route</strong> แต่ตอนรัน <code>bin/rails routes</code> ในบท 101 เราเห็น <strong>8 แถว</strong> — ไม่มีใครผิด:
+</p>
+
+<pre><code>$ bin/rails routes -c posts
+   Prefix Verb   URI Pattern               Controller#Action
+    posts GET    /posts(.:format)          posts#index
+          POST   /posts(.:format)          posts#create
+ new_post GET    /posts/new(.:format)      posts#new
+edit_post GET    /posts/:id/edit(.:format) posts#edit
+     post GET    /posts/:id(.:format)      posts#show
+          PATCH  /posts/:id(.:format)      posts#update
+          PUT    /posts/:id(.:format)      posts#update
+          DELETE /posts/:id(.:format)      posts#destroy</code></pre>
+
+<p>
+  ดูคอลัมน์ขวาสุด · <code>PATCH</code> กับ <code>PUT</code> ไปที่ <code>posts#update</code> <strong>เมนูเดียวกัน</strong> ·
+  นับเป็น "เมนู" (action) ได้ 7 · นับเป็น "บรรทัดในรายการ" ได้ 8 · เวลาคนพูดว่า "resources ให้ 7 route" เขานับเมนู
+</p>
+
+<p>นี่คือ 7 เมนูนั้น วางข้างโค้ด Gin ที่คุณเคยเขียนในบท 38 (คอลัมน์ Gin ยกมาจากสไลด์หน้า 46):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ใบสั่ง</th><th>เมนู</th><th>ภาษาคน</th><th>Gin ที่เคยเขียน</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /posts</code></td><td><code>index</code></td><td>ดูบทความทั้งหมด</td><td><code>r.GET("/posts", h.List)</code></td></tr>
+    <tr><td><code>GET /posts/new</code></td><td><code>new</code></td><td>เปิดฟอร์มเขียนใหม่</td><td>— (API ไม่มีหน้าฟอร์ม)</td></tr>
+    <tr><td><code>POST /posts</code></td><td><code>create</code></td><td>บันทึกบทความใหม่</td><td><code>r.POST("/posts", h.Create)</code></td></tr>
+    <tr><td><code>GET /posts/:id</code></td><td><code>show</code></td><td>ดูบทความชิ้นเดียว</td><td><code>r.GET("/posts/:id", h.Get)</code></td></tr>
+    <tr><td><code>GET /posts/:id/edit</code></td><td><code>edit</code></td><td>เปิดฟอร์มแก้</td><td>— (API ไม่มีหน้าฟอร์ม)</td></tr>
+    <tr><td><code>PATCH /posts/:id</code> (และ PUT)</td><td><code>update</code></td><td>บันทึกที่แก้</td><td><code>r.PUT("/posts/:id", h.Update)</code></td></tr>
+    <tr><td><code>DELETE /posts/:id</code></td><td><code>destroy</code></td><td>ลบ</td><td><code>r.DELETE("/posts/:id", h.Del)</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ฝั่ง Gin มีแค่ 5 เพราะตอนนั้นเราทำ API ที่ตอบเป็น JSON ให้โปรแกรมอื่นอ่าน ไม่มีหน้าฟอร์มให้คนกรอก ·
+  Rails ทำเว็บที่มีหน้าฟอร์มด้วย เลยมี <code>new</code> กับ <code>edit</code> เพิ่ม
+</p>
+
+<div class="compare">
+  <div class="side good">
+    <h4>✅ ได้อะไร</h4>
+    <p>ทุกแผนกในร้านใช้ชื่อเมนูชุดเดียวกัน · คนใหม่เข้าทีมเห็น URL <code>/comments/3/edit</code> ก็เดาได้ทันทีว่าไปที่ method <code>edit</code> ของ <code>CommentsController</code> ไม่ต้องเปิดไฟล์</p>
+  </div>
+  <div class="side bad">
+    <h4>⚠️ เสียอะไร</h4>
+    <p>เปิด <code>config/routes.rb</code> แล้ว<strong>ไม่เห็น URL จริงสักเส้น</strong> เห็นแค่ <code>resources :posts</code> · ต้องสั่ง <code>bin/rails routes</code> ดูทุกครั้ง · ฝั่ง Gin เปิด <code>main.go</code> ก็เห็นครบ</p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่ทวนไป</span>
+  <dl>
+    <dt>REST · RESTful</dt>
+    <dd>แนวตั้ง URL เป็นชื่อของ (คำนาม) แล้วใช้ verb บอกว่าทำอะไร · route ที่ทำตามแนวนี้เรียกว่า RESTful ·
+        <strong>ถาม senior ได้ว่า "URL <code>/deletePost?id=3</code> นี่ไม่ RESTful ใช่ไหมครับ ควรเป็น <code>DELETE /posts/3</code>"</strong></dd>
+    <dt>resource</dt>
+    <dd>ของหนึ่งชนิดที่มี URL ของตัวเอง (posts · comments) · <code>resources :ชื่อ</code> สร้างเซ็ตเมนูมาตรฐานของมันให้ ·
+        <strong>พิมพ์บอก AI ได้ว่า "add RESTful routes for comments using resources"</strong></dd>
+  </dl>
+</div>
+
+<p>
+  ที่เหลือของครึ่งแรกคือ 4 ท่าสำหรับวันที่เซ็ตมาตรฐาน<strong>ไม่พอดี</strong>กับร้านเรา · ทุกท่าผมรัน <code>bin/rails routes</code> จริงให้ดูผล
+</p>
+
+<h2 id="sn-sec-2">ท่าที่ 1 · ตัดเมนูที่ไม่ใช้ทิ้ง — <code>only:</code> กับ <code>except:</code></h2>
+
+<p>
+  ถ้าแอปเรายังไม่มีหน้าลบบทความ ก็ไม่ควรเปิดทาง <code>DELETE /posts/:id</code> ทิ้งไว้ ·
+  เส้นที่เปิดไว้แต่ไม่ได้ใช้ คือประตูที่ไม่มีคนเฝ้า วันหนึ่งมีคนเผลอเขียน <code>def destroy</code> เพิ่มเข้ามา ประตูนั้นก็ใช้ได้ทันทีโดยไม่มีใครตั้งใจ
+</p>
+
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="f">resources</span> <span class="n">:posts</span>, <span class="n">only:</span> [<span class="n">:index</span>, <span class="n">:show</span>]</code></pre>
+
+<pre><code>$ bin/rails routes -c posts
+Prefix Verb URI Pattern          Controller#Action
+ posts GET  /posts(.:format)     posts#index
+  post GET  /posts/:id(.:format) posts#show</code></pre>
+
+<ul>
+  <li><code>only: [:index, :show]</code> — "เอาแค่เมนูในรายการนี้" · ผลคือเหลือ 2 เส้นจาก 8 · <code>[ ]</code> คือ array ของ symbol (บท 92)</li>
+  <li>เขียน <code>only:</code> ต่อท้ายด้วยลูกน้ำได้ เพราะเป็น hash ท้าย argument ที่ไม่ต้องใส่ปีกกา (บท 97)</li>
+</ul>
+
+<p>ถ้าอยากได้เกือบครบ ขาดแค่ตัวเดียว ใช้ <code>except:</code> (= "ทุกเมนู ยกเว้น…") จะสั้นกว่า:</p>
+
+<pre><code><span class="f">resources</span> <span class="n">:posts</span>, <span class="n">except:</span> [<span class="n">:destroy</span>]</code></pre>
+
+<pre><code>$ bin/rails routes -c posts
+   Prefix Verb  URI Pattern               Controller#Action
+    posts GET   /posts(.:format)          posts#index
+          POST  /posts(.:format)          posts#create
+ new_post GET   /posts/new(.:format)      posts#new
+edit_post GET   /posts/:id/edit(.:format) posts#edit
+     post GET   /posts/:id(.:format)      posts#show
+          PATCH /posts/:id(.:format)      posts#update
+          PUT   /posts/:id(.:format)      posts#update</code></pre>
+
+<p>
+  แถว <code>DELETE</code> หายไป · ตอนนี้ใบสั่ง <code>DELETE /posts/1</code> จะได้ <strong>Routing Error</strong> ทันที (ผมถาม router ดูแล้วได้ <code>No route matches "/posts/1"</code> · พนักงานต้อนรับไม่มีบรรทัดนี้ในรายการ — 404 แบบที่ 1 ของบท 101)
+</p>
+
+<h2 id="sn-sec-3">ท่าที่ 2 · ซ้อนกัน — คอมเมนต์ของบทความเลขไหน</h2>
+
+<p>
+  คอมเมนต์ไม่ได้ลอยอยู่เฉย ๆ มัน<strong>อยู่ใต้บทความ</strong>เสมอ (ในตู้ ใบคอมเมนต์มีช่อง <code>post_id</code> — บท 115) ·
+  เวลาจะเขียนคอมเมนต์ใหม่ URL ก็ควรบอกด้วยว่า "ใต้บทความเลขไหน" · Rails ทำได้ด้วยการ<strong>วาง resources ซ้อนใน do … end</strong>:
+</p>
+
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="f">resources</span> <span class="n">:posts</span> <span class="k">do</span>
+  <span class="f">resources</span> <span class="n">:comments</span>
+<span class="k">end</span></code></pre>
+
+<pre><code>$ bin/rails routes -c comments
+           Prefix Verb   URI Pattern                                 Controller#Action
+    post_comments GET    /posts/:post_id/comments(.:format)          comments#index
+                  POST   /posts/:post_id/comments(.:format)          comments#create
+ new_post_comment GET    /posts/:post_id/comments/new(.:format)      comments#new
+edit_post_comment GET    /posts/:post_id/comments/:id/edit(.:format) comments#edit
+     post_comment GET    /posts/:post_id/comments/:id(.:format)      comments#show
+                  PATCH  /posts/:post_id/comments/:id(.:format)      comments#update
+                  PUT    /posts/:post_id/comments/:id(.:format)      comments#update
+                  DELETE /posts/:post_id/comments/:id(.:format)      comments#destroy</code></pre>
+
+<p>ของใหม่ในตารางนี้มีสามอย่าง:</p>
+<ul>
+  <li><strong>ทุก URL ขึ้นต้นด้วย <code>/posts/:post_id/</code></strong> — ช่องว่างที่รอเติมเลขบทความ · ชื่อช่องคือ <code>:post_id</code> ไม่ใช่ <code>:id</code>
+      เพราะ <code>:id</code> สงวนไว้ให้เลขของคอมเมนต์เอง · ใน controller อ่านด้วย <code>params[:post_id]</code></li>
+  <li><strong>ยังไปแผนก <code>comments</code></strong> (= <code>CommentsController</code>) ไม่ใช่แผนก posts · การซ้อนเปลี่ยนแค่หน้าตา URL ไม่ได้ย้ายแผนก</li>
+  <li><strong>ชื่อ route ได้คำว่า <code>post_</code> นำหน้า</strong> — <code>post_comments</code> · <code>post_comment</code> → helper คือ <code>post_comments_path</code> · <code>post_comment_path</code> (หัวข้อ route helper ด้านล่าง)</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🧾 เทียบกับร้านอาหาร — ใบสั่งที่ต้องระบุเลขจานแม่</span>
+  <p>
+    ใบคอมเมนต์ในตู้มีช่อง <strong>"เป็นของบทความเลขที่ …"</strong> อยู่แล้ว (บท 115) ·
+    nested route คือการพิมพ์ช่องเดียวกันนี้ไว้บน<strong>ใบสั่งของลูกค้า</strong>ด้วย:
+    "ขอเขียนคอมเมนต์ <strong>ใต้บทความจานที่ 5</strong>" = <code>POST /posts/5/comments</code> ·
+    พนักงานต้อนรับเห็นเลข 5 ก็จดใส่ <code>params[:post_id]</code> แล้วส่งเข้าแผนกคอมเมนต์
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานต้อนรับ<strong>ไม่ได้เปิดตู้เช็ค</strong>ว่าบทความเลข 5 มีจริงไหม
+    หรือคอมเมนต์เลข 9 อยู่ใต้บทความ 5 จริงไหม · เขาแค่จดตัวเลขตามใบสั่ง ·
+    คนที่ต้องเช็คคือเชฟ (controller) — เช่น <code>Post.find(params[:post_id])</code> ถ้าไม่เจอได้ 404 (เห็นจริงในภารกิจท้ายบท)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ใน Gin คุณเขียนเองว่า <code>r.POST("/posts/:post_id/comments", h.CreateComment)</code> แล้วอ่าน <code>c.Param("post_id")</code> ·
+  Rails ได้ชุดนี้ครบ 8 บรรทัดจากการวาง <code>resources :comments</code> ไว้ใน block ของ posts
+</p>
+
+<h3 id="sn-sub-1">กฎ: ซ้อนแค่ชั้นเดียวพอ</h3>
+
+<p>ถ้าคอมเมนต์มีการตอบกลับ (replies) อีกชั้น แล้วซ้อนลงไปตรง ๆ จะได้แบบนี้ (ตัดมา 3 แถวจาก 8):</p>
+
+<pre><code><span class="c"># ❌ ซ้อนสองชั้น</span>
+<span class="f">resources</span> <span class="n">:posts</span> <span class="k">do</span>
+  <span class="f">resources</span> <span class="n">:comments</span> <span class="k">do</span>
+    <span class="f">resources</span> <span class="n">:replies</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<pre><code>$ bin/rails routes -c replies
+                 Prefix Verb   URI Pattern                                                     Controller#Action
+   post_comment_replies GET    /posts/:post_id/comments/:comment_id/replies(.:format)          replies#index
+edit_post_comment_reply GET    /posts/:post_id/comments/:comment_id/replies/:id/edit(.:format) replies#edit
+     post_comment_reply GET    /posts/:post_id/comments/:comment_id/replies/:id(.:format)      replies#show</code></pre>
+
+<p>
+  URL ยาวเป็นพรืด และทุกครั้งที่สร้างลิงก์ต้องส่งเลขครบสามตัว (บทความ · คอมเมนต์ · การตอบ) ·
+  คู่มือ Rails เองแนะนำว่า <strong>ซ้อนไม่เกิน 1 ชั้น</strong> · สไลด์หน้า 47 เรียก <code>/posts/1/comments/2/replies/3</code> ว่า "สัญญาณว่าออกแบบผิด"
+</p>
+<p>
+  ทางออกคือ: ใช้ URL ซ้อนเฉพาะตอนที่<strong>ต้องรู้แม่</strong> (ดูรายการคอมเมนต์ของบทความ · เขียนคอมเมนต์ใหม่ใต้บทความ) ·
+  ส่วนคอมเมนต์ที่มีเลขของตัวเองแล้ว ใช้ URL สั้น <code>/comments/9</code> ได้เลย เพราะคอมเมนต์ 9 รู้อยู่แล้วว่าตัวเองอยู่ใต้บทความไหน ·
+  Rails มีตัวเลือก <code>shallow: true</code> ที่ทำแบบนี้ให้อัตโนมัติ (แค่รู้จักไว้ · ตัวอย่างเต็มอยู่ในคู่มือ Rails ลิงก์แรกของหัวข้ออ้างอิง):
+</p>
+
+<pre><code><span class="f">resources</span> <span class="n">:posts</span> <span class="k">do</span>
+  <span class="f">resources</span> <span class="n">:comments</span>, <span class="n">shallow:</span> <span class="k">true</span>   <span class="c"># index · new · create ซ้อน · ที่เหลือใช้ /comments/:id</span>
+<span class="k">end</span></code></pre>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>nested resources</dt>
+    <dd>การวาง <code>resources</code> ซ้อนใน block ของอีกตัว ได้ URL แบบ <code>/posts/:post_id/comments</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า "nest comments under posts in routes.rb, only index and create"</strong></dd>
+    <dt>parent id (<code>:post_id</code>)</dt>
+    <dd>เลขของแม่ที่ติดมาใน URL · อ่านด้วย <code>params[:post_id]</code> · ส่วน <code>params[:id]</code> คือเลขของลูก ·
+        <strong>ถาม senior ได้ว่า "action นี้ควรหา comment ผ่าน post.comments.find หรือ Comment.find ตรง ๆ ครับ"</strong> (คำตอบส่วนใหญ่คืออย่างแรก เพราะเช็คว่าเป็นของบทความนี้จริง)</dd>
+    <dt>shallow nesting</dt>
+    <dd>ซ้อนเฉพาะเส้นที่ยังไม่มี id ของลูก · เส้นที่มี id แล้วใช้ URL สั้น · <strong>คุยกับทีมได้ว่า "เส้นนี้ลึกเกิน ใช้ shallow ดีไหม"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">ท่าที่ 3 · เมนูพิเศษ — <code>member</code> กับ <code>collection</code></h2>
+
+<p>
+  ร้านเราอยากได้สองหน้าที่ไม่อยู่ในเซ็ตมาตรฐาน: <strong>ปุ่ม "เผยแพร่" ของบทความหนึ่งชิ้น</strong> (publish) และ<strong>หน้ารวมบทความที่ยังเป็นร่าง</strong> (drafts) ·
+  สองอย่างนี้ต่างกันตรงที่ อันแรก<strong>ต้องรู้ว่าบทความชิ้นไหน</strong> (มีเลข id) · อันหลังเป็น<strong>เรื่องของทั้งแผนก</strong> (ไม่มีเลข id)
+</p>
+
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="f">resources</span> <span class="n">:posts</span> <span class="k">do</span>
+  <span class="f">member</span> <span class="k">do</span>
+    <span class="f">post</span> <span class="n">:publish</span>        <span class="c"># เรื่องของบทความชิ้นเดียว → มี :id</span>
+  <span class="k">end</span>
+  <span class="f">collection</span> <span class="k">do</span>
+    <span class="f">get</span> <span class="n">:drafts</span>         <span class="c"># เรื่องของทั้งแผนก → ไม่มี :id</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<pre><code>$ bin/rails routes -c posts
+      Prefix Verb   URI Pattern                  Controller#Action
+publish_post POST   /posts/:id/publish(.:format) posts#publish
+drafts_posts GET    /posts/drafts(.:format)      posts#drafts
+       posts GET    /posts(.:format)             posts#index
+             POST   /posts(.:format)             posts#create
+    new_post GET    /posts/new(.:format)         posts#new
+   edit_post GET    /posts/:id/edit(.:format)    posts#edit
+        post GET    /posts/:id(.:format)         posts#show
+             PATCH  /posts/:id(.:format)         posts#update
+             PUT    /posts/:id(.:format)         posts#update
+             DELETE /posts/:id(.:format)         posts#destroy</code></pre>
+
+<ul>
+  <li><code>member do … end</code> — "เมนูสำหรับบทความชิ้นเดียว" · ได้ <code>/posts/:id/publish</code> · ชื่อ <code>publish_post</code> (เอกพจน์)</li>
+  <li><code>post :publish</code> — คำว่า <code>post</code> ตรงนี้คือ <strong>verb POST</strong> (เหมือน <code>get</code> ในบท 101) ไม่ใช่ชื่อ model · ที่ใช้ POST เพราะการเผยแพร่คือ "เปลี่ยนข้อมูล"</li>
+  <li><code>collection do … end</code> — "เมนูสำหรับทั้งแผนก" · ได้ <code>/posts/drafts</code> ไม่มี <code>:id</code> · ชื่อ <code>drafts_posts</code> (พหูพจน์)</li>
+  <li>สังเกตว่าสองเส้นใหม่ถูกวาง<strong>ไว้บนสุด</strong> เหนือ <code>/posts/:id</code> · Rails จัดให้เอง <code>/posts/drafts</code> เลยไม่โดน <code>:id</code> แย่งไปเป็น <code>show</code> (กับดักเรื่องลำดับในบท 101)</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">⭐ เทียบกับร้านอาหาร — เมนูพิเศษนอกเซ็ต</span>
+  <p>
+    <strong>member</strong> คือคำสั่งพิเศษที่ต้องบอกเลขจาน: "จาน<strong>ที่ 5</strong> ยกขึ้นตู้โชว์หน้าร้านได้แล้ว" (publish) ·
+    <strong>collection</strong> คือคำสั่งกับทั้งแผนก ไม่ต้องบอกเลข: "ขอดูรายการจานที่<strong>ยังไม่ได้</strong>ขึ้นตู้โชว์" (drafts) ·
+    ทั้งสองอย่างคือการเขียนบรรทัดเพิ่มลงในรายการของพนักงานต้อนรับ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงประกาศเมนูพิเศษแล้วเชฟก็รู้ว่าต้องทำอะไร ·
+    ใน Rails การเพิ่มบรรทัดใน <code>routes.rb</code> คือแค่<strong>จดลงในรายการ</strong> · เชฟยังไม่มีสูตร ต้องเขียน <code>def publish</code> กับ <code>def drafts</code> ใน <code>PostsController</code> เอง
+    ไม่งั้นยิงไปได้ Unknown action (404 แบบที่ 2 ของบท 101)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ใน Gin ไม่มีคำว่า member/collection · คุณแค่เขียนเพิ่มสองบรรทัด
+  <code>r.POST("/posts/:id/publish", h.Publish)</code> กับ <code>r.GET("/posts/drafts", h.Drafts)</code> · Rails แยกสองคำนี้ไว้เพื่อให้มันเติม <code>:id</code> ให้ถูกและตั้งชื่อ route ให้เอง
+</p>
+
+<h2 id="sn-sec-5">ท่าที่ 4 · ของที่มีชิ้นเดียว — <code>resource</code> (ไม่มี s)</h2>
+
+<p>
+  บางอย่างผู้ใช้แต่ละคนมี<strong>แค่ชิ้นเดียว</strong> เช่น "หน้าโปรไฟล์ของฉัน" · ไม่มีหน้ารวมโปรไฟล์ทุกคน และไม่ต้องใส่เลข id ใน URL เพราะ "ของฉัน" ก็คือของคนที่ login อยู่ (ระบบ login มาใน Day 4) ·
+  ใน Gin คุณก็แค่เขียน <code>r.GET("/profile", h.ShowProfile)</code> ไม่มี <code>:id</code> · Rails ใช้ <code>resource</code> ที่<strong>ไม่มี s</strong>:
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="f">resource</span> <span class="n">:profile</span>
+
+$ bin/rails routes -c profile</code></pre>
+  <p class="ask">ใบ้: ชื่อ symbol เป็นเอกพจน์ <code>:profile</code> · คิดว่าคอลัมน์ <code>Controller#Action</code> จะเขียนว่า <code>profile#show</code> หรือ <code>profiles#show</code>? และมี <code>index</code> ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>$ bin/rails routes -c profile
+      Prefix Verb   URI Pattern             Controller#Action
+ new_profile GET    /profile/new(.:format)  profiles#new
+edit_profile GET    /profile/edit(.:format) profiles#edit
+     profile GET    /profile(.:format)      profiles#show
+             PATCH  /profile(.:format)      profiles#update
+             PUT    /profile(.:format)      profiles#update
+             DELETE /profile(.:format)      profiles#destroy
+             POST   /profile(.:format)      profiles#create</code></pre>
+    <p>
+      URL เป็นเอกพจน์ <code>/profile</code> และ<strong>ไม่มี <code>:id</code></strong> สักเส้น · ไม่มี <code>index</code> (ของชิ้นเดียวไม่มีหน้ารวม) ·
+      แต่ controller ยังเป็น<strong>พหูพจน์</strong> <code>profiles#…</code> = <code>ProfilesController</code> ·
+      ถ้าคุณสร้างไฟล์ชื่อ <code>profile_controller.rb</code> ตามความรู้สึก จะเจอ error <code>uninitialized constant ProfilesController</code>
+    </p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>member route · collection route</dt>
+    <dd>member = เมนูเพิ่มของ<strong>ชิ้นเดียว</strong> (มี <code>:id</code>) · collection = เมนูเพิ่มของ<strong>ทั้งกลุ่ม</strong> (ไม่มี <code>:id</code>) ·
+        <strong>พิมพ์บอก AI ได้ว่า "add a member route POST /posts/:id/publish and a collection route GET /posts/drafts"</strong></dd>
+    <dt>singular resource (<code>resource</code>)</dt>
+    <dd>ของที่ผู้ใช้มีชิ้นเดียว · ได้ 6 เมนู ไม่มี index ไม่มี id · controller ยังเป็นพหูพจน์ ·
+        <strong>ถาม senior ได้ว่า "หน้าตั้งค่าบัญชีควรเป็น resource เอกพจน์ไหมครับ"</strong></dd>
+    <dt><code>only:</code> · <code>except:</code></dt>
+    <dd>ตัดเซ็ตเมนูให้เหลือเฉพาะที่ใช้จริง · <strong>คุยกับทีมได้ว่า "route ที่ไม่มี action รองรับ ใส่ only ปิดไว้เลยดีไหม"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">route helper — ทวนแล้วต่อยอดให้เส้นที่ซ้อน</h2>
+
+<p>
+  ในบท 101 เราได้ <code>post_path(42)</code> ที่ประกอบ URL จากชื่อ route ·
+  พอ route ซ้อนกัน ชื่อ helper ก็ต่อกันตามไปด้วย · ผมลองใน console
+  (<code>app.</code> ข้างหน้า = ตัวช่วยใน console ที่ทำตัวเหมือน browser — ตัวเดียวกับ <code>app.get</code> ใน<a href="../../rails-day-1/lessons/0104-rails-debug-and-console.html">บท 104</a> — จึงเรียก helper ของ route ได้ · ใน controller กับ view ไม่ต้องใส่ <code>app.</code>):
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find(5)
+  Post Load (1.4ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 5 LIMIT 1 /*application='WongnokBlog'*/
+wongnok-blog(dev):002&gt; app.post_path(post)
+=&gt; "/posts/5"
+wongnok-blog(dev):003&gt; app.edit_post_path(post)
+=&gt; "/posts/5/edit"
+wongnok-blog(dev):004&gt; app.post_comments_path(post)
+=&gt; "/posts/5/comments"
+wongnok-blog(dev):005&gt; app.post_comment_path(post, post.comments.first)
+  Comment Load (1.5ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = 5 ORDER BY "comments"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt; "/posts/5/comments/5"
+wongnok-blog(dev):006&gt; app.polymorphic_path(post)
+=&gt; "/posts/5"</code></pre>
+
+<p>(routes ตอนรันคือ <code>resources :posts do resources :comments end</code> · ผมตัดบรรทัดที่ console พิมพ์แฟ้มบทความทั้งแผ่นออกหลังบรรทัด 001)</p>
+
+<ul>
+  <li><code>post_path(post)</code> — ส่ง<strong>ตัวบทความทั้งแผ่น</strong>เข้าไปได้ ไม่ต้องส่ง <code>post.id</code> · Rails หยิบเลข id ให้เอง</li>
+  <li>SQL บรรทัด <code>Post Load</code> แปลว่า "ขอแฟ้มทุกช่องจากลิ้นชัก posts เฉพาะแผ่นที่ช่อง id เป็น 5 เอาแผ่นเดียว"</li>
+  <li><code>post_comments_path(post)</code> — ชื่อแม่ + ชื่อลูก · ต้องส่งบทความเข้าไป เพราะ URL ต้องการเลขบทความ</li>
+  <li><code>post_comment_path(post, comment)</code> — เส้นที่มีเลขสองตัว ต้องส่งสองอย่าง <strong>เรียงแม่ก่อนลูก</strong> ·
+      SQL <code>Comment Load</code> = "ขอคอมเมนต์แผ่นแรกจากลิ้นชัก comments เฉพาะที่เป็นของบทความ 5 เรียงตามเลข id" ได้คอมเมนต์เลข 5</li>
+  <li><code>polymorphic_path(post)</code> — กลไกเดียวกับที่อยู่เบื้องหลัง <code>redirect_to @post</code> (บท 110) ·
+      Rails ดูว่าของที่ส่งมาเป็น <code>Post</code> → เดาว่าต้องใช้ <code>post_path</code> → ได้ <code>/posts/5</code>
+      (ตอน <code>redirect_to</code> มันใช้ตัวพี่น้องที่ได้ URL เต็มมี <code>http://…</code> นำหน้า แต่หลักการเดาเหมือนกัน)</li>
+</ul>
+
+<p>
+  ประโยชน์เหมือนเดิมกับบท 101: ถ้าวันหนึ่งเปลี่ยน URL จาก <code>/posts</code> เป็น <code>/articles</code> แก้แค่ <code>routes.rb</code> ·
+  ทุกที่ที่ใช้ <code>post_path</code> ได้ URL ใหม่ทันที ไม่ต้องไล่แก้ข้อความ <code>"/posts"</code> ที่พิมพ์ไว้ 20 ที่
+</p>
+
+<h2 id="sn-sec-7">เตรียมยิงใบสั่งจริง — แอปทดลองสำหรับครึ่งหลัง</h2>
+
+<p>
+  ครึ่งหลังเราจะส่งข้อมูลเข้า action <code>create</code> แล้วดูว่าอะไรลงตู้บ้าง · ต้องมีสามไฟล์ ·
+  ถ้าคุณมีไฟล์ชื่อเดียวกันจากบทก่อน ๆ อยู่แล้ว <strong>แทนที่ทั้งไฟล์ด้วยอันนี้</strong> (ใช้ git ย้อนกลับได้ทีหลัง)
+</p>
+
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="n">Rails</span>.application.routes.<span class="f">draw</span> <span class="k">do</span>
+  <span class="f">resources</span> <span class="n">:posts</span>, <span class="n">only:</span> [<span class="n">:index</span>, <span class="n">:create</span>]
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c">&lt;%# app/views/posts/index.html.erb %&gt;</span>
+&lt;h1&gt;บทความทั้งหมด&lt;/h1&gt;
+&lt;ul&gt;
+  &lt;% @posts.each do |post| %&gt;
+    &lt;li&gt;&lt;%= post.title %&gt; · &lt;%= post.views %&gt; วิว&lt;/li&gt;
+  &lt;% end %&gt;
+&lt;/ul&gt;</code></pre>
+
+<pre><code><span class="c"># app/controllers/posts_controller.rb</span>
+<span class="k">class</span> <span class="n">PostsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @posts = <span class="n">Post</span>.<span class="f">order</span>(<span class="n">:id</span>)
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">create</span>
+    @post = <span class="n">Post</span>.<span class="f">new</span>(params[<span class="n">:post</span>])
+    @post.user = <span class="n">User</span>.<span class="f">first</span>   <span class="c"># ชั่วคราว: ยังไม่มีระบบ login</span>
+    @post.<span class="f">save!</span>
+    <span class="f">render</span> <span class="n">plain:</span> <span class="s">"บันทึกแล้ว: #{@post.attributes.slice("title", "views", "published", "user_id")}\n"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>index</code> + view — มีไว้<strong>ให้เราไปขอบัตรคิว (CSRF token)</strong> เท่านั้น · หน้าที่มี layout จะมีรหัสฝังอยู่ใน <code>&lt;head&gt;</code> (บท 103) ·
+      <code>Post.order(:id)</code> = บทความทั้งหมดเรียงตามเลข id (บท 113)</li>
+  <li><code>params[:post]</code> — ฟอร์มของ Rails ตั้งชื่อช่องว่า <code>post[title]</code> · <code>post[body]</code> · Rails จึงรวบเป็นกลุ่มเดียว
+      <code>{"title" =&gt; …, "body" =&gt; …}</code> ไว้ใน <code>params[:post]</code></li>
+  <li><code>Post.new(params[:post])</code> — "สร้างแฟ้มบทความจากทุกช่องในกลุ่มนั้นรวดเดียว" · บรรทัดนี้คือตัวเอกของครึ่งหลัง</li>
+  <li><code>@post.user = User.first</code> — ใส่ผู้เขียนเป็นสมชาย (คนแรกในตู้) แบบเดียวกับบท 110 · ของจริงคือคนที่ login อยู่ (Day 4)</li>
+  <li><code>render plain: …</code> — ตอบเป็นข้อความเปล่า ให้ curl เห็นผลทันที (ของจริงจะ <code>redirect_to @post</code>) ·
+      <code>@post.attributes</code> = Hash ของทุกช่องบนแฟ้ม · <code>.slice("title", …)</code> = หยิบเฉพาะช่องที่ระบุมาโชว์</li>
+</ul>
+
+<p>
+  เปิด server (<code>bin/rails server</code>) ทิ้งไว้หนึ่งหน้าต่าง แล้วเปิดอีกหน้าต่างมาขอบัตรคิว ·
+  บรรทัดนี้ยาว <strong>ก็อปไปวางได้เลย</strong> หน้าตาเดียวกับบท 103 แค่เก็บรหัสไว้ใช้หลายรอบ:
+</p>
+
+<pre><code>$ TOKEN=$(curl -s -c jar.txt http://localhost:3000/posts | grep -o 'name="csrf-token" content="[^"]*"' | sed 's/.*content="//;s/"$//')</code></pre>
+
+<ul>
+  <li>เปิดหน้า <code>/posts</code> เหมือนลูกค้าจริง · เก็บ cookie ลงไฟล์ <code>jar.txt</code> (<code>-c</code>) · ตัดเอารหัสใส่ตัวแปร <code>TOKEN</code></li>
+  <li>ทุกคำสั่ง POST ต่อจากนี้จะแนบ <code>-b jar.txt</code> (cookie) และ <code>-H "X-CSRF-Token: $TOKEN"</code> (รหัส) · <code>-d "post[title]=…"</code> = ส่งช่องหนึ่งช่องเหมือนกรอกฟอร์ม</li>
+  <li>คำสั่งยาว ผมตัดบรรทัดด้วย <code>\</code> (= "บรรทัดนี้ยังไม่จบ") พิมพ์รวดเดียวบรรทัดเดียวก็ได้ผลเหมือนกัน</li>
+</ul>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong>เราถือบัตรคิวไปเหมือนลูกค้าจริง ไม่ได้ปิดการตรวจ CSRF</strong> · บทความในเน็ตหลายที่แนะนำให้ปิดเพื่อยิง curl ง่าย ๆ — อย่าทำ ·
+    ปิดแล้วลืมเปิด = เปิดทางให้เว็บอื่นปลอมใบสั่งแทนผู้ใช้ (บท 103) · ถ้าเห็น <code>422</code> + <code>Can't verify CSRF token authenticity.</code>
+    แปลว่าลืม <code>-b jar.txt</code> หรือ <code>-H</code> · หรือเปิดหน้าต่าง terminal ใหม่ (ตัวแปร <code>TOKEN</code> อยู่แค่ในหน้าต่างที่สั่ง หน้าต่างใหม่ <code>$TOKEN</code> ว่าง) → สั่งบรรทัดขอบัตรคิวใหม่ในหน้าต่างนั้น
+  </p>
+</div>
+
+<h2 id="sn-sec-8">mass assignment — ลูกค้าแอบเขียนเพิ่มในใบสั่ง</h2>
+
+<p>
+  ฟอร์มเขียนบทความของเรามีแค่ 2 ช่อง: ชื่อเรื่องกับเนื้อหา · แต่ <strong>ฟอร์มเป็นแค่หน้าตาบนจอ</strong> ·
+  ของที่ถึงร้านจริงคือ request ซึ่งใครจะเติมช่องอะไรลงไปก็ได้ (ด้วย curl หรือเครื่องมือในเบราว์เซอร์)
+  เช่น <code>post[views]=999999</code> · <code>post[published]=true</code>
+</p>
+<p>
+  <strong>mass assignment</strong> คือการเอาของทั้งกลุ่มยัดใส่แฟ้มรวดเดียว อย่าง <code>Post.new(params[:post])</code> ·
+  สะดวกมาก · แต่ถ้าไม่จำกัดว่ารับช่องไหน ช่องที่คนร้ายเติมมาก็เข้าตู้ไปด้วย
+</p>
+
+<div class="analogy">
+  <span class="label">📝 เทียบกับร้านอาหาร — ใบสั่งที่ลูกค้าเขียนเพิ่มเอง</span>
+  <p>
+    ใบสั่งของร้านพิมพ์ช่องไว้สองช่อง: "ชื่อเมนู" กับ "รายละเอียด" ·
+    ลูกค้าคนหนึ่งเขียนเพิ่มที่ขอบกระดาษว่า <strong>"ฉันเป็นผู้จัดการ · ฟรี · ลงบัญชีโต๊ะอื่น"</strong> ·
+    ถ้าครัวทำตาม<strong>ทุกบรรทัดที่เขียนบนกระดาษ</strong> ร้านก็เจ๊ง — นี่คือ mass assignment
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนในครัวจริงจะสะดุดตากับลายมือแปลก ๆ ที่ขอบกระดาษ ·
+    โปรแกรม<strong>ไม่มีทางรู้</strong>ว่าช่องไหนมาจากฟอร์มของเรา ช่องไหนคนร้ายเติม — ทุกช่องหน้าตาเหมือนกันหมดใน <code>params</code> ·
+    เราจึงต้องเขียนบอกเองว่ารับช่องไหน
+  </p>
+</div>
+
+<h3 id="sn-sub-2">ขั้นที่ 1 · Rails 8 ไม่ยอมให้ทำแบบนี้ตั้งแต่แรก</h3>
+
+<p>ยิงใบสั่งธรรมดา ๆ (ไม่มีช่องแปลก) เข้าโค้ดข้างบน · <code>-o /dev/null -w '%{http_code}\n'</code> = ไม่ต้องโชว์เนื้อหา พิมพ์แค่เลขสถานะ (บท 103):</p>
+
+<pre><code>$ curl -s -o /dev/null -w '%{http_code}\n' -b jar.txt -H "X-CSRF-Token: $TOKEN" \
+    -X POST http://localhost:3000/posts -d "post[title]=ลาบหมู" -d "post[body]=แซ่บ"
+500</code></pre>
+
+<p>log ของ server (ตัดรายชื่อไฟล์ของ Rails ใต้บรรทัดสุดท้ายออก):</p>
+
+<pre><code>Started POST "/posts" for ::1 at 2026-11-04 19:09:56 +0700
+Processing by PostsController#create as */*
+  Parameters: {"post" =&gt; {"title" =&gt; "ลาบหมู", "body" =&gt; "แซ่บ"}}
+Completed 500 Internal Server Error in 2ms (ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+ActiveModel::ForbiddenAttributesError (ActiveModel::ForbiddenAttributesError):
+app/controllers/posts_controller.rb:8:in 'PostsController#create'</code></pre>
+
+<ul>
+  <li><code>500</code> — ครัวพัง · <strong>ไม่มีอะไรลงตู้</strong> (ไม่มีบรรทัด SQL เลย: <code>0 queries</code>)</li>
+  <li><code>ForbiddenAttributesError</code> แปลว่า "ของต้องห้ามถูกยัดใส่แฟ้ม" · Rails ไม่ยอมให้เอา <code>params</code> ทั้งก้อนใส่แฟ้มจนกว่าเราจะบอกว่ารับช่องไหน</li>
+  <li><code>posts_controller.rb:8</code> — บรรทัดที่ 8 นับรวมบรรทัดคอมเมนต์ชื่อไฟล์ด้วย = บรรทัด <code>Post.new(params[:post])</code></li>
+</ul>
+
+<p>
+  ข่าวดีคือ Rails ปิดประตูนี้ให้แล้ว · ข่าวร้ายคือ<strong>มีท่าเปิดประตูกลับ</strong> ที่โผล่ในคำตอบของ AI และในเน็ตบ่อย ๆ
+  เวลามีคนเจอ error ข้างบนแล้วอยากให้มัน "หายไปเร็ว ๆ"
+</p>
+
+<h3 id="sn-sub-3">ขั้นที่ 2 · เปิดประตูด้วย <code>permit!</code> แล้วลองเจาะ</h3>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong><code>permit!</code> (มี <code>!</code>) แปลว่า "รับทุกช่อง ไม่ต้องตรวจ"</strong> · ใส่ในบทนี้เพื่อให้เห็นช่องโหว่กับตาเท่านั้น ·
+    ถ้าเห็นในโค้ดจริงหรือในคำตอบของ AI ให้ถือว่าเป็นบั๊ก · ทำหัวข้อนี้เสร็จแล้วเปลี่ยนกลับตามหัวข้อถัดไปทันที
+  </p>
+</div>
+
+<p>แก้บรรทัดที่ 8 เป็น:</p>
+
+<pre><code>    @post = <span class="n">Post</span>.<span class="f">new</span>(params[<span class="n">:post</span>].<span class="f">permit!</span>)</code></pre>
+
+<p>ใบสั่งธรรมดาผ่านแล้ว · แฟ้มใหม่ได้ <code>views</code> 0 · <code>published</code> false (ค่าตั้งต้นที่ migration ของตาราง posts ตั้งไว้) · ผู้เขียนเป็นสมชาย (<code>user_id</code> 1):</p>
+
+<pre><code>$ curl -s -b jar.txt -H "X-CSRF-Token: $TOKEN" \
+    -X POST http://localhost:3000/posts -d "post[title]=ลาบหมู" -d "post[body]=แซ่บ"
+บันทึกแล้ว: {"title" =&gt; "ลาบหมู", "views" =&gt; 0, "published" =&gt; false, "user_id" =&gt; 1}</code></pre>
+
+<div class="predict">
+  <p>ทีนี้เป็นคนร้าย · ส่งสองช่องตามฟอร์ม แล้ว<strong>แอบเติมอีกสามช่อง</strong>: ยอดวิว 999999 · เผยแพร่ทันที · และอ้างว่าผู้เขียนคือมานะ (<code>user_id</code> 3)</p>
+<pre><code>$ curl -s -b jar.txt -H "X-CSRF-Token: $TOKEN" -X POST http://localhost:3000/posts \
+    -d "post[title]=ร้านผม" -d "post[body]=อร่อยที่สุดในโลก" \
+    -d "post[views]=999999" -d "post[published]=true" -d "post[user_id]=3"</code></pre>
+  <p class="ask">สามช่องที่แอบเติม ช่องไหนลงตู้ได้บ้าง? (ดูโค้ด <code>create</code> อีกที — บรรทัดที่ 9 ทำอะไรหลังบรรทัดที่ 8)</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>บันทึกแล้ว: {"title" =&gt; "ร้านผม", "views" =&gt; 999999, "published" =&gt; true, "user_id" =&gt; 1}</code></pre>
+    <p>log ยืนยันว่าเข้าตู้จริง (ตัดเฉพาะสองบรรทัดที่สำคัญ):</p>
+<pre><code>  Parameters: {"post" =&gt; {"title" =&gt; "ร้านผม", "body" =&gt; "อร่อยที่สุดในโลก", "views" =&gt; "999999", "published" =&gt; "true", "user_id" =&gt; "3"}}
+  Post Create (2.2ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id") VALUES ('ร้านผม', 'อร่อยที่สุดในโลก', '2026-11-04 12:09:58.082068', '2026-11-04 12:09:58.082068', TRUE, 999999, 1) RETURNING "id" /*action='create',application='WongnokBlog',controller='posts'*/</code></pre>
+    <p>
+      <code>INSERT INTO "posts" (…) VALUES (…)</code> แปลว่า "เพิ่มแฟ้มใหม่ลงลิ้นชัก posts โดยช่องในวงเล็บแรกได้ค่าในวงเล็บที่สองตามลำดับ" ·
+      ช่อง published ได้ <code>TRUE</code> · views ได้ <code>999999</code> · <code>RETURNING "id"</code> = "แล้วบอกเลขที่แฟ้มใหม่กลับมาด้วย"
+    </p>
+    <p>
+      <strong>views กับ published เข้าตู้</strong> · บทความที่ควรรอตรวจกลายเป็นเผยแพร่แล้วและยอดวิวสูงสุดในเว็บ ·
+      <strong>user_id ไม่เข้า</strong> — ได้ 1 ไม่ใช่ 3 · ไม่ใช่เพราะ Rails กันให้ แต่เพราะ<strong>บรรทัดที่ 9 <code>@post.user = User.first</code> เขียนทับ</strong>หลังจากบรรทัดที่ 8 ใส่ 3 ไปแล้ว ·
+      นี่คือ "รอดเพราะโชค" ไม่ใช่รอดเพราะตั้งใจกัน
+    </p>
+  </div>
+</div>
+
+<p>
+  อยากเห็นตอนที่โชคไม่ช่วย · ผมเขียน action <code>update</code> ชั่วคราวที่ใช้ท่าเดียวกัน (<code>@post.update!(params[:post].permit!)</code>) ·
+  ใน <code>update</code> ไม่มีบรรทัดไหนเขียนทับผู้เขียน · ส่งแก้คำผิดในชื่อบทความ 2 (ของสมชาย) พร้อมแอบเติม <code>user_id</code>:
+</p>
+
+<pre><code>$ curl -s -b jar.txt -H "X-CSRF-Token: $TOKEN" -X PATCH http://localhost:3000/posts/2 \
+    -d "post[title]=ส้มตำปูปลาร้า (แก้คำผิด)" -d "post[user_id]=3"
+แก้แล้ว: {"title" =&gt; "ส้มตำปูปลาร้า (แก้คำผิด)", "user_id" =&gt; 3}</code></pre>
+
+<pre><code>  Post Update (1.3ms)  UPDATE "posts" SET "title" = 'ส้มตำปูปลาร้า (แก้คำผิด)', "updated_at" = '2026-11-04 12:10:01.703604', "user_id" = 3 WHERE "posts"."id" = 2 /*action='update',application='WongnokBlog',controller='posts'*/</code></pre>
+
+<p>
+  <code>UPDATE "posts" SET … WHERE "posts"."id" = 2</code> = "แก้แฟ้มเลข 2 ในลิ้นชัก posts ให้ช่องเหล่านี้เป็นค่าใหม่" ·
+  <code>"user_id" = 3</code> อยู่ในนั้น → <strong>บทความของสมชายกลายเป็นของมานะ</strong> แค่เติมช่องเดียวในใบสั่ง
+  (ตอนทดลองผมเปลี่ยน <code>only:</code> ใน routes เป็น <code>[:index, :update]</code> ชั่วคราว · ไม่ต้องทำตาม)
+</p>
+
+<p>
+  <strong>สไลด์หน้า 48 อ้างว่า</strong>ช่องโหว่แบบนี้เคยถูกใช้กับ GitHub ในปี 2012 ·
+  ส่วนที่ผมยืนยันได้กับยืนยันไม่ได้ อยู่ในตารางท้ายบท · ไม่ต้องจำเรื่องนี้ จำแค่ว่าช่องโหว่นี้<strong>ทำได้จริงด้วย curl คำสั่งเดียว</strong> อย่างที่คุณเพิ่งเห็น
+</p>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ช่องโหว่เดียวกันเกิดได้ถ้าเอา JSON ของผู้ใช้ใส่ตรงเข้า struct ที่ลง DB · struct <code>Post</code> แบบ GORM ที่มีช่อง <code>Views</code> · <code>UserID</code> พร้อม tag <code>json</code>:
+</p>
+
+<pre><code><span class="k">var</span> post <span class="n">Post</span>                           <span class="c">// ❌ struct ที่ลง DB</span>
+json.<span class="f">Unmarshal</span>(body, &amp;post)              <span class="c">// body มี views · published · user_id แอบมา</span>
+<span class="c">// ผลรันจริง: {ID:0 Title:ร้านผม Body:x Views:999999 Published:true UserID:3}</span></code></pre>
+
+<p>(ตัดมาสามบรรทัด · ผมรันในไฟล์ <code>main.go</code> เต็มที่มี <code>package main</code> กับ <code>import "encoding/json"</code> · <code>ShouldBindJSON</code> ของ Gin ในบท 39 โดยปกติก็ใช้ <code>encoding/json</code> ตัวนี้ข้างใน)</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>mass assignment</dt>
+    <dd>การใส่ค่าหลายช่องให้ object รวดเดียวจาก Hash เช่น <code>Post.new(hash)</code> · <code>post.update(hash)</code> · ตัวมันเองไม่ผิด ผิดตอนที่ hash มาจากผู้ใช้โดยไม่ได้กรอง ·
+        <strong>ถาม senior ได้ว่า "action นี้มีช่องโหว่ mass assignment ไหมครับ ผมควรเช็คตรงไหน"</strong></dd>
+    <dt><code>ActiveModel::ForbiddenAttributesError</code></dt>
+    <dd>error ที่ Rails โยนเมื่อเอา <code>params</code> ที่ยังไม่ได้กรองไปใส่แฟ้ม · ทางแก้ที่ถูกคือ strong parameters (หัวข้อถัดไป) <strong>ไม่ใช่ <code>permit!</code></strong> ·
+        <strong>พิมพ์บอก AI ได้ว่า "I got ForbiddenAttributesError — write strong params with params.expect, do not use permit!"</strong></dd>
+    <dt><code>permit!</code></dt>
+    <dd>"อนุญาตทุกช่อง" · ปิด error ได้แต่เปิดช่องโหว่กลับมาทั้งหมด · ในการรีวิวโค้ด <strong>เจอคำนี้กับ params จากผู้ใช้ ให้ทักทุกครั้ง</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9">strong parameters — รับเฉพาะช่องที่อยู่บนแบบฟอร์ม</h2>
+
+<p>
+  ทางแก้คือ<strong>เขียนรายชื่อช่องที่ยอมรับ</strong> ไว้ใน method แยกใต้ <code>private</code> แล้วให้ <code>create</code> เรียกใช้ ·
+  ช่องที่ไม่อยู่ในรายชื่อจะถูกทิ้งก่อนถึงแฟ้ม · เปลี่ยนไฟล์ controller เป็น:
+</p>
+
+<pre><code><span class="c"># app/controllers/posts_controller.rb</span>
+<span class="k">class</span> <span class="n">PostsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @posts = <span class="n">Post</span>.<span class="f">order</span>(<span class="n">:id</span>)
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">create</span>
+    @post = <span class="n">Post</span>.<span class="f">new</span>(post_params)
+    @post.user = <span class="n">User</span>.<span class="f">first</span>   <span class="c"># ชั่วคราว: ยังไม่มีระบบ login</span>
+    @post.<span class="f">save!</span>
+    <span class="f">render</span> <span class="n">plain:</span> <span class="s">"บันทึกแล้ว: #{@post.attributes.slice("title", "views", "published", "user_id")}\n"</span>
+  <span class="k">end</span>
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">post_params</span>
+    params.<span class="f">require</span>(<span class="n">:post</span>).<span class="f">permit</span>(<span class="n">:title</span>, <span class="n">:body</span>)
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>Post.new(post_params)</code> — เปลี่ยนจาก <code>params[:post]</code> เป็นการเรียก method <code>post_params</code> ที่กรองแล้ว</li>
+  <li><code>params.require(:post)</code> — "ใบสั่งนี้<strong>ต้องมี</strong>กลุ่มชื่อ <code>post</code>" · ไม่มีให้หยุดเลย</li>
+  <li><code>.permit(:title, :body)</code> — "จากกลุ่มนั้น รับแค่ <code>title</code> กับ <code>body</code>" · ที่เหลือทิ้ง</li>
+  <li>อยู่ใต้ <code>private</code> เพราะไม่ใช่เมนู ลูกค้าเรียกตรง ๆ ไม่ได้ · ตั้งชื่อ <code>ชื่อmodel_params</code> เป็นธรรมเนียมที่ทุกร้าน Rails ใช้ และใช้ซ้ำได้ทั้งใน <code>create</code> กับ <code>update</code></li>
+</ul>
+
+<p>ยิงคำสั่งเจาะชุดเดิม:</p>
+
+<pre><code>$ curl -s -b jar.txt -H "X-CSRF-Token: $TOKEN" -X POST http://localhost:3000/posts \
+    -d "post[title]=ร้านผม" -d "post[body]=อร่อยที่สุดในโลก" \
+    -d "post[views]=999999" -d "post[published]=true" -d "post[user_id]=3"
+บันทึกแล้ว: {"title" =&gt; "ร้านผม", "views" =&gt; 0, "published" =&gt; false, "user_id" =&gt; 1}</code></pre>
+
+<p>บันทึกได้ (คนร้ายไม่รู้ตัวด้วยซ้ำว่าโดนตัด) แต่ views กลับเป็น 0 · published เป็น false · ใน log มีบรรทัดใหม่ (ตัดท้ายบรรทัดที่ยาวมากออก):</p>
+
+<pre><code>  Parameters: {"post" =&gt; {"title" =&gt; "ร้านผม", "body" =&gt; "อร่อยที่สุดในโลก", "views" =&gt; "999999", "published" =&gt; "true", "user_id" =&gt; "3"}}
+Unpermitted parameters: :views, :published, :user_id. Context: { controller: PostsController, action: create, … }
+  Post Create (2.5ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id") VALUES ('ร้านผม', 'อร่อยที่สุดในโลก', '2026-11-04 12:09:59.183341', '2026-11-04 12:09:59.183341', FALSE, 0, 1) RETURNING "id" /*action='create',application='WongnokBlog',controller='posts'*/</code></pre>
+
+<ul>
+  <li><code>Parameters:</code> — ของที่คนร้ายส่งมายังอยู่ครบ 5 ช่อง (log จดตามที่ได้รับ)</li>
+  <li><code>Unpermitted parameters: :views, :published, :user_id</code> — "สามช่องนี้ไม่อยู่ในรายชื่อ ทิ้งแล้ว" · บรรทัดนี้โผล่เฉพาะตอนพัฒนาในเครื่องกับตอนรันเทส (ค่าตั้งต้นของ Rails) เป็นตัวช่วยจับว่าฟอร์มส่งอะไรเกินมา</li>
+  <li><code>INSERT … VALUES (…, FALSE, 0, 1)</code> — ค่าที่ลงตู้จริงคือค่าตั้งต้น ไม่ใช่ของคนร้าย</li>
+</ul>
+
+<p>
+  หลักการข้างหลังคือ <strong>allowlist ชนะ blocklist</strong> — เขียนว่า "ช่องไหนผ่านได้" ไม่ใช่ "ช่องไหนห้ามผ่าน" ·
+  ถ้าเขียนแบบห้าม วันที่ migration เพิ่มช่อง <code>is_featured</code> (บทความแนะนำ) เข้ามา แล้วลืมเพิ่มในรายการห้าม ช่องนั้นก็เปิดให้คนร้ายทันที ·
+  แบบ allowlist ช่องใหม่ถูกปิดไว้ก่อนเสมอจนกว่าจะตั้งใจเปิด
+</p>
+
+<div class="analogy">
+  <span class="label">🛎 เทียบกับร้านอาหาร — พนักงานต้อนรับลอกเฉพาะช่องบนแบบฟอร์ม</span>
+  <p>
+    strong parameters คือพนักงานต้อนรับที่ถือ<strong>แบบฟอร์มทางการของร้าน</strong>ไว้ ·
+    ลูกค้ายื่นกระดาษอะไรมาก็ตาม พนักงานลอกเฉพาะช่อง "ชื่อเมนู" กับ "รายละเอียด" ลงใบสั่งของร้าน แล้วส่งใบนั้นเข้าครัว ·
+    ข้อความ "ฉันเป็นผู้จัดการ · ฟรี" ที่ขอบกระดาษไม่เคยไปถึงครัว
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงอาจหันไปบอกลูกค้าว่า "ช่องนี้เราไม่รับนะครับ" ·
+    <code>permit</code> <strong>ทิ้งเงียบ ๆ</strong> ลูกค้าได้คำตอบ 200 เหมือนสำเร็จทุกอย่าง · คนที่รู้มีแค่เรา ผ่านบรรทัด <code>Unpermitted parameters</code> ใน log ·
+    และพนักงานคนนี้<strong>ไม่ตรวจว่าค่าในช่องถูกไหม</strong> (ชื่อเรื่องว่างก็ลอกให้) — เรื่องนั้นเป็นงานของ validation ในบท 110
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ท่าที่ถูกคือแยก <strong>struct สำหรับรับ input</strong> (เรียกกันว่า DTO) ออกจาก struct ที่ลง DB · struct รับ input มีแค่ช่องที่อยู่บนฟอร์ม:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>❌ รับตรงเข้า struct ที่ลง DB</h4>
+<pre><code><span class="k">var</span> post <span class="n">Post</span>
+json.<span class="f">Unmarshal</span>(body, &amp;post)
+<span class="c">// Views:999999 Published:true UserID:3</span></code></pre>
+  </div>
+  <div class="side good">
+    <h4>✅ รับเข้า DTO ก่อน แล้วค่อยย้าย</h4>
+<pre><code><span class="k">type</span> <span class="n">CreatePostInput</span> <span class="k">struct</span> {
+    Title <span class="k">string</span> <span class="s">`json:"title"`</span>
+    Body  <span class="k">string</span> <span class="s">`json:"body"`</span>
+}
+<span class="k">var</span> in <span class="n">CreatePostInput</span>
+json.<span class="f">Unmarshal</span>(body, &amp;in)
+post := <span class="n">Post</span>{Title: in.Title, Body: in.Body, UserID: <span class="n">1</span>}
+<span class="c">// Views:0 Published:false UserID:1</span></code></pre>
+  </div>
+</div>
+
+<p>
+  (ผลในคอมเมนต์มาจากการรันจริง ด้วย JSON ที่แอบเติม views · published · user_id แบบเดียวกับคนร้าย · <code>encoding/json</code> ทิ้งช่องที่ struct ไม่มีเงียบ ๆ เหมือน <code>permit</code>) ·
+  struct <code>CreatePostInput</code> ของ Go = รายชื่อใน <code>permit(:title, :body)</code> ของ Rails · ต่างกันแค่ Go ประกาศเป็นชนิดข้อมูล Rails ประกาศเป็นรายชื่อ symbol
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>strong parameters</dt>
+    <dd>ระบบกรอง <code>params</code> ของ Rails · ต้องประกาศช่องที่รับก่อนเอาไปใส่ model · method <code>post_params</code> ใต้ <code>private</code> คือที่อยู่ประจำ ·
+        <strong>พิมพ์บอก AI ได้ว่า "add strong parameters for Post allowing only title and body"</strong></dd>
+    <dt>allowlist · blocklist</dt>
+    <dd>allowlist = รายชื่อของที่ผ่านได้ (ที่เหลือห้ามหมด) · blocklist = รายชื่อของที่ห้าม (ที่เหลือผ่านหมด) · งานความปลอดภัยใช้ allowlist เสมอ ·
+        <strong>คุยกับทีมได้ว่า "ตรงนี้เราใช้ allowlist หรือ blocklist ครับ"</strong></dd>
+    <dt>Unpermitted parameters (log)</dt>
+    <dd>บรรทัดใน log ตอนพัฒนาที่บอกว่าช่องไหนโดน <code>permit</code> ทิ้ง · ถ้าเห็นช่องที่<em>ควร</em>ผ่าน แปลว่าลืมใส่ในรายชื่อ ·
+        <strong>ถาม senior ได้ว่า "log ขึ้น Unpermitted parameter: :category_id แปลว่าผมต้องเพิ่มใน permit ใช่ไหมครับ"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-10"><code>params.expect</code> — ท่าของ Rails 8 ที่ตรวจรูปร่างด้วย</h2>
+
+<p>
+  <code>require/permit</code> กันช่องเกินได้แล้ว แต่ยังมีรูรั่วอีกแบบ · <code>require(:post)</code> เช็คแค่ว่า "มีของชื่อ <code>post</code> ไหม" ·
+  ไม่ได้เช็คว่าของนั้น<strong>เป็นกลุ่มช่อง (Hash)</strong> จริงหรือเปล่า · ถ้าคนป่วนส่ง <code>post</code> มาเป็นคำเดียวหรือเป็นรายการ จะเกิดอะไรขึ้น:
+</p>
+
+<pre><code>$ curl -s -o /dev/null -w '%{http_code}\n' -b jar.txt -H "X-CSRF-Token: $TOKEN" \
+    -X POST http://localhost:3000/posts -d "post=hello"
+500</code></pre>
+
+<pre><code>  Parameters: {"post" =&gt; "hello"}
+Completed 500 Internal Server Error in 1ms (ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+NoMethodError (undefined method 'permit' for an instance of String):
+app/controllers/posts_controller.rb:17:in 'PostsController#post_params'
+app/controllers/posts_controller.rb:8:in 'PostsController#create'</code></pre>
+
+<ul>
+  <li><code>{"post" =&gt; "hello"}</code> — <code>post</code> เป็นข้อความเฉย ๆ ไม่ใช่กลุ่ม <code>{title, body}</code></li>
+  <li><code>require(:post)</code> เห็นว่ามี <code>post</code> ก็ปล่อยผ่าน · ต่อด้วย <code>.permit</code> กับข้อความ → <code>undefined method 'permit' for an instance of String</code> (ข้อความไม่มี method ชื่อ permit)</li>
+  <li>บรรทัด 17 คือ <code>params.require(:post).permit(:title, :body)</code> · บรรทัด 8 คือที่ <code>create</code> เรียก <code>post_params</code></li>
+</ul>
+
+<p>
+  ข้อมูลไม่ได้เสีย แต่ได้ <strong>500</strong> · ทั้งที่เป็นความผิดของคนส่ง ไม่ใช่บั๊กของเรา ·
+  Rails 8 มี method ใหม่ <code>params.expect</code> ที่เช็ค<strong>ทั้งรายชื่อช่องและรูปร่าง</strong>ในคำสั่งเดียว · แก้ <code>post_params</code> เป็น:
+</p>
+
+<pre><code>  <span class="k">def</span> <span class="f">post_params</span>
+    params.<span class="f">expect</span>(<span class="n">post:</span> [<span class="n">:title</span>, <span class="n">:body</span>])
+  <span class="k">end</span></code></pre>
+
+<ul>
+  <li>อ่านว่า "<strong>คาดหวัง</strong>ว่าจะมี <code>post</code> ที่เป็นกลุ่มช่อง และรับแค่ <code>title</code> กับ <code>body</code>"</li>
+  <li><code>post: [ … ]</code> — hash ที่ key คือชื่อกลุ่ม ค่าคือรายชื่อช่อง (เหมือนเอา <code>require</code> กับ <code>permit</code> มาเขียนรวมกัน)</li>
+</ul>
+
+<p>ผมยิงสามแบบเดียวกันเข้าทั้งสองท่า (ทุกครั้งเปลี่ยนแค่ <code>-d</code>) ได้ status แบบนี้:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ส่งมาแบบไหน (<code>-d …</code>)</th><th>ภาษาคน</th><th><code>require/permit</code></th><th><code>params.expect</code></th></tr></thead>
+  <tbody>
+    <tr><td><code>"post=hello"</code></td><td>post เป็นข้อความคำเดียว</td><td>500 <code>NoMethodError</code></td><td><strong>400</strong> <code>ParameterMissing</code></td></tr>
+    <tr><td><code>"post[]=a"</code></td><td>post เป็นรายการ (Array)</td><td>500 <code>NoMethodError</code></td><td><strong>400</strong> <code>ParameterMissing</code></td></tr>
+    <tr><td><code>"title=x"</code></td><td>ไม่มี post เลย</td><td>400 <code>ParameterMissing</code></td><td>400 <code>ParameterMissing</code></td></tr>
+    <tr><td>ห้าช่องของคนร้ายชุดเดิม</td><td>ช่องเกิน 3 ช่อง</td><td>200 · ช่องเกินถูกทิ้ง</td><td>200 · ช่องเกินถูกทิ้ง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>บรรทัดใน log ของ <code>expect</code> ตอนส่ง <code>post=hello</code>:</p>
+
+<pre><code>  Parameters: {"post" =&gt; "hello"}
+Completed 400 Bad Request in 1ms (ActiveRecord: 0.0ms (0 queries, 0 cached) | GC: 0.0ms)
+ActionController::ParameterMissing (param is missing or the value is empty or invalid: post):</code></pre>
+
+<p>
+  <code>param is missing or the value is empty or invalid: post</code> = "ช่อง post ไม่มี · ว่าง · หรือ<strong>รูปร่างไม่ถูก</strong>" · Rails ตอบ 400 ให้เอง ไปไม่ถึงบรรทัด <code>save!</code>
+</p>
+
+<p>
+  <strong>400 กับ 500 ต่างกันยังไง ทำไมต้องสน:</strong> 400 Bad Request = "ใบสั่งของคุณผิดแบบ" (ความผิดฝั่งคนส่ง) ·
+  500 Internal Server Error = "ครัวเราพังเอง" (ความผิดฝั่งเรา) · หลายทีมตั้งระบบเตือนให้ปลุกคนเวรเมื่อเห็น 500 เยอะ ๆ ·
+  ถ้าคนป่วนยิง <code>post=hello</code> มาพันครั้งแล้วได้ 500 พันครั้ง ทีมต้องตื่นมาไล่ log หาบั๊กที่ไม่มีอยู่จริง
+</p>
+
+<div class="analogy">
+  <span class="label">📋 เทียบกับร้านอาหาร — ดูก่อนว่าเป็นแบบฟอร์มของร้านจริงไหม</span>
+  <p>
+    <code>require</code> เหมือนพนักงานต้อนรับที่ถามแค่ว่า "มีกระดาษที่เขียนว่า <em>ใบสั่ง</em> ไหม" ·
+    ลูกค้ายื่นกระดาษที่เขียนคำว่า "hello" คำเดียวมา พนักงานก็รับส่งเข้าครัว · เชฟหาช่องชื่อเมนูไม่เจอ <strong>ทำจานตกแตก</strong> (500)
+    <br><code>expect</code> คือพนักงานที่ดูก่อนว่า<strong>เป็นแบบฟอร์มที่มีช่องจริง ๆ</strong> · ถ้าไม่ใช่ คืนลูกค้าที่หน้าร้านเลยว่า "ใบสั่งผิดแบบครับ" (400) ครัวไม่ต้องรู้เรื่อง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> การตรวจนี้จริง ๆ เกิด<strong>ในครัว</strong> (ตอน <code>create</code> เรียก <code>post_params</code>) ไม่ใช่หน้าร้าน แค่เกิดก่อนเชฟลงมือ ·
+    พนักงานจริงที่คืนใบสั่งจะบอกว่าผิดตรงไหน แต่ <code>expect</code> บอกแค่ชื่อกลุ่ม (<code>invalid: post</code>) · และเรื่องช่องเกิน <code>expect</code> <strong>ทิ้งเงียบกว่า</strong> <code>require/permit</code> อีก —
+    ผมยิงห้าช่องของคนร้ายเข้าท่า <code>expect</code> แล้ว<strong>ไม่มีบรรทัด <code>Unpermitted parameters</code> ใน log เลย</strong> ·
+    ช่องเกินยังถูกทิ้งเหมือนเดิม แค่ไม่มีใครบอก
+  </p>
+</div>
+
+<p>
+  <strong>เรื่อง AI:</strong> สไลด์หน้า 49 เตือนว่า AI มักเขียน <code>require/permit</code> ให้ เพราะเรียนจากโค้ดยุค Rails 6–7 ·
+  ไม่ผิด กันช่องเกินได้เหมือนกัน แต่ได้ 500 ตอนเจอรูปร่างแปลก · ขอให้ AI ใช้ <code>params.expect</code> ตรง ๆ ได้เลย ·
+  ส่วน <code>bin/rails generate scaffold</code> ของ Rails 8.1.4 เขียน <code>params.expect</code> ให้แล้ว (ผมเปิดไฟล์แม่แบบของมันดู — บท 118 จะอ่านโค้ดที่มันสร้าง)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>params.expect</code></dt>
+    <dd>ท่าของ Rails 8 ที่รวม require + permit และเช็คว่าเป็นกลุ่มช่องจริง · รูปร่างผิดได้ 400 ·
+        <strong>พิมพ์บอก AI ได้ว่า "use params.expect (Rails 8) instead of require/permit"</strong></dd>
+    <dt><code>ActionController::ParameterMissing</code> · 400 Bad Request</dt>
+    <dd>error ที่ Rails แปลงเป็น 400 ให้เองเมื่อใบสั่งไม่มีกลุ่มที่ต้องการหรือรูปร่างไม่ถูก · ไม่ต้องเขียน rescue เอง ·
+        <strong>ถาม senior ได้ว่า "API นี้ตอบ 500 ตอนส่ง body ผิดรูป ควรเปลี่ยนเป็น params.expect ให้ได้ 400 ไหมครับ"</strong></dd>
+    <dt>500 Internal Server Error</dt>
+    <dd>"ฝั่ง server พังเอง" · ควรเห็นเฉพาะตอนมีบั๊กจริง · ถ้าคนส่งผิดแล้วได้ 500 คือเราตอบผิดประเภท ·
+        <strong>คุยกับทีมได้ว่า "error rate 500 ขึ้น เพราะ request ผิดรูปหรือบั๊กจริง"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-11">ภารกิจ — ช่องเขียนคอมเมนต์ใต้บทความ ที่กันคนสวมรอยได้</h2>
+
+<div class="task">
+  <h3 id="sn-sub-4">🎯 nested route + <code>params.expect</code> (~10 นาที)</h3>
+  <p>ต่อจากแอปทดลองข้างบน (ต้องมี <code>posts#index</code> + view ไว้ขอบัตรคิว) · คอมเมนต์ต้องเป็นของ "คนที่ login อยู่" เสมอ ไม่ใช่คนที่ใบสั่งอ้าง</p>
+  <ol>
+    <li>แก้ <code>config/routes.rb</code> ให้มี <code>POST /posts/:post_id/comments</code> <strong>เส้นเดียว</strong> ซ้อนใต้ posts (ใช้ <code>only:</code> ทั้งสองชั้น ให้ posts เหลือ index กับ create เหมือนเดิม ·
+      ใบ้: <code>only: […]</code> เขียนไว้<strong>ก่อน</strong>คำว่า <code>do</code> ได้ เช่น <code>resources :posts, only: [...] do</code>)</li>
+    <li>สั่ง <code>bin/rails routes -c comments</code> · ควรเห็นแถวเดียว ชื่อ <code>post_comments</code> ไปที่ <code>comments#create</code></li>
+    <li>สร้างไฟล์ <code>app/controllers/comments_controller.rb</code> · action <code>create</code> ให้:
+      หาบทความจาก <code>params[:post_id]</code> ·
+      สร้างคอมเมนต์ใต้บทความนั้นด้วย <code>post.comments.new(comment_params)</code> (<code>new</code> = <code>build</code> ในบท 115) ·
+      ใส่ผู้เขียนเป็น <code>User.last</code> (สมมุติว่าคนที่ login คือมานะ) · <code>save!</code> · แล้ว <code>render plain:</code> ข้อความบอกว่าใครเขียนอะไรใต้บทความไหน</li>
+    <li>เขียน <code>comment_params</code> ใต้ <code>private</code> ด้วย <code>params.expect</code> ให้รับแค่ <code>body</code></li>
+    <li>ขอบัตรคิวใหม่ (บรรทัด <code>TOKEN=…</code>) แล้วยิงแบบคนร้ายที่อ้างว่าเป็นสมชาย:
+<pre><code>$ curl -s -b jar.txt -H "X-CSRF-Token: $TOKEN" -X POST http://localhost:3000/posts/5/comments \
+    -d "comment[body]=ขอสูตรด้วย" -d "comment[user_id]=1"</code></pre></li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> ข้อความที่บอกว่าผู้เขียนคือ <strong>มานะ</strong> ไม่ใช่สมชาย · บทความเลข 5 ใน seeds คือ "ผัดกะเพราหมูสับ"
+    (ถ้าของคุณเลขไม่ตรงเพราะเคยเพิ่ม/ลบบทความ ใช้เลขบทความที่มีอยู่จริงในตู้ของคุณแทนได้)</p>
+  <p><strong>ถ้าเจอ error แปลว่า…</strong></p>
+  <ul>
+    <li><code>400</code> + <code>param is missing or the value is empty or invalid: comment</code> → ชื่อกลุ่มใน <code>-d</code> ไม่ตรงกับใน <code>expect</code> เช่นส่ง <code>-d "body=…"</code> หรือ <code>post[body]</code></li>
+    <li><code>422</code> + <code>Can't verify CSRF token authenticity.</code> → ลืม <code>-b jar.txt</code> / <code>-H</code> หรือยิงจากหน้าต่าง terminal ใหม่ที่ยังไม่ได้สั่งบรรทัด <code>TOKEN=…</code> (<code>$TOKEN</code> ว่าง)</li>
+    <li><code>uninitialized constant CommentsController</code> → ชื่อไฟล์หรือชื่อ class ไม่ตรงกฎ (ต้อง <code>comments_controller.rb</code> + <code>CommentsController</code> พหูพจน์)</li>
+    <li><code>404</code> + <code>Couldn't find Post with 'id'="999"</code> → ไม่มีบทความเลขนั้นในตู้ · <code>Post.find</code> ทำงานถูกแล้ว</li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>① routes:</p>
+<pre><code><span class="c"># config/routes.rb</span>
+<span class="n">Rails</span>.application.routes.<span class="f">draw</span> <span class="k">do</span>
+  <span class="f">resources</span> <span class="n">:posts</span>, <span class="n">only:</span> [<span class="n">:index</span>, <span class="n">:create</span>] <span class="k">do</span>
+    <span class="f">resources</span> <span class="n">:comments</span>, <span class="n">only:</span> [<span class="n">:create</span>]
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<pre><code>$ bin/rails routes -c comments
+       Prefix Verb URI Pattern                        Controller#Action
+post_comments POST /posts/:post_id/comments(.:format) comments#create</code></pre>
+    <p>② controller:</p>
+<pre><code><span class="c"># app/controllers/comments_controller.rb</span>
+<span class="k">class</span> <span class="n">CommentsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">create</span>
+    post = <span class="n">Post</span>.<span class="f">find</span>(params[<span class="n">:post_id</span>])
+    comment = post.comments.<span class="f">new</span>(comment_params)
+    comment.user = <span class="n">User</span>.<span class="f">last</span>   <span class="c"># ชั่วคราว: สมมุติว่าคนที่ login คือมานะ</span>
+    comment.<span class="f">save!</span>
+    <span class="f">render</span> <span class="n">plain:</span> <span class="s">"คอมเมนต์ใหม่บน #{post.title} โดย #{comment.user.name}: #{comment.body}\n"</span>
+  <span class="k">end</span>
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">comment_params</span>
+    params.<span class="f">expect</span>(<span class="n">comment:</span> [<span class="n">:body</span>])
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+    <ul>
+      <li><code>params[:post_id]</code> — เลขบทความจาก URL (ไม่ใช่ <code>params[:id]</code>)</li>
+      <li><code>post.comments.new(…)</code> — สร้างใบคอมเมนต์ที่ช่อง <code>post_id</code> ถูกเติมเป็น 5 ให้แล้ว (บท 115)</li>
+      <li><code>comment.user = User.last</code> — ผู้เขียนมาจาก<strong>ฝั่งเรา</strong> ไม่ได้มาจากใบสั่ง · ต่อให้ไม่มีบรรทัดนี้ <code>user_id</code> ของคนร้ายก็ไม่ผ่าน <code>expect</code> อยู่ดี</li>
+    </ul>
+    <p>③ ผลรันจริง:</p>
+<pre><code>$ curl -s -b jar.txt -H "X-CSRF-Token: $TOKEN" -X POST http://localhost:3000/posts/5/comments \
+    -d "comment[body]=ขอสูตรด้วย" -d "comment[user_id]=1"
+คอมเมนต์ใหม่บน ผัดกะเพราหมูสับ โดย มานะ: ขอสูตรด้วย</code></pre>
+    <p>log (ตัดเฉพาะบรรทัดสำคัญ):</p>
+<pre><code>  Parameters: {"comment" =&gt; {"body" =&gt; "ขอสูตรด้วย", "user_id" =&gt; "1"}, "post_id" =&gt; "5"}
+  Post Load (1.1ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 5 LIMIT 1 /*action='create',application='WongnokBlog',controller='comments'*/
+  User Load (1.2ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" DESC LIMIT 1 /*action='create',application='WongnokBlog',controller='comments'*/
+  Comment Create (3.1ms)  INSERT INTO "comments" ("body", "post_id", "user_id", "created_at", "updated_at") VALUES ('ขอสูตรด้วย', 5, 3, '2026-11-04 12:10:02.806225', '2026-11-04 12:10:02.806225') RETURNING "id" /*action='create',application='WongnokBlog',controller='comments'*/</code></pre>
+    <ul>
+      <li><code>"post_id" =&gt; "5"</code> อยู่นอกกลุ่ม <code>comment</code> — มาจาก URL ไม่ใช่จากฟอร์ม</li>
+      <li><code>User Load … ORDER BY "users"."id" DESC LIMIT 1</code> = "ขอผู้ใช้หนึ่งคน เรียงเลข id จากมากไปน้อย" = คนสุดท้าย (มานะ) · <code>DESC</code> = เรียงจากมากไปน้อย</li>
+      <li><code>INSERT INTO "comments" … VALUES ('ขอสูตรด้วย', 5, 3, …)</code> — ลงลิ้นชัก comments ด้วย post_id 5 และ <strong>user_id 3</strong> (มานะ) ไม่ใช่ 1 ที่คนร้ายอ้าง</li>
+      <li>ไม่มีบรรทัด <code>Unpermitted parameters</code> — ท่า <code>expect</code> ทิ้งเงียบ (หัวข้อก่อน)</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-12">ทดสอบความเข้าใจ</h2>
+
+<p>ข้อ 1 มาจาก Quiz 6 ของสไลด์หน้า 50 · ทุกเฉลยรันพิสูจน์แล้ว</p>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อ 1 · <code>routes.rb</code> มีแค่ <code>resources :posts do resources :comments end</code> · ใบสั่ง <code>DELETE /posts/5/comments/9</code> ไปที่ไหน และ params มีอะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>posts#destroy</code> โดย <code>params[:id]</code> เป็น <code>"5"</code></button>
+    <button class="opt"><code>comments#destroy</code> โดย <code>params[:id]</code> เป็น <code>"5"</code></button>
+    <button class="opt"><code>comments#destroy</code> โดย <code>post_id</code> เป็น <code>"5"</code> และ <code>id</code> เป็น <code>"9"</code></button>
+    <button class="opt"><code>posts#update</code> โดย <code>id</code> เป็น <code>"5"</code> และ <code>comment_id</code> เป็น <code>"9"</code></button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 3 ถูก · ผมถามพนักงานต้อนรับตรง ๆ ด้วย <code>Rails.application.routes.recognize_path</code> (ท่าเดียวกับ quiz ข้อ 4 ของ<a href="../../rails-day-1/lessons/0105-rails-day1-lab.html">บท 105</a>) วนทีละเส้นครบห้าเส้นของสไลด์ แล้วพิมพ์ผล:</p>
+<pre><code>GET /posts/5 =&gt; {controller: "posts", action: "show", id: "5"}
+GET /posts/5/edit =&gt; {controller: "posts", action: "edit", id: "5"}
+POST /posts/5/comments =&gt; {controller: "comments", action: "create", post_id: "5"}
+DELETE /posts/5/comments/9 =&gt; {controller: "comments", action: "destroy", post_id: "5", id: "9"}
+GET /posts/new =&gt; {controller: "posts", action: "new"}</code></pre>
+    <p>
+      ตัวเลือกที่ 1 ลืมว่า URL ที่มี <code>/comments</code> ไปแผนก comments · ตัวเลือกที่ 2 ไปแผนกถูก แต่สลับเลข — <code>:id</code> เป็นของคอมเมนต์ (ลูก) ส่วนเลขบทความ (แม่) ชื่อ <code>post_id</code> ·
+      ตัวเลือกที่ 4 ผิดทั้ง verb และแผนก — DELETE ไปเมนู destroy เสมอ
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ใน nested route เลขของแม่ชื่อ <code>:ชื่อแม่_id</code> · เลขของลูกชื่อ <code>:id</code> · ตอบไม่ได้เมื่อไหร่ สั่ง <code>bin/rails routes -c comments</code> ดูได้เลย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 2 · บน Rails 8.1 · action <code>create</code> เขียน <code>@post = Post.new(params[:post])</code> (ไม่มี permit/expect) แล้วผู้ใช้ส่งฟอร์มธรรมดาที่มีแค่ title กับ body · เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">บันทึกได้ และถ้ามีช่องแอบเติมมาก็บันทึกด้วยทั้งหมด</button>
+    <button class="opt">ได้ <code>ForbiddenAttributesError</code> ตอบ 500 และไม่มีอะไรลงตู้</button>
+    <button class="opt">บันทึกได้ เพราะ Rails ตัดช่องที่ฟอร์มไม่มีทิ้งให้เอง</button>
+    <button class="opt">ได้ 400 Bad Request เพราะไม่ได้เขียน <code>params.expect</code></button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · ผลจริงในหัวข้อ mass assignment ขั้นที่ 1: <code>500</code> · log เขียน <code>ActiveModel::ForbiddenAttributesError</code> · <code>0 queries</code> ·
+      คู่มือ Rails (Action Controller Overview หัวข้อ Strong Parameters) ก็เขียนตัวอย่างเดียวกันไว้ว่าบรรทัดแบบนี้จะโยน error ตัวนี้
+    </p>
+    <p>
+      ตัวเลือกที่ 1 คือสิ่งที่สไลด์หน้า 48 และ 50 พูดถึง — เกิดจริงเฉพาะตอนมีคนเติม <code>permit!</code> เข้าไป ·
+      ตัวเลือกที่ 3 ผิด — Rails ไม่รู้ว่าฟอร์มเรามีช่องอะไร ต้องเขียนรายชื่อเอง ·
+      ตัวเลือกที่ 4 ผิด — 400 มาจาก <code>expect</code>/<code>require</code> ตอนไม่มีกลุ่ม post ไม่ใช่เพราะลืมเขียน
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> Rails 8 ปิดประตู mass assignment ไว้ก่อน · คนที่เปิดกลับคือเราเอง (ด้วย <code>permit!</code>) · ทางแก้ error นี้ที่ถูกคือเขียน strong parameters</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อ 3 · <code>post_params</code> เขียน <code>params.require(:post).permit(:title, :body)</code> · คนร้ายส่ง title · body และแอบเติม <code>post[views]=999999</code> · ผลคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">บันทึกได้ views เป็น 0 และ log เขียน <code>Unpermitted parameters</code></button>
+    <button class="opt">ได้ 400 Bad Request เพราะมีช่องที่ไม่ได้อนุญาตปนมา</button>
+    <button class="opt">บันทึกได้ views เป็น 999999 แต่ log เขียนคำเตือนไว้ให้</button>
+    <button class="opt">ได้ 500 เพราะ <code>permit</code> เจอช่องที่ไม่รู้จักแล้วพัง</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · ผลจริง: <code>บันทึกแล้ว: {"title" =&gt; "ร้านผม", "views" =&gt; 0, …}</code> และ log มี
+      <code>Unpermitted parameters: :views, :published, :user_id</code> · SQL <code>INSERT</code> ใส่ views เป็น 0
+    </p>
+    <p>
+      ตัวเลือกที่ 2 กับ 4 ผิด — <code>permit</code> ไม่ปฏิเสธใบสั่ง แค่ทิ้งช่องเกินแล้วไปต่อ (status 200) ·
+      ตัวเลือกที่ 3 ผิด — log จดไว้ก็จริง แต่ช่องนั้น<strong>ไม่ได้ลงตู้</strong> · คำเตือนไม่ใช่การปล่อยผ่าน
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> permit = allowlist ที่ทิ้งเงียบ ๆ · คนส่งไม่รู้ตัว · เราดูได้จาก log ตอนพัฒนา</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ข้อ 4 · มีคนป่วนส่ง <code>-d "post=hello"</code> (post เป็นข้อความคำเดียว) · ถ้า <code>post_params</code> เขียนด้วย <code>require/permit</code> กับเขียนด้วย <code>params.expect</code> จะได้ status อะไรตามลำดับ?</p>
+  <div class="opts">
+    <button class="opt">400 ทั้งสองแบบ เพราะไม่มีช่อง title ส่งมา</button>
+    <button class="opt">500 ทั้งสองแบบ เพราะ <code>hello</code> ไม่ใช่ Hash</button>
+    <button class="opt">200 ทั้งสองแบบ แต่ได้บทความที่ไม่มีชื่อเรื่อง</button>
+    <button class="opt"><code>require/permit</code> ได้ 500 · <code>expect</code> ได้ 400</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · ผลจริงในตารางหัวข้อ <code>params.expect</code>: <code>require/permit</code> ได้ <code>500</code> + <code>undefined method 'permit' for an instance of String</code> ·
+      <code>expect</code> ได้ <code>400</code> + <code>ParameterMissing</code>
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิดครึ่งเดียว — ท่าเก่าไม่ได้ 400 เพราะ <code>require</code> เห็นว่ามี <code>post</code> ก็ปล่อยผ่าน ·
+      ตัวเลือกที่ 2 ผิดครึ่งเดียว — <code>expect</code> เช็ครูปร่างก่อน จึงไม่พัง ·
+      ตัวเลือกที่ 3 ผิด — ทั้งสองท่าไม่ไปถึงบรรทัด <code>save!</code> เลย
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>expect</code> = require + permit + เช็ครูปร่าง · ใบสั่งผิดแบบได้ 400 (ความผิดคนส่ง) ไม่ใช่ 500 (ครัวพัง)</p>
+  </div>
+</div>
+
+<div class="note">
+  <p>
+    <strong>ข้อ 3 ปลายเปิดของสไลด์หน้า 50</strong> ("แก้ให้ปลอดภัยแล้ว ยังมีอีก 2 เรื่องที่ควรแก้ · เรื่องหนึ่งเกี่ยวกับ save อีกเรื่องเกี่ยวกับผู้ใช้ที่กรอกผิด") ·
+    ลองคิดเองก่อน แล้วเทียบกับ action <code>create</code> ใน<a href="./0110-validations.html">บท 110</a> หัวข้อ 7 ที่ใช้ <code>if @post.save … else render :new, status: :unprocessable_content</code> ·
+    โค้ดในสไลด์ไม่ดูผลของ <code>save</code> แล้ว redirect เสมอ แม้บันทึกไม่สำเร็จ
+  </p>
+</div>
+
+<h2 id="sn-sec-13">ถามกลับได้เลย</h2>
+
+<p>
+  ถ้าคุณเจอ route ที่ไม่รู้ว่าควรเป็น member · collection · หรือ resource ใหม่ (เช่น "กดไลก์บทความ" ควรเป็น <code>POST /posts/:id/like</code> หรือ <code>resources :likes</code>) —
+  นี่คือคำถามที่ดีมากที่จะเอาไปถาม senior หรือ AI · ส่งไปพร้อมผล <code>bin/rails routes -c ชื่อแผนก</code> คนที่ช่วยจะเห็นภาพทันที
+</p>
+
+<h2 id="sn-sec-14">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>45–46</td><td><code>resources</code> 1 บรรทัด = 7 route</td><td><code>bin/rails routes</code> พิมพ์ 8 แถว เพราะ PATCH กับ PUT ไปเมนู update เดียวกัน</td><td>ไม่ต้อง — นับเมนูได้ 7 ถูกแล้ว</td></tr>
+    <tr><td>46</td><td>คอลัมน์ Gin ใช้ <code>r.PUT</code> คู่กับ PATCH ของ Rails</td><td>Rails รับทั้ง PATCH และ PUT</td><td>ไม่ต้อง</td></tr>
+    <tr><td>48</td><td><code>Post.create(params[:post])</code> → "ทุก field ที่ส่งมา เข้าไปหมด"</td><td>Rails 8.1.4 ได้ <code>ForbiddenAttributesError</code> (500) ไม่มีอะไรลงตู้ · ช่องโหว่เปิดจริงเมื่อเติม <code>permit!</code></td><td>รู้ไว้ — quiz ข้อ 2</td></tr>
+    <tr><td>48–49</td><td>"field อื่นถูกทิ้ง + log เตือน"</td><td>จริงกับ <code>require/permit</code> · ส่วน <code>params.expect</code> ทิ้งเหมือนกันแต่<strong>ไม่มี</strong> log <code>Unpermitted parameters</code></td><td>สนใจ — ถ้าเปลี่ยนเป็น expect อย่ารอดู log บรรทัดนี้</td></tr>
+    <tr><td>48</td><td>GitHub ถูกเจาะ มีนาคม 2012 (Egor Homakov)</td><td>ยืนยันได้ว่ามี issue #5228 ใน repo ของ Rails ที่เขาเปิดเรื่อง mass assignment วันที่ 1 มี.ค. 2012 · ส่วนรายละเอียดการเจาะไม่ได้ยืนยัน</td><td>ไม่ต้อง</td></tr>
+    <tr><td>50 ข้อ 2</td><td>ถามว่าโค้ด <code>Post.new(params[:post])</code> มีปัญหาอะไร</td><td>บน Rails 8.1.4 ได้ error ก่อนถึง <code>save</code> (ดูแถวหน้า 48) · ถ้าเปลี่ยนเป็น <code>permit!</code> บรรทัด <code>user_id = current_user.id</code> จะเขียนทับ user_id ได้ แต่ช่องอื่นรั่ว</td><td>รู้ไว้ — predict ในหัวข้อ mass assignment</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0116-dependent-and-helpers.html">← บทเรียน 116 · dependent · counter_cache</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0118-scaffold-reading.html">บทเรียน 118 → scaffold</a>
+</nav>
+
+<h2 id="sn-sec-15">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/routing.html#nested-resources">Rails Guides — Rails Routing from the Outside In · 2.7 Nested Resources</a> —
+      <strong>อ่าน 2.7 ต่อด้วย 2.7.1 <em>Limits to Nesting</em></strong> (ประโยค "only nest resources 1 level deep") และ 2.7.2 <em>Shallow Nesting</em></li>
+  <li><a href="https://guides.rubyonrails.org/routing.html#adding-member-routes">Rails Guides — 2.10.1 Adding Member Routes</a> —
+      <strong>อ่าน 2.10.1 กับ 2.10.2 <em>Adding Collection Routes</em></strong> (publish · drafts ของบทนี้) · แล้วย้อนไป
+      <a href="https://guides.rubyonrails.org/routing.html#singular-resources">2.5 Singular Resources</a> ที่บอกว่า <code>resource :geocoder</code> ไป <code>GeocodersController</code> (พหูพจน์ — predict ของบทนี้)</li>
+  <li><a href="https://guides.rubyonrails.org/routing.html#restricting-the-routes-created">Rails Guides — 4.8 Restricting the Routes Created</a> —
+      <strong>อ่านทั้งหัวข้อ</strong> เรื่อง <code>only:</code> / <code>except:</code> · และ
+      <a href="https://guides.rubyonrails.org/routing.html#creating-paths-and-urls-from-objects">2.9 Creating Paths and URLs from Objects</a> ที่อธิบายว่าส่ง object ตรง ๆ แล้ว Rails เดา helper ให้ (กลไกเดียวกับ <code>redirect_to @post</code>)</li>
+  <li><a href="https://guides.rubyonrails.org/action_controller_overview.html#strong-parameters">Rails Guides — Action Controller Overview · 4 Strong Parameters</a> —
+      <strong>อ่านตัวอย่างโค้ดแรกของหัวข้อ 4</strong> (บรรทัด <code>Person.create(params[:person])</code> ที่โยน ForbiddenAttributesError) แล้วต่อด้วย
+      4.1.1 <code>expect</code> และ 4.1.3 <code>permit!</code> (คำเตือนให้ใช้อย่างระวัง)</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionController/Parameters.html#method-i-expect">Rails API — ActionController::Parameters#expect</a> —
+      <strong>อ่านย่อหน้าแรก</strong> ที่บอกว่า expect ปลอดภัยกว่า require + permit ซึ่ง "could allow user triggered 500 errors" · แล้วดูตัวอย่าง <code>user: "hack"</code> (กรณีเดียวกับ <code>post=hello</code> ของบทนี้) · ถ้าวันหนึ่งฟอร์มมีช่องเป็นรายการหรือมีฟอร์มย่อยข้างใน หน้านี้มีตัวอย่างวิธีเขียน <code>expect</code> ให้รองรับ</li>
+  <li><a href="https://github.com/rails/rails/issues/5228">rails/rails issue #5228 — Mass assignment vulnerability</a> —
+      issue ที่ Egor Homakov เปิดเมื่อ 1 มี.ค. 2012 · <strong>อ่านแค่ข้อความแรก</strong> พอเห็นบรรยากาศสมัยที่ Rails ยังไม่บังคับ strong parameters</li>
+  <li><a href="https://pkg.go.dev/encoding/json#Unmarshal">Go — encoding/json · Unmarshal</a> —
+      <strong>อ่านย่อหน้าที่พูดถึงการจับคู่ key ของ JSON กับช่องของ struct</strong> (ช่องที่ struct ไม่มีถูกข้ามไป) — เหตุผลที่ DTO ใน Go กันช่องเกินได้</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

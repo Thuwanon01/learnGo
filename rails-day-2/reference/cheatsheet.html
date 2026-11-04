@@ -1,0 +1,1085 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rails Day 2 สำหรับมือใหม่ — Active Record · Migration · Validation · Query · Association แผ่นเดียวจบ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Cheat sheet · Rails · Day 2</p>
+  <h1>Rails Day 2 สำหรับมือใหม่ — Active Record · Migration · Validation · Query · Association แผ่นเดียวจบ</h1>
+  <p class="meta">คู่กับ <a href="../lessons/0106-active-record-intro.html">บทเรียน 106–119</a> ·
+    ทุกผลรันในหน้านี้ก็อปมาจากบทเรียน ซึ่งรันจริงบนเครื่องตรวจ ไม่ได้พิมพ์จากความจำ</p>
+  <p class="standfirst">
+    หน้านี้ไม่ได้ให้อ่านรวดเดียว — เปิดไว้ข้างจอ<strong>ตอนลงมือทำ</strong> แล้วกวาดตาหาแถวที่ต้องการ<br>
+    งงว่า “ของชิ้นนี้ในร้านคือใคร” → หัวข้อ <strong>1</strong> ·
+    อ่านบรรทัด SQL ใน console ไม่ออก → หัวข้อ <strong>3</strong> ·
+    จะแก้หน้าตาตาราง → หัวข้อ <strong>5</strong><br>
+    หน้าเว็บช้า / log ยาวเป็นพรืด → หัวข้อ <strong>10</strong> (N+1) ·
+    ได้ AI หรือ scaffold มาแล้วจะตรวจยังไง → หัวข้อ <strong>13</strong> ·
+    จอขึ้นสีแดง → ข้ามไปหัวข้อ <strong>14</strong> (ตาราง error) ได้เลย
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🧰 เวอร์ชันที่ใช้ตรวจ</strong> — Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17
+  (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — เป็นรุ่นแก้บั๊กในสายเดียวกัน เรื่องในหน้านี้ใช้ได้เหมือนกัน)</p>
+  <p><strong>📦 ข้อมูลตัวอย่าง</strong> — แอปบล็อก <code>wongnok_blog</code> ที่เตรียมใน<a href="../lessons/0107-console-crud.html">บท 107</a>
+  (<code>db/seeds.rb</code>): ผู้ใช้ 3 คน (สมชาย · สมหญิง · มานะ) · บทความ 6 ชิ้น (เผยแพร่แล้ว 4 · ร่าง 2) · คอมเมนต์ 7 ใบ ·
+  ลิ้นชัก <code>posts</code> มีช่อง <code>title · body · published · views · user_id</code> ·
+  <code>users</code> มี <code>name · email</code> · <code>comments</code> มี <code>body · post_id · user_id</code></p>
+  <p style="margin-bottom:0">ของในเครื่องคุณ เช่น เวลาในวงเล็บ <code>(2.2ms)</code> · เลขนำหน้าไฟล์ migration (<code>20261104…</code>) · เลข <code>0x…</code> จะไม่ตรงกับในหน้านี้ — เป็นเรื่องปกติ</p>
+</div>
+
+<h2 id="sn-sec-1">สารบัญ</h2>
+<ol class="toc" style="columns:2; font-size:0.92rem; padding-left:1.2rem">
+  <li><a href="#restaurant">ภาพร้านอาหาร — ส่วนที่ Day 2 เพิ่ม</a></li>
+  <li><a href="#big3">3 ประโยคหลักของวัน</a></li>
+  <li><a href="#crud">GORM ↔ Active Record · แปล SQL</a></li>
+  <li><a href="#console">คำสั่ง console ที่ใช้บ่อย</a></li>
+  <li><a href="#migration">migration — แก้หน้าตาตาราง</a></li>
+  <li><a href="#validation">validation — กฎตรวจแฟ้ม</a></li>
+  <li><a href="#layers">4 ชั้นป้องกัน · validation คู่ constraint</a></li>
+  <li><a href="#callbacks">callbacks · โค้ดควรอยู่ไหน</a></li>
+  <li><a href="#query">query — ใบเบิกของ</a></li>
+  <li><a href="#n-plus-one">N+1 — เดินไปตู้ 101 รอบ</a></li>
+  <li><a href="#association">association · dependent</a></li>
+  <li><a href="#rest">REST · strong params</a></li>
+  <li><a href="#scaffold">scaffold · checklist ตรวจงาน AI</a></li>
+  <li><a href="#errors">ตาราง error → แปลว่า → แก้ยังไง</a></li>
+  <li><a href="#glossary">ศัพท์ภาษาคน</a></li>
+  <li><a href="#slides">ถ้าเปิดสไลด์ดูประกอบ</a></li>
+  <li><a href="#refs">อ้างอิง</a></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="restaurant">1 · ภาพร้านอาหาร — ส่วนที่ Day 2 เพิ่ม</h2>
+
+<p>Day 1 เดินจากหน้าร้านถึงคนจัดจาน · Day 2 ลงไป<strong>ห้องเก็บของ</strong> — ตู้แฟ้ม (database) · ลิ้นชัก (ตาราง) · แฟ้มหนึ่งแผ่น (แถว) · ช่องบนแฟ้ม (คอลัมน์) ·
+Go ที่เคยเรียน = <strong>เปิดร้านเองตั้งแต่ศูนย์</strong> (GORM = ตู้ที่ซื้อมา แต่ต้องบอกขนาดลิ้นชักเองใน struct) ·
+Rails = <strong>แฟรนไชส์ที่ได้ครัวครบชุด</strong> ตู้ถูกถามเองว่ามีช่องอะไร</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Day 2</th><th>ในร้านอาหาร</th><th>หน้าตาในโค้ด / log</th><th>ใน Go/GORM คือ</th><th>บท</th></tr></thead>
+  <tbody>
+    <tr><td>Active Record</td><td>แฟ้มที่<strong>เดินเข้าลิ้นชักเองได้</strong> — คนดูแลสต็อกฝังอยู่ในแฟ้ม</td><td><code>post.save!</code></td><td>struct ไม่ save ตัวเอง ต้องยื่น <code>db.Create(&amp;p)</code></td><td>106</td></tr>
+    <tr><td>Data Mapper</td><td>แฟ้มเป็นกระดาษเปล่า มีพนักงานคลังแยกถือไปเก็บ</td><td><code>repo.save(post)</code></td><td>repository ของบท 27</td><td>106</td></tr>
+    <tr><td>SQL</td><td>ภาษาที่คนดูแลสต็อกใช้สั่งตู้ · Active Record แปลจาก Ruby ให้</td><td><code>SELECT COUNT(*) FROM "posts"</code></td><td>SQL ที่ GORM ยิงให้</td><td>106–107</td></tr>
+    <tr><td>log ของ SQL</td><td>สมุดบันทึกการเบิกของ — เดินไปตู้ 1 ครั้ง จด 1 บรรทัด</td><td><code>Post Load (2.2ms)  SELECT …</code></td><td><code>[7.862ms] [rows:1] INSERT …</code></td><td>107 · 113</td></tr>
+    <tr><td>migration</td><td>ใบสั่งช่างต่อเติม/ดัดแปลงตู้</td><td><code>db/migrate/2026…_add_subtitle_to_posts.rb</code></td><td>ไฟล์ goose <code>-- +goose Up</code></td><td>108</td></tr>
+    <tr><td><code>db/migrate/*</code></td><td>แฟ้มใบสั่งช่างทุกใบตั้งแต่วันเปิดร้าน (ประวัติ)</td><td>ไฟล์เรียงตามเลขเวลา</td><td><code>migrations/*.sql</code></td><td>108</td></tr>
+    <tr><td><code>schema.rb</code></td><td>แปลนตู้ฉบับล่าสุด (ภาพถ่ายตอนนี้)</td><td><code>db/schema.rb</code> · Rails เขียนให้เอง</td><td>ไม่มี</td><td>108</td></tr>
+    <tr><td><code>schema_migrations</code></td><td>สมุดเซ็นรับงานช่าง — ใบไหนทำไปแล้ว</td><td>ตารางในฐานข้อมูล เก็บเลข 14 หลัก</td><td>ตาราง <code>goose_db_version</code></td><td>108</td></tr>
+    <tr><td>rollback</td><td>เรียกช่างมารื้องานใบล่าสุดออก</td><td><code>bin/rails db:rollback</code></td><td><code>goose down</code></td><td>108</td></tr>
+    <tr><td>lock</td><td>ปิดลิ้นชักไว้ระหว่างช่างทำงาน ใครจะเก็บแฟ้มต้องรอ</td><td>migration ติดป้าย 200,000 แผ่น ใช้ ~15.7 วินาที</td><td>เหมือนกัน (เป็นเรื่องของ PostgreSQL)</td><td>109</td></tr>
+    <tr><td>index</td><td>ป้ายแท็บเรียงตัวอักษรในลิ้นชัก หาเจอโดยไม่ต้องไล่ทีละแผ่น</td><td><code>add_index :posts, :title</code></td><td>tag <code>uniqueIndex</code> (แบบห้ามซ้ำ)</td><td>109</td></tr>
+    <tr><td>expand → migrate → contract</td><td>ปรับปรุงร้านโดยไม่ปิดร้าน: ต่อลิ้นชักใหม่ → ย้ายแฟ้ม → รื้อลิ้นชักเก่า</td><td>3 เฟส คั่นด้วย deploy ทุกเฟส</td><td>หลักการเดียวกัน ไม่ขึ้นกับภาษา</td><td>109</td></tr>
+    <tr><td>validation</td><td>คนดูแลสต็อกตรวจแฟ้มก่อนเก็บ (“ไม่มีชื่อเรื่อง ไม่รับ”)</td><td><code>validates :title, presence: true</code></td><td><code>binding:"required"</code> ของ Gin</td><td>110</td></tr>
+    <tr><td>DB constraint</td><td>ตัวตู้ที่ใส่แฟ้มผิดแบบไม่ได้เลย — แอบเข้าหลังร้านก็ข้ามไม่ได้</td><td><code>null: false</code> · unique index · FK · CHECK</td><td><code>gorm:"unique"</code> · <code>gorm:"not null"</code></td><td>111</td></tr>
+    <tr><td>callback</td><td>ขั้นตอนอัตโนมัติก่อน/หลังเก็บแฟ้ม (ติดป้ายทุกครั้งก่อนเข้าตู้)</td><td><code>before_validation :generate_slug</code></td><td>hook <code>BeforeSave</code> ของ GORM</td><td>112</td></tr>
+    <tr><td>relation</td><td>ใบเบิกของที่ยังเขียนไม่เสร็จ — ยังไม่มีใครเดินไปตู้จนกว่าจะ “ยื่น”</td><td><code>Post.where(published: true)</code></td><td>GORM ไปตู้ตอนเจอ <code>Find</code></td><td>113</td></tr>
+    <tr><td>N+1</td><td>เดินไปตู้ 101 รอบ หยิบทีละแผ่น</td><td>log มี <code>User Load</code> เรียงยาว</td><td><code>db.First</code> อยู่ในลูป <code>for</code></td><td>114</td></tr>
+    <tr><td>includes</td><td>เขียนใบเบิกทีเดียว หยิบมาทั้งตะกร้า</td><td><code>Post.includes(:user)</code></td><td><code>db.Preload("Comments")</code></td><td>114</td></tr>
+    <tr><td>association · foreign key</td><td>ช่อง “เป็นของบทความเลขที่ …” บนใบคอมเมนต์ (ช่องอยู่บนใบลูก ไม่ใช่ใบแม่)</td><td><code>belongs_to :post</code> · ช่อง <code>comments.post_id</code></td><td>field <code>PostID uint</code> + <code>Post Post</code></td><td>115</td></tr>
+    <tr><td>dependent</td><td>ทิ้งแฟ้มบทความแล้ว ใบคอมเมนต์ที่อ้างถึงทำยังไง</td><td><code>has_many :comments, dependent: :destroy</code></td><td><code>db.Select("Comments").Delete(&amp;post)</code></td><td>116</td></tr>
+    <tr><td>strong params</td><td>พนักงานต้อนรับรับเฉพาะช่องบนแบบฟอร์ม ช่องที่แอบเขียนเพิ่มถูกตัดทิ้ง</td><td><code>params.expect(post: [:title, :body])</code></td><td>struct รับ input แยก (<code>CreatePostInput</code>)</td><td>117</td></tr>
+    <tr><td>mass assignment</td><td>ลูกค้าแอบเขียน “ฉันเป็นผู้จัดการ · ฟรี” แล้วครัวทำตามหมด</td><td><code>Post.new(params[:post].permit!)</code></td><td><code>json.Unmarshal(body, &amp;post)</code> ลง struct ที่ลง DB ตรง ๆ</td><td>117</td></tr>
+    <tr><td>scaffold</td><td>ชุดเปิดแผนกใหม่สำเร็จรูปจากแฟรนไชส์ — ใช้ได้ทันที แต่ไม่รู้กฎเฉพาะของร้านเรา (เหมือนโค้ดจาก AI)</td><td><code>bin/rails generate scaffold Category …</code></td><td>ไม่มี</td><td>118</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="big3">2 · 3 ประโยคหลักของวัน</h2>
+
+<p>ถ้าจำได้แค่สามบรรทัด จำสามบรรทัดนี้ (สไลด์หน้า 3 และ 59 · สรุปใน<a href="../lessons/0119-rails-day2-lab.html">บท 119</a>)</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ประโยค</th><th>ภาษาคน</th><th>ในร้านอาหาร</th><th>เห็นกับมือที่</th></tr></thead>
+  <tbody>
+    <tr><td>① schema เปลี่ยนได้โดยไม่ต้องดับแอป (expand → migrate → contract)</td><td>โค้ดกับตารางไม่มีวันเปลี่ยนพร้อมกันเป๊ะ · จึงเพิ่มของใหม่ก่อน ย้ายข้อมูล แล้วค่อยรื้อของเก่า</td><td>ปรับปรุงร้านโดยไม่ปิดร้าน</td><td>109 · Lab ขั้น 5 (<code>category_id</code> เริ่มแบบว่างได้ก่อน)</td></tr>
+    <tr><td>② validation ใน model ไม่ใช่การรับประกัน ต้องมี constraint ที่ DB คู่กัน</td><td>“ตรวจ” กับ “เก็บ” เป็นสองจังหวะ มีช่องว่างตรงกลาง · และมีประตูข้างที่ข้ามการตรวจได้</td><td>คนดูแลสต็อกตรวจเก่ง แต่คนเข้าทางหลังร้านเขาไม่เห็น · ตู้ที่ทำร่องไว้กันได้ทุกทาง</td><td>111 (สมัครพร้อมกันได้อีเมลซ้ำ) · Lab ขั้น 2–4</td></tr>
+    <tr><td>③ N+1 ไม่ได้อ่านจากโค้ด อ่านจาก log</td><td>ORM ซ่อน SQL เก่งจนลืมว่าทุก <code>post.user</code> คือการถาม DB · ต้องเปิด log นับ query</td><td>ดูจากใบเบิกไม่รู้ ต้องเปิดสมุดบันทึกการเบิกของ</td><td>114 (7 query → 2) · Lab ขั้น 6</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="crud">3 · GORM ↔ Active Record · แปล SQL เป็นภาษาคน</h2>
+
+<p><strong>CRUD</strong> = งานสี่อย่างกับข้อมูล: สร้าง (Create) · อ่าน (Read) · แก้ (Update) · ลบ (Delete) ·
+ทุกคำสั่งในตารางนี้ลองใน <code>bin/rails console</code> ได้ และ console จะโชว์ SQL ที่ยิงจริงให้ทุกครั้ง (บท 107)</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>อยากทำ</th><th>Go · GORM</th><th>Ruby · Active Record</th><th>SQL ที่ console โชว์ (ย่อ)</th><th>ภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td>สร้างไว้ในมือ</td><td><code>p := Post{Title: …}</code></td><td><code>post = Post.new(title: …)</code></td><td>— ไม่มี SQL</td><td>แฟ้มยังไม่เข้าลิ้นชัก · <code>id</code> เป็น <code>nil</code></td></tr>
+    <tr><td>เก็บลงตู้</td><td><code>db.Create(&amp;p)</code> + เช็ค <code>.Error</code> เอง</td><td><code>post.save</code> · <code>post.save!</code></td><td><code>INSERT INTO "posts" (…) VALUES (…) RETURNING "id"</code></td><td>ใส่แฟ้มใหม่ลงลิ้นชัก แล้วบอกเลขที่กลับมา</td></tr>
+    <tr><td>สร้าง + เก็บในบรรทัดเดียว</td><td>—</td><td><code>Post.create(…)</code> · <code>Post.create!(…)</code></td><td><code>INSERT …</code></td><td>เหมือน new แล้ว save</td></tr>
+    <tr><td>หยิบตามเลขที่</td><td><code>db.First(&amp;p, 1)</code></td><td><code>Post.find(1)</code></td><td><code>… WHERE "posts"."id" = 1 LIMIT 1</code></td><td>ขอแผ่นเลขที่ 1 เอาแผ่นเดียว</td></tr>
+    <tr><td>หยิบแผ่นแรกที่ตรงเงื่อนไข</td><td>—</td><td><code>Post.find_by(title: "ส้มตำปูปลาร้า")</code></td><td><code>… WHERE "posts"."title" = 'ส้มตำปูปลาร้า' LIMIT 1</code></td><td>เจอแผ่นแรกก็หยุด</td></tr>
+    <tr><td>หยิบทุกแผ่นที่ตรงเงื่อนไข</td><td><code>db.Where("title = ?", x).Find(&amp;list)</code></td><td><code>Post.where(title: x)</code></td><td><code>… WHERE "posts"."title" = '…'</code></td><td>ได้รายการ (อาจว่าง)</td></tr>
+    <tr><td>แผ่นแรก · สุดท้าย</td><td>—</td><td><code>Post.first</code> · <code>Post.last</code></td><td><code>ORDER BY "posts"."id" ASC LIMIT 1</code> (last = <code>DESC</code>)</td><td>เรียงตามเลขที่แล้วหยิบหัว/ท้าย</td></tr>
+    <tr><td>หยิบทุกแผ่น</td><td><code>db.Find(&amp;list)</code></td><td><code>Post.all</code></td><td><code>SELECT "posts".* FROM "posts"</code></td><td>ขอทุกช่องของทุกแผ่น</td></tr>
+    <tr><td>แก้</td><td><code>db.Model(&amp;p).Update("Title", x)</code></td><td><code>post.update(title: x)</code></td><td><code>UPDATE "posts" SET "title" = '…', "updated_at" = '…' WHERE "posts"."id" = 1</code></td><td>แก้เฉพาะช่องที่เปลี่ยน + เวลาแก้ ของแผ่นเลขที่ 1</td></tr>
+    <tr><td>ลบ</td><td><code>db.Delete(&amp;p)</code></td><td><code>post.destroy</code></td><td><code>DELETE FROM "posts" WHERE "posts"."id" = 1</code></td><td>ทิ้งแผ่นเลขที่ 1</td></tr>
+    <tr><td>นับ</td><td>—</td><td><code>Post.count</code></td><td><code>SELECT COUNT(*) FROM "posts"</code></td><td>ให้ตู้นับ ไม่ต้องหยิบแฟ้มมา</td></tr>
+    <tr><td>บอกว่ามีช่องอะไร</td><td>เขียนเองใน struct ทุกช่อง</td><td>ไม่เขียน · Rails ถามตาราง <code>posts</code> ตอนรัน</td><td>—</td><td>ช่องมาจากตาราง ไม่ใช่จากไฟล์</td></tr>
+    <tr><td>ชื่อตารางไม่ตามกฎ</td><td><code>func (Article) TableName() string { return "posts" }</code></td><td><code>self.table_name = "posts"</code></td><td>—</td><td>บอกชื่อลิ้นชักเอง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-1">หาไม่เจอ — สามคำสั่ง สามคำตอบ (ผลจริง บท 107)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>พิมพ์</th><th>ได้</th><th>ภาษาคน</th><th>ใน GORM</th></tr></thead>
+  <tbody>
+    <tr><td><code>Post.find(99)</code></td><td><code>Couldn't find Post with 'id'=99 (ActiveRecord::RecordNotFound)</code></td><td>ระเบิด · ในหน้าเว็บ Rails แปลงเป็น 404 ให้</td><td><code>First</code> คืน <code>gorm.ErrRecordNotFound</code></td></tr>
+    <tr><td><code>Post.find_by(title: "ไม่มีเรื่องนี้")</code></td><td><code>=&gt; nil</code></td><td>ตอบเงียบ ๆ ว่า “ไม่มี” · เรียก <code>.title</code> ต่อจะพัง <code>for nil</code></td><td>—</td></tr>
+    <tr><td><code>Post.where(title: "ไม่มีเรื่องนี้")</code></td><td><code>=&gt; []</code></td><td>รายการว่าง</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-2">แปล SQL ที่เห็นใน log เป็นภาษาคน (บท 106 · 107 · 113 · 114)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำใน SQL</th><th>ภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>SELECT "posts".*</code> · <code>SELECT "posts"."title"</code></td><td>ขอทุกช่องของแฟ้ม (<code>*</code> = ทุกช่อง) · ขอแค่ช่อง title</td></tr>
+    <tr><td><code>FROM "posts"</code></td><td>จากลิ้นชัก posts</td></tr>
+    <tr><td><code>WHERE …</code> · <code>AND</code></td><td>เฉพาะแผ่นที่ตรงเงื่อนไข · “และ” ต้องตรงทั้งสองข้อ</td></tr>
+    <tr><td><code>IS NULL</code> · <code>IN (1, 2, 3)</code></td><td>ช่องนี้ว่าง · ตรงกับตัวใดตัวหนึ่งในรายการ</td></tr>
+    <tr><td><code>ORDER BY … ASC / DESC</code> · <code>LIMIT 10</code></td><td>เรียงน้อยไปมาก / มากไปน้อย · เอาไม่เกิน 10 แผ่น</td></tr>
+    <tr><td><code>COUNT(*)</code> · <code>SUM(…)</code> · <code>AVG(…)</code></td><td>นับ · บวกรวม · หาค่าเฉลี่ย — ตู้คิดให้ ไม่ต้องหยิบแฟ้มมา</td></tr>
+    <tr><td><code>GROUP BY …</code> · <code>AS "ชื่อ"</code></td><td>แยกกองตามช่องนี้ก่อนนับ · ชื่อเล่นที่ Rails ตั้งให้ผล (ข้ามได้)</td></tr>
+    <tr><td><code>SELECT 1 AS one … LIMIT 1</code></td><td>“มีสักแผ่นไหม” เจอแผ่นแรกก็หยุด (ของ <code>exists?</code> · <code>uniqueness</code>)</td></tr>
+    <tr><td><code>INSERT INTO … VALUES … RETURNING "id"</code></td><td>ใส่แฟ้มใหม่ แล้วบอกเลขที่กลับมา</td></tr>
+    <tr><td><code>UPDATE … SET … WHERE …</code> · <code>DELETE FROM … WHERE …</code></td><td>แก้ · ทิ้ง ทุกแผ่นที่ตรง · <strong>ไม่มี WHERE = โดนทั้งลิ้นชัก</strong></td></tr>
+    <tr><td><code>JOIN … ON …</code> · <code>LEFT OUTER JOIN</code></td><td>เย็บแฟ้มสองลิ้นชักเป็นแถวเดียวตามเลขที่ที่ตรงกัน · LEFT OUTER = เก็บแถวฝั่งซ้ายไว้แม้หาคู่ไม่เจอ</td></tr>
+    <tr><td><code>TRANSACTION … BEGIN</code> · <code>COMMIT</code> · <code>ROLLBACK</code></td><td>เริ่มงานชุดหนึ่ง · ยืนยัน (เข้าตู้จริง) · ยกเลิกทั้งชุด</td></tr>
+    <tr><td><code>/*application='WongnokBlog'*/</code></td><td>ป้ายที่ Rails แปะบอกว่าแอปไหนส่งมา · database ไม่สนใจ · ข้ามได้</td></tr>
+    <tr><td><code>Post Create (2.7ms)</code> หน้าบรรทัด</td><td>“คนดูแลสต็อกของ Post กำลังสร้างแถว ใช้เวลา 2.7 มิลลิวินาที” · <code>CACHE …</code> = ตอบจากความจำ ไม่ได้ไปตู้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="console">4 · คำสั่ง console ที่ใช้บ่อย</h2>
+
+<p>เปิดด้วย <code>bin/rails console</code> (ครัวทดลองหลังร้าน) · ทุกบรรทัดในตารางเป็นผลจริงจากข้อมูลตัวอย่าง</p>
+
+<h3 id="sn-sub-3">ถามสถานะของแฟ้มหนึ่งแผ่น</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>พิมพ์</th><th>ได้ (ตัวอย่างจริง)</th><th>ภาษาคน</th><th>บท</th></tr></thead>
+  <tbody>
+    <tr><td><code>post.new_record?</code> · <code>post.persisted?</code></td><td><code>true</code> · <code>false</code> (ก่อน save)</td><td>ยังอยู่ในมือใช่ไหม · เข้าลิ้นชักแล้วใช่ไหม</td><td>107</td></tr>
+    <tr><td><code>post.valid?</code></td><td><code>false</code></td><td>ช่วยตรวจตามกฎหน่อย · ตรวจอย่างเดียว ไม่บันทึก</td><td>110</td></tr>
+    <tr><td><code>post.errors.full_messages</code></td><td><code>["User must exist", "Title can't be blank"]</code></td><td>ขอดูโน้ตปัญหาทั้งหมดเป็นประโยคเต็ม</td><td>110</td></tr>
+    <tr><td><code>post.errors[:title]</code></td><td><code>["can't be blank"]</code></td><td>เฉพาะโน้ตของช่อง title (ฟอร์มใช้โชว์ใต้ช่อง)</td><td>110</td></tr>
+    <tr><td><code>from.reload.views</code></td><td><code>85</code></td><td>ไปอ่านค่าล่าสุดจากตู้ใหม่ ไม่เชื่อของในมือ</td><td>111</td></tr>
+    <tr><td><code>post.user_id</code> กับ <code>post.user</code></td><td><code>1</code> (ไม่มี SQL) · <code>User Load … WHERE "users"."id" = 1</code></td><td>อ่านช่องบนแฟ้ม · <strong>เดินไปตู้</strong>หาเจ้าของ (บ่อเกิด N+1)</td><td>114</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-4">ถามตัวตาราง / model</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>พิมพ์</th><th>ได้ (ตัวอย่างจริง)</th><th>ภาษาคน</th><th>บท</th></tr></thead>
+  <tbody>
+    <tr><td><code>Post.table_name</code></td><td><code>"posts"</code></td><td>model นี้ใช้ลิ้นชักชื่ออะไร</td><td>106</td></tr>
+    <tr><td><code>Post.column_names</code></td><td><code>["id", "title", "body", "created_at", "updated_at"]</code> (ก่อนเพิ่มช่องของ Day 2)</td><td>แฟ้มมีช่องอะไรบ้าง</td><td>106</td></tr>
+    <tr><td><code>Post.columns_hash["body"].type</code></td><td><code>:text</code></td><td>ช่องนี้เป็นชนิดไหน</td><td>106</td></tr>
+    <tr><td><code>Category.columns_hash["name"].null</code></td><td><code>true</code></td><td>ช่องนี้ตู้ยอมให้ว่างไหม (true = ยังยอม)</td><td>119</td></tr>
+    <tr><td><code>Post.count</code></td><td><code>6</code></td><td>มีกี่แผ่น</td><td>107</td></tr>
+    <tr><td><code>Post.validators_on(:title)</code></td><td><code>[]</code> = ไม่มีกฎเลย</td><td>กฎที่คิดว่ามี มีอยู่จริงไหม</td><td>110</td></tr>
+    <tr><td><code>Post.where(published: true).to_sql</code></td><td>ข้อความ SQL (ไม่ยิง)</td><td>ขอดูใบเบิกก่อนยื่น</td><td>113</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-5">นิสัยใน console ที่ช่วยไม่ให้งง</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ทำ</th><th>เพราะ</th><th>บท</th></tr></thead>
+  <tbody>
+    <tr><td>ต่อท้าย <code>; nil</code> เช่น <code>q = Post.where(…); nil</code></td><td>console ยื่นใบเบิกเองเพื่อโชว์ผล (เห็น <code>/* loading for pp */ LIMIT 11</code>) · ใส่ <code>; nil</code> จะเห็นว่าจริง ๆ ยังไม่ยิง</td><td>113</td></tr>
+    <tr><td>แก้ไฟล์ model แล้วพิมพ์ <code>reload!</code> + <strong>หาตัวแปรใหม่</strong></td><td>console ยังจำ model ฉบับเก่า · ตัวแปรเก่ายังถือกฎเก่า</td><td>110 · 116</td></tr>
+    <tr><td>สร้างโฟลเดอร์ใหม่ใต้ <code>app/</code> (เช่น <code>app/services/</code>) → ปิด console แล้วเปิดใหม่</td><td><code>reload!</code> ไม่พอ · Rails จดรายชื่อโฟลเดอร์ตอนเปิดแอปเท่านั้น</td><td>112</td></tr>
+    <tr><td><code>bin/rails console --sandbox</code></td><td>ออกแล้วยกเลิกทุกอย่าง · log จะขึ้น <code>SAVEPOINT</code> แทน <code>COMMIT</code> — ไม่ได้พัง</td><td>107</td></tr>
+    <tr><td>เห็น <code>email: "[FILTERED]"</code></td><td>ไม่ใช่ error · Rails ซ่อนอีเมลตอนพิมพ์ทั้งแฟ้ม · <code>user.email</code> ยังได้ค่าจริง</td><td>107</td></tr>
+    <tr><td>ไม่อยากเปิด console: <code>bin/rails runner 'p [User.count, Post.count, Comment.count]'</code></td><td>รันบรรทัดเดียวแล้วจบ · ได้ <code>[3, 6, 7]</code></td><td>107</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="migration">5 · migration — แก้หน้าตาตาราง</h2>
+
+<p><strong>schema</strong> = หน้าตาของตู้ (มีลิ้นชักอะไร ช่องอะไร ชนิดไหน) ไม่รวมแฟ้มข้างใน ·
+<strong>migration</strong> = ใบสั่งช่างหนึ่งใบ = เปลี่ยน schema หนึ่งครั้ง · เก็บใน git เหมือนโค้ด ทุกเครื่องจึงได้ตู้หน้าตาเดียวกัน (บท 108)</p>
+
+<h3 id="sn-sub-6">ของ 3 ชิ้นที่ทำงานคู่กัน — เทียบ goose (บท 31)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ของ</th><th>ในร้านอาหาร</th><th>Rails</th><th>goose</th></tr></thead>
+  <tbody>
+    <tr><td>ใบสั่งทุกใบ (ประวัติ)</td><td>แฟ้มใบสั่งช่างตั้งแต่วันเปิดร้าน</td><td><code>db/migrate/*.rb</code></td><td><code>migrations/*.sql</code></td></tr>
+    <tr><td>แปลนฉบับล่าสุด (ภาพถ่าย)</td><td>แปลนตู้ตอนนี้</td><td><code>db/schema.rb</code> — Rails เขียนให้หลัง migrate · <strong>ห้ามแก้มือ แต่ต้อง commit</strong></td><td>ไม่มี</td></tr>
+    <tr><td>สมุดว่าใบไหนทำแล้ว</td><td>สมุดเซ็นรับงานช่าง</td><td>ตาราง <code>schema_migrations</code> (เลข 14 หลักหน้าชื่อไฟล์)</td><td>ตาราง <code>goose_db_version</code></td></tr>
+    <tr><td>สร้างใบใหม่</td><td>—</td><td><code>bin/rails generate migration AddXToY</code></td><td><code>goose create add_x sql</code></td></tr>
+    <tr><td>ขาไป · ขากลับ</td><td>ต่อเติม · รื้อ</td><td><code>def change</code> (Rails เดาขากลับให้) หรือ <code>def up</code> / <code>def down</code></td><td><code>-- +goose Up</code> / <code>Down</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-7">คำสั่ง <code>bin/rails db:*</code> — อันไหนห้ามแตะบนร้านจริง (production = เว็บจริงที่ลูกค้าใช้อยู่)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ทำอะไร (ภาษาคน)</th><th>เครื่องเรา</th><th>production</th></tr></thead>
+  <tbody>
+    <tr><td><code>bin/rails db:migrate</code></td><td>ทำทุกใบที่ยัง <code>down</code> ตามลำดับ แล้วเขียน <code>schema.rb</code> ใหม่</td><td>ใช้บ่อย</td><td>ใช้ตอน deploy ตามขั้นตอนทีม</td></tr>
+    <tr><td><code>bin/rails db:migrate:status</code></td><td>ดูว่าใบไหน <code>up</code> (ทำแล้ว) / <code>down</code> (ยัง) · แค่ดู</td><td>ใช้บ่อย</td><td>ปลอดภัย</td></tr>
+    <tr><td><code>bin/rails db:rollback</code> · <code>STEP=3</code></td><td>รื้อใบล่าสุด 1 ใบ · 3 ใบ</td><td>ใช้ได้</td><td>อันตราย — ข้อมูลในช่องที่รื้อหายจริง</td></tr>
+    <tr><td><code>bin/rails db:migrate:redo</code></td><td>รื้อใบล่าสุดแล้วทำใหม่ — ลองว่าย้อนได้จริง</td><td>ก่อนเปิด PR</td><td>—</td></tr>
+    <tr><td><code>bin/rails db:prepare</code></td><td>ยังไม่มี DB → สร้าง + โหลด <code>schema.rb</code> + ใส่ seeds · มีแล้ว → ทำใบที่ down</td><td>เพิ่ง clone โปรเจกต์</td><td>บางทีมให้ระบบ deploy เรียก</td></tr>
+    <tr><td><code>bin/rails db:seed</code></td><td>รัน <code>db/seeds.rb</code> ใส่ข้อมูลตัวอย่าง · <strong>สั่งซ้ำ = ข้อมูลเบิ้ล</strong> (ได้ 6 users จาก 3)</td><td>ระวังเบิ้ล</td><td>แล้วแต่ทีม</td></tr>
+    <tr><td><code>bin/rails db:reset</code></td><td>ลบ DB ทิ้ง → สร้างใหม่จาก <code>schema.rb</code> → ใส่ seeds</td><td>อยากเริ่มใหม่สะอาด ๆ</td><td><strong>ห้ามเด็ดขาด</strong></td></tr>
+    <tr><td><code>bin/rails db:migrate:reset</code></td><td>ลบ DB ทิ้ง → สร้างใหม่ → ไล่ทำทุกใบตั้งแต่ใบแรก · ไม่ใส่ seeds</td><td>เช็คว่าใบทุกใบยังต่อกันได้</td><td><strong>ห้ามเด็ดขาด</strong></td></tr>
+    <tr><td><code>bin/rails destroy migration AddXToY</code></td><td>ลบไฟล์ใบสั่ง · <strong>ต้อง rollback ก่อน</strong></td><td>ใช้ได้</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-8">คลังคำที่เขียนใน <code>def change</code></h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ภาษาคน · ในร้านอาหาร</th><th>ตัวอย่าง</th><th>บท</th></tr></thead>
+  <tbody>
+    <tr><td><code>create_table</code> · <code>drop_table</code></td><td>ต่อลิ้นชักใหม่ · รื้อลิ้นชักทิ้งพร้อมแฟ้มข้างใน</td><td><code>create_table :tags do |t| … end</code></td><td>108</td></tr>
+    <tr><td><code>add_column</code> · <code>remove_column</code></td><td>เพิ่ม · ลบช่องบนแฟ้ม (ลบ = ของในช่องหายด้วย)</td><td><code>add_column :posts, :subtitle, :string</code></td><td>108</td></tr>
+    <tr><td><code>rename_column</code></td><td>เปลี่ยนชื่อช่อง ข้อมูลยังอยู่ (แต่แอปที่รันอยู่พัง — ใช้ expand/contract)</td><td><code>rename_column :posts, :body, :content</code></td><td>108 · 109</td></tr>
+    <tr><td><code>add_index</code> (+ <code>unique: true</code>)</td><td>ติดป้ายแท็บ · แบบห้ามซ้ำ</td><td><code>add_index :users, :email, unique: true</code></td><td>109 · 111</td></tr>
+    <tr><td><code>add_reference</code></td><td>เพิ่มช่อง “เป็นของ … เลขที่” + index + กฎ FK</td><td><code>add_reference :posts, :category, null: true, foreign_key: true</code></td><td>115 · 119</td></tr>
+    <tr><td><code>change_column_null</code></td><td>ตั้งกฎ “ช่องนี้ห้ามว่าง” ทีหลัง · แฟ้มเก่าต้องไม่มีช่องว่างค้าง</td><td><code>change_column_null :users, :name, false</code></td><td>111</td></tr>
+    <tr><td><code>add_check_constraint</code></td><td>ตั้งเงื่อนไขของเราเองที่ตัวตู้</td><td><code>add_check_constraint :posts, "views &gt;= 0", name: "views_not_negative"</code></td><td>111</td></tr>
+    <tr><td><code>remove_foreign_key</code> + <code>add_foreign_key … on_delete: :cascade</code></td><td>เปลี่ยนกฎ FK ให้ตู้ทิ้งลูกตามแม่</td><td><code>add_foreign_key :comments, :posts, on_delete: :cascade</code></td><td>116</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-9">ตั้งชื่อใบให้ถูกแบบ แล้ว generator เขียนเนื้อให้ (บท 108 · ผลจริง)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สั่ง <code>bin/rails generate migration …</code></th><th>ได้ใน change</th></tr></thead>
+  <tbody>
+    <tr><td><code>AddSubtitleToPosts subtitle:string</code></td><td><code>add_column :posts, :subtitle, :string</code></td></tr>
+    <tr><td><code>RemoveSubtitleFromPosts subtitle:string</code></td><td><code>remove_column :posts, :subtitle, :string</code></td></tr>
+    <tr><td><code>CreateTags name:string</code></td><td><code>create_table :tags do |t|</code> + <code>t.string :name</code> + <code>t.timestamps</code></td></tr>
+    <tr><td><code>AddSlugToPosts slug:string:index</code></td><td><code>add_column</code> + <code>add_index :posts, :slug</code></td></tr>
+    <tr><td><code>AddCategoryToPosts category:references</code></td><td><code>add_reference :posts, :category, null: false, foreign_key: true</code></td></tr>
+    <tr><td><code>AddReadingMinutesPosts reading_minutes:integer</code> (ลืมคำว่า To)</td><td>⚠️ ว่างเปล่า — <code>def change</code> กับ <code>end</code> เฉย ๆ · ไม่มี error เตือน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-10">จุดพลาดที่เจอบ่อย</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>พลาดแบบนี้</th><th>ผลจริง</th><th>ทำแทน</th></tr></thead>
+  <tbody>
+    <tr><td>แก้ไฟล์ migration ที่รันไปแล้ว</td><td>เครื่องเราไม่มีอะไรเกิด · เครื่องเพื่อนได้ตู้ต่างจากเรา · rollback พัง <code>No indexes found on posts with the options provided.</code></td><td><strong>เขียนใบใหม่</strong> · หรือ rollback ก่อนแล้วค่อยแก้</td></tr>
+    <tr><td><code>destroy migration</code> ก่อน <code>rollback</code></td><td>status ขึ้น <code>NO FILE</code> · rollback ได้ <code>ActiveRecord::UnknownMigrationVersionError</code></td><td>ลำดับต้องเป็น rollback → destroy</td></tr>
+    <tr><td>rollback ใบที่เพิ่มคอลัมน์ แล้ว migrate กลับ</td><td>คอลัมน์กลับมา แต่ค่าทุกแผ่นเป็น <code>nil</code></td><td>บน production ถือว่าข้อมูลหาย · อย่าใช้ rollback แทนปุ่ม undo</td></tr>
+    <tr><td>สั่ง <code>db:seed</code> ซ้ำ</td><td>ได้ <code>[6, 12, 14]</code> แทน <code>[3, 6, 7]</code></td><td><code>db:reset</code> ในเครื่องตัวเอง</td></tr>
+    <tr><td>ตั้ง NOT NULL / unique ทั้งที่ตู้มีแฟ้มเสียค้าง</td><td><code>contains null values</code> · <code>could not create unique index … is duplicated</code></td><td>หาแฟ้มเสีย → เก็บกวาด/เติมค่า (backfill) → migrate ใหม่</td></tr>
+    <tr><td>ใช้ <code>execute "UPDATE …"</code> ใน <code>change</code></td><td>rollback ได้ <code>This migration uses execute, which is not automatically reversible.</code></td><td>เขียน <code>up</code>/<code>down</code> · ย้อนไม่ได้จริงก็ <code>raise ActiveRecord::IrreversibleMigration, "เหตุผล"</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-11">ท่าอันตราย vs ท่าปลอดภัย — ถามทุกครั้ง: “แตะกี่แผ่น และระหว่างนั้นใครต้องรอ” (บท 109 · วัดบน 200,000 แถว)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>อยากทำ</th><th>ท่าตรง ๆ</th><th>แตะกี่แผ่น · ใครรอ</th><th>ท่าที่ปลอดภัยกว่า</th></tr></thead>
+  <tbody>
+    <tr><td>สร้าง index</td><td><code>add_index</code></td><td>อ่านทุกแผ่นมาเรียง · ห้ามเขียนจนเสร็จ (~15.7 วินาที)</td><td><code>algorithm: :concurrently</code> + <code>disable_ddl_transaction!</code></td></tr>
+    <tr><td>เปลี่ยนชนิดข้อมูล</td><td><code>change_column :posts, :views, :bigint</code></td><td>เขียนใหม่ทุกแผ่น · ห้ามทั้งอ่านและเขียน (~0.16 วินาที · ถ้ามีป้ายแท็บติดอยู่ ต้องทำป้ายใหม่ด้วย = ~16 วินาที)</td><td>คอลัมน์ใหม่ + ย้ายข้อมูล + สลับ (expand/contract)</td></tr>
+    <tr><td>ตั้งกฎห้ามว่าง</td><td><code>change_column_null :posts, :title, false</code></td><td>อ่านทุกแผ่นเพื่อตรวจ · ปิดลิ้นชักระหว่างตรวจ</td><td>มีท่าหลายขั้น (บทเรียนไม่สอน) — strong_migrations บอกให้ได้</td></tr>
+    <tr><td>เพิ่มคอลัมน์พร้อมค่าเริ่มต้น</td><td><code>add_column … default: "draft"</code></td><td>Postgres รุ่นใหม่ไม่แตะแผ่นเดิม (ไม่ถึง 0.05 วินาที)</td><td>ปลอดภัยอยู่แล้ว</td></tr>
+    <tr><td>ลบคอลัมน์</td><td><code>remove_column :users, :name</code></td><td>เร็วมาก แต่แอปที่ยังรันโค้ดเก่าพัง (จำแปลนตู้เก่า)</td><td>ใส่ <code>self.ignored_columns += ["name"]</code> + deploy ก่อน แล้วค่อยลบ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<pre><code># ติดป้ายแท็บแบบไม่ปิดลิ้นชัก (บท 109)
+class AddIndexToPostsTitle &lt; ActiveRecord::Migration[8.1]
+  disable_ddl_transaction!   # ไฟล์นี้ไม่ต้องห่อด้วย transaction
+  def change
+    add_index :posts, :title, algorithm: :concurrently
+  end
+end</code></pre>
+<p><code>disable_ddl_transaction!</code> อยู่ใน class แต่นอก <code>def change</code> · ลืมบรรทัดนี้ = พัง <code>CREATE INDEX CONCURRENTLY cannot run inside a transaction block</code> ·
+ไฟล์ที่ปิด transaction แล้ว พังกลางทางจะไม่ย้อนคืนให้ → ใส่งานเรื่องเดียวต่อไฟล์</p>
+
+<h3 id="sn-sub-12">expand → migrate → contract — เปลี่ยนชื่อคอลัมน์ <code>users.email</code> → <code>email_address</code> โดยไม่ปิดร้าน (เฉลยภารกิจบท 109)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เฟส</th><th>ตู้ (migration)</th><th>โค้ด</th><th>deploy</th></tr></thead>
+  <tbody>
+    <tr><td>1 · expand (ต่อลิ้นชักใหม่)</td><td><code>add_column :users, :email_address, :string</code> — ไม่แตะแถวเดิม เร็ว</td><td>เขียนลงทั้งสองช่อง (dual write) · ยังอ่านจาก <code>email</code></td><td>ครั้งที่ 1</td></tr>
+    <tr><td>2 · migrate (ย้ายแฟ้ม)</td><td>ไม่มี migration · เติมค่าย้อนหลัง (backfill) ในงานแยก ทีละกอง</td><td>เปลี่ยนไปอ่าน <code>email_address</code> · ยังเขียนทั้งสองช่อง</td><td>ครั้งที่ 2</td></tr>
+    <tr><td>3 · contract (รื้อของเก่า)</td><td>(ยังไม่ลบ)</td><td>เลิกเขียน <code>email</code> · ใส่ <code>self.ignored_columns += ["email"]</code></td><td>ครั้งที่ 3</td></tr>
+    <tr><td>3 · contract (ต่อ)</td><td><code>remove_column :users, :email, :string</code></td><td>—</td><td>ครั้งที่ 4 หรือรวมรอบถัดไป</td></tr>
+  </tbody>
+</table>
+</div>
+<pre><code># backfill ทีละ 1,000 แผ่น — รันจาก runner / งานแยก ไม่ใช่ในไฟล์ migration
+User.where(email_address: nil).in_batches(of: 1000) { |b| b.update_all("email_address = email") }</code></pre>
+<p>บรรทัดนี้: หาแผ่นที่ช่องใหม่ยังว่าง → แบ่งกองละ 1,000 (<code>in_batches</code>) → แต่ละกองสั่ง UPDATE ประโยคเดียว “คัดลอกค่าจาก email ไปใส่ email_address” ·
+ทำทีละกองเพื่อไม่ให้ปิดลิ้นชักนานรวดเดียว</p>
+
+<!-- ============================================================ -->
+<h2 id="validation">6 · validation — กฎตรวจแฟ้มก่อนเก็บ (บท 110)</h2>
+
+<p>ไม่ผ่านกฎ = ไม่เขียนลงตู้ + มีโน้ตปัญหาติดแฟ้มไว้ใน <code>errors</code> · ตรวจทุกครั้งที่ save/create ไม่ว่าเรียกจากหน้าเว็บ console หรือ seeds ·
+ใน Go คือ <code>binding:"required"</code> ของ Gin — แต่ Gin ตรวจตอน handler อ่าน body ส่วน Rails ตรวจที่ model</p>
+
+<h3 id="sn-sub-13">กฎสำเร็จรูป 5 แบบ — ข้อความจริงที่ได้</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กฎ</th><th>ตรวจอะไร (ภาษาคน)</th><th>ข้อความที่ได้จริง</th></tr></thead>
+  <tbody>
+    <tr><td><code>validates :title, presence: true</code></td><td>ห้ามว่าง (ช่องว่างล้วนก็นับว่าว่าง)</td><td><code>Title can't be blank</code></td></tr>
+    <tr><td><code>length: { in: 5..120 }</code> · <code>{ maximum: 120 }</code></td><td>ยาว 5 ถึง 120 ตัวอักษร (<code>5..120</code> = ช่วงตัวเลข)</td><td><code>Title is too short (minimum is 5 characters)</code></td></tr>
+    <tr><td><code>numericality: { greater_than_or_equal_to: 0 }</code></td><td>ต้องเป็นตัวเลข และ ≥ 0 · ของจากฟอร์มเป็นข้อความเสมอ จึงโดนจับได้จริง</td><td><code>Views must be greater than or equal to 0</code> · <code>Views is not a number</code></td></tr>
+    <tr><td><code>inclusion: { in: [true, false] }</code></td><td>ค่าต้องอยู่ในรายการนี้เท่านั้น (เหมาะกับสถานะ)</td><td><code>Published is not included in the list</code></td></tr>
+    <tr><td><code>format: { with: /\A[^@\s]+@[^@\s]+\z/ }</code></td><td>หน้าตาข้อความต้องตรงแบบ (regex) · <code>\A</code> <code>\z</code> = ต้น/ท้ายข้อความทั้งก้อน</td><td><code>Email is invalid</code></td></tr>
+    <tr><td><code>uniqueness: true</code></td><td>ห้ามซ้ำกับแผ่นอื่น — <strong>แต่ยังซ้ำได้ถ้าสองคนกดพร้อมกัน</strong> (หัวข้อ 7)</td><td><code>Email has already been taken</code></td></tr>
+    <tr><td><code>belongs_to :user</code> (ได้กฎฟรี)</td><td>ต้องมีเจ้าของ</td><td><code>User must exist</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-14">กฎของร้านเราเอง — <code>validate</code> (ไม่มี s) + <code>errors.add</code></h3>
+<pre><code># app/models/post.rb
+class Post &lt; ApplicationRecord
+  belongs_to :user
+  has_many :comments
+  validates :title, presence: true, length: { maximum: 120 }
+  validates :views, numericality: { greater_than_or_equal_to: 0 }
+  validate :body_needed_to_publish
+  private
+  def body_needed_to_publish
+    return unless published
+    if body.blank?
+      errors.add(:body, "ต้องมีเนื้อหาก่อนเผยแพร่")
+    end
+  end
+end</code></pre>
+<p><code>validate :ชื่อ</code> = “ตอนตรวจ ให้เรียก method นี้ด้วย” · <code>return unless published</code> = “ถ้าไม่ได้จะเผยแพร่ ออกเลย” ·
+<code>errors.add(:body, "…")</code> = แปะโน้ตที่ช่อง body เอง แค่นี้แฟ้มก็ไม่ผ่าน · ผลจริง: <code>["Body ต้องมีเนื้อหาก่อนเผยแพร่"]</code></p>
+
+<h3 id="sn-sub-15">กับดักตัว s ตัวเดียว — <code>validates</code> กับ <code>validate</code></h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียนว่า</th><th>ผลจริง</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>validate :title, presence: true</code> (ลืม s)</td><td><code>Unknown key: :presence. … Perhaps you meant to call `validates` instead of `validate`? (ArgumentError)</code></td><td>Rails จับได้และใบ้ให้ · โหลด model ไม่ได้ หน้าเว็บ 500</td></tr>
+    <tr><td><code>validates :title, presense: true</code> (สะกดผิด)</td><td><code>Unknown validator: 'PresenseValidator' (ArgumentError)</code></td><td>ดูชื่อในวงเล็บแล้วเห็นตัวสะกดผิด</td></tr>
+    <tr><td><code>validate :title</code> (ลืม s และชื่อกฎ)</td><td>⚠️ เงียบสนิท · ชื่อเรื่องว่างผ่านฉลุย</td><td>Rails เรียก method <code>title</code> เป็นกฎ แต่มันไม่เคยแปะโน้ต · เช็คด้วย <code>Post.validators_on(:title)</code> ได้ <code>[]</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-16">กฎ <code>!</code> = “ถ้าทำไม่ได้ ให้ระเบิด”</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>ไม่มี ! (<code>save</code> · <code>create</code> · <code>update</code> · <code>find_by</code> · <code>destroy</code>)</th><th>มี ! (<code>save!</code> · <code>create!</code> · <code>update!</code> · <code>find_by!</code> · <code>destroy!</code>)</th></tr></thead>
+  <tbody>
+    <tr><td>ถ้าไม่ได้</td><td>คืน <code>false</code> / แฟ้มที่ยังไม่เข้าตู้ / <code>nil</code></td><td>โยน error: <code>RecordInvalid</code> · <code>RecordNotFound</code> · <code>RecordNotDestroyed</code></td></tr>
+    <tr><td>ข้อความจริง</td><td><code>p.save</code> → <code>=&gt; false</code></td><td><code>Validation failed: Title can't be blank (ActiveRecord::RecordInvalid)</code></td></tr>
+    <tr><td>ใช้เมื่อ</td><td>ข้อมูลจากฟอร์มที่ผู้ใช้กรอก · ผิดเป็นเรื่องปกติ · อยากโชว์ error บนหน้าจอ</td><td>seeds · สคริปต์ · ใน transaction · ข้อมูลที่เราเขียนเอง ถ้าผิดคือบั๊ก</td></tr>
+    <tr><td>ใน GORM</td><td>มีแบบเดียว: <code>db.Create(&amp;post)</code> คืน <code>.Error</code> ให้เช็คเอง</td><td>ไม่มีแบบนี้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-17">ท่ามาตรฐานใน controller</h3>
+<pre><code>def create
+  @post = Post.new(post_params)
+  @post.user = User.first   # ชั่วคราว: ยังไม่มีระบบ login
+  if @post.save
+    redirect_to @post, notice: "สร้างบทความแล้ว"
+  else
+    render :new, status: :unprocessable_content
+  end
+end</code></pre>
+<p>ผ่าน → พาไปหน้าบทความ · ไม่ผ่าน → โชว์ฟอร์มเดิมพร้อมของที่ผู้ใช้พิมพ์และ <code>@post.errors</code> · ตอบ <code>422</code> ·
+ใช้ชื่อ <code>:unprocessable_content</code> (ชื่อเก่า <code>:unprocessable_entity</code> ยังได้ 422 แต่ Rack — ชิ้นส่วนที่ Rails ใช้คุยกับ Puma — ประกาศเลิกใช้แล้ว)</p>
+
+<!-- ============================================================ -->
+<h2 id="layers">7 · 4 ชั้นป้องกัน · validation ต้องมี constraint คู่กัน (บท 111)</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ด่าน</th><th>ในร้านอาหาร</th><th>ในโค้ด</th><th>กันได้</th><th>ข้ามได้ด้วย</th></tr></thead>
+  <tbody>
+    <tr><td>① HTML</td><td>ป้ายหน้าร้าน “กรุณากรอกชื่อ”</td><td><code>required: true</code> · <code>type="email"</code></td><td>เตือนเร็วในเบราว์เซอร์</td><td><code>curl</code> ที่แนบบัตรคิว CSRF มาด้วย (ได้ 422 จากด่าน ③ แทน)</td></tr>
+    <tr><td>② strong params</td><td>พนักงานต้อนรับรับเฉพาะช่องบนแบบฟอร์ม</td><td><code>params.expect(user: [:name, :email])</code></td><td>ช่องที่แอบเขียนเพิ่ม (หัวข้อ 12)</td><td>ไม่ได้ดูว่าค่าในช่องถูกไหม</td></tr>
+    <tr><td>③ validation</td><td>คนดูแลสต็อกตรวจแฟ้ม บอกเหตุผลสุภาพ</td><td><code>validates …</code></td><td>99% ของเวลา · ข้อความภาษาคน</td><td>ประตูข้าง (ตารางล่าง) · สองคนกดพร้อมกัน</td></tr>
+    <tr><td>④ DB constraint</td><td>ตัวตู้ที่ใส่แฟ้มผิดแบบไม่ได้เลย</td><td><code>null: false</code> · unique index · FK · CHECK</td><td>รับประกันจริง ทุกทาง</td><td>ไม่มี · แต่พูดภาษาเครื่อง (<code>PG::UniqueViolation</code>) ลูกค้าอ่านไม่รู้เรื่อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-18">คู่ validation ↔ constraint — ทุกกฎใน model ควรมีคู่ที่ตู้</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กฎที่อยากได้</th><th>ด่าน ③ ใน model</th><th>ด่าน ④ ใน migration</th><th>ตู้ปฏิเสธแล้วได้ error</th><th>ใน GORM</th></tr></thead>
+  <tbody>
+    <tr><td>ห้ามว่าง</td><td><code>validates :name, presence: true</code></td><td><code>null: false</code> · <code>change_column_null</code></td><td><code>ActiveRecord::NotNullViolation</code></td><td><code>gorm:"not null"</code></td></tr>
+    <tr><td>ห้ามซ้ำ</td><td><code>validates :email, uniqueness: true</code></td><td><code>add_index … unique: true</code></td><td><code>ActiveRecord::RecordNotUnique</code></td><td><code>gorm:"unique"</code> · <code>uniqueIndex</code></td></tr>
+    <tr><td>ต้องมีเจ้าของจริง</td><td><code>belongs_to :post</code> (ตรวจให้เอง)</td><td><code>foreign_key: true</code></td><td><code>ActiveRecord::InvalidForeignKey</code></td><td>—</td></tr>
+    <tr><td>ตัวเลขห้ามติดลบ</td><td><code>validates :views, numericality: { greater_than_or_equal_to: 0 }</code></td><td><code>add_check_constraint</code></td><td><code>ActiveRecord::CheckViolation</code></td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+<p>⚠️ <code>''</code> (ข้อความว่าง) ไม่ใช่ NULL — ตู้ที่มี <code>null: false</code> ยังรับ <code>''</code> ได้ · ต้องมี <code>presence</code> ใน model กันอีกชั้น (บท 119)</p>
+
+<h3 id="sn-sub-19">ทำไม <code>uniqueness: true</code> อย่างเดียวกันอีเมลซ้ำไม่ได้</h3>
+<p>กฎนี้ทำสองจังหวะ: ถามตู้ก่อน (<code>User Exists? … SELECT 1 AS one … LIMIT 1</code>) แล้วค่อยเก็บ — เรียกว่า <em>check-then-act</em> ·
+ถ้าสองคนสมัครพร้อมกัน ทั้งคู่ถามตอนที่ยังไม่มีใคร → ทั้งคู่ผ่าน (<em>race condition</em>) · ผลจริงในบท:
+<code>B: save ได้ true</code> · <code>A: save ได้ true</code> → อีเมลเดียวกันสองแถว ·
+พอเติม unique index แล้วแข่งใหม่: คนที่ช้ากว่าได้ <code>PG::UniqueViolation … (ActiveRecord::RecordNotUnique)</code> เหลือแถวเดียว</p>
+
+<pre><code>def create
+  @user = User.new(user_params)
+  if @user.save
+    redirect_to @user
+  else
+    render :new, status: :unprocessable_content     # 99%: validation จับได้
+  end
+rescue ActiveRecord::RecordNotUnique
+  @user.errors.add(:email, "ถูกใช้ไปแล้ว")             # 1%: แพ้การแข่ง ตู้ปฏิเสธ
+  render :new, status: :unprocessable_content
+end</code></pre>
+<p>ครบชุดต้องมีสามอย่าง: unique index (รับประกัน) + <code>uniqueness</code> (ข้อความภาษาคน) + <code>rescue</code> (ไม่ให้คนแพ้แข่งเห็นหน้า error)</p>
+
+<h3 id="sn-sub-20">ประตูข้าง — คำสั่งที่เก็บลงตู้โดย<strong>ไม่ตรวจ</strong> validation</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ทำอะไร</th><th>เจอที่ไหนบ่อย</th></tr></thead>
+  <tbody>
+    <tr><td><code>save(validate: false)</code></td><td>เก็บโดยไม่ตรวจ</td><td>สคริปต์แก้ข้อมูล · โค้ดที่ AI เขียนให้ “ผ่าน” ไว้ก่อน</td></tr>
+    <tr><td><code>update_column</code> · <code>update_columns</code></td><td>แก้ช่องตรง ๆ</td><td>แก้ทีละแถวใน console</td></tr>
+    <tr><td><code>update_all</code></td><td>แก้หลายแถวด้วย UPDATE ประโยคเดียว (ข้าม callback ด้วย)</td><td>ล้าง/เติมข้อมูลทั้งตาราง</td></tr>
+    <tr><td><code>insert_all</code> · <code>upsert_all</code></td><td>ใส่หลายแถวทีเดียว</td><td>นำเข้าข้อมูลจากไฟล์</td></tr>
+    <tr><td>SQL ตรง ๆ</td><td>ไม่ผ่าน Rails เลย</td><td>psql · แอปอื่นที่ต่อ DB เดียวกัน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-21">transaction — ทำทั้งหมด หรือไม่ทำเลย (โอนยอดวิว 200 ระหว่างสองบทความ)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ใน <code>ActiveRecord::Base.transaction do … end</code> ใช้</th><th>log จริง</th><th>ผลในตู้</th></tr></thead>
+  <tbody>
+    <tr><td><code>update</code> (ไม่มี !)</td><td>UPDATE ใบแรก → <code>COMMIT</code> → <code>=&gt; false</code></td><td>❌ ใบแรกได้ +200 (540) ใบที่สองไม่ลด (85) — ข้อมูลเพี้ยนครึ่งเดียว</td></tr>
+    <tr><td><code>update!</code> (มี !)</td><td>UPDATE ใบแรก → <code>ROLLBACK</code> → <code>RecordInvalid</code></td><td>✅ ย้อนทั้งชุด กลับเป็น 340 กับ 85</td></tr>
+  </tbody>
+</table>
+</div>
+<p>จำ: <strong>ใน transaction ใช้ตัว !</strong> · มันต้องระเบิดถึงจะสั่งยกเลิกทั้งชุดได้ · อยากยกเลิกเองโดยไม่ระเบิด: <code>raise ActiveRecord::Rollback</code> (บท 112)</p>
+
+<!-- ============================================================ -->
+<h2 id="callbacks">8 · callbacks · business logic ควรอยู่ไหน (บท 112)</h2>
+
+<p>callback = method ที่ Rails เรียกให้เองตอนแฟ้มถูกสร้าง · บันทึก · ลบ — ประกาศครั้งเดียว ใช้ทุกครั้ง ·
+ใน GORM เรียกว่า <em>hook</em> (<code>func (p *Post) BeforeSave(tx *gorm.DB) error</code> — ต้องสะกดชื่อตรงเป๊ะ)</p>
+
+<pre><code>สั่ง post.save / Post.create / post.update
+ 1  before_validation   ← เตรียมของก่อนตรวจ (สร้าง slug ทำตรงนี้)
+        ··· ตรวจกฎ validation ···
+ 2  after_validation
+ 3  before_save         ← ทั้งตอนสร้างใหม่ และตอนแก้ของเดิม
+ 4  before_create       ← เฉพาะแฟ้มใหม่
+   ═══ INSERT หรือ UPDATE ลงตู้ ═══
+ 5  after_create        ← เฉพาะแฟ้มใหม่
+ 6  after_save
+   ═══ COMMIT — ตู้ยืนยันแล้วจริง ═══
+ 7  after_commit        ← ของที่ออกไปนอกร้าน (อีเมล · แจ้งเตือน) ทำตรงนี้</code></pre>
+<p>ลำดับนี้ยืนยันด้วยการให้ callback ทุกตัว <code>puts</code> ชื่อตัวเอง — บรรทัด 1–4 ขึ้นก่อน <code>INSERT</code> · 5–6 ระหว่าง <code>INSERT</code> กับ <code>COMMIT</code> · 7 หลัง <code>COMMIT</code></p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>ตัวอย่าง</th><th>ทำไม</th></tr></thead>
+  <tbody>
+    <tr><td>✅ ใช้ได้สบาย</td><td>สร้าง slug · ทำอีเมลเป็นตัวเล็ก</td><td>เตรียมข้อมูลบนแฟ้มตัวเอง · ไม่ออกไปนอกตู้</td></tr>
+    <tr><td>⚠️ เริ่มเจ็บ</td><td>ยิง API ภายนอก / ส่งอีเมลใน <code>after_save</code></td><td>ช้า · ระบบนอกล่มแล้วบันทึกพังตาม · rollback ย้อนอีเมลที่ส่งไปแล้วไม่ได้</td></tr>
+    <tr><td>⚠️ เริ่มเจ็บ</td><td>callback ไปแก้ model อื่นที่มี callback ต่ออีก</td><td>โดมิโน ไล่บั๊กยากมาก</td></tr>
+    <tr><td>⚠️ เริ่มเจ็บ</td><td>save ทีเดียวมีของเกิด 8 อย่าง</td><td>อ่าน controller เห็นแค่ <code>post.save</code> ไม่มีใครรู้ว่าเกิดอะไรบ้าง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-22">กับดักที่พังเงียบ</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียน</th><th>ผลจริง</th><th>แก้</th></tr></thead>
+  <tbody>
+    <tr><td><code>slug ||= title.to_s.parameterize</code> (ลืม <code>self.</code>)</td><td>slug เป็น <code>nil</code> ไม่มี error · Ruby สร้างตัวแปร local แทน</td><td><code>self.slug ||= …</code> · เรียก setter (method ที่ลงท้าย <code>=</code>) ใน class ต้องมี <code>self.</code> เสมอ</td></tr>
+    <tr><td>ชื่อเรื่องภาษาไทย + <code>parameterize</code> (method ที่แปลงข้อความเป็นแบบใส่ URL ได้)</td><td><code>"ผัดไทยกุ้งสด"</code> ได้ slug <code>""</code> · <code>"ต้มยำ Tom Yum"</code> ได้ <code>"tom-yum"</code></td><td>ตัวไทยหายหมด · เว็บไทยต้องเลือกวิธีอื่น (เช่น ใช้เลข id)</td></tr>
+    <tr><td><code>self.slug ||= …</code> กับฟอร์มที่ส่งช่องว่าง</td><td>ฟอร์มส่ง <code>''</code> ไม่ใช่ nil → <code>||=</code> ไม่เติม → <code>Slug can't be blank</code></td><td><code>self.slug = name.to_s.parameterize if slug.blank?</code> (<code>blank?</code> นับทั้ง nil และ <code>''</code>)</td></tr>
+    <tr><td>ส่งอีเมลใน <code>after_save</code></td><td>บรรทัด 📧 ขึ้นก่อน <code>COMMIT</code> — ถ้า rollback อีเมลหลอกไปแล้ว</td><td>ใช้ <code>after_commit :notify_followers, on: :create</code></td></tr>
+    <tr><td><code>before_validation</code> ทำอีเมลตัวเล็ก</td><td>เก็บเป็นตัวเล็ก แต่ <code>User.find_by(email: "PITI@example.com")</code> ได้ <code>nil</code></td><td><code>normalizes :email, with: -&gt; email { email.strip.downcase }</code> — ทำให้ทั้งตอนเก็บและตอนค้น</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-23">business logic ควรอยู่ที่ไหน — ใครในร้านรับผิดชอบงานไหน</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ที่อยู่</th><th>ใส่อะไร</th><th>ในร้านอาหาร</th><th>ตัวอย่าง · โฟลเดอร์</th></tr></thead>
+  <tbody>
+    <tr><td>model</td><td>ของที่เป็นธรรมชาติของสิ่งนั้น</td><td>คนดูแลสต็อกรู้เรื่องแฟ้มตัวเอง</td><td>validation · callback แบบสบาย ๆ · <code>app/models/</code></td></tr>
+    <tr><td>concern</td><td>ของที่ model หลายตัวใช้ร่วมกัน</td><td>คู่มือกลางที่หลายลิ้นชักหยิบไปใช้</td><td><code>Sluggable</code> · <code>app/models/concerns/</code></td></tr>
+    <tr><td>service object</td><td>งานหลายขั้น ข้ามหลาย model · ตั้งชื่อเป็นกริยา · มี method <code>call</code></td><td>ใบงานที่ผู้จัดการถือไปสั่งหลายแผนก</td><td><code>PublishPost.new(post).call</code> · <code>app/services/</code></td></tr>
+    <tr><td>form object</td><td>ฟอร์มเดียวที่ข้อมูลกระจายลงหลายตาราง</td><td>ใบสมัครใบเดียว แยกเก็บหลายลิ้นชัก</td><td><code>SignupForm</code> · <code>app/forms/</code></td></tr>
+    <tr><td>background job</td><td>งานที่ทำทีหลังได้ ไม่ให้ลูกค้ายืนรอ (ส่งอีเมล)</td><td>ฝากงานให้พนักงานรอบดึก</td><td><strong>Day 3</strong> · บทเรียนใช้ <code>Rails.logger.info</code> แทน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="query">9 · query — <code>Post.where(…)</code> คือใบเบิกของ ไม่ใช่ข้อมูล (บท 113)</h2>
+
+<p><code>where</code> · <code>order</code> · <code>limit</code> คืน <em>relation</em> = ใบเบิกที่ยังไม่ยื่น · ต่อเงื่อนไขได้เรื่อย ๆ ยังไม่มีใครเดินไปตู้ ·
+ต่างจาก GORM ที่บรรทัดลงท้าย <code>Find</code> คือไปตู้ทันที · ⚠️ พิมพ์ชื่อคอลัมน์ผิดใน <code>where</code> จะยังไม่ error จนกว่าจะยื่นใบ — error จึงชี้บรรทัดที่ยื่น ไม่ใช่บรรทัดที่เขียนผิด</p>
+
+<h3 id="sn-sub-24">ยื่นใบเมื่อไหร่ — คำสั่งไหนไปตู้จริง</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>พิมพ์</th><th>ไปตู้ไหม</th><th>SQL ที่เห็นจริง (ภาษาคน)</th></tr></thead>
+  <tbody>
+    <tr><td><code>.where</code> · <code>.order</code> · <code>.limit</code></td><td>❌</td><td>แค่เขียนเพิ่มลงใบ</td></tr>
+    <tr><td><code>.class</code> · <code>.to_sql</code> · <code>.loaded?</code></td><td>❌</td><td>ถามเรื่องตัวใบ (<code>Post::ActiveRecord_Relation</code>) · <code>loaded?</code> ได้ <code>nil</code> ก่อนยื่น <code>true</code> หลังยื่น</td></tr>
+    <tr><td><code>.each { … }</code> · <code>.to_a</code> · <code>.map</code></td><td>✅</td><td><code>SELECT "posts".* …</code> หยิบทุกแผ่นที่ตรงมาวางบนโต๊ะ · ครั้งที่สองไม่ไปซ้ำ</td></tr>
+    <tr><td><code>.first</code></td><td>✅ (ถ้ายังไม่โหลด)</td><td><code>… ORDER BY "posts"."id" ASC LIMIT 1</code></td></tr>
+    <tr><td><code>.count</code></td><td>✅ ทุกครั้ง</td><td><code>SELECT COUNT(*) …</code> เรียกสองครั้งไปสองครั้ง</td></tr>
+    <tr><td><code>.exists?</code> · <code>.any?</code> · <code>.empty?</code></td><td>✅</td><td><code>SELECT 1 AS one … LIMIT 1</code> “มีสักแผ่นไหม”</td></tr>
+    <tr><td><code>&lt;% @posts.each do |post| %&gt;</code> ใน view</td><td>✅</td><td>เหมือน each · log บอกเลขบรรทัดไฟล์ <code>.erb</code> เกินจริง 1</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-25">นับสามแบบ ไปตู้ไม่เท่ากัน</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ทำอะไร</th><th>ใช้เมื่อ</th></tr></thead>
+  <tbody>
+    <tr><td><code>count</code></td><td>ให้ตู้นับเสมอ (<code>COUNT(*)</code>)</td><td>อยากได้เลขอย่างเดียว</td></tr>
+    <tr><td><code>length</code></td><td>หยิบทุกแผ่นมาแล้วนับในมือ</td><td>แทบไม่ใช้กับ relation</td></tr>
+    <tr><td><code>size</code></td><td>ยังไม่โหลด → ให้ตู้นับ · โหลดแล้ว → นับในมือ ไม่ไปตู้ · มี counter_cache → อ่านป้าย</td><td>ใช้เป็นค่าเริ่มต้น โดยเฉพาะหลัง <code>each</code> / <code>includes</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-26">ให้ตู้คำนวณให้ — ขอแค่ของที่ใช้ (ผลจริงจากข้อมูลตัวอย่าง)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>พิมพ์</th><th>SQL</th><th>ได้</th><th>ภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>Post.pluck(:title)</code></td><td><code>SELECT "posts"."title" FROM "posts"</code></td><td><code>["ต้มยำกุ้งน้ำข้น", …]</code></td><td>ขอค่าดิบช่องเดียว ไม่สร้าง object</td></tr>
+    <tr><td><code>Post.ids</code></td><td><code>SELECT "posts"."id" FROM "posts"</code></td><td><code>[1, 2, 3, 4, 5, 6]</code></td><td>ขอแค่เลขที่</td></tr>
+    <tr><td><code>Post.exists?(user_id: 1)</code></td><td><code>SELECT 1 AS one … LIMIT 1</code></td><td><code>true</code></td><td>ดีกว่า <code>count &gt; 0</code> เพราะหยุดที่แผ่นแรก</td></tr>
+    <tr><td><code>Post.sum(:views)</code></td><td><code>SELECT SUM("posts"."views") …</code></td><td><code>1055</code></td><td>บวกยอดวิวทุกแผ่น</td></tr>
+    <tr><td><code>Post.where(published: true).average(:views)</code></td><td><code>SELECT AVG(…) … WHERE … = TRUE</code></td><td><code>0.26375e3</code> (= 263.75)</td><td>ค่าเฉลี่ย · ได้เลขแบบวิทยาศาสตร์</td></tr>
+    <tr><td><code>Post.group(:user_id).count</code></td><td><code>… GROUP BY "posts"."user_id"</code></td><td><code>{3 =&gt; 2, 2 =&gt; 2, 1 =&gt; 2}</code></td><td>แยกกองตามผู้เขียนแล้วนับ</td></tr>
+    <tr><td><code>Post.group(:user_id).sum(:views)</code></td><td><code>SELECT SUM(…) … GROUP BY …</code></td><td><code>{3 =&gt; 510, 2 =&gt; 85, 1 =&gt; 460}</code></td><td>ยอดวิวรวมของแต่ละคน</td></tr>
+    <tr><td><code>Post.select(:id, :title).first</code></td><td><code>SELECT "posts"."id", "posts"."title" …</code></td><td>object ที่มีแค่สองช่อง</td><td>ขอช่องอื่นต่อ = <code>missing attribute 'body'</code></td></tr>
+    <tr><td><code>Post.where(published: false).update_all(views: 0)</code></td><td><code>UPDATE "posts" SET "views" = 0 WHERE …</code></td><td><code>2</code> (จำนวนแถว)</td><td>แก้หลายแถวทีเดียว · ข้าม validation และ callback</td></tr>
+    <tr><td><code>Post.where(…).explain(:analyze)</code></td><td><code>EXPLAIN (ANALYZE) …</code></td><td><code>Seq Scan</code> / <code>Index Scan</code></td><td>ตู้ไล่ทีละแผ่น หรือใช้ป้ายแท็บ (แค่ให้รู้ว่ามี)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-27">ข้อมูลเยอะ — ยกแฟ้มทีละลัง ไม่ยกทั้งตู้</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>SQL ที่เห็น</th><th>ภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>Post.find_each(batch_size: 2) { |p| … }</code></td><td><code>… ORDER BY "posts"."id" ASC LIMIT 2</code> แล้ว <code>WHERE "posts"."id" &gt; 2 …</code> ต่อไปเรื่อย ๆ</td><td>วนทีละแผ่น แต่หยิบจากตู้ทีละลัง · โต๊ะไม่ล้น</td></tr>
+    <tr><td><code>….in_batches(of: 1000) { |batch| … }</code></td><td>หยิบเลขที่ทีละกอง แล้วทำกับทั้งกอง</td><td>ใช้คู่ <code>update_all</code> ตอน backfill</td></tr>
+    <tr><td><code>Post.order(views: :desc).find_each …</code></td><td><code>Scoped order is ignored, use :cursor with :order to configure custom order.</code></td><td>⚠️ ไม่ใช่ error · คำสั่งเรียงถูกทิ้ง ได้ลำดับตามเลขที่</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="n-plus-one">10 · N+1 — โค้ด 3 บรรทัดที่เดินไปตู้ 101 รอบ (บท 114)</h2>
+
+<p><strong>N+1</strong> = ไปตู้ 1 รอบเอารายการ แล้วไปเพิ่มอีก 1 รอบต่อทุกชิ้นในรายการ · บทความ 6 ชิ้น ขอชื่อผู้เขียน = 7 รอบ ·
+เกิดเพราะ <code>post.user</code> คือการ<strong>เดินไปตู้</strong> ไม่ใช่อ่านช่องบนแฟ้ม (Rails ยังไม่โหลดของที่ผูกกันจนกว่าจะถาม — <em>lazy loading</em>) ·
+ใน Go คือ <code>db.First(&amp;u, p.UserID)</code> อยู่ในลูป <code>for</code> — ใน Go เห็นด้วยตา แต่ใน Rails ซ่อนอยู่ใน <code>post.user.name</code></p>
+
+<h3 id="sn-sub-28">วิธีเห็น — นับจาก log ไม่ใช่จากโค้ด</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ดูที่</th><th>หน้าตาจริง</th><th>อ่านว่า</th></tr></thead>
+  <tbody>
+    <tr><td>console</td><td><code>Post Load …</code> 1 บรรทัด + <code>User Load … WHERE "users"."id" = 1 LIMIT 1</code> 6 บรรทัด</td><td>นับบรรทัด Load/Count = จำนวนรอบที่ไปตู้</td></tr>
+    <tr><td>log ของ server (<code>tail -f log/development.log</code>)</td><td><code>Completed 200 OK in 87ms (Views: 4.3ms | ActiveRecord: 59.9ms (7 queries, 3 cached) | GC: 9.6ms)</code></td><td>ท่อน <code>(7 queries, 3 cached)</code> คือตัวเลขที่ต้องดู</td></tr>
+    <tr><td>บรรทัด <code>CACHE User Load (0.0ms)</code></td><td>ผู้เขียนซ้ำในหน้าเดียว ตอบจากความจำ</td><td>⚠️ ช่วยได้แค่ตอนซ้ำ · 100 บทความ 100 ผู้เขียน = ยัง 101 รอบ</td></tr>
+    <tr><td>บรรทัด <code>↳ app/views/posts/index.html.erb:6</code></td><td>ใต้ SQL แต่ละบรรทัด</td><td>บอกว่า SQL นี้มาจากไฟล์ไหน (ไฟล์ .erb เลขเกินจริง 1)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-29">ก่อน / หลังแก้ — หน้า <code>/posts</code> ที่โชว์ผู้เขียน + จำนวนคอมเมนต์ (ภารกิจบท 114)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>controller · view</th><th>บรรทัด Completed</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>Post.all</code> · <code>post.comments.count</code></td><td><code>(13 queries, 3 cached)</code></td><td>บทความ 1 + ผู้เขียน 6 + นับคอมเมนต์ 6</td></tr>
+    <tr><td><code>Post.includes(:user)</code> · <code>count</code></td><td><code>(8 queries, 0 cached)</code></td><td>ผู้เขียนเหลือบรรทัดเดียว <code>IN (1, 2, 3)</code> · แต่ <code>count</code> ยังไปตู้ทุกชิ้น</td></tr>
+    <tr><td><code>Post.includes(:user, :comments)</code> · <code>size</code></td><td><code>(3 queries, 0 cached)</code></td><td>บทความ 1 · ผู้เขียน 1 · คอมเมนต์ 1 — ไม่โตตามจำนวนบทความ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-30">includes · preload · eager_load — สามคำ สองวิธี (SQL จริง)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ไปตู้กี่รอบ</th><th>SQL หน้าตา</th><th>กรองด้วยช่องของลิ้นชักลูกได้ไหม</th><th>ใช้เมื่อ</th></tr></thead>
+  <tbody>
+    <tr><td><code>Post.preload(:user)</code></td><td>2</td><td><code>SELECT "posts".* FROM "posts"</code> + <code>SELECT "users".* FROM "users" WHERE "users"."id" IN (1, 2, 3)</code></td><td>❌ error <code>missing FROM-clause entry for table "users"</code></td><td>แค่เอามาโชว์</td></tr>
+    <tr><td><code>Post.eager_load(:user)</code></td><td>1</td><td><code>SELECT "posts"."id" AS t0_r0, … FROM "posts" LEFT OUTER JOIN "users" ON "users"."id" = "posts"."user_id"</code></td><td>✅</td><td>ต้องกรองด้วยช่องของ users</td></tr>
+    <tr><td><code>Post.includes(:user)</code></td><td>ปกติ 2 · มี <code>where(users: …)</code> เป็น 1</td><td>Rails เลือกให้</td><td>✅ (สลับเป็น JOIN เอง)</td><td>ใช้เป็นค่าเริ่มต้น</td></tr>
+  </tbody>
+</table>
+</div>
+<p>ตัวอย่างกรอง: <code>Post.includes(:user).where(users: { name: "มานะ" }).map(&amp;:title)</code> → ได้ <code>["ผัดกะเพราหมูสับ", "แกงเขียวหวานไก่"]</code> ด้วย query เดียว ·
+ใน GORM ใกล้สุดคือ <code>db.Preload("Comments")</code> · ชื่อใน <code>includes</code> ต้องตรงกับใน model (<code>:user</code> เอกพจน์ เพราะ <code>belongs_to :user</code>)</p>
+
+<h3 id="sn-sub-31">ตัวช่วยจับ N+1</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ของ</th><th>ทำอะไร</th><th>หน้าตา</th></tr></thead>
+  <tbody>
+    <tr><td><code>Post.strict_loading.first</code></td><td>ห้าม lazy loading · ถามของที่ผูกกันโดยไม่ได้ includes = ระเบิด</td><td><code>`Post` is marked for strict_loading. The User association named `:user` cannot be lazily loaded. (ActiveRecord::StrictLoadingViolationError)</code></td></tr>
+    <tr><td>counter_cache</td><td>ป้ายตัวเลขบนแฟ้มแม่ แก้ N+1 ของการนับ (หัวข้อ 11)</td><td><code>post.comments.size</code> ไม่ยิง SQL เลย</td></tr>
+    <tr><td>gem <a href="https://github.com/flyerhzm/bullet">bullet</a></td><td>เตือน N+1 ระหว่างพัฒนา · <strong>ไม่ได้ติดตั้ง/รันในบทเรียน</strong> (ห้ามเพิ่ม gem ในแอปตัวอย่าง)</td><td>ดูข้อความตัวอย่างในเอกสารของ gem</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>นิสัยเดียวที่ต้องติดตัว:</strong> ก่อนรับงาน (ของตัวเองหรือของ AI) เปิด log ของหน้านั้น หาบรรทัด <code>Completed</code> แล้วดูว่า query โตตามจำนวนแถวไหม</p>
+
+<!-- ============================================================ -->
+<h2 id="association">11 · association · dependent (บท 115 · 116)</h2>
+
+<p><strong>กฎข้อเดียว: <code>belongs_to</code> อยู่ฝั่งที่มีคอลัมน์ <code>_id</code></strong> · ใบคอมเมนต์มีช่อง <code>post_id</code> → <code>Comment belongs_to :post</code> ·
+บทความไม่มีช่องอะไรเพิ่ม → <code>Post has_many :comments</code> · ช่อง <code>_id</code> ที่ชี้ไปหาแฟ้มลิ้นชักอื่นเรียกว่า <em>foreign key</em> ·
+ใน GORM คือ field <code>PostID uint</code> อยู่ฝั่ง Comment เหมือนกัน</p>
+
+<h3 id="sn-sub-32">ความสัมพันธ์ 5 แบบ</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ภาษาคน</th><th>ตัวอย่างในบล็อก</th><th>ช่อง <code>_id</code> อยู่ที่</th><th>ได้ method</th></tr></thead>
+  <tbody>
+    <tr><td><code>belongs_to</code></td><td>“ฉันเป็นของ…หนึ่งตัว”</td><td>Comment เป็นของ Post</td><td><code>comments.post_id</code> (ตารางตัวเอง)</td><td><code>comment.post</code></td></tr>
+    <tr><td><code>has_many</code></td><td>“ฉันมี…ได้หลายตัว”</td><td>Post มีหลาย Comment</td><td>ไม่มีในตารางตัวเอง (อยู่ที่ comments)</td><td><code>post.comments</code></td></tr>
+    <tr><td><code>has_one</code></td><td>“ฉันมี…ได้ตัวเดียว”</td><td>User มี Profile หนึ่งหน้า (แค่ภาพ ไม่ได้สร้าง)</td><td><code>profiles.user_id</code></td><td><code>user.profile</code></td></tr>
+    <tr><td><code>has_many :through</code></td><td>หลายต่อหลาย ผ่านตารางกลางที่มี model</td><td>Post ติดได้หลาย Tag · Tag อยู่ได้หลาย Post</td><td>ตารางกลาง <code>taggings</code> มีทั้ง <code>post_id</code> และ <code>tag_id</code></td><td><code>post.tags</code></td></tr>
+    <tr><td><code>has_and_belongs_to_many</code> (habtm)</td><td>หลายต่อหลาย ตารางกลางเปล่า ไม่มี model</td><td>เหมือนแถวบน (แค่รู้จัก)</td><td>ตาราง <code>posts_tags</code></td><td><code>post.tags</code></td></tr>
+  </tbody>
+</table>
+</div>
+<pre><code># app/models/post.rb
+class Post &lt; ApplicationRecord
+  belongs_to :user                 # posts มี user_id
+  has_many :comments               # post_id อยู่ฝั่ง comments
+  has_many :taggings
+  has_many :tags, through: :taggings
+end</code></pre>
+<p>ลืมบรรทัด <code>has_many :taggings</code> แต่เขียน <code>through: :taggings</code> = <code>Could not find the association :taggings in model …</code> · Rails ไม่รู้ว่าจะเดินผ่านอะไร</p>
+
+<h3 id="sn-sub-33">method ที่ได้ฟรีจาก <code>has_many</code></h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ทำอะไร</th><th>ลงตู้ทันทีไหม</th></tr></thead>
+  <tbody>
+    <tr><td><code>post.comments</code></td><td>ใบเบิก “คอมเมนต์ทุกใบของบทความนี้” ต่อ <code>.where</code> / <code>.order</code> ได้</td><td>— (แค่อ่าน)</td></tr>
+    <tr><td><code>post.comments.create(user: mana, body: "…")</code></td><td>สร้างพร้อมเติม <code>post_id</code> ให้ ไม่ต้องเขียนเลขที่เอง</td><td>✅ ถ้าผ่านกฎ</td></tr>
+    <tr><td><code>post.comments.build(…)</code></td><td>สร้างไว้ในมือพร้อมเติม <code>post_id</code></td><td>❌ ต้อง save เอง</td></tr>
+    <tr><td><code>post.comments &lt;&lt; c</code></td><td>เอาคอมเมนต์ที่มีอยู่มาผูกกับบทความนี้</td><td>✅</td></tr>
+    <tr><td><code>post.comments.count</code> · <code>.size</code></td><td>นับในตู้ · นับในตู้ + ของในมือที่ยังไม่เก็บ (ผลจริง 3 กับ 4)</td><td>—</td></tr>
+    <tr><td><code>post.comment_ids</code></td><td>เลขที่คอมเมนต์ทั้งหมด (<code>[5, 6, 7]</code>)</td><td>—</td></tr>
+    <tr><td><code>post.comments.clear</code></td><td>⚠️ ตัดความสัมพันธ์ = ตั้ง <code>post_id</code> เป็นว่าง → ตู้ห้าม → <code>NotNullViolation</code></td><td>อย่าใช้กับ belongs_to ที่บังคับ</td></tr>
+  </tbody>
+</table>
+</div>
+<p>ตั้งชื่อทางลัดที่มีเงื่อนไข: <code>has_many :published_posts, -&gt; { where(published: true) }, class_name: "Post"</code> ·
+<code>-&gt; { … }</code> คือ lambda (ก้อนโค้ดเก็บไว้รันทีหลัง) · ลืม <code>class_name</code> = <code>Missing model class PublishedPost …</code></p>
+
+<h3 id="sn-sub-34">dependent — ทิ้งแฟ้มบทความแล้ว ใบคอมเมนต์ทำยังไง</h3>
+<p>ไม่ใส่อะไรเลย → ตู้ห้ามทิ้ง: <code>Key (id)=(1) is still referenced from table "comments". (ActiveRecord::InvalidForeignKey)</code> = “แฟ้มเลขที่ 1 ยังมีใบคอมเมนต์อ้างถึงอยู่”</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ทาง</th><th>ใครทำ</th><th>SQL ที่เห็นจริง</th><th>callback ของลูก</th><th>เลือกเมื่อธุรกิจตอบว่า…</th><th>ใน Go</th></tr></thead>
+  <tbody>
+    <tr><td>① <code>dependent: :destroy</code></td><td>Rails หยิบลูกทีละใบแล้ว destroy</td><td><code>Comment Load</code> + <code>DELETE … WHERE "comments"."id" = 1</code> ทีละใบ + <code>DELETE</code> บทความ · ลูก 100 ใบ = 104 คำสั่ง</td><td>✅ ทำงาน</td><td>ตอนลูกหายมีงานต้องทำ (ลบรูปแนบ · แจ้งเตือน)</td><td><code>db.Select("Comments").Delete(&amp;post)</code></td></tr>
+    <tr><td>② <code>dependent: :delete_all</code></td><td>Rails ยิง DELETE คำสั่งเดียว</td><td><code>DELETE FROM "comments" WHERE "comments"."post_id" = 1</code> · กี่พันใบก็ 4 คำสั่ง</td><td>❌ ไม่ทำงาน</td><td>ลูกเยอะ · ไม่มี callback · ไม่มีหลาน</td><td><code>db.Where("post_id = ?", …).Delete(&amp;Comment{})</code></td></tr>
+    <tr><td>③ <code>on_delete: :cascade</code> (ใน migration)</td><td>ตัวตู้ทิ้งลูกเอง</td><td>log เห็นแค่ <code>DELETE FROM "posts" …</code></td><td>❌ Rails ไม่เห็น</td><td>มีคนลบข้อมูลโดยไม่ผ่านแอปนี้ และห้ามเหลือแฟ้มกำพร้า</td><td><code>gorm:"constraint:OnDelete:CASCADE;"</code></td></tr>
+    <tr><td>④ <code>dependent: :restrict_with_error</code></td><td>Rails ห้ามทิ้ง</td><td><code>Comment Exists? … LIMIT 1</code> → <code>ROLLBACK</code> → <code>false</code></td><td>—</td><td>ลบแม่ไม่ได้ถ้ายังมีลูก (ผู้ใช้ที่มีผลงาน · หมวดที่มีบทความ)</td><td>เช็คเองก่อนลบ</td></tr>
+  </tbody>
+</table>
+</div>
+<p>ทาง ④ ได้ <code>errors.full_messages</code> = <code>["Cannot delete record because dependent comments exist"]</code> · ถ้าใช้ <code>destroy!</code> จะได้ <code>ActiveRecord::RecordNotDestroyed</code> หน้าแดงแทน (scaffold ใช้ <code>destroy!</code> — Lab ขั้น 5) ·
+<strong>ทุก <code>has_many</code> ที่ชี้มาหาแม่ต้องตัดสินใจ</strong> ไม่ใช่แค่ comments — ลืม <code>taggings</code> ก็ยังได้ <code>InvalidForeignKey</code> ท่อน <code>on table "taggings"</code></p>
+
+<h3 id="sn-sub-35">ของเล็กอีกสามชิ้น</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ของ</th><th>เขียน</th><th>ผลจริง</th><th>ภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td>counter_cache</td><td>ช่อง <code>comments_count</code> (<code>default: 0, null: false</code>) + <code>belongs_to :post, counter_cache: true</code> + <strong>backfill ค่าเก่า</strong></td><td>สร้างคอมเมนต์: <code>UPDATE "posts" SET "comments_count" = COALESCE("posts"."comments_count", 0) + 1 …</code> (<code>COALESCE(…, 0)</code> = ถ้าช่องว่างให้ถือเป็น 0) · ลูป <code>size</code> เหลือ 1 query</td><td>ป้ายตัวเลขบนหน้าแฟ้ม ไม่ต้องเดินไปนับ · ต้องใช้ <code>size</code> ถึงได้ประโยชน์</td></tr>
+    <tr><td>touch</td><td><code>belongs_to :post, counter_cache: true, touch: true</code></td><td>คอมเมนต์ใหม่ → <code>updated_at</code> ของบทความเปลี่ยนตาม</td><td>ลูกขยับ แม่รู้ตัว · ฐานของ cache ใน Day 3</td></tr>
+    <tr><td>inverse_of</td><td>ปกติไม่ต้องเขียน</td><td><code>comment.post.equal?(post)</code> → <code>true</code></td><td>สองฝั่งใช้ object ตัวเดียวกัน · Rails เดาให้เองเมื่อชื่อตามกฎ (แค่รู้จัก)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="rest">12 · REST · strong params · params.expect (บท 117)</h2>
+
+<h3 id="sn-sub-36"><code>resources :posts</code> = 7 เมนูมาตรฐาน (8 แถว เพราะ PATCH กับ PUT ไปเมนูเดียวกัน)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ใบสั่ง</th><th>เมนู</th><th>ภาษาคน</th><th>Gin ที่เคยเขียน</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /posts</code></td><td>index</td><td>ดูบทความทั้งหมด</td><td><code>r.GET("/posts", h.List)</code></td></tr>
+    <tr><td><code>GET /posts/new</code></td><td>new</td><td>เปิดฟอร์มเขียนใหม่</td><td>— (API ไม่มีหน้าฟอร์ม)</td></tr>
+    <tr><td><code>POST /posts</code></td><td>create</td><td>บันทึกบทความใหม่</td><td><code>r.POST("/posts", h.Create)</code></td></tr>
+    <tr><td><code>GET /posts/:id</code></td><td>show</td><td>ดูชิ้นเดียว</td><td><code>r.GET("/posts/:id", h.Get)</code></td></tr>
+    <tr><td><code>GET /posts/:id/edit</code></td><td>edit</td><td>เปิดฟอร์มแก้</td><td>—</td></tr>
+    <tr><td><code>PATCH</code> (และ <code>PUT</code>) <code>/posts/:id</code></td><td>update</td><td>บันทึกที่แก้</td><td><code>r.PUT("/posts/:id", h.Update)</code></td></tr>
+    <tr><td><code>DELETE /posts/:id</code></td><td>destroy</td><td>ลบ</td><td><code>r.DELETE("/posts/:id", h.Del)</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-37">ปรับเซ็ตเมนู — ใน <code>config/routes.rb</code></h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เขียน</th><th>ได้ (จาก <code>bin/rails routes -c …</code>)</th><th>ภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>resources :posts, only: [:index, :show]</code></td><td>2 เส้น: <code>posts#index</code> · <code>posts#show</code></td><td>เอาแค่เมนูที่ใช้จริง</td></tr>
+    <tr><td><code>resources :posts, except: [:destroy]</code></td><td>ทุกเส้นยกเว้น DELETE</td><td>ตัดออกบางเมนู</td></tr>
+    <tr><td><code>resources :posts do</code> / <code>resources :comments</code> / <code>end</code></td><td><code>/posts/:post_id/comments</code> · <code>post_comments_path</code></td><td>คอมเมนต์ของบทความเลขไหน · เลขแม่อ่านด้วย <code>params[:post_id]</code></td></tr>
+    <tr><td><code>resources :comments, shallow: true</code> (ซ้อนใน posts)</td><td>index · new · create ซ้อน · ที่เหลือ <code>/comments/:id</code></td><td>ซ้อนเฉพาะเส้นที่ยังไม่มี id ลูก · <strong>อย่าซ้อนเกินชั้นเดียว</strong></td></tr>
+    <tr><td><code>member do post :publish end</code></td><td><code>POST /posts/:id/publish</code> · <code>publish_post</code></td><td>เมนูพิเศษของชิ้นเดียว (มี :id)</td></tr>
+    <tr><td><code>collection do get :drafts end</code></td><td><code>GET /posts/drafts</code> · <code>drafts_posts</code></td><td>เมนูพิเศษของทั้งแผนก (ไม่มี :id)</td></tr>
+    <tr><td><code>resource</code> (ไม่มี s)</td><td>6 เมนู ไม่มี index ไม่มี id · controller ยังพหูพจน์</td><td>ของที่ผู้ใช้มีชิ้นเดียว เช่น หน้าตั้งค่าบัญชี</td></tr>
+  </tbody>
+</table>
+</div>
+<p>route helper ใน console (ผลจริง): <code>app.post_path(post)</code> → <code>"/posts/5"</code> · <code>app.post_comments_path(post)</code> → <code>"/posts/5/comments"</code> ·
+<code>app.post_comment_path(post, post.comments.first)</code> → <code>"/posts/5/comments/5"</code></p>
+
+<h3 id="sn-sub-38">mass assignment → strong params — ยิงจริงด้วย curl (ถือบัตรคิว CSRF ไปด้วย ไม่ได้ปิดการตรวจ)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>controller เขียนว่า</th><th>คนร้ายส่ง <code>title · body · views=999999 · published=true · user_id=3</code></th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td><code>Post.new(params[:post])</code></td><td><code>500</code> · <code>ActiveModel::ForbiddenAttributesError</code></td><td>Rails 8 ไม่ยอมเอา params ที่ยังไม่กรองใส่แฟ้มตั้งแต่แรก</td></tr>
+    <tr><td><code>Post.new(params[:post].permit!)</code></td><td>แก้ <code>user_id=3</code> ได้จริง → ย้ายบทความไปเป็นของคนอื่น</td><td>❌ <code>permit!</code> = “รับทุกช่อง” · เจอในโค้ดหรือคำตอบ AI ให้ถือเป็นบั๊ก</td></tr>
+    <tr><td><code>params.require(:post).permit(:title, :body)</code></td><td><code>{"title" =&gt; "ร้านผม", "views" =&gt; 0, "published" =&gt; false, "user_id" =&gt; 1}</code> + log <code>Unpermitted parameters: :views, :published, :user_id.</code></td><td>✅ ช่องเกินถูกตัดทิ้ง (allowlist = รายชื่อของที่ผ่านได้)</td></tr>
+    <tr><td><code>params.expect(post: [:title, :body])</code></td><td>ผลเหมือนแถวบน · แต่ไม่มี log <code>Unpermitted parameters</code></td><td>✅ ท่าของ Rails 8 · ตรวจรูปร่างด้วย</td></tr>
+  </tbody>
+</table>
+</div>
+<p>ใน Go คือ <code>json.Unmarshal(body, &amp;post)</code> ลง struct ที่ลง DB ตรง ๆ (ได้ <code>Views:999999 Published:true UserID:3</code>) ·
+ทางแก้ฝั่ง Go = struct รับ input แยก <code>CreatePostInput{Title, Body}</code> · Rails ทำหน้าที่เดียวกันด้วย <code>post_params</code> ใต้ <code>private</code></p>
+
+<h3 id="sn-sub-39">ส่งรูปร่างผิดมา — 400 (คนส่งผิด) ดีกว่า 500 (server พังเอง)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ส่งมาแบบไหน (<code>-d …</code>)</th><th>ภาษาคน</th><th><code>require</code>/<code>permit</code></th><th><code>params.expect</code></th></tr></thead>
+  <tbody>
+    <tr><td><code>"post=hello"</code></td><td>post เป็นข้อความคำเดียว</td><td>500 <code>undefined method 'permit' for an instance of String</code></td><td>400 <code>ParameterMissing</code></td></tr>
+    <tr><td><code>"post[]=a"</code></td><td>post เป็นรายการ</td><td>500 NoMethodError</td><td>400 ParameterMissing</td></tr>
+    <tr><td><code>"title=x"</code></td><td>ไม่มีกลุ่ม post เลย</td><td>400 ParameterMissing</td><td>400 ParameterMissing</td></tr>
+    <tr><td>ห้าช่องของคนร้าย</td><td>ช่องเกิน 3 ช่อง</td><td>200 · ช่องเกินถูกทิ้ง</td><td>200 · ช่องเกินถูกทิ้ง</td></tr>
+  </tbody>
+</table>
+</div>
+<p>ข้อความ 400 จริง: <code>ActionController::ParameterMissing (param is missing or the value is empty or invalid: post)</code> ·
+strong params ตอบว่า “<strong>ช่องนี้</strong>รับได้ไหม” · ไม่ได้ตอบว่า “<strong>คนนี้</strong>ทำได้ไหม” (authorization = Day 4)</p>
+
+<!-- ============================================================ -->
+<h2 id="scaffold">13 · scaffold · checklist 8 ข้อตรวจงาน AI (บท 118 · 119)</h2>
+
+<p><code>bin/rails generate scaffold Category name:string slug:string description:text</code> = ได้ทั้งแผนกในคำสั่งเดียว ·
+ย้อนด้วย <code>bin/rails db:rollback</code> <strong>ก่อน</strong> แล้วค่อย <code>bin/rails destroy scaffold Category</code> (สลับลำดับ = Rails ไม่รู้ว่าต้องรื้ออะไร) ·
+หน้าไม่มีสี = สั่ง <code>bin/rails tailwindcss:build</code> หนึ่งครั้ง</p>
+
+<h3 id="sn-sub-40">ได้อะไรมา (ไฟล์ใหม่ 16 ไฟล์ + routes 1 บรรทัด)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ไฟล์</th><th>คืออะไร</th><th>ในร้านอาหาร</th></tr></thead>
+  <tbody>
+    <tr><td><code>db/migrate/…_create_categories.rb</code></td><td>สร้างตาราง 3 ช่อง + เวลาสร้าง/แก้ · <strong>ไม่มี <code>null: false</code> ไม่มี index</strong></td><td>ใบสั่งช่างต่อลิ้นชักใหม่</td></tr>
+    <tr><td><code>app/models/category.rb</code></td><td>model <strong>ว่างเปล่า</strong> ไม่มีกฎสักข้อ</td><td>คนดูแลสต็อกที่ยังไม่รู้กฎร้าน</td></tr>
+    <tr><td><code>config/routes.rb</code> +1 บรรทัด</td><td><code>resources :categories</code> = 8 เส้น</td><td>รายการใหม่ในมือพนักงานต้อนรับ</td></tr>
+    <tr><td><code>app/controllers/categories_controller.rb</code></td><td>7 action · <code>before_action :set_category</code> · <code>respond_to</code> (HTML + JSON) · <code>params.expect(category: [ :name, :slug, :description ])</code> · <code>destroy!</code></td><td>หัวหน้าเชฟกับ 7 เมนู</td></tr>
+    <tr><td><code>app/views/categories/*.html.erb</code> (6 ไฟล์)</td><td>index · show · new · edit + <code>_form</code> · <code>_category</code> (partial = ชิ้นส่วนใช้ซ้ำ ชื่อขึ้นต้น <code>_</code>)</td><td>แบบจัดจาน</td></tr>
+    <tr><td><code>*.json.jbuilder</code> (3 ไฟล์)</td><td>ตอบเป็น JSON (<code>/categories.json</code>)</td><td>แบบใส่กล่องกลับบ้าน</td></tr>
+    <tr><td><code>app/helpers/…</code> · <code>test/…</code></td><td>module ว่าง · เทส (รอ Day 4)</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-41">ของที่ scaffold ไม่ให้ = ของที่ AI ไม่ให้</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เรื่อง</th><th>ขาดอะไร</th><th>เติมด้วย · บท</th></tr></thead>
+  <tbody>
+    <tr><td>กฎของร้าน</td><td>ชื่อซ้ำได้ไหม · ลบหมวดแล้วบทความเป็นยังไง · ใครทำอะไรได้</td><td>คำตอบมาจากเจ้าของร้าน ไม่ใช่จากโค้ด</td></tr>
+    <tr><td>ปริมาณข้อมูลจริง</td><td>ไม่มี index สักตัว</td><td>index — 109</td></tr>
+    <tr><td>กฎที่ตัวตู้</td><td>ไม่มี <code>null: false</code> · ไม่มี unique index</td><td>validation 110 + constraint 111 คู่กันเสมอ</td></tr>
+    <tr><td>จำนวนรอบที่เดินไปตู้</td><td><code>Category.all</code> ไม่มี limit · ไม่มี includes</td><td>limit 113 · includes 114</td></tr>
+    <tr><td>ใครมีสิทธิ์</td><td>ใครเปิดหน้าได้ก็กด Destroy ได้</td><td>strong params 117 · authorization Day 4</td></tr>
+    <tr><td>ภาษา</td><td>ข้อความอังกฤษตายตัว (<code>Category was successfully created.</code>)</td><td>แก้ข้อความเอง · หรือ i18n (ระบบแปลภาษาของ Rails · นอกขอบเขตคอร์ส)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-42">⭐ checklist 8 ข้อ — ไล่ทุกครั้งที่รับโค้ดจาก AI หรือ scaffold</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อ</th><th>ถามอะไร</th><th>ทำไม</th><th>บท</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>เห็น <code>uniqueness: true</code> → มี unique index คู่ไหม</td><td>มีแค่กฎใน model สองคนกดพร้อมกันยังซ้ำได้</td><td>111</td></tr>
+    <tr><td>2</td><td>เห็น <code>presence: true</code> → มี NOT NULL (<code>null: false</code>) คู่ไหม</td><td>validation กันแค่ทางที่ผ่าน model · constraint กันทุกทาง</td><td>110 · 111</td></tr>
+    <tr><td>3</td><td>ช่องที่ใช้ค้นหา (อยู่ใน where) และช่อง <code>…_id</code> มี index ไหม</td><td>ไม่มีป้ายแท็บ = ไล่หาทีละแผ่น ช้าขึ้นตามจำนวนแฟ้ม</td><td>109</td></tr>
+    <tr><td>4</td><td>มี <code>has_many</code> → เลือก dependent ถูกไหม</td><td>ลบแม่แล้วลูกหายตาม · ห้ามลบ · หรือค้างกำพร้า — ธุรกิจตอบ ไม่ใช่ AI</td><td>116</td></tr>
+    <tr><td>5</td><td>วน each แล้วแตะของที่ผูกกัน → มี includes ไหม</td><td>ไม่มี = N+1 · เปิด log นับ query ก่อนรับงาน</td><td>114</td></tr>
+    <tr><td>6</td><td>หน้ารายการมี limit หรือการแบ่งหน้าไหม</td><td><code>Model.all</code> ใน index = ระเบิดเวลาที่รอวันข้อมูลโต</td><td>113</td></tr>
+    <tr><td>7</td><td>migration นี้ แตะกี่แถว ระหว่างนั้นใครต้องรอ</td><td>ตารางใหญ่ + lock = แอปค้างทั้งร้าน</td><td>109</td></tr>
+    <tr><td>8</td><td>ใครมีสิทธิ์ทำอันนี้</td><td>strong params ไม่ใช่ authorization</td><td>117 · Day 4</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>prompt ที่ดีบอก<strong>กฎของธุรกิจ</strong>และ<strong>สิ่งที่ห้ามทำ</strong>ไปด้วย (ตัวอย่างจากภารกิจบท 118):</p>
+<pre><code>Ingredient ต้องมี name ห้ามว่าง และห้ามซ้ำ — เติมทั้ง validation ใน model และ constraint ใน migration ใหม่
+(null: false + unique index) · หน้า index ให้เรียงตามชื่อและ limit 50 · อย่าแก้ migration เดิมที่รันไปแล้ว</code></pre>
+
+<h3 id="sn-sub-43">ลำดับ Lab 2 (บท 119) — เติมของที่ scaffold ไม่ให้</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ขั้น</th><th>ทำ</th><th>ผลที่เห็นจริง</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>scaffold Category แล้วกด Create ฟอร์มว่าง</td><td><code>INSERT … VALUES ('', '', …)</code> — ตู้รับแฟ้มว่าง</td></tr>
+    <tr><td>2</td><td>เติม validation + <code>before_validation :fill_slug</code></td><td><code>["Name can't be blank", "Slug can't be blank", "Slug is invalid"]</code></td></tr>
+    <tr><td>3</td><td>migration <code>change_column_null</code> × 2 + unique index</td><td>พังก่อน: <code>column "slug" of relation "categories" contains null values</code> → เก็บกวาดแฟ้มเสีย → ผ่าน</td></tr>
+    <tr><td>4</td><td>ลองประตูข้าง <code>save(validate: false)</code> อีกรอบ</td><td>ตู้ปฏิเสธ: <code>NotNullViolation</code> · <code>RecordNotUnique</code></td></tr>
+    <tr><td>5</td><td><code>add_reference :posts, :category, null: true</code> + <code>belongs_to :category, optional: true</code> + <code>restrict_with_error</code></td><td>หมวดที่มีบทความลบไม่ได้ · แก้ <code>destroy!</code> ใน controller เป็น <code>if @category.destroy</code></td></tr>
+    <tr><td>6</td><td><code>Category.order(:name).includes(:posts).limit(50)</code></td><td>5 query → <code>(3 queries, 0 cached)</code> ไม่โตตามจำนวนหมวด</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="errors">14 · ตาราง error → แปลว่า → แก้ยังไง</h2>
+
+<p><strong>อ่าน error 3 จังหวะ:</strong> ① ชื่อในวงเล็บท้ายบรรทัด (<code>(ActiveRecord::…)</code>) บอกว่าใครโวย →
+② ประโยคหลัง <code>ERROR:</code> และบรรทัด <code>DETAIL:</code> / <code>HINT:</code> บอกว่าโวยเรื่องอะไร (ส่วนใหญ่สำคัญที่สุด) →
+③ <code>(wongnok-blog):3</code> = บรรทัดที่ 3 ที่พิมพ์ใน console · <code>…/db/migrate/….rb:3</code> = บรรทัดในไฟล์ ·
+ชื่อขึ้นต้น <code>PG::</code> = PostgreSQL (ตัวตู้) เป็นคนโวย · ไม่มี <code>PG::</code> = Rails โวยเอง</p>
+
+<h3 id="sn-sub-44">ใน console / model</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อความที่เห็น</th><th>แปลว่า</th><th>แก้ยังไง</th></tr></thead>
+  <tbody>
+    <tr><td><code>PG::UndefinedTable: ERROR:  relation "posts" does not exist (ActiveRecord::StatementInvalid)</code></td><td>มี model แล้ว แต่ยังไม่มีลิ้นชักในตู้</td><td><code>bin/rails db:migrate</code> · หรือชื่อ class ไม่ตรงชื่อตาราง → <code>self.table_name</code></td></tr>
+    <tr><td><code>PG::UndefinedColumn: ERROR:  column posts.publish does not exist</code> + <code>HINT:  Perhaps you meant to reference the column "posts.published".</code></td><td>ชื่อคอลัมน์ผิด (หรือยังไม่มีช่องนั้นจริง)</td><td>ดู HINT · ช่องยังไม่มี → เขียน migration ก่อน</td></tr>
+    <tr><td><code>unknown attribute 'user_id' for Post. (ActiveModel::UnknownAttributeError)</code></td><td>ส่งช่องที่ตารางไม่มีเข้า <code>new</code></td><td>เช็ค <code>Post.column_names</code></td></tr>
+    <tr><td><code>undefined method 'slug' for an instance of Post (NoMethodError)</code></td><td>แฟ้มไม่มีช่องนี้ · Rails สร้าง method ตามคอลัมน์จริงเท่านั้น</td><td>migration เพิ่มคอลัมน์ก่อน</td></tr>
+    <tr><td><code>missing attribute 'body' for Post (ActiveModel::MissingAttributeError)</code></td><td>ใช้ <code>select(:id, :title)</code> แล้วขอช่องอื่น</td><td>เพิ่มช่องใน select หรือเลิกใช้ select</td></tr>
+    <tr><td><code>Couldn't find Post with 'id'=99 (ActiveRecord::RecordNotFound)</code></td><td><code>find</code> หาไม่เจอ (ในเว็บ = 404)</td><td>ไม่เจอเป็นเรื่องปกติ → ใช้ <code>find_by</code> แล้วเช็ค nil</td></tr>
+    <tr><td><code>undefined method 'name' for nil (NoMethodError)</code></td><td><code>find_by</code> ตอบ nil แล้วเรียกต่อ</td><td>ย้อนเช็คบรรทัด find_by (พิมพ์ชื่อผิด?)</td></tr>
+    <tr><td><code>["User must exist"]</code> · <code>["Category must exist"]</code></td><td><code>belongs_to</code> บังคับต้องมีเจ้าของ</td><td>ใส่ <code>user:</code> · ของเก่าไม่มีหมวด → <code>optional: true</code> ชั่วคราว</td></tr>
+    <tr><td><code>Validation failed: Title can't be blank (ActiveRecord::RecordInvalid)</code></td><td><code>save!</code>/<code>create!</code> ไม่ผ่านกฎ</td><td>อ่านท่อนหลัง <code>Validation failed:</code> · ถ้าเป็นข้อมูลจากฟอร์ม ใช้ <code>save</code> ไม่มี !</td></tr>
+    <tr><td><code>Unknown key: :presence. … Perhaps you meant to call `validates` instead of `validate`?</code></td><td>ลืมตัว s</td><td><code>validate</code> → <code>validates</code></td></tr>
+    <tr><td><code>The provided regular expression is using multiline anchors (^ or $) …</code></td><td>regex ใช้ <code>^</code> <code>$</code> (ข้อความหลายบรรทัดแอบผ่านได้)</td><td>เปลี่ยนเป็น <code>\A</code> … <code>\z</code></td></tr>
+    <tr><td><code>valid?</code> ได้ true ทั้งที่เพิ่งเติมกฎ</td><td>console ใช้ model ฉบับเก่า</td><td><code>reload!</code> แล้วสร้าง/หาตัวแปรใหม่</td></tr>
+    <tr><td><code>uninitialized constant PublishPost (NameError)</code></td><td>โฟลเดอร์ใหม่ใต้ <code>app/</code> ที่ console ยังไม่รู้จัก</td><td>ปิด console แล้วเปิดใหม่</td></tr>
+    <tr><td><code>Missing model class PublishedPost for the User#published_posts association.</code></td><td>ชื่อความสัมพันธ์ไม่ตรงชื่อ model</td><td>เติม <code>class_name: "Post"</code></td></tr>
+    <tr><td><code>Association named 'users' was not found on Post; perhaps you misspelled it? … Did you mean?  user</code></td><td><code>includes(:users)</code> มี s เกิน</td><td>ใช้ชื่อเดียวกับใน model (<code>:user</code>)</td></tr>
+    <tr><td><code>The :dependent option must be one of [:destroy, :delete_all, :nullify, :restrict_with_error, :restrict_with_exception, :destroy_async], but is :restrict</code></td><td>พิมพ์ค่า dependent ผิด</td><td>เลือกจากรายการในวงเล็บ</td></tr>
+    <tr><td><code>… is marked for strict_loading. … cannot be lazily loaded. (ActiveRecord::StrictLoadingViolationError)</code></td><td>กำลังจะสร้าง N+1</td><td>เติม <code>includes</code> ตามชื่อที่มันบอก</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-45">ตัวตู้ (PostgreSQL) ปฏิเสธ — constraint ทำงาน</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อความที่เห็น</th><th>แปลว่า</th><th>แก้ยังไง</th></tr></thead>
+  <tbody>
+    <tr><td><code>null value in column "user_id" of relation "posts" violates not-null constraint (ActiveRecord::NotNullViolation)</code></td><td>ช่องที่ห้ามว่างถูกส่งมาว่าง (มักผ่านประตูข้าง)</td><td>ใส่ค่า · และเติม <code>presence</code> ให้ได้ข้อความภาษาคนก่อนถึงตู้</td></tr>
+    <tr><td><code>duplicate key value violates unique constraint "index_users_on_email" (ActiveRecord::RecordNotUnique)</code> + <code>DETAIL:  Key (email)=(…) already exists.</code></td><td>ค่าซ้ำ · unique index ทำงาน</td><td>ใน controller <code>rescue ActiveRecord::RecordNotUnique</code> แล้ว render ฟอร์มพร้อม error</td></tr>
+    <tr><td><code>insert or update on table "comments" violates foreign key constraint "fk_rails_…" (ActiveRecord::InvalidForeignKey)</code> + <code>Key (post_id)=(9999) is not present in table "posts".</code></td><td>อ้างถึงแฟ้มแม่ที่ไม่มีอยู่จริง</td><td>ใช้เลขที่มีจริง · สร้างผ่าน <code>post.comments.create</code></td></tr>
+    <tr><td><code>update or delete on table "posts" violates foreign key constraint … on table "comments"</code> + <code>is still referenced from table "comments".</code></td><td>ทิ้งแม่ทั้งที่ลูกยังอ้างถึง</td><td>เลือก dependent (หัวข้อ 11) · ดูท่อน <code>on table "…"</code> ว่าลิ้นชักไหนห้าม</td></tr>
+    <tr><td><code>new row for relation "posts" violates check constraint "views_not_negative" (ActiveRecord::CheckViolation)</code></td><td>ผิดเงื่อนไข CHECK</td><td>แก้ค่า · เติม <code>numericality</code> คู่กัน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-46">ตอน migrate / rollback</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อความที่เห็น</th><th>แปลว่า</th><th>แก้ยังไง</th></tr></thead>
+  <tbody>
+    <tr><td><code>PG::NotNullViolation: ERROR:  column "slug" of relation "categories" contains null values</code></td><td>ตั้งกฎห้ามว่างไม่ได้ เพราะมีแฟ้มเก่าที่ว่างค้าง</td><td>หา <code>where(slug: nil)</code> → เก็บกวาด/backfill → migrate ใหม่</td></tr>
+    <tr><td><code>column "category_id" of relation "posts" contains null values</code> (ตอน <code>add_reference … null: false</code>)</td><td>ช่องใหม่บังคับต้องมีค่า แต่บทความเดิมไม่มี</td><td>expand ก่อน: <code>null: true</code> · เติมค่าแล้วค่อยขัน NOT NULL</td></tr>
+    <tr><td><code>PG::UniqueViolation: ERROR:  could not create unique index "index_users_on_email"</code> + <code>Key (email)=(…) is duplicated.</code></td><td>มีของซ้ำซ่อนอยู่แล้ว</td><td><code>User.group(:email).having("COUNT(*) &gt; 1").count</code> หาของซ้ำ · เจ้าของข้อมูลตัดสินว่าเก็บแถวไหน</td></tr>
+    <tr><td><code>CREATE INDEX CONCURRENTLY cannot run inside a transaction block</code></td><td>ลืม <code>disable_ddl_transaction!</code></td><td>เติมใน class นอก def change</td></tr>
+    <tr><td><code>No indexes found on posts with the options provided.</code> (ตอน rollback)</td><td>แก้ไฟล์ใบเก่าหลังรันไปแล้ว</td><td>คืนไฟล์ให้เหมือนตอนรัน → rollback → ค่อยแก้ · หรือเขียนใบใหม่</td></tr>
+    <tr><td><code>PG::DuplicateTable: ERROR:  relation "index_posts_on_subtitle" already exists</code></td><td>มี index ชื่อนี้อยู่แล้ว (สร้างซ้ำสองใบ)</td><td>เก็บกวาดใบที่ซ้ำ</td></tr>
+    <tr><td><code>This migration uses execute, which is not automatically reversible.</code></td><td>Rails เดาขากลับของ SQL ดิบไม่ได้</td><td>เขียน <code>up</code>/<code>down</code> หรือ raise IrreversibleMigration</td></tr>
+    <tr><td><code>ActiveRecord::UnknownMigrationVersionError · No migration with version number …</code> · status ขึ้น <code>NO FILE</code></td><td>ลบไฟล์ก่อน rollback</td><td>ครั้งหน้า rollback → destroy</td></tr>
+    <tr><td><code>Could not generate field 'reading_minutes' with unknown type 'integr'.</code></td><td>พิมพ์ชนิดข้อมูลผิด · ไม่มีไฟล์ถูกสร้าง</td><td>สั่งใหม่ให้ถูก (<code>integer</code>)</td></tr>
+    <tr><td><code>PG::ObjectInUse: ERROR:  database "…" is being accessed by other users</code></td><td>ยังมี console/server ต่อตู้อยู่ ทิ้งตู้ไม่ได้</td><td>exit ทุกหน้าต่างแล้วสั่งใหม่</td></tr>
+    <tr><td><code>Database not found: … (ActiveRecord::NoDatabaseError)</code></td><td>ยังไม่มี DB ชื่อนั้น</td><td><code>bin/rails db:prepare</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-47">ในหน้าเว็บ / log ของ server</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อความที่เห็น</th><th>แปลว่า</th><th>แก้ยังไง</th></tr></thead>
+  <tbody>
+    <tr><td><code>ActiveRecord::PendingMigrationError</code> · <code>Migrations are pending. To resolve this issue, run: bin/rails db:migrate</code></td><td>มีใบสั่งที่ยัง down</td><td>ทำตามที่มันบอก แล้ว refresh</td></tr>
+    <tr><td><code>500</code> + <code>ActiveModel::ForbiddenAttributesError</code></td><td>เอา params ดิบใส่ model</td><td>strong params (<code>params.expect</code>) · <strong>ห้าม</strong> <code>permit!</code></td></tr>
+    <tr><td><code>400</code> + <code>param is missing or the value is empty or invalid: comment</code></td><td>ชื่อกลุ่มที่ส่งมาไม่ตรงกับใน expect</td><td>ส่ง <code>comment[body]=…</code> ให้ตรง</td></tr>
+    <tr><td><code>422</code> + <code>Can't verify CSRF token authenticity.</code></td><td>ยิง curl โดยไม่มีบัตรคิว</td><td>เอา token + cookie (<code>-b jar.txt</code>) ไปด้วย · อย่าปิดการตรวจ</td></tr>
+    <tr><td><code>ActiveRecord::RecordNotDestroyed</code> · <code>Failed to destroy Category with id=5</code></td><td><code>destroy!</code> ของ scaffold เจอ <code>restrict_with_error</code></td><td><code>if @category.destroy … else</code> โชว์ <code>errors.full_messages.to_sentence</code></td></tr>
+    <tr><td><code>The name 'Category' is either already used in your application or reserved by Ruby on Rails.</code></td><td>scaffold ชื่อนี้มีอยู่แล้ว</td><td>rollback → <code>destroy scaffold</code> → commit แล้วเริ่มใหม่</td></tr>
+    <tr><td><code>Unpermitted parameters: :views, :published, :user_id.</code></td><td>ไม่ใช่ error · ช่องเกินถูกตัดทิ้ง</td><td>ถ้าช่องที่ควรผ่านโผล่ตรงนี้ = ลืมใส่ใน permit</td></tr>
+    <tr><td>หน้าเป็นตัวหนังสือดำล้วน ไม่มีสี</td><td>ยังไม่ได้สร้างไฟล์ CSS ของ Tailwind</td><td><code>bin/rails tailwindcss:build</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="glossary">15 · ศัพท์ภาษาคน</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ศัพท์</th><th>ภาษาคน</th><th>ในร้านอาหาร</th><th>ใน Go/GORM</th></tr></thead>
+  <tbody>
+    <tr><td>database · table · row · column</td><td>ที่เก็บข้อมูล · ตาราง · แถว (record) · คอลัมน์</td><td>ตู้ · ลิ้นชัก · แฟ้มหนึ่งแผ่น · ช่องบนแฟ้ม</td><td>เหมือนกัน</td></tr>
+    <tr><td>SQL · query</td><td>ภาษาสั่ง database · คำสั่งหนึ่งประโยค = ไปตู้หนึ่งรอบ</td><td>ภาษาของคนดูแลสต็อก · การเดินไปตู้</td><td>SQL ที่ GORM ยิง</td></tr>
+    <tr><td>NULL</td><td>ช่องที่ไม่มีค่า · Ruby เห็นเป็น <code>nil</code> · ไม่ใช่ <code>''</code></td><td>ช่องที่ไม่ได้เขียนอะไร</td><td>—</td></tr>
+    <tr><td>ORM</td><td>ตัวแปลงระหว่าง object ในโค้ดกับแถวในตาราง</td><td>คนแปลภาษาให้คนดูแลสต็อก</td><td>GORM</td></tr>
+    <tr><td>Active Record pattern</td><td>object หนึ่งตัว = แถวหนึ่ง + รู้วิธี save ตัวเอง</td><td>แฟ้มที่เดินเข้าลิ้นชักเองได้</td><td>struct ไม่ save ตัวเอง</td></tr>
+    <tr><td>Data Mapper · repository</td><td>แยก object ข้อมูลล้วนกับตัวที่คุยกับ DB</td><td>แฟ้มกระดาษเปล่า + พนักงานคลัง</td><td>repository บท 27</td></tr>
+    <tr><td>attribute</td><td>ช่องข้อมูลฝั่ง model ที่ Rails สร้าง method ให้จากคอลัมน์</td><td>ช่องบนแฟ้ม</td><td>field ของ struct</td></tr>
+    <tr><td>CRUD</td><td>สร้าง · อ่าน · แก้ · ลบ</td><td>งานสี่อย่างของคนดูแลสต็อก</td><td>เหมือนกัน</td></tr>
+    <tr><td>transaction · commit · rollback</td><td>กลุ่มคำสั่งที่ทำทั้งหมดหรือไม่ทำเลย · ยืนยัน · ยกเลิกทั้งชุด</td><td>งานชุดเดียวที่ห้ามค้างครึ่ง</td><td><code>db.Transaction(func…)</code></td></tr>
+    <tr><td>schema · migration</td><td>หน้าตาของ DB · ไฟล์เปลี่ยนหน้าตาหนึ่งครั้ง</td><td>แปลนตู้ · ใบสั่งช่าง</td><td>goose</td></tr>
+    <tr><td>schema drift</td><td>DB แต่ละเครื่องค่อย ๆ ไม่ตรงกันโดยไม่มีใครรู้</td><td>ตู้แต่ละสาขาหน้าตาเพี้ยนกัน</td><td>เจอในบท 31</td></tr>
+    <tr><td>production · deploy · downtime</td><td>เว็บจริง · เอาโค้ดใหม่ขึ้น · ช่วงที่เว็บใช้ไม่ได้</td><td>ร้านจริง · ส่งของเข้าร้าน · ร้านปิด</td><td>เหมือนกัน</td></tr>
+    <tr><td>lock · DDL</td><td>DB กันไม่ให้คนอื่นแตะตารางชั่วคราว · คำสั่งเปลี่ยนโครงตู้ (CREATE · ALTER · DROP)</td><td>ปิดลิ้นชักระหว่างช่างทำงาน</td><td>เรื่องของ PostgreSQL</td></tr>
+    <tr><td>index · Seq Scan · Index Scan</td><td>โครงสร้างช่วยหาเร็ว · ไล่ทีละแถว · ใช้ index</td><td>ป้ายแท็บ · ไล่ทีละแผ่น · เปิดตามป้าย</td><td>tag <code>uniqueIndex</code> (แบบห้ามซ้ำ)</td></tr>
+    <tr><td>expand/contract · backfill · dual write</td><td>เพิ่มใหม่ → ย้าย → รื้อเก่า · เติมค่าย้อนหลัง · เขียนลงทั้งช่องเก่าและใหม่</td><td>ปรับปรุงร้านโดยไม่ปิดร้าน</td><td>หลักการเดียวกัน</td></tr>
+    <tr><td>validation · constraint</td><td>กฎที่โค้ดตรวจ (ข้ามได้) · กฎที่ตัว DB บังคับ (ข้ามไม่ได้)</td><td>คนดูแลสต็อก · ตัวตู้</td><td><code>binding</code> ของ Gin · <code>gorm:"not null"</code></td></tr>
+    <tr><td>defense in depth</td><td>กันหลายชั้น ชั้นหนึ่งพลาดอีกชั้นยังกัน</td><td>4 ด่านหน้าร้านถึงตู้</td><td>—</td></tr>
+    <tr><td>race condition · check-then-act</td><td>ผลขึ้นกับใครเสร็จก่อน · ตรวจก่อนแล้วค่อยทำ (มีช่องว่างตรงกลาง)</td><td>สองคนจองโต๊ะเดียวกันพร้อมกัน</td><td>เหมือนกัน</td></tr>
+    <tr><td>bang method (<code>!</code>)</td><td>ถ้าทำไม่ได้ให้โยน error</td><td>กดกริ่งเตือนดัง ๆ</td><td>GORM มีแบบเดียว: คืน <code>.Error</code></td></tr>
+    <tr><td>callback · lifecycle</td><td>method ที่ Rails เรียกให้เองตามจังหวะชีวิตของแฟ้ม</td><td>ขั้นตอนอัตโนมัติก่อน/หลังเก็บ</td><td>hook (<code>BeforeSave</code>)</td></tr>
+    <tr><td>side effect</td><td>ผลที่ออกไปนอกตัวโค้ด (อีเมล · API) · rollback ย้อนไม่ได้</td><td>จดหมายที่ส่งออกไปแล้ว</td><td>เหมือนกัน</td></tr>
+    <tr><td>service object · concern</td><td>class ทำงานหลายขั้นหนึ่งอย่าง · module ที่หลาย model ใช้ร่วม</td><td>ใบงานผู้จัดการ · คู่มือกลาง</td><td>—</td></tr>
+    <tr><td>relation · lazy</td><td>ใบเบิกที่ยังไม่ยื่น · ยังไม่ทำจนกว่าต้องใช้ผล</td><td>ใบเบิกในมือ</td><td>GORM ยิงตอน <code>Find</code></td></tr>
+    <tr><td>N+1 · eager loading</td><td>ไปตู้ 1 + N รอบ · โหลดของที่ผูกกันมาล่วงหน้า</td><td>เดิน 101 รอบ · หยิบทั้งตะกร้า</td><td>loop + <code>First</code> · <code>Preload</code></td></tr>
+    <tr><td>primary key · foreign key</td><td>เลขที่แฟ้ม (<code>id</code>) · ช่องที่เก็บเลขที่แฟ้มลิ้นชักอื่น (<code>post_id</code>)</td><td>เลขหน้าแฟ้ม · ช่อง “เป็นของเลขที่ …”</td><td><code>ID</code> · <code>PostID</code></td></tr>
+    <tr><td>association · join table</td><td>บอก model ว่าผูกกับใคร · ตารางกลางของหลายต่อหลาย</td><td>ช่องอ้างอิงบนใบลูก · ใบจับคู่</td><td>field <code>Comments []Comment</code></td></tr>
+    <tr><td>parent · child · orphan</td><td>แฟ้มที่ถูกอ้าง · แฟ้มที่ชี้ไปหาแม่ · ลูกที่แม่หายไปแล้ว</td><td>บทความ · ใบคอมเมนต์ · ใบกำพร้า</td><td>เหมือนกัน</td></tr>
+    <tr><td>counter cache</td><td>เก็บจำนวนลูกไว้บนแม่ ให้ Rails บวก/ลบให้</td><td>ป้ายตัวเลขบนหน้าแฟ้ม</td><td>เขียนเอง</td></tr>
+    <tr><td>REST · resource · nested</td><td>URL เป็นคำนาม + verb บอกการกระทำ · ของหนึ่งชนิด · ซ้อนใต้แม่</td><td>เซ็ตเมนูมาตรฐาน · แผนกย่อยในแผนก</td><td><code>r.GET</code> <code>r.POST</code> … เองทีละเส้น</td></tr>
+    <tr><td>mass assignment · strong parameters · allowlist</td><td>ใส่หลายช่องรวดเดียวจาก hash · ระบบกรอง params · รายชื่อของที่ผ่านได้</td><td>ใบสั่งที่ลูกค้าเขียนเพิ่ม · พนักงานต้อนรับ</td><td><code>json.Unmarshal</code> · struct input แยก</td></tr>
+    <tr><td>400 · 422 · 500</td><td>คำขอผิดรูป · ข้อมูลไม่ผ่านกฎ · server พังเอง (ควรเห็นเฉพาะบั๊กจริง)</td><td>ใบสั่งอ่านไม่ออก · ของไม่ผ่านตรวจ · ครัวไฟไหม้</td><td><code>c.JSON(400, …)</code></td></tr>
+    <tr><td>scaffold · generator · boilerplate</td><td>สร้างทั้งแผนกในคำสั่งเดียว · คำสั่งตระกูล generate · โค้ดหน้าตาเดิม ๆ ที่ทุกแอปต้องมี</td><td>ชุดเปิดแผนกสำเร็จรูป</td><td>ไม่มี</td></tr>
+    <tr><td>authorization · business rule</td><td>“คนนี้ทำได้ไหม” (Day 4) · กฎที่มาจากการทำงานของร้าน AI เดาไม่ได้</td><td>ใครเข้าครัวได้ · กฎเจ้าของร้าน</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="slides">16 · ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<p>เฉพาะจุดที่<strong>พิมพ์ตามสไลด์แล้วพัง</strong> · ที่เหลือดูได้ในตารางท้ายแต่ละบท</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ทำยังไง</th></tr></thead>
+  <tbody>
+    <tr><td>5</td><td><code>Post.new(title: "Hello", user_id: 1)</code></td><td>ตอนยังไม่มีช่อง <code>user_id</code> ได้ <code>ActiveModel::UnknownAttributeError</code></td><td>ตัด <code>user_id</code> ออกจนกว่าจะเตรียมตู้บท 107</td></tr>
+    <tr><td>22</td><td><code>numericality: { greater_than: 0 }</code> ที่ views</td><td>views เริ่มที่ 0 → บทความใหม่ทุกชิ้นได้ <code>Views must be greater than 0</code></td><td><code>greater_than_or_equal_to: 0</code></td></tr>
+    <tr><td>23 · 53</td><td><code>status: :unprocessable_entity</code></td><td>ยังได้ 422 แต่ Rack ประกาศเลิกใช้ชื่อนี้</td><td><code>:unprocessable_content</code></td></tr>
+    <tr><td>24</td><td><code>self.slug ||= …</code> โดยไม่บอกให้เพิ่มคอลัมน์ · <code>NotifyFollowersJob.perform_later</code></td><td><code>undefined method 'slug'</code> · <code>uninitialized constant Post::NotifyFollowersJob</code> (job คือ Day 3)</td><td>migration <code>AddSlugToPosts</code> ก่อน · ใช้ <code>Rails.logger</code> แทน job</td></tr>
+    <tr><td>26</td><td><code>@user.save!</code> แล้ว rescue แค่ <code>RecordNotUnique</code></td><td>อีเมลซ้ำแบบปกติได้ <code>RecordInvalid</code> ไม่มีใครรับ → หน้าแดง</td><td><code>if @user.save</code> + rescue (หัวข้อ 7)</td></tr>
+    <tr><td>31</td><td>พิมพ์ <code>q = Post.where(…)</code> “ยังไม่มี SQL วิ่ง”</td><td>console โชว์ SQL ทุกบรรทัด (<code>loading for pp</code>)</td><td>ต่อ <code>; nil</code></td></tr>
+    <tr><td>41</td><td><code>post.comments.create(body: "hi")</code> · <code>post.comments.clear</code></td><td><code>User must exist</code> · <code>NotNullViolation</code></td><td>ใส่ <code>user:</code> · อย่าใช้ <code>clear</code> กับ belongs_to ที่บังคับ</td></tr>
+    <tr><td>54</td><td><code>self.slug ||= name.to_s.parameterize</code> · <code>has_many :posts</code> ใน Category</td><td>ฟอร์มส่ง <code>''</code> → <code>Slug can't be blank</code> · ยังไม่มี <code>category_id</code> → <code>PG::UndefinedColumn</code></td><td><code>if slug.blank?</code> · <code>add_reference … null: true</code> ก่อน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="refs">17 · อ้างอิง</h2>
+
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#retrieving-a-single-record">Rails Guides — Active Record Query Interface: Retrieving a Single Record</a> —
+    <code>find</code> · <code>find_by</code> · <code>first</code> ฉบับทางการ คู่กับหัวข้อ 3–4</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_migrations.html#schema-dumps-and-source-control">Rails Guides — Active Record Migrations: Schema Dumps and Source Control</a> —
+    ทำไม <code>schema.rb</code> ต้อง commit (หัวข้อ 5) · หัวข้อ <a href="https://guides.rubyonrails.org/active_record_migrations.html#throwing-an-error-to-prevent-reverts">Throwing an Error to Prevent Reverts</a> คือ IrreversibleMigration</li>
+  <li><a href="https://github.com/ankane/strong_migrations">strong_migrations</a> —
+    gem ที่เตือนท่า migration อันตรายพร้อมบอกท่าปลอดภัย (หัวข้อ 5 · ไม่ได้ติดตั้งในบทเรียน)</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_validations.html#skipping-validations">Rails Guides — Active Record Validations: Skipping Validations</a> —
+    รายชื่อประตูข้างทั้งหมด (หัวข้อ 7) · และหัวข้อ <a href="https://guides.rubyonrails.org/active_record_validations.html#uniqueness">uniqueness</a> ที่ทีม Rails เตือนเรื่องต้องมี unique index เอง</li>
+  <li><a href="https://www.postgresql.org/docs/17/ddl-constraints.html">PostgreSQL 17 — Constraints</a> —
+    NOT NULL · UNIQUE · CHECK · FOREIGN KEY ฝั่งตัวตู้ (หัวข้อ 7)</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#n-1-queries-problem">Rails Guides — N + 1 Queries Problem</a> —
+    includes · preload · eager_load (หัวข้อ 10) · และ <a href="https://guides.rubyonrails.org/active_record_querying.html#strict-loading">strict loading</a></li>
+  <li><a href="https://guides.rubyonrails.org/association_basics.html#dependent">Rails Guides — Association Basics: dependent</a> —
+    ค่าทั้งหมดของ <code>dependent:</code> (หัวข้อ 11) · และ <a href="https://guides.rubyonrails.org/association_basics.html#counter-cache">counter_cache</a></li>
+  <li><a href="https://guides.rubyonrails.org/routing.html#nested-resources">Rails Guides — Routing: Nested Resources</a> —
+    route ซ้อนและกฎ “ซ้อนชั้นเดียว” (หัวข้อ 12)</li>
+  <li><a href="https://guides.rubyonrails.org/command_line.html#generating-scaffolds">Rails Guides — Generating Scaffolds</a> —
+    ไฟล์ที่ scaffold สร้างให้ (หัวข้อ 13)</li>
+</ul>
+
+<nav class="nav"><a href="../lessons/0106-active-record-intro.html">← กลับไปบทเรียน 106–119</a> <a href="../../index.html">🏠 หน้าแรก</a></nav>
+
+</main>
+
+</body>
+</html>

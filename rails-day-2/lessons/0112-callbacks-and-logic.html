@@ -1,0 +1,1045 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 112 — Callbacks และที่อยู่ของโค้ด — ขั้นตอนอัตโนมัติก่อนเก็บแฟ้ม</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 112 · Rails · Day 2</p>
+  <h1>Callbacks และที่อยู่ของโค้ด — ขั้นตอนอัตโนมัติก่อนเก็บแฟ้ม</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="./0110-validations.html">บทเรียน 110</a> (validation) และ <a href="./0111-four-layers-and-uniqueness.html">บทเรียน 111</a> (transaction) มาก่อน</p>
+  <p class="standfirst">
+    บางงานต้องทำ<strong>ทุกครั้ง</strong>ที่บันทึกบทความ เช่น สร้างชื่อสำหรับใส่ใน URL หรือแปลงอีเมลเป็นตัวเล็ก ·
+    ถ้าต้องจำเขียนเองทุกที่ สักวันต้องมีคนลืม
+    <br>อ่านจบบทนี้ คุณจะสั่งให้ Rails <strong>ทำงานพวกนี้ให้เองอัตโนมัติ</strong> ก่อนหรือหลังเก็บแฟ้มเข้าตู้ได้ ·
+    รู้ว่างานไหนต้องรอให้ตู้ยืนยันก่อน (ไม่งั้นได้อีเมลหลอก) ·
+    และรู้ว่าโค้ดงานใหญ่ที่มีหลายขั้นควรไปอยู่ไฟล์ไหน
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>model</strong> (บท 106) — คนดูแลสต็อกที่ฝังอยู่ในแฟ้ม · <code>Post</code> หนึ่งตัว = แฟ้มบทความหนึ่งแผ่น ที่เดินเข้าลิ้นชัก <code>posts</code> เองได้</li>
+    <li><strong>validation</strong> (บท 110) — กฎที่คนดูแลสต็อกใช้ตรวจแฟ้มก่อนเก็บ เช่น "ไม่มีชื่อเรื่อง ไม่รับ" · <code>save!</code> / <code>update!</code> = ถ้าไม่ผ่านให้ระเบิด</li>
+    <li><strong>migration</strong> (บท 108) — ใบสั่งช่างมาต่อเติมตู้ · <code>bin/rails db:migrate</code> = ให้ช่างลงมือ · <code>db:rollback</code> = รื้องานใบล่าสุดออก</li>
+    <li><strong>transaction</strong> (บท 111) — กล่องคำสั่ง "ทำทั้งหมด หรือไม่ทำเลย" · ใน log เห็นเป็น <code>BEGIN</code> (เปิดกล่อง) · <code>COMMIT</code> (ยืนยัน) · <code>ROLLBACK</code> (ยกเลิกทั้งกล่อง)</li>
+    <li><strong><code>||=</code></strong> (บท 94) — "ถ้ายังว่างค่อยใส่" · <strong><code>before_action :set_post</code></strong> (บท 102) — "ก่อนเข้าเมนู ให้เรียก method นี้ก่อน" · <strong><code>private</code></strong> (บท 102) — method ข้างใต้ใช้ได้แค่ภายใน class</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17</strong>
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน ใช้แทนกันได้)</p>
+  <p>📦 ตัวอย่างในบทนี้ใช้ตาราง users / posts / comments และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับ<a href="./0107-console-crud.html">บท 107</a> ·
+    บทนี้จะ<strong>เพิ่มคอลัมน์ <code>slug</code> ให้ posts เฉพาะบทนี้</strong> แล้วคืนสภาพตอนท้ายภารกิจ เพื่อให้บทถัดไปได้ผลตรงกัน</p>
+  <p>✂️ <strong>โค้ด model ในบทนี้โชว์เฉพาะบรรทัดที่เกี่ยวกับเรื่องของบท</strong> · <code>validates</code> ที่คุณเติมไว้ตามบท 110–111 <strong>เก็บไว้ตามเดิม</strong> แล้วแทรกบรรทัดใหม่เพิ่มเข้าไป ·
+    ผลรันในบทนี้รันกับ model ที่ไม่มี <code>validates</code> — log ของคุณจึงอาจมีบรรทัดเพิ่ม เช่น <code>User Exists?</code> (Rails เช็คอีเมลซ้ำตามกฎบท 111) ไม่ต้องตกใจ</p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · <strong>เวลา (ms) · วันเวลา · เลข id · เลขหน้าชื่อไฟล์ migration ของคุณจะต่าง</strong> ·
+    ทุกคำสั่งพิมพ์ใน <code>bin/rails console</code> ธรรมดา <strong>ไม่ใช้ <code>--sandbox</code></strong>
+    (แผ่นใสของ sandbox ทำให้ log รกและดูเรื่อง <code>after_commit</code> ท้ายบทไม่ออก)</p>
+</div>
+
+<h2 id="sn-sec-1">callback คืออะไร — กฎ "ทำทุกครั้ง" ที่ติดไว้ข้างตู้</h2>
+
+<p>
+  <strong>callback</strong> คือ method ที่เราฝากไว้กับ model ว่า "<strong>ทุกครั้งที่จะเก็บแฟ้ม (หรือเพิ่งเก็บเสร็จ) ให้เรียก method นี้ด้วย</strong>" ·
+  ไม่ต้องมีใครสั่ง ไม่ว่าการบันทึกจะมาจาก controller · console · หรือ seeds ก็โดนหมด
+</p>
+<p>
+  มีไว้สำหรับงานที่<strong>ต้องทำทุกครั้งโดยไม่มีข้อยกเว้น</strong> — ถ้าปล่อยให้คนเขียนเองในทุก controller สักวันต้องมีที่หนึ่งที่ลืม
+</p>
+
+<div class="analogy">
+  <span class="label">🏷 เทียบให้เห็นภาพ — ป้ายกฎที่ติดไว้ข้างตู้เก็บแฟ้ม</span>
+  <p>
+    คนดูแลสต็อกติดป้ายไว้ข้างตู้ว่า "<strong>แฟ้มทุกแผ่น ก่อนเข้าลิ้นชัก ต้องติดป้ายชื่อย่อที่สันแฟ้ม</strong>" ·
+    ใครเอาแฟ้มมาส่งก็ตาม — เชฟ พนักงานต้อนรับ หรือผู้จัดการ — คนดูแลสต็อกติดป้ายให้เองทุกแผ่น คนส่งไม่ต้องจำ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงเห็นแฟ้มแปลก ๆ ก็หยุดถามก่อนได้ · callback ไม่คิด ทำทุกครั้งเป๊ะ ๆ ·
+    และคนที่อ่านโค้ด controller <strong>มองไม่เห็นป้ายนี้</strong> — เห็นแค่ <code>post.save</code> บรรทัดเดียว ไม่รู้ว่าข้างในมีงานแอบทำอีกกี่อย่าง
+    (นี่คือที่มาของคำว่า "สะดวกมากและเจ็บมาก" — มีหัวข้อของมันเองข้างล่าง)
+  </p>
+</div>
+
+<p>
+  หน้าตาคุ้นตาแน่นอน — เพราะคุณเคยเห็นญาติของมันแล้วใน controller: <code>before_action :set_post</code> (บท 102) ·
+  callback ของ model เขียนแบบเดียวกันเป๊ะ ต่างกันแค่จังหวะ: before_action ทำก่อน<strong>เข้าเมนู</strong> · callback ทำก่อน/หลัง<strong>เก็บแฟ้ม</strong>
+</p>
+
+<pre><code><span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">before_validation</span> <span class="n">:generate_slug</span>   <span class="c"># ก่อนตรวจแฟ้ม ให้เรียก method ชื่อ generate_slug</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM ก็มีของแบบนี้ เรียกว่า <strong>hook</strong> — ถ้า struct มี method ชื่อ <code>BeforeSave</code> สะกดตรงเป๊ะ GORM จะเรียกให้เองก่อนบันทึก
+  (ไฟล์นี้ <code>go run</code> ผ่านจริง):
+</p>
+
+<pre><code><span class="c">// main.go</span>
+<span class="k">package</span> main
+
+<span class="k">import</span> (
+	<span class="s">"fmt"</span>
+	<span class="s">"strings"</span>
+
+	<span class="s">"gorm.io/driver/sqlite"</span>
+	<span class="s">"gorm.io/gorm"</span>
+)
+
+<span class="k">type</span> <span class="n">Post</span> <span class="k">struct</span> {
+	ID    <span class="n">uint</span>
+	Title <span class="n">string</span>
+	Slug  <span class="n">string</span>
+}
+
+<span class="c">// BeforeSave คือ hook ของ GORM — ชื่อต้องสะกดตรงเป๊ะ GORM ถึงจะเรียกให้เองก่อน save</span>
+<span class="k">func</span> (p *<span class="n">Post</span>) <span class="f">BeforeSave</span>(tx *gorm.DB) <span class="k">error</span> {
+	<span class="k">if</span> p.Slug == <span class="s">""</span> {
+		p.Slug = strings.<span class="f">ToLower</span>(strings.<span class="f">ReplaceAll</span>(p.Title, <span class="s">" "</span>, <span class="s">"-"</span>))
+	}
+	<span class="k">return</span> <span class="n">nil</span>
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+	db, _ := gorm.<span class="f">Open</span>(sqlite.<span class="f">Open</span>(<span class="s">"file::memory:"</span>), &amp;gorm.Config{})
+	db.<span class="f">AutoMigrate</span>(&amp;Post{})
+
+	post := Post{Title: <span class="s">"Green Curry Chicken"</span>}
+	db.<span class="f">Create</span>(&amp;post)
+	fmt.<span class="f">Println</span>(post.Slug)
+}</code></pre>
+
+<pre><code>$ go run main.go
+green-curry-chicken</code></pre>
+
+<p>อ่านเฉพาะส่วนที่เกี่ยวกับเรื่องนี้:</p>
+<ul>
+  <li><code>func (p *Post) BeforeSave(tx *gorm.DB) error</code> — method ของ struct Post (<code>p</code> คือบทความตัวที่กำลังจะถูกบันทึก) · คืน <code>error</code> ได้ ถ้าคืน error GORM จะยกเลิกการบันทึก</li>
+  <li><code>if p.Slug == ""</code> … — ถ้ายังไม่มี slug ให้เอาชื่อเรื่องมาเปลี่ยนช่องว่างเป็นขีด แล้วทำเป็นตัวเล็ก</li>
+  <li><code>db.AutoMigrate(&amp;Post{})</code> — ให้ GORM สร้างตารางจาก struct (บท 27) · <code>db.Create(&amp;post)</code> — บันทึก · ในจังหวะนี้แหละที่ GORM เรียก <code>BeforeSave</code> ให้เอง เราไม่ได้เรียกเลย</li>
+  <li>ฝั่ง Go: GORM <strong>เดาจากชื่อ method</strong> — สะกด <code>Beforesave</code> ผิดตัวเดียวก็เงียบ ไม่ถูกเรียก (ผมลองแล้ว ได้บรรทัดว่างแทน slug)</li>
+  <li>ฝั่ง Rails: เรา<strong>ประกาศเองตรง ๆ</strong> ว่า "จังหวะ before_validation ให้เรียก <code>:generate_slug</code>" · ชื่อ method ตั้งอะไรก็ได้</li>
+  <li>ใช้ SQLite (ฐานข้อมูลในหน่วยความจำ) แค่ให้ตัวอย่าง Go รันได้ในไฟล์เดียว ไม่เกี่ยวกับแอป Rails</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>callback (Active Record callback)</dt>
+    <dd>method ที่ Rails เรียกให้เองตอนแฟ้มถูกสร้าง · บันทึก · ลบ · ประกาศด้วยคำอย่าง <code>before_validation</code> · <code>after_commit</code> ·
+        GORM เรียกของแบบเดียวกันว่า hook ·
+        <strong>ถาม senior ได้ว่า “model นี้มี callback อะไรซ่อนอยู่บ้าง ก่อนที่ผมจะไปเรียก save จากที่ใหม่”</strong></dd>
+    <dt>lifecycle (วงจรชีวิตของ object)</dt>
+    <dd>ลำดับจังหวะที่แฟ้มหนึ่งแผ่นผ่าน ตั้งแต่ "จะบันทึก" จนถึง "ตู้ยืนยันแล้ว" · callback แต่ละตัวคือจุดแวะในเส้นทางนี้ (หัวข้อถัดไป) ·
+        <strong>พิมพ์บอก AI ได้ว่า “at which point in the Active Record lifecycle should I set this attribute?”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">ลำดับที่ callback ทำงาน — แฟ้มเดินผ่านจุดแวะไหนบ้าง</h2>
+
+<p>
+  เวลาสั่ง <code>create</code> หนึ่งครั้ง แฟ้มไม่ได้กระโดดเข้าตู้ทันที แต่เดินผ่านจุดแวะเรียงกันตามนี้ (สไลด์หน้า 24 · ผมเรียงตามผลรันจริงข้างล่าง):
+</p>
+
+<div class="diagram"><pre>สั่ง post.save / Post.create / post.update
+        │
+        ▼
+ 1  before_validation   ← เตรียมของก่อนตรวจ (สร้าง slug ทำตรงนี้)
+        │  ··· ตรวจกฎ validation (บท 110) ···
+ 2  after_validation
+ 3  before_save         ← ทำทั้งตอนสร้างใหม่ และตอนแก้ของเดิม
+ 4  before_create       ← เฉพาะแฟ้มใหม่ (ถ้าแก้ของเดิม ตัวนี้ข้ามไป)
+        │
+   ═══ INSERT (เก็บแฟ้มใหม่) หรือ UPDATE (แก้แฟ้มเดิม) ลงตู้ ═══
+        │
+ 5  after_create        ← เฉพาะแฟ้มใหม่
+ 6  after_save
+        │
+   ═══ COMMIT — ตู้ยืนยันว่ารับแฟ้มแล้วจริง ═══
+        │
+ 7  after_commit        ← ของที่ออกไปนอกร้าน (อีเมล · แจ้งเตือน) ทำตรงนี้</pre></div>
+
+<p>
+  อย่าเชื่อแผนภาพ ลองให้ callback ทุกตัว "ตะโกนชื่อตัวเอง" ดีกว่า · เปิดไฟล์ <code>app/models/post.rb</code> แล้ว<strong>เพิ่ม 7 บรรทัดนี้ชั่วคราว</strong> (ใต้ <code>has_many</code>):
+</p>
+
+<pre><code><span class="c"># app/models/post.rb — ตัวทดลอง: ให้ callback ทุกตัวตะโกนชื่อตัวเอง</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">before_validation</span> { <span class="f">puts</span> <span class="s">"1 before_validation"</span> }
+  <span class="f">after_validation</span>  { <span class="f">puts</span> <span class="s">"2 after_validation"</span> }
+  <span class="f">before_save</span>       { <span class="f">puts</span> <span class="s">"3 before_save"</span> }
+  <span class="f">before_create</span>     { <span class="f">puts</span> <span class="s">"4 before_create"</span> }
+  <span class="f">after_create</span>      { <span class="f">puts</span> <span class="s">"5 after_create"</span> }
+  <span class="f">after_save</span>        { <span class="f">puts</span> <span class="s">"6 after_save"</span> }
+  <span class="f">after_commit</span>      { <span class="f">puts</span> <span class="s">"7 after_commit"</span> }
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>belongs_to :user</code> · <code>has_many :comments</code> — ของเดิมในไฟล์ (บทความเป็นของผู้ใช้หนึ่งคน มีคอมเมนต์หลายอัน — ละเอียดบท 115) ห้ามลบ</li>
+  <li><code>before_validation { … }</code> — แทนที่จะส่งชื่อ method ก็ส่ง <strong>block</strong> (ก้อนโค้ดใน <code>{ }</code> บท 93) ไปตรง ๆ ได้ · เหมาะกับโค้ดทดลองสั้น ๆ</li>
+</ul>
+
+<p>เปิด <code>bin/rails console</code> แล้วสร้างบทความหนึ่งชิ้น (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):001&gt; somchai = User.find_by(name: "สมชาย"); nil
+  User Load (2.0ms)  SELECT "users".* FROM "users" WHERE "users"."name" = 'สมชาย' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):002&gt; post = somchai.posts.create(title: "Pad Thai", body: "เส้นจันท์"); nil
+1 before_validation
+2 after_validation
+3 before_save
+4 before_create
+  TRANSACTION (0.9ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (3.1ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id") VALUES ('Pad Thai', 'เส้นจันท์', '2026-11-04 12:23:32.692780', '2026-11-04 12:23:32.692780', FALSE, 0, 1) RETURNING "id" /*application='WongnokBlog'*/
+5 after_create
+6 after_save
+  TRANSACTION (2.1ms)  COMMIT /*application='WongnokBlog'*/
+7 after_commit
+=&gt; nil</code></pre>
+
+<ul>
+  <li><code>; nil</code> ท้ายบรรทัด — <code>;</code> คือ "สั่งสองอย่างในบรรทัดเดียว" · อย่างที่สองคือ <code>nil</code> เฉย ๆ ·
+      console จึงโชว์ <code>=&gt; nil</code> แทนการพิมพ์แฟ้มบทความยาวเหยียด · <strong>ไม่ได้เปลี่ยนผลอะไร</strong> ใช้แบบนี้ทั้งบท</li>
+  <li><code>somchai.posts.create(…)</code> — สร้างบทความ<strong>ในชื่อของสมชาย</strong> แบบเดียวกับใน seeds บท 107 · Rails เติมช่อง <code>user_id</code> ให้เอง (ละเอียดบท 115)</li>
+  <li>บรรทัดที่ขึ้นต้นด้วย <code>User Load (2.0ms)</code> · <code>Post Create (3.1ms)</code> — สมุดบันทึกการเบิกของ: ใครไปตู้ ทำอะไร ใช้เวลากี่มิลลิวินาที แล้วตามด้วย SQL ที่ส่งไปจริง</li>
+  <li><code>SELECT "users".* FROM "users" WHERE "users"."name" = 'สมชาย' LIMIT 1</code> — "ขอทุกช่องจากลิ้นชัก users เฉพาะแผ่นที่ช่อง name เป็น สมชาย เอาแผ่นเดียว" ·
+      ป้าย <code>/*application='WongnokBlog'*/</code> ท้ายทุกบรรทัด คือ Rails แปะบอกว่า SQL นี้มาจากแอปไหน <strong>ไม่ต้องสนใจ</strong></li>
+  <li><code>INSERT INTO "posts" (…) VALUES (…)</code> — "เก็บแฟ้มใหม่ลงลิ้นชัก posts โดยเขียนช่องพวกนี้ด้วยค่าพวกนี้" · <code>RETURNING "id"</code> ท้ายคำสั่ง = "เก็บเสร็จแล้วบอกเลขที่แฟ้มกลับมาด้วย" (บท 107) ·
+      ตอนนี้ยังไม่มีช่อง <code>slug</code> — จะเพิ่มในหัวข้อถัดไป</li>
+  <li><code>BEGIN</code> … <code>COMMIT</code> — Rails ครอบการบันทึกทุกครั้งด้วย transaction ให้เอง (บท 111) ·
+      ที่ <code>BEGIN</code> โผล่หลังเลข 4 เพราะ Rails ส่งคำนี้ไปบอกฐานข้อมูลตอนจะเขียนจริงเท่านั้น <strong>ไม่ต้องสนใจ</strong></li>
+  <li><strong>จุดที่ต้องดูจริง ๆ:</strong> เลข 6 (<code>after_save</code>) อยู่<strong>ก่อน</strong> <code>COMMIT</code> · เลข 7 (<code>after_commit</code>) อยู่<strong>หลัง</strong> — จำไว้ หัวข้อ after_save หรือ after_commit ข้างล่างใช้เรื่องนี้</li>
+</ul>
+
+<div class="predict">
+<pre><code>wongnok-blog(dev):003&gt; post.update(title: "Pad Thai Goong")</code></pre>
+  <p class="ask">ทีนี้<strong>แก้</strong>บทความเดิม ไม่ได้สร้างใหม่ · ตัวเลข 1–7 ตัวไหนจะโผล่บ้าง?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — <strong>หายไปสองตัว คือ 4 กับ 5</strong>:</p>
+<pre><code>1 before_validation
+2 after_validation
+3 before_save
+  TRANSACTION (1.6ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (3.5ms)  UPDATE "posts" SET "title" = 'Pad Thai Goong', "updated_at" = '2026-11-04 11:53:04.914520' WHERE "posts"."id" = 7 /*application='WongnokBlog'*/
+6 after_save
+  TRANSACTION (1.5ms)  COMMIT /*application='WongnokBlog'*/
+7 after_commit
+=&gt; true</code></pre>
+    <p><code>before_create</code> / <code>after_create</code> มีไว้เฉพาะ<strong>แฟ้มใหม่</strong> · ส่วนคำว่า <strong>save</strong> ครอบทั้งสร้างและแก้ จึงยังโผล่ ·
+      SQL เปลี่ยนจาก INSERT เป็น <code>UPDATE "posts" SET "title" = … WHERE "posts"."id" = 7</code> = "แก้ช่อง title ของแฟ้มในลิ้นชัก posts เฉพาะแผ่นเลขที่ 7" (เลข id ของคุณจะต่าง)</p>
+  </div>
+</div>
+
+<p>ทดลองเสร็จแล้ว <strong>ลบ callback ทั้ง 7 บรรทัดนั้นออก</strong> ให้ไฟล์กลับเป็นเหมือนก่อนเริ่มหัวข้อนี้ — หัวข้อถัดไปจะใส่ของจริง</p>
+
+<h2 id="sn-sec-3">ลงมือ: ให้บทความสร้าง slug เองทุกครั้ง</h2>
+
+<p>
+  <strong>slug</strong> คือชื่อเรื่องที่แปลงให้ใส่ใน URL ได้ เช่น <code>"Green Curry Chicken"</code> → <code>green-curry-chicken</code>
+  (เคยเห็นแล้วในบท 95 ตอนทำ module Sluggable · คือ "ป้ายชื่อย่อที่สันแฟ้ม" ในภาพข้างบน) · เว็บจะได้มี URL แบบ <code>/posts/green-curry-chicken</code> แทน <code>/posts/8</code> ·
+  งานนี้ต้องทำ<strong>ทุกครั้งที่มีบทความใหม่</strong> — เหมาะกับ callback ที่สุด
+</p>
+
+<h3 id="sn-sub-1">ขั้นที่ 1 — ต่อช่อง slug บนแฟ้ม (ทวนบท 108)</h3>
+
+<p>ตาราง posts ยังไม่มีช่องนี้ ต้องสั่งช่างมาต่อก่อน · <strong>คอลัมน์นี้ใช้เฉพาะบทนี้</strong> ท้ายภารกิจจะรื้อออก (ผลจริง):</p>
+
+<pre><code>$ bin/rails generate migration AddSlugToPosts slug:string
+      invoke  active_record
+      create    db/migrate/20261104115254_add_slug_to_posts.rb
+$ bin/rails db:migrate
+== 20261104115254 AddSlugToPosts: migrating ===================================
+-- add_column(:posts, :slug, :string)
+   -&gt; 0.0021s
+== 20261104115254 AddSlugToPosts: migrated (0.0021s) ==========================</code></pre>
+
+<ul>
+  <li><code>AddSlugToPosts slug:string</code> — ชื่อขึ้นต้นด้วย <code>Add…To…</code> Rails เลยรู้ว่าจะเพิ่มช่องให้ลิ้นชัก posts · ช่องชื่อ <code>slug</code> เก็บข้อความ</li>
+  <li><code>add_column(:posts, :slug, :string)</code> — ใบสั่งช่างที่ generator เขียนให้ มีบรรทัดเดียว · เลข <code>20261104115254</code> คือวันเวลาที่สร้าง ของคุณจะต่าง</li>
+</ul>
+
+<h3 id="sn-sub-2">ขั้นที่ 2 — ติดป้ายกฎไว้ข้างตู้</h3>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">before_validation</span> <span class="n">:generate_slug</span>
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">generate_slug</span>
+    <span class="k">self</span>.slug ||= title.to_s.<span class="f">parameterize</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>before_validation :generate_slug</code> — "ก่อนตรวจแฟ้มทุกครั้ง ให้เรียก method <code>generate_slug</code>" · ส่งชื่อ method เป็น symbol เหมือน <code>before_action</code></li>
+  <li><code>private</code> — <code>generate_slug</code> เป็นงานภายใน ไม่อยากให้ใครเรียก <code>post.generate_slug</code> จากข้างนอก</li>
+  <li><code>title.to_s</code> — เอาชื่อเรื่องมา · <code>.to_s</code> กันกรณี title เป็น <code>nil</code> (ได้ <code>""</code> แทน จะได้ไม่พัง)</li>
+  <li><code>.parameterize</code> — method ของ Rails ที่แปลงข้อความเป็นแบบใส่ URL ได้: ตัวเล็กหมด · ช่องว่างเป็นขีด · ตัดเครื่องหมายแปลก ๆ ทิ้ง</li>
+  <li><code>self.slug ||= …</code> — "ถ้าช่อง slug ยังว่าง ค่อยเติม" (บท 94) · คำว่า <code>self.</code> สำคัญมาก หัวข้อถัดไปทั้งหัวข้อพูดเรื่องนี้</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ <strong>ถ้าข้ามขั้นที่ 1 (สไลด์หน้า 24 ก็ไม่ได้บอกให้เพิ่มคอลัมน์) โค้ดนี้จะพังทันทีที่สร้างบทความ</strong> — ผลจริง:</p>
+<pre><code>app/models/post.rb:11:in 'Post#generate_slug': undefined method 'slug' for an instance of Post (NoMethodError)</code></pre>
+  <p>แปลว่า "แฟ้มบทความไม่มีช่องชื่อ slug" · Rails สร้าง method ให้ตามคอลัมน์ที่มีในตารางจริงเท่านั้น (บท 106) · เลข 11 คือบรรทัด <code>self.slug ||= …</code> (นับรวมบรรทัดคอมเมนต์ชื่อไฟล์ด้วย)</p>
+</div>
+
+<p>ลองใน console · <strong>แก้ไฟล์ model แล้วให้ปิด console เปิดใหม่</strong> (หรือ <code>reload!</code> แล้วหาตัวแปรใหม่ทุกตัว — ตัวแปรที่หาไว้ก่อน reload ยังใช้โค้ดเก่า ผมลองแล้ว) · ผลจริง:</p>
+
+<pre><code>wongnok-blog(dev):001&gt; somchai = User.find_by(name: "สมชาย"); nil
+  User Load (1.3ms)  SELECT "users".* FROM "users" WHERE "users"."name" = 'สมชาย' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):002&gt; curry = somchai.posts.create(title: "Green Curry Chicken", body: "แกงเขียวหวาน"); nil
+  TRANSACTION (2.0ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (4.2ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id", "slug") VALUES ('Green Curry Chicken', 'แกงเขียวหวาน', '2026-11-04 11:53:15.359458', '2026-11-04 11:53:15.359458', FALSE, 0, 1, 'green-curry-chicken') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.8ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):003&gt; curry.slug
+=&gt; "green-curry-chicken"
+wongnok-blog(dev):004&gt; curry.update(title: "Best Green Curry")
+  TRANSACTION (2.0ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (4.1ms)  UPDATE "posts" SET "title" = 'Best Green Curry', "updated_at" = '2026-11-04 11:53:16.597786' WHERE "posts"."id" = 8 /*application='WongnokBlog'*/
+  TRANSACTION (1.6ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):005&gt; curry.slug
+=&gt; "green-curry-chicken"</code></pre>
+
+<ul>
+  <li>บรรทัด 002 — ไม่ได้ส่ง slug มาเลย แต่ใน INSERT ช่องสุดท้ายเป็น <code>'green-curry-chicken'</code> = callback เติมให้ก่อนเข้าตู้</li>
+  <li>บรรทัด 004 — เปลี่ยนชื่อเรื่อง แต่ UPDATE <strong>ไม่ได้แตะช่อง slug</strong> · บรรทัด 005 ยืนยันว่ายังเป็นชื่อเดิม ·
+      เพราะ <code>||=</code> เห็นว่า slug มีค่าแล้วเลยปล่อยไว้ — <strong>ตั้งใจ:</strong> URL ที่คนแชร์ไปแล้วจะได้ไม่เสีย</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ <strong>ชื่อเรื่องภาษาไทย ได้ slug เป็นข้อความว่าง</strong> — ผลจริง:</p>
+<pre><code>wongnok-blog(dev):006&gt; thai = somchai.posts.create(title: "ผัดไทยกุ้งสด", body: "เส้นจันท์"); nil
+  …
+  Post Create (3.1ms)  INSERT INTO "posts" (…, "slug") VALUES (…, '') RETURNING "id" /*application='WongnokBlog'*/
+  …
+wongnok-blog(dev):007&gt; thai.slug
+=&gt; ""</code></pre>
+  <p><code>parameterize</code> เก็บไว้แค่ตัวอังกฤษ ตัวเลข ขีด และขีดล่าง <code>_</code> (ลองแล้ว <code>"ต้มยำ Tom Yum".parameterize</code> ได้ <code>"tom-yum"</code>) · ตัวไทยหายหมด ·
+    และ <code>""</code> ไม่ใช่ <code>nil</code> — <code>||=</code> จึงถือว่า "มีค่าแล้ว" ไม่เติมซ้ำอีกเลย ·
+    <strong>บทนี้ใช้ชื่อภาษาอังกฤษเพื่อให้เห็นผลชัด</strong> · เว็บไทยจริงต้องเลือกวิธีอื่น (เช่น ใช้เลข id ใน URL) — เกินขอบเขตบทนี้</p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>slug · parameterize</dt>
+    <dd>slug = ชื่อสั้นที่อ่านออกสำหรับใส่ใน URL (<code>green-curry-chicken</code>) · <code>parameterize</code> = method ของ Rails ที่ทำ slug จากข้อความ ·
+        <strong>ถาม senior ได้ว่า “บทความภาษาไทยของเรา ทำ slug ยังไง เพราะ parameterize ให้ค่าว่าง”</strong></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ถ้าใส่กฎ <code>validates :slug, presence: true</code> (ห้าม slug ว่าง · บท 110) ไว้ด้วย · <code>generate_slug</code> ต้องผูกกับ callback ตัวไหน บทความใหม่ถึงจะบันทึกผ่าน?</p>
+  <div class="opts">
+    <button class="opt"><code>before_save</code> เพราะเป็นจังหวะสุดท้ายก่อนเขียนลงตู้</button>
+    <button class="opt"><code>before_validation</code> เพราะ slug ต้องมีค่าก่อนการตรวจเริ่ม</button>
+    <button class="opt"><code>after_create</code> เพราะตอนนั้นบทความได้เลข id แล้ว</button>
+    <button class="opt"><code>after_commit</code> เพราะตอนนั้นตู้รับแฟ้มไว้แน่นอนแล้ว</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ดูแผนภาพ: การตรวจ validation อยู่ระหว่างจุดที่ 1 กับ 2 · ต้องเติม slug ก่อนนั้น</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะ <code>before_save</code> มาหลังการตรวจ · ผมลองย้ายไปไว้ตรงนั้นจริง ได้ <code>post.persisted?</code> เป็น <code>false</code>
+       และ <code>post.errors.full_messages</code> เป็น <code>["Slug can't be blank"]</code> — ตรวจตอน slug ยังว่าง เลยไม่รับ ·
+       ตัวเลือกที่ 3 และ 4 ผิด เพราะทั้งคู่อยู่หลัง INSERT — แฟ้มเข้าตู้ไปแล้ว (หรือถูกปฏิเสธไปแล้ว) ค่อยมาเติมก็สายเกินไป</p>
+    <p><strong>จุดที่ต้องจำ:</strong> อยากเตรียมค่าให้ผ่านการตรวจ → <code>before_validation</code></p>
+  </div>
+</div>
+
+<h2 id="sn-sec-4">self. — ตัวเล็ก ๆ ที่ขาดแล้วพังเงียบ</h2>
+
+<p>
+  ใน method ของ model การ<strong>อ่าน</strong>ช่องบนแฟ้มเขียนชื่อเฉย ๆ ได้ (<code>title</code> ในบรรทัดเดียวกันนั่นแหละ) ·
+  แต่การ<strong>เขียนค่าลงช่อง</strong>ต้องมี <code>self.</code> นำหน้าเสมอ · <code>self</code> แปลว่า "แฟ้มแผ่นที่กำลังทำงานอยู่นี้"
+</p>
+<p>ลองลบ <code>self.</code> ออกดู แล้วสร้างบทความใหม่ (ผลจริง):</p>
+
+<pre><code><span class="k">def</span> <span class="f">generate_slug</span>
+  slug ||= title.to_s.<span class="f">parameterize</span>      <span class="c"># ← ลืม self.</span>
+<span class="k">end</span></code></pre>
+
+<pre><code>wongnok-blog(dev):001&gt; oops = User.first.posts.create(title: "Massaman Curry", body: "มัสมั่น"); nil
+  User Load (1.0ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (0.6ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (2.2ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id", "slug") VALUES ('Massaman Curry', 'มัสมั่น', '2026-11-04 11:53:30.754274', '2026-11-04 11:53:30.754274', FALSE, 0, 1, NULL) RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (0.6ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):002&gt; oops.slug
+=&gt; nil</code></pre>
+
+<p>
+  <strong>ไม่มี error สักตัว</strong> แต่ช่อง slug ใน INSERT เป็น <code>NULL</code> ·
+  เพราะ Ruby อ่าน <code>slug ||= …</code> ว่า "<strong>สร้างตัวแปร local ชื่อ slug</strong>" (ตัวแปรที่อยู่แค่ใน method นี้ จบ method ก็หายไป) — ไม่ได้แตะแฟ้มเลย
+</p>
+
+<p>เห็นชัดกว่าถ้าลองกับ Ruby ล้วน ๆ ไม่มี Rails (ผลจริง):</p>
+
+<pre><code><span class="c"># self_demo.rb</span>
+<span class="k">class</span> <span class="n">Post</span>
+  <span class="f">attr_accessor</span> <span class="n">:slug</span>
+
+  <span class="k">def</span> <span class="f">forget_self</span>
+    slug = <span class="s">"hello"</span>        <span class="c"># Ruby เข้าใจว่า: สร้างตัวแปร local ชื่อ slug</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">with_self</span>
+    <span class="k">self</span>.slug = <span class="s">"hello"</span>   <span class="c"># Ruby เข้าใจว่า: เรียก method slug= ของ object นี้</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+post = <span class="n">Post</span>.<span class="f">new</span>
+post.forget_self
+<span class="f">p</span> post.slug
+post.with_self
+<span class="f">p</span> post.slug</code></pre>
+
+<pre><code>$ ruby self_demo.rb
+nil
+"hello"</code></pre>
+
+<ul>
+  <li><code>attr_accessor :slug</code> (บท 95) — สร้าง method อ่าน <code>slug</code> และ method เขียน <code>slug=</code> ให้ · Rails ก็สร้างสองตัวนี้ให้ทุกคอลัมน์เหมือนกัน</li>
+  <li><code>slug = "hello"</code> — ไม่มีอะไรนำหน้า Ruby ถือว่าเป็นการ<strong>ตั้งตัวแปรใหม่</strong>เสมอ · ไม่ได้เรียก <code>slug=</code></li>
+  <li><code>self.slug = "hello"</code> — มี <code>self.</code> นำหน้า = "เรียก method <code>slug=</code> ของ object ตัวนี้" → ค่าเข้าช่องจริง</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">📝 เทียบให้เห็นภาพ — โน้ตในมือ กับช่องบนแฟ้ม</span>
+  <p>
+    คนดูแลสต็อกถือแฟ้มบทความอยู่ และมีกระดาษโน้ตแผ่นเล็กในมือ ·
+    <code>slug = …</code> คือ<strong>จดลงกระดาษโน้ต</strong> — จบงานก็ขยำทิ้ง แฟ้มไม่ได้อะไรเลย ·
+    <code>self.slug = …</code> คือ<strong>เขียนลงช่อง slug บนแฟ้มแผ่นนี้</strong> — แฟ้มเข้าตู้พร้อมค่านั้น
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงก้มดูก็รู้ว่าเขียนผิดที่ · Ruby ไม่เตือนสักคำ เพราะการสร้างตัวแปรชื่อ <code>slug</code> ถูกกฎทุกอย่าง ·
+    และการ<strong>อ่าน</strong> (<code>title</code>) ไม่ต้องมี <code>self.</code> เพราะไม่มีตัวแปรชื่อ title ให้สับสน — ต้องระวังแค่ตอน<strong>เขียน</strong>
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ใน hook ของ GORM คุณเขียน <code>p.Slug = …</code> — มี <code>p.</code> นำหน้าเสมอเพราะ Go บังคับ ·
+  <code>self.</code> ของ Ruby คือ <code>p.</code> ตัวนั้น ต่างกันที่ Ruby ยอมให้ละไว้ตอนอ่าน เลยเผลอละตอนเขียนได้
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>self</code> · setter</dt>
+    <dd><code>self</code> = object ที่ method กำลังทำงานอยู่ (แฟ้มแผ่นนี้) · setter = method ที่ชื่อลงท้ายด้วย <code>=</code> เช่น <code>slug=</code> ใช้เขียนค่าลงช่อง ·
+        <strong>กฎ: เรียก setter ภายใน class ต้องมี <code>self.</code> เสมอ</strong> ·
+        <strong>พิมพ์บอก AI ได้ว่า “my callback assigns slug but the column stays nil, did I forget self?”</strong></dd>
+    <dt>local variable</dt>
+    <dd>ตัวแปรที่มีชีวิตอยู่แค่ใน method เดียว จบ method ก็หาย · Ruby สร้างให้ทุกครั้งที่เห็น <code>ชื่อ = ค่า</code> โดยไม่มีอะไรนำหน้า ·
+        <strong>ถาม senior ได้ว่า “ทำไม Ruby ไม่เตือนตอนผมเขียน slug = … ใน method แล้วค่าไม่เข้าช่อง”</strong></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ใน <code>before_validation</code> เขียนว่า <code>slug ||= title.to_s.parameterize</code> (ไม่มี <code>self.</code>) แล้วสร้างบทความชื่อ "Massaman Curry" จะเกิดอะไร?</p>
+  <div class="opts">
+    <button class="opt">error <code>NoMethodError</code> ทันที เพราะ Ruby หา slug ไม่เจอ</button>
+    <button class="opt">ได้ slug <code>"massaman-curry"</code> ปกติ เพราะ Rails เดาให้เอง</button>
+    <button class="opt">บันทึกผ่านไม่มี error แต่ช่อง slug ในตู้เป็น <code>nil</code></button>
+    <button class="opt">Rails ไม่ยอมบันทึก และแจ้งว่า slug ยังว่างอยู่</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — ผลจริง: INSERT ส่ง <code>NULL</code> ลงช่อง slug · <code>oops.slug</code> ได้ <code>nil</code> · ไม่มีอะไรเตือน</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะ Ruby ไม่ได้ "หา" slug เลย มันสร้างตัวแปรใหม่ชื่อนั้นแทน ·
+       ตัวเลือกที่ 2 ผิด เพราะ Rails ไม่เดาให้ — ค่าที่คำนวณได้อยู่บนกระดาษโน้ตแล้วถูกทิ้ง ·
+       ตัวเลือกที่ 4 ผิด เพราะเราไม่ได้ใส่กฎ <code>presence</code> ให้ slug · ถ้าใส่ไว้ถึงจะไม่ยอมบันทึก (อีกเหตุผลที่ควรมีกฎตรวจคู่กัน)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> เขียนค่าลงช่องใน model → <code>self.ชื่อช่อง = …</code> ทุกครั้ง · ลืม = พังเงียบ</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">ทำอีเมลเป็นตัวเล็กเสมอ — callback หรือ normalizes</h2>
+
+<p>
+  ผู้ใช้พิมพ์ <code>"  Piti@Example.COM "</code> (มีช่องว่าง ตัวใหญ่ปน) แต่เราอยากเก็บเป็น <code>"piti@example.com"</code> ทุกครั้ง ·
+  ไม่งั้นคนเดียวกันจะดูเหมือนสองคน · งานแบบนี้เรียกว่า <strong>normalize</strong> (ทำให้อยู่ในรูปมาตรฐานเดียวกัน)
+</p>
+
+<p><strong>ทางที่ 1 — เขียน callback เอง</strong> แบบเดียวกับ slug:</p>
+
+<pre><code><span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">before_validation</span> <span class="n">:tidy_email</span>
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">tidy_email</span>
+    <span class="k">self</span>.email = email.to_s.<span class="f">strip</span>.<span class="f">downcase</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>.strip</code> — ตัดช่องว่างหัวท้ายทิ้ง · <code>.downcase</code> — เปลี่ยนเป็นตัวเล็กทั้งหมด · และอย่าลืม <code>self.</code> ตามหัวข้อที่แล้ว</li>
+</ul>
+
+<pre><code>wongnok-blog(dev):001&gt; piti = User.create(name: "ปิติ", email: "  Piti@Example.COM "); nil
+  TRANSACTION (0.7ms)  BEGIN /*application='WongnokBlog'*/
+  User Create (2.0ms)  INSERT INTO "users" ("name", "email", "created_at", "updated_at") VALUES ('ปิติ', 'piti@example.com', '2026-11-04 11:53:34.169235', '2026-11-04 11:53:34.169235') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.5ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):002&gt; piti.email
+=&gt; "piti@example.com"
+wongnok-blog(dev):003&gt; User.find_by(email: "PITI@example.com")
+  User Load (2.5ms)  SELECT "users".* FROM "users" WHERE "users"."email" = 'PITI@example.com' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; nil</code></pre>
+
+<p>
+  ตอนเก็บใช้ได้ (INSERT ส่ง <code>'piti@example.com'</code>) · แต่บรรทัด 003 <strong>หาไม่เจอ</strong> —
+  SQL ค้นด้วย <code>'PITI@example.com'</code> ตัวใหญ่ตามที่พิมพ์ ("หาแฟ้มในลิ้นชัก users ที่ช่อง email ตรงกับ PITI@… เป๊ะ ๆ") ·
+  callback ทำงานตอน<strong>บันทึก</strong>เท่านั้น ไม่ได้ช่วยตอน<strong>ค้นหา</strong> · หน้าล็อกอินที่ผู้ใช้พิมพ์ตัวใหญ่จะหาบัญชีตัวเองไม่เจอ
+</p>
+
+<p><strong>ทางที่ 2 — <code>normalizes</code></strong> คำสั่งสำเร็จรูปของ Rails (มีตั้งแต่ Rails 7.1 · ใช้ได้ใน 8.1.4 ที่ผมตรวจ) แทน callback ทั้งก้อน:</p>
+
+<pre><code><span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">normalizes</span> <span class="n">:email</span>, <span class="n">with:</span> -&gt; email { email.<span class="f">strip</span>.<span class="f">downcase</span> }
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>normalizes :email</code> — "ช่อง email ต้องผ่านเครื่องแปลงก่อนเสมอ"</li>
+  <li><code>with: -&gt; email { … }</code> — <code>-&gt;</code> สร้าง <strong>lambda</strong> = ก้อนโค้ดที่เก็บไว้เรียกทีหลัง (ญาติของ block บท 93) ·
+      รับค่าเดิมเข้ามาในชื่อ <code>email</code> แล้วคืนค่าใหม่ · เทียบ Go คือ <code>func(email string) string { … }</code> ที่ส่งเป็นค่าได้</li>
+  <li>ไม่ต้องเขียน <code>self.</code> ไม่ต้องมี <code>private</code> · ลบ <code>before_validation :tidy_email</code> กับ method <code>tidy_email</code> ทิ้งได้เลย</li>
+</ul>
+
+<pre><code>wongnok-blog(dev):001&gt; chujai = User.create(name: "ชูใจ", email: "  ChuJai@Example.COM "); nil
+  TRANSACTION (0.4ms)  BEGIN /*application='WongnokBlog'*/
+  User Create (1.6ms)  INSERT INTO "users" ("name", "email", "created_at", "updated_at") VALUES ('ชูใจ', 'chujai@example.com', '2026-11-04 11:53:38.195125', '2026-11-04 11:53:38.195125') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (2.0ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):002&gt; chujai.email
+=&gt; "chujai@example.com"
+wongnok-blog(dev):003&gt; User.find_by(email: "CHUJAI@example.com").name
+  User Load (1.3ms)  SELECT "users".* FROM "users" WHERE "users"."email" = 'chujai@example.com' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; "ชูใจ"</code></pre>
+
+<p>
+  ดูบรรทัด 003 — เราพิมพ์ <code>"CHUJAI@example.com"</code> แต่ SQL ค้นด้วย <code>'chujai@example.com'</code> · <strong>normalizes แปลงให้ทั้งตอนเก็บและตอนค้น</strong> จึงเจอ ·
+  เลยแนะนำ <code>normalizes</code> สำหรับงานแปลงค่าช่องเดียว · ส่วน slug ต้องใช้ title (อีกช่องหนึ่ง) มาคำนวณ จึงยังเป็นงานของ callback
+</p>
+
+<div class="analogy">
+  <span class="label">🔤 เทียบให้เห็นภาพ — คนจัดแฟ้มตอนเก็บ กับกติกาตัวสะกดของทั้งลิ้นชัก</span>
+  <p>
+    callback <code>tidy_email</code> เหมือนคนดูแลสต็อกที่<strong>แก้ตัวสะกดให้เฉพาะแฟ้มที่กำลังจะเก็บ</strong> ·
+    ใครยื่นใบเบิกมาว่า "ขอแฟ้มของ PITI@…" เขาก็ค้นตามตัวอักษรที่เขียนมาเป๊ะ ๆ เลยหาไม่เจอ ·
+    <code>normalizes</code> คือ<strong>ติดกติกาไว้ที่ลิ้นชัก users</strong> ว่า "อีเมลเขียนตัวเล็กเสมอ" — ทั้งแฟ้มที่เข้า และใบเบิกที่ส่งมาค้น ต้องแปลงตามกติกานี้ก่อน
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> กติกาบนลิ้นชักจริงใช้กับแฟ้มเก่าที่อยู่ในลิ้นชักแล้วด้วย ·
+    <code>normalizes</code> <strong>ไม่ไปแก้แฟ้มเก่าในตู้ให้</strong> — แฟ้มที่เก็บไว้ก่อนเพิ่มบรรทัดนี้ ถ้ามีตัวใหญ่ปนก็ยังเป็นแบบเดิม (ผมลองแล้ว และ <code>find_by</code> กลับหาแฟ้มเก่าพวกนั้นไม่เจอ เพราะคำค้นถูกแปลงเป็นตัวเล็ก)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ในโค้ด Go ที่เรียนมา คุณต้องเรียก <code>strings.ToLower(strings.TrimSpace(email))</code> เอง<strong>สองที่</strong> —
+  ก่อนบันทึก และก่อนค้น · ลืมที่ไหน ก็พังที่นั่น (แบบเดียวกับทางที่ 1 ข้างบน)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>normalize · <code>normalizes</code></dt>
+    <dd>normalize = แปลงค่าให้อยู่รูปมาตรฐาน (ตัดช่องว่าง · ตัวเล็ก) ก่อนเก็บ · <code>normalizes</code> = คำสั่งของ Rails ที่ทำให้ทั้งตอนกำหนดค่าและตอน <code>find_by</code> / <code>where</code> ·
+        <strong>ถาม senior ได้ว่า “ช่อง email ของเรา normalize ไว้หรือยัง ถ้ายัง ข้อมูลเก่าที่มีตัวใหญ่ปนต้องแก้ด้วยไหม”</strong></dd>
+    <dt>lambda (<code>-&gt; x { … }</code>)</dt>
+    <dd>ก้อนโค้ดที่เก็บใส่ตัวแปรหรือส่งเป็นค่าได้ แล้วค่อยเรียกทีหลัง · เทียบ anonymous function ของ Go ·
+        <strong>พิมพ์บอก AI ได้ว่า “explain this Ruby lambda syntax: -&gt; email { email.strip.downcase }”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">after_save หรือ after_commit — อีเมลหลอกเกิดได้ยังไง</h2>
+
+<p>
+  สมมติอยากส่งอีเมลบอกผู้ติดตาม "มีบทความใหม่!" ทุกครั้งที่สร้างบทความ · ดูเผิน ๆ ใส่ <code>after_save</code> ก็น่าจะได้ ·
+  แต่จำแผนภาพได้ไหม — <strong><code>after_save</code> ทำงานก่อน COMMIT</strong> ตอนนั้นตู้ยังไม่ได้ยืนยันว่าจะรับแฟ้ม
+</p>
+
+<div class="analogy">
+  <span class="label">📱 เทียบให้เห็นภาพ — ส่งไลน์บอกลูกค้าก่อนตู้เซ็นรับ</span>
+  <p>
+    แฟ้มบทความถูกยื่นเข้าช่องตู้ แต่ยังไม่ได้เซ็นรับ · พนักงานคนหนึ่งรีบส่งไลน์บอกผู้ติดตามว่า "บทความใหม่เข้าตู้แล้ว!" (<code>after_save</code>) ·
+    วินาทีต่อมาผู้จัดการสั่งยกเลิกทั้งกล่อง (<code>ROLLBACK</code>) แฟ้มถูกดึงออก — <strong>ผู้ติดตามได้ข่าวของที่ไม่มีอยู่จริง</strong> ·
+    ถ้ารอให้ตู้เซ็นรับก่อนค่อยส่ง (<code>after_commit</code>) จะไม่มีวันส่งข่าวหลอก
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ไลน์ยังพิมพ์ขอโทษตามได้ · อีเมลที่ส่งออกไปแล้วดึงกลับไม่ได้ ·
+    และ ROLLBACK ย้อนได้เฉพาะ<strong>ของในตู้ (database)</strong> — ของที่ออกไปนอกร้านแล้ว ไม่ย้อนตาม (เหมือนแผ่นใสของ <code>--sandbox</code> ในบท 104)
+  </p>
+</div>
+
+<p>ลองของจริง · ใส่ทั้งสองแบบไว้ใน Post พร้อมกัน (งานจริงยังไม่ส่งอีเมล แค่พิมพ์ข้อความแทน):</p>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+
+  <span class="f">before_validation</span> <span class="n">:generate_slug</span>
+  <span class="f">after_save</span>   <span class="n">:email_too_early</span>                    <span class="c"># ❌ ตัวอย่างที่ผิด</span>
+  <span class="f">after_commit</span> <span class="n">:notify_followers</span>, <span class="n">on:</span> <span class="n">:create</span>      <span class="c"># ✅ ตัวอย่างที่ถูก</span>
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">generate_slug</span>
+    <span class="k">self</span>.slug ||= title.to_s.<span class="f">parameterize</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">email_too_early</span>
+    <span class="f">puts</span> <span class="s">"📧 after_save: ส่งอีเมลเรื่อง #{title} แล้ว"</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">notify_followers</span>
+    <span class="n">Rails</span>.logger.<span class="f">info</span> <span class="s">"📬 after_commit: ส่งงานแจ้งผู้ติดตามเรื่อง #{title}"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>after_commit :notify_followers, on: :create</code> — "หลังตู้ยืนยันแล้ว เรียก <code>notify_followers</code> · <strong>เฉพาะตอนสร้างใหม่</strong>" ·
+      ไม่ใส่ <code>on:</code> จะทำทั้งตอนสร้าง แก้ และลบ</li>
+  <li><code>Rails.logger.info "…"</code> — จดลงสมุดบันทึกของแอป (log) แทน <code>puts</code> (บท 93 บอกไว้ว่าแอปจริงใช้ตัวนี้) · ใน console จะเห็นขึ้นจอด้วย</li>
+  <li>ของจริงใน <code>notify_followers</code> จะเป็น <code>NotifyFollowersJob.perform_later(id)</code> ตามสไลด์ — แปลว่า "ฝากงานส่งอีเมลไว้ในคิว ให้คนงานเบื้องหลังทำทีหลัง" ·
+      <strong>job คือเรื่องของ Day 3</strong> · ตอนนี้แอปยังไม่มี job ตัวนี้ ถ้าพิมพ์ตามสไลด์จะได้ <code>uninitialized constant Post::NotifyFollowersJob</code> (ผมลองแล้ว)</li>
+</ul>
+
+<p>เปิด console ใหม่ · รอบแรก สร้างบทความตามปกติ (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):001&gt; somchai = User.find_by(name: "สมชาย"); nil
+  User Load (0.8ms)  SELECT "users".* FROM "users" WHERE "users"."name" = 'สมชาย' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):002&gt; somchai.posts.create(title: "Khao Soi", body: "ข้าวซอย"); nil
+  TRANSACTION (1.6ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (3.6ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id", "slug") VALUES ('Khao Soi', 'ข้าวซอย', '2026-11-04 11:53:52.082532', '2026-11-04 11:53:52.082532', FALSE, 0, 1, 'khao-soi') RETURNING "id" /*application='WongnokBlog'*/
+📧 after_save: ส่งอีเมลเรื่อง Khao Soi แล้ว
+  TRANSACTION (1.3ms)  COMMIT /*application='WongnokBlog'*/
+📬 after_commit: ส่งงานแจ้งผู้ติดตามเรื่อง Khao Soi
+=&gt; nil</code></pre>
+
+<p>ทั้งสองข้อความขึ้น · ดูไม่ต่างกัน · ทีนี้ลองให้บทความถูกยกเลิกกลางทาง:</p>
+
+<div class="predict">
+<pre><code>wongnok-blog(dev):003&gt; Post.transaction do
+wongnok-blog(dev):004*   somchai.posts.create(title: "Boat Noodles", body: "ก๋วยเตี๋ยวเรือ")
+wongnok-blog(dev):005*   raise ActiveRecord::Rollback
+wongnok-blog(dev):006*   end</code></pre>
+  <ul>
+    <li><code>Post.transaction do … end</code> — เปิดกล่อง "ทำทั้งหมดหรือไม่ทำเลย" เอง (บท 111) · พิมพ์ <code>do</code> แล้ว Enter prompt จะเปลี่ยนเป็น <code>*</code> = รอให้พิมพ์จนถึง <code>end</code></li>
+    <li><code>raise ActiveRecord::Rollback</code> — สั่ง "ยกเลิกทั้งกล่อง" แบบเงียบ ๆ (ไม่โชว์ error) · จำลองว่าขั้นถัดไปพัง เช่น ระบบอื่นล่ม</li>
+  </ul>
+  <p class="ask">บทความ Boat Noodles จะอยู่ในตู้ไหม? และจะเห็นข้อความ 📧 กับ 📬 ตัวไหนบ้าง?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง:</p>
+<pre><code>  TRANSACTION (2.2ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (4.9ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id", "slug") VALUES ('Boat Noodles', 'ก๋วยเตี๋ยวเรือ', '2026-11-04 11:55:22.932559', '2026-11-04 11:55:22.932559', FALSE, 0, 1, 'boat-noodles') RETURNING "id" /*application='WongnokBlog'*/
+📧 after_save: ส่งอีเมลเรื่อง Boat Noodles แล้ว
+  TRANSACTION (1.3ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):007&gt; Post.where(title: "Boat Noodles").count
+  Post Count (3.2ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."title" = 'Boat Noodles' /*application='WongnokBlog'*/
+=&gt; 0</code></pre>
+    <ul>
+      <li><strong>📧 ขึ้น</strong> — <code>after_save</code> ทำงานไปแล้วก่อน ROLLBACK · ถ้าตรงนี้ส่งอีเมลจริง ผู้ติดตามได้อีเมลไปแล้ว</li>
+      <li><strong>📬 ไม่ขึ้น</strong> — ไม่มี COMMIT จึงไม่มี <code>after_commit</code></li>
+      <li><code>SELECT COUNT(*) FROM "posts" WHERE "posts"."title" = 'Boat Noodles'</code> — "นับว่าลิ้นชัก posts มีแฟ้มชื่อนี้กี่แผ่น" (<code>COUNT</code> = นับ) · ได้ <code>0</code> = <strong>บทความไม่มีอยู่จริง แต่อีเมลออกไปแล้ว</strong></li>
+    </ul>
+  </div>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> คู่มือ GORM บอกลำดับ hook ไว้ว่า <code>BeforeSave</code> → … → <code>AfterSave</code> → แล้วค่อย commit หรือ rollback ·
+  <strong>ไม่มี hook หลัง commit ให้</strong> — ถ้าส่งอีเมลใน <code>AfterSave</code> ของ GORM ก็เจอปัญหาเดียวกันนี้เป๊ะ ต้องไปส่งหลัง <code>db.Create</code> คืนค่าสำเร็จเอง
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>after_commit</code> (transaction callback)</dt>
+    <dd>callback ที่รอให้ฐานข้อมูลยืนยัน (COMMIT) ก่อนค่อยทำ · ถ้า rollback ก็ไม่ทำเลย · ที่สำหรับงานที่ออกไปนอกตู้: ส่งอีเมล · แจ้งเตือน · ฝากงานให้ job ·
+        <strong>ถาม senior ได้ว่า “callback ที่ส่งอีเมลตัวนี้ ควรย้ายจาก after_save ไป after_commit ไหม”</strong></dd>
+    <dt>side effect (ผลข้างเคียง)</dt>
+    <dd>สิ่งที่โค้ดทำแล้วมีผลออกไปนอกตัวมัน เช่น ส่งอีเมล · เรียก API ภายนอก · เขียนไฟล์ · rollback ย้อนของพวกนี้ไม่ได้ ·
+        <strong>พิมพ์บอก AI ได้ว่า “move side effects out of after_save into after_commit and enqueue a job”</strong></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">โค้ดส่งอีเมลแจ้งผู้ติดตามหลังสร้างบทความใหม่ ควรวางไว้ที่ไหน?</p>
+  <div class="opts">
+    <button class="opt">ใน <code>before_save</code> จะได้ส่งเร็วที่สุดก่อนบันทึก</button>
+    <button class="opt">ใน <code>after_save</code> เพราะแฟ้มถูกเขียนลงตู้แล้ว</button>
+    <button class="opt">ในกฎ <code>validate</code> เพราะทำงานทุกครั้งที่บันทึก</button>
+    <button class="opt">ใน <code>after_commit</code> แล้วฝากให้ job ส่งทีหลัง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — รอตู้ยืนยันก่อน จะไม่มีวันส่งอีเมลเรื่องที่ไม่มีอยู่จริง · และฝาก job (Day 3) ให้ส่งทีหลัง หน้าเว็บจะได้ไม่ต้องรออีเมลส่งเสร็จ</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะยังไม่ได้ตรวจด้วยซ้ำ บทความอาจไม่ผ่าน validation ด้วย ·
+       ตัวเลือกที่ 2 คือ<strong>กับดักของข้อนี้</strong> (ฟังดูถูกที่สุด) — "เขียนลงตู้แล้ว" ไม่ได้แปลว่า "ยืนยันแล้ว" ผลจริงข้างบน 📧 ขึ้นทั้งที่ count ได้ 0 ·
+       ตัวเลือกที่ 3 ผิด เพราะ validation มีไว้ตรวจว่าแฟ้มถูกไหม ไม่ใช่ที่ทำงานอื่น (และ <code>valid?</code> เรียกเฉย ๆ ก็ทำงาน ทั้งที่ไม่ได้บันทึก)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ของที่ออกไปนอกตู้ (อีเมล · API · แจ้งเตือน) → <code>after_commit</code> เสมอ</p>
+  </div>
+</div>
+
+<p>ทดลองเสร็จ <strong>ลบบรรทัด <code>after_save :email_too_early</code> และ method <code>email_too_early</code> ทิ้ง</strong> ·
+  ให้ Post เหลือ <code>before_validation :generate_slug</code> กับ <code>after_commit :notify_followers, on: :create</code> — หน้าตาเดียวกับสไลด์หน้า 24</p>
+
+<h2 id="sn-sec-7">callback แบบไหนใช้ได้สบาย แบบไหนเริ่มเจ็บ</h2>
+
+<p>สไลด์หน้า 24 แบ่งไว้สองฝั่ง · แปลเป็นภาษาร้าน:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>ตัวอย่าง</th><th>ทำไม</th></tr></thead>
+  <tbody>
+    <tr><td>✅ <strong>ใช้ได้สบาย</strong></td><td>สร้าง slug · ทำอีเมลเป็นตัวเล็ก</td><td>เตรียมข้อมูล<strong>บนแฟ้มตัวเอง</strong> · ไม่ทำแล้วแฟ้มไม่สมบูรณ์ · ไม่ออกไปนอกตู้</td></tr>
+    <tr><td>⚠️ <strong>เริ่มเจ็บ</strong></td><td>ยิง API ภายนอก / ส่งอีเมลใน callback</td><td>ช้า · ถ้าระบบนอกล่ม การบันทึกพังตาม · rollback ย้อนไม่ได้ (หัวข้อที่แล้ว)</td></tr>
+    <tr><td>⚠️ <strong>เริ่มเจ็บ</strong></td><td>callback ไปแก้ model ตัวอื่น ที่มี callback ต่ออีก</td><td>โดมิโน: save บทความหนึ่งครั้ง ไปสะกิดผู้ใช้ ผู้ใช้ไปสะกิดอย่างอื่น · ไล่บั๊กยากมาก</td></tr>
+    <tr><td>⚠️ <strong>เริ่มเจ็บ</strong></td><td>save ทีเดียวมีของเกิด 8 อย่าง</td><td>อ่าน controller เห็นแค่ <code>post.save</code> · ไม่มีใครรู้ว่าจะเกิดอะไรบ้าง · เทสต์ช้าลง (เทสต์คือ Day 4)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  หลักง่าย ๆ: <strong>callback ควรดูแลแค่แฟ้มของตัวเอง</strong> · ถ้างานนั้นต้องคุยกับคนอื่น (model อื่น ระบบอื่น อีเมล) ให้คิดก่อนว่าควรอยู่ใน callback จริงไหม ·
+  ส่วนมากคำตอบคือ "ย้ายไปไว้ในไฟล์ของงานนั้นเอง" — หัวข้อถัดไป
+</p>
+
+<h2 id="sn-sec-8">business logic ควรอยู่ที่ไหน — ใครในร้านรับผิดชอบงานไหน</h2>
+
+<p>
+  <strong>business logic</strong> คือกฎของธุรกิจเรา เช่น "บทความที่เผยแพร่แล้ว ห้ามเผยแพร่ซ้ำ" หรือ "เผยแพร่แล้วต้องแจ้งผู้ติดตาม" ·
+  Rails <strong>ไม่ได้บังคับ</strong>ว่าโค้ดพวกนี้ต้องอยู่ไฟล์ไหน — สไลด์หน้า 27 เลยเสนอที่อยู่ 4 แบบ:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ที่อยู่</th><th>ใส่อะไร</th><th>ในร้านอาหาร</th><th>ตัวอย่าง · โฟลเดอร์</th></tr></thead>
+  <tbody>
+    <tr><td><strong>model</strong></td><td>ของที่เป็น "ธรรมชาติ" ของสิ่งนั้น</td><td>คนดูแลสต็อกรู้เรื่องของแฟ้มตัวเอง</td><td><code>post.published</code> · validation · callback แบบสบาย ๆ · <code>app/models/</code></td></tr>
+    <tr><td><strong>concern</strong></td><td>ของที่ model หลายตัวใช้ร่วมกัน</td><td>คู่มือกลางที่หลายลิ้นชักหยิบไปใช้</td><td><code>Sluggable</code> · <code>app/models/concerns/</code></td></tr>
+    <tr><td><strong>service object</strong></td><td>งานหลายขั้น ข้ามหลาย model</td><td>ใบงานที่ผู้จัดการถือไปสั่งหลายแผนกทีละขั้น</td><td><code>PublishPost</code> · <code>app/services/</code></td></tr>
+    <tr><td><strong>form object</strong></td><td>ฟอร์มเดียว ที่ข้อมูลกระจายลงหลายตาราง</td><td>ใบสมัครสมาชิกใบเดียว แยกเก็บหลายลิ้นชัก</td><td><code>SignupForm</code> · <code>app/forms/</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — งาน "เปิดเมนูใหม่" ของร้าน</span>
+  <p>
+    การเปิดเมนูใหม่มีหลายขั้น: เช็คว่ายังไม่เคยเปิด → เปลี่ยนป้ายเป็น "พร้อมขาย" → แจ้งลูกค้าประจำ ·
+    ถ้ายัดทุกขั้นไว้กับ<strong>คนดูแลสต็อก</strong> (model) เขาจะต้องรู้เรื่องลูกค้าด้วย ทั้งที่หน้าที่เขาคือแฟ้ม ·
+    ร้านที่เป็นระบบจะเขียน<strong>ใบงาน "เปิดเมนูใหม่"</strong> (service object) หนึ่งใบ ใครจะเปิดเมนูก็หยิบใบนี้ไปทำตามทีละขั้น
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงมีผังองค์กรชัดว่าใครทำอะไร · Rails <strong>ไม่มีผังให้</strong> ทุกทีมตกลงกันเอง ·
+    ไปทีมใหม่ ต้องเปิดดูโฟลเดอร์ <code>app/</code> หรือถาม senior ก่อนว่าทีมนี้วางงานแบบไหน — อย่าเดาจากทีมเก่า
+  </p>
+</div>
+
+<h3 id="sn-sub-3">concern — ทวนบท 95 ในแบบของ Rails</h3>
+
+<p>
+  บท 95 คุณทำ <code>module Sluggable</code> แล้ว <code>include</code> ไปใส่หลาย class · ใน Rails ทำแบบเดียวกันแต่วางไว้ที่ <code>app/models/concerns/</code>
+  (โฟลเดอร์นี้มีมาให้แล้วตั้งแต่ <code>rails new</code>) · ตัวอย่างนี้<strong>ดูหน้าตาไว้ก่อน ไม่ต้องทำตาม</strong> (ผมรันจริงแล้ว):
+</p>
+
+<pre><code><span class="c"># app/models/concerns/sluggable.rb</span>
+<span class="k">module</span> <span class="n">Sluggable</span>
+  <span class="k">extend</span> <span class="n">ActiveSupport</span>::<span class="n">Concern</span>
+
+  <span class="f">included</span> <span class="k">do</span>
+    <span class="f">before_validation</span> <span class="n">:generate_slug</span>
+  <span class="k">end</span>
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">generate_slug</span>
+    <span class="k">self</span>.slug ||= title.to_s.<span class="f">parameterize</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+<span class="c"># app/models/post.rb — แค่ include แทนการเขียนเอง</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="k">include</span> <span class="n">Sluggable</span>
+  …
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>extend ActiveSupport::Concern</code> — ป้ายบอก Rails ว่า "module นี้เป็น concern" เพื่อปลดล็อกบรรทัดถัดไป (<code>ActiveSupport</code> = ชุดเครื่องมือเสริมที่มากับ Rails · <code>parameterize</code> ก็มาจากชุดนี้)</li>
+  <li><code>included do … end</code> — "ตอนมี class ไหน <code>include</code> ฉัน ให้รันบรรทัดในนี้<strong>ใน class นั้น</strong>" · callback จึงไปติดที่ Post</li>
+  <li>ผลจริง: <code>User.first.posts.create(title: "Mango Sticky Rice", body: "ข้าวเหนียวมะม่วง").slug</code> ได้ <code>=&gt; "mango-sticky-rice"</code> — เหมือนเขียนใน Post ตรง ๆ</li>
+  <li>สไลด์แนะนำว่า <strong>แยกเป็น concern เมื่อซ้ำตั้งแต่ 2 ที่ขึ้นไป</strong> · ตอนนี้มี slug แค่ Post ที่เดียว เขียนใน model ไปก่อนพอ</li>
+</ul>
+
+<h3 id="sn-sub-4">service object — ลองทำ PublishPost จิ๋ว ๆ</h3>
+
+<p>
+  งาน "เผยแพร่บทความ" มีหลายขั้น เหมาะกับ service object · ชื่อเป็น<strong>กริยา</strong> (PublishPost = "เผยแพร่บทความ") ไม่ใช่คำนาม ·
+  เพราะมันคือ "งานหนึ่งอย่าง" ไม่ใช่ "ของหนึ่งชิ้น" · สร้างโฟลเดอร์ <code>app/services/</code> แล้วสร้างไฟล์นี้:
+</p>
+
+<pre><code><span class="c"># app/services/publish_post.rb</span>
+<span class="k">class</span> <span class="n">PublishPost</span>
+  <span class="k">def</span> <span class="f">initialize</span>(post)
+    @post = post
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">call</span>
+    <span class="k">return</span> <span class="n">false</span> <span class="k">if</span> @post.published
+
+    @post.<span class="f">update!</span>(<span class="n">published:</span> <span class="n">true</span>)
+    <span class="n">Rails</span>.logger.<span class="f">info</span> <span class="s">"📣 เผยแพร่เรื่อง #{@post.title} ของ #{@post.user.name} แล้ว"</span>
+    <span class="n">true</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>class PublishPost</code> — class Ruby ธรรมดา <strong>ไม่มี <code>&lt; ApplicationRecord</code></strong> เพราะไม่ใช่แฟ้มในตู้ ไม่มีตารางของตัวเอง</li>
+  <li><code>initialize(post)</code> · <code>@post = post</code> — รับบทความที่จะเผยแพร่มาเก็บไว้ (บท 95)</li>
+  <li><code>return false if @post.published</code> — ขั้น 1: ถ้าเผยแพร่ไปแล้ว จบเลย คืน <code>false</code></li>
+  <li><code>@post.update!(published: true)</code> — ขั้น 2: เปลี่ยนสถานะ · มี <code>!</code> = ถ้าบันทึกไม่ได้ให้ระเบิด (บท 110)</li>
+  <li><code>Rails.logger.info …</code> — ขั้น 3: แจ้งผู้ติดตาม (ของจริงฝากให้ job — Day 3) · <code>@post.user.name</code> = ชื่อผู้เขียน (บท 115 จะอธิบายว่าทำไมเรียกแบบนี้ได้)</li>
+  <li>ชื่อไฟล์ <code>publish_post.rb</code> ↔ ชื่อ class <code>PublishPost</code> — กฎตั้งชื่อเดียวกับบท 99 · Rails หาไฟล์เจอเองจากชื่อ ไม่ต้อง <code>require</code></li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ <strong>สร้างโฟลเดอร์ <code>app/services/</code> ใหม่ ต้องปิด console แล้วเปิดใหม่</strong> · <code>reload!</code> ไม่พอ — ผมลองสร้างโฟลเดอร์ระหว่างที่ console เปิดอยู่ ได้แบบนี้ทั้งก่อนและหลัง <code>reload!</code>:</p>
+<pre><code>(wongnok-blog):2:in '&lt;main&gt;': uninitialized constant PublishPost (NameError)</code></pre>
+  <p>Rails จดรายชื่อโฟลเดอร์ใต้ <code>app/</code> ไว้ตอนเปิดแอปเท่านั้น · เปิดใหม่แล้วโฟลเดอร์ใหม่ถูกรวมเข้ามาเอง (ไม่ต้องตั้งค่าอะไร)</p>
+</div>
+
+<p>เปิด console ใหม่ แล้วเผยแพร่ "Green Curry Chicken" ที่สร้างไว้ตอนหัวข้อ slug (ตอนนี้ยังเป็นร่าง) — ผลจริง:</p>
+
+<pre><code>wongnok-blog(dev):001&gt; curry = Post.find_by(slug: "green-curry-chicken"); nil
+  Post Load (1.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."slug" = 'green-curry-chicken' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):002&gt; PublishPost.new(curry).call
+  TRANSACTION (1.9ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (4.1ms)  UPDATE "posts" SET "updated_at" = '2026-11-04 11:55:35.237323', "published" = TRUE WHERE "posts"."id" = 8 /*application='WongnokBlog'*/
+  TRANSACTION (1.7ms)  COMMIT /*application='WongnokBlog'*/
+  User Load (1.0ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+📣 เผยแพร่เรื่อง Best Green Curry ของ สมชาย แล้ว
+=&gt; true
+wongnok-blog(dev):003&gt; PublishPost.new(curry).call
+=&gt; false</code></pre>
+
+<ul>
+  <li>บรรทัด 001 — หาบทความ<strong>ด้วย slug</strong> ได้แล้ว (ค้นช่อง slug ในลิ้นชัก posts) · ชื่อเรื่องเป็น Best Green Curry เพราะเราเปลี่ยนไว้ แต่ slug ยังเป็นอันเดิม</li>
+  <li>บรรทัด 002 — <code>UPDATE … SET "published" = TRUE</code> = "แก้ช่อง published ของแฟ้มเลข 8 เป็นจริง" · ไม่มี 📬 เพราะ <code>after_commit</code> ของเราใส่ <code>on: :create</code> (นี่คือการแก้ ไม่ใช่สร้าง)</li>
+  <li><code>User Load … WHERE "users"."id" = 1 LIMIT 1</code> หลัง COMMIT — มาจาก <code>@post.user.name</code> ในขั้น 3: "ไปหยิบแฟ้มผู้เขียนเลขที่ 1 จากลิ้นชัก users มาดูชื่อ"</li>
+  <li>บรรทัด 003 — เรียกซ้ำ ได้ <code>false</code> ทันที ไม่ยิง SQL สักบรรทัด · กฎ "ห้ามเผยแพร่ซ้ำ" อยู่ในใบงานใบเดียว อ่านง่าย</li>
+</ul>
+
+<p>
+  <strong>เทียบกับ Go:</strong> นี่คือแนวเดียวกับชั้น <strong>service</strong> ที่คุณแยกจาก handler และ repository ในโปรเจกต์ Go (บท 27) ·
+  ต่างกันที่ Go คุณวางโครงนี้เองตั้งแต่วันแรก · Rails ไม่มีโฟลเดอร์นี้มาให้ สร้างเมื่อต้องใช้
+</p>
+
+<p>
+  <strong>form object</strong> — แค่รู้จักชื่อไว้: ใช้ตอนฟอร์มหนึ่งหน้าไม่ตรงกับ model ตัวเดียว เช่น ฟอร์มสมัครสมาชิกที่สร้างทั้งผู้ใช้และบทความแรกพร้อมกัน ·
+  เป็น class ธรรมดาที่ใช้ validation ได้ทั้งที่ไม่มีตารางของตัวเอง · บทนี้ไม่ลงรายละเอียด
+</p>
+
+<div class="win">
+  <p><strong>💡 ลำดับที่สไลด์แนะนำ:</strong> เขียนใน model ไปก่อน → เมื่อไฟล์ยาวเกินราว ๆ 200 บรรทัด หรือเริ่มมีหลายเรื่องปนกัน ค่อยแยกออก ·
+    <strong>อย่าแยกตั้งแต่วันแรก</strong> — สไลด์อ้างว่าโปรเจกต์ที่มี service object 40 ไฟล์ตั้งแต่สัปดาห์แรก อ่านยากกว่า model อ้วน ๆ ไฟล์เดียว</p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>service object</dt>
+    <dd>class ธรรมดาที่ทำ "งานหนึ่งอย่าง" ที่มีหลายขั้น · ตั้งชื่อเป็นกริยา (<code>PublishPost</code> · <code>CheckoutOrder</code>) · มักมี method เดียวชื่อ <code>call</code> · อยู่ <code>app/services/</code> ·
+        <strong>ถาม senior ได้ว่า “งานนี้ควรอยู่ใน model หรือแยกเป็น service object — ทีมเราใช้เกณฑ์อะไร”</strong></dd>
+    <dt>concern · <code>ActiveSupport::Concern</code></dt>
+    <dd>module ที่ model หลายตัว <code>include</code> ไปใช้ร่วมกัน · ใส่ callback หรือ validation ได้ผ่าน <code>included do … end</code> · อยู่ <code>app/models/concerns/</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า “extract this slug logic into a Rails concern only if two models need it”</strong> — กันมันแยกเร็วเกินเหตุ</dd>
+    <dt>fat model · form object</dt>
+    <dd>fat model = model ที่อ้วนเพราะมีงานทุกอย่างอยู่ในไฟล์เดียว (ไม่ผิด แค่มีจุดที่ควรแยก) · form object = class สำหรับฟอร์มที่เขียนหลายตาราง ·
+        <strong>ถาม senior ได้ว่า “model ไหนของเราอ้วนที่สุด และมีแผนจะแยกไหม”</strong></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">งาน "เผยแพร่บทความ" ต้องทำ: เช็คว่ายังไม่เคยเผยแพร่ → เปลี่ยนสถานะบทความ → บันทึกสถิติของผู้เขียน → แจ้งผู้ติดตาม · ควรวางโค้ดไว้ที่ไหน?</p>
+  <div class="opts">
+    <button class="opt">service object ชื่อ <code>PublishPost</code> ใน <code>app/services/</code></button>
+    <button class="opt">concern ชื่อ <code>Publishable</code> ใน <code>app/models/concerns/</code></button>
+    <button class="opt">callback <code>after_save</code> ทั้งหมดใน model <code>Post</code></button>
+    <button class="opt">form object ชื่อ <code>PublishForm</code> ใน <code>app/forms/</code></button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — งานหลายขั้น ข้ามหลาย model (บทความ · ผู้เขียน · ผู้ติดตาม) = ใบงานหนึ่งใบที่ชื่อเป็นกริยา</p>
+    <p>ตัวเลือกที่ 2 ผิด เพราะ concern ใช้ตอน model <strong>หลายตัว</strong>มีของเหมือนกัน · ที่นี่มีแค่ Post ที่เผยแพร่ได้ ·
+       ตัวเลือกที่ 3 ผิด เพราะเป็นทุกอย่างในตาราง "เริ่มเจ็บ": ไปแก้ model อื่น + แจ้งคนนอกตู้ใน <code>after_save</code> (ก่อน COMMIT) ·
+       ตัวเลือกที่ 4 ผิด เพราะไม่ได้มีฟอร์มที่ผู้ใช้กรอกลงหลายตาราง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ธรรมชาติของแฟ้ม → model · ซ้ำหลาย model → concern · งานหลายขั้นข้าม model → service object · ไม่แน่ใจ → เริ่มที่ model</p>
+  </div>
+</div>
+
+<div class="task">
+  <h3 id="sn-sub-5">🎯 ภารกิจ — ให้คอมเมนต์ดูแลตัวเอง (~10 นาที)</h3>
+  <p>ทำในแอป <code>wongnok_blog</code> ของคุณ (ที่มี users / posts / comments และ seeds จากบท 107 · Post มี slug ตามหัวข้อบน ๆ แล้ว) · ใช้ console ธรรมดา ไม่ใช่ <code>--sandbox</code></p>
+  <ol>
+    <li>เปิด <code>app/models/comment.rb</code> แก้ให้เป็นแบบนี้ (สองบรรทัด <code>belongs_to</code> มีอยู่แล้ว):
+<pre><code><span class="c"># app/models/comment.rb</span>
+<span class="k">class</span> <span class="n">Comment</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+
+  <span class="f">before_validation</span> <span class="n">:tidy_body</span>
+  <span class="f">after_commit</span> <span class="n">:announce</span>, <span class="n">on:</span> <span class="n">:create</span>
+
+  <span class="k">private</span>
+
+  <span class="k">def</span> <span class="f">tidy_body</span>
+    <span class="k">self</span>.body = body.to_s.<span class="f">strip</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">announce</span>
+    <span class="n">Rails</span>.logger.<span class="f">info</span> <span class="s">"💬 คอมเมนต์ใหม่ในเรื่อง #{post.title}"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre></li>
+    <li>เปิด <code>bin/rails console</code> แล้วพิมพ์:
+      <code>tomyum = Post.find_by(title: "ต้มยำกุ้งน้ำข้น"); mana = User.find_by(name: "มานะ"); nil</code></li>
+    <li>สร้างคอมเมนต์ที่มีช่องว่างหัวท้าย: <code>c = tomyum.comments.create(user: mana, body: "   อร่อยมาก   "); nil</code> แล้วพิมพ์ <code>c.body</code>
+      (<code>tomyum.comments.create</code> = สร้างคอมเมนต์ที่เป็นของบทความต้มยำ · Rails เติม <code>post_id</code> ให้เอง เหมือน <code>somchai.posts.create</code>)</li>
+    <li>ลองสร้างคอมเมนต์ในกล่องที่ถูกยกเลิก — พิมพ์ทีละบรรทัด กด Enter ทุกบรรทัด (แบบเดียวกับ Boat Noodles ข้างบน):
+<pre><code>Comment.transaction do
+  tomyum.comments.create(user: mana, body: "คอมเมนต์ที่จะถูกยกเลิก")
+  raise ActiveRecord::Rollback
+end</code></pre></li>
+    <li>นับ: <code>tomyum.comments.count</code></li>
+    <li><strong>คืนสภาพก่อนไปบทถัดไป</strong> — ปิด console (และ server ถ้าเปิดอยู่) แล้ว:
+      ① ลบเฉพาะโค้ดที่<strong>บทนี้</strong>เพิ่มใน <code>post.rb</code> · <code>user.rb</code> · <code>comment.rb</code> (บรรทัด callback · <code>normalizes</code> · method ที่บทนี้เขียนใต้ <code>private</code>) — <code>validates</code> จากบท 110–111 เก็บไว้ ·
+      ② ลบโฟลเดอร์ <code>app/services/</code> (และ <code>app/models/concerns/sluggable.rb</code> ถ้าทำตาม) ·
+      ③ <code>bin/rails db:rollback</code> (รื้อช่อง slug ออก) ·
+      ④ ลบไฟล์ <code>db/migrate/…_add_slug_to_posts.rb</code> ·
+      ⑤ <code>bin/rails db:reset</code> (ล้างตู้แล้วใส่ seeds ใหม่ — บท 108)
+      <br><strong>ลำดับสำคัญ:</strong> ต้อง rollback (③) ก่อนลบไฟล์ migration (④) · ลบไฟล์ก่อนแล้ว Rails จะไม่รู้ว่าต้องรื้ออะไร</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ข้อ 3 <code>c.body</code> ได้อะไร · ข้อ 4 จะเห็นบรรทัด 💬 ไหม · ข้อ 5 ได้เลขเท่าไร (seeds ให้ต้มยำกุ้งมีคอมเมนต์อยู่แล้ว 2 อัน) · และถ้าเปลี่ยน <code>after_commit</code> เป็น <code>after_save</code> ข้อ 4 จะต่างไปยังไง?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>สิ่งที่ควรเห็น</strong> (ผลจริงจากเครื่องที่ใช้ตรวจ · id และเวลาของคุณจะต่าง):</p>
+<pre><code>wongnok-blog(dev):002&gt; c = tomyum.comments.create(user: mana, body: "   อร่อยมาก   "); nil
+  TRANSACTION (1.5ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Create (3.7ms)  INSERT INTO "comments" ("body", "post_id", "user_id", "created_at", "updated_at") VALUES ('อร่อยมาก', 1, 3, '2026-11-04 11:55:58.493625', '2026-11-04 11:55:58.493625') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.0ms)  COMMIT /*application='WongnokBlog'*/
+💬 คอมเมนต์ใหม่ในเรื่อง ต้มยำกุ้งน้ำข้น
+=&gt; nil
+wongnok-blog(dev):003&gt; c.body
+=&gt; "อร่อยมาก"
+wongnok-blog(dev):004&gt; Comment.transaction do
+wongnok-blog(dev):005*   tomyum.comments.create(user: mana, body: "คอมเมนต์ที่จะถูกยกเลิก")
+wongnok-blog(dev):006*   raise ActiveRecord::Rollback
+wongnok-blog(dev):007*   end
+  TRANSACTION (2.8ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Create (6.6ms)  INSERT INTO "comments" ("body", "post_id", "user_id", "created_at", "updated_at") VALUES ('คอมเมนต์ที่จะถูกยกเลิก', 1, 3, '2026-11-04 11:57:30.098348', '2026-11-04 11:57:30.098348') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.2ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):008&gt; tomyum.comments.count
+  Comment Count (3.7ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+=&gt; 3</code></pre>
+    <ul>
+      <li>ข้อ 3 — INSERT ส่ง <code>'อร่อยมาก'</code> ไม่มีช่องว่าง · 💬 ขึ้น<strong>หลัง</strong> COMMIT</li>
+      <li>ข้อ 4 — ROLLBACK · <strong>ไม่มี 💬</strong> · ข้อ 5 ได้ <code>3</code> (2 จาก seeds + 1 จากข้อ 3) — "นับแฟ้มในลิ้นชัก comments ที่เป็นของบทความเลข 1"</li>
+      <li>ถ้าเปลี่ยนเป็น <code>after_save :announce</code> — ผมลองแล้ว ข้อ 4 <strong>มี 💬 ขึ้นก่อน ROLLBACK</strong> = ประกาศคอมเมนต์ที่ไม่มีอยู่จริง (เรื่องเดียวกับอีเมลหลอก)</li>
+      <li>ข้อ 6 — <code>db:rollback</code> ขึ้น <code>AddSlugToPosts: reverting</code> · <code>-- remove_column(:posts, :slug, :string)</code> · <code>db:reset</code> ขึ้น <code>Dropped database …</code> / <code>Created database …</code> (ชื่อ database ของคุณจะต่างจากของผม) ·
+          เช็คด้วย <code>bin/rails runner 'p [User.count, Post.count, Comment.count]'</code> ควรได้ <code>[3, 6, 7]</code> เท่ากับตอนจบบท 107</li>
+    </ul>
+    <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong><code>c.body</code> ยังมีช่องว่างหัวท้าย ไม่มี error</strong> — ลืม <code>self.</code> ใน <code>tidy_body</code> (ผมลองแล้ว ได้ <code>"  ลืม self  "</code> ออกมาทั้งช่องว่าง)</li>
+      <li><strong><code>undefined method 'anounce' for an instance of Comment (NoMethodError)</code></strong> — ชื่อหลัง <code>after_commit</code> สะกดไม่ตรงกับชื่อ method ·
+          ระวัง: ผมลองแล้ว error ขึ้น<strong>หลัง COMMIT</strong> — คอมเมนต์ถูกบันทึกไปแล้วทั้งที่จอแดง (count เพิ่มจริง) · Ruby ใบ้ให้ด้วย <code>Did you mean?  announce</code></li>
+      <li><strong><code>User(#…) expected, got #&lt;User id: 3, name: "มานะ", …&gt; which is an instance of User(#…) (ActiveRecord::AssociationTypeMismatch)</code></strong>
+          หรือ<strong>ข้อ 3 ไม่มี 💬 และช่องว่างยังอยู่ครบ</strong> — console ยังถือตัวแปรที่หาไว้<strong>ก่อน</strong>แก้ไฟล์ ·
+          ผมลองแล้ว: พิมพ์ <code>reload!</code> แต่ใช้ <code>tomyum</code> กับ <code>mana</code> ตัวเดิม ได้ error นี้ (Rails เห็นว่า mana เป็นแฟ้ม User รุ่นก่อน reload) ·
+          หา <code>mana</code> ใหม่แต่ใช้ <code>tomyum</code> เดิม ได้ช่องว่างครบและไม่มี 💬 · ทางที่ชัวร์คือปิด console เปิดใหม่ แล้วเริ่มจากข้อ 2</li>
+      <li><strong><code>undefined method 'slug'</code> หลังคืนสภาพ</strong> — rollback ช่อง slug ไปแล้ว แต่ยังไม่ได้ลบ <code>generate_slug</code> ออกจาก <code>post.rb</code> · กลับไปทำ ① ให้ครบ</li>
+    </ul>
+    <p>ติดตรงไหน หรือผลของคุณไม่ตรงกับที่เขียนไว้ <strong>ถามกลับมาได้เลย</strong> พร้อมแปะสิ่งที่จอขึ้นมาทั้งก้อน</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>24</td><td>โค้ด <code>self.slug ||= …</code> โดยไม่บอกว่าต้องเพิ่มคอลัมน์</td><td>ตาราง posts ไม่มีช่อง slug · ไม่ทำ migration ก่อนได้ <code>undefined method 'slug'</code></td><td><strong>สนใจ</strong> — พิมพ์ตามแล้วพัง</td></tr>
+    <tr><td>24</td><td><code>NotifyFollowersJob.perform_later(id)</code></td><td>แอปยังไม่มี job นี้ (Day 3) · ได้ <code>uninitialized constant Post::NotifyFollowersJob</code> หลัง COMMIT · บทนี้ใช้ <code>Rails.logger</code> แทน</td><td><strong>สนใจ</strong> ถ้าพิมพ์ตาม</td></tr>
+    <tr><td>24</td><td><code>title.to_s.parameterize</code></td><td>ชื่อเรื่องภาษาไทยได้ slug เป็น <code>""</code></td><td>ควรรู้ ยังไม่ต้องแก้</td></tr>
+    <tr><td>27</td><td><code>PublishPost.call(post)</code></td><td>กับโค้ดในบทนี้ได้ <code>undefined method 'call' for class PublishPost</code> · บทนี้เรียก <code>PublishPost.new(post).call</code> · แบบสไลด์ต้องเขียน method ของ class เพิ่ม</td><td>ไม่ต้อง — ทั้งสองแบบเจอบ่อย</td></tr>
+    <tr><td>29</td><td>Quiz 3 ข้อ 3 (ส่งอีเมลหลังสร้างโพสต์)</td><td>เฉลยคือ after_commit + job · อยู่ใน quiz ข้อ 3 ของบทนี้ พร้อมผลรันจริง · ข้อ 1–2 ของสไลด์เป็นเรื่องของบท 110–111</td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0111-four-layers-and-uniqueness.html">← บทเรียน 111 · 4 ชั้นป้องกัน · uniqueness</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0113-query-lazy-relation.html">บทเรียน 113 → Query · lazy relation</a>
+</nav>
+
+<h2 id="sn-sec-10">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_callbacks.html#available-callbacks">Rails Guides — Active Record Callbacks § Available Callbacks</a> —
+      <strong>อ่านแค่รายการ Creating an Object กับ Updating an Object</strong> · ลำดับตรงกับแผนภาพในบทนี้ (คู่มือมี <code>around_*</code> เพิ่มมา ข้ามไปก่อนได้)</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_callbacks.html#after-commit-and-after-rollback">Rails Guides — Active Record Callbacks § after_commit and after_rollback</a> —
+      ทำไมงานที่ออกไปนอกฐานข้อมูลต้องรอ COMMIT · อ่านถึงหัวข้อ Aliases for after_commit ก็พอ</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveModel/Attributes/Normalization/ClassMethods.html#method-i-normalizes">Rails API — normalizes</a> —
+      ดูตัวอย่าง <code>normalizes :email, with: -&gt; email { email.strip.downcase }</code> และหมายเหตุว่า<strong>ค่า nil จะไม่ถูกแปลง</strong> ถ้าไม่ตั้ง <code>apply_to_nil</code> ·
+      (ตัวอย่างในหน้านั้นมีบรรทัด <code>include ActiveModel::…</code> เพราะเป็น class ธรรมดา · model ที่ <code>&lt; ApplicationRecord</code> ของเราไม่ต้องใส่)</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveSupport/Inflector.html#method-i-parameterize">Rails API — ActiveSupport::Inflector#parameterize</a> —
+      ตัวอย่างการแปลงข้อความเป็น slug · ดูแค่สองบรรทัดตัวอย่างแรก</li>
+  <li><a href="https://docs.ruby-lang.org/en/4.0/syntax/assignment_rdoc.html#label-Local+Variables+and+Methods">Ruby docs — Assignment § Local Variables and Methods</a> —
+      คู่มือ Ruby อธิบายว่าทำไม <code>ชื่อ = ค่า</code> กลายเป็นตัวแปร local และต้องใช้ <code>self.</code> ถึงจะเรียก method</li>
+  <li><a href="https://guides.rubyonrails.org/autoloading_and_reloading_constants.html#custom-namespaces">Rails Guides — Autoloading and Reloading Constants § Custom Namespaces</a> —
+      <strong>อ่านแค่ย่อหน้าแรก</strong> ที่บอกว่า <code>app/services</code> ไม่ได้สร้างมาให้ แต่ถ้ามีอยู่ Rails จะรวมเข้าไปเอง · ส่วน namespace ที่เหลือข้ามได้</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveSupport/Concern.html">Rails API — ActiveSupport::Concern</a> —
+      หน้าตา <code>extend ActiveSupport::Concern</code> กับ <code>included do</code> · ตัวอย่างท้ายหน้าเรื่อง dependency ยังไม่ต้องอ่าน</li>
+  <li><a href="https://gorm.io/docs/hooks.html">GORM — Hooks</a> —
+      ลำดับ hook ฝั่ง Go (<code>BeforeSave</code> → … → <code>AfterSave</code> → commit or rollback) · ยืนยันว่า GORM ไม่มี hook หลัง commit</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+</body>
+</html>

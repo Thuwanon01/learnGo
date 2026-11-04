@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 114 — N+1 — โค้ด 3 บรรทัดที่เดินไปตู้ 101 รอบ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 114 · Rails · Day 2</p>
+  <h1>N+1 — โค้ด 3 บรรทัดที่เดินไปตู้ 101 รอบ</h1>
+  <p class="meta">~20 นาที · ควรผ่าน <a href="./0113-query-lazy-relation.html">บทเรียน 113</a> (ใบเบิกของ · อ่าน log นับ query) และ <a href="./0107-console-crud.html">บทเรียน 107</a> (ข้อมูลตัวอย่าง · <code>post.user</code>) มาก่อน</p>
+  <p class="standfirst">
+    ปัญหาที่เจอกันทุกทีม: <strong>หน้าเว็บที่โค้ดดูธรรมดามาก แต่ช้าลงเรื่อย ๆ ตามจำนวนบทความ</strong>
+    <br>อ่านจบบทนี้ คุณจะ<strong>มองเห็น</strong>ปัญหาที่ชื่อ N+1 ใน log ได้เอง · นับได้ว่าหน้าหนึ่งไปถามฐานข้อมูลกี่รอบ ·
+    แก้ด้วยคำเดียว <code>includes</code> · และรู้ว่าเมื่อไหร่ต้องใช้ <code>preload</code> หรือ <code>eager_load</code> แทน
+    <br>ประโยคที่จะติดตัวไปจากบทนี้: <strong>N+1 ไม่ได้อ่านจากโค้ด — อ่านจาก log</strong>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>model · ลิ้นชัก · แฟ้ม</strong> (บท 106) — <code>Post</code> คือคนดูแลสต็อกของลิ้นชัก <code>posts</code> · หนึ่งแฟ้ม = บทความหนึ่งชิ้น (หนึ่งแถว) · ช่องบนแฟ้ม = คอลัมน์</li>
+    <li><strong><code>post.user</code></strong> (บท 107) — "ขอผู้เขียนของบทความนี้" · ใช้ได้เพราะ <code>Post</code> เขียนไว้ว่า <code>belongs_to :user</code> (ละเอียดในบท 115)</li>
+    <li><strong>ใบเบิกของ</strong> (บท 113) — <code>Post.all</code> · <code>Post.where(…)</code> ยังไม่ไปตู้ จนกว่าจะเริ่มใช้ข้อมูลจริง เช่น วน <code>each</code> ·
+      และ <code>count</code> = ให้ตู้นับใหม่เสมอ · <code>size</code> = ถ้าแฟ้มมาอยู่บนโต๊ะแล้ว นับบนโต๊ะ</li>
+    <li><strong>log ของ server</strong> (บท 113) — บรรทัด <code>Post Load …</code> = ไปตู้หนึ่งรอบ · <code>↳ ไฟล์:บรรทัด</code> = บรรทัดไหนสั่ง · <code>(N queries)</code> ท้ายใบสั่ง = รวมกี่รอบ</li>
+    <li><strong><code>map</code> · <code>&amp;:title</code></strong> (บท 92) — <code>map</code> วนทีละชิ้นแล้วเก็บผลเป็นรายการใหม่ · <code>map(&amp;:title)</code> = <code>map { |p| p.title }</code> แบบย่อ</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17</strong>
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน ใช้แทนกันได้)</p>
+  <p>🗂 ตัวอย่างในบทนี้ใช้ตาราง <code>users</code> / <code>posts</code> / <code>comments</code> และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับที่สร้างไว้ใน <a href="./0107-console-crud.html">บท 107</a> —
+    บทความ 6 ชิ้น · <strong>สมชาย สมหญิง มานะ เขียนคนละ 2 ชิ้น</strong> · คอมเมนต์ 7 อัน</p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · ตัดบรรทัดที่ไม่เกี่ยวเป็น <code>…</code> · <strong>เวลา (ms) · วันที่ · เลข <code>0x…</code> ของคุณจะไม่ตรงกับในบท</strong> และจอคุณจะมีสี</p>
+</div>
+
+<h2 id="sn-sec-1">ภาพก่อนโค้ด: ขอชื่อผู้เขียน 6 คน ต้องเดินไปตู้ 7 รอบ</h2>
+
+<p>
+  สมมติหน้าแรกของบล็อกต้องโชว์ "ชื่อบทความ — โดย ชื่อผู้เขียน" ทั้ง 6 ชิ้น
+  <br>ชื่อบทความอยู่ในลิ้นชัก <code>posts</code> · แต่<strong>ชื่อผู้เขียนอยู่อีกลิ้นชักหนึ่ง</strong> คือ <code>users</code> · บนแฟ้มบทความมีแค่ช่อง <code>user_id</code> (เลขที่ของผู้เขียน) ไม่มีชื่อ
+</p>
+
+<p>ถ้าเขียนโค้ดแบบที่คนส่วนใหญ่เขียนตามธรรมชาติ คนดูแลสต็อกจะทำแบบนี้:</p>
+
+<div class="diagram">รอบที่ 1   ลิ้นชัก posts  → หยิบแฟ้มบทความมาทั้ง 6 แผ่น            ← นี่คือ "1"
+
+           ได้แฟ้มแล้ว เริ่มโชว์ทีละชิ้น … ชิ้นแรกเขียนว่า user_id = 1
+รอบที่ 2   ลิ้นชัก users  → หาแฟ้มเลขที่ 1  → "สมชาย"
+รอบที่ 3   ลิ้นชัก users  → หาแฟ้มเลขที่ 1  → "สมชาย"   (คนเดิม! แต่เดินไปอีก)
+รอบที่ 4   ลิ้นชัก users  → หาแฟ้มเลขที่ 2  → "สมหญิง"
+รอบที่ 5   ลิ้นชัก users  → หาแฟ้มเลขที่ 2  → "สมหญิง"
+รอบที่ 6   ลิ้นชัก users  → หาแฟ้มเลขที่ 3  → "มานะ"
+รอบที่ 7   ลิ้นชัก users  → หาแฟ้มเลขที่ 3  → "มานะ"     ← 6 รอบนี้คือ "N"
+
+รวม 1 + 6 = 7 รอบ · ถ้ามีบทความ 100 ชิ้น = 1 + 100 = 101 รอบ</div>
+
+<p>
+  ปัญหานี้ชื่อ <strong>N+1</strong> — ไปตู้ <strong>1</strong> รอบเพื่อเอารายการ แล้วไปอีก <strong>N</strong> รอบ (หนึ่งรอบต่อหนึ่งชิ้นในรายการ) ·
+  6 ชิ้นยังไม่รู้สึก · แต่ 100 ชิ้นคือ 101 รอบ และ<strong>ทุกรอบต้องรอฐานข้อมูลตอบ</strong> หน้าเว็บจึงช้าลงตามจำนวนข้อมูลไปเรื่อย ๆ
+</p>
+
+<div class="analogy">
+  <span class="label">🚶 เทียบให้เห็นภาพ — เดินไปตู้ 101 รอบ หยิบทีละแผ่น</span>
+  <p>
+    เชฟสั่งคนดูแลสต็อกว่า "เอาแฟ้มบทความมา" · ได้มาแล้วเชฟอ่านทีละแผ่น · เจอช่อง "ผู้เขียนเลขที่ 1" ก็สั่ง "ไปหยิบแฟ้มผู้เขียนเลขที่ 1 มา" ·
+    คนดูแลสต็อกเดินไปลิ้นชัก users กลับมา · แผ่นถัดไปก็สั่งใหม่ เดินใหม่ — <strong>ทีละแผ่น ทีละรอบ</strong>
+    <br>ทางที่ฉลาดกว่า: อ่านแฟ้มบทความให้ครบก่อน จดเลขผู้เขียนทั้งหมด (1, 2, 3) แล้ว<strong>เดินไปรอบเดียว หยิบมาทั้งตะกร้า</strong>
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนดูแลสต็อกตัวจริงเดินไปสองสามรอบก็คงฉุกคิดเองว่า "เดี๋ยวนะ ขอเลขให้ครบก่อนดีกว่า" ·
+    แต่ Rails <strong>ไม่ฉุกคิดเอง</strong> — มันทำตามที่โค้ดสั่งเป๊ะ ๆ ทีละบรรทัด เราต้องบอกมันล่วงหน้าเองว่า "เดี๋ยวจะใช้ผู้เขียนด้วยนะ"
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>N+1 query (N+1 problem)</dt>
+    <dd>ไปฐานข้อมูล 1 รอบเอารายการ แล้วไปเพิ่มอีกหนึ่งรอบต่อทุกชิ้นในรายการ · เป็นสาเหตุอันดับต้น ๆ ที่หน้าเว็บ Rails ช้า ·
+        <strong>พิมพ์บอก AI ได้ว่า “this page has an N+1 query on post.user, here is the log”</strong></dd>
+    <dt>query</dt>
+    <dd>คำสั่ง SQL หนึ่งประโยคที่ส่งไปฐานข้อมูล = เดินไปตู้หนึ่งรอบ · เวลาคนพูดว่า "หน้านี้ยิง 7 query" แปลว่าไปตู้ 7 รอบ ·
+        <strong>ถาม senior ได้ว่า “หน้านี้ควรยิงไม่เกินกี่ query ถึงจะถือว่าโอเค”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">ลองใน console — นับ SELECT ด้วยตาตัวเอง</h2>
+
+<p>
+  เปิด <code>bin/rails console</code> ในแอป <code>wongnok_blog</code> ที่มีข้อมูลจากบท 107 ·
+  console ของ Rails 8.1 <strong>โชว์ SQL ทุกบรรทัดให้อยู่แล้ว</strong> ไม่ต้องตั้งอะไรเพิ่ม (ถ้าดูสไลด์หน้า 37 ข้ามบรรทัด <code>ActiveRecord::Base.logger = …</code> ไปได้ — ดูท้ายบท)
+</p>
+
+<p>คำสั่งที่จะพิมพ์ — "ขอชื่อผู้เขียนของทุกบทความ":</p>
+
+<pre><code><span class="n">Post</span>.<span class="f">all</span>.<span class="f">map</span> { |p| p.<span class="f">user</span>.<span class="f">name</span> }</code></pre>
+
+<ul>
+  <li><code>Post.all</code> — ใบเบิกของ "ขอบทความทุกชิ้น" (ยังไม่ไปตู้)</li>
+  <li><code>.map { |p| … }</code> — วนทีละบทความ ตั้งชื่อเล่นว่า <code>p</code> · <strong>ตรงนี้แหละที่ใบเบิกถูกยื่น</strong> เพราะต้องใช้ข้อมูลจริงแล้ว</li>
+  <li><code>p.user.name</code> — ขอผู้เขียนของบทความนี้ แล้วเอาชื่อ</li>
+</ul>
+
+<div class="predict">
+<pre><code>wongnok-blog(dev):001&gt; Post.all.map { |p| p.user.name }</code></pre>
+  <p class="ask">มีบทความ 6 ชิ้น · จะเห็นบรรทัด <code>SELECT</code> โผล่มากี่บรรทัด?
+    แล้ว<strong>สมชายเขียน 2 ชิ้น</strong> — Rails จะไปหาแฟ้มสมชายสองรอบ หรือจำได้ว่าเพิ่งหยิบมา?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — <strong>7 บรรทัด</strong> · และ<strong>ไปหาสมชายสองรอบจริง</strong> (เลข 1 ซ้ำกัน · 2 ซ้ำ · 3 ซ้ำ):</p>
+<pre><code>wongnok-blog(dev):001&gt; Post.all.map { |p| p.user.name }
+  Post Load (48.4ms)  SELECT "posts".* FROM "posts" /*application='WongnokBlog'*/
+  User Load (1.5ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+  User Load (1.1ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+  User Load (1.1ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 2 LIMIT 1 /*application='WongnokBlog'*/
+  User Load (1.0ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 2 LIMIT 1 /*application='WongnokBlog'*/
+  User Load (1.0ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 3 LIMIT 1 /*application='WongnokBlog'*/
+  User Load (1.1ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 3 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; ["สมชาย", "สมชาย", "สมหญิง", "สมหญิง", "มานะ", "มานะ"]</code></pre>
+    <p>นี่คือคำตอบของคำถามในสไลด์หน้า 37 ("ถ้า 5 โพสต์เป็นของคนเดียวกัน ยิงกี่ครั้ง") ด้วย — <strong>ใน console ยังยิงครบ 1 + 5</strong> ·
+      Rails ไม่ได้ถามว่า "คนนี้เพิ่งหยิบมาหรือเปล่า" มันแค่ทำตามคำสั่งทีละบทความ ·
+      (ในหน้าเว็บจริงจะต่างไปนิดหนึ่ง — เดี๋ยวเห็นในหัวข้อ log ของ server)</p>
+  </div>
+</div>
+
+<p>แปลบรรทัด SQL เป็นภาษาคน:</p>
+<ul>
+  <li><code>Post Load (48.4ms)</code> — "คนดูแลสต็อกของ <code>Post</code> ไปหยิบแฟ้ม ใช้เวลา 48.4 มิลลิวินาที" (ตัวเลขเวลาเปลี่ยนทุกรอบ ไม่ต้องสนใจ)</li>
+  <li><code>SELECT "posts".* FROM "posts"</code> — "ขอแฟ้ม<strong>ทุกช่อง</strong> (<code>*</code>) จากลิ้นชัก <code>posts</code> ทุกแผ่น" → รอบที่ 1</li>
+  <li><code>SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1</code> — "ขอแฟ้มทุกช่องจากลิ้นชัก <code>users</code> <strong>เฉพาะ</strong>แผ่นที่เลขที่ (<code>id</code>) เป็น 1 · <strong>เอามาไม่เกินแผ่นเดียว</strong>" → รอบที่ 2 ถึง 7</li>
+  <li><code>/*application='WongnokBlog'*/</code> — ป้ายชื่อแอปที่ Rails แปะท้าย SQL (บท 113) ไม่ต้องสนใจ</li>
+  <li><code>=&gt; [...]</code> — ผลของ <code>map</code> คือรายการชื่อ 6 ชื่อ</li>
+</ul>
+
+<h2 id="sn-sec-3">ทำไมเกิด: <code>post.user</code> คือการ "เดินไปตู้" ไม่ใช่ "อ่านช่องบนแฟ้ม"</h2>
+
+<p>
+  ต้นเหตุทั้งหมดอยู่ที่หน้าตาของโค้ด · <code>post.user</code> หน้าตาเหมือนอ่านค่าธรรมดา เหมือน <code>post.title</code> ·
+  <strong>แต่ข้างในต่างกันมาก</strong> — ลองแยกดูทีละคำสั่งใน console (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.first
+  Post Load (1.6ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x00000001264959e0
+...
+wongnok-blog(dev):002&gt; post.user_id
+=&gt; 1
+wongnok-blog(dev):003&gt; post.user
+  User Load (1.8ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;User:0x0000000126c1abe8
+ id: 1,
+ name: "สมชาย",
+ email: "[FILTERED]",
+…
+wongnok-blog(dev):004&gt; post.user.name
+=&gt; "สมชาย"</code></pre>
+
+<ul>
+  <li><code>post = Post.first</code> — หยิบแฟ้มบทความแผ่นแรกมาถือไว้ (ไปตู้ 1 รอบ · <code>ORDER BY "posts"."id" ASC</code> = เรียงเลขที่น้อยไปมาก)</li>
+  <li><code>post.user_id</code> — ได้ <code>1</code> และ<strong>ไม่มีบรรทัด SQL เลย</strong> · เพราะเลข 1 เขียนอยู่บนแฟ้มที่ถืออยู่แล้ว แค่อ่าน</li>
+  <li><code>post.user</code> — <strong>มีบรรทัด <code>User Load</code> โผล่</strong> · ชื่อผู้เขียนไม่ได้อยู่บนแฟ้มบทความ คนดูแลสต็อกจึงต้องเดินไปลิ้นชัก <code>users</code> ·
+      (<code>email: "[FILTERED]"</code> คือ Rails ซ่อนอีเมลไม่ให้โชว์ในจอ — ในตู้ยังเป็นอีเมลจริง)</li>
+  <li><code>post.user.name</code> — ครั้งที่สอง<strong>ไม่ไปตู้แล้ว</strong> · บทความแผ่นนี้จำผู้เขียนที่เพิ่งหยิบมาไว้ ·
+      แต่จำได้<strong>เฉพาะแผ่นนี้</strong> บทความแผ่นอื่นของสมชายไม่รู้เรื่องด้วย — จึงเกิดการไปหาสมชายซ้ำในหัวข้อที่แล้ว</li>
+</ul>
+
+<p>
+  <strong>Rails ไม่รู้ล่วงหน้า</strong>ว่าเราจะถามผู้เขียนของทุกแผ่น · ตอนหยิบแฟ้มบทความมามันจึงไม่หยิบผู้เขียนมาด้วย ·
+  พอเราถามทีละแผ่น มันก็ไปตู้ทีละแผ่น — การไปตู้ "ตอนที่ถาม" แบบนี้เรียกว่า <strong>lazy loading</strong>
+</p>
+
+<p>
+  คำนี้เจอแล้วในบท 113 · <strong>หลักเดียวกัน</strong> คือ "ยังไม่ไปตู้จนกว่าจะต้องใช้" ·
+  บท 113 ใช้กับใบเบิกของ (<code>Post.where(…)</code>) · บทนี้ใช้กับ<strong>ผู้เขียนของแต่ละบทความ</strong> (<code>post.user</code>)
+</p>
+
+<p><strong>เทียบกับ Go (GORM บท 27):</strong> ใน Go ถ้าจะทำ N+1 คุณต้อง<strong>เขียนคำสั่งไปตู้ในลูปเองกับมือ</strong> — เห็นชัดตั้งแต่อ่านโค้ด:</p>
+
+<pre><code><span class="c">// Go + GORM — N+1 แบบเห็นด้วยตา</span>
+<span class="k">var</span> posts []Post
+db.<span class="f">Find</span>(&amp;posts)                  <span class="c">// ไปตู้ 1 รอบ</span>
+<span class="k">for</span> _, p := <span class="k">range</span> posts {
+    <span class="k">var</span> u User
+    db.<span class="f">First</span>(&amp;u, p.UserID)        <span class="c">// ไปตู้อีก 1 รอบ ต่อบทความ 1 ชิ้น</span>
+    fmt.<span class="f">Println</span>(u.Name)
+}</code></pre>
+
+<p>
+  ฝั่ง Rails คำว่า <code>db.First</code> <strong>ถูกซ่อนอยู่ใน <code>p.user</code></strong> · โค้ดสั้นและอ่านง่ายกว่า แต่มองไม่เห็นว่ามีการไปตู้ ·
+  นี่คือเหตุผลของประโยคหลักวันนี้: <strong>N+1 ไม่ได้อ่านจากโค้ด — อ่านจาก log</strong>
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>lazy loading</dt>
+    <dd>ยังไม่โหลดของที่ผูกกันอยู่ (เช่น ผู้เขียนของบทความ) จนกว่าจะมีคนถามถึง · เป็นค่าเริ่มต้นของ Rails · สะดวก แต่ถ้าถามในลูปจะกลายเป็น N+1 ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ post.user ถูก lazy load ในลูปหรือเปล่า”</strong></dd>
+    <dt>association</dt>
+    <dd>ความสัมพันธ์ระหว่างสองลิ้นชัก เช่น บทความ <em>เป็นของ</em> ผู้ใช้ (<code>belongs_to :user</code>) · <code>post.user</code> คือการเดินตามความสัมพันธ์นั้น (ละเอียดในบท 115) ·
+        <strong>พิมพ์บอก AI ได้ว่า “Post belongs_to :user, I loop over posts and call post.user”</strong> — AI จะรู้ทันทีว่าเสี่ยง N+1</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">แก้ด้วยคำเดียว: <code>includes</code></h2>
+
+<p>
+  ทางแก้คือ<strong>บอก Rails ล่วงหน้า</strong>ตอนเขียนใบเบิกว่า "เดี๋ยวจะใช้ผู้เขียนด้วยนะ หยิบมาเผื่อเลย" ·
+  คำที่ใช้บอกคือ <code>includes(:user)</code> — ชื่อ <code>:user</code> ต้องตรงกับที่เขียนใน model (<code>belongs_to :user</code>)
+</p>
+
+<pre><code>wongnok-blog(dev):002&gt; Post.includes(:user).map { |p| p.user.name }
+  Post Load (2.4ms)  SELECT "posts".* FROM "posts" /*application='WongnokBlog'*/
+  User Load (2.0ms)  SELECT "users".* FROM "users" WHERE "users"."id" IN (1, 2, 3) /*application='WongnokBlog'*/
+=&gt; ["สมชาย", "สมชาย", "สมหญิง", "สมหญิง", "มานะ", "มานะ"]</code></pre>
+
+<ul>
+  <li>เหลือ <strong>2 บรรทัด</strong> จาก 7 · ผลลัพธ์เหมือนเดิมทุกตัวอักษร</li>
+  <li>บรรทัดแรกเหมือนเดิม: หยิบบทความทุกแผ่น</li>
+  <li><code>WHERE "users"."id" IN (1, 2, 3)</code> — <code>IN (…)</code> แปลว่า "<strong>เฉพาะแผ่นที่เลขที่เป็นตัวใดตัวหนึ่งในวงเล็บ</strong>" ·
+      ทั้งประโยค = "ขอแฟ้มทุกช่องจากลิ้นชัก <code>users</code> เฉพาะเลขที่ 1, 2 หรือ 3" — Rails อ่านแฟ้มบทความแล้วรวบเลขผู้เขียนมาให้เอง ซ้ำก็ตัดให้</li>
+  <li>หลังจากนั้น <code>p.user</code> <strong>ไม่ไปตู้แล้ว</strong> เพราะผู้เขียนทุกคนถูกหยิบมารอไว้แล้ว</li>
+</ul>
+
+<p>
+  ถ้ามีบทความ 100 ชิ้น ก็ยังเป็น <strong>2 รอบ</strong> · จำนวนรอบไม่โตตามข้อมูลอีกต่อไป — ต่างจากเดิมที่ 100 ชิ้น = 101 รอบ
+</p>
+
+<div class="analogy">
+  <span class="label">🧺 เทียบให้เห็นภาพ — เขียนใบเบิกทีเดียว หยิบมาทั้งตะกร้า</span>
+  <p>
+    <code>includes(:user)</code> เหมือนเขียนเพิ่มท้ายใบเบิกว่า "<strong>พร้อมแฟ้มผู้เขียนของทุกแผ่น</strong>" ·
+    คนดูแลสต็อกหยิบแฟ้มบทความมาก่อน จดเลขผู้เขียนที่เจอ (1, 2, 3) แล้วเดินไปลิ้นชัก users <strong>รอบเดียว</strong> หยิบมาใส่ตะกร้าทั้งสามแผ่น ·
+    เชฟอ่านบทความแผ่นไหน ก็หยิบผู้เขียนจากตะกร้าข้างตัวได้เลย
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ตะกร้าจริงหยิบของเกินมาก็แค่หนัก ·
+    แต่ <code>includes</code> ของที่ไม่ได้ใช้ <strong>ก็ยังเดินไปหยิบจริง</strong> เสียหนึ่งรอบฟรี ๆ — อย่าใส่ <code>includes</code> เผื่อไว้ทุกที่ ใส่เฉพาะของที่หน้านั้นใช้จริง
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM ก็มีของแบบเดียวกันชื่อ <code>Preload</code> — <code>db.Preload("User").Find(&amp;posts)</code> ·
+  เอกสาร GORM บอกว่าได้ SQL สองประโยค: ลิ้นชักหลักหนึ่งรอบ + <code>WHERE … IN (…)</code> อีกหนึ่งรอบ — หน้าตาเดียวกับที่เราเพิ่งเห็น
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>eager loading · <code>includes</code></dt>
+    <dd>โหลดของที่ผูกกันมา<strong>ล่วงหน้า</strong> (ตรงข้ามกับ lazy loading) · ใน Rails สั่งด้วย <code>includes(:ชื่อความสัมพันธ์)</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า “add eager loading with includes(:user) to fix the N+1 in PostsController#index”</strong></dd>
+    <dt><code>WHERE id IN (…)</code></dt>
+    <dd>เงื่อนไข "ตรงกับตัวใดตัวหนึ่งในรายการ" · เห็นบรรทัดนี้ใน log หลังแก้ N+1 แปลว่า eager loading ทำงานแล้ว ·
+        <strong>ถาม senior ได้ว่า “ถ้ารายการใน IN ยาวเป็นพัน ๆ ตัว จะมีปัญหาไหม”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">ในหน้าเว็บจริง — อ่าน log ของ server นับก่อน/หลัง</h2>
+
+<p>
+  console ช่วยให้เข้าใจ · แต่ N+1 ตัวจริงเกิดในหน้าเว็บ และ<strong>ซ่อนอยู่ใน view</strong> · มาทำหน้า <code>/posts</code> จิ๋ว ๆ (ถ้ามีจากบท 113 แล้ว แก้ให้เป็นแบบนี้):
+</p>
+
+<pre><code><span class="c"># config/routes.rb — ใน block ของ draw (บท 101)</span>
+<span class="f">resources</span> <span class="n">:posts</span>, <span class="n">only:</span> <span class="n">:index</span></code></pre>
+
+<pre><code><span class="c"># app/controllers/posts_controller.rb</span>
+<span class="k">class</span> <span class="n">PostsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @posts = <span class="n">Post</span>.<span class="f">all</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c">&lt;%# app/views/posts/index.html.erb %&gt;</span>
+&lt;h1&gt;บทความทั้งหมด&lt;/h1&gt;
+&lt;ul&gt;
+  &lt;% @posts.each do |post| %&gt;
+    &lt;li&gt;&lt;%= post.title %&gt; — โดย &lt;%= post.user.name %&gt;&lt;/li&gt;
+  &lt;% end %&gt;
+&lt;/ul&gt;</code></pre>
+
+<ul>
+  <li><code>only: :index</code> — จาก 8 เส้นของ <code>resources</code> เอาแค่เส้น <code>GET /posts</code> เส้นเดียว (เหมือนบท 113 · ละเอียดในบท 117)</li>
+  <li>controller วางใบเบิก "บทความทุกชิ้น" ไว้บนถาด <code>@posts</code> (ยังไม่ไปตู้ — บท 113)</li>
+  <li>view บรรทัด 1: <code>&lt;%# … %&gt;</code> — แค่โน้ตชื่อไฟล์ (comment ของ ERB ไม่โชว์บนหน้าเว็บ) · <strong>บทนี้นับมันเป็นบรรทัด 1</strong></li>
+  <li>view บรรทัด 4: <code>@posts.each</code> — วนทีละบทความ (ยื่นใบเบิกตรงนี้)</li>
+  <li>view บรรทัด 5: <code>post.user.name</code> — <strong>ตัวต้นเหตุ</strong> หน้าตาไม่มีพิษภัยอะไรเลย</li>
+</ul>
+
+<p>
+  เปิด <code>bin/rails server</code> หน้าต่างหนึ่ง · <code>tail -f log/development.log</code> อีกหน้าต่าง (บท 113) · แล้วเปิด <code>http://localhost:3000/posts</code> ในเบราว์เซอร์ ·
+  ด้านล่างผมใช้ <code>curl</code> แทน (<code>curl</code> = โปรแกรมเปิดหน้าเว็บจากเทอร์มินัล โชว์ HTML เป็นข้อความ · ใช้เบราว์เซอร์ก็ได้ผลเหมือนกัน) — ผลจริง:
+</p>
+
+<pre><code>$ curl -s localhost:3000/posts
+…
+      &lt;!-- BEGIN app/views/posts/index.html.erb
+--&gt;&lt;h1&gt;บทความทั้งหมด&lt;/h1&gt;
+&lt;ul&gt;
+    &lt;li&gt;ต้มยำกุ้งน้ำข้น — โดย สมชาย&lt;/li&gt;
+    &lt;li&gt;ส้มตำปูปลาร้า — โดย สมชาย&lt;/li&gt;
+    …
+    &lt;li&gt;แกงเขียวหวานไก่ — โดย มานะ&lt;/li&gt;
+&lt;/ul&gt;
+&lt;!-- END app/views/posts/index.html.erb --&gt;
+…</code></pre>
+
+<p>
+  <code>&lt;!-- BEGIN … --&gt;</code> กับ <code>&lt;!-- END … --&gt;</code> = โน้ตที่ Rails โหมด development แปะบอกว่า "ส่วนนี้มาจาก view ไฟล์ไหน" (เบราว์เซอร์ไม่โชว์ ไม่ต้องสนใจ) ·
+  โน้ต BEGIN กินที่ไปหนึ่งบรรทัด — <strong>นี่คือเหตุที่เลขบรรทัดของ <code>.erb</code> ใน log เกินจริง 1</strong> (เดี๋ยวเจอข้างล่าง)
+</p>
+
+<p>หน้าเว็บถูกต้องทุกบรรทัด ไม่มี error · <strong>ถ้าดูแค่หน้าเว็บจะไม่มีวันรู้ว่ามีปัญหา</strong> · ต้องดูที่ log (ผลจริง):</p>
+
+<pre><code>Started GET "/posts" for ::1 at 2026-11-04 19:04:37 +0700
+Processing by PostsController#index as */*
+  Rendering layout layouts/application.html.erb
+  Rendering posts/index.html.erb within layouts/application
+  Post Load (33.8ms)  SELECT "posts".* FROM "posts" /*action='index',application='WongnokBlog',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:5
+  User Load (1.4ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1 /*action='index',application='WongnokBlog',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:6
+  CACHE User Load (0.0ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1
+  ↳ app/views/posts/index.html.erb:6
+  User Load (0.9ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 2 LIMIT 1 /*action='index',application='WongnokBlog',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:6
+  CACHE User Load (0.0ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 2 LIMIT 1
+  ↳ app/views/posts/index.html.erb:6
+  User Load (0.9ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 3 LIMIT 1 /*action='index',application='WongnokBlog',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:6
+  CACHE User Load (0.0ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 3 LIMIT 1
+  ↳ app/views/posts/index.html.erb:6
+  Rendered posts/index.html.erb within layouts/application (Duration: 57.4ms | GC: 1.1ms)
+  Rendered layout layouts/application.html.erb (Duration: 63.3ms | GC: 1.3ms)
+Completed 200 OK in 87ms (Views: 4.3ms | ActiveRecord: 59.9ms (7 queries, 3 cached) | GC: 9.6ms)</code></pre>
+
+<p>อ่านแบบนักสืบ — สามที่ที่ต้องดู:</p>
+<ul>
+  <li><strong>บรรทัดสุดท้าย <code>(7 queries, 3 cached)</code></strong> — ดูตรงนี้ก่อนเสมอ · 7 คือจำนวนคำถามทั้งหมด · <strong>มี 6 บทความแต่ถาม 7 ครั้ง = กลิ่น N+1</strong></li>
+  <li><strong><code>User Load</code> ซ้ำ ๆ กันหลายบรรทัด</strong> ต่างกันแค่เลข id — รูปแบบหน้าตาของ N+1 ที่ต้องจำให้ได้</li>
+  <li><strong><code>↳ app/views/posts/index.html.erb:6</code></strong> — ชี้ว่าบรรทัดไหนสั่ง · <strong>ลบหนึ่ง</strong> ได้บรรทัด 5 = <code>post.user.name</code> พอดี
+      (เลขบรรทัดไฟล์ <code>.erb</code> ใน log เกินจริง 1 — บท 113 เตือนไว้ · สาเหตุคือโน้ต <code>&lt;!-- BEGIN … --&gt;</code> ที่เพิ่งเห็นใน HTML)</li>
+</ul>
+
+<p>
+  ถ้าคุณ<strong>ไม่ได้พิมพ์บรรทัด 1</strong> (โน้ตชื่อไฟล์) ทุกบรรทัดในไฟล์จะขยับขึ้นหนึ่ง log ของคุณจึงเป็น <code>:4</code> กับ <code>:5</code> แทน <code>:5</code> กับ <code>:6</code> (ผมลองแล้วทั้งสองแบบ) ·
+  กฎ "ลบหนึ่ง" ยังใช้ได้เหมือนเดิม
+</p>
+
+<p>
+  <strong>ของใหม่ที่ console ไม่มี: <code>CACHE User Load (0.0ms)</code></strong> · นี่คือ <em>query cache</em> ที่เห็นแวบ ๆ ในบท 113 —
+  ระหว่างทำใบสั่งหนึ่งใบ Rails <strong>จำคำตอบของคำถามที่เพิ่งถาม</strong>ไว้ ถามซ้ำเป๊ะ ๆ (สมชายรอบที่สอง) ก็ตอบจากความจำ ไม่เดินไปตู้
+</p>
+
+<p>
+  log จึงนับว่า 7 query แต่ <strong>3 ตัวในนั้นตอบจากความจำ</strong> ไปตู้จริง 4 รอบ ·
+  ความจำนี้<strong>ล้างทิ้งทุกครั้งที่ใบสั่งจบ</strong> · ใน console ไม่มีใบสั่ง จึงไม่มีความจำนี้ (ถึงเห็นสมชายสองรอบเต็ม ๆ เมื่อกี้)
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>อย่าวางใจว่า CACHE จะช่วยได้</strong> — มันช่วยได้เฉพาะตอนผู้เขียนซ้ำกัน · ถ้าบทความ 100 ชิ้นมาจากผู้เขียน 100 คน ก็ยังไปตู้ 101 รอบ</p>
+</div>
+
+<p>ทีนี้แก้ controller <strong>บรรทัดเดียว</strong> — view ไม่ต้องแตะเลย:</p>
+
+<pre><code><span class="c"># app/controllers/posts_controller.rb</span>
+<span class="k">class</span> <span class="n">PostsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @posts = <span class="n">Post</span>.<span class="f">includes</span>(<span class="n">:user</span>)
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>รีเฟรชหน้าเดิม · log ใหม่ (ผลจริง):</p>
+
+<pre><code>Started GET "/posts" for ::1 at 2026-11-04 19:04:39 +0700
+Processing by PostsController#index as */*
+  Rendering layout layouts/application.html.erb
+  Rendering posts/index.html.erb within layouts/application
+  Post Load (2.4ms)  SELECT "posts".* FROM "posts" /*action='index',application='WongnokBlog',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:5
+  User Load (1.5ms)  SELECT "users".* FROM "users" WHERE "users"."id" IN (1, 2, 3) /*action='index',application='WongnokBlog',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:5
+  Rendered posts/index.html.erb within layouts/application (Duration: 19.5ms | GC: 0.0ms)
+  Rendered layout layouts/application.html.erb (Duration: 20.8ms | GC: 0.0ms)
+Completed 200 OK in 23ms (Views: 9.3ms | ActiveRecord: 12.2ms (2 queries, 0 cached) | GC: 0.0ms)</code></pre>
+
+<ul>
+  <li><code>(2 queries, 0 cached)</code> — จาก 7 เหลือ 2 · หน้าเว็บที่ได้เหมือนเดิมทุกตัวอักษร</li>
+  <li><strong>ทั้งสองบรรทัดชี้ <code>:5</code></strong> (= บรรทัด 4 คือ <code>@posts.each</code>) — ผู้เขียนถูกหยิบมาพร้อมกันตอนยื่นใบเบิก ไม่ใช่ตอนถาม <code>post.user</code></li>
+  <li>เวลา <code>87ms</code> → <code>23ms</code> ในเครื่องผม (6 บทความ ตัวเลขเล็กมาก ของคุณจะต่าง) · <strong>สไลด์หน้า 38 อ้างว่า</strong> หน้าที่โชว์ 20 โพสต์ใช้ 740ms ก่อนแก้ และ 40–60ms หลังแก้ — ผมไม่ได้วัดเลขชุดนั้น แต่ทิศทางเดียวกัน</li>
+</ul>
+
+<h2 id="sn-sec-6"><code>includes</code> · <code>preload</code> · <code>eager_load</code> — สามคำ สองวิธี</h2>
+
+<p>
+  <code>includes</code> ไม่ใช่คำเดียวที่ทำแบบนี้ได้ · Rails มีวิธีหยิบของที่ผูกกันมาล่วงหน้า <strong>สองวิธีจริง ๆ</strong> และมีคำสั่งเรียกแต่ละวิธีตรง ๆ ·
+  <code>includes</code> คือ "ให้ Rails เลือกวิธีให้"
+</p>
+
+<p><strong>วิธีที่ 1 — <code>preload</code>: แยกไปสองลิ้นชัก สองรอบ</strong> (ผลจริง · เหมือนที่ <code>includes</code> ทำเมื่อกี้ทุกบรรทัด):</p>
+
+<pre><code>wongnok-blog(dev):001&gt; Post.preload(:user).map { |p| p.user.name }
+  Post Load (50.4ms)  SELECT "posts".* FROM "posts" /*application='WongnokBlog'*/
+  User Load (1.5ms)  SELECT "users".* FROM "users" WHERE "users"."id" IN (1, 2, 3) /*application='WongnokBlog'*/
+=&gt; ["สมชาย", "สมชาย", "สมหญิง", "สมหญิง", "มานะ", "มานะ"]</code></pre>
+
+<p><strong>วิธีที่ 2 — <code>eager_load</code>: เย็บสองลิ้นชักเป็นแผ่นเดียว ไปรอบเดียว</strong> (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):002&gt; Post.eager_load(:user).map { |p| p.user.name }
+  Post Eager Load (3.1ms)  SELECT "posts"."id" AS t0_r0, "posts"."title" AS t0_r1, "posts"."body" AS t0_r2, "posts"."created_at" AS t0_r3, "posts"."updated_at" AS t0_r4, "posts"."published" AS t0_r5, "posts"."views" AS t0_r6, "posts"."user_id" AS t0_r7, "users"."id" AS t1_r0, "users"."name" AS t1_r1, "users"."email" AS t1_r2, "users"."created_at" AS t1_r3, "users"."updated_at" AS t1_r4 FROM "posts" LEFT OUTER JOIN "users" ON "users"."id" = "posts"."user_id" /*application='WongnokBlog'*/
+=&gt; ["สมชาย", "สมชาย", "สมหญิง", "สมหญิง", "มานะ", "มานะ"]</code></pre>
+
+<p>ประโยคนี้ยาว แต่อ่านแค่สามท่อนก็พอ:</p>
+<ul>
+  <li><code>Post Eager Load</code> — ป้ายหน้าบรรทัดเปลี่ยนจาก <code>Post Load</code> · และ<strong>มีบรรทัดเดียว</strong> ไม่มี <code>User Load</code> ตามมา</li>
+  <li><code>SELECT "posts"."id" AS t0_r0, … "users"."name" AS t1_r1, …</code> — ขอทุกช่องของ<strong>ทั้งสองลิ้นชัก</strong> · <code>AS t0_r0</code> คือตั้งชื่อเล่นให้แต่ละช่อง กันไม่ให้ <code>id</code> ของสองลิ้นชักชนกัน (ไม่ต้องอ่าน)</li>
+  <li><code>FROM "posts" LEFT OUTER JOIN "users"</code> — <strong>JOIN</strong> = "เอาแฟ้มจากสองลิ้นชักมา<strong>วางคู่กันเป็นแผ่นเดียว</strong>" · <code>LEFT OUTER</code> = ถึงบทความไหนหาผู้เขียนไม่เจอ ก็ยังเอาบทความนั้นมา (ช่องผู้เขียนว่างไว้)</li>
+  <li><code>ON "users"."id" = "posts"."user_id"</code> — กติกาการจับคู่: "ผู้ใช้เลขที่ … คู่กับบทความที่ช่อง <code>user_id</code> เป็นเลขเดียวกัน"</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">📎 เทียบให้เห็นภาพ — สองกองบนโต๊ะ vs แฟ้มที่เย็บติดกันมา</span>
+  <p>
+    <strong><code>preload</code></strong> = คนดูแลสต็อกเดินสองรอบ ได้<strong>สองกอง</strong>มาวางบนโต๊ะ: กองบทความ กับกองผู้เขียน · Rails จับคู่ให้บนโต๊ะเอง ·
+    <strong><code>eager_load</code></strong> = ขอให้ห้องเก็บของ<strong>ถ่ายเอกสารแฟ้มบทความเย็บติดกับแฟ้มผู้เขียน</strong>มาเป็นแผ่นเดียว เดินรอบเดียว ·
+    <strong><code>includes</code></strong> = บอกคนดูแลสต็อกว่า "เลือกวิธีเองเลย"
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในชีวิตจริง "รอบเดียว" ดูดีกว่าเสมอ · แต่ในฐานข้อมูลไม่แน่ —
+    ถ้าบทความหนึ่งมีคอมเมนต์ 50 อัน แผ่นที่เย็บติดกันจะ<strong>มีข้อมูลบทความซ้ำ 50 แผ่น</strong> (สไลด์หน้า 34) ส่งของซ้ำมาเยอะ · บางครั้งสองรอบเบากว่า
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM ก็มีสองแบบเหมือนกัน · <code>db.Preload("User")</code> = แบบ <code>preload</code> (แยกไปสองรอบ) ·
+  <code>db.Joins("User")</code> = แบบ <code>eager_load</code> (เอกสาร GORM เรียกว่า Joins Preloading — ใช้ JOIN ไปรอบเดียว) ·
+  ต่างกันที่ GORM ไม่มีตัวที่ "เลือกให้เอง" แบบ <code>includes</code> คุณต้องเลือกเองทุกครั้ง
+</p>
+
+<h3 id="sn-sub-1">แล้วเมื่อไหร่ต้องเลือกเอง — ตอนกรองด้วยลิ้นชักลูก</h3>
+
+<p>
+  สมมติอยากได้ "บทความของ<strong>มานะ</strong> พร้อมชื่อผู้เขียน" · เงื่อนไข "ชื่อผู้เขียนเป็นมานะ" อยู่ในลิ้นชัก <code>users</code> ไม่ใช่ <code>posts</code> ·
+  <code>where(users: { name: "มานะ" })</code> คือ "เฉพาะแผ่นที่ช่อง name <strong>ของลิ้นชัก users</strong> เป็นมานะ" ·
+  เป็น hash ซ้อน hash: ชั้นนอก <code>users:</code> บอกลิ้นชัก · ชั้นใน <code>{ name: "มานะ" }</code> บอกช่องกับค่า
+</p>
+
+<div class="predict">
+<pre><code>wongnok-blog(dev):005&gt; Post.preload(:user).where(users: { name: "มานะ" }).map(&amp;:title)</code></pre>
+  <p class="ask"><code>preload</code> แยกไปสองรอบ · รอบแรกหยิบจากลิ้นชัก <code>posts</code> อย่างเดียว · แล้วเงื่อนไขเรื่อง <code>users</code> จะไปอยู่ตรงไหน?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — <strong>error</strong>:</p>
+<pre><code>  Post Load (1.2ms)  SELECT "posts".* FROM "posts" WHERE "users"."name" = 'มานะ' /*application='WongnokBlog'*/
+(wongnok-blog):5:in 'Enumerable#map': PG::UndefinedTable: ERROR:  missing FROM-clause entry for table "users" (ActiveRecord::StatementInvalid)
+LINE 1: SELECT "posts".* FROM "posts" WHERE "users"."name" = 'มานะ' ...
+                                            ^
+…</code></pre>
+    <p>
+      SQL รอบแรกขอจากลิ้นชัก <code>posts</code> อย่างเดียว แต่ไปตั้งเงื่อนไขกับช่องของ <code>users</code> ·
+      PostgreSQL ตอบว่า <code>missing FROM-clause entry for table "users"</code> = "<strong>คุณพูดถึงลิ้นชัก users แต่ไม่ได้เปิดลิ้นชักนั้นมาด้วย</strong>" ·
+      ลูกศร <code>^</code> ชี้ตรงคำว่า <code>"users"."name"</code> ที่เป็นปัญหา
+    </p>
+  </div>
+</div>
+
+<p>ใช้ <code>includes</code> แทน — Rails เห็นว่ามีเงื่อนไขของลิ้นชักลูก จึง<strong>สลับไปใช้วิธีเย็บติดกัน</strong> (<code>Eager Load</code> + <code>JOIN</code>) ให้เอง (ผลจริง · ย่อรายชื่อช่องเป็น …):</p>
+
+<pre><code>wongnok-blog(dev):006&gt; Post.includes(:user).where(users: { name: "มานะ" }).map(&amp;:title)
+  Post Eager Load (2.7ms)  SELECT "posts"."id" AS t0_r0, … FROM "posts" LEFT OUTER JOIN "users" ON "users"."id" = "posts"."user_id" WHERE "users"."name" = 'มานะ' /*application='WongnokBlog'*/
+=&gt; ["ผัดกะเพราหมูสับ", "แกงเขียวหวานไก่"]</code></pre>
+
+<p>สรุปเป็นตาราง (ผลจริงจาก console ทุกช่อง):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ไปตู้กี่รอบ</th><th>SQL หน้าตา</th><th>กรองด้วยลิ้นชักลูกได้ไหม</th><th>ใช้เมื่อ</th></tr></thead>
+  <tbody>
+    <tr><td><code>preload(:user)</code></td><td>2 (ลิ้นชักละรอบ)</td><td>ลิ้นชักหลัก + <code>WHERE id IN (…)</code></td><td>❌ error</td><td>แค่อยากเอามาโชว์ ไม่กรอง</td></tr>
+    <tr><td><code>eager_load(:user)</code></td><td>1 (เย็บเป็นประโยคเดียว)</td><td><code>LEFT OUTER JOIN</code></td><td>✅</td><td>ต้องกรองด้วยช่องของลิ้นชักลูก</td></tr>
+    <tr><td><code>includes(:user)</code></td><td>ปกติ 2 · มีเงื่อนไขลิ้นชักลูกเป็น 1</td><td>Rails เลือกให้</td><td>✅ (สลับเป็น JOIN เอง)</td><td><strong>ใช้เป็นค่าเริ่มต้นได้</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>ระวัง <code>to_sql</code></strong> (บท 113 · ดู SQL โดยไม่ยิง): กับ <code>preload</code> และ <code>includes</code> มันโชว์แค่ SQL ของลิ้นชัก <code>posts</code> (ผลจริง) ·
+  <strong>ไม่เห็นรอบที่สอง</strong> ที่ไปหยิบผู้เขียน — อยากรู้ว่าไปตู้กี่รอบจริง ต้องรันแล้วดู log
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>preload</code> · <code>eager_load</code></dt>
+    <dd>preload = โหลดของที่ผูกกันด้วย query แยก (2 รอบ) · eager_load = โหลดด้วย JOIN (1 รอบ) · includes = ให้ Rails เลือกระหว่างสองตัวนี้ ·
+        <strong>ถาม senior ได้ว่า “query นี้กรองด้วยตาราง users ด้วย ควรใช้ eager_load ไปเลยไหม จะได้อ่านโค้ดแล้วรู้ว่าเป็น JOIN”</strong></dd>
+    <dt>JOIN · LEFT OUTER JOIN</dt>
+    <dd>คำสั่ง SQL ที่เอาแถวจากสองตารางมาต่อกันเป็นแถวเดียวตามกติกาจับคู่ (<code>ON …</code>) · LEFT OUTER = เก็บแถวของตารางซ้ายไว้แม้หาคู่ไม่เจอ ·
+        <strong>พิมพ์บอก AI ได้ว่า “explain this LEFT OUTER JOIN query from my Rails log in simple words”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">N+1 ตัวที่สอง: นับคอมเมนต์ด้วย <code>count</code></h2>
+
+<p>
+  ผู้เขียนเป็นแค่ตัวอย่างแรก · <strong>ทุกครั้งที่ในลูปมีการถามลิ้นชักอื่น</strong> ก็เป็น N+1 ได้หมด ·
+  ตัวที่เจอบ่อยมากคือ "บทความนี้มีกี่คอมเมนต์" (สไลด์หน้า 38 · <code>post.comments</code> ใช้ได้เพราะ <code>has_many :comments</code> บท 107) — ผลจริง:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; Post.all.map { |p| p.comments.count }
+  Post Load (42.8ms)  SELECT "posts".* FROM "posts" /*application='WongnokBlog'*/
+  Comment Count (2.0ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+  Comment Count (1.0ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 2 /*application='WongnokBlog'*/
+  …
+  Comment Count (0.9ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 6 /*application='WongnokBlog'*/
+=&gt; [2, 1, 1, 0, 3, 0]</code></pre>
+
+<p>
+  <code>SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 1</code> = "ไม่ต้องหยิบแฟ้มมา แค่<strong>นับ</strong>ว่าในลิ้นชัก comments มีกี่แผ่นที่เป็นของบทความเลขที่ 1" ·
+  หน้าตาต่างจาก <code>User Load</code> แต่<strong>รูปแบบเดียวกัน</strong>: บรรทัดซ้ำ ๆ ต่างกันแค่เลข = 1 + 6
+</p>
+
+<div class="predict">
+<pre><code>wongnok-blog(dev):002&gt; Post.includes(:comments).map { |p| p.comments.count }</code></pre>
+  <p class="ask">ใส่ <code>includes(:comments)</code> แล้ว คอมเมนต์ทุกอันวางรอในตะกร้าแล้ว · คิดว่าเหลือกี่ query?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — <strong>8 query แย่กว่าเดิมอีก!</strong></p>
+<pre><code>  Post Load (2.6ms)  SELECT "posts".* FROM "posts" /*application='WongnokBlog'*/
+  Comment Load (3.2ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" IN (1, 2, 3, 4, 5, 6) /*application='WongnokBlog'*/
+  Comment Count (1.6ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+  …
+  Comment Count (0.9ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 6 /*application='WongnokBlog'*/
+=&gt; [2, 1, 1, 0, 3, 0]</code></pre>
+    <p>
+      <code>includes</code> หยิบคอมเมนต์มาใส่ตะกร้าแล้วจริง (<code>Comment Load … IN (1, 2, 3, 4, 5, 6)</code>) ·
+      แต่ <strong><code>count</code> ไม่มองตะกร้า มันเดินไปให้ตู้นับใหม่ทุกครั้ง</strong> (บท 113: <code>count</code> = ไปตู้เสมอ) ·
+      ต้องเปลี่ยนเป็น <code>size</code> ซึ่ง "ถ้ามีของในตะกร้าแล้ว นับจากตะกร้า":
+    </p>
+<pre><code>wongnok-blog(dev):003&gt; Post.includes(:comments).map { |p| p.comments.size }
+  Post Load (2.3ms)  SELECT "posts".* FROM "posts" /*application='WongnokBlog'*/
+  Comment Load (1.7ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" IN (1, 2, 3, 4, 5, 6) /*application='WongnokBlog'*/
+=&gt; [2, 1, 1, 0, 3, 0]</code></pre>
+    <p>เหลือ 2 · <strong>นี่แหละเหตุผลที่ต้องอ่าน log ทุกครั้ง</strong> — ใส่ <code>includes</code> แล้วคิดว่าแก้แล้ว แต่ log บอกว่ายังไม่หาย</p>
+  </div>
+</div>
+
+<p>
+  วิธีที่ดีกว่านี้สำหรับ "นับคอมเมนต์" คือให้แฟ้มบทความมี<strong>ช่องเก็บจำนวนคอมเมนต์ไว้เลย</strong> ไม่ต้องนับใหม่ทุกครั้ง — ชื่อ <code>counter_cache</code> อยู่ในบท 116
+</p>
+
+<h2 id="sn-sec-8">ข้อมูลเยอะ ๆ: <code>find_each</code> — ยกแฟ้มทีละลัง ไม่ยกทั้งตู้</h2>
+
+<p>
+  ปัญหานี้คนละเรื่องกับ N+1 แต่มักเจอคู่กัน · <code>Post.all.each</code> = <strong>หยิบแฟ้มทุกแผ่นมากองไว้ในหน่วยความจำ (RAM) ทีเดียว</strong> แล้วค่อยวน ·
+  6 แผ่นไม่เป็นไร · สไลด์หน้า 36 ยกตัวอย่าง 2 ล้านแถวบนเครื่อง RAM 2 GB — กองไม่พอ โปรแกรมพัง
+</p>
+
+<p><code>find_each</code> วนได้เหมือน <code>each</code> แต่หยิบมา<strong>ทีละชุด</strong> · ลองชุดละ 2 แผ่นกับข้อมูลเรา (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):001&gt; Post.find_each(batch_size: 2) { |p| puts p.title }
+  Post Load (1.4ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 2 /*application='WongnokBlog'*/
+ต้มยำกุ้งน้ำข้น
+ส้มตำปูปลาร้า
+  Post Load (1.3ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" &gt; 2 ORDER BY "posts"."id" ASC LIMIT 2 /*application='WongnokBlog'*/
+ข้าวมันไก่ประตูน้ำ
+ก๋วยเตี๋ยวเรืออยุธยา
+  Post Load (0.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" &gt; 4 ORDER BY "posts"."id" ASC LIMIT 2 /*application='WongnokBlog'*/
+ผัดกะเพราหมูสับ
+แกงเขียวหวานไก่
+  Post Load (1.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" &gt; 6 ORDER BY "posts"."id" ASC LIMIT 2 /*application='WongnokBlog'*/
+=&gt; nil</code></pre>
+
+<ul>
+  <li><code>batch_size: 2</code> — ชุดละ 2 แผ่น (ค่าเริ่มต้นคือ 1000 · ใช้ 2 แค่ให้เห็นกับข้อมูล 6 แผ่น)</li>
+  <li>ลัง 1: <code>ORDER BY "posts"."id" ASC LIMIT 2</code> = "เรียงตามเลขที่น้อยไปมาก เอา 2 แผ่นแรก" → ได้เลขที่ 1, 2</li>
+  <li>ลัง 2: <code>WHERE "posts"."id" &gt; 2 … LIMIT 2</code> = "<strong>เลขที่มากกว่า 2</strong> เอามา 2 แผ่น" — จำเลขสุดท้ายของลังก่อน แล้วต่อจากตรงนั้น</li>
+  <li>ลังสุดท้าย <code>id &gt; 6</code> ไม่ได้อะไรกลับมา → รู้ว่าหมดแล้ว จบ · ในหน่วยความจำมีแฟ้มไม่เกิน 2 แผ่นตลอดเวลา</li>
+  <li><code>=&gt; nil</code> — ค่าที่ <code>find_each</code> คืนมาเมื่อวนจบ ไม่ต้องสนใจ (ของที่เราอยากเห็นคือชื่อที่ <code>puts</code> พิมพ์ออกมา)</li>
+</ul>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM มี <code>FindInBatches</code> ทำหน้าที่เดียวกัน —
+  <code>db.FindInBatches(&amp;results, 100, func(tx *gorm.DB, batch int) error { … })</code> = หยิบมาชุดละ 100 แล้วส่งให้ฟังก์ชันของเราทีละชุด
+</p>
+
+<div class="analogy">
+  <span class="label">📦 เทียบให้เห็นภาพ — ยกแฟ้มทีละลัง</span>
+  <p>
+    ต้องตรวจแฟ้มทุกแผ่นในตู้ · <code>all.each</code> = ยกแฟ้ม<strong>ทั้งตู้</strong>มากองบนโต๊ะทีเดียว — โต๊ะเล็ก กองไม่พอ ล้ม ·
+    <code>find_each</code> = ยกมา<strong>ทีละลัง</strong> ตรวจเสร็จเก็บคืน แล้วยกลังถัดไป · จดไว้ว่าลังที่แล้วจบที่แฟ้มเลขอะไร จะได้ต่อถูก
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ยกทีละลังจริง ๆ คุณเลือกได้ว่าจะไล่ตามวันที่หรือตามชื่อ ·
+    แต่ <code>find_each</code> <strong>ไล่ตามเลขที่ (id) เสมอ</strong> — ถ้าสั่งเรียงแบบอื่นไว้ มันทิ้งให้เลย (ดูกล่องเตือนข้างล่าง)
+  </p>
+</div>
+
+<div class="warn">
+  <p>⚠️ <strong>เรียงเองไม่ได้</strong> — ลอง <code>Post.order(views: :desc).find_each(batch_size: 2) { … }</code> ได้ข้อความนี้จริง แล้วลำดับออกมาตามเลขที่เหมือนเดิม:</p>
+<pre><code>Scoped order is ignored, use :cursor with :order to configure custom order.
+  Post Load (1.7ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 2 /*application='WongnokBlog'*/</code></pre>
+  <p>= "คำสั่งเรียงที่ใส่มาถูกทิ้ง" · ไม่ใช่ error งานยังทำต่อ — จึงพลาดง่ายถ้าไม่อ่าน log</p>
+</div>
+
+<p>
+  พี่น้องของมันชื่อ <code>in_batches</code> — แทนที่จะส่งให้ทีละแผ่น มันส่ง<strong>ทั้งลัง</strong>ให้ (เป็นใบเบิกของหนึ่งใบ) ·
+  เหมาะกับงานแบบ "แก้ทุกแผ่นในลังนี้ด้วยคำสั่งเดียว" · บทนี้แค่ให้รู้จักชื่อ
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>batch · <code>find_each</code> · <code>in_batches</code></dt>
+    <dd>batch = ชุดย่อย · find_each วนทีละแผ่นแต่ดึงจากฐานข้อมูลทีละชุด · in_batches ส่งทั้งชุดให้ · ใช้กับงานที่วนข้อมูลทั้งตาราง (เช่น งานเบื้องหลัง Day 3) ·
+        <strong>ถาม senior ได้ว่า “ตารางนี้ใหญ่แค่ไหน งานนี้ควรใช้ find_each ไหม batch_size เท่าไหร่ดี”</strong></dd>
+    <dt>memory (RAM) · load the whole table</dt>
+    <dd>หน่วยความจำของเครื่อง = โต๊ะที่วางแฟ้ม · <code>Post.all.each</code> กับตารางใหญ่ = ยกทั้งตู้มาวางโต๊ะ ·
+        <strong>พิมพ์บอก AI ได้ว่า “this loop loads the whole posts table into memory, rewrite it with find_each”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9">ตัวช่วยจับ: <code>strict_loading</code> และ bullet</h2>
+
+<p>
+  อ่าน log ทุกหน้าด้วยตาเป็นนิสัยที่ดี แต่คนลืมได้ · Rails จึงมีของที่<strong>โวยวายแทนเรา</strong> ·
+  <code>strict_loading</code> = "บทความชุดนี้<strong>ห้าม</strong>ไปตู้ตอนถามผู้เขียน ถ้าไม่ได้ includes มาก่อน ให้ระเบิดเลย" (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):003&gt; post = Post.strict_loading.first
+  Post Load (2.5ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000123dc1a58
+...
+wongnok-blog(dev):004&gt; post.title
+=&gt; "ต้มยำกุ้งน้ำข้น"
+wongnok-blog(dev):005&gt; post.user
+(wongnok-blog):5:in '&lt;main&gt;': `Post` is marked for strict_loading. The User association named `:user` cannot be lazily loaded. (ActiveRecord::StrictLoadingViolationError)
+wongnok-blog(dev):006&gt; Post.strict_loading.includes(:user).first.user.name
+  Post Load (1.5ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+  User Load (0.8ms)  SELECT "users".* FROM "users" WHERE "users"."id" = 1 /*application='WongnokBlog'*/
+=&gt; "สมชาย"</code></pre>
+
+<ul>
+  <li><code>post.title</code> — ปกติ เพราะเป็นช่องบนแฟ้มเอง ไม่ต้องไปตู้</li>
+  <li><code>post.user</code> — <strong>error</strong>: "บทความนี้ถูกตั้งเป็น strict_loading · ห้ามโหลด <code>:user</code> แบบ lazy (ตอนถาม)" · เจอบรรทัดนี้ = เจอ N+1 ก่อนมันขึ้นเว็บจริง</li>
+  <li>บรรทัดสุดท้าย — ใส่ <code>includes(:user)</code> แล้วผ่าน · SQL ของผู้เขียนเป็น <code>= 1</code> แทน <code>IN (1)</code> เพราะมีบทความแผ่นเดียว ผู้เขียนคนเดียว Rails เลยเขียนแบบสั้น (ความหมายเดียวกัน)</li>
+</ul>
+
+<p>
+  ถ้าอยากให้ <strong>model ทั้งตัว</strong>เข้มแบบนี้ สไลด์หน้า 36 ใส่ <code>self.strict_loading_by_default = true</code> ไว้ใน <code>class Post</code>
+  (<code>self.</code> ในตัว class = ตั้งค่าให้ทั้ง class ไม่ใช่แฟ้มแผ่นเดียว) ·
+  ผมลองตั้งค่าเดียวกันใน console (<code>Post.strict_loading_by_default = true</code>) แล้ว <code>Post.first.user</code> ได้ error ตัวเดียวกันจริง ·
+  แต่ระวัง: <strong>หน้าเก่าที่ลืม includes จะพังทันที</strong> — จะเปิดกับ model ไหน คุยกับทีมก่อน
+</p>
+
+<p>
+  <strong>bullet</strong> เป็น gem ที่สไลด์แนะนำ — ระหว่างพัฒนามันคอยดูทุกหน้าแล้วเตือนว่า "หน้านี้มี N+1 ควรเติม includes ตรงนี้" หรือ "includes ตัวนี้ไม่ได้ใช้ ลบได้" ·
+  <strong>ไม่ได้มากับแอป และบทนี้ไม่ได้ติดตั้ง</strong> · ข้อความตัวอย่างจากสไลด์หน้า 36 (ไม่ได้รันในบทนี้):
+  <code>N+1 Query detected · Post =&gt; [:user] · Add to your query: .includes([:user])</code> ·
+  ถ้าทีมใช้ อ่านวิธีตั้งค่าที่ <a href="https://github.com/flyerhzm/bullet">github.com/flyerhzm/bullet</a>
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>strict loading · <code>StrictLoadingViolationError</code></dt>
+    <dd>โหมดที่ห้าม lazy loading · ถ้าโค้ดไปถามของที่ผูกกันโดยไม่ได้ includes มาก่อน จะได้ error ชื่อนี้ ·
+        <strong>ถาม senior ได้ว่า “โปรเจกต์นี้เปิด strict_loading ไว้ที่ model ไหนบ้าง หรือเปิดแค่ตอนรันเทส”</strong></dd>
+    <dt>bullet</dt>
+    <dd>gem ที่ตรวจหา N+1 และ eager loading ที่ไม่ได้ใช้ ระหว่างพัฒนา ·
+        <strong>พิมพ์บอก AI ได้ว่า “bullet says N+1 Query detected Post =&gt; [:user], where should I add includes?”</strong> แล้วแปะข้อความเตือนทั้งก้อน</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-10">นิสัยเดียวที่ต้องติดตัว: เปิด log นับ query ก่อน merge</h2>
+
+<div class="note">
+  <p>merge = รวมโค้ดของเราเข้า branch หลัก (เช่น <code>main</code>) ให้ทั้งทีมใช้ · หัวข้อนี้คือ "ก่อนส่งงานให้ทีม"</p>
+</div>
+
+<p>
+  ทั้งบทสรุปได้ว่า <strong>อ่านโค้ดอย่างเดียวไม่มีทางรู้</strong> — <code>post.user</code> กับ <code>post.title</code> หน้าตาเหมือนกัน · <code>count</code> กับ <code>size</code> ได้ผลเท่ากัน ·
+  ที่รู้ได้ทุกครั้งคือ log · ก่อนส่งงานหน้าไหนที่โชว์เป็นรายการ ทำ 4 ข้อนี้:
+</p>
+
+<ol>
+  <li>เปิดหน้านั้นในเบราว์เซอร์ แล้วดู <code>tail -f log/development.log</code></li>
+  <li>อ่านบรรทัด <code>Completed …</code> → ดู <strong><code>(N queries, M cached)</code></strong> · ตัวเลขควร<strong>ไม่โตตามจำนวนแถว</strong> (ลองเพิ่มข้อมูลอีกสักแถวแล้วเปิดใหม่ ถ้าตัวเลขขึ้นตาม = N+1)</li>
+  <li>มองหาบรรทัด <code>… Load</code> หรือ <code>… Count</code> <strong>ซ้ำ ๆ ต่างกันแค่เลข</strong> · ตาม <code>↳</code> ไปหาบรรทัดต้นเหตุ (<code>.erb</code> ลบหนึ่ง)</li>
+  <li>แก้ด้วย <code>includes</code> ที่ controller · นับคู่กับ <code>size</code> ไม่ใช่ <code>count</code> · แล้ว<strong>เปิดหน้าใหม่ นับซ้ำ</strong> — อย่าเชื่อว่าแก้แล้วจนกว่า log จะบอก</li>
+</ol>
+
+<p>
+  ข้อนี้สำคัญเป็นพิเศษกับโค้ดที่ AI เขียนให้ · AI ชอบเขียน <code>post.user.name</code> ใน view โดยไม่เติม <code>includes</code> เพราะมันไม่เห็น log ของคุณ ·
+  <strong>คุณเห็น</strong> — แปะ log ให้มันดูแล้วบอกว่า "fix the N+1 in this log" ได้ผลกว่าสั่งลอย ๆ
+</p>
+
+<div class="task">
+  <h3 id="sn-sub-2">🎯 ภารกิจ — จับ N+1 สองตัวในหน้าเดียว (~10 นาที)</h3>
+  <p>ทำในแอป <code>wongnok_blog</code> ที่มีข้อมูลจากบท 107 · ใช้หน้า <code>/posts</code> ในหัวข้อ "ในหน้าเว็บจริง" ของบทนี้ (route + controller + view)</p>
+  <ol>
+    <li>ตั้ง controller เป็น <code>@posts = Post.all</code> · แก้บรรทัด <code>&lt;li&gt;</code> ใน view ให้โชว์จำนวนคอมเมนต์ด้วย:
+<pre><code>&lt;li&gt;&lt;%= post.title %&gt; — โดย &lt;%= post.user.name %&gt; (&lt;%= post.comments.count %&gt; คอมเมนต์)&lt;/li&gt;</code></pre></li>
+    <li>เปิด <code>bin/rails server</code> หน้าต่างหนึ่ง · <code>tail -f log/development.log</code> อีกหน้าต่าง · เปิด <code>http://localhost:3000/posts</code></li>
+    <li>จดตัวเลขจากบรรทัด <code>Completed …</code> และนับว่ามี <code>User Load</code> กี่บรรทัด · <code>Comment Count</code> กี่บรรทัด</li>
+    <li>แก้ controller เป็น <code>@posts = Post.includes(:user)</code> → รีเฟรช → จดตัวเลขใหม่</li>
+    <li>แก้เป็น <code>@posts = Post.includes(:user, :comments)</code> และเปลี่ยน <code>count</code> ใน view เป็น <code>size</code> → รีเฟรช → จดตัวเลขสุดท้าย</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ขั้น 3 · 4 · 5 คิดว่า <code>(N queries)</code> จะเป็นเท่าไหร่? และขั้น 4 ทำไมยังไม่จบ?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>สิ่งที่ควรเห็น</strong> (ผลจริงจากเครื่องที่ใช้ตรวจ · เวลา ms ของคุณจะต่าง แต่<strong>จำนวน query ต้องตรง</strong>):</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>ขั้น</th><th>controller · view</th><th>บรรทัด Completed (ตัดมาเฉพาะส่วน ActiveRecord)</th></tr></thead>
+      <tbody>
+        <tr><td>3</td><td><code>Post.all</code> · <code>count</code></td><td><code>ActiveRecord: 73.9ms (13 queries, 3 cached)</code> — 1 + ผู้เขียน 6 (3 ตัวจากความจำ) + นับคอมเมนต์ 6</td></tr>
+        <tr><td>4</td><td><code>includes(:user)</code> · <code>count</code></td><td><code>(8 queries, 0 cached)</code> — ผู้เขียนหายเป็น <code>IN (1, 2, 3)</code> บรรทัดเดียว แต่ <code>Comment Count</code> ยังอยู่ครบ 6</td></tr>
+        <tr><td>5</td><td><code>includes(:user, :comments)</code> · <code>size</code></td><td><code>(3 queries, 0 cached)</code> — บทความ 1 · ผู้เขียน 1 · คอมเมนต์ 1 (<code>IN (1, 2, 3, 4, 5, 6)</code>)</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>ขั้น 4 ยังไม่จบเพราะแก้ไปแค่ N+1 ตัวแรก · <strong>หน้าหนึ่งมี N+1 ได้หลายตัว</strong> ต้องนับใหม่หลังแก้ทุกครั้ง ·
+      (ลองเล่นต่อ: ขั้น 5 ถ้าใช้ <code>size</code> แต่ลืม <code>:comments</code> ใน includes ผมได้ 8 query — <code>size</code> เห็นตะกร้าว่างก็ไปให้ตู้นับเหมือนกัน)</p>
+    <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong><code>Association named 'users' was not found on Post; perhaps you misspelled it? (ActiveRecord::AssociationNotFoundError) Did you mean?  user</code></strong> —
+          คุณเขียน <code>includes(:users)</code> (มี s) · ชื่อใน includes ต้องตรงกับใน model: บทความ <code>belongs_to :user</code> (เอกพจน์ เพราะมีผู้เขียนคนเดียว) · Rails ใบ้ให้แล้วว่า <code>Did you mean? user</code></li>
+      <li><strong><code>PG::UndefinedTable: ERROR:  missing FROM-clause entry for table "users"</code></strong> — คุณใช้ <code>preload</code> คู่กับ <code>where(users: …)</code> · เปลี่ยนเป็น <code>includes</code> หรือ <code>eager_load</code></li>
+      <li><strong><code>ActiveRecord::StrictLoadingViolationError</code></strong> — มีคนเปิด strict_loading ไว้ · ไม่ใช่บั๊กของ Rails แต่มันบอกว่าคุณกำลังจะสร้าง N+1 · เติม <code>includes</code> ตัวที่มันบอกชื่อ</li>
+      <li><strong>ไม่เห็นบรรทัด SQL เลย</strong> — คุณดูหน้าต่างผิด · SQL ขึ้นในหน้าต่าง <code>tail -f</code> (หรือหน้าต่าง server) ไม่ใช่ในเบราว์เซอร์</li>
+    </ul>
+    <p>ตัวเลขของคุณไม่ตรงกับตาราง หรือติดตรงไหน <strong>ถามกลับมาได้เลย</strong> พร้อมแปะ log ของใบสั่งนั้นทั้งก้อน (ตั้งแต่ <code>Started GET</code> ถึง <code>Completed</code>)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">log ของหน้า <code>/posts</code> (สไลด์หน้า 38) มี <code>Post Load</code> 1 บรรทัด · <code>User Load</code> 20 บรรทัด · <code>Comment Count</code> 20 บรรทัด · หน้านี้ไปตู้ประมาณกี่รอบ?</p>
+  <div class="opts">
+    <button class="opt">ประมาณ 3 รอบ เพราะมีแค่สามลิ้นชักให้ไปหยิบ</button>
+    <button class="opt">ประมาณ 21 รอบ เพราะนับเฉพาะ User Load กับ Post Load</button>
+    <button class="opt">ประมาณ 41 รอบ เพราะทุกบรรทัด Load/Count คือหนึ่งรอบ</button>
+    <button class="opt">1 รอบ เพราะทั้งหมดอยู่ในใบสั่งของลูกค้าใบเดียว</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — 1 + 20 + 20 = 41 · <strong>N+1 สองตัวซ้อนกัน</strong> (ผู้เขียน กับ จำนวนคอมเมนต์) · ในบรรทัด <code>Completed</code> จะเห็นเป็น <code>(41 queries, …)</code> (ถ้าผู้เขียนซ้ำกันบางตัวจะเป็น cached)</p>
+    <p>ตัวเลือกที่ 1 คือจำนวนที่<strong>ควรจะเป็น</strong>หลังแก้แล้ว ไม่ใช่ตอนนี้ ·
+       ตัวเลือกที่ 2 ลืมว่า <code>Comment Count</code> ก็ไปตู้เหมือนกัน แค่หน้าตาต่าง ·
+       ตัวเลือกที่ 4 สับสน "ใบสั่งจากลูกค้า" (request) กับ "การไปตู้" (query) — ใบสั่งเดียวไปตู้ได้หลายสิบรอบ</p>
+    <p><strong>จุดที่ต้องจำ:</strong> นับทุกบรรทัด <code>… Load</code> / <code>… Count</code> · บรรทัดซ้ำ ๆ ต่างกันแค่เลข = N+1 หนึ่งตัว</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">หน้าเดียวกันนั้น ต้องโชว์ชื่อผู้เขียนและจำนวนคอมเมนต์ · แบบไหนเหลือ 3 query (บทความ · ผู้เขียน · คอมเมนต์ อย่างละรอบ)?</p>
+  <div class="opts">
+    <button class="opt">controller <code>Post.includes(:user)</code> · view <code>post.comments.size</code></button>
+    <button class="opt">controller <code>Post.includes(:user, :comments)</code> · view <code>post.comments.count</code></button>
+    <button class="opt">controller <code>Post.preload(:user)</code> · view <code>post.comments.count</code></button>
+    <button class="opt">controller <code>Post.includes(:user, :comments)</code> · view <code>post.comments.size</code></button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — ผลจริงในภารกิจ: <code>(3 queries, 0 cached)</code> · คอมเมนต์อยู่ในตะกร้าแล้ว และ <code>size</code> นับจากตะกร้า</p>
+    <p>ตัวเลือกที่ 1 ลืมหยิบคอมเมนต์มา <code>size</code> เลยไปให้ตู้นับทีละบทความ (ผมลองได้ 8 query) ·
+       ตัวเลือกที่ 2 หยิบคอมเมนต์มาแล้วแต่ <code>count</code> ไม่มองตะกร้า ไปตู้ใหม่ทุกครั้ง (ผลจริงในหัวข้อคอมเมนต์ · แย่กว่าเดิม) ·
+       ตัวเลือกที่ 3 แก้แค่ผู้เขียน จำนวนคอมเมนต์ยังเป็น N+1</p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>includes</code> ของที่ใช้ให้ครบทุกตัว · นับของที่ includes มาแล้วใช้ <code>size</code> · แล้วเปิด log ยืนยัน</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ถือแฟ้มบทความไว้แล้ว (<code>post = Post.first</code>) · ข้อไหนอธิบายถูกว่าทำไม <code>post.user_id</code> ไม่ขึ้น SQL แต่ <code>post.user</code> ขึ้น?</p>
+  <div class="opts">
+    <button class="opt"><code>user_id</code> เป็นช่องบนแฟ้มบทความ แต่ข้อมูลผู้ใช้อยู่อีกลิ้นชักต้องไปหยิบ</button>
+    <button class="opt"><code>user_id</code> ถูกเก็บไว้ใน query cache ส่วน <code>user</code> ไม่ถูกเก็บไว้</button>
+    <button class="opt"><code>post.user</code> ไปตู้เพราะ console ไม่มีความจำ ในหน้าเว็บจริงจะไม่ไปตู้</button>
+    <button class="opt"><code>post.user</code> ต้องตรวจสิทธิ์ผู้ใช้ก่อนทุกครั้ง จึงต้องถามฐานข้อมูล</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — บนแฟ้มบทความมีแค่เลขที่ผู้เขียน (<code>user_id = 1</code>) · ชื่อและอีเมลอยู่ในลิ้นชัก <code>users</code> · <code>post.user</code> จึงต้องเดินไปหยิบ (lazy loading)</p>
+    <p>ตัวเลือกที่ 2 ผิด เพราะ <code>user_id</code> ไม่ได้มาจาก cache แต่มากับแฟ้มตั้งแต่ <code>Post.first</code> ·
+       ตัวเลือกที่ 3 ผิด เพราะในหน้าเว็บจริงครั้งแรกก็ไปตู้เหมือนกัน (เห็นใน log ของ server) ความจำช่วยแค่คำถามที่ซ้ำ ·
+       ตัวเลือกที่ 4 ผิด เพราะ <code>post.user</code> แค่หาแฟ้มผู้เขียน ไม่ได้ตรวจสิทธิ์อะไร (เรื่องสิทธิ์อยู่ Day 4)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ช่องบนแฟ้ม = อ่านฟรี · ของที่อยู่ลิ้นชักอื่น = ไปตู้ · ไปตู้ในลูป = N+1</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ต้องเขียนงานที่วนแก้บทความทุกชิ้น และสไลด์บอกว่าตารางจริงมี 2 ล้านแถว · ควรวนแบบไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>Post.all.each</code> เพราะดึงครั้งเดียวจบ ไปตู้น้อยรอบที่สุด</button>
+    <button class="opt"><code>Post.find_each</code> เพราะหยิบมาทีละชุด หน่วยความจำไม่ล้น</button>
+    <button class="opt"><code>Post.includes(:user).each</code> เพราะ includes ช่วยให้ดึงแถวเร็วขึ้น</button>
+    <button class="opt"><code>Post.order(views: :desc).find_each</code> เพื่อให้ได้ทีละชุดตามยอดวิว</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ดึงชุดละ 1000 (ค่าเริ่มต้น) ด้วย <code>WHERE id &gt; … LIMIT …</code> · ในหน่วยความจำมีแฟ้มไม่เกินหนึ่งชุดตลอด</p>
+    <p>ตัวเลือกที่ 1 ไปตู้รอบเดียวจริง แต่<strong>ยกมาทั้งตู้</strong> 2 ล้านแฟ้มเข้าหน่วยความจำ — โต๊ะล้ม ·
+       ตัวเลือกที่ 3 แก้ N+1 ของผู้เขียน ไม่ได้แก้เรื่องจำนวนแถว ยังยกทั้งตู้เหมือนเดิม ·
+       ตัวเลือกที่ 4 ไม่ได้ลำดับตามยอดวิว — ผลจริงขึ้น <code>Scoped order is ignored</code> แล้วไล่ตาม id</p>
+    <p><strong>จุดที่ต้องจำ:</strong> N+1 = ไปตู้หลายรอบเกินไป · <code>all.each</code> กับตารางใหญ่ = ยกของมากเกินไปในรอบเดียว · คนละปัญหา คนละทางแก้</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>37</td><td>ขั้น 1: ตั้ง <code>ActiveRecord::Base.logger = Logger.new(STDOUT)</code> เพื่อให้เห็น SQL</td><td>console ใน development โชว์ SQL ให้อยู่แล้ว · ถ้าตั้งตาม ทุกบรรทัดจะมีหัว <code>D, [2026-…] DEBUG -- :</code> เพิ่มมา</td><td>ไม่ต้อง — ข้ามได้</td></tr>
+    <tr><td>37</td><td>คำถาม "ถ้า 5 โพสต์เป็นของคนเดียวกัน ยิงกี่ครั้ง"</td><td>console: ยังยิงครบ 1 + 5 (ไม่มีความจำ) · ในหน้าเว็บ: นับครบเหมือนกัน แต่ตัวซ้ำขึ้นเป็น <code>CACHE</code> / <code>cached</code></td><td><strong>สนใจ</strong> — คำตอบขึ้นกับว่ารันที่ไหน</td></tr>
+    <tr><td>33 · 38</td><td>SQL เป็น <code>SELECT * FROM users WHERE id = 1</code></td><td><code>SELECT "users".* FROM "users" WHERE "users"."id" = 1 LIMIT 1</code> + ป้าย <code>/*…*/</code></td><td>ไม่ต้อง — ความหมายเดียวกัน</td></tr>
+    <tr><td>38</td><td>740ms ก่อนแก้ · 40–60ms หลังแก้</td><td>ตัวเลขของสไลด์ ไม่ได้วัดในบทนี้ · กับข้อมูล 6 แถวผมได้ 87ms → 23ms</td><td>ไม่ต้อง — ดูจำนวน query ดีกว่าดูเวลา</td></tr>
+    <tr><td>36</td><td><code>find_each</code> ทิ้ง order ของเรา "ถ้าต้องเรียงเองให้ใช้ <code>in_batches</code>"</td><td><code>in_batches</code> ก็ขึ้น <code>Scoped order is ignored, use :cursor with :order …</code> เหมือนกัน และแบ่งชุดตาม id</td><td><strong>สนใจ</strong> ถ้าจะเรียงเอง — ข้อความเตือนชี้ทางให้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0113-query-lazy-relation.html">← บทเรียน 113 · Query · lazy relation</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0115-associations.html">บทเรียน 115 → Association</a>
+</nav>
+
+<h2 id="sn-sec-12">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#n-1-queries-problem">Rails Guides — Active Record Query Interface § N + 1 Queries Problem</a> —
+      <strong>อ่านต่อถึง Solution to N + 1 Queries Problem แล้วหยุด</strong> · ตัวอย่างในคู่มือเป็นหนังสือ 10 เล่มกับผู้แต่ง ภาพเดียวกับบทความ 6 ชิ้นของเรา</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#eager-loading-associations">Rails Guides — § Eager Loading Associations</a> —
+      <strong>อ่านหัวข้อย่อย includes · preload · eager_load</strong> (ข้ามเรื่อง multiple associations ไปก่อนได้) · ยืนยันว่า includes + where ตารางลูกจะกลายเป็น LEFT OUTER JOIN</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#retrieving-multiple-records-in-batches">Rails Guides — § Retrieving Multiple Records in Batches</a> —
+      <strong>อ่านแค่ find_each กับ option <code>:batch_size</code></strong> · ย่อหน้า "If an order is present in the relation…" ยืนยันว่า order ถูกทิ้งพร้อมคำเตือน (ค่าเริ่มต้น)</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Batches.html#method-i-find_each">Rails API — ActiveRecord::Batches#find_each</a> —
+      <strong>ดูแค่รายการ options</strong> · <code>:cursor</code> กับ <code>:order</code> คือสิ่งที่ข้อความ "Scoped order is ignored, use :cursor with :order" ชี้ไป ถ้าวันหนึ่งต้องไล่ด้วยลำดับอื่น</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#strict-loading">Rails Guides — § Strict Loading</a> —
+      ยืนยัน <code>strict_loading</code> และ <code>StrictLoadingViolationError</code> · อ่านสั้น ๆ ไม่กี่ย่อหน้า</li>
+  <li><a href="https://guides.rubyonrails.org/caching_with_rails.html#sql-caching">Rails Guides — Caching with Rails § SQL Caching</a> —
+      ที่มาของบรรทัด <code>CACHE … Load</code> · <strong>อ่านแค่ย่อหน้าแรก</strong>: ความจำนี้อยู่แค่ช่วงหนึ่ง request</li>
+  <li><a href="https://gorm.io/docs/preload.html">GORM — Preloading (Eager Loading)</a> —
+      ฝั่ง Go ที่เทียบกัน · <strong>ดูตัวอย่าง Traditional API บรรทัด <code>db.Preload("Orders").Find(&amp;users)</code></strong> ที่ได้ SQL <code>WHERE user_id IN (…)</code> แบบเดียวกับ <code>preload</code> ·
+      หัวข้อ <a href="https://gorm.io/docs/preload.html#Joins-Preloading">Joins Preloading</a> คือแบบ JOIN รอบเดียวที่เทียบกับ <code>eager_load</code></li>
+  <li><a href="https://gorm.io/docs/advanced_query.html#FindInBatches">GORM — Advanced Query § FindInBatches</a> —
+      ฝั่ง Go ของ <code>find_each</code> · <strong>ดูแค่ตัวอย่างแรก</strong> (ชุดละ 100)</li>
+  <li><a href="https://github.com/flyerhzm/bullet">GitHub — flyerhzm/bullet</a> —
+      gem ตรวจ N+1 ที่สไลด์แนะนำ (บทนี้ไม่ได้ติดตั้ง) · <strong>อ่านแค่ส่วน Configuration</strong> ถ้าทีมของคุณใช้</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

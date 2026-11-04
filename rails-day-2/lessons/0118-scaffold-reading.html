@@ -1,0 +1,958 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 118 — scaffold — โค้ดที่เครื่องเขียนให้ทั้งชุด แล้วเราต้องอ่านให้ออก</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 118 · Rails · Day 2</p>
+  <h1>scaffold — โค้ดที่เครื่องเขียนให้ทั้งชุด แล้วเราต้องอ่านให้ออก</h1>
+  <p class="meta">~25 นาที (มีลงมือสองรอบ) · ควรผ่าน <a href="./0110-validations.html">บท 110</a> ·
+    <a href="./0111-four-layers-and-uniqueness.html">บท 111</a> · <a href="./0117-rest-and-strong-params.html">บท 117</a> มาก่อน ·
+    ใช้ของจาก <a href="../../rails-day-1/lessons/0102-rails-controller.html">บท 102 (controller)</a> ด้วย</p>
+  <p class="standfirst">
+    Rails มีคำสั่งเดียวที่เขียนแผนกใหม่ให้ทั้งชุด — ตาราง · model · controller · หน้าเว็บ 4 หน้า · เทส — ใช้เวลาไม่ถึงวินาที
+    <br>บทนี้คุณจะ<strong>สั่งมันจริง</strong> เปิดหน้าเว็บที่ได้ ลองสร้าง แก้ ลบ แล้ว<strong>อ่านโค้ดที่มันเขียนทีละไฟล์</strong>ด้วยความรู้ที่มีอยู่แล้ว
+    <br>อ่านจบแล้วคุณจะชี้ได้ว่า<strong>มันลืมอะไร</strong> และมี checklist 8 ข้อไว้ตรวจโค้ดที่ AI เขียนให้ — เพราะของที่ scaffold ลืม คือของชุดเดียวกับที่ AI ลืม
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้ทั้งหมด</p>
+  <ul>
+    <li><strong><code>resources :posts</code></strong> (บท 101 · 117) — บรรทัดเดียวได้ URL มาตรฐาน 8 เส้น ไปหา 7 เมนู (index · show · new · create · edit · update · destroy — update มีสองเส้นคือ PATCH กับ PUT)</li>
+    <li><strong><code>before_action</code></strong> (บท 102) — "ก่อนเข้าเมนูพวกนี้ ให้เรียก method นี้ก่อนเสมอ"</li>
+    <li><strong><code>if @post.save … else render :new</code></strong> (บท 110) — เก็บได้ก็พาไปหน้าอื่น · เก็บไม่ได้ก็โชว์ฟอร์มเดิมพร้อมข้อผิดพลาด</li>
+    <li><strong><code>params.expect</code></strong> (บท 117) — รับเฉพาะช่องที่อยู่ในรายการ ช่องอื่นที่ลูกค้าแอบเขียนมาถูกตัดทิ้ง</li>
+    <li><strong>validation กับ constraint</strong> (บท 110–111) — กฎใน model คือคนดูแลสต็อกตรวจแฟ้ม · กฎในตาราง (NOT NULL · unique index) คือตัวตู้ที่ใส่แฟ้มผิดแบบไม่ได้เลย</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17 (สไลด์ใช้ 4.0.6 · 8.1.3 — โค้ดที่ generate ได้ต่างจากสไลด์นิดหน่อย บอกไว้ทุกจุด) ·
+    <strong>📦 ข้อมูล:</strong> แอป <code>wongnok_blog</code> ที่มีตาราง users/posts/comments และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับ<a href="./0107-console-crud.html">บท 107</a> ·
+    บทนี้<strong>เพิ่มตารางใหม่ <code>categories</code></strong> (หมวดหมู่อาหาร) ด้วย scaffold ทีละขั้นด้านล่าง ·
+    ผลรันทุกกล่องมาจากเครื่องจริง · เวลา (ms) · เลขเวลาในชื่อไฟล์ migration · เลข id ของคุณจะไม่ตรงกับของผม
+  </p>
+</div>
+
+<h2 id="sn-sec-1">1 · scaffold คืออะไร — ชุดเปิดแผนกใหม่สำเร็จรูป</h2>
+
+<p>
+  ที่ผ่านมาเราสร้างของทีละชิ้น: generate model (บท 99) · เขียน route (บท 101) · เขียน controller (บท 102) · เขียน view (บท 103)
+  <br><strong>scaffold</strong> คือคำสั่ง generate ตัวใหญ่ที่<strong>ทำทุกชิ้นนั้นให้ในทีเดียว</strong> สำหรับของหนึ่งอย่าง (เช่น หมวดหมู่)
+  ได้หน้าเว็บที่ดูรายการ · ดูทีละชิ้น · สร้าง · แก้ · ลบ ได้ทันที
+</p>
+
+<p>
+  สไลด์เรียกมันว่า <strong>"vibe code รุ่นปี 2005"</strong> (vibe code = บอก AI ว่าอยากได้อะไรแล้วรับโค้ดมาใช้เลย โดยไม่ได้เขียนเอง) — สั่งคำเดียวได้โค้ดมาทั้งกอง เหมือนสั่ง AI ทุกวันนี้
+  <br>ต่างกันที่ scaffold ไม่ได้ "คิด" อะไรเลย มันเติมชื่อที่เราให้ลงในแม่แบบที่เตรียมไว้ · ผลจึงเหมือนกันทุกครั้ง และ<strong>ไม่รู้อะไรเกี่ยวกับร้านเราเลย</strong>
+</p>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ตอนทำ wongnok API ด้วย Go คุณเขียนเองทุกชิ้น — struct ของ GORM (บท 27) · ไฟล์ SQL ของ goose (บท 31) · handler ของ Gin ทีละตัว (บท 38) ·
+  Go ไม่มีคำสั่งมาตรฐานที่เขียนชุดนี้ให้ · Rails มี เพราะทุกแอป Rails วางของที่เดิมตามกฎตั้งชื่อ (ร้านแฟรนไชส์ที่ทุกสาขาวางของตำแหน่งเดียวกัน)
+</p>
+
+<div class="analogy">
+  <span class="label">🏪 เทียบให้เห็นภาพ — ชุดเปิดแผนกใหม่จากแฟรนไชส์</span>
+  <p>
+    ร้านเราอยากเปิด<strong>แผนกหมวดหมู่อาหาร</strong> · แทนที่จะต่อตู้เอง จ้างเชฟเอง ทำป้ายเมนูเอง
+    สำนักงานใหญ่ส่ง<strong>ชุดสำเร็จรูป</strong>มาให้ทั้งกล่อง: ใบสั่งช่างต่อลิ้นชักใหม่ (migration) · คนดูแลสต็อก (model) ·
+    หัวหน้าเชฟพร้อมเมนู 7 อย่าง (controller) · แบบจัดจาน 4 แบบ (view) · พนักงานต้อนรับได้รายการใหม่ (route) — แกะกล่องแล้วเปิดแผนกได้วันนั้นเลย
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ชุดของแฟรนไชส์จริงมักมีคู่มือกฎมาด้วย · ชุดนี้<strong>ไม่มีกฎเลย</strong> — คนดูแลสต็อกรับแฟ้มเปล่า ๆ ·
+    ลิ้นชักไม่มีป้ายแท็บ · หัวหน้าเชฟให้ใครก็ได้สั่งทิ้งแฟ้ม (เดี๋ยวเห็นกับตาในหัวข้อ 6) ·
+    และของในกล่องกลายเป็น<strong>ไฟล์ของเราทันที</strong> — สำนักงานใหญ่ไม่ส่งรุ่นใหม่มาอัปเดตให้ แก้ได้ทุกบรรทัด และต้องดูแลเองทุกบรรทัด
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>scaffold (นั่งร้าน)</dt>
+    <dd>คำสั่ง <code>bin/rails generate scaffold</code> ที่สร้าง migration + model + controller + view + route + test ของ resource หนึ่งตัว (ของหนึ่งอย่างที่มีชุด URL มาตรฐาน 8 เส้น บท 117) ในทีเดียว ·
+        ชื่อมาจากนั่งร้านก่อสร้าง — ของชั่วคราวที่ช่วยให้ขึ้นโครงได้เร็ว ไม่ใช่ตัวตึก ·
+        <strong>ถาม senior ได้ว่า "ฟีเจอร์นี้ scaffold มาเป็นจุดตั้งต้นได้ไหม หรือทีมเขียนมือเท่านั้น"</strong></dd>
+    <dt>generator</dt>
+    <dd>คำสั่งตระกูล <code>bin/rails generate …</code> ทั้งหมด (model · migration · controller · scaffold) ที่เติมชื่อลงแม่แบบแล้วเขียนไฟล์ให้ ·
+        ย้อนได้ด้วย <code>bin/rails destroy …</code> ชื่อเดียวกัน (ใช้ในภารกิจ) ·
+        <strong>พิมพ์บอก AI ได้ว่า "show me the exact rails generate command, don't write the files by hand"</strong> ได้ไฟล์ที่ชื่อตรงกฎแน่นอน</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">2 · สั่งคำเดียว ได้อะไรมา</h2>
+
+<p>
+  เปิดโฟลเดอร์แอป <code>wongnok_blog</code> แล้วสั่งสร้างแผนกหมวดหมู่ ที่มีสามช่อง: <code>name</code> (ชื่อหมวด) ·
+  <code>slug</code> (ชื่อสั้นภาษาอังกฤษไว้ใส่ใน URL เช่น <code>one-dish</code>) · <code>description</code> (คำอธิบายยาว ๆ)
+</p>
+
+<pre><code>$ bin/rails generate scaffold <span class="n">Category</span> name:<span class="n">string</span> slug:<span class="n">string</span> description:<span class="n">text</span>
+      invoke  active_record
+      create    db/migrate/20261104120550_create_categories.rb
+      create    app/models/category.rb
+      invoke    test_unit
+      create      test/models/category_test.rb
+      create      test/fixtures/categories.yml
+      invoke  resource_route
+       route    resources :categories
+      invoke  scaffold_controller
+      create    app/controllers/categories_controller.rb
+      invoke    tailwindcss
+      create      app/views/categories
+      create      app/views/categories/index.html.erb
+      create      app/views/categories/edit.html.erb
+      create      app/views/categories/show.html.erb
+      create      app/views/categories/new.html.erb
+      create      app/views/categories/_form.html.erb
+      create      app/views/categories/_category.html.erb
+      invoke    resource_route
+      invoke    test_unit
+      create      test/controllers/categories_controller_test.rb
+      invoke    helper
+      create      app/helpers/categories_helper.rb
+      invoke      test_unit
+      invoke    jbuilder
+      create      app/views/categories/index.json.jbuilder
+      create      app/views/categories/show.json.jbuilder
+      create      app/views/categories/_category.json.jbuilder</code></pre>
+
+<ul>
+  <li><code>Category name:string …</code> — ชื่อ model เป็น<strong>เอกพจน์ตัวใหญ่</strong> ตามกฎ (บท 99) · ตามด้วย <code>ชื่อช่อง:ชนิด</code> แบบเดียวกับ generate model ·
+      <code>string</code> = ข้อความสั้น · <code>text</code> = ข้อความยาว</li>
+  <li><code>invoke</code> = "เรียกผู้ช่วยแผนกนี้มาทำงาน" · <code>create</code> = "เขียนไฟล์นี้แล้ว" · <code>route</code> = "เติมบรรทัดนี้ลงไฟล์ route"</li>
+  <li>คำหลัง <code>invoke</code> คือชื่อผู้ช่วยแต่ละคน: <code>active_record</code> เขียน model + migration · <code>test_unit</code> เขียนเทส ·
+      <code>tailwindcss</code> เขียนหน้าเว็บที่แต่งด้วย Tailwind · <code>helper</code> เขียนไฟล์ helper · <code>jbuilder</code> เขียนแบบตอบเป็น JSON — ไม่ต้องจำ ดูตารางข้างล่างพอ</li>
+  <li>เลข <code>20261104120550</code> คือวันเวลาที่สั่ง ของคุณจะต่าง</li>
+</ul>
+
+<p>จัดกลุ่มใหม่ให้อ่านง่าย — ทุกไฟล์เข้าช่องในร้านที่เรารู้จักแล้ว:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ไฟล์</th><th>คืออะไร</th><th>ในร้านอาหาร</th></tr></thead>
+  <tbody>
+    <tr><td><code>db/migrate/…_create_categories.rb</code></td><td>สร้างตาราง <code>categories</code> 3 ช่อง + เวลาสร้าง/แก้</td><td>ใบสั่งช่างต่อลิ้นชักใหม่ (บท 108)</td></tr>
+    <tr><td><code>app/models/category.rb</code></td><td>model <code>Category</code></td><td>คนดูแลสต็อกของลิ้นชักนี้</td></tr>
+    <tr><td><code>config/routes.rb</code> (+1 บรรทัด)</td><td><code>resources :categories</code> = 8 เส้น</td><td>รายการใหม่ในมือพนักงานต้อนรับ</td></tr>
+    <tr><td><code>app/controllers/categories_controller.rb</code></td><td>7 action ครบ</td><td>หัวหน้าเชฟกับ 7 เมนู</td></tr>
+    <tr><td><code>app/views/categories/*.html.erb</code> (6 ไฟล์)</td><td>หน้ารายการ · ดูทีละชิ้น · สร้าง · แก้ + ชิ้นส่วนใช้ซ้ำ 2 ชิ้น</td><td>แบบจัดจาน</td></tr>
+    <tr><td><code>app/views/categories/*.json.jbuilder</code> (3 ไฟล์)</td><td>แบบตอบเป็น JSON (หัวข้อ 4)</td><td>แบบใส่กล่องกลับบ้าน</td></tr>
+    <tr><td><code>app/helpers/categories_helper.rb</code></td><td>module ว่าง ๆ ไว้ใส่ helper ของแผนกนี้</td><td>ลิ้นชักเครื่องมือจัดจานที่ยังว่าง</td></tr>
+    <tr><td><code>test/…</code> (3 ไฟล์)</td><td>เทสของ controller 7 ข้อ · เทสของ model (ว่าง) · ข้อมูลทดสอบ</td><td>รอ Day 4</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ผมนับจาก git: <strong>ไฟล์ใหม่ 16 ไฟล์ + แก้ <code>config/routes.rb</code> 1 บรรทัด รวม 265 บรรทัด</strong>
+  ใช้เวลาประมาณ <strong>0.4 วินาที</strong> (วัดสองรอบได้ 0.42 กับ 0.46 · เครื่องคุณจะต่าง) ·
+  สไลด์ใช้ตัวเลขต่างไปนิด (ดูตารางท้ายบท) <strong>แต่แก่นเหมือนกัน: ไม่ได้พิมพ์โค้ดเองสักบรรทัด</strong>
+</p>
+
+<p>ไฟล์ migration ยังไม่ได้รัน (ใบสั่งช่างเขียนเสร็จแล้ว แต่ช่างยังไม่มาต่อตู้) — สั่งรันก่อน:</p>
+
+<pre><code>$ bin/rails db:migrate
+== 20261104120550 CreateCategories: migrating =================================
+-- create_table(:categories)
+   -&gt; 0.0105s
+== 20261104120550 CreateCategories: migrated (0.0105s) ========================</code></pre>
+
+<p>
+  แปลว่า "เริ่มทำใบสั่งช่าง CreateCategories → ต่อลิ้นชักใหม่ชื่อ <code>categories</code> (<code>create_table</code>) ใช้เวลา 0.01 วินาที → เสร็จ" ·
+  ชุดเดียวกับที่เห็นในบท 108 · เวลาของคุณจะต่าง
+</p>
+
+<p>แล้วถามพนักงานต้อนรับว่ารายการใหม่มีอะไรบ้าง (<code>-c categories</code> = ขอดูเฉพาะของแผนก categories):</p>
+
+<pre><code>$ bin/rails routes -c categories
+       Prefix Verb   URI Pattern                    Controller#Action
+   categories GET    /categories(.:format)          categories#index
+              POST   /categories(.:format)          categories#create
+ new_category GET    /categories/new(.:format)      categories#new
+edit_category GET    /categories/:id/edit(.:format) categories#edit
+     category GET    /categories/:id(.:format)      categories#show
+              PATCH  /categories/:id(.:format)      categories#update
+              PUT    /categories/:id(.:format)      categories#update
+              DELETE /categories/:id(.:format)      categories#destroy</code></pre>
+
+<p>
+  8 เส้นชุดเดียวกับ <code>resources :posts</code> ในบท 101 ทุกตัวอักษร แค่เปลี่ยนชื่อ ·
+  <code>(.:format)</code> ท้าย URL แปลว่าต่อท้ายด้วย <code>.json</code> ได้ — เก็บไว้ดูในหัวข้อ 4
+</p>
+
+<h2 id="sn-sec-3">3 · เปิดแผนกใหม่ ลองใช้จริง</h2>
+
+<p>
+  เปิดร้านด้วย <code>bin/rails server</code> แล้วเปิด browser ที่ <code>http://localhost:3000/categories</code> ·
+  จะเห็นหัวข้อ <strong>Categories</strong> · ปุ่ม <strong>New category</strong> · และข้อความ <strong>No categories found.</strong>
+</p>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong>ถ้าหน้าเว็บขึ้นเป็นตัวหนังสือดำล้วน ไม่มีปุ่มสี</strong> — โค้ดไม่ได้พัง · หน้าของ scaffold ใช้ Tailwind
+    (ชุดคำสั่งแต่งหน้าตาที่ <code>rails new --css=tailwind</code> ใส่ไว้) ซึ่งต้องสร้างไฟล์ CSS (ไฟล์แต่งหน้าตา) ใหม่ทุกครั้งที่มีหน้าใหม่ ·
+    เปิด terminal อีกหน้าต่างแล้วสั่ง <code>bin/rails tailwindcss:build</code> หนึ่งครั้ง (ผมลองแล้ว: ขึ้น <code>Done in 42ms</code> · เลข ms ของคุณจะต่าง) แล้ว refresh หน้าเว็บ · ยังใช้ <code>bin/rails server</code> เหมือนเดิม
+  </p>
+</div>
+
+<p>
+  ลองทำตามนี้: กด <strong>New category</strong> → กรอก Name <code>อาหารจานเดียว</code> · Slug <code>one-dish</code> ·
+  Description <code>ข้าวราดแกง กะเพรา ข้าวมันไก่</code> → กด <strong>Create Category</strong> ·
+  หน้าเว็บพาไป <code>/categories/1</code> พร้อมข้อความสีเขียว <strong>Category was successfully created.</strong>
+</p>
+
+<p>หน้าต่างที่รัน server จด log ไว้แบบนี้ (ผมตัดคอมเมนต์ <code>/*action=…*/</code> ท้าย SQL และบรรทัด <code>↳</code> ออกให้อ่านง่าย):</p>
+
+<pre><code>Started POST "/categories" for ::1 at 2026-11-04 19:08:46 +0700
+Processing by CategoriesController#create as TURBO_STREAM
+  Parameters: {"authenticity_token" =&gt; "[FILTERED]", "category" =&gt; {"name" =&gt; "อาหารจานเดียว", "slug" =&gt; "one-dish", "description" =&gt; "ข้าวราดแกง กะเพรา ข้าวมันไก่"}, "commit" =&gt; "Create Category"}
+  TRANSACTION (0.9ms)  BEGIN
+  Category Create (3.1ms)  INSERT INTO "categories" ("name", "slug", "description", "created_at", "updated_at") VALUES ('อาหารจานเดียว', 'one-dish', 'ข้าวราดแกง กะเพรา ข้าวมันไก่', '2026-11-04 12:08:46.921718', '2026-11-04 12:08:46.921718') RETURNING "id"
+  TRANSACTION (1.0ms)  COMMIT
+Redirected to http://localhost:3000/categories/1
+Completed 302 Found in 7ms (ActiveRecord: 5.4ms (1 query, 0 cached) | GC: 0.0ms)</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัด</th><th>แปลเป็นภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>Started POST "/categories" for ::1</code></td><td>ลูกค้ายื่นแบบฟอร์ม "สร้างของใหม่" (POST) มาที่ <code>/categories</code> · <code>::1</code> = ลูกค้าคือเครื่องเราเอง (บท 100)</td></tr>
+    <tr><td><code>Processing by CategoriesController#create as TURBO_STREAM</code></td><td>เข้าแผนก categories เมนู <code>create</code> ·
+        <code>TURBO_STREAM</code> คือป้ายที่ browser ติดมาเพราะแอปใช้ Turbo (ตัวช่วยให้หน้าเว็บเปลี่ยนเร็วโดยไม่โหลดทั้งหน้า — Day 3) · ตอนนี้ข้ามได้</td></tr>
+    <tr><td><code>Parameters: {… "category" =&gt; {"name" =&gt; …}}</code></td><td>ของในกล่อง params · ช่องของฟอร์ม<strong>ซ้อนอยู่ในกล่องชื่อ <code>category</code></strong> (สำคัญตอนอ่าน controller) ·
+        <code>authenticity_token</code> คือบัตรคิว (CSRF token · <a href="../../rails-day-1/lessons/0103-rails-views-and-helpers.html">บท 103</a>) ที่ยืนยันว่าฟอร์มนี้มาจากหน้าของร้านเราจริง Rails ซ่อนค่าไว้ให้</td></tr>
+    <tr><td><code>BEGIN</code> · <code>COMMIT</code></td><td>เปิดรอบงาน · ปิดรอบงาน — "ทำทั้งหมด หรือไม่ทำเลย" (transaction บท 111)</td></tr>
+    <tr><td><code>INSERT INTO "categories" (…) VALUES (…) RETURNING "id"</code></td><td><strong>"เพิ่มแฟ้มใหม่หนึ่งแผ่นลงลิ้นชัก categories เขียนช่อง name · slug · description · เวลาสร้าง · เวลาแก้ ตามค่าเหล่านี้ แล้วบอกเลขที่แฟ้มกลับมา"</strong></td></tr>
+    <tr><td><code>Redirected to …/categories/1</code> · <code>302 Found</code></td><td>บอกลูกค้าให้ไปเปิดหน้าแฟ้มเลขที่ 1 (redirect บท 102) · 302 คือเลขของคำตอบแบบ "ไปที่อื่น"</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ทีนี้ลองแบบที่ลูกค้าขี้เกียจทำ:</p>
+
+<div class="predict">
+  <p>กด <strong>New category</strong> แล้วกด <strong>Create Category</strong> ทันที <strong>โดยไม่กรอกอะไรเลยสักช่อง</strong></p>
+  <p class="ask">คิดว่าหน้าเว็บจะขึ้นอะไร — ข้อความแดงว่า "กรอกไม่ครบ" · หน้า error · หรืออย่างอื่น?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>บันทึกสำเร็จ</strong> — หน้าเว็บพาไป <code>/categories/2</code> พร้อมข้อความเขียว <code>Category was successfully created.</code> และทุกช่องว่างเปล่า · log ยืนยัน (ตัดมาเฉพาะบรรทัดที่สำคัญ):</p>
+<pre><code>  Parameters: {"authenticity_token" =&gt; "[FILTERED]", "category" =&gt; {"name" =&gt; "", "slug" =&gt; "", "description" =&gt; ""}, "commit" =&gt; "Create Category"}
+  Category Create (3.1ms)  INSERT INTO "categories" ("name", "slug", "description", "created_at", "updated_at") VALUES ('', '', '', '2026-11-04 12:08:56.935084', '2026-11-04 12:08:56.935084') RETURNING "id"
+Redirected to http://localhost:3000/categories/2
+Completed 302 Found in 6ms (ActiveRecord: 5.6ms (1 query, 0 cached) | GC: 0.0ms)</code></pre>
+    <p>
+      <code>VALUES ('', '', '', …)</code> = "เก็บแฟ้มที่ทุกช่องเป็นข้อความว่าง" · ไม่มีใครห้าม เพราะ model ไม่มี validation (บท 110) และตารางไม่มี NOT NULL (บท 111) ·
+      scaffold ให้ "ร้านที่ทำงานได้" แต่ไม่ได้ให้ "ร้านที่มีกฎ" — นี่คือเรื่องหลักของหัวข้อ 6
+    </p>
+  </div>
+</div>
+
+<p>
+  ได้แฟ้มว่างมาหนึ่งแผ่นแล้ว (เลขที่ 2) — ใช้มันลองอีกสองอย่าง <strong>อย่าแตะแฟ้มเลขที่ 1</strong> เพราะหัวข้อ 6 ยังใช้ ·
+  ที่หน้าแฟ้มว่าง กด <strong>Edit this category</strong> กรอก Name <code>ของหวาน</code> · Slug <code>dessert</code> แล้วกด <strong>Update Category</strong> ·
+  จากนั้นกด <strong>Destroy this category</strong> (browser ถาม "Are you sure?" ให้กด OK) · ได้ SQL ตามนี้ (ตัดมาเฉพาะบรรทัดที่หยิบ/แก้/ทิ้งแฟ้ม กับบรรทัดสุดท้าย · บรรทัด <code>BEGIN</code> · <code>COMMIT</code> มีเหมือนตอนสร้าง แต่ตัดออก):
+</p>
+
+<pre><code><span class="c"># กด Update Category — PATCH /categories/2</span>
+  Category Load (2.3ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" = 2 LIMIT 1
+  Category Update (3.2ms)  UPDATE "categories" SET "name" = 'ของหวาน', "slug" = 'dessert', "updated_at" = '2026-11-04 12:09:03.833330' WHERE "categories"."id" = 2
+Completed 303 See Other in 10ms (ActiveRecord: 8.7ms (2 queries, 0 cached) | GC: 0.0ms)
+
+<span class="c"># กด Destroy this category — DELETE /categories/2</span>
+  Category Load (2.7ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" = 2 LIMIT 1
+  Category Destroy (2.6ms)  DELETE FROM "categories" WHERE "categories"."id" = 2
+Completed 303 See Other in 13ms (ActiveRecord: 9.3ms (2 queries, 0 cached) | GC: 0.2ms)</code></pre>
+
+<ul>
+  <li><code>SELECT "categories".* FROM "categories" WHERE "categories"."id" = 2 LIMIT 1</code> — "ขอทุกช่องของแฟ้มในลิ้นชัก categories เฉพาะแผ่นเลขที่ 2 เอาแผ่นเดียว" · มาจาก <code>Category.find</code> (หัวข้อ 4)</li>
+  <li><code>UPDATE … SET "name" = 'ของหวาน', … WHERE "categories"."id" = 2</code> — "แก้แฟ้มเลขที่ 2: เขียนช่อง name กับ slug ใหม่ แล้วอัปเดตเวลาแก้" ·
+      ช่อง description ไม่ได้เปลี่ยน Rails เลยไม่เขียนทับ</li>
+  <li><code>DELETE FROM "categories" WHERE "categories"."id" = 2</code> — "ทิ้งแฟ้มเลขที่ 2 ออกจากลิ้นชัก"</li>
+  <li><code>303 See Other</code> — ญาติของ 302 แปลว่า "ไปเปิดหน้าอื่นด้วยการขอดูธรรมดา (GET)" · ใช้หลังแก้/ลบ เพราะถ้าตอบ 302 browser บางตัวจะเดินไปหน้าใหม่ด้วยคำสั่งเดิม (เช่น DELETE ซ้ำอีกรอบ) · 303 บังคับให้เป็น GET (เอกสารของ <code>redirect_to</code> เขียนไว้) · Turbo ของ Day 3 ก็อาศัยเลขนี้</li>
+</ul>
+
+<p>
+  <strong>ของแถม:</strong> จำ <code>(.:format)</code> ใน routes ได้ไหม — ลองต่อท้าย <code>.json</code> จะได้ข้อมูลเป็น JSON (แบบที่ Gin ตอบด้วย <code>c.JSON</code>) โดยไม่ได้เขียนอะไรเพิ่ม:
+</p>
+
+<pre><code>$ curl -s http://localhost:3000/categories.json
+[{"id":1,"name":"อาหารจานเดียว","slug":"one-dish","description":"ข้าวราดแกง กะเพรา ข้าวมันไก่","created_at":"2026-11-04T12:08:46.921Z","updated_at":"2026-11-04T12:08:46.921Z","url":"http://localhost:3000/categories/1.json"}]</code></pre>
+
+<p>
+  <code>[ … ]</code> คือรายการ · ในนั้นเหลือแฟ้มเลขที่ 1 แผ่นเดียวเพราะแผ่นที่ 2 ลบไปแล้ว · ช่อง <code>url</code> ไม่ได้อยู่ในตาราง ไฟล์ <code>.jbuilder</code> เติมให้ ว่าแฟ้มนี้ดูแบบ JSON ได้ที่ไหน
+</p>
+
+<h2 id="sn-sec-4">4 · อ่าน controller ทีละ action</h2>
+
+<p>
+  ไฟล์ที่ยาวที่สุด (70 บรรทัด) และสำคัญที่สุด · อ่านทีละท่อน — ทุกบรรทัดใช้ของที่เรียนมาแล้ว
+  ยกเว้นของใหม่ชื่อ <code>respond_to</code> ซึ่งอธิบายตรงที่เจอ
+</p>
+
+<h3 id="sn-sub-1">ท่อน 1 — before_action กับ 4 เมนูที่สั้นมาก</h3>
+
+<pre><code><span class="c"># app/controllers/categories_controller.rb</span>
+<span class="k">class</span> <span class="n">CategoriesController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="f">before_action</span> <span class="n">:set_category</span>, only: <span class="n">%i[ show edit update destroy ]</span>
+
+  <span class="c"># GET /categories or /categories.json</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @categories = <span class="n">Category</span>.<span class="f">all</span>
+  <span class="k">end</span>
+
+  <span class="c"># GET /categories/1 or /categories/1.json</span>
+  <span class="k">def</span> <span class="f">show</span>
+  <span class="k">end</span>
+
+  <span class="c"># GET /categories/new</span>
+  <span class="k">def</span> <span class="f">new</span>
+    @category = <span class="n">Category</span>.<span class="f">new</span>
+  <span class="k">end</span>
+
+  <span class="c"># GET /categories/1/edit</span>
+  <span class="k">def</span> <span class="f">edit</span>
+  <span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>before_action :set_category, only: %i[ show edit update destroy ]</code> — "ก่อนเข้า 4 เมนูนี้ ให้เรียก <code>set_category</code> ก่อน" (บท 102) ·
+      <code>%i[ … ]</code> คือวิธีเขียน array ของ symbol แบบย่อ = <code>[:show, :edit, :update, :destroy]</code> ·
+      4 เมนูนี้มีเลขที่แฟ้ม (<code>:id</code>) ใน URL ทั้งหมด จึงต้องไปหยิบแฟ้มก่อนเหมือนกัน</li>
+  <li><code>@categories = Category.all</code> — "เอาแฟ้มทุกแผ่นในลิ้นชัก" วางบนถาดให้หน้ารายการ · <strong>จำบรรทัดนี้ไว้ หัวข้อ 6 จะกลับมา</strong></li>
+  <li><code>def show</code> · <code>def edit</code> <strong>ว่างเปล่า</strong> — เพราะ <code>before_action</code> หยิบ <code>@category</code> มาวางบนถาดให้แล้ว ·
+      ที่เหลือ Rails เปิด view ชื่อตรงกับเมนูให้เอง (implicit render บท 102)</li>
+  <li><code>@category = Category.new</code> — แฟ้มเปล่าที่ยังไม่ลงลิ้นชัก (บท 107) ให้ฟอร์มใช้เป็นแม่แบบ</li>
+  <li>คอมเมนต์ <code># GET /categories …</code> เหนือแต่ละเมนู = scaffold จดไว้ให้ว่าเมนูนี้รับ URL ไหน (ตรงกับตาราง routes หัวข้อ 2)</li>
+</ul>
+
+<h3 id="sn-sub-2">ท่อน 2 — create และของใหม่ชื่อ respond_to</h3>
+
+<pre><code>  <span class="c"># POST /categories or /categories.json</span>
+  <span class="k">def</span> <span class="f">create</span>
+    @category = <span class="n">Category</span>.<span class="f">new</span>(category_params)
+
+    <span class="f">respond_to</span> <span class="k">do</span> |format|
+      <span class="k">if</span> @category.<span class="f">save</span>
+        format.<span class="f">html</span> { <span class="f">redirect_to</span> @category, notice: <span class="s">"Category was successfully created."</span> }
+        format.<span class="f">json</span> { <span class="f">render</span> <span class="n">:show</span>, status: <span class="n">:created</span>, location: @category }
+      <span class="k">else</span>
+        format.<span class="f">html</span> { <span class="f">render</span> <span class="n">:new</span>, status: <span class="n">:unprocessable_content</span> }
+        format.<span class="f">json</span> { <span class="f">render</span> json: @category.errors, status: <span class="n">:unprocessable_content</span> }
+      <span class="k">end</span>
+    <span class="k">end</span>
+  <span class="k">end</span></code></pre>
+
+<p>ตัด <code>respond_to</code> ออกก่อน จะเหลือท่าเดียวกับบท 110 เป๊ะ:</p>
+
+<ul>
+  <li><code>Category.new(category_params)</code> — สร้างแฟ้มจากของในฟอร์ม <strong>ที่ผ่านการคัดแล้ว</strong> (<code>category_params</code> อยู่ท่อน 4)</li>
+  <li><code>if @category.save</code> — เก็บได้ (<code>true</code>) → <code>redirect_to @category</code> พาไปหน้าแฟ้มนั้น พร้อมข้อความเขียว (<code>notice:</code> = flash ฝากโชว์หน้าถัดไปครั้งเดียว บท 102)</li>
+  <li><code>else</code> → <code>render :new, status: :unprocessable_content</code> — โชว์ฟอร์มเดิมพร้อมข้อผิดพลาด ตอบเลข 422 ("ข้อมูลไม่ผ่าน" บท 110) ·
+      Turbo ต้องได้ 422 ถึงจะวาดฟอร์มที่มีข้อผิดพลาดให้ (Day 3) ·
+      <strong>ตอนนี้ทางนี้ไม่มีวันเกิด</strong> เพราะไม่มีกฎ <code>save</code> จึงได้ <code>true</code> เสมอ (เห็นแล้วใน predict)</li>
+</ul>
+
+<p>
+  <strong>ของใหม่: <code>respond_to do |format|</code></strong> = "ถามก่อนว่าลูกค้าอยากได้คำตอบแบบไหน" ·
+  มาจากหน้าเว็บ (HTML) → ทำตาม <code>format.html { … }</code> · มาทาง <code>.json</code> → ทำตาม <code>format.json { … }</code> ·
+  <code>{ … }</code> คือ block (บท 93) ที่จะรันเฉพาะแบบที่ตรงกับลูกค้า
+</p>
+
+<ul>
+  <li><code>format.json { render :show, status: :created, location: @category }</code> — ฝั่ง JSON ไม่มีหน้าให้ redirect จึงตอบข้อมูลแฟ้มใหม่ (ใช้แบบ <code>show.json.jbuilder</code>) ·
+      เลข 201 (<code>:created</code> = "สร้างแล้ว") · <code>location:</code> = แนบที่อยู่ของแฟ้มใหม่ (<code>/categories/1</code>) ไปกับคำตอบ</li>
+  <li><code>render json: @category.errors</code> — เก็บไม่ได้ก็ส่งรายการข้อผิดพลาด (<code>errors</code> บท 110) กลับไปเป็น JSON แทนการโชว์ฟอร์ม</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🥡 เทียบให้เห็นภาพ — ทานที่ร้าน หรือ ใส่กล่องกลับบ้าน</span>
+  <p>
+    เมนูเดียวกัน (<code>create</code>) แต่ลูกค้ามีสองแบบ: <strong>นั่งทานในร้าน</strong> (browser — อยากได้หน้า HTML) กับ <strong>สั่งกลับบ้าน</strong> (แอปมือถือหรือโปรแกรมอื่น — อยากได้ JSON) ·
+    เชฟทำอาหารเหมือนกัน (<code>save</code> ครั้งเดียว) ต่างกันแค่ตอนส่ง: จัดจาน หรือ ใส่กล่อง · <code>respond_to</code> คือพนักงานที่ถามว่า "ทานที่นี่หรือกลับบ้านคะ"
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงถามลูกค้าด้วยปาก · Rails ดู<strong>ท้าย URL</strong> (<code>.json</code>) หรือป้ายที่ browser ติดมาเอง ลูกค้าไม่ต้องตอบ ·
+    และถ้าแอปเราไม่มีลูกค้าสั่งกลับบ้านเลย ส่วน <code>format.json</code> กับไฟล์ <code>.jbuilder</code> 3 ไฟล์ก็เป็นของเกินที่ลบทิ้งได้
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ใน Gin คุณเลือกเองในแต่ละ handler ว่าจะตอบ <code>c.HTML(…)</code> หรือ <code>c.JSON(…)</code> ·
+  ถ้าอยากได้ทั้งสองแบบจาก URL เดียว ต้องเขียน <code>if</code> ตรวจเอง · <code>respond_to</code> คือ <code>if</code> นั้นที่ Rails เตรียมไว้ให้
+</p>
+
+<h3 id="sn-sub-3">ท่อน 3 — update กับ destroy</h3>
+
+<pre><code>  <span class="c"># PATCH/PUT /categories/1 or /categories/1.json</span>
+  <span class="k">def</span> <span class="f">update</span>
+    <span class="f">respond_to</span> <span class="k">do</span> |format|
+      <span class="k">if</span> @category.<span class="f">update</span>(category_params)
+        format.<span class="f">html</span> { <span class="f">redirect_to</span> @category, notice: <span class="s">"Category was successfully updated."</span>, status: <span class="n">:see_other</span> }
+        format.<span class="f">json</span> { <span class="f">render</span> <span class="n">:show</span>, status: <span class="n">:ok</span>, location: @category }
+      <span class="k">else</span>
+        format.<span class="f">html</span> { <span class="f">render</span> <span class="n">:edit</span>, status: <span class="n">:unprocessable_content</span> }
+        format.<span class="f">json</span> { <span class="f">render</span> json: @category.errors, status: <span class="n">:unprocessable_content</span> }
+      <span class="k">end</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+
+  <span class="c"># DELETE /categories/1 or /categories/1.json</span>
+  <span class="k">def</span> <span class="f">destroy</span>
+    @category.<span class="f">destroy!</span>
+
+    <span class="f">respond_to</span> <span class="k">do</span> |format|
+      format.<span class="f">html</span> { <span class="f">redirect_to</span> categories_path, notice: <span class="s">"Category was successfully destroyed."</span>, status: <span class="n">:see_other</span> }
+      format.<span class="f">json</span> { <span class="f">head</span> <span class="n">:no_content</span> }
+    <span class="k">end</span>
+  <span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>update</code> หน้าตาเหมือน <code>create</code> ทุกอย่าง ต่างแค่ <code>@category.update(…)</code> แทน <code>new</code> + <code>save</code> (บท 107) และไม่ผ่านก็กลับไปฟอร์มแก้ (<code>:edit</code>)</li>
+  <li><code>status: :see_other</code> — คือเลข 303 ที่เห็นใน log หัวข้อ 3 · ส่วน <code>status: :ok</code> ฝั่ง JSON คือเลข 200 = "เรียบร้อย"</li>
+  <li><code>@category.destroy!</code> — ทิ้งแฟ้ม · ตัว <code>!</code> แปลว่า "ถ้าทิ้งไม่ได้ให้ระเบิด" (กฎ ! บท 110) · ทิ้งเสร็จพาไปหน้ารายการ (<code>categories_path</code>)</li>
+  <li><code>head :no_content</code> — ฝั่ง JSON ตอบเลข 204 ("เรียบร้อย ไม่มีอะไรส่งกลับ")</li>
+</ul>
+
+<h3 id="sn-sub-4">ท่อน 4 — private: ผู้ช่วยสองคน</h3>
+
+<pre><code>  <span class="k">private</span>
+    <span class="c"># Use callbacks to share common setup or constraints between actions.</span>
+    <span class="k">def</span> <span class="f">set_category</span>
+      @category = <span class="n">Category</span>.<span class="f">find</span>(params.<span class="f">expect</span>(<span class="n">:id</span>))
+    <span class="k">end</span>
+
+    <span class="c"># Only allow a list of trusted parameters through.</span>
+    <span class="k">def</span> <span class="f">category_params</span>
+      params.<span class="f">expect</span>(category: [ <span class="n">:name</span>, <span class="n">:slug</span>, <span class="n">:description</span> ])
+    <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>private</code> — method ใต้คำนี้ route เรียกตรง ๆ ไม่ได้ เป็นผู้ช่วยหลังครัว ไม่ใช่เมนู (บท 102)</li>
+  <li>คอมเมนต์อังกฤษ <code>Use callbacks …</code> ที่ scaffold เขียนมา — คำว่า callbacks ในที่นี้หมายถึง <code>before_action</code> นั่นเอง (ญาติของ callback ฝั่ง model บท 112)</li>
+  <li><code>Category.find(params.expect(:id))</code> — หยิบแฟ้มตามเลขที่ใน URL (บท 107) · <code>params.expect(:id)</code> = "ต้องมี <code>id</code> และต้องเป็นค่าธรรมดา" ·
+      ถ้าไม่เจอแฟ้ม <code>find</code> ระเบิด และ Rails ตอบ 404 ("ไม่มีหน้านี้") ให้เอง ·
+      ผมลอง <code>/categories/99</code>: log ขึ้น <code>Completed 404 Not Found</code> แต่<strong>ในเครื่องเรา browser จะโชว์หน้าแดง <code>ActiveRecord::RecordNotFound in CategoriesController#show</code></strong>
+      กับ <code>Couldn't find Category with 'id'="99"</code> — ไม่ใช่โค้ดพัง เป็นหน้าช่วยนักพัฒนา · ลูกค้าบนเว็บจริงจะเห็นแค่หน้า 404</li>
+  <li><code>params.expect(category: [ :name, :slug, :description ])</code> — "เปิดกล่อง <code>category</code> (ที่เห็นใน log หัวข้อ 3) แล้วหยิบแค่สามช่องนี้" ·
+      ช่องอื่นที่ลูกค้าแอบเขียนมาถูกตัดทิ้ง = strong parameters (บท 117)</li>
+</ul>
+
+<div class="win">
+  <p>
+    ✅ <strong>ของที่ scaffold ทำถูก</strong> (สไลด์หน้า 53 ชมไว้ ผมเห็นด้วยทุกข้อ): ใช้ <code>before_action</code> แทนการเขียน <code>find</code> ซ้ำ 4 ที่ ·
+    ใช้ท่า <code>if save … else render</code> พร้อม status 422 · คัดช่องด้วย <code>params.expect</code> ของ Rails 8 · เก็บผู้ช่วยไว้ใต้ <code>private</code> ·
+    <strong>ถ้าเขียน controller เอง ใช้ไฟล์นี้เป็นแบบได้เลย</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>respond_to</code> · format</dt>
+    <dd>ส่วนของ controller ที่เลือกคำตอบตามแบบที่ลูกค้าขอ (HTML · JSON …) · แบบมาจากท้าย URL หรือหัวของ request ·
+        <strong>พิมพ์บอก AI ได้ว่า "this app is HTML only — remove the respond_to / format.json branches and jbuilder files"</strong> เวลาอยากได้โค้ดที่สั้นลง</dd>
+    <dt>303 See Other · 422 Unprocessable Content</dt>
+    <dd>303 = "ไปดูหน้าอื่นด้วย GET" ใช้หลังแก้/ลบ · 422 = "ข้อมูลที่ส่งมาไม่ผ่านกฎ" ใช้ตอน render ฟอร์มเดิม · Turbo ของ Day 3 ต้องการสองเลขนี้ ·
+        <strong>ถาม senior ได้ว่า "ทำไม scaffold ใช้ 303 กับ update/destroy แต่ create ใช้ 302 ธรรมดา"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 · อ่าน model · migration · ฟอร์ม</h2>
+
+<p>สามไฟล์นี้สั้นมาก — <strong>สั้นจนน่าสงสัย</strong>:</p>
+
+<pre><code><span class="c"># app/models/category.rb</span>
+<span class="k">class</span> <span class="n">Category</span> &lt; <span class="n">ApplicationRecord</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c"># db/migrate/20261104120550_create_categories.rb</span>
+<span class="k">class</span> <span class="n">CreateCategories</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">create_table</span> <span class="n">:categories</span> <span class="k">do</span> |t|
+      t.<span class="f">string</span> <span class="n">:name</span>
+      t.<span class="f">string</span> <span class="n">:slug</span>
+      t.<span class="f">text</span> <span class="n">:description</span>
+
+      t.<span class="f">timestamps</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><strong>model ว่าง</strong> — คนดูแลสต็อกที่ไม่มีกฎสักข้อ (ไม่มี <code>validates</code> บท 110) · ไม่รู้ว่าเกี่ยวกับใคร (ไม่มี association = การผูกกับตารางอื่น เช่น หมวดหนึ่งมีหลายบทความ — บท 115)</li>
+  <li><strong>migration</strong> — ต่อลิ้นชักสามช่อง + <code>t.timestamps</code> (ช่องเวลาสร้าง/แก้ ซึ่ง Rails ใส่ <code>null: false</code> ให้เองสองช่องนี้) ·
+      แต่ช่องของเรา<strong>ไม่มี <code>null: false</code></strong> (ปล่อยว่างได้) · <code>slug</code> <strong>ไม่มี index</strong> (ไม่มีป้ายแท็บ บท 109) และ<strong>ไม่มี unique</strong> (ซ้ำได้ บท 111)</li>
+</ul>
+
+<p>ส่วนฟอร์มอยู่ในไฟล์ที่ชื่อขึ้นต้นด้วยขีดล่าง · ผมตัดคลาสแต่งหน้าตา (<code>class: …</code>) ออก และย่อบางท่อนเป็นคำอธิบายไทยในเครื่องหมาย <code>…</code> ให้เห็นโครง (ไฟล์จริงยาวกว่านี้):</p>
+
+<pre><code><span class="c">&lt;%# app/views/categories/_form.html.erb (ตัด class ของ Tailwind ออก) %&gt;</span>
+&lt;%= <span class="f">form_with</span>(model: category) <span class="k">do</span> |form| %&gt;
+  &lt;% <span class="k">if</span> category.errors.<span class="f">any?</span> %&gt;
+    … โชว์รายการข้อผิดพลาด (category.errors บท 110) …
+  &lt;% <span class="k">end</span> %&gt;
+
+  &lt;%= form.<span class="f">label</span> <span class="n">:name</span> %&gt;
+  &lt;%= form.<span class="f">text_field</span> <span class="n">:name</span> %&gt;
+  … slug แบบเดียวกัน · description ใช้ form.textarea (ช่องกรอกหลายบรรทัด) …
+  &lt;%= form.<span class="f">submit</span> %&gt;
+&lt;% <span class="k">end</span> %&gt;</code></pre>
+
+<ul>
+  <li>บรรทัดแรก <code>&lt;%# … %&gt;</code> คือคอมเมนต์ของ ERB (มี <code>#</code> ต่อท้าย <code>&lt;%</code> · บท 103) — ไม่โผล่บนหน้าเว็บ</li>
+  <li><strong>ไฟล์ที่ชื่อขึ้นต้นด้วย <code>_</code> เรียกว่า partial</strong> (ของใหม่) = ชิ้นส่วนหน้าเว็บที่เอาไปใช้ซ้ำได้ ·
+      หน้า new กับหน้า edit เรียกฟอร์มชิ้นเดียวกันด้วย <code>&lt;%= render "form", category: @category %&gt;</code>
+      (<code>"form"</code> = ไฟล์ <code>_form</code> โดยไม่ต้องพิมพ์ขีดล่าง · <code>category:</code> = ส่งแฟ้มบนถาดเข้าไปในชื่อ <code>category</code>)</li>
+  <li><code>_category.html.erb</code> ก็เป็น partial — โชว์แฟ้มหนึ่งแผ่น ใช้ทั้งหน้ารายการ (วนทีละแผ่น) และหน้า show</li>
+  <li><code>form_with(model: category) do |form|</code> — วาดฟอร์มของแฟ้มนี้ · <code>form</code> คือผู้ช่วยวาดช่อง (บท 97 ที่ถามว่า "f โผล่มาจากไหน") ·
+      <code>form.label :name</code> = ป้ายชื่อช่อง (ขึ้นว่า Name) · <code>form.text_field :name</code> = ช่องกรอกของ name · <code>form.submit</code> = ปุ่มส่งฟอร์ม</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>partial</dt>
+    <dd>ไฟล์ view ที่ชื่อขึ้นต้นด้วย <code>_</code> เรียกใช้ด้วย <code>render "ชื่อ"</code> · ในร้านคือ<strong>แม่พิมพ์จัดจานชิ้นเดียวที่คนจัดจานใช้กับหลายเมนู</strong> ·
+        เทียบ Go: API ที่เราเขียนด้วย Gin ตอบ JSON อย่างเดียว ไม่มีหน้าเว็บ · ใกล้สุดคือ func ช่วยตัวเดียวที่ handler สองตัวเรียกใช้ร่วมกัน แทนการก็อปโค้ดซ้ำ ·
+        <strong>พิมพ์บอก AI ได้ว่า "extract this into a partial and render it from both new and edit"</strong></dd>
+    <dt><code>_method</code> (method override)</dt>
+    <dd>ช่องซ่อนในฟอร์มที่บอก Rails ว่า "ถือว่าเป็น PATCH / DELETE นะ" เพราะฟอร์ม HTML ส่งได้แค่ GET กับ POST ·
+        <strong>ถาม senior ได้ว่า "ฟอร์มนี้ส่ง POST แต่ log ขึ้น PATCH เพราะ _method ใช่ไหม"</strong></dd>
+  </dl>
+</div>
+
+<p>
+  คำถามที่น่าสนใจ: <strong>ฟอร์มชิ้นเดียว ทำไมหน้า new ส่งไปสร้าง แต่หน้า edit ส่งไปแก้</strong>? ผมดึง HTML ของสองหน้ามาดูเฉพาะแท็กฟอร์มกับปุ่ม:
+</p>
+
+<pre><code><span class="c">&lt;!-- หน้า /categories/new --&gt;</span>
+&lt;form action="/categories" accept-charset="UTF-8" method="post"&gt;
+&lt;input type="submit" name="commit" value="Create Category" data-disable-with="Create Category" /&gt;
+
+<span class="c">&lt;!-- หน้า /categories/1/edit --&gt;</span>
+&lt;form action="/categories/1" accept-charset="UTF-8" method="post"&gt;
+&lt;input type="hidden" name="_method" value="patch" /&gt;
+&lt;input type="submit" name="commit" value="Update Category" data-disable-with="Update Category" /&gt;</code></pre>
+
+<p>
+  <code>form_with</code> ถามแฟ้มว่า <code>persisted?</code> ("อยู่ในลิ้นชักแล้วหรือยัง" บท 107):
+  แฟ้มใหม่ → ส่งไป <code>/categories</code> ปุ่ม Create · แฟ้มที่มีเลขที่แล้ว → ส่งไป <code>/categories/1</code> ปุ่ม Update ·
+  <code>_method</code> = "patch" คือป้ายซ่อนที่บอก Rails ให้ถือว่าเป็น PATCH เพราะฟอร์ม HTML ส่งได้แค่ GET กับ POST
+</p>
+
+<p>
+  ส่วนที่เหลือในแท็กไม่ต้องสนใจ: <code>accept-charset="UTF-8"</code> = ส่งตัวอักษรแบบที่รองรับภาษาไทย ·
+  <code>data-disable-with</code> = กดแล้วปุ่มกดซ้ำไม่ได้ระหว่างรอ (กันลูกค้ากดสองที)
+</p>
+
+<h2 id="sn-sec-6">6 · ของที่ scaffold ไม่ให้ = ของที่ AI ไม่ให้</h2>
+
+<p>
+  ตอนนี้ร้านเปิดแผนกหมวดหมู่ได้แล้ว · ลองทำตัวเป็นลูกค้าที่ทำพลาดในครัวทดลอง (<code>bin/rails console</code>) ·
+  สมมติว่ามีหมวด <code>one-dish</code> อยู่แล้วหนึ่งอัน (จากหัวข้อ 3) แล้วสร้างอีกอันด้วย slug ซ้ำ:
+</p>
+
+<div class="predict">
+<pre><code>wongnok-blog(dev):001&gt; <span class="n">Category</span>.<span class="f">create</span>(name: <span class="s">"อาหารเส้น"</span>, slug: <span class="s">"one-dish"</span>)
+wongnok-blog(dev):002&gt; <span class="n">Category</span>.<span class="f">where</span>(slug: <span class="s">"one-dish"</span>).<span class="f">count</span>
+wongnok-blog(dev):003&gt; <span class="n">Category</span>.<span class="f">new</span>.<span class="f">save</span></code></pre>
+  <p class="ask">บรรทัด 2 ได้เลขอะไร · บรรทัด 3 ได้ <code>true</code> หรือ <code>false</code>?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง (ตัดคอมเมนต์ <code>/*application=…*/</code> ท้าย SQL ออกเหมือนหัวข้อ 3 · เวลา ms · เลข <code>0x…</code> ของคุณจะต่าง):</p>
+<pre><code>wongnok-blog(dev):001&gt; Category.create(name: "อาหารเส้น", slug: "one-dish")
+  TRANSACTION (0.5ms)  BEGIN
+  Category Create (1.4ms)  INSERT INTO "categories" ("name", "slug", "description", "created_at", "updated_at") VALUES ('อาหารเส้น', 'one-dish', NULL, '2026-11-04 12:12:00.817389', '2026-11-04 12:12:00.817389') RETURNING "id"
+  TRANSACTION (1.1ms)  COMMIT
+=&gt;
+#&lt;Category:0x00000001285b3ff0
+ id: 3,
+ name: "อาหารเส้น",
+ slug: "one-dish",
+ description: nil,
+ created_at: "2026-11-04 12:12:00.817389000 +0000",
+ updated_at: "2026-11-04 12:12:00.817389000 +0000"&gt;
+wongnok-blog(dev):002&gt; Category.where(slug: "one-dish").count
+  Category Count (2.3ms)  SELECT COUNT(*) FROM "categories" WHERE "categories"."slug" = 'one-dish'
+=&gt; 2
+wongnok-blog(dev):003&gt; Category.new.save
+  TRANSACTION (1.4ms)  BEGIN
+  Category Create (2.6ms)  INSERT INTO "categories" ("name", "slug", "description", "created_at", "updated_at") VALUES (NULL, NULL, NULL, '2026-11-04 12:12:03.505033', '2026-11-04 12:12:03.505033') RETURNING "id"
+  TRANSACTION (1.6ms)  COMMIT
+=&gt; true</code></pre>
+    <ul>
+      <li>บรรทัด 2 ได้ <strong>2</strong> — <code>SELECT COUNT(*) … WHERE "categories"."slug" = 'one-dish'</code> = "นับแฟ้มในลิ้นชัก categories ที่ช่อง slug เป็น one-dish" · slug ที่ควรเป็นชื่อเฉพาะของหมวด<strong>ซ้ำกันแล้ว</strong></li>
+      <li>บรรทัด 3 ได้ <strong><code>true</code></strong> — <code>VALUES (NULL, NULL, NULL, …)</code> = เก็บแฟ้มที่ "ไม่มีค่าเลย" สักช่อง (<code>NULL</code> = nil ของฝั่งตาราง) · ต่างจากฟอร์มในหัวข้อ 3 ที่ส่ง<strong>ข้อความว่าง</strong> <code>''</code></li>
+    </ul>
+    <p>หน้า <code>/categories</code> ตอนนี้โชว์ 3 แถว: อาหารจานเดียว · อาหารเส้น (slug ซ้ำ) · และแถวว่างทั้งแถว (id ของคุณอาจต่าง)</p>
+  </div>
+</div>
+
+<p>
+  ทั้ง scaffold และ AI เขียน<strong>โค้ดที่ทำงานได้</strong>ให้เราได้ · แต่ทั้งคู่<strong>ไม่รู้ว่าร้านเราทำงานยังไง</strong> —
+  สไลด์หน้า 55 แบ่งของที่ขาดเป็น 6 เรื่อง ผมโยงแต่ละเรื่องกลับไปบทที่สอนวิธีเติม:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เรื่อง</th><th>scaffold ให้อะไร · ขาดอะไร</th><th>เติมด้วยอะไร · บทไหน</th></tr></thead>
+  <tbody>
+    <tr><td>1 · กฎของร้าน</td><td>ไม่รู้ว่าชื่อหมวดซ้ำได้ไหม · ลบหมวดแล้วบทความในหมวดเป็นยังไง · ใครทำอะไรได้</td><td>คำตอบมาจาก<strong>เจ้าของร้าน</strong> ไม่ใช่จากโค้ด · แล้วค่อยแปลงเป็นข้อข้างล่าง</td></tr>
+    <tr><td>2 · ปริมาณข้อมูลจริง</td><td>ไม่รู้ว่าลิ้นชักนี้จะมี 100 แผ่นหรือ 10 ล้านแผ่น · ไม่มี index สักตัว</td><td>index ที่ช่องที่ใช้ค้นหา — <a href="./0109-safe-migrations.html">บท 109</a></td></tr>
+    <tr><td>3 · กฎที่ตัวตู้</td><td>ไม่มี <code>null: false</code> · ไม่มี unique index (เห็นแล้วข้างบน)</td><td>validation <a href="./0110-validations.html">บท 110</a> + NOT NULL · unique index <a href="./0111-four-layers-and-uniqueness.html">บท 111</a> <strong>คู่กันเสมอ</strong></td></tr>
+    <tr><td>4 · จำนวนครั้งที่เดินไปตู้</td><td><code>Category.all</code> ไม่มี <code>limit</code> · ไม่มีการแบ่งหน้า · ไม่มี <code>includes</code></td><td><code>limit</code> <a href="./0113-query-lazy-relation.html">บท 113</a> · <code>includes</code> กัน N+1 <a href="./0114-n-plus-one.html">บท 114</a></td></tr>
+    <tr><td>5 · ใครมีสิทธิ์</td><td>มี strong params (กัน<strong>ช่องแปลก</strong>) แต่ไม่มีการตรวจ<strong>คน</strong> — ใครเปิดหน้าได้ก็กด Destroy ได้</td><td>strong params <a href="./0117-rest-and-strong-params.html">บท 117</a> · การตรวจสิทธิ์ (authorization) = Day 4</td></tr>
+    <tr><td>6 · ภาษาและข้อความ</td><td>ข้อความอังกฤษเขียนตายตัว (<code>"Category was successfully created."</code> · <code>No categories found.</code>)</td><td>แก้ข้อความเอง หรือใช้ระบบแปลภาษา i18n ของ Rails (นอกขอบเขตคอร์ส ลิงก์อยู่ท้ายบท)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ข้อ 4 ดูจาก log ได้เลย — ตอนเปิดหน้ารายการ Rails ยิง <code>SELECT "categories".* FROM "categories"</code>
+  ("ขอทุกช่องของ<strong>ทุกแผ่น</strong>ในลิ้นชัก categories" ไม่มี <code>LIMIT</code>) · วันนี้มี 3 แผ่นเลยเร็ว · สไลด์ยกตัวอย่างว่าถ้ามี 50,000 แผ่นก็ดึงมาหมดทุกครั้งที่มีคนเปิดหน้า
+</p>
+
+<div class="analogy">
+  <span class="label">🪪 เทียบให้เห็นภาพ — คัดช่องบนแบบฟอร์ม ไม่เท่ากับ ดูบัตรพนักงาน</span>
+  <p>
+    <code>params.expect</code> คือพนักงานต้อนรับที่<strong>ตัดช่องแปลก ๆ ทิ้งจากใบสั่ง</strong> — ลูกค้าเขียนว่า "ฉันเป็นผู้จัดการ" ก็ถูกตัด เหลือแค่ name · slug · description ·
+    แต่ถ้าลูกค้าคนไหนเดินมายื่นใบสั่ง<strong>"ทิ้งแฟ้มหมวดอาหารจานเดียว"</strong> ที่กรอกถูกแบบฟอร์มทุกช่อง พนักงานก็ส่งเข้าครัวทันที — ไม่มีใครถามว่าคุณเป็นใคร
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงอย่างน้อยยังเห็นหน้าลูกค้า · เว็บที่ไม่มีระบบ login และไม่มีการตรวจสิทธิ์ <strong>ไม่รู้แม้แต่ว่าใครกด</strong> ·
+    และการตรวจสิทธิ์ไม่ใช่ด่านเดียวหน้าร้าน — ต้องถามทุกเมนูที่แตะของสำคัญ (ลบ · แก้ · ดูของคนอื่น) ซึ่งเป็นเรื่องของ Day 4
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>authorization (การตรวจสิทธิ์)</dt>
+    <dd>คำถาม "คนนี้ทำสิ่งนี้ได้ไหม" · คนละเรื่องกับ strong params ที่ถามว่า "ช่องนี้รับได้ไหม" · Day 4 ใช้ gem ชื่อ Pundit ·
+        <strong>ถาม senior ได้ว่า "action destroy นี้ใครกดได้บ้าง และเราเช็คที่ไหน"</strong> — คำถามที่ควรถามทุกครั้งที่มีโค้ดเพิ่มปุ่มลบ</dd>
+    <dt>business rule (กฎของธุรกิจ)</dt>
+    <dd>กฎที่มาจากการทำงานของร้าน ไม่ได้มาจากโค้ด เช่น "ชื่อหมวดห้ามซ้ำ" "หมวดที่ยังมีบทความห้ามลบ" · AI เดาไม่ได้ เราต้องบอก ·
+        <strong>พิมพ์บอก AI ได้ว่า "business rules: slug must be unique and lowercase; a category with posts cannot be deleted"</strong> ก่อนให้มันเขียนโค้ด</dd>
+  </dl>
+</div>
+
+<p>สไลด์หน้า 54 ร่างโค้ดที่ต้องเติมไว้ให้เห็นภาพ — อ่านเป็นแผนที่ว่าแต่ละบรรทัดมาจากบทไหน (<strong>ลงมือเติมจริงใน Lab <a href="./0119-rails-day2-lab.html">บท 119</a></strong>):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>โค้ดจากสไลด์หน้า 54</th><th>แปลว่า</th><th>บท</th></tr></thead>
+  <tbody>
+    <tr><td><code>validates :name, presence: true, length: { maximum: 80 }</code></td><td>คนดูแลสต็อกห้ามรับชื่อว่าง และยาวไม่เกิน 80 ตัว</td><td>110</td></tr>
+    <tr><td><code>validates :slug, presence: true, uniqueness: true, format: { with: /\A[a-z0-9-]+\z/ }</code></td><td>slug ห้ามว่าง ห้ามซ้ำ และมีได้แค่ a–z · 0–9 · ขีด (<code>/…/</code> คือ regex = แบบของตัวอักษรที่ยอมรับ บท 110)</td><td>110 · 111</td></tr>
+    <tr><td><code>change_column_null :categories, :name, false</code> (และ <code>:slug</code>)</td><td>migration ที่สั่งให้ตัวตู้ห้ามช่องนี้เป็น NULL</td><td>108 · 111</td></tr>
+    <tr><td><code>add_index :categories, :slug, unique: true</code></td><td>ติดป้ายแท็บที่ slug และให้ตัวตู้ห้ามซ้ำ</td><td>109 · 111</td></tr>
+    <tr><td><code>has_many :posts, dependent: :restrict_with_error</code></td><td>หมวดหนึ่งมีหลายบทความ · หมวดที่ยังมีบทความห้ามลบ</td><td>115 · 116</td></tr>
+    <tr><td><code>scope :alphabetical, -&gt; { order(:name) }</code></td><td>ตั้งชื่อเล่น <code>alphabetical</code> ให้เงื่อนไข "เรียงตามชื่อ" ที่ใช้บ่อย แล้วเรียก <code>Category.alphabetical</code> ได้ ·
+        <code>-&gt; { … }</code> คือ lambda = ก้อนโค้ดที่เก็บไว้รันทีหลัง (บท 112 · 115)</td><td>113 · 115</td></tr>
+    <tr><td><code>Category.alphabetical.includes(:posts).limit(50)</code></td><td>เรียงตามชื่อ (scope แถวบน) · หยิบบทความมาทีเดียว · เอาแค่ 50 แผ่น</td><td>113 · 114</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong>สองแถวสุดท้ายพิมพ์ตามในแอปเราแล้วพัง</strong> — ตาราง <code>posts</code> ยังไม่มีช่อง <code>category_id</code> (scaffold ไม่ได้สร้างความสัมพันธ์ให้) ·
+    ผมลองแล้วได้ <code>PG::UndefinedColumn: ERROR:  column posts.category_id does not exist</code> · ต้องเพิ่มช่องนั้นก่อน (<a href="./0115-associations.html">บท 115</a>)
+  </p>
+  <p>
+    ⚠️ <strong>และเติม NOT NULL ทีหลังไม่ได้ ถ้าตู้มีแฟ้มเสียอยู่แล้ว</strong> — ผมสั่ง <code>change_column_null :categories, :name, false</code> หลังจากเก็บแฟ้มว่างไปแล้ว migration ล้มทันที:
+    <code>PG::NotNullViolation: ERROR:  column "name" of relation "categories" contains null values</code> · ต้องเก็บกวาดแฟ้มเสียก่อน ·
+    นี่คือเหตุผลที่ควรถาม checklist ข้างล่าง<strong>ตอนรับงาน</strong> ไม่ใช่หลังเปิดใช้ไปแล้ว
+  </p>
+</div>
+
+<p>
+  อีกเรื่องที่เห็นจากสองการทดลอง: ฟอร์มส่ง<strong>ข้อความว่าง <code>''</code></strong> ส่วน console ส่ง <code>NULL</code> ·
+  NOT NULL ของตู้กันได้แค่ <code>NULL</code> — ผมลองกับตารางทดสอบที่มี NOT NULL: ใส่ <code>''</code> ผ่าน · ใส่ <code>NULL</code> ได้ <code>ActiveRecord::NotNullViolation</code> ·
+  ข้อความว่างจากฟอร์มจึงต้องให้ <code>presence: true</code> เป็นคนกัน · <strong>validation กับ constraint ต้องมาคู่กัน เพราะกันคนละรู</strong> (ประโยคหลักข้อ ② ของวัน)
+</p>
+
+<h2 id="sn-sec-7">7 · checklist 8 ข้อ ตรวจงานที่ AI (หรือ scaffold) เขียน</h2>
+
+<p>
+  เวลาได้โค้ดชั้นข้อมูลมาจาก AI · จาก scaffold · หรือจากเพื่อน ให้ไล่ถาม 8 ข้อนี้ก่อนรับ (สไลด์หน้า 56) ·
+  ทุกข้อคือเรื่องที่เรียนมาทั้งวัน — ถ้าข้อไหนตอบไม่ได้ ย้อนไปบทนั้น
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อ</th><th>ถามอะไร</th><th>ทำไม</th><th>เรียนในบท</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>เห็น <code>uniqueness: true</code> → <strong>มี unique index คู่ไหม</strong></td><td>มีแค่กฎใน model สองคนกดพร้อมกันยังซ้ำได้</td><td><a href="./0111-four-layers-and-uniqueness.html">111</a></td></tr>
+    <tr><td>2</td><td>เห็น <code>presence: true</code> → <strong>มี NOT NULL (<code>null: false</code>) คู่ไหม</strong></td><td>validation กันแค่ทางที่ผ่าน model · constraint กันทุกทาง</td><td><a href="./0110-validations.html">110</a> · <a href="./0111-four-layers-and-uniqueness.html">111</a></td></tr>
+    <tr><td>3</td><td>ช่องที่ใช้ค้นหา (อยู่ใน <code>where</code>) และช่อง <code>…_id</code> <strong>มี index ไหม</strong></td><td>ไม่มีป้ายแท็บ = ไล่หาทีละแผ่น ช้าขึ้นตามจำนวนแฟ้ม</td><td><a href="./0109-safe-migrations.html">109</a></td></tr>
+    <tr><td>4</td><td>มี <code>has_many</code> → <strong>เลือก <code>dependent</code> ถูกไหม</strong></td><td>ลบแม่แล้วลูกหายตาม · ห้ามลบ · หรือค้างกำพร้า — คำตอบมาจากธุรกิจ ไม่ใช่จาก AI</td><td><a href="./0116-dependent-and-helpers.html">116</a></td></tr>
+    <tr><td>5</td><td>วน <code>each</code> แล้วแตะของที่ผูกกัน → <strong>มี <code>includes</code> ไหม</strong></td><td>ไม่มี = N+1 (เดินไปตู้ทีละแผ่นซ้ำ ๆ แทนที่จะหยิบทีเดียวทั้งตะกร้า) · <strong>เปิด log นับ query ก่อนรับงานเสมอ</strong></td><td><a href="./0114-n-plus-one.html">114</a></td></tr>
+    <tr><td>6</td><td>หน้ารายการ <strong>มี <code>limit</code> หรือการแบ่งหน้าไหม</strong></td><td><code>Model.all</code> ใน <code>index</code> = ระเบิดเวลาที่รอวันข้อมูลโต</td><td><a href="./0113-query-lazy-relation.html">113</a></td></tr>
+    <tr><td>7</td><td>migration นี้ <strong>แตะกี่แถว ระหว่างนั้นใครต้องรอ</strong></td><td>ตารางใหญ่ + lock (ปิดลิ้นชักไว้ระหว่างช่างทำงาน) = แอปค้างทั้งร้าน</td><td><a href="./0109-safe-migrations.html">109</a></td></tr>
+    <tr><td>8</td><td><strong>ใครมีสิทธิ์ทำอันนี้</strong></td><td>strong params ไม่ใช่ authorization</td><td><a href="./0117-rest-and-strong-params.html">117</a> · Day 4</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ข้อ 1–2 คือ "กฎคู่" ของบท 111 (ซึ่งมี checklist ฉบับละเอียดของเรื่องนี้อยู่แล้ว) · ข้อ 3–7 คือ "ร้านตอนคนเยอะ" ·
+  ข้อ 8 คือ "ร้านที่มีคนไม่หวังดี" · scaffold ของเราตอบ <strong>"ไม่มี"</strong> เกือบทุกข้อ — ซึ่งเป็นเรื่องปกติของโค้ดตั้งต้น ไม่ใช่ความผิดของมัน
+</p>
+
+<div class="analogy">
+  <span class="label">🏠 เทียบให้เห็นภาพ — ตรวจรับบ้านก่อนโอน</span>
+  <p>
+    ซื้อบ้านจากโครงการ ผู้รับเหมาสร้างเสร็จเร็วและดูสวย · แต่ก่อนเซ็นรับ คนส่วนใหญ่เดินตรวจด้วย<strong>ใบตรวจรับบ้าน</strong>:
+    เปิดน้ำทุกก๊อก · เคาะกระเบื้องหาโพรง · ดูรอยร้าว · checklist 8 ข้อคือใบตรวจรับของโค้ดชั้นข้อมูล — AI คือผู้รับเหมา เราคือคนเซ็นรับ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> บ้านตรวจครั้งเดียวตอนโอน · โค้ดต้องตรวจ<strong>ทุกครั้งที่มีการแก้</strong> (ทุก PR = คำขอรวมโค้ดเข้าโปรเจกต์) ·
+    และใบตรวจรับบ้านถามว่า "ของที่สร้างมาเสียไหม" แต่ checklist นี้ถามว่า "<strong>ของที่ควรมีแต่ไม่ได้สร้าง</strong> มีไหม" — ซึ่งมองหายากกว่า เพราะต้องรู้ว่าควรมีอะไร
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>code review (รีวิวโค้ด)</dt>
+    <dd>การอ่านโค้ดคนอื่น (หรือของ AI) ก่อนรวมเข้าโปรเจกต์ · PR (pull request) คือคำขอรวมโค้ดที่เปิดให้คนอื่นรีวิว ·
+        <strong>คุยกับทีมได้ว่า "ผมไล่ checklist ชั้นข้อมูล 8 ข้อแล้ว ข้อ 3 กับ 8 ยังไม่ผ่าน"</strong> — บอกชัดกว่า "ดูแล้วโอเค"</dd>
+    <dt>boilerplate</dt>
+    <dd>โค้ดหน้าตาเดิม ๆ ที่ทุกแอปต้องมี (CRUD 7 action · ฟอร์ม · หน้ารายการ) — ของที่ scaffold และ AI ทำได้ดีที่สุด ·
+        <strong>พิมพ์บอก AI ได้ว่า "generate the boilerplate, then list what business rules and DB constraints you assumed"</strong> ให้มันบอกเองว่าเดาอะไรไว้</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">ภารกิจ — scaffold Ingredient แล้วตรวจรับตาม checklist</h2>
+
+<div class="task">
+  <h3 id="sn-sub-5">🎯 แผนกวัตถุดิบ (~10 นาที)</h3>
+  <p>ร้านอยากมีรายชื่อวัตถุดิบ เช่น <code>กุ้ง</code> · <code>ใบกะเพรา</code> · <strong>กฎของร้าน: ชื่อวัตถุดิบห้ามว่าง และห้ามซ้ำ</strong></p>
+  <p>(ไม่ใช้ชื่อ <code>Tag</code> เพราะ<a href="./0115-associations.html">บท 115</a>ให้คุณสร้าง model <code>Tag</code> ไว้แล้ว — scaffold ชื่อซ้ำจะไม่ยอมทำงาน)</p>
+  <ol>
+    <li>ในโฟลเดอร์แอป สั่ง <code>bin/rails generate scaffold Ingredient name:string</code> แล้ว<strong>นับว่าได้ไฟล์ <code>create</code> กี่บรรทัด</strong></li>
+    <li>สั่ง <code>bin/rails db:migrate</code> · เปิด server แล้วเข้า <code>http://localhost:3000/ingredients</code> · สร้างวัตถุดิบ <code>กุ้ง</code> สองครั้ง กับวัตถุดิบที่ไม่กรอกชื่อหนึ่งครั้ง</li>
+    <li>เปิด <code>app/models/ingredient.rb</code> · <code>db/migrate/…_create_ingredients.rb</code> · <code>app/controllers/ingredients_controller.rb</code> แล้ว<strong>ไล่ checklist ทั้ง 8 ข้อ</strong> จดว่าข้อไหน "ผ่าน" · "ไม่ผ่าน" · "ไม่เกี่ยว"</li>
+    <li>เขียนประโยคเดียวที่จะสั่ง AI ให้เติมของที่ขาด (ไม่ต้องให้มันทำจริง — Lab บท 119 ทำ)</li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> <code>create</code> 17 บรรทัด (16 ไฟล์ + โฟลเดอร์ <code>app/views/ingredients</code>) + <code>route resources :ingredients</code> · หน้า /ingredients โชว์ <code>กุ้ง</code> สองแถวกับแถวว่างหนึ่งแถว ไม่มีอะไรห้าม</p>
+  <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong></p>
+  <ul>
+    <li>หน้าเว็บขึ้น <code>ActiveRecord::PendingMigrationError</code> · <code>Migrations are pending. To resolve this issue, run: bin/rails db:migrate</code>
+        → มีใบสั่งช่างที่ยังไม่ได้ทำ (ข้ามขั้น 2) · สั่ง <code>bin/rails db:migrate</code> แล้ว refresh</li>
+    <li>สั่ง generate รอบสองแล้วขึ้น <code>The name 'Ingredient' is either already used in your application or reserved by Ruby on Rails.</code>
+        → มี <code>Ingredient</code> อยู่แล้วจากรอบแรก · อยากเริ่มใหม่ให้ย้อนตามลำดับ: <code>bin/rails db:rollback</code> (รื้องานช่างใบล่าสุด บท 108) แล้ว <code>bin/rails destroy scaffold Ingredient</code> (ลบไฟล์ทั้งชุด)</li>
+    <li>หน้าไม่มีสี → <code>bin/rails tailwindcss:build</code> แบบหัวข้อ 3</li>
+  </ul>
+  <p>
+    <strong>ทำเสร็จแล้ว รื้อ Ingredient ออก</strong> ด้วยสองคำสั่งเดียวกับข้างบน ตามลำดับ: <code>bin/rails db:rollback</code> แล้ว <code>bin/rails destroy scaffold Ingredient</code> ·
+    สั่ง <code>bin/rails db:migrate:status</code> แล้วบรรทัดล่างสุดต้องกลับมาเป็น <code>up … Create categories</code> ·
+    Category เก็บไว้ได้ — Lab <a href="./0119-rails-day2-lab.html">บท 119</a> มีขั้นตอนรื้อ Category ของบทนี้บอกไว้ต้นบท (ขั้นตอนนั้นเขียนไว้สำหรับกรณีที่ Category เป็นงานช่างใบล่าสุด จึงต้องรื้อ Ingredient ก่อน)
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ไฟล์ที่ได้ (ผลจริงจากเครื่องผม · ตัดมาเฉพาะบรรทัด <code>create</code> กับ <code>route</code>):</p>
+<pre><code>      create    db/migrate/20261104124304_create_ingredients.rb
+      create    app/models/ingredient.rb
+      create      test/models/ingredient_test.rb
+      create      test/fixtures/ingredients.yml
+       route    resources :ingredients
+      create    app/controllers/ingredients_controller.rb
+      create      app/views/ingredients
+      create      app/views/ingredients/index.html.erb
+      create      app/views/ingredients/edit.html.erb
+      create      app/views/ingredients/show.html.erb
+      create      app/views/ingredients/new.html.erb
+      create      app/views/ingredients/_form.html.erb
+      create      app/views/ingredients/_ingredient.html.erb
+      create      test/controllers/ingredients_controller_test.rb
+      create      app/helpers/ingredients_helper.rb
+      create      app/views/ingredients/index.json.jbuilder
+      create      app/views/ingredients/show.json.jbuilder
+      create      app/views/ingredients/_ingredient.json.jbuilder</code></pre>
+    <p>
+      <strong>17 บรรทัด = 16 ไฟล์ + โฟลเดอร์ <code>app/views/ingredients</code> อีกหนึ่ง</strong> ชุดเดียวกับ Category ทุกไฟล์ ·
+      migration ที่ได้:
+    </p>
+<pre><code><span class="k">class</span> <span class="n">CreateIngredients</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">create_table</span> <span class="n">:ingredients</span> <span class="k">do</span> |t|
+      t.<span class="f">string</span> <span class="n">:name</span>
+
+      t.<span class="f">timestamps</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>ข้อ</th><th>ผล</th><th>เหตุผล</th></tr></thead>
+      <tbody>
+        <tr><td>1 uniqueness + unique index</td><td>❌ ไม่ผ่าน</td><td>กฎร้านบอกห้ามซ้ำ แต่ไม่มีทั้ง <code>uniqueness</code> และ unique index · เห็นจริงว่า <code>กุ้ง</code> ซ้ำได้</td></tr>
+        <tr><td>2 presence + NOT NULL</td><td>❌ ไม่ผ่าน</td><td>model ว่าง · migration ไม่มี <code>null: false</code> · วัตถุดิบที่ไม่มีชื่อก็เก็บได้</td></tr>
+        <tr><td>3 index ช่องที่ค้นหา</td><td>❌ ไม่ผ่าน</td><td>ถ้าจะหาวัตถุดิบจากชื่อ (<code>where(name: …)</code>) ควรมี index · unique index ของข้อ 1 ทำหน้าที่นี้ได้ด้วย</td></tr>
+        <tr><td>4 dependent</td><td>➖ ยังไม่เกี่ยว</td><td>Ingredient ยังไม่ผูกกับตารางอื่น · พอผูกแล้ว (เมนูหนึ่งใช้หลายวัตถุดิบ วัตถุดิบหนึ่งอยู่ในหลายเมนู — <code>has_many :through</code> บท 115) ต้องตอบข้อนี้</td></tr>
+        <tr><td>5 includes</td><td>➖ ยังไม่เกี่ยว</td><td>หน้า /ingredients ไม่ได้แตะของที่ผูกกัน · log ของหน้ารายการมีแต่ query ของลิ้นชัก <code>ingredients</code></td></tr>
+        <tr><td>6 limit</td><td>❌ ไม่ผ่าน</td><td><code>@ingredients = Ingredient.all</code> ใน <code>index</code></td></tr>
+        <tr><td>7 lock</td><td>✅ ผ่าน</td><td><code>create_table</code> ของตารางใหม่ที่ว่างเปล่า ไม่มีใครรอ (ต่างจากการแก้ตารางเดิมที่มีข้อมูลเยอะ บท 109)</td></tr>
+        <tr><td>8 ใครมีสิทธิ์</td><td>❌ ไม่ผ่าน</td><td>ใครเปิดหน้าได้ก็สร้าง/แก้/ลบวัตถุดิบได้ · มีแค่ <code>params.expect(ingredient: [ :name ])</code> ที่คัดช่อง</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>ตัวอย่างประโยคสั่ง AI (ภาษาไทยก็ได้):</p>
+    <pre><code>Ingredient ต้องมี name ห้ามว่าง และห้ามซ้ำ — เติมทั้ง validation ใน model และ constraint ใน migration ใหม่
+(null: false + unique index) · หน้า index ให้เรียงตามชื่อและ limit 50 · อย่าแก้ migration เดิมที่รันไปแล้ว</code></pre>
+    <p>
+      ประโยคท้าย "อย่าแก้ migration เดิม" มาจากกับดักในบท 108 · ถ้าไม่บอก AI อาจแก้ไฟล์ <code>create_ingredients</code> ตรง ๆ ซึ่งเครื่องที่รันไปแล้วจะไม่รู้เรื่อง
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อ 1 · ใน controller ที่ scaffold เขียนให้ <code>before_action :set_category, only: %i[ show edit update destroy ]</code> — ทำไม <code>index</code> · <code>new</code> · <code>create</code> ไม่อยู่ในรายการ?</p>
+  <div class="opts">
+    <button class="opt">เพราะสาม action นั้นเป็น private จึงเรียก before_action ไม่ได้</button>
+    <button class="opt">เพราะ scaffold ลืมใส่ ควรเติมให้ครบทั้ง 7 action</button>
+    <button class="opt">เพราะสาม action นั้นไม่มีเลขที่แฟ้มให้หยิบ ไม่ได้ทำงานกับแฟ้มเดิม</button>
+    <button class="opt">เพราะสาม action นั้นต้องใช้ find_by แทน find</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · <code>set_category</code> ทำ <code>Category.find(params.expect(:id))</code> ซึ่งต้องมี <code>:id</code> ใน URL ·
+      ดูตาราง routes หัวข้อ 2: มีแค่ show · edit · update · destroy ที่ URL มี <code>:id</code> · <code>index</code> ดูทุกแผ่น · <code>new</code> กับ <code>create</code> ทำแฟ้มใหม่ที่ยังไม่มีเลขที่
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิด — ทั้งเจ็ดเป็นเมนูธรรมดา (อยู่เหนือ <code>private</code>) · ตัวเลือกที่ 2 ผิด — ถ้าเติม <code>index</code> เข้าไป <code>find</code> จะหาเลขที่ที่ไม่มีแล้วระเบิด ·
+      ตัวเลือกที่ 4 ผิด — ปัญหาไม่ได้อยู่ที่วิธีหา แต่อยู่ที่ไม่มีอะไรให้หา
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>before_action … only:</code> = "เมนูที่ต้องหยิบแฟ้มเดิมก่อน" · ดูจาก URL ว่ามี <code>:id</code> ไหม</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อ 2 · <code>category_params</code> เขียนว่า <code>params.expect(category: [ :name, :slug, :description ])</code> — บรรทัดนี้ป้องกันอะไรได้?</p>
+  <div class="opts">
+    <button class="opt">ช่องอื่นที่ไม่อยู่ในรายการถูกตัดทิ้ง แต่ไม่ได้ตรวจว่าใครเป็นคนส่ง</button>
+    <button class="opt">กันไม่ให้คนที่ไม่ได้ login สร้างหรือลบหมวดหมู่ได้</button>
+    <button class="opt">กันไม่ให้ name กับ slug เป็นข้อความว่างก่อนบันทึก</button>
+    <button class="opt">กันไม่ให้ slug ซ้ำกับหมวดหมู่อื่นที่มีอยู่แล้ว</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · strong params คัด<strong>ช่อง</strong> (บท 117) ไม่ได้ดู<strong>คน</strong> ·
+      ตัวเลือกที่ 2 คือ authorization ซึ่ง scaffold ไม่มี (Day 4) ·
+      ตัวเลือกที่ 3 คือ <code>presence</code> ของ validation — predict หัวข้อ 3 พิสูจน์แล้วว่าช่องว่างผ่านได้ ·
+      ตัวเลือกที่ 4 คือ uniqueness + unique index — console หัวข้อ 6 ได้ slug ซ้ำ 2 แผ่น
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> strong params กันรูปร่างของข้อมูล · validation กันค่า · constraint กันทุกทาง · authorization กันคน — สี่อย่างนี้แทนกันไม่ได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ข้อ 3 · AI ส่ง model มาให้ มีบรรทัด <code>validates :email, uniqueness: true</code> — คำถามแรกจาก checklist ที่ควรถามคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">หน้า index ของ users มี limit หรือการแบ่งหน้าแล้วหรือยัง</button>
+    <button class="opt">ข้อความ error ของ uniqueness แปลเป็นภาษาไทยแล้วหรือยัง</button>
+    <button class="opt">controller ใช้ <code>respond_to</code> ตอบเป็น JSON ได้ด้วยแล้วหรือยัง</button>
+    <button class="opt">migration มี unique index ที่ email คู่กันแล้วหรือยัง</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · checklist ข้อ 1 · บท 111 พิสูจน์ว่า <code>uniqueness</code> อย่างเดียวยังได้อีเมลซ้ำเมื่อมีสองคนกดพร้อมกัน · ต้องมีตัวตู้ (unique index) เป็นคนตัดสินสุดท้าย
+    </p>
+    <p>
+      ตัวเลือกที่ 1 เป็นคำถามที่ดี (ข้อ 6) แต่ไม่เกี่ยวกับบรรทัดนี้ · ตัวเลือกที่ 2 เรื่องข้อความ ไม่ทำให้ข้อมูลเสีย · ตัวเลือกที่ 3 ไม่เกี่ยวกับความถูกต้องของข้อมูลเลย
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> เห็น <code>uniqueness</code> → ถามหา unique index · เห็น <code>presence</code> → ถามหา <code>null: false</code> · กฎใน model ต้องมีคู่ที่ตัวตู้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 4 · <code>def index; @categories = Category.all; end</code> ที่ scaffold เขียนให้ — ทำงานได้ถูกต้องวันนี้ แล้วจะเป็นปัญหาตอนไหน?</p>
+  <div class="opts">
+    <button class="opt">ตอนมีคนสองคนเปิดหน้ารายการพร้อมกัน จะได้ข้อมูลซ้ำกัน</button>
+    <button class="opt">ตอนข้อมูลโตมาก ทุกครั้งที่เปิดหน้าจะดึงทุกแถวมาหมด</button>
+    <button class="opt">ตอนลบหมวดหมู่ หน้ารายการจะ error เพราะหาแถวไม่เจอ</button>
+    <button class="opt">ตอนเปลี่ยนไปใช้ Rails รุ่นใหม่ เพราะ all ถูกยกเลิกแล้ว</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · log หัวข้อ 6: <code>SELECT "categories".* FROM "categories"</code> ไม่มี <code>LIMIT</code> = ขอทุกแผ่นทุกครั้ง ·
+      3 แผ่นเร็ว · หลายหมื่นแผ่นทั้งช้าและกินหน่วยความจำ · checklist ข้อ 6 · แก้ด้วย <code>limit</code> (บท 113) หรือการแบ่งหน้า
+    </p>
+    <p>
+      ตัวเลือกที่ 1 ผิด — คนละคนก็ได้ผลแยกกัน ไม่ซ้ำกันเอง · ตัวเลือกที่ 3 ผิด — <code>all</code> ไม่ได้หาแถวไหนเจาะจง ลบไปแล้วก็แค่ไม่โชว์ (เราลบแฟ้มที่ 2 แล้วหน้ารายการยังขึ้นปกติ) ·
+      ตัวเลือกที่ 4 ผิด — <code>all</code> ยังใช้ได้ใน Rails 8.1.4 ที่ผมรัน
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> โค้ดที่ "ทำงานได้" กับโค้ดที่ "ทำงานได้ตอนข้อมูลเยอะ" คนละเรื่อง · <code>Model.all</code> ใน <code>index</code> = ระเบิดเวลา</p>
+  </div>
+</div>
+
+<p>
+  <strong>ถามกลับได้เลย</strong> — ถ้าอ่าน controller แล้วติดบรรทัดไหน หรืออยากรู้ว่า checklist ข้อไหนใช้กับโค้ดในงานของคุณยังไง
+  ก็อปโค้ดนั้นมาถาม AI ได้เลยว่า "ไล่ checklist 8 ข้อนี้กับโค้ดนี้ให้หน่อย"
+</p>
+
+<h2 id="sn-sec-10">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4)</th><th>ต้องสนใจไหม</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>52</td><td>13 ไฟล์ · ~220 บรรทัด · 1.4 วินาที</td><td>ไฟล์ใหม่ 16 ไฟล์ (มี helper กับ <code>.jbuilder</code> 3 ไฟล์เพิ่ม) + routes 1 บรรทัด = 265 บรรทัด · ~0.4 วินาที</td><td>ไม่ต้อง — แก่นเหมือนกัน</td></tr>
+    <tr><td>53</td><td>controller ไม่มี <code>respond_to</code> · ข้อความ <code>"Category was created."</code> · <code>find(params[:id])</code></td><td>มี <code>respond_to</code> + <code>format.json</code> ทุก action · <code>"Category was successfully created."</code> · <code>find(params.expect(:id))</code></td><td>ไม่ต้อง — สไลด์ย่อให้สั้น</td></tr>
+    <tr><td>53</td><td><code>status: :unprocessable_entity</code></td><td><code>:unprocessable_content</code> · ชื่อเก่าในสไลด์ยังได้ 422 เหมือนกัน และ Rails 8.1.4 ไม่เตือนอะไร แต่ Rack ประกาศเลิกใช้ชื่อเก่าแล้ว (บท 110)</td><td>สนใจถ้าพิมพ์เอง — ใช้ชื่อใหม่</td></tr>
+    <tr><td>54</td><td><code>has_many :posts</code> · <code>includes(:posts)</code></td><td>ตาราง posts ยังไม่มี <code>category_id</code> → <code>PG::UndefinedColumn</code></td><td>สนใจ — ต้องเพิ่มช่องก่อน (บท 115)</td></tr>
+    <tr><td>54</td><td><code>before_validation { self.slug ||= name.to_s.parameterize }</code></td><td><code>"อาหารจานเดียว".parameterize</code> ได้ <code>""</code> (ตัดอักษรไทยทิ้งหมด) · และฟอร์มส่ง slug มาเป็น <code>""</code> ไม่ใช่ <code>nil</code> → <code>||=</code> ไม่ทำงาน</td><td>สนใจถ้าชื่อเป็นภาษาไทย — callback บท 112</td></tr>
+    <tr><td>ทั้งชุด</td><td>Ruby 4.0.6 · Rails 8.1.3</td><td>เครื่องตรวจใช้ Ruby 4.0.9 · Rails 8.1.4</td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0117-rest-and-strong-params.html">← บทเรียน 117 · REST · params.expect</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0119-rails-day2-lab.html">บทเรียน 119 → Lab 2</a>
+</nav>
+
+<h2 id="sn-sec-11">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/command_line.html#generating-scaffolds">Rails Guides — The Rails Command Line</a> —
+      <strong>อ่านหัวข้อ 4.4 <em>Generating Scaffolds</em></strong> รายการไฟล์ทางการของ scaffold เกือบเหมือนหัวข้อ 2 ของบทนี้ (คู่มือใช้ <code>Post</code> · ขึ้น <code>erb</code> แทน <code>tailwindcss</code> และมีไฟล์เทส <code>test/system/…</code> เพิ่มหนึ่งไฟล์ที่แอปเราไม่มี)</li>
+  <li><a href="https://guides.rubyonrails.org/action_controller_overview.html#controller-callbacks">Rails Guides — Action Controller Overview</a> —
+      <strong>อ่านหัวข้อ 7 <em>Controller Callbacks</em></strong> (<code>before_action</code> · <code>only:</code>) แล้วย้อนไปหัวข้อ 4 <em>Strong Parameters</em> (<code>params.expect</code>)</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionController/MimeResponds.html#method-i-respond_to">Rails API — ActionController::MimeResponds#respond_to</a> —
+      <strong>อ่านตัวอย่างแรกที่เขียน <code>respond_to do |format|</code></strong> และประโยค "What that says is…" ใต้มัน ·
+      ตัวอย่างใช้ <code>format.xml</code> แทน JSON แต่หลักเดียวกัน (ทานที่ร้าน vs กลับบ้าน)</li>
+  <li><a href="https://guides.rubyonrails.org/form_helpers.html#creating-forms-with-model-objects">Rails Guides — Action View Form Helpers</a> —
+      <strong>อ่านหัวข้อ 2 <em>Creating Forms with Model Objects</em></strong> ที่อธิบายว่า <code>form_with model:</code> เลือก create หรือ update จากแฟ้มใหม่หรือเก่า</li>
+  <li><a href="https://guides.rubyonrails.org/layouts_and_rendering.html#using-partials">Rails Guides — Layouts and Rendering in Rails</a> —
+      <strong>อ่านหัวข้อ 3.4 <em>Using Partials</em></strong> (ไฟล์ <code>_form</code> · <code>_category</code>)</li>
+  <li><a href="https://guides.rubyonrails.org/i18n.html">Rails Guides — Rails Internationalization (I18n) API</a> —
+      <strong>แค่อ่านย่อหน้าแรก</strong>ให้รู้ว่ามีระบบแปลข้อความ (ข้อ 6 ของของที่ขาด) · ไม่อยู่ในคอร์ส</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

@@ -181,6 +181,23 @@
       { n: '103', f: 'rails-day-1/lessons/0103-rails-views-and-helpers.html', t: 'View — ERB · layout · helper' },
       { n: '104', f: 'rails-day-1/lessons/0104-rails-debug-and-console.html', t: 'debugger และ bin/rails console' },
       { n: '105', f: 'rails-day-1/lessons/0105-rails-day1-lab.html', t: 'Lab 1 — สร้างแอปเองตั้งแต่ศูนย์' }
+    ]},
+    { key: 'rails-day-2', btn: 'Day 2', where: 'Rails Day 2',
+      sheetLabel: 'Cheat sheet Rails Day 2', d: 202, lessons: [
+      { n: '106', f: 'rails-day-2/lessons/0106-active-record-intro.html', t: 'Active Record คืออะไร' },
+      { n: '107', f: 'rails-day-2/lessons/0107-console-crud.html', t: 'สร้าง อ่าน แก้ ลบ ใน console' },
+      { n: '108', f: 'rails-day-2/lessons/0108-migration-basics.html', t: 'Migration — ใบสั่งช่างต่อเติมตู้' },
+      { n: '109', f: 'rails-day-2/lessons/0109-safe-migrations.html', t: 'Migration ที่ไม่ทำร้านปิด' },
+      { n: '110', f: 'rails-day-2/lessons/0110-validations.html', t: 'Validation — ตรวจก่อนเก็บ' },
+      { n: '111', f: 'rails-day-2/lessons/0111-four-layers-and-uniqueness.html', t: '4 ชั้นป้องกัน · uniqueness' },
+      { n: '112', f: 'rails-day-2/lessons/0112-callbacks-and-logic.html', t: 'Callbacks และที่อยู่ของโค้ด' },
+      { n: '113', f: 'rails-day-2/lessons/0113-query-lazy-relation.html', t: 'Query — where ยังไม่ยิง SQL' },
+      { n: '114', f: 'rails-day-2/lessons/0114-n-plus-one.html', t: 'N+1 และ includes' },
+      { n: '115', f: 'rails-day-2/lessons/0115-associations.html', t: 'Association — belongs_to · has_many' },
+      { n: '116', f: 'rails-day-2/lessons/0116-dependent-and-helpers.html', t: 'dependent · CASCADE · counter_cache' },
+      { n: '117', f: 'rails-day-2/lessons/0117-rest-and-strong-params.html', t: 'REST · mass assignment · params.expect' },
+      { n: '118', f: 'rails-day-2/lessons/0118-scaffold-reading.html', t: 'scaffold — อ่านโค้ดที่เครื่องเขียน' },
+      { n: '119', f: 'rails-day-2/lessons/0119-rails-day2-lab.html', t: 'Lab 2 — เติมของที่ scaffold ไม่ให้' }
     ]}
   ];
 

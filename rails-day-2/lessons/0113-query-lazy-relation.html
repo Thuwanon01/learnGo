@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 113 — Query — ใบเบิกของที่ยังไม่ยื่น จนกว่าจะใช้ข้อมูลจริง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 113 · Rails · Day 2</p>
+  <h1>Query — ใบเบิกของที่ยังไม่ยื่น จนกว่าจะใช้ข้อมูลจริง</h1>
+  <p class="meta">~20–25 นาที (ถ้าลองใน console ตามทุกก้อน) · ควรผ่าน <a href="./0106-active-record-intro.html">บทเรียน 106</a> (Active Record · SQL ภาษาคน) และ <a href="./0107-console-crud.html">บทเรียน 107</a> (ลอง <code>where</code> · <code>first</code> ใน console) มาก่อน</p>
+  <p class="standfirst">
+    เรื่องที่ทำให้มือใหม่งงที่สุดเรื่องหนึ่งของ Rails: <strong>พิมพ์ <code>Post.where(...)</code> แล้ว Rails ยังไม่ได้ไปเอาข้อมูลจากฐานข้อมูลเลย</strong>
+    <br>อ่านจบบทนี้ คุณจะบอกได้ว่าบรรทัดไหน "ไปตู้จริง" บรรทัดไหนยังไม่ไป ·
+    เปิดดู SQL ที่แอปยิงจริงจาก log ได้ · และเลือกใช้ <code>count</code> · <code>size</code> · <code>length</code> · <code>exists?</code> · <code>pluck</code> · <code>sum</code> ได้ถูกตัว
+    โดยให้ฐานข้อมูลทำงานให้ แทนที่จะขนข้อมูลมาทั้งหมด
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>model <code>Post</code></strong> (บท 106) — "คนดูแลสต็อก" ของลิ้นชัก <code>posts</code> · เรียก method ของมัน แล้วมันไปคุยกับฐานข้อมูลให้</li>
+    <li><strong>SQL</strong> (บท 106) — ภาษาที่ใช้สั่งตู้เก็บแฟ้ม (ฐานข้อมูล) · Active Record แปลคำสั่ง Ruby เป็น SQL ให้เอง</li>
+    <li><strong><code>bin/rails console</code></strong> (บท 104, 107) — ครัวทดลองหลังร้าน พิมพ์โค้ดทีละบรรทัดแล้วเห็นผลทันที · เห็น SQL ที่ Rails ยิงด้วย</li>
+    <li><strong><code>Post.where(...)</code> · <code>first</code> · <code>all</code></strong> (บท 107) — หาแฟ้มตามเงื่อนไข · เอาแผ่นแรก · เอาทั้งหมด</li>
+    <li><strong>log ของ server</strong> (บท 100, 104) — ข้อความ <code>Started GET …</code> / <code>Completed 200 OK …</code> ที่ขึ้นทุกครั้งที่มีใบสั่งเข้าร้าน</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17</strong>
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน ใช้แทนกันได้)</p>
+  <p>🗂 ตัวอย่างในบทนี้ใช้ตาราง <code>users</code> / <code>posts</code> / <code>comments</code> และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับที่สร้างไว้ใน <a href="./0107-console-crud.html">บท 107</a> —
+    บทความ 6 ชิ้น (published 4 · draft 2) ของสมชาย สมหญิง และมานะ</p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · <strong>เวลา (ms) · วันที่ · เลข <code>0x…</code> ของคุณจะไม่ตรงกับในบท</strong> และจอคุณจะมีสี ·
+    เลข <code>001</code> <code>002</code> ใน prompt ของ console นับตามบรรทัดที่พิมพ์ในรอบนั้น บางก้อนในบทรันแยกรอบ เลขเลยเริ่มใหม่ — ไม่ต้องสนใจ</p>
+</div>
+
+<h2 id="sn-sec-1">ทวน SQL ภาษาคน — คำที่จะเห็นทั้งบท</h2>
+
+<p>
+  ทั้งบทนี้เราจะอ่าน SQL ที่ Rails ยิงออกไป · ไม่ต้องเขียน SQL เป็น แค่<strong>อ่านออก</strong>ว่ามันขออะไรจากตู้ก็พอ
+  <br>นี่คือคำทั้งหมดที่จะเจอ (ทวนจากบท 106 และเพิ่มอีกนิด):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำใน SQL</th><th>แปลเป็นภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>SELECT "posts".*</code></td><td>ขอ<strong>ทุกช่อง</strong>ของแฟ้ม (<code>*</code> = ทุกช่อง)</td></tr>
+    <tr><td><code>SELECT "posts"."title"</code></td><td>ขอแค่ช่อง <code>title</code> ช่องเดียว</td></tr>
+    <tr><td><code>FROM "posts"</code></td><td>จากลิ้นชัก <code>posts</code></td></tr>
+    <tr><td><code>WHERE …</code></td><td>เฉพาะแผ่นที่ตรงเงื่อนไขนี้</td></tr>
+    <tr><td><code>… AND …</code></td><td>"และ" — ต้องตรงทั้งสองเงื่อนไข</td></tr>
+    <tr><td><code>ORDER BY … DESC</code> / <code>ASC</code></td><td>เรียงตามช่องนี้ · <code>DESC</code> = มากไปน้อย · <code>ASC</code> = น้อยไปมาก</td></tr>
+    <tr><td><code>LIMIT 10</code></td><td>เอามาไม่เกิน 10 แผ่น</td></tr>
+    <tr><td><code>COUNT(*)</code></td><td>ไม่ต้องหยิบแฟ้มมา แค่<strong>นับ</strong>ให้หน่อยว่ามีกี่แผ่น</td></tr>
+    <tr><td><code>SUM(…)</code> · <code>AVG(…)</code></td><td>บวกตัวเลขในช่องนี้ของทุกแผ่น · หาค่าเฉลี่ย</td></tr>
+    <tr><td><code>GROUP BY …</code></td><td>แยกกองตามช่องนี้ก่อน แล้วค่อยนับ/บวกทีละกอง</td></tr>
+    <tr><td><code>… AS "ชื่อ"</code></td><td>ตั้งชื่อเล่นให้ผลลัพธ์ช่องนั้น (Rails ใส่ไว้ใช้เอง ข้ามได้)</td></tr>
+    <tr><td><code>UPDATE … SET …</code></td><td>แก้ค่าในช่องนี้ ของทุกแผ่นที่ตรงเงื่อนไข</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ลองแปลหนึ่งประโยคเต็ม ๆ:</p>
+<pre><code>SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE ORDER BY "posts"."views" DESC LIMIT 10</code></pre>
+<p>
+  = "ขอแฟ้ม<strong>ทุกช่อง</strong> จากลิ้นชัก <code>posts</code> · <strong>เฉพาะ</strong>แผ่นที่ช่อง <code>published</code> เป็นจริง ·
+  <strong>เรียง</strong>ตามยอดวิวมากไปน้อย · เอามา<strong>ไม่เกิน 10 แผ่น</strong>"
+  <br>เครื่องหมาย <code>"…"</code> รอบชื่อเป็นแค่วิธีเขียนชื่อของ PostgreSQL · <code>"posts"."views"</code> อ่านว่า "ช่อง views ของลิ้นชัก posts"
+</p>
+
+<h2 id="sn-sec-2"><code>Post.where(...)</code> ไม่ใช่ข้อมูล — มันคือใบเบิกของ</h2>
+
+<p>
+  ตอนพิมพ์ <code>Post.where(published: true)</code> หลายคนคิดว่า "Rails ไปเอาบทความที่ published มาให้แล้ว" ·
+  <strong>ความจริงคือยังไม่ได้ไปเลย</strong>
+  <br>สิ่งที่ <code>where</code> คืนมาคือ<strong>คำขอที่จดไว้</strong>ว่า "อยากได้อะไร" · Rails จะไปตู้จริงก็ต่อเมื่อเรา<strong>เริ่มใช้ข้อมูล</strong> เช่น วนลูปโชว์ หรือนับจำนวน
+</p>
+
+<p>
+  ประโยชน์ของการออกแบบแบบนี้: เราต่อเงื่อนไขเพิ่มได้ทีละบรรทัด (<code>where</code> แล้ว <code>order</code> แล้ว <code>limit</code>) ·
+  Rails รวมทุกอย่างเป็น SQL <strong>ประโยคเดียว</strong> แล้วไปตู้<strong>ครั้งเดียว</strong>ตอนท้าย ·
+  ไม่ใช่ไปตู้ทุกบรรทัด
+</p>
+
+<div class="analogy">
+  <span class="label">📝 เทียบให้เห็นภาพ — ใบเบิกของที่ยังเขียนไม่เสร็จ</span>
+  <p>
+    <code>Post.where(published: true)</code> เหมือนหยิบ<strong>ใบเบิกของ</strong>มาหนึ่งใบ แล้วเขียนว่า "เอาแฟ้มที่ published แล้ว" ·
+    <code>.order(views: :desc)</code> = เขียนต่อว่า "เรียงตามยอดวิว" · <code>.limit(10)</code> = "ขอแค่ 10 แผ่น"
+    <br>ตลอดเวลาที่ยังเขียนอยู่ <strong>ไม่มีใครเดินไปตู้เลย</strong> · คนดูแลสต็อกจะเดินไปก็ต่อเมื่อเรา "ยื่นใบ" —
+    คือตอนที่เราต้องการของจริง เช่น จะเอาแฟ้มมาวางเรียงบนจาน (<code>each</code>)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ใบเบิกของจริงยื่นแล้วก็หมดหน้าที่ ·
+    แต่ใบเบิกของ Rails <strong>ยื่นซ้ำได้</strong> และบางคำสั่ง (เช่น <code>count</code>) จะเดินไปตู้ใหม่ทุกครั้งที่เรียก แม้เคยยื่นไปแล้ว — เดี๋ยวเห็นจริงในหัวข้อ count vs size
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go (GORM):</strong> GORM ก็ต่อเงื่อนไขทีละท่อนได้เหมือนกัน แต่<strong>ต้องปิดท้ายด้วยคำสั่งที่สั่งให้ไปตู้เอง</strong> เช่น <code>Find</code> ·
+  ตามเอกสาร GORM เรียกคำสั่งพวกนี้ว่า Finisher Methods และบอกว่ามันยิง SQL ทันที:
+</p>
+
+<pre><code><span class="c">// Go + GORM — บรรทัดนี้ไปตู้ทันที เพราะลงท้ายด้วย Find</span>
+<span class="k">var</span> posts []Post
+db.<span class="f">Where</span>(<span class="s">"published = ?"</span>, <span class="k">true</span>).<span class="f">Order</span>(<span class="s">"views desc"</span>).<span class="f">Find</span>(&amp;posts)</code></pre>
+
+<pre><code><span class="c"># Ruby + Rails — บรรทัดนี้ยังไม่ไปตู้ ไม่มีคำว่า Find ท้าย</span>
+posts = <span class="n">Post</span>.<span class="f">where</span>(<span class="n">published:</span> <span class="k">true</span>).<span class="f">order</span>(<span class="n">views:</span> <span class="n">:desc</span>)</code></pre>
+
+<ul>
+  <li>ฝั่ง Go: <code>Find(&amp;posts)</code> = "ไปตู้เดี๋ยวนี้ แล้วเทแฟ้มที่ได้ใส่ slice <code>posts</code>" · อ่านโค้ดแล้ว<strong>เห็นชัดว่าไปตู้ตรงไหน</strong></li>
+  <li>ฝั่ง Rails: <code>posts</code> ได้ใบเบิกของ · จะไปตู้ตอนไหนขึ้นกับว่า<strong>บรรทัดถัด ๆ ไปเอา <code>posts</code> ไปทำอะไร</strong> — อ่านบรรทัดเดียวไม่รู้</li>
+  <li><code>:desc</code> — symbol (บท 92) แปลว่า "มากไปน้อย"</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>ActiveRecord::Relation (relation)</dt>
+    <dd>ชนิดของสิ่งที่ <code>where</code> · <code>order</code> · <code>limit</code> คืนมา = "ใบเบิกของ" ที่ยังไม่ยื่น · ใน console จะเห็นชื่อเต็มว่า <code>Post::ActiveRecord_Relation</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า “this returns an ActiveRecord::Relation, when does it actually hit the database?”</strong></dd>
+    <dt>lazy loading · lazy evaluation</dt>
+    <dd>"ขี้เกียจไว้ก่อน" — ยังไม่ทำงานจริงจนกว่าจะต้องใช้ผล · คำว่า <em>hit the database</em> = ไปตู้จริง ·
+        <strong>ถาม senior ได้ว่า “relation นี้ถูก load ตรงไหน ใน controller หรือใน view”</strong></dd>
+    <dt>query chaining · finisher</dt>
+    <dd>การต่อคำสั่ง <code>.where.order.limit</code> เป็นสาย · ฝั่ง GORM คำสั่งปิดท้ายที่ไปตู้ (<code>Find</code> · <code>First</code>) เรียกว่า <em>finisher</em> ·
+        <strong>พิมพ์บอก AI ได้ว่า “in GORM I call Find to execute, what triggers execution in ActiveRecord?”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">ลองใน console — แล้วเจอกับดักทันที</h2>
+
+<p>
+  มาพิสูจน์ด้วยตาตัวเอง · เปิด <code>bin/rails console</code> แล้วพิมพ์ทีละบรรทัดตามสไลด์หน้า 31
+  <br>ถ้า <code>where</code> ไม่ไปตู้จริง เราไม่ควรเห็น SQL โผล่เลยสักบรรทัด… ผลจริง:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; q = Post.where(published: true)
+  Post Load (1.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE /* loading for pp */ LIMIT 11 /*application='WongnokBlog'*/
+=&gt;
+[#&lt;Post:0x0000000127a4e458
+...
+wongnok-blog(dev):002&gt; q = q.where("views &gt; ?", 100)
+  Post Load (2.3ms)  SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE AND (views &gt; 100) /* loading for pp */ LIMIT 11 /*application='WongnokBlog'*/
+=&gt;
+[#&lt;Post:0x000000012657d5d8
+...</code></pre>
+
+<p>
+  <strong>เห็น SQL ทุกบรรทัด!</strong> ขัดกับที่เพิ่งพูดไปเลย · แต่สังเกตคำแปลก ๆ ใน SQL: <code>/* loading for pp */</code> กับ <code>LIMIT 11</code>
+  <br>ทั้งสองอย่างนี้ <strong>console ใส่เอง</strong> ไม่ใช่ของ <code>where</code>:
+</p>
+<ul>
+  <li>console มีนิสัย<strong>โชว์ผลของทุกบรรทัด</strong>หลังเครื่องหมาย <code>=&gt;</code> · จะโชว์ใบเบิกของได้ ต้องรู้ก่อนว่าได้แฟ้มอะไร → เลย<strong>ยื่นใบให้เราเอง</strong></li>
+  <li><code>pp</code> = "pretty print" คำสั่งพิมพ์สวย ๆ ที่ console ใช้โชว์ผล · <code>loading for pp</code> = "ไปตู้เพราะจะพิมพ์ให้ดู"</li>
+  <li><code>LIMIT 11</code> = console ขอแค่ 11 แผ่นพอ เผื่อตารางใหญ่จะได้ไม่ขนมาทั้งลิ้นชัก</li>
+  <li><code>/*application='WongnokBlog'*/</code> ท้ายสุด = ป้ายชื่อแอปที่ Rails แปะไว้ท้าย SQL ทุกประโยค · <strong>ไม่ต้องสนใจ</strong> (เดี๋ยวเจออีกในหัวข้อ log)</li>
+  <li><code>"views &gt; ?", 100</code> — เงื่อนไขแบบเขียนเอง · <code>?</code> คือช่องว่างที่ Rails เอา <code>100</code> ไปเติมให้อย่างปลอดภัย (เหมือน <code>?</code> ใน <code>db.Where</code> ของ GORM)</li>
+</ul>
+
+<p>
+  <strong>ในแอปจริง (controller · view) ไม่มีนิสัยนี้</strong> — ไม่มีใครมาโชว์ผลทุกบรรทัด · กับดักนี้มีแค่ใน console
+  <br>วิธีแก้: <strong>ต่อท้ายบรรทัดด้วย <code>; nil</code></strong> · <code>;</code> คือ "จบคำสั่งแรก ขึ้นคำสั่งใหม่ในบรรทัดเดียวกัน" ·
+  คำสั่งสุดท้ายเป็น <code>nil</code> console เลยโชว์แค่ <code>nil</code> ไม่ต้องยื่นใบเบิกของ
+</p>
+
+<div class="analogy">
+  <span class="label">🙋 เทียบให้เห็นภาพ — ผู้ช่วยขี้สงสัยในครัวทดลอง</span>
+  <p>
+    ครัวทดลอง (console) มีผู้ช่วยคนหนึ่งที่<strong>อยากให้คุณเห็นผลทุกอย่างที่เขียน</strong> ·
+    คุณเพิ่งเขียนใบเบิกของบรรทัดแรก เขาก็วิ่งไปตู้ หยิบแฟ้มมาโชว์ 11 แผ่นทันที · เขียนต่ออีกบรรทัด ก็วิ่งไปอีกรอบ
+    <br><code>; nil</code> = บอกผู้ช่วยว่า "ไม่ต้องโชว์ ฉันยังเขียนไม่เสร็จ"
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ผู้ช่วยจริงถ้าไปตู้มาแล้วก็คงวางแฟ้มไว้ให้เราใช้ต่อ ·
+    แต่ผู้ช่วยใน console <strong>ถ่ายสำเนาใบของเราไปเบิกเอง แล้วทิ้งแฟ้มที่ได้หลังโชว์เสร็จ</strong> — ใบตัวจริง (<code>q</code>) ในมือเรายังนับว่า "ไม่เคยยื่น" ·
+    พอเราเอาไปใช้จริง Rails ก็ต้องไปตู้อีกรอบอยู่ดี
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> Go ไม่มีครัวทดลองแบบนี้ (ต้อง <code>go run</code> ทั้งไฟล์) จึงไม่มีใครมาแอบโชว์ผลให้ · กับดักนี้เป็นของ console ของ Rails ล้วน ๆ
+</p>
+
+<p>ลองใหม่ด้วย <code>; nil</code> ทุกบรรทัด:</p>
+
+<div class="predict">
+<pre><code>q = Post.where(published: true); nil
+q = q.where("views &gt; ?", 100); nil
+q = q.order(created_at: :desc); nil
+q = q.limit(10); nil</code></pre>
+  <p class="ask">พิมพ์ 4 บรรทัดนี้ จะเห็นบรรทัด <code>Post Load (…) SELECT …</code> โผล่กี่ครั้ง?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — <strong>ไม่โผล่เลยสักครั้ง</strong>:</p>
+<pre><code>wongnok-blog(dev):001&gt; q = Post.where(published: true); nil
+=&gt; nil
+wongnok-blog(dev):002&gt; q = q.where("views &gt; ?", 100); nil
+=&gt; nil
+wongnok-blog(dev):003&gt; q = q.order(created_at: :desc); nil
+=&gt; nil
+wongnok-blog(dev):004&gt; q = q.limit(10); nil
+=&gt; nil</code></pre>
+    <p>สี่บรรทัดนี้แค่<strong>เขียนเพิ่มลงใบเบิกของ</strong> · ยังไม่มีใครไปตู้ · นี่คือพฤติกรรมเดียวกับในแอปจริง</p>
+  </div>
+</div>
+
+<p>ใบเบิกของยังอยู่ในมือ ถามมันได้ว่าเป็นอะไร และเขียนว่าอะไรไว้บ้าง (ผลจริง ต่อจากเมื่อกี้):</p>
+
+<pre><code>wongnok-blog(dev):005&gt; q.class
+=&gt; Post::ActiveRecord_Relation
+wongnok-blog(dev):006&gt; q.to_sql
+=&gt; "SELECT \"posts\".* FROM \"posts\" WHERE \"posts\".\"published\" = TRUE AND (views &gt; 100) ORDER BY \"posts\".\"created_at\" DESC LIMIT 10"</code></pre>
+
+<ul>
+  <li><code>q.class</code> — ชนิดของ <code>q</code> คือ <code>Post::ActiveRecord_Relation</code> = ใบเบิกของของลิ้นชัก posts <strong>ไม่ใช่ Array ของบทความ</strong></li>
+  <li><code>q.to_sql</code> — "อ่านใบเบิกของให้ฟังหน่อย" ได้ SQL ที่<strong>จะ</strong>ยิง โดยยังไม่ยิง ·
+      <code>\"</code> คือเครื่องหมายคำพูดที่อยู่ใน string (console โชว์แบบนี้ ของจริงคือ <code>"</code>)</li>
+  <li>แปล SQL: "ขอทุกช่องจากลิ้นชัก posts · เฉพาะแผ่นที่ published เป็นจริง <strong>และ</strong>ยอดวิวเกิน 100 · เรียงจากสร้างล่าสุดก่อน · ไม่เกิน 10 แผ่น" ·
+      สี่บรรทัด Ruby → <strong>SQL ประโยคเดียว</strong> · <code>created_at</code> = ช่องเวลาที่สร้างแฟ้ม (มาจาก <code>t.timestamps</code> บท 106)</li>
+</ul>
+
+<p>ทีนี้ "ยื่นใบ" จริงด้วย <code>each</code> (วนทีละแผ่น บท 93) แล้วลองยื่นซ้ำอีกครั้ง — ผลจริง ต่อจากเมื่อกี้:</p>
+
+<pre><code>wongnok-blog(dev):007&gt; q.loaded?
+=&gt; nil
+wongnok-blog(dev):008&gt; q.each { |post| puts post.title }; nil
+  Post Load (4.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE AND (views &gt; 100) ORDER BY "posts"."created_at" DESC LIMIT 10 /*application='WongnokBlog'*/
+ผัดกะเพราหมูสับ
+ส้มตำปูปลาร้า
+ต้มยำกุ้งน้ำข้น
+=&gt; nil
+wongnok-blog(dev):009&gt; q.loaded?
+=&gt; true
+wongnok-blog(dev):010&gt; q.each { |post| puts post.title }; nil
+ผัดกะเพราหมูสับ
+ส้มตำปูปลาร้า
+ต้มยำกุ้งน้ำข้น
+=&gt; nil</code></pre>
+
+<ul>
+  <li><code>q.loaded?</code> — "ยื่นใบนี้ไปหรือยัง" · ตอนแรกได้ <code>nil</code> (= ยัง · Rails ตอบ <code>nil</code> ไม่ใช่ <code>false</code> แต่ความหมายเดียวกัน)</li>
+  <li><code>each</code> ครั้งแรก — <strong>SQL โผล่ตรงนี้</strong> ไปตู้ครั้งเดียว ได้ 3 บทความที่ published และวิวเกิน 100</li>
+  <li><code>q.loaded?</code> หลังจากนั้น — <code>true</code> แฟ้มวางอยู่บนโต๊ะแล้ว</li>
+  <li><code>each</code> ครั้งที่สอง — <strong>ไม่มี SQL</strong> · ใช้แฟ้มที่วางบนโต๊ะอยู่แล้ว ไม่เดินไปตู้ซ้ำ</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>inspect · pp (pretty print)</dt>
+    <dd>สิ่งที่ console ทำกับผลของทุกบรรทัดเพื่อโชว์หลัง <code>=&gt;</code> · กับ relation มันทำให้ยิง SQL (<code>loading for pp</code>) ·
+        <strong>พิมพ์บอก AI ได้ว่า “in rails console, why does a where clause run SQL immediately? I see /* loading for pp */”</strong></dd>
+    <dt>to_sql · loaded?</dt>
+    <dd><code>to_sql</code> = ดู SQL ที่ relation จะยิง โดยไม่ยิง · <code>loaded?</code> = relation นี้ไปเอาข้อมูลมาแล้วหรือยัง ·
+        <strong>ถาม senior ได้ว่า “ก่อนส่ง relation นี้ไป view ผมเช็ค to_sql แล้ว SQL หน้าตาแบบนี้ ถูกไหม”</strong></dd>
+  </dl>
+</div>
+
+<div class="warn">
+  <p>⚠️ <strong>พิมพ์ชื่อคอลัมน์ผิดใน <code>where</code> จะยังไม่ error ตอนเขียน</strong> — จะ error ตอนยื่นใบ ซึ่งอาจอยู่ไกลออกไปหลายบรรทัด (ผลจริง: สะกด <code>publish</code> ขาด ed):</p>
+<pre><code>wongnok-blog(dev):001&gt; bad = Post.where(publish: true); nil
+=&gt; nil
+wongnok-blog(dev):002&gt; bad.class
+=&gt; Post::ActiveRecord_Relation
+wongnok-blog(dev):003&gt; bad.size
+  Post Count (2.3ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."publish" = TRUE /*application='WongnokBlog'*/
+(wongnok-blog):3:in '&lt;main&gt;': PG::UndefinedColumn: ERROR:  column posts.publish does not exist (ActiveRecord::StatementInvalid)
+…
+HINT:  Perhaps you meant to reference the column "posts.published".</code></pre>
+  <p>error ชี้ <code>:3</code> (บรรทัดที่ยื่นใบ) ไม่ใช่บรรทัด 1 ที่เขียนผิด · ในแอปจริงอาจชี้ไปที่ไฟล์ view ทั้งที่ผิดใน controller ·
+    <code>ActiveRecord::StatementInvalid</code> = ชื่อ error ของ Rails แปลว่า "ตู้ไม่รับ SQL ประโยคนี้" ·
+    <code>HINT</code> ท้ายสุดคือ PostgreSQL เดาให้ว่าน่าจะหมายถึง <code>published</code></p>
+</div>
+
+<h2 id="sn-sec-4">ยื่นใบเมื่อไหร่ — คำสั่งไหนไปตู้จริง</h2>
+
+<p>
+  ตารางนี้สรุปจากผลรันจริงใน console ทุกบรรทัด (เริ่มจาก <code>Post.where(published: true)</code> ที่ยังไม่ยื่น) ·
+  <strong>ไม่ต้องจำทั้งหมด</strong> จำแค่หลัก: <em>อะไรที่ต้องรู้ "ของจริง" = ไปตู้</em>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>พิมพ์</th><th>ไปตู้ไหม</th><th>SQL ที่เห็นจริง (ภาษาคน)</th></tr></thead>
+  <tbody>
+    <tr><td><code>.where</code> · <code>.order</code> · <code>.limit</code></td><td>❌ ไม่ไป</td><td>แค่เขียนเพิ่มลงใบ</td></tr>
+    <tr><td><code>.class</code> · <code>.to_sql</code></td><td>❌ ไม่ไป</td><td>ถามเรื่องตัวใบ ไม่ได้ถามเรื่องแฟ้ม</td></tr>
+    <tr><td><code>.each { … }</code> · <code>.to_a</code></td><td>✅ ไป</td><td><code>SELECT "posts".* …</code> = หยิบทุกแผ่นที่ตรงมาวางบนโต๊ะ · <code>to_a</code> แปลงเป็น Array ธรรมดา</td></tr>
+    <tr><td><code>.first</code></td><td>✅ ไป (ถ้ายังไม่โหลด)</td><td><code>… ORDER BY "posts"."id" ASC LIMIT 1</code> = เรียงตามเลขที่แล้วหยิบแผ่นแรกแผ่นเดียว · <strong>ถ้าโหลดแล้วไม่ไปซ้ำ</strong></td></tr>
+    <tr><td><code>.count</code></td><td>✅ ไป <strong>ทุกครั้ง</strong></td><td><code>SELECT COUNT(*) …</code> = ให้ตู้นับ · เรียกสองครั้งก็ไปสองครั้ง</td></tr>
+    <tr><td><code>.any?</code> · <code>.empty?</code> · <code>.exists?</code></td><td>✅ ไป</td><td><code>SELECT 1 AS one … LIMIT 1</code> = "มีสักแผ่นไหม" เจอแผ่นแรกก็หยุด</td></tr>
+    <tr><td><code>&lt;% @posts.each do |post| %&gt;</code> ใน view</td><td>✅ ไป</td><td>เหมือน <code>each</code> ข้างบน · เดี๋ยวเห็นใน log หัวข้อถัดไป</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ใน controller เขียนบรรทัดเดียว <code>@posts = Post.where(published: true).order(:views)</code> · <strong>ตอนบรรทัดนี้ทำงานเสร็จ</strong> Rails ยิง SQL ไปแล้วกี่ครั้ง?</p>
+  <div class="opts">
+    <button class="opt">0 ครั้ง — ยังเป็นใบเบิกของที่ยังไม่ยื่น</button>
+    <button class="opt">1 ครั้ง — <code>where</code> กับ <code>order</code> รวมเป็นประโยคเดียว</button>
+    <button class="opt">2 ครั้ง — <code>where</code> หนึ่งครั้ง <code>order</code> อีกหนึ่งครั้ง</button>
+    <button class="opt">ขึ้นกับว่าในตารางมีบทความกี่ชิ้น</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — <code>where</code> กับ <code>order</code> แค่เขียนเพิ่มลงใบเบิกของ · SQL จะโผล่ตอนที่ view เอา <code>@posts</code> ไปวน <code>each</code></p>
+    <p>ตัวเลือกที่ 2 ผิดครึ่งเดียว — ถูกที่ "รวมเป็นประโยคเดียว" แต่ประโยคนั้นยังไม่ถูกส่งตอนนี้ ·
+       ตัวเลือกที่ 3 ผิด เพราะ Rails ไม่เคยยิงแยกทีละ method · ตัวเลือกที่ 4 ผิด เพราะจำนวนแถวไม่เกี่ยวกับว่าจะยิงหรือไม่ยิง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>where</code> · <code>order</code> · <code>limit</code> = เขียนใบ · <code>each</code> · <code>count</code> · <code>first</code> = ยื่นใบ</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">เห็น SQL ที่แอปยิงจริง — สมุดบันทึกการเบิกของ</h2>
+
+<p>
+  console ดีไว้ลองทีละบรรทัด · แต่เวลาแอปช้า เราอยากรู้ว่า<strong>หน้าเว็บจริงหนึ่งหน้า</strong>ไปตู้กี่รอบ ด้วย SQL อะไร
+  <br>คำตอบอยู่ในไฟล์ <code>log/development.log</code> · Rails จดทุกอย่างที่เห็นในเทอร์มินัลของ server ลงไฟล์นี้ด้วย <strong>รวมถึง SQL ทุกประโยค</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">📒 เทียบให้เห็นภาพ — สมุดบันทึกการเบิกของ</span>
+  <p>
+    ทุกครั้งที่คนดูแลสต็อกเดินไปตู้ เขาจดไว้หนึ่งบรรทัด: "เวลาเท่าไหร่ · เบิกอะไร · ใช้เวลากี่วินาที · <strong>ใครสั่งให้มาเบิก</strong>" ·
+    อยากรู้ว่าจานนี้ทำไมช้า ก็เปิดสมุดนับดูว่าเดินไปตู้กี่รอบ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> สมุดจริงเปิดอ่านย้อนหลังสบาย ๆ ·
+    แต่ <code>development.log</code> <strong>ยาวขึ้นเรื่อย ๆ ไม่มีวันหยุด</strong> (ทุกใบสั่งต่อท้ายไฟล์เดิม) · จึงนิยมเปิดแบบ "ดูสด" ด้วย <code>tail -f</code> แทนการเปิดไฟล์ทั้งไฟล์
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM ค่าเริ่มต้นจดแค่ SQL ที่ช้าหรือที่ error · อยากเห็นทุกประโยคต้องเรียก <code>db.Debug()</code> หรือตั้ง logger ของมันเอง ·
+  Rails เปิดสมุดนี้ไว้ให้ตั้งแต่ <code>rails new</code> ในโหมด development
+</p>
+
+<p>มาทำหน้า <code>/posts</code> จิ๋ว ๆ ให้มีของให้ดู — 3 ไฟล์ (ถ้ามี <code>PostsController</code> จาก Day 1 อยู่แล้ว แก้ action <code>index</code> ให้เป็นแบบนี้):</p>
+
+<pre><code><span class="c"># config/routes.rb — เพิ่มบรรทัดนี้ใน block (บท 101) · ถ้ามี resources :posts อยู่แล้ว ไม่ต้องเพิ่ม</span>
+<span class="f">resources</span> <span class="n">:posts</span>, <span class="n">only:</span> <span class="n">:index</span></code></pre>
+
+<pre><code><span class="c"># app/controllers/posts_controller.rb</span>
+<span class="k">class</span> <span class="n">PostsController</span> &lt; <span class="n">ApplicationController</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @posts = <span class="n">Post</span>.<span class="f">where</span>(<span class="n">published:</span> <span class="k">true</span>).<span class="f">order</span>(<span class="n">views:</span> <span class="n">:desc</span>)
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c">&lt;%# app/views/posts/index.html.erb %&gt;</span>
+&lt;h1&gt;บทความ &lt;%= @posts.count %&gt; ชิ้น&lt;/h1&gt;
+&lt;ul&gt;
+  &lt;% @posts.each do |post| %&gt;
+    &lt;li&gt;&lt;%= post.title %&gt; (&lt;%= post.views %&gt; views)&lt;/li&gt;
+  &lt;% end %&gt;
+&lt;/ul&gt;</code></pre>
+
+<ul>
+  <li><code>only: :index</code> — จาก 8 เส้นของ <code>resources</code> เอาแค่เส้น <code>GET /posts</code> (เรื่อง <code>only</code> ละเอียดในบท 117)</li>
+  <li>controller วางใบเบิกของ (ยังไม่ยื่น) ไว้บนถาด <code>@posts</code></li>
+  <li>view บรรทัด 2: <code>@posts.count</code> = นับจำนวน · บรรทัด 4: <code>@posts.each</code> = วนทีละแผ่น · บรรทัด 1 เป็นแค่โน้ตชื่อไฟล์</li>
+</ul>
+
+<p>เปิดเทอร์มินัล<strong>สองหน้าต่าง</strong> · หน้าต่างแรกเปิด server · หน้าต่างที่สองเปิดสมุดแบบดูสด:</p>
+
+<pre><code><span class="c"># หน้าต่างที่ 1</span>
+bin/rails server
+
+<span class="c"># หน้าต่างที่ 2 — อยู่ในโฟลเดอร์แอปเหมือนกัน</span>
+tail -f log/development.log</code></pre>
+
+<p>
+  <code>tail</code> = โชว์ท้ายไฟล์ · <code>-f</code> = "follow" มีบรรทัดใหม่ต่อท้ายเมื่อไหร่ โชว์ทันที (กด Ctrl-C เพื่อเลิกดู) ·
+  จากนั้นเปิด <code>http://localhost:3000/posts</code> ในเบราว์เซอร์ หน้าต่างที่ 2 จะขึ้นแบบนี้ (ผลจริง · ผมยิงด้วย <code>curl</code>):
+</p>
+
+<pre><code>Started GET "/posts" for ::1 at 2026-11-04 18:49:47 +0700
+Processing by PostsController#index as */*
+  Rendering layout layouts/application.html.erb
+  Rendering posts/index.html.erb within layouts/application
+  Post Count (1.1ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."published" = TRUE /*action='index',application='WongnokBlog',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:3
+  Post Load (0.8ms)  SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE ORDER BY "posts"."views" DESC /*action='index',application='WongnokBlog',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:5
+  Rendered posts/index.html.erb within layouts/application (Duration: 19.0ms | GC: 9.5ms)
+  Rendered layout layouts/application.html.erb (Duration: 26.4ms | GC: 10.8ms)
+Completed 200 OK in 80ms (Views: 21.6ms | ActiveRecord: 20.7ms (2 queries, 0 cached) | GC: 10.8ms)</code></pre>
+
+<p>อ่านทีละส่วน:</p>
+<ul>
+  <li><code>Started GET "/posts" for ::1</code> = ใบสั่งเข้าร้าน (<code>::1</code> = เครื่องตัวเอง) · <code>as */*</code> เพราะผมใช้ <code>curl</code> · เปิดด้วยเบราว์เซอร์จะเห็น <code>as HTML</code></li>
+  <li><code>Rendering …</code> / <code>Rendered …</code> = คนจัดจานเริ่มจัด / จัดเสร็จ (layout = จานรองมาตรฐาน บท 103) · <code>GC</code> = เวลาที่ Ruby เก็บกวาดหน่วยความจำ ข้ามได้</li>
+  <li><code>Processing by PostsController#index</code> แล้วตามด้วย <code>Rendering …</code> — <strong>ไม่มี SQL ระหว่างที่ controller ทำงาน</strong> · ยืนยันว่า <code>where</code> ใน controller ยังไม่ยื่นใบ</li>
+  <li><code>Post Count (1.1ms) SELECT COUNT(*) …</code> — ไปตู้รอบที่ 1: "นับให้หน่อยว่ามีบทความ published กี่แผ่น" ใช้เวลา 1.1 มิลลิวินาที</li>
+  <li><code>Post Load (0.8ms) SELECT "posts".* … ORDER BY "posts"."views" DESC</code> — ไปตู้รอบที่ 2: "หยิบทุกแผ่นที่ published เรียงวิวมากไปน้อย"</li>
+  <li><code>↳ app/views/posts/index.html.erb:3</code> — <strong>บรรทัดที่สั่งให้ไปตู้</strong> (ลูกศรงอ = "มาจากตรงนี้") · อันนี้แหละที่จะช่วยตามหาต้นเหตุในบท 114</li>
+  <li><code>/*action='index',…,controller='posts'*/</code> — ป้ายที่ Rails แปะท้าย SQL ว่าใบสั่งของแผนกไหน เมนูอะไร (ใน console เห็นแค่ชื่อแอป เพราะไม่มีใบสั่ง)</li>
+  <li><code>ActiveRecord: 20.7ms (2 queries, 0 cached)</code> — สรุปท้ายใบสั่ง: <strong>ไปตู้ 2 รอบ</strong> · ตัวเลขนี้คือสิ่งแรกที่ควรดูเวลาหน้าไหนช้า</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ <strong>เลขบรรทัดของไฟล์ <code>.erb</code> ใน log เกินจริง 1</strong> — log บอก <code>:3</code> กับ <code>:5</code> แต่ในไฟล์ <code>count</code> อยู่บรรทัด 2 · <code>each</code> อยู่บรรทัด 4 ·
+    <strong>เปิดไฟล์ view แล้วดูบรรทัดที่ log บอก ลบหนึ่ง</strong> (ไฟล์ <code>.rb</code> ไม่โดน)</p>
+  <p>สาเหตุ: แอปใหม่เปิดค่าตั้งที่แอบแปะโน้ตชื่อไฟล์ไว้บนสุดของ view ทุกไฟล์ (<code>annotate_rendered_view_with_filenames</code>) · ผมลองปิดแล้วเลขกลับมาเป็น <code>:2</code> กับ <code>:4</code> · ไม่ต้องไปปิดเอง</p>
+</div>
+
+<p>
+  บรรทัด <code>↳</code> กับป้าย <code>/*action=…*/</code> มาจากค่าตั้งสองตัว (<code>verbose_query_logs</code> · <code>query_log_tags_enabled</code>)
+  ที่ <strong>Rails 8.1 เปิดไว้ให้แล้ว</strong> ในไฟล์ <code>config/environments/development.rb</code> ของแอปที่สร้างใหม่ · <strong>ไม่ต้องแก้อะไร</strong>
+</p>
+
+<p>
+  <strong>อีกทางที่สไลด์แนะนำ (แค่รู้จัก):</strong> gem <code>rack-mini-profiler</code> ขึ้นกล่องเล็ก ๆ มุมจอทุกหน้า บอกว่าหน้านี้ไปตู้กี่รอบ ·
+  <strong>ไม่ได้มากับแอป และบทนี้ไม่ได้ติดตั้ง</strong> · ถ้าทีมใช้ จะเห็นตัวเลขเดียวกับบรรทัด <code>(2 queries)</code> ใน log
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>development.log · tail -f</dt>
+    <dd>ไฟล์ที่ Rails จดทุกใบสั่งและทุก SQL ในโหมด development · <code>tail -f</code> = เปิดดูบรรทัดใหม่แบบสด ๆ ·
+        <strong>พิมพ์บอก AI ได้ว่า “here is my development.log for one request to /posts, how many queries does it run?”</strong></dd>
+    <dt>verbose query logs · query log tags</dt>
+    <dd>บรรทัด <code>↳ ไฟล์:บรรทัด</code> ใต้ SQL = verbose query logs · ป้าย <code>/*action='index'…*/</code> ท้าย SQL = query log tags ·
+        <strong>ถาม senior ได้ว่า “บน production เราเปิด query log tags ไว้ไหม จะได้รู้ว่า SQL ช้าตัวนี้มาจาก controller ไหน”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">count · size · length — นับสามแบบ ไปตู้ไม่เท่ากัน</h2>
+
+<p>
+  ทั้งสามคำตอบ "มีกี่แผ่น" เหมือนกัน แต่<strong>วิธีหาคำตอบต่างกัน</strong> ·
+  สไลด์หน้า 35 ยกเรื่องนี้มาเป็น "คำถามสัมภาษณ์ยอดนิยม" — ลองใน console ทีละบรรทัดกับใบเบิกของที่ยังไม่ยื่น (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; posts = Post.where(published: true); nil
+=&gt; nil
+wongnok-blog(dev):002&gt; posts.size
+  Post Count (2.6ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."published" = TRUE /*application='WongnokBlog'*/
+=&gt; 4
+wongnok-blog(dev):003&gt; posts.length
+  Post Load (1.5ms)  SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE /*application='WongnokBlog'*/
+=&gt; 4
+wongnok-blog(dev):004&gt; posts.size
+=&gt; 4
+wongnok-blog(dev):005&gt; posts.count
+  Post Count (1.6ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."published" = TRUE /*application='WongnokBlog'*/
+=&gt; 4</code></pre>
+
+<ul>
+  <li>บรรทัด 2 <code>size</code> ตอนยังไม่ยื่นใบ — ใช้ <code>COUNT(*)</code> ให้ตู้นับ</li>
+  <li>บรรทัด 3 <code>length</code> — <strong>หยิบแฟ้มทุกแผ่นมาวางบนโต๊ะ</strong> (<code>SELECT "posts".*</code>) แล้วนับเองบนโต๊ะ</li>
+  <li>บรรทัด 4 <code>size</code> อีกครั้ง — <strong>ไม่มี SQL</strong> เพราะแฟ้มอยู่บนโต๊ะแล้ว นับบนโต๊ะเลย</li>
+  <li>บรรทัด 5 <code>count</code> — แฟ้มอยู่บนโต๊ะแล้วแท้ ๆ <strong>ก็ยังไปตู้</strong> ให้ตู้นับใหม่</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">📞 เทียบให้เห็นภาพ — นับแฟ้มสามวิธี</span>
+  <p>
+    <strong><code>count</code></strong> = โทรถามคนดูแลสต็อกว่า "มีกี่แผ่น" เขานับในตู้แล้วบอกตัวเลขกลับมา · โทรทุกครั้งที่อยากรู้ แม้แฟ้มกองอยู่บนโต๊ะตรงหน้า
+    <br><strong><code>length</code></strong> = ขนแฟ้มทั้งหมดมาวางบนโต๊ะแล้วนับเอง · เปลืองแรงถ้าแค่อยากรู้ตัวเลข แต่ถ้ายังไงก็จะใช้แฟ้มพวกนั้นอยู่แล้วก็คุ้ม
+    <br><strong><code>size</code></strong> = คนฉลาด: ดูก่อนว่าบนโต๊ะมีแฟ้มกองอยู่ไหม · มี → นับบนโต๊ะ · ไม่มี → โทรถาม
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงเห็นว่าแฟ้มบนโต๊ะเก่าแล้วก็โทรถามใหม่ได้ ·
+    แต่ <code>size</code> กับ <code>length</code> <strong>ไม่รู้ว่ามีคนเพิ่มแฟ้มเข้าตู้ไปหลังจากที่ขนมาแล้ว</strong> — นับจากกองบนโต๊ะเสมอ · อยากได้ตัวเลขล่าสุดจริง ๆ ต้อง <code>count</code>
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> <code>count</code> ≈ <code>db.Model(&amp;Post{}).Where(…).Count(&amp;n)</code> ให้ DB นับ ·
+  <code>length</code> ≈ <code>db.Where(…).Find(&amp;posts)</code> แล้ว <code>len(posts)</code> · ฝั่ง Go ไม่มี <code>size</code> ที่เลือกให้เอง ต้องตัดสินใจเองทุกครั้ง
+</p>
+
+<p>ทีนี้มาดูในหน้าเว็บจริง · แก้ view ให้โชว์จำนวน<strong>ทั้งบนและล่าง</strong>ของรายการ:</p>
+
+<div class="predict">
+<pre><code>&lt;%# app/views/posts/index.html.erb %&gt;
+&lt;h1&gt;บทความ &lt;%= @posts.count %&gt; ชิ้น&lt;/h1&gt;
+&lt;ul&gt;
+  &lt;% @posts.each do |post| %&gt;
+    &lt;li&gt;&lt;%= post.title %&gt; (&lt;%= post.views %&gt; views)&lt;/li&gt;
+  &lt;% end %&gt;
+&lt;/ul&gt;
+&lt;p&gt;รวม &lt;%= @posts.count %&gt; ชิ้น&lt;/p&gt;</code></pre>
+  <p class="ask">หน้านี้ไปตู้กี่รอบ? แล้วถ้าเปลี่ยน <code>count</code> ทั้งสองที่เป็น <code>size</code> · หรือเป็น <code>length</code> ล่ะ?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงจาก log ทีละแบบ (ตัดมาเฉพาะบรรทัด SQL กับบรรทัดสรุป · เลขบรรทัด view เกินจริง 1 ตามที่เตือนไว้):</p>
+<pre><code><span class="c"># แบบ count ทั้งสองที่</span>
+  Post Count (1.6ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."published" = TRUE /*…*/
+  ↳ app/views/posts/index.html.erb:3
+  Post Load (1.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE ORDER BY "posts"."views" DESC /*…*/
+  ↳ app/views/posts/index.html.erb:5
+  CACHE Post Count (0.0ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."published" = TRUE
+  ↳ app/views/posts/index.html.erb:9
+Completed 200 OK in 15ms (Views: 4.2ms | ActiveRecord: 8.8ms (3 queries, 1 cached) | GC: 0.0ms)
+
+<span class="c"># แบบ size ทั้งสองที่</span>
+  Post Count (1.5ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."published" = TRUE /*…*/
+  ↳ app/views/posts/index.html.erb:3
+  Post Load (1.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE ORDER BY "posts"."views" DESC /*…*/
+  ↳ app/views/posts/index.html.erb:5
+Completed 200 OK in 15ms (Views: 4.3ms | ActiveRecord: 8.1ms (2 queries, 0 cached) | GC: 0.0ms)
+
+<span class="c"># แบบ length ทั้งสองที่</span>
+  Post Load (2.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE ORDER BY "posts"."views" DESC /*…*/
+  ↳ app/views/posts/index.html.erb:3
+Completed 200 OK in 17ms (Views: 3.9ms | ActiveRecord: 11.4ms (1 query, 0 cached) | GC: 0.0ms)</code></pre>
+    <ul>
+      <li><strong>count = 3 รอบ</strong> · ตัวที่สาม <code>CACHE Post Count (0.0ms)</code> = Rails จำได้ว่าใบสั่งนี้เพิ่งถามคำถามเดียวกันไป เลยตอบจากความจำ ไม่ได้ไปตู้จริง
+          (ความจำนี้อยู่แค่ภายในใบสั่งเดียว ใบสั่งถัดไปเริ่มใหม่) · แต่ <code>count</code> ก็ยัง<strong>พยายาม</strong>ไปตู้ทุกครั้ง</li>
+      <li><strong>size = 2 รอบ</strong> · ตัวบน (บรรทัด 2) แฟ้มยังไม่มาบนโต๊ะ → ยังโทรถาม <code>COUNT(*)</code> · ตัวล่าง (บรรทัด 8) อยู่หลัง <code>each</code> แฟ้มมาแล้ว → นับบนโต๊ะ ไม่มี SQL</li>
+      <li><strong>length = 1 รอบ</strong> · ตัวบนขนแฟ้มมาเลยตั้งแต่บรรทัด 2 · <code>each</code> กับตัวล่างใช้กองเดิมทั้งหมด</li>
+    </ul>
+    <p><strong>สรุปใช้จริง:</strong> ถ้าหน้านั้น<strong>จะวน <code>each</code> โชว์ทุกแผ่นอยู่แล้ว</strong> และแผ่นไม่เยอะ → <code>length</code> ไปตู้รอบเดียวคุ้มสุด ·
+      ถ้า<strong>แค่อยากรู้ตัวเลข</strong> ไม่ได้โชว์แฟ้ม → <code>count</code> ให้ตู้นับ อย่าขนมาทั้งลิ้นชัก ·
+      ไม่แน่ใจ → <code>size</code> เลือกให้เอง แต่<strong>ต้องรู้ว่ามันอยู่ก่อนหรือหลัง <code>each</code></strong></p>
+  </div>
+</div>
+
+<h3 id="sn-sub-1">ถามแค่ว่า "มีไหม" — ใช้ <code>exists?</code></h3>
+
+<p>
+  บางทีไม่ได้อยากรู้ว่ากี่ชิ้น แค่อยากรู้ว่า "สมชายเคยเขียนบทความไหม" · ลองสองแบบ (ผลจริง ต่อจากก้อน count เมื่อกี้) ·
+  <code>user_id</code> = ช่อง "เป็นของผู้ใช้เลขที่ …" บนแฟ้มบทความ ที่สร้างไว้ในบท 107 (ละเอียดในบท 115) · สมชายคือเลขที่ 1:
+</p>
+
+<pre><code>wongnok-blog(dev):006&gt; Post.where(user_id: 1).count &gt; 0
+  Post Count (2.8ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."user_id" = 1 /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):007&gt; Post.exists?(user_id: 1)
+  Post Exists? (2.6ms)  SELECT 1 AS one FROM "posts" WHERE "posts"."user_id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; true</code></pre>
+
+<ul>
+  <li>แบบแรก <code>count &gt; 0</code> — ให้ตู้นับ (<code>COUNT(*)</code>) แล้วเอาตัวเลขมาเทียบว่าเกิน 0 ไหม · ไม่ได้หยิบแฟ้มมา แต่ตู้ต้อง<strong>นับให้ครบทุกแผ่น</strong>ก่อน — ถ้าสมชายมี 50,000 บทความ ต้องนับถึง 50,000</li>
+  <li>แบบที่สอง <code>exists?</code> — <code>SELECT 1 AS one … LIMIT 1</code> แปลว่า "ไม่ต้องหยิบช่องไหนมา เจอแผ่นแรกที่ตรงก็ตอบเลข 1 กลับมาพอ" · เจอปุ๊บหยุดปั๊บ</li>
+  <li>กับข้อมูล 6 แถวของเรา ความเร็วไม่ต่างกัน (เวลา ms ข้างบนแกว่งเอง) · ความต่างจะเห็นตอนตารางใหญ่</li>
+  <li>แบบที่แย่ที่สุดคือ <code>.length</code> (เช่น <code>Post.all.length</code>) — หยิบทุกแผ่นมาวางบนโต๊ะจริง (<code>SELECT "posts".* FROM "posts"</code>) แค่เพื่อนับ</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>count vs size vs length</dt>
+    <dd><code>count</code> = ให้ DB นับเสมอ · <code>length</code> = โหลดมาแล้วนับใน Ruby · <code>size</code> = โหลดแล้วนับใน Ruby ยังไม่โหลดให้ DB นับ ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ควรใช้ size แทน count ไหม เพราะเดี๋ยว view จะวน each อยู่แล้ว”</strong></dd>
+    <dt>exists? · query cache</dt>
+    <dd><code>exists?</code> = ถามแค่ว่ามีสักแถวไหม (<code>LIMIT 1</code>) · <code>CACHE</code> ใน log = query cache ที่ Rails จำคำตอบของ SQL เดิมไว้ภายในหนึ่ง request ·
+        <strong>พิมพ์บอก AI ได้ว่า “I only need to know if any row exists, should I use exists? instead of count &gt; 0?”</strong></dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ใน view วน <code>&lt;% @posts.each do |post| %&gt;</code> เสร็จแล้ว · <strong>ใต้รายการ</strong>อยากเขียน "รวม N ชิ้น" โดย<strong>ไม่ไปตู้เพิ่ม</strong> ควรใช้อะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>@posts.count</code> เพราะ count นับเร็วที่สุด</button>
+    <button class="opt"><code>@posts.size</code> เพราะแฟ้มมาบนโต๊ะแล้ว</button>
+    <button class="opt"><code>Post.count</code> เพราะนับทั้งลิ้นชักตรง ๆ</button>
+    <button class="opt"><code>@posts.exists?</code> เพราะหยุดที่แผ่นแรก</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — หลัง <code>each</code> แฟ้มอยู่บนโต๊ะแล้ว (<code>loaded?</code> เป็นจริง) · <code>size</code> นับบนโต๊ะ ไม่มี SQL · ตรงกับผลจริงแบบ size ในเฉลย predict (ตัวล่างไม่มี SQL) · <code>length</code> ก็ได้ผลเดียวกันตรงนี้</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะ <code>count</code> ส่ง <code>COUNT(*)</code> ไปถามตู้ใหม่ทุกครั้ง แม้แฟ้มอยู่บนโต๊ะแล้ว (ถ้าใบสั่งนี้เพิ่งถามคำถามเดียวกันไป log จะขึ้น <code>CACHE</code> แต่ถ้ายังไม่เคยถาม ก็ไปตู้จริง) ·
+       ตัวเลือกที่ 3 ผิดสองชั้น — ไปตู้ และนับบทความ draft ด้วย ได้ 6 ไม่ใช่ 4 ·
+       ตัวเลือกที่ 4 ผิด เพราะ <code>exists?</code> ตอบแค่จริง/เท็จ ไม่ได้บอกจำนวน</p>
+    <p><strong>จุดที่ต้องจำ:</strong> หลัง <code>each</code> ใช้ <code>size</code> · ก่อน <code>each</code> แม้แต่ <code>size</code> ก็ยังไปตู้</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-7">ให้ตู้คำนวณให้ — ขอแค่ของที่ใช้</h2>
+
+<p>
+  หลักเดียวกับ <code>count</code>: ถ้าอยากได้แค่ <strong>ตัวเลข</strong> หรือแค่ <strong>บางช่อง</strong> · บอกตู้ให้ทำมาให้เสร็จ
+  ดีกว่าขนแฟ้มทั้งแผ่นมาทำเองใน Ruby · ทุกตัวข้างล่างนี้<strong>ไปตู้ทันที</strong> (เป็นการยื่นใบ) — ผลจริงจากข้อมูลตัวอย่าง:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; Post.pluck(:title)
+  Post Pluck (1.3ms)  SELECT "posts"."title" FROM "posts" /*application='WongnokBlog'*/
+=&gt;
+["ต้มยำกุ้งน้ำข้น",
+ "ส้มตำปูปลาร้า",
+ "ข้าวมันไก่ประตูน้ำ",
+ "ก๋วยเตี๋ยวเรืออยุธยา",
+ "ผัดกะเพราหมูสับ",
+ "แกงเขียวหวานไก่"]
+wongnok-blog(dev):002&gt; Post.ids
+  Post Ids (0.8ms)  SELECT "posts"."id" FROM "posts" /*application='WongnokBlog'*/
+=&gt; [1, 2, 3, 4, 5, 6]</code></pre>
+
+<ul>
+  <li><code>pluck(:title)</code> — "ขอแค่ช่อง title ของทุกแผ่น" · ได้ <strong>Array ของ String ธรรมดา</strong> ไม่ใช่ object <code>Post</code> · เร็วและเบากว่าหยิบแฟ้มทั้งแผ่น</li>
+  <li><code>ids</code> — ทางลัดของ <code>pluck(:id)</code> · ได้เลขที่ของทุกแผ่น</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">📋 เทียบให้เห็นภาพ — ขอแค่รายชื่อ ไม่ต้องขนแฟ้ม</span>
+  <p>
+    อยากได้รายชื่อเมนูไปติดบอร์ด · ทางแรก: ขนแฟ้มสูตรทั้ง 6 แผ่นมาวางบนโต๊ะ แล้วนั่งลอกชื่อ (<code>Post.all.map(&amp;:title)</code> — <code>map</code> กับ <code>&amp;:</code> จากบท 92) ·
+    ทางที่สอง: บอกคนดูแลสต็อกว่า "จดแค่ชื่อเมนูมาให้กระดาษแผ่นเดียว" (<code>pluck(:title)</code>)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> กระดาษรายชื่อจริงยังเอาไปถามต่อได้ว่า "เมนูนี้ใส่อะไร" ·
+    แต่ผลของ <code>pluck</code> เป็นแค่ข้อความเปล่า ๆ — <strong>ไม่ใช่แฟ้ม</strong> เรียก <code>.save</code> หรือ <code>.user</code> ต่อไม่ได้ ·
+    ต้องใช้ทั้งแผ่นเมื่อไหร่ ต้องกลับไปเบิกแฟ้มจริง
+  </p>
+</div>
+
+<p>ต่อไปเป็นการให้ตู้ "คิดเลข" (ผลจริง ต่อจากเมื่อกี้):</p>
+
+<pre><code>wongnok-blog(dev):003&gt; Post.sum(:views)
+  Post Sum (2.3ms)  SELECT SUM("posts"."views") FROM "posts" /*application='WongnokBlog'*/
+=&gt; 1055
+wongnok-blog(dev):004&gt; Post.average(:views)
+  Post Average (2.7ms)  SELECT AVG("posts"."views") FROM "posts" /*application='WongnokBlog'*/
+=&gt; 0.1758333333333333333e3
+wongnok-blog(dev):005&gt; Post.where(published: true).average(:views)
+  Post Average (2.6ms)  SELECT AVG("posts"."views") FROM "posts" WHERE "posts"."published" = TRUE /*application='WongnokBlog'*/
+=&gt; 0.26375e3
+wongnok-blog(dev):006&gt; Post.group(:user_id).count
+  Post Count (0.5ms)  SELECT COUNT(*) AS "count_all", "posts"."user_id" AS "posts_user_id" FROM "posts" GROUP BY "posts"."user_id" /*application='WongnokBlog'*/
+=&gt; {3 =&gt; 2, 2 =&gt; 2, 1 =&gt; 2}
+wongnok-blog(dev):007&gt; Post.group(:user_id).sum(:views)
+  Post Sum (2.5ms)  SELECT SUM("posts"."views") AS "sum_views", "posts"."user_id" AS "posts_user_id" FROM "posts" GROUP BY "posts"."user_id" /*application='WongnokBlog'*/
+=&gt; {3 =&gt; 510, 2 =&gt; 85, 1 =&gt; 460}</code></pre>
+
+<ul>
+  <li><code>sum(:views)</code> — ยอดวิวรวมทุกบทความ = 120 + 340 + 85 + 0 + 510 + 0 = <strong>1055</strong></li>
+  <li><code>average(:views)</code> — ได้ <code>0.1758333333333333333e3</code> หน้าตาประหลาด · อ่านว่า 0.17583… × 10³ = <strong>175.83</strong> ·
+      เป็นตัวเลขทศนิยมแบบแม่นยำชื่อ BigDecimal · อยากได้หน้าตาปกติต่อท้าย <code>.to_f</code> (ลองแล้วได้ <code>175.83333333333334</code>)</li>
+  <li>บรรทัด 5 ต่อ <code>where</code> ก่อนได้ — เฉลี่ยเฉพาะที่ published = <code>0.26375e3</code> = <strong>263.75</strong></li>
+  <li><code>group(:user_id).count</code> — "แยกกองตามเจ้าของ (<code>user_id</code>) ก่อน แล้วนับแต่ละกอง" · ได้ hash <code>{user_id =&gt; จำนวน}</code> · ทุกคนมี 2 บทความ ·
+      คำว่า <code>AS "count_all"</code> ใน SQL เป็นชื่อเล่นที่ Rails ตั้งไว้ใช้เอง ข้ามได้ ·
+      <strong>ลำดับใน hash ของคุณอาจไม่เหมือนนี้</strong> (SQL ไม่ได้สั่งเรียง)</li>
+  <li><code>group(:user_id).sum(:views)</code> — ยอดวิวรวมต่อคน: มานะ (3) 510 · สมหญิง (2) 85 · สมชาย (1) 460</li>
+</ul>
+
+<p>ขอบางช่องแต่ยังได้เป็น object <code>Post</code> ใช้ <code>select</code> — แต่ระวัง (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):008&gt; Post.select(:id, :title).first
+  Post Load (1.2ms)  SELECT "posts"."id", "posts"."title" FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Post:0x000000012622a368 id: 1, title: "ต้มยำกุ้งน้ำข้น"&gt;
+wongnok-blog(dev):009&gt; Post.select(:id, :title).first.body
+  Post Load (2.3ms)  SELECT "posts"."id", "posts"."title" FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+(wongnok-blog):9:in '&lt;main&gt;': missing attribute 'body' for Post (ActiveModel::MissingAttributeError)</code></pre>
+
+<ul>
+  <li><code>select(:id, :title)</code> — "หยิบแฟ้มมา แต่กรอกแค่สองช่อง" · ได้ <code>Post</code> ที่มีแค่ <code>id</code> กับ <code>title</code></li>
+  <li><code>.body</code> — ขอช่องที่ไม่ได้หยิบมา → <code>missing attribute 'body'</code> ("ช่อง body ไม่มีในแฟ้มแผ่นนี้") · Rails ไม่ไปตู้ซ้ำให้เอง</li>
+  <li>ต่างจาก <code>pluck</code>: <code>select</code> ได้ object (ใช้ใน view เหมือนแฟ้มปกติ) · <code>pluck</code> ได้ค่าดิบ</li>
+</ul>
+
+<p>สุดท้าย ทวน <code>update_all</code> ที่เคยใช้ในภารกิจบท 111 — แก้หลายแถวในคำสั่งเดียว (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):010&gt; Post.where(published: false).update_all(views: 0)
+  Post Update All (4.7ms)  UPDATE "posts" SET "views" = 0 WHERE "posts"."published" = FALSE /*application='WongnokBlog'*/
+=&gt; 2</code></pre>
+
+<ul>
+  <li>SQL ภาษาคน: "แก้ช่อง views ให้เป็น 0 ทุกแผ่นที่ยังไม่ published" · ได้ <code>2</code> = แก้ไป 2 แผ่น (draft สองชิ้น ซึ่งเป็น 0 อยู่แล้ว ข้อมูลเลยไม่เปลี่ยน)</li>
+  <li>ไปตู้<strong>ครั้งเดียว</strong> ไม่ว่าจะกี่แผ่น · ต่างจากวน <code>each</code> แล้ว <code>update</code> ทีละแผ่นที่ไปตู้แผ่นละรอบ</li>
+  <li>⚠️ <strong>ข้ามคนดูแลสต็อกไปเลย</strong> — กฎตรวจแฟ้ม (validation บท 110) และขั้นตอนอัตโนมัติ (callback บท 112) <strong>ไม่ทำงาน</strong> และช่อง <code>updated_at</code> ก็ไม่ถูกแก้ให้ (เอกสาร API เขียนไว้) · ใช้เมื่อมั่นใจว่าค่าที่ใส่ถูกแน่</li>
+</ul>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM มี <code>Pluck("title", &amp;titles)</code> · <code>Count(&amp;n)</code> คล้ายกัน ·
+  ส่วน sum/average ฝั่ง GORM ต้องเขียน <code>Select("sum(views)")</code> เอง · Rails มี method ตั้งชื่อไว้ให้
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>pluck · select</dt>
+    <dd><code>pluck</code> = ดึงค่าดิบของบางคอลัมน์ ไม่สร้าง object · <code>select</code> = สร้าง object แต่โหลดแค่บางคอลัมน์ ·
+        <strong>ถาม senior ได้ว่า “หน้านี้ใช้แค่ title ควร pluck หรือ select ดี เพราะยังต้องใช้ link_to กับ post อยู่”</strong></dd>
+    <dt>aggregate (sum · average · group)</dt>
+    <dd>การให้ DB คำนวณสรุปจากหลายแถว (รวม · เฉลี่ย · นับแยกกลุ่ม) แทนการโหลดมาคำนวณใน Ruby ·
+        <strong>พิมพ์บอก AI ได้ว่า “rewrite this so the database does the aggregation instead of Ruby”</strong></dd>
+    <dt>update_all</dt>
+    <dd>แก้หลายแถวด้วย <code>UPDATE</code> ประโยคเดียว · ข้าม validation และ callback ·
+        <strong>ถาม senior ได้ว่า “ใช้ update_all ตรงนี้ได้ไหม มี callback อะไรที่ต้องทำงานด้วยหรือเปล่า”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">explain — แค่ให้เห็นว่ามีของแบบนี้</h2>
+
+<p>
+  <code>explain</code> = ถาม PostgreSQL ว่า "ถ้าให้ทำใบเบิกนี้ จะ<strong>ไปหาแฟ้มยังไง</strong>" · ใส่ <code>(:analyze)</code> = ทำจริงแล้วจับเวลาด้วย ·
+  บทนี้แค่ให้เห็นหน้าตา ใช้จริงตอนเจอหน้าที่ช้า (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; Post.where(published: true).explain(:analyze)
+  Post Load (1.0ms)  SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE /*application='WongnokBlog'*/
+=&gt;
+EXPLAIN (ANALYZE) SELECT "posts".* FROM "posts" WHERE "posts"."published" = TRUE /*application='WongnokBlog'*/
+                                             QUERY PLAN
+----------------------------------------------------------------------------------------------------
+ Seq Scan on posts  (cost=0.00..16.30 rows=315 width=101) (actual time=0.008..0.009 rows=4 loops=1)
+   Filter: published
+   Rows Removed by Filter: 2
+ Planning Time: 0.038 ms
+ Execution Time: 0.015 ms
+(5 rows)</code></pre>
+
+<ul>
+  <li><code>Seq Scan on posts</code> — "ไล่ดูทีละแผ่นทั้งลิ้นชัก" · <code>Filter: published</code> = ดูทีละแผ่นว่า published ไหม · <code>Rows Removed by Filter: 2</code> = ทิ้งไป 2 แผ่น (draft)</li>
+  <li><code>actual … rows=4</code> — ได้จริง 4 แผ่น · ส่วน <code>rows=315</code> ในวงเล็บแรกเป็นแค่<strong>การเดาล่วงหน้า</strong>ของ PostgreSQL · ตัวเลขอื่นในวงเล็บข้ามได้</li>
+  <li><code>Planning Time</code> / <code>Execution Time</code> — เวลาที่ใช้วางแผน / ทำจริง (หน่วย ms)</li>
+  <li>ลิ้นชัก 6 แผ่นไล่ทีละแผ่นก็เร็ว · ถ้า 50 ล้านแผ่นจะช้ามาก — ทางแก้ที่พบบ่อยคือ <strong>index</strong> (สารบัญในลิ้นชัก บท 109) · ถ้า PostgreSQL เลือกใช้สารบัญนั้น explain จะเปลี่ยนจาก Seq Scan เป็นคำอื่น (เช่น Index Scan)</li>
+  <li>สังเกตบรรทัด <code>Post Load</code> — <code>explain</code> ก็ยื่นใบจริงด้วย</li>
+</ul>
+
+<div class="task">
+  <h3 id="sn-sub-2">🎯 ภารกิจ · เขียนใบเบิกของของสมชาย (~10 นาที)</h3>
+  <p>ใช้ <code>bin/rails console</code> กับข้อมูลตัวอย่างชุดเดียวกับบท 107 · <strong>ทุกบรรทัดที่สร้างใบเบิกของ ต่อท้ายด้วย <code>; nil</code></strong></p>
+  <ol>
+    <li>สร้าง <code>mine</code> = บทความของสมชาย (<code>user_id: 1</code>) · เพิ่มเงื่อนไข published · เรียงยอดวิวมากไปน้อย — <strong>สามบรรทัด</strong> ต้องไม่เห็น SQL สักบรรทัด</li>
+    <li>พิมพ์ <code>mine.to_sql</code> แล้วแปลเป็นภาษาคนในใจ</li>
+    <li>ขอแค่ชื่อเรื่อง เรียงตามที่ตั้งไว้ — ใช้ method ที่ไม่สร้าง object <code>Post</code></li>
+    <li>ยอดวิวรวมของบทความใน <code>mine</code></li>
+    <li>เช็คว่าสมหญิง (<code>user_id: 2</code>) มีบทความที่ยังเป็น draft ไหม — ใช้วิธีที่ "เจอแผ่นแรกก็หยุด"</li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> ข้อ 1 มีแต่ <code>=&gt; nil</code> · ข้อ 3 ได้ <code>["ส้มตำปูปลาร้า", "ต้มยำกุ้งน้ำข้น"]</code> · ข้อ 4 ได้ <code>460</code> · ข้อ 5 ได้ <code>true</code> และ SQL มี <code>LIMIT 1</code></p>
+  <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong></p>
+  <ul>
+    <li><strong>เห็น <code>Post Load … /* loading for pp */ LIMIT 11</code> ในข้อ 1</strong> — ไม่ใช่ error แต่ลืม <code>; nil</code> · console ยื่นใบให้เพื่อจะโชว์ผล</li>
+    <li><strong><code>PG::UndefinedColumn: ERROR:  column "titel" does not exist</code></strong> — พิมพ์ชื่อคอลัมน์ผิด · อ่านบรรทัด <code>HINT: Perhaps you meant …</code> ข้างล่าง PostgreSQL เดาชื่อที่ถูกให้</li>
+    <li><strong><code>missing attribute 'body' for Post</code></strong> — ใช้ <code>select(:id, :title)</code> แล้วไปขอช่องอื่น · เพิ่มช่องนั้นใน <code>select</code> หรือเลิกใช้ <code>select</code></li>
+    <li><strong>ได้ <code>[]</code> หรือ <code>0</code></strong> — เลขที่ของสมชายในเครื่องคุณอาจไม่ใช่ 1 (เช่น เคยลบแล้ว seed ใหม่) · เช็คด้วย <code>User.find_by(name: "สมชาย").id</code></li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงทั้งหมด:</p>
+<pre><code>wongnok-blog(dev):001&gt; mine = Post.where(user_id: 1); nil
+=&gt; nil
+wongnok-blog(dev):002&gt; mine = mine.where(published: true); nil
+=&gt; nil
+wongnok-blog(dev):003&gt; mine = mine.order(views: :desc); nil
+=&gt; nil
+wongnok-blog(dev):004&gt; mine.to_sql
+=&gt; "SELECT \"posts\".* FROM \"posts\" WHERE \"posts\".\"user_id\" = 1 AND \"posts\".\"published\" = TRUE ORDER BY \"posts\".\"views\" DESC"
+wongnok-blog(dev):005&gt; mine.pluck(:title)
+  Post Pluck (1.2ms)  SELECT "posts"."title" FROM "posts" WHERE "posts"."user_id" = 1 AND "posts"."published" = TRUE ORDER BY "posts"."views" DESC /*application='WongnokBlog'*/
+=&gt; ["ส้มตำปูปลาร้า", "ต้มยำกุ้งน้ำข้น"]
+wongnok-blog(dev):006&gt; mine.sum(:views)
+  Post Sum (2.9ms)  SELECT SUM("posts"."views") FROM "posts" WHERE "posts"."user_id" = 1 AND "posts"."published" = TRUE /*application='WongnokBlog'*/
+=&gt; 460
+wongnok-blog(dev):007&gt; Post.where(user_id: 2, published: false).exists?
+  Post Exists? (2.0ms)  SELECT 1 AS one FROM "posts" WHERE "posts"."user_id" = 2 AND "posts"."published" = FALSE LIMIT 1 /*application='WongnokBlog'*/
+=&gt; true</code></pre>
+    <ul>
+      <li>ข้อ 2 แปล: "ขอทุกช่องจากลิ้นชัก posts · เฉพาะแผ่นที่เจ้าของเลขที่ 1 <strong>และ</strong> published เป็นจริง · เรียงวิวมากไปน้อย" — สามบรรทัดกลายเป็น <code>AND</code> ในประโยคเดียว</li>
+      <li>ข้อ 3: <code>pluck</code> ใช้ใบเบิกของเดิม แต่เปลี่ยน <code>SELECT "posts".*</code> เป็น <code>SELECT "posts"."title"</code> ให้เอง · เรียงตาม <code>ORDER BY</code> ที่เขียนไว้</li>
+      <li>ข้อ 4: <code>sum</code> ตัด <code>ORDER BY</code> ทิ้งให้เอง เพราะการรวมเลขไม่ต้องเรียง · 340 + 120 = 460</li>
+      <li>ข้อ 5: <code>where</code> ใส่สองเงื่อนไขในวงเล็บเดียวได้ · <code>exists?</code> ได้ <code>LIMIT 1</code> (ก๋วยเตี๋ยวเรืออยุธยาเป็น draft ของสมหญิง)</li>
+    </ul>
+    <p><strong>ลองต่อถ้ายังมีเวลา:</strong> พิมพ์ <code>mine.count</code> สองครั้งติดกัน แล้วพิมพ์ <code>mine.size</code> — นับดูว่าเห็น SQL กี่บรรทัด แล้วเทียบกับตารางในหัวข้อ count vs size</p>
+    <p>ผลของคุณไม่ตรงกับนี้ หรือเห็น SQL ในจังหวะที่ไม่คาดไว้ <strong>ถามกลับมาได้เลย</strong> พร้อมแปะทั้งก้อนที่ console ขึ้นมา</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">อยากรู้แค่ว่า "สมชายมีบทความบ้างไหม" (ไม่ต้องรู้ว่ากี่ชิ้น) · แบบไหนให้ตู้ทำงาน<strong>น้อยที่สุด</strong>?</p>
+  <div class="opts">
+    <button class="opt"><code>Post.where(user_id: 1).length &gt; 0</code></button>
+    <button class="opt"><code>Post.where(user_id: 1).count &gt; 0</code></button>
+    <button class="opt"><code>Post.exists?(user_id: 1)</code></button>
+    <button class="opt"><code>Post.where(user_id: 1).to_a.any?</code></button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — SQL จริงคือ <code>SELECT 1 AS one … LIMIT 1</code> เจอแผ่นแรกก็ตอบ ไม่ต้องหยิบแฟ้ม ไม่ต้องนับต่อ</p>
+    <p>ตัวเลือกที่ 1 กับ 4 ผิด เพราะหยิบ<strong>ทุกแผ่น</strong>ของสมชายมาวางบนโต๊ะก่อน (<code>SELECT "posts".*</code>) แค่เพื่อตอบว่ามีหรือไม่ ·
+       ตัวเลือกที่ 2 ไม่ได้หยิบแฟ้ม (เป็น <code>COUNT(*)</code>) แต่ตู้ต้องนับให้ครบทุกแผ่นก่อน — ดีกว่า 1 และ 4 แต่ยังทำงานเกินจำเป็น</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ถามว่า "มีไหม" ใช้ <code>exists?</code> · ถาม "กี่ชิ้น" ใช้ <code>count</code> · อย่าขนแฟ้มมาเพื่อตอบคำถามที่ตอบเป็นตัวเลขได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ใน console พิมพ์ <code>q = Post.where(published: true)</code> (ไม่มี <code>; nil</code>) แล้วเห็น SQL ที่มี <code>/* loading for pp */ LIMIT 11</code> · แปลว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt"><code>where</code> ยิง SQL ทันทีเสมอ สิ่งที่บทนี้สอนผิด</button>
+    <button class="opt">console ยื่นใบให้เองเพื่อโชว์ผล · ในแอปจริงไม่เป็นแบบนี้</button>
+    <button class="opt">ตาราง posts มี 11 แถว Rails เลยใส่ LIMIT 11 ให้</button>
+    <button class="opt">Rails 8.1 เปลี่ยนให้ <code>where</code> โหลดล่วงหน้า 11 แถวเสมอ</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — console ต้องโชว์ผลหลัง <code>=&gt;</code> จึงไปตู้เพื่อ "pretty print" (<code>pp</code>) และขอแค่ 11 แผ่นกันตารางใหญ่ ·
+       ใน log ของหน้า <code>/posts</code> เห็นชัดว่า controller ที่มี <code>where</code> ไม่ได้ยิง SQL เลย</p>
+    <p>ตัวเลือกที่ 1 ผิด — ต่อท้าย <code>; nil</code> แล้ว SQL หายไปเลย พิสูจน์ว่าไม่ใช่ <code>where</code> ที่ยิง ·
+       ตัวเลือกที่ 3 ผิด เพราะตารางเรามี 6 แถว แต่ยังได้ <code>LIMIT 11</code> · ตัวเลือกที่ 4 ผิด เพราะในแอปจริงไม่มี <code>LIMIT 11</code> โผล่ใน log</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ทดลองเรื่อง "ยิงตอนไหน" ใน console ต้องต่อ <code>; nil</code> ไม่งั้นจะเห็นภาพผิด</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">สรุป 3 บรรทัด</h2>
+
+<ul>
+  <li><strong><code>where</code> · <code>order</code> · <code>limit</code> = เขียนใบเบิกของ</strong> · <code>each</code> · <code>count</code> · <code>first</code> · <code>exists?</code> · <code>pluck</code> · <code>sum</code> = ยื่นใบ</li>
+  <li><strong>อยากรู้ว่าหน้าไหนไปตู้กี่รอบ อย่าเดาจากโค้ด — เปิด log</strong> ดูบรรทัด <code>(N queries)</code> และ <code>↳</code> ที่ชี้ต้นเหตุ (นี่คือทักษะที่บท 114 ใช้หา N+1)</li>
+  <li><strong>ให้ตู้ทำงานแทน</strong>: นับด้วย <code>count</code> · ถามว่ามีไหมด้วย <code>exists?</code> · ขอบางช่องด้วย <code>pluck</code> · อย่าขนแฟ้มทั้งลิ้นชักมาทำใน Ruby</li>
+</ul>
+
+<h2 id="sn-sec-10">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>31</td><td>พิมพ์ <code>q = Post.where(…)</code> ทีละบรรทัด "ยังไม่มี SQL วิ่งเลย"</td><td>ใน console เห็น SQL ทุกบรรทัด (<code>loading for pp</code>) · ต้องต่อ <code>; nil</code> ถึงจะเห็นว่าไม่ยิง</td><td><strong>สนใจ</strong> — พิมพ์ตามแล้วจะงง</td></tr>
+    <tr><td>31</td><td>เรียกใช้ relation เดิมซ้ำ "ยิง SQL ใหม่ทุกครั้ง"</td><td>จริงกับ <code>count</code> · แต่ <code>each</code> / <code>first</code> / <code>size</code> ครั้งที่สองบน relation ที่โหลดแล้วไม่ยิงซ้ำ</td><td>นิดหน่อย</td></tr>
+    <tr><td>32</td><td>ต้องเพิ่ม <code>verbose_query_logs = true</code> เอง</td><td>Rails 8.1 เปิดไว้ใน development แล้ว · เลขบรรทัดไฟล์ <code>.erb</code> เกินจริง 1</td><td><strong>สนใจ</strong> เรื่องเลขบรรทัด</td></tr>
+    <tr><td>35</td><td><code>Post.where(user_id: 1).count &gt; 0</code> = "โหลดมาทั้งหมด"</td><td>ยิง <code>COUNT(*)</code> ไม่ได้โหลดแถว · <code>exists?</code> ยังดีกว่าเพราะหยุดที่แถวแรก</td><td>นิดหน่อย — ข้อสรุปถูก เหตุผลเกินจริง</td></tr>
+    <tr><td>35</td><td>"ใน view ที่วน each อยู่แล้ว ใช้ size"</td><td>ถูกเฉพาะ <code>size</code> ที่อยู่<strong>หลัง</strong> <code>each</code> · ถ้าอยู่บน <code>each</code> ยังยิง <code>COUNT(*)</code></td><td><strong>สนใจ</strong></td></tr>
+    <tr><td>35</td><td><code>Post.where(old: true).update_all(…)</code></td><td>ตารางเราไม่มีช่อง <code>old</code> → <code>PG::UndefinedColumn</code> · บทนี้ใช้ <code>published: false</code> แทน</td><td>ไม่ต้อง — แค่ตัวอย่าง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0112-callbacks-and-logic.html">← บทเรียน 112 · Callbacks · business logic</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0114-n-plus-one.html">บทเรียน 114 → N+1 · includes</a>
+</nav>
+
+<h2 id="sn-sec-11">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#calculations">Rails Guides — Active Record Query Interface § Calculations</a> —
+      <strong>อ่านหัวข้อ Calculations (count · average · sum)</strong> และหัวข้อ <a href="https://guides.rubyonrails.org/active_record_querying.html#pluck">pluck</a> ·
+      <a href="https://guides.rubyonrails.org/active_record_querying.html#exists-questionmark">exists?</a> · <a href="https://guides.rubyonrails.org/active_record_querying.html#running-explain">Running EXPLAIN</a> ·
+      หัวข้อ joins / eager loading ข้ามไปก่อน (บท 114–115)</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Relation.html#method-i-size">Rails API — ActiveRecord::Relation#size</a> —
+      ยืนยันพฤติกรรม "โหลดแล้วนับใน Ruby ยังไม่โหลดใช้ COUNT" · ในหน้าเดียวกันดู <code>load</code> · <code>to_sql</code> · <code>update_all</code> (มีคำเตือนเรื่องข้าม callback/validation)</li>
+  <li><a href="https://guides.rubyonrails.org/debugging_rails_applications.html#verbose-query-logs">Rails Guides — Debugging § Verbose Query Logs</a> —
+      <strong>อ่านแค่หัวข้อนี้กับหัวข้อ SQL Query Comments ในหมวดเดียวกัน</strong> · ตัวอย่างในคู่มือเป็น N+1 พอดี ไว้อ่านคู่กับบท 114</li>
+  <li><a href="https://gorm.io/docs/method_chaining.html#Finisher-Methods">GORM — Method Chaining § Finisher Methods</a> —
+      ฝั่ง Go: คู่มือบอกว่า <code>Find</code> · <code>First</code> ฯลฯ "immediate" คือยิง SQL ทันที · ต่างจาก Rails ที่ไม่มีคำสั่งปิดท้ายแบบนี้</li>
+  <li><a href="https://www.postgresql.org/docs/17/sql-explain.html">PostgreSQL 17 — EXPLAIN</a> —
+      ไว้อ่านทีหลังตอนเจอหน้าช้าจริง · <strong>อ่านแค่ย่อหน้า Description</strong> พอให้รู้ว่า ANALYZE รันคำสั่งจริง</li>
+  <li><a href="https://github.com/MiniProfiler/rack-mini-profiler">rack-mini-profiler (GitHub)</a> —
+      gem ที่สไลด์แนะนำ ขึ้นกล่องนับ query มุมจอ · <strong>บทนี้ไม่ได้ติดตั้ง</strong> อ่าน README ส่วนแรกพอรู้จัก</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

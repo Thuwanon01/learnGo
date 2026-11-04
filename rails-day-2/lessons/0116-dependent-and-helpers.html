@@ -1,0 +1,1054 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 116 — ลบบทความแล้วคอมเมนต์ไปไหน — dependent, CASCADE และ counter_cache</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 116 · Rails · Day 2</p>
+  <h1>ลบบทความแล้วคอมเมนต์ไปไหน — dependent, CASCADE และ counter_cache</h1>
+  <p class="meta">~25 นาที (ลองตามใน console หลายรอบ) · ควรผ่าน
+    <a href="./0111-four-layers-and-uniqueness.html">บท 111</a> (foreign key · transaction) ·
+    <a href="./0112-callbacks-and-logic.html">บท 112</a> (callback) ·
+    <a href="./0115-associations.html">บท 115</a> (has_many · belongs_to) มาก่อน</p>
+  <p class="standfirst">
+    ลองลบบทความที่มีคนมาคอมเมนต์ไว้ แล้วคุณจะเจอ error สีแดงทันที — <strong>นั่นไม่ใช่บั๊ก แต่เป็นตู้เก็บแฟ้มกำลังปกป้องข้อมูลให้คุณ</strong>
+    <br>อ่านจบแล้วคุณจะอ่าน error นั้นออก · เลือกได้ว่า "ลบบทความแล้วคอมเมนต์ควรเป็นยังไง" จาก<strong>ทางเลือก 4 แบบ</strong> โดยรู้ว่าแต่ละแบบยิง SQL อะไรจริง
+    · แถมของเล็ก ๆ อีกสามชิ้น: <code>counter_cache</code> (จดจำนวนคอมเมนต์ไว้บนบทความ ไม่ต้องเดินไปนับทุกครั้ง) ·
+    <code>touch</code> (คอมเมนต์เปลี่ยน → บทความรู้ตัวว่ามีอะไรเปลี่ยน) · <code>inverse_of</code> (แค่รู้จักชื่อ)
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้ตลอด</p>
+  <ul>
+    <li><strong><code>has_many :comments</code> · <code>belongs_to :post</code></strong> (<a href="./0115-associations.html">บท 115</a>) — บทความหนึ่งชิ้นมีใบคอมเมนต์หลายใบ · ใบคอมเมนต์แต่ละใบเป็นของบทความหนึ่งชิ้น</li>
+    <li><strong>foreign key</strong> (<a href="./0111-four-layers-and-uniqueness.html">บท 111</a> · <a href="./0115-associations.html">บท 115</a>) — ช่อง <code>post_id</code> บนใบคอมเมนต์ ("เป็นของบทความเลขที่ …") พร้อม<strong>กฎของตู้</strong>ว่าเลขนั้นต้องมีอยู่จริง</li>
+    <li><strong>transaction</strong> (<a href="./0111-four-layers-and-uniqueness.html">บท 111</a>) — <code>BEGIN</code> … <code>COMMIT</code> = ทำทั้งชุดหรือไม่ทำเลย · <code>ROLLBACK</code> = ยกเลิกทั้งชุด เหมือนไม่เคยเกิด</li>
+    <li><strong>callback</strong> (<a href="./0112-callbacks-and-logic.html">บท 112</a>) — ขั้นตอนอัตโนมัติที่ทำก่อน/หลังเก็บแฟ้มทุกครั้ง</li>
+    <li><strong>migration · <code>db:reset</code></strong> (<a href="./0108-migration-basics.html">บท 108</a>) — ใบสั่งช่างดัดแปลงตู้ · ล้างตู้ทิ้งแล้วสร้างใหม่จากแปลน (schema.rb) พร้อมข้อมูลตัวอย่าง</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17</strong>
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน ใช้แทนกันได้)</p>
+  <p>🗂 ตัวอย่างในบทนี้ใช้ตาราง <code>users</code> / <code>posts</code> / <code>comments</code> และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับที่สร้างไว้ใน <a href="./0107-console-crud.html">บท 107</a> ·
+    บทความที่ใช้บ่อย: <strong>ต้มยำกุ้งน้ำข้น</strong> (เลขที่ 1 · มีคอมเมนต์ 2 ใบ) และ <strong>ก๋วยเตี๋ยวเรืออยุธยา</strong> (เลขที่ 4 · ไม่มีคอมเมนต์)</p>
+  <p>⚠️ <strong>เริ่มบทด้วย <code>bin/rails db:reset</code> หนึ่งครั้ง</strong> — ถ้าทำ<a href="./0115-associations.html">บท 115</a>ครบ ต้มยำกุ้งจะมีป้าย (tags) ติดอยู่
+    ซึ่งทำให้ทางที่ ①–③ ข้างล่างลบต้มยำกุ้งไม่ผ่าน (ติดลิ้นชัก <code>taggings</code> แทน) · seeds ไม่มีป้าย reset แล้วป้ายหายหมด ผลจะตรงกับในบท
+    (ลิ้นชัก taggings กลับมาคุยกันอีกทีตอนท้ายหัวข้อ "เลือกแบบไหน")</p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · <strong>เวลา (ms) · วันที่ · เลข <code>0x…</code> ของคุณจะไม่ตรงกับในบท</strong> ·
+    บทนี้จะลบข้อมูลหลายรอบ — <strong>ลบแล้วอยากได้ข้อมูลคืน ให้สั่ง <code>bin/rails db:reset</code></strong> (ในเครื่องตัวเองเท่านั้น)</p>
+</div>
+
+<h2 id="sn-sec-1">ลองลบบทความที่มีคอมเมนต์ — แล้วตู้ไม่ยอม</h2>
+
+<p>
+  เปิดครัวทดลองด้วย <code>bin/rails console</code> แล้วลองทิ้งบทความต้มยำกุ้ง (ที่มีคนคอมเมนต์ไว้ 2 ใบ) ด้วย <code>destroy</code> แบบที่เรียนใน<a href="./0107-console-crud.html">บท 107</a>:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find_by(title: "ต้มยำกุ้งน้ำข้น")
+  Post Load (1.6ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ต้มยำกุ้งน้ำข้น' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):002&gt; post.comments.count
+  Comment Count (1.8ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+=&gt; 2
+wongnok-blog(dev):003&gt; post.destroy
+  TRANSACTION (1.9ms)  BEGIN /*application='WongnokBlog'*/
+  Post Destroy (5.6ms)  DELETE FROM "posts" WHERE "posts"."id" = 1 /*application='WongnokBlog'*/
+  TRANSACTION (0.7ms)  ROLLBACK /*application='WongnokBlog'*/
+(wongnok-blog):3:in '&lt;main&gt;': PG::ForeignKeyViolation: ERROR:  update or delete on table "posts" violates foreign key constraint "fk_rails_2fd19c0db7" on table "comments" (ActiveRecord::InvalidForeignKey)
+DETAIL:  Key (id)=(1) is still referenced from table "comments".
+
+<span class="c">… (ข้อความเดิมซ้ำอีกรอบจากชั้นในของ PostgreSQL ตามด้วยรายชื่อไฟล์ยาว ๆ และ "... 55 levels..." — ข้ามได้)</span></code></pre>
+
+<p>อ่าน log ทีละบรรทัด (บรรทัดที่ย่อหน้าเข้าไปคือ SQL ที่ Rails ยิงไปที่ตู้ · คำหน้าสุด เช่น <code>Post Destroy</code> บอกว่างานของใคร):</p>
+
+<ul>
+  <li><code>BEGIN</code> — เริ่ม transaction: "งานต่อจากนี้ ทำทั้งชุดหรือไม่ทำเลย"</li>
+  <li><code>DELETE FROM "posts" WHERE "posts"."id" = 1</code> — <strong>DELETE</strong> คือคำสั่ง "ทิ้ง" ·
+      แปลว่า "ทิ้งแฟ้มจากลิ้นชัก <code>posts</code> เฉพาะแผ่นที่เลขที่ (<code>id</code>) เป็น 1"
+      · สังเกตว่า <strong>Rails ไม่ได้เช็คอะไรก่อนเลย</strong> ส่งคำสั่งทิ้งไปตรง ๆ</li>
+  <li><code>ROLLBACK</code> — ตู้ปฏิเสธ Rails เลยยกเลิกทั้งชุด · <strong>ไม่มีอะไรหาย</strong> บทความยังอยู่ครบ</li>
+</ul>
+
+<p>แล้วอ่าน error ทีละท่อน:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ท่อนใน error</th><th>แปลเป็นภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>(wongnok-blog):3</code></td><td>พังที่บรรทัดที่ 3 ที่เราพิมพ์ใน console (<code>post.destroy</code>)</td></tr>
+    <tr><td><code>PG::ForeignKeyViolation</code></td><td>PostgreSQL (<code>PG</code>) บอกว่า "ผิดกฎ foreign key"</td></tr>
+    <tr><td><code>update or delete on table "posts" violates foreign key constraint … on table "comments"</code></td><td>"การแก้หรือทิ้งแฟ้มในลิ้นชัก posts ไปขัดกฎของลิ้นชัก comments"</td></tr>
+    <tr><td><code>"fk_rails_2fd19c0db7"</code></td><td>ชื่อกฎที่ Rails ตั้งให้อัตโนมัติตอนสร้างตาราง comments (<a href="./0111-four-layers-and-uniqueness.html">บท 111</a> เจอชื่อเดียวกัน) — ไม่ต้องจำ</td></tr>
+    <tr><td><code>(ActiveRecord::InvalidForeignKey)</code></td><td>ชื่อ error ฝั่ง Rails ที่ห่อ error ของ PostgreSQL ไว้อีกชั้น — ถ้าจะ <code>rescue</code> ให้ใช้ชื่อนี้</td></tr>
+    <tr><td><code>DETAIL:  Key (id)=(1) is still referenced from table "comments".</code></td><td><strong>"แฟ้มเลขที่ 1 ยังมีใบในลิ้นชัก comments อ้างถึงอยู่"</strong> ← ประโยคที่สำคัญที่สุด</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สรุปเป็นภาษาคน: <strong>ถ้าทิ้งบทความเลขที่ 1 ไป ใบคอมเมนต์ 2 ใบที่เขียนว่า "เป็นของบทความเลขที่ 1" จะชี้ไปหาของที่ไม่มีอยู่จริง</strong> ตู้เลยไม่ยอม
+  <br>กฎนี้มาจาก <code>foreign_key: true</code> ตอนสร้างตาราง comments (<code>post:references</code> ใน<a href="./0107-console-crud.html">บท 107</a>) — ตัวเดียวกับที่<a href="./0111-four-layers-and-uniqueness.html">บท 111</a> ใช้กันใบคอมเมนต์ที่ชี้ไปบทความเลข 9999
+  · บท 111 เห็นด้าน "เพิ่มใบลูกที่ไม่มีแม่" · บทนี้เห็นอีกด้าน "ทิ้งแม่ที่ยังมีลูก"
+</p>
+
+<div class="analogy">
+  <span class="label">🗄 เทียบให้เห็นภาพ — ตู้ที่ไม่ยอมปล่อยแฟ้มที่ยังมีคนอ้างถึง</span>
+  <p>
+    ใบคอมเมนต์ทุกใบมีช่อง "เป็นของบทความเลขที่ …" เขียนไว้ · ตู้ของร้านเราออกแบบมาพิเศษ —
+    พอมีคนจะดึงแฟ้มบทความเลขที่ 1 ออกไปทิ้ง ตู้จะ<strong>ไม่ยอมปล่อยแฟ้มออกมา</strong> (ดึงยังไงก็ไม่ออก) เพราะยังมีใบคอมเมนต์ 2 ใบเขียนเลข 1 อยู่
+    <br>คนดูแลสต็อก (model) ไม่ได้เป็นคนห้าม — เขาเดินไปดึงตามสั่งเลย แต่<strong>ตัวตู้</strong>ไม่ยอม
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ตู้จริงที่ดึงแฟ้มไม่ออก คนจะลองงัด หรือเดินไปหาเองว่าใบไหนอ้างอยู่ ·
+    ตู้ของ PostgreSQL แค่ปฏิเสธแล้วบอกชื่อลิ้นชักที่อ้างถึง (<code>table "comments"</code>) — <strong>มันไม่ได้ถามว่าเราอยากให้ทำอะไรกับใบคอมเมนต์</strong>
+    เราต้องบอกเองล่วงหน้า และนั่นคือเรื่องของทั้งบทนี้
+  </p>
+</div>
+
+<p>
+  เทียบกับ Go: ถ้าเขียน <code>db.Delete(&amp;post)</code> ด้วย GORM (<a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a>) กับตารางที่มี foreign key แบบนี้ ก็ถูกตู้ปฏิเสธด้วยกฎเดียวกัน
+  — เพราะ<strong>คนปฏิเสธคือ PostgreSQL ไม่ใช่ Rails</strong> · ภาษาไหนมาต่อตู้นี้ก็โดนกฎเดียวกันหมด (ฝั่ง Go จะได้ error กลับมาเป็นค่า <code>err</code> แทนการระเบิด)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของ error ต้นบท</span>
+  <dl>
+    <dt>foreign key constraint · <code>ActiveRecord::InvalidForeignKey</code></dt>
+    <dd>กฎของตู้ที่บังคับว่าเลขในช่อง <code>post_id</code> ต้องมีอยู่จริงในลิ้นชัก posts — ทั้งตอนเพิ่มใบลูก และตอนทิ้งแฟ้มแม่ ·
+        <strong>พิมพ์บอก AI ได้ว่า "destroying a Post raises ActiveRecord::InvalidForeignKey because comments still reference it — what are my options?"</strong></dd>
+    <dt>parent · child record (แม่ · ลูก)</dt>
+    <dd>แฟ้มที่ถูกอ้างถึง (บทความ) คือ<strong>แม่</strong> · แฟ้มที่มีช่องชี้ไปหาแม่ (ใบคอมเมนต์ที่มี <code>post_id</code>) คือ<strong>ลูก</strong> ·
+        <strong>ถาม senior ได้ว่า "ตารางนี้ถ้าลบ parent แล้ว child ต้องเป็นยังไง ธุรกิจตัดสินไว้หรือยัง"</strong></dd>
+    <dt>orphan record (แฟ้มกำพร้า)</dt>
+    <dd>ใบลูกที่แม่หายไปแล้ว ชี้ไปหาเลขที่ไม่มีอยู่จริง · foreign key มีไว้กันไม่ให้เกิดสิ่งนี้ ·
+        <strong>ถาม senior ได้ว่า "ตารางเก่า ๆ ที่ไม่มี foreign key มี orphan ค้างอยู่เท่าไหร่"</strong></dd>
+  </dl>
+</div>
+
+<div class="predict">
+  <p>ทีนี้ลองทิ้งบทความ <strong>ก๋วยเตี๋ยวเรืออยุธยา</strong> (เลขที่ 4) ที่ยังไม่มีใครคอมเมนต์เลย — ตารางเดิม กฎ foreign key เดิม:</p>
+  <pre><code>post = Post.find_by(title: "ก๋วยเตี๋ยวเรืออยุธยา")
+post.comments.count    <span class="c"># =&gt; 0</span>
+post.destroy</code></pre>
+  <p class="ask">ได้ error แบบเดียวกันไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ทิ้งได้ปกติ</strong> ไม่มี error:</p>
+    <pre><code>wongnok-blog(dev):003&gt; post.destroy
+  TRANSACTION (2.1ms)  BEGIN /*application='WongnokBlog'*/
+  Post Destroy (4.1ms)  DELETE FROM "posts" WHERE "posts"."id" = 4 /*application='WongnokBlog'*/
+  TRANSACTION (1.6ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):004&gt; Post.count
+  Post Count (2.7ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 5</code></pre>
+    <p>
+      SQL เหมือนกันเป๊ะ (<code>DELETE … WHERE "posts"."id" = 4</code>) ต่างกันแค่บรรทัดสุดท้าย: <code>COMMIT</code> (ยืนยันจริง) แทน <code>ROLLBACK</code>
+      · ตู้ไม่ได้ห้ามทิ้งบทความ<strong>ทุกชิ้น</strong> ห้ามเฉพาะชิ้นที่ยังมีใบลูกอ้างอยู่
+    </p>
+    <p>
+      <strong>บทเรียน:</strong> นี่คือเหตุผลที่บั๊กแบบนี้มักหลุดไปถึงตอนใช้งานจริง — ตอนทดสอบเรามักลบบทความที่เพิ่งสร้าง (ยังไม่มีคอมเมนต์) เลยไม่เคยเห็น error
+      · ทดลองเสร็จแล้วสั่ง <code>bin/rails db:reset</code> ให้บทความกลับมาครบ 6 ชิ้น
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-2">สี่ทางเลือก — ภาพรวมก่อนลงมือ</h2>
+
+<p>
+  Rails ไม่เดาให้ว่าลบบทความแล้วคอมเมนต์ควรเป็นยังไง เพราะคำตอบ<strong>ขึ้นกับธุรกิจ</strong> · เราต้องเลือกเองหนึ่งในสี่แบบนี้
+  แล้วเขียนบอกไว้ในโค้ด (สามแบบเขียนใน model · หนึ่งแบบเขียนใน migration)
+</p>
+
+<div class="diagram">ทิ้งแฟ้มบทความเลขที่ 1 (มีใบคอมเมนต์อ้างอยู่ 2 ใบ) แล้วใบคอมเมนต์…
+
+① dependent: :destroy          ทิ้งทีละใบ พร้อมจดบันทึกทุกใบ     ← คนดูแลสต็อกทำ (Rails)
+② dependent: :delete_all       โกยทิ้งทั้งกองในครั้งเดียว           ← คนดูแลสต็อกทำ (Rails)
+③ on_delete: :cascade          ตู้ทิ้งให้เองอัตโนมัติ               ← ตัวตู้ทำ (PostgreSQL)
+④ dependent: :restrict_with_error  ห้ามทิ้งบทความ ถ้ายังมีใบอ้างอยู่ ← คนดูแลสต็อกห้าม (Rails)</div>
+
+<div class="analogy">
+  <span class="label">🗑 เทียบให้เห็นภาพ — สี่วิธีเก็บกวาดใบคอมเมนต์ก่อนทิ้งแฟ้มบทความ</span>
+  <p>
+    ① คนดูแลสต็อกหยิบใบคอมเมนต์<strong>ออกมาทีละใบ</strong> ทิ้งทีละใบ และทำ "ขั้นตอนอัตโนมัติ" ของใบนั้นครบ (เช่น จดลงสมุดว่าทิ้งใบไหน) — ละเอียดแต่ช้า
+    <br>② คนดูแลสต็อก<strong>โกยใบคอมเมนต์ทั้งกอง</strong>ของบทความนี้ลงถังทีเดียว ไม่ได้ดูทีละใบ — เร็ว แต่ไม่มีใครจดอะไร
+    <br>③ ตัวตู้มีกลไกในตัว: พอแฟ้มบทความถูกดึงออก <strong>ใบคอมเมนต์ที่อ้างถึงหล่นลงถังเอง</strong> — คนดูแลสต็อกไม่รู้ด้วยซ้ำว่ามีอะไรหล่นไป
+    <br>④ คนดูแลสต็อก<strong>ปฏิเสธ</strong>: "บทความนี้ยังมีคอมเมนต์ ทิ้งไม่ได้" แล้วบอกเหตุผลกลับมา
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริงถ้าทิ้งผิดยังไปคุ้ยถังขยะคืนได้ · ในฐานข้อมูล ① ② ③ <strong>ทิ้งแล้วหายถาวร</strong> ไม่มีถังให้คุ้ย
+    (ถ้าธุรกิจอยากกู้คืนได้ ต้องออกแบบ "ลบแบบซ่อนไว้" เอง — แบบ <code>DeletedAt</code> ของ GORM ใน<a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a>)
+  </p>
+</div>
+
+<p>
+  เราจะลองทีละแบบกับบทความต้มยำกุ้ง แล้วดูว่า Rails ยิง SQL อะไรจริง · ก่อนเริ่ม ให้แปะ callback (ขั้นตอนอัตโนมัติ จาก<a href="./0112-callbacks-and-logic.html">บท 112</a>) ไว้ที่ใบคอมเมนต์
+  <strong>ชั่วคราว</strong> — เพื่อให้เห็นด้วยตาว่าแบบไหน "จดบันทึก" แบบไหนไม่จด
+  (เพิ่มแค่บรรทัด <code>after_destroy</code> · กฎอื่นที่คุณเติมไว้จากบทก่อน ๆ คงไว้ตามเดิม):
+</p>
+
+<pre><code><span class="c"># app/models/comment.rb</span>
+<span class="k">class</span> <span class="n">Comment</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+
+  <span class="f">after_destroy</span> { <span class="f">puts</span> <span class="s">"📝 จดบันทึก: ทิ้งใบคอมเมนต์เลขที่ #{id} แล้ว"</span> }
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>after_destroy</code> — callback แบบที่ทำงาน<strong>หลังจากใบนี้ถูกทิ้ง</strong> (ญาติของ <code>after_commit</code> ใน<a href="./0112-callbacks-and-logic.html">บท 112</a>)</li>
+  <li><code>{ puts "…" }</code> — block (<a href="../../rails-day-1/lessons/0093-ruby-blocks-and-methods.html">บท 93</a>) ที่พิมพ์ข้อความออกจอ · <code>#{id}</code> = แทรกเลขที่ของใบนี้ลงในข้อความ</li>
+  <li>ในงานจริงตรงนี้อาจเป็น "ลบรูปที่แนบมากับคอมเมนต์" หรือ "หักแต้มผู้ใช้" — งานที่<strong>ต้องเกิดทุกครั้ง</strong>ที่ใบคอมเมนต์หายไป</li>
+</ul>
+
+<h2 id="sn-sec-3">ทางที่ ① — <code>dependent: :destroy</code> ทิ้งทีละใบ พร้อมจดบันทึก</h2>
+
+<p>
+  บอก Rails ว่า "ก่อนทิ้งบทความ ให้ทิ้งใบคอมเมนต์ของมันให้หมดก่อน <strong>แบบทีละใบ</strong>" · เติมแค่ท้ายบรรทัด <code>has_many :comments</code>
+  (บรรทัดอื่นในไฟล์ของคุณ เช่น <code>has_many :taggings</code> จากบท 115 คงไว้):
+</p>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>, <span class="n">dependent:</span> <span class="n">:destroy</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  <code>dependent:</code> แปลว่า "ของที่พึ่งพาแฟ้มนี้" · <code>:destroy</code> คือวิธีจัดการ · แก้ไฟล์แล้ว<strong>ต้องสั่ง <code>reload!</code> ใน console</strong> (หรือปิดแล้วเปิดใหม่ — <a href="../../rails-day-1/lessons/0104-rails-debug-and-console.html">บท 104</a>)
+  แล้ว<strong>หาบทความใหม่อีกรอบ</strong> เพราะตัวแปร <code>post</code> เก่ายังจำกฎเก่าอยู่:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find_by(title: "ต้มยำกุ้งน้ำข้น")
+  Post Load (1.5ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ต้มยำกุ้งน้ำข้น' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):002&gt; post.destroy
+  TRANSACTION (1.4ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Load (1.3ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+  Comment Destroy (1.3ms)  DELETE FROM "comments" WHERE "comments"."id" = 1 /*application='WongnokBlog'*/
+📝 จดบันทึก: ทิ้งใบคอมเมนต์เลขที่ 1 แล้ว
+  Comment Destroy (0.9ms)  DELETE FROM "comments" WHERE "comments"."id" = 2 /*application='WongnokBlog'*/
+📝 จดบันทึก: ทิ้งใบคอมเมนต์เลขที่ 2 แล้ว
+  Post Destroy (1.2ms)  DELETE FROM "posts" WHERE "posts"."id" = 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.9ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):003&gt; Comment.count
+  Comment Count (2.7ms)  SELECT COUNT(*) FROM "comments" /*application='WongnokBlog'*/
+=&gt; 5</code></pre>
+
+<ul>
+  <li><code>Comment Load … SELECT "comments".* … WHERE "comments"."post_id" = 1</code> — "หยิบใบคอมเมนต์<strong>ทุกใบ</strong>ของบทความเลขที่ 1 ออกมาก่อน" (เอาขึ้นมาเป็น object ใน Ruby)</li>
+  <li><code>DELETE FROM "comments" WHERE "comments"."id" = 1</code> — ทิ้งใบเลขที่ 1 → ตามด้วย 📝 = callback ของใบนั้นทำงาน</li>
+  <li>ทำซ้ำกับใบเลขที่ 2 · <strong>หนึ่งใบ = หนึ่งคำสั่ง DELETE</strong></li>
+  <li>ลูกหมดแล้ว ค่อย <code>DELETE FROM "posts" … = 1</code> · ตู้ยอม → <code>COMMIT</code> · คอมเมนต์ทั้งร้านเหลือ 5 จาก 7</li>
+</ul>
+
+<p>
+  ราคาที่จ่ายคือ<strong>จำนวนคำสั่ง</strong> — ผมลองบทความที่มีคอมเมนต์ 100 ใบ แล้วนับ SQL ตอน <code>destroy</code> ได้ <strong>104 คำสั่ง</strong>
+  (BEGIN 1 · หยิบคอมเมนต์ 1 · DELETE ทีละใบ 100 · DELETE บทความ 1 · COMMIT 1) · คอมเมนต์ 5,000 ใบก็ราว 5,000 กว่าคำสั่ง ช้าตามจำนวนลูก
+</p>
+
+<p>เทียบกับ Go: GORM มีท่าที่ใกล้เคียง คือบอกตอนลบว่าให้ลบลูกชื่ออะไรไปด้วย (ต้องเขียนทุกครั้งที่ลบ ไม่ได้ประกาศไว้ที่ struct ครั้งเดียวแบบ Rails):</p>
+
+<pre><code><span class="c">// Go + GORM — ลบบทความพร้อม Comments ของมัน (ตามเอกสาร GORM หัวข้อ Delete Associations)</span>
+db.<span class="f">Select</span>(<span class="s">"Comments"</span>).<span class="f">Delete</span>(&amp;post)</code></pre>
+
+<p><code>Select("Comments")</code> ตรงนี้ไม่ได้แปลว่า "ค้นหา" — แปลว่า "เลือกลูกชื่อ <code>Comments</code> (ชื่อ field ใน struct Post) ให้ลบตามไปด้วย" · ไม่ใส่ = GORM ลบแค่บทความ แล้วโดนตู้ปฏิเสธแบบต้นบท</p>
+
+<p>ทดลองเสร็จ สั่ง <code>exit</code> ออกจาก console แล้ว <code>bin/rails db:reset</code> ให้ต้มยำกุ้งกลับมา ก่อนไปทางที่ ②</p>
+
+<h2 id="sn-sec-4">ทางที่ ② — <code>dependent: :delete_all</code> โกยทิ้งทั้งกอง</h2>
+
+<p>เปลี่ยนคำเดียวใน <code>app/models/post.rb</code> (callback 📝 ของ Comment ยังอยู่เหมือนเดิม):</p>
+
+<pre><code>  <span class="f">has_many</span> <span class="n">:comments</span>, <span class="n">dependent:</span> <span class="n">:delete_all</span></code></pre>
+
+<div class="predict">
+  <p>เปิด console ใหม่ แล้วทิ้งต้มยำกุ้งอีกรอบ:</p>
+  <pre><code>post = Post.find_by(title: "ต้มยำกุ้งน้ำข้น")
+post.destroy</code></pre>
+  <p class="ask">บรรทัด 📝 จดบันทึก จะขึ้นกี่บรรทัด? และ SQL ที่ขึ้นต้นด้วย <code>DELETE</code> จะมีกี่บรรทัด?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>📝 ไม่ขึ้นเลยสักบรรทัด · DELETE มีแค่ 2 บรรทัด</strong>:</p>
+    <pre><code>wongnok-blog(dev):002&gt; post.destroy
+  TRANSACTION (1.7ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Delete All (1.1ms)  DELETE FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+  Post Destroy (0.9ms)  DELETE FROM "posts" WHERE "posts"."id" = 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.0ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):003&gt; Comment.count
+  Comment Count (1.8ms)  SELECT COUNT(*) FROM "comments" /*application='WongnokBlog'*/
+=&gt; 5</code></pre>
+    <ul>
+      <li><code>DELETE FROM "comments" WHERE "comments"."post_id" = 1</code> — "ทิ้งใบคอมเมนต์<strong>ทุกใบ</strong>ที่เป็นของบทความ 1" ในคำสั่งเดียว · สังเกตว่า WHERE ดูที่ <code>post_id</code> ไม่ใช่ <code>id</code> ทีละใบ</li>
+      <li><strong>ไม่มี <code>Comment Load</code></strong> — Rails ไม่ได้หยิบใบคอมเมนต์ขึ้นมาเป็น object เลย · ไม่มี object ก็ไม่มีใครเรียก callback → ไม่มี 📝</li>
+      <li>ผลลัพธ์ในตู้เหมือนทางที่ ① ทุกอย่าง (คอมเมนต์เหลือ 5) — ต่างกันที่<strong>วิธีทำ</strong></li>
+    </ul>
+    <p>
+      กับบทความที่มีคอมเมนต์ 100 ใบ ผมนับได้ <strong>4 คำสั่ง</strong> (BEGIN · DELETE คอมเมนต์ · DELETE บทความ · COMMIT) เทียบกับ 104 ของทางที่ ① ·
+      และไม่ว่าจะมีกี่พันใบ ก็ยังเป็น 4 คำสั่ง
+    </p>
+  </div>
+</div>
+
+<p>
+  ใน Go ท่านี้คือการเขียนลบลูกด้วยเงื่อนไขเองก่อน แล้วค่อยลบแม่ — Rails แค่เขียนสองบรรทัดนี้ให้อัตโนมัติ:
+</p>
+
+<pre><code><span class="c">// Go + GORM — สิ่งที่ dependent: :delete_all ทำให้ ถ้าเขียนเอง</span>
+db.<span class="f">Where</span>(<span class="s">"post_id = ?"</span>, post.ID).<span class="f">Delete</span>(&amp;Comment{})  <span class="c">// DELETE FROM comments WHERE post_id = …</span>
+db.<span class="f">Delete</span>(&amp;post)</code></pre>
+
+<div class="warn">
+  <p>
+    <strong>ราคาของความเร็ว:</strong> ถ้าวันหนึ่งใบคอมเมนต์มี<strong>ลูกของมันเอง</strong> (เช่น ตาราง likes ที่มี <code>comment_id</code>) — <code>delete_all</code> ไม่ไปจัดการหลานให้ ·
+    ผมลองสร้างตาราง likes ที่มี foreign key ชี้ไปใบคอมเมนต์แล้วทิ้งบทความ ได้ <code>ActiveRecord::InvalidForeignKey</code> แบบเดียวกับต้นบท (คราวนี้ลิ้นชัก likes เป็นคนห้าม)
+  </p>
+</div>
+
+<p>ทดลองเสร็จ <code>exit</code> แล้ว <code>bin/rails db:reset</code> อีกรอบ</p>
+
+<h2 id="sn-sec-5">ทางที่ ③ — <code>on_delete: :cascade</code> ให้ตู้ทิ้งเอง</h2>
+
+<p>
+  สองทางแรก Rails เป็นคนลบ · ทางนี้ย้ายงานไปให้<strong>ตัวตู้ (PostgreSQL)</strong> — เราแก้กฎ foreign key เดิมจาก "ห้ามทิ้งแม่ที่มีลูก" เป็น "ทิ้งแม่แล้วให้ลูกหายตาม"
+  · การแก้กฎของตู้ = แก้โครงตู้ → ต้องเขียน <strong>migration</strong> (ใบสั่งช่าง <a href="./0108-migration-basics.html">บท 108</a>)
+</p>
+
+<p>เริ่มจาก<strong>เอา <code>dependent:</code> ออกจาก Post</strong> ก่อน (ให้เห็นผลของตู้ล้วน ๆ):</p>
+
+<pre><code>  <span class="f">has_many</span> <span class="n">:comments</span></code></pre>
+
+<p>แล้วสร้างใบสั่งช่างเปล่า ๆ หนึ่งใบ (ชื่อ migration ตั้งเองได้ ขอให้อ่านแล้วรู้ว่าทำอะไร):</p>
+
+<pre><code><span class="c">$ bin/rails generate migration ChangeCommentsPostForeignKeyToCascade</span>
+      invoke  active_record
+      create    db/migrate/20261104120515_change_comments_post_foreign_key_to_cascade.rb</code></pre>
+
+<p>ตัวเลขหน้าชื่อไฟล์คือวันเวลาที่สร้าง — ของคุณจะต่าง · เปิดไฟล์นั้น แล้วเขียนข้างใน <code>change</code> สองบรรทัด:</p>
+
+<pre><code><span class="c"># db/migrate/20261104120515_change_comments_post_foreign_key_to_cascade.rb</span>
+<span class="k">class</span> <span class="n">ChangeCommentsPostForeignKeyToCascade</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">remove_foreign_key</span> <span class="n">:comments</span>, <span class="n">:posts</span>
+    <span class="f">add_foreign_key</span> <span class="n">:comments</span>, <span class="n">:posts</span>, <span class="n">on_delete:</span> <span class="n">:cascade</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>remove_foreign_key :comments, :posts</code> — "รื้อกฎเดิมที่ผูกลิ้นชัก comments ไว้กับลิ้นชัก posts ออก" (กฎของตู้แก้ตรง ๆ ไม่ได้ ต้องรื้อแล้วติดใหม่)</li>
+  <li><code>add_foreign_key :comments, :posts, on_delete: :cascade</code> — "ติดกฎใหม่ ที่<strong>เวลาทิ้งแฟ้มบทความ ให้ทิ้งใบคอมเมนต์ที่อ้างถึงตามไปด้วย</strong>"
+      · <code>on_delete</code> = "เมื่อมีการทิ้ง" · <code>:cascade</code> = "ไหลต่อเป็นทอด ๆ" (แบบน้ำตก)</li>
+</ul>
+
+<pre><code><span class="c">$ bin/rails db:migrate</span>
+== 20261104120515 ChangeCommentsPostForeignKeyToCascade: migrating ============
+-- remove_foreign_key(:comments, :posts)
+   -&gt; 0.0095s
+-- add_foreign_key(:comments, :posts, {on_delete: :cascade})
+   -&gt; 0.0041s
+== 20261104120515 ChangeCommentsPostForeignKeyToCascade: migrated (0.0136s) ===</code></pre>
+
+<p>เปิดแปลนตู้ฉบับล่าสุด (<code>db/schema.rb</code>) จะเห็นบรรทัดกฎของ comments เปลี่ยนไปหนึ่งบรรทัด (แสดงแบบ <code>git diff</code> — บรรทัด <code>-</code> คือของเดิม · <code>+</code> คือของใหม่ ·
+  นอกจากนี้เลข <code>version:</code> บรรทัดบนสุดก็เปลี่ยนเป็นเลขของ migration ใหม่ตามปกติ):</p>
+
+<pre><code>-  add_foreign_key "comments", "posts"
++  add_foreign_key "comments", "posts", on_delete: :cascade</code></pre>
+
+<p>
+  migration นี้ย้อนได้ด้วย <code>bin/rails db:rollback</code> — ผมลองแล้ว Rails รื้อกฎ cascade ออกแล้วติดกฎเดิมกลับให้เอง
+  (เพราะเราบอกชื่อลิ้นชักทั้งสองฝั่งไว้ครบ มันเลยรู้ว่าต้องติดอะไรคืน) · ถ้าลอง rollback ดู ให้สั่ง <code>bin/rails db:migrate</code> กลับก่อนไปต่อ
+  · ทีนี้ <code>bin/rails db:reset</code> แล้วเปิด console ทิ้งต้มยำกุ้ง:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find_by(title: "ต้มยำกุ้งน้ำข้น")
+  <span class="c">… (Post Load — ตัดออก)</span>
+wongnok-blog(dev):002&gt; post.destroy
+  TRANSACTION (2.4ms)  BEGIN /*application='WongnokBlog'*/
+  Post Destroy (5.2ms)  DELETE FROM "posts" WHERE "posts"."id" = 1 /*application='WongnokBlog'*/
+  TRANSACTION (2.0ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; #&lt;Post … <span class="c">(ผลยาว ตัดออก)</span>
+wongnok-blog(dev):003&gt; Comment.count
+  Comment Count (1.1ms)  SELECT COUNT(*) FROM "comments" /*application='WongnokBlog'*/
+=&gt; 5</code></pre>
+
+<p>
+  เทียบกับต้นบทดี ๆ: <strong>SQL ที่ Rails ยิงเหมือนกันทุกตัวอักษร</strong> (<code>DELETE FROM "posts" WHERE "posts"."id" = 1</code>) — ต่างกันแค่คราวนี้ตู้ตอบ <code>COMMIT</code>
+  <br>คอมเมนต์ 2 ใบหายไปจริง (เหลือ 5) แต่ <strong>log ไม่มีบรรทัดไหนพูดถึงคอมเมนต์เลย</strong> และไม่มี 📝 — ตู้ทิ้งเองข้างใน Rails ไม่รู้เรื่อง
+</p>
+
+<p>
+  ข้อดีที่สองทางแรกให้ไม่ได้: กฎนี้<strong>อยู่ในตู้</strong> ใครมาทิ้งแฟ้มทางไหนก็โดน — ผมลองสั่ง SQL ตรง ๆ <code>DELETE FROM posts WHERE id = 5</code> โดยไม่ผ่าน model
+  ใบคอมเมนต์ของบทความ 5 ก็หายตามครบ · นี่คือแนวคิดเดียวกับ<a href="./0111-four-layers-and-uniqueness.html">บท 111</a>: กฎใน model ข้ามได้ กฎในตู้ข้ามไม่ได้
+</p>
+
+<p>ทดลองเสร็จ <code>exit</code> แล้ว <code>bin/rails db:reset</code> ให้บทความกลับมาครบ 6 ชิ้น (กฎ cascade ยังอยู่ เพราะอยู่ในแปลนตู้แล้ว)</p>
+
+<p>เทียบกับ Go: กฎนี้เป็นของ PostgreSQL ล้วน ๆ จึงเขียนได้ทั้งใน SQL ของ goose (<a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a>) และใน tag ของ GORM:</p>
+
+<pre><code><span class="c">-- goose (SQL ล้วน) — คำว่า ON DELETE CASCADE ตัวเดียวกับที่ Rails สร้างให้</span>
+post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE
+
+<span class="c">// GORM — บอกผ่าน tag บน struct (ตามเอกสาร GORM หัวข้อ Foreign Key Constraint)</span>
+Comments []Comment <span class="s">`gorm:"constraint:OnDelete:CASCADE;"`</span></code></pre>
+
+<ul>
+  <li>บรรทัด goose แปลว่า "ช่อง <code>post_id</code> เป็นเลขจำนวนเต็ม (<code>BIGINT</code>) · ห้ามว่าง (<code>NOT NULL</code>) · ต้องตรงกับ <code>id</code> ที่มีอยู่จริงในลิ้นชัก posts (<code>REFERENCES posts(id)</code>) · และเมื่อแฟ้มบทความถูกทิ้ง ให้ทิ้งใบนี้ตาม (<code>ON DELETE CASCADE</code>)"</li>
+  <li>บรรทัด GORM คือ field <code>Comments</code> ใน struct Post พร้อม tag ที่บอกว่า "ตอน <code>AutoMigrate</code> สร้างตาราง (<a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a>) ให้ติดกฎ cascade ด้วย"</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของทางที่ ① ② ③</span>
+  <dl>
+    <dt><code>dependent: :destroy</code></dt>
+    <dd>Rails หยิบลูกขึ้นมาทีละใบแล้ว <code>destroy</code> · callback ของลูกทำงานครบ · ช้าตามจำนวนลูก ·
+        <strong>พิมพ์บอก AI ได้ว่า "use dependent: :destroy because Comment has an after_destroy callback that must run"</strong></dd>
+    <dt><code>dependent: :delete_all</code></dt>
+    <dd>Rails ยิง DELETE คำสั่งเดียวตามเงื่อนไข <code>post_id</code> · ไม่สร้าง object · callback ไม่ทำงาน ·
+        <strong>ถาม senior ได้ว่า "comment มี callback หรือมีตารางลูกต่ออีกไหม ถ้าไม่มี ใช้ delete_all ได้หรือเปล่า"</strong></dd>
+    <dt><code>ON DELETE CASCADE</code> · <code>on_delete: :cascade</code></dt>
+    <dd>กฎของ foreign key ในตู้ (ไม่ใช่ของ Rails) ที่ทิ้งลูกตามแม่อัตโนมัติ · ทำงานแม้คนลบไม่ผ่าน Rails · Rails ไม่เห็นและไม่เรียก callback ·
+        <strong>พิมพ์บอก AI ได้ว่า "write a Rails migration that changes the comments → posts foreign key to ON DELETE CASCADE, reversible"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">ทางที่ ④ — <code>dependent: :restrict_with_error</code> ห้ามทิ้ง</h2>
+
+<p>
+  บางธุรกิจ<strong>ไม่อยากให้ลบเลย</strong>ถ้ายังมีของอ้างอยู่ — เช่น ห้ามลบหมวดหมู่ที่ยังมีบทความ (สไลด์หน้า 54 ใช้ตัวนี้กับ Category) ·
+  ต่างจากต้นบทตรงที่คราวนี้ <strong>Rails เป็นคนห้ามเอง อย่างสุภาพ</strong> ก่อนจะไปถึงตู้ · ลองกับ Post:
+</p>
+
+<pre><code>  <span class="f">has_many</span> <span class="n">:comments</span>, <span class="n">dependent:</span> <span class="n">:restrict_with_error</span></code></pre>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find_by(title: "ต้มยำกุ้งน้ำข้น")
+  <span class="c">… (Post Load — ตัดออก)</span>
+wongnok-blog(dev):002&gt; post.destroy
+  TRANSACTION (2.5ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Exists? (1.7ms)  SELECT 1 AS one FROM "comments" WHERE "comments"."post_id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.2ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):003&gt; post.errors.full_messages
+=&gt; ["Cannot delete record because dependent comments exist"]
+wongnok-blog(dev):004&gt; Post.count
+  Post Count (3.2ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 6</code></pre>
+
+<ul>
+  <li><code>SELECT 1 AS one FROM "comments" WHERE "comments"."post_id" = 1 LIMIT 1</code> — "ไม่ต้องหยิบแฟ้มมา <strong>แค่บอกว่ามีใบคอมเมนต์ของบทความ 1 สักใบไหม</strong>" (<code>LIMIT 1</code> = เจอใบแรกก็หยุด · คำสั่งเดียวกับ <code>exists?</code> ใน<a href="./0113-query-lazy-relation.html">บท 113</a>)</li>
+  <li>เจอ → <strong>ไม่ส่ง DELETE เลย</strong> แล้ว <code>ROLLBACK</code> · <code>destroy</code> คืน <code>false</code> (เหมือน <code>save</code> ที่คืน <code>false</code> ใน<a href="./0110-validations.html">บท 110</a>)</li>
+  <li><code>errors.full_messages</code> — "ลบไม่ได้ เพราะยังมี comments ที่พึ่งพาอยู่" · ข้อความนี้เอาไปโชว์บนหน้าเว็บได้เลย ไม่ต้องหน้าแดง</li>
+</ul>
+
+<p>
+  อยากให้ระเบิดแทนคืน <code>false</code> ก็ใช้ <code>destroy!</code> ตามกฎ <code>!</code> ของ<a href="./0110-validations.html">บท 110</a> — ผลจริง:
+  <code>Failed to destroy Post with id=1 (ActiveRecord::RecordNotDestroyed)</code>
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของทางที่ ④</span>
+  <dl>
+    <dt><code>dependent: :restrict_with_error</code></dt>
+    <dd>ห้ามลบแม่ถ้ายังมีลูก โดย Rails ถามตู้ก่อนว่ามีลูกไหม · <code>destroy</code> คืน <code>false</code> พร้อมข้อความใน <code>errors</code> แทนการระเบิด ·
+        <strong>พิมพ์บอก AI ได้ว่า "use dependent: :restrict_with_error so deleting a category with posts shows an error message instead of a 500 page"</strong></dd>
+    <dt><code>ActiveRecord::RecordNotDestroyed</code></dt>
+    <dd>error ที่ได้จาก <code>destroy!</code> เมื่อการลบถูกห้าม · คู่กับ <code>RecordInvalid</code> ของ <code>save!</code> ·
+        <strong>ถาม senior ได้ว่า "ตรงนี้ควรใช้ destroy แล้วเช็ค false หรือ destroy! แล้ว rescue"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">เลือกแบบไหน — คำตอบมาจากธุรกิจ ไม่ใช่จาก AI</h2>
+
+<p>
+  ทั้งสี่แบบ "ถูก" ทางเทคนิคหมด · ที่ต่างคือ<strong>ธุรกิจอยากให้เกิดอะไร</strong> — คำถามแบบนี้ AI ตอบแทนไม่ได้ เพราะมันไม่รู้กฎของร้านคุณ
+  (ถ้าไม่บอก มันก็ได้แต่เดา) · ถามคนที่รู้เรื่องธุรกิจด้วยคำถามในคอลัมน์ซ้าย:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ถามธุรกิจว่า…</th><th>ถ้าคำตอบคือ…</th><th>เลือก</th></tr></thead>
+  <tbody>
+    <tr><td>ลบแม่แล้ว ลูกต้องเก็บไว้ไหม?</td><td>ต้องเก็บ ห้ามลบแม่ (เช่น ลูกค้าที่มีประวัติสั่งซื้อ · หมวดหมู่ที่ยังมีบทความ)</td><td><code>:restrict_with_error</code></td></tr>
+    <tr><td>ตอนลูกหายไป มีงานต้องทำไหม?</td><td>มี (ลบรูปแนบ · หักแต้ม · แจ้งเตือน) — งานพวกนี้เป็น callback</td><td><code>:destroy</code></td></tr>
+    <tr><td>ลูกเยอะไหม · มีหลานต่อไหม?</td><td>ลูกเป็นพัน ๆ · ไม่มี callback · ไม่มีหลาน</td><td><code>:delete_all</code></td></tr>
+    <tr><td>มีใครลบข้อมูลโดยไม่ผ่านแอปนี้ไหม?</td><td>มี (สคริปต์ SQL · แอปอื่นใช้ตู้เดียวกัน) และต้องไม่เหลือแฟ้มกำพร้าเด็ดขาด</td><td><code>on_delete: :cascade</code> (ใช้คู่กับแบบอื่นได้)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ตอนพิมพ์ <code>dependent:</code> ผิด Rails จะบอกค่าที่ใช้ได้ทั้งหมดในข้อความ error (ดูภารกิจ) — มีอีกสองค่าที่บทนี้ไม่ได้ลอง:
+  <code>:nullify</code> (ลบช่อง <code>post_id</code> ของลูกให้ว่าง — ใช้กับตารางเราไม่ได้ ผมลองแล้วตู้ฟ้อง <code>NotNullViolation</code> เพราะ <code>post_id</code> ตั้ง <code>null: false</code> ไว้)
+  กับ <code>:destroy_async</code> (ทิ้งทีละใบแบบทางที่ ① แต่ทำทีหลังด้วยงานเบื้องหลัง — รอ Day 3)
+</p>
+
+<p>
+  <strong>บล็อกของเราเลือกอะไร:</strong> ลบบทความแล้วคอมเมนต์หายตามได้ · และอยากได้ทั้ง callback และการรับประกันของตู้ → <strong>ใช้ทางที่ ① คู่กับ ③</strong>
+  · Rails ลบลูกทีละใบก่อน (callback ทำงาน) · ส่วน cascade ในตู้เป็น "ตาข่ายรองรับ" เผื่อมีใครลบข้ามแอป —
+  เป็นหลักเดียวกับประโยคหลักของวันนี้ข้อ ②: <strong>กฎใน model ไม่ใช่การรับประกัน ต้องมีกฎที่ตู้คู่กัน</strong>
+</p>
+
+<p>ทำให้แอปของคุณอยู่ในสภาพนี้ก่อนไปหัวข้อถัดไป (โชว์เฉพาะบรรทัดที่เกี่ยว · กฎอื่นจากบทก่อน ๆ คงไว้):</p>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>, <span class="n">dependent:</span> <span class="n">:destroy</span>
+  <span class="f">has_many</span> <span class="n">:taggings</span>, <span class="n">dependent:</span> <span class="n">:destroy</span>   <span class="c"># ถ้ามีจากบท 115</span>
+  <span class="f">has_many</span> <span class="n">:tags</span>, <span class="n">through:</span> <span class="n">:taggings</span>            <span class="c"># ถ้ามีจากบท 115</span>
+<span class="k">end</span>
+
+<span class="c"># app/models/comment.rb — ลบบรรทัด after_destroy ที่ใส่ทดลองออก</span>
+<span class="k">class</span> <span class="n">Comment</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+<span class="k">end</span></code></pre>
+
+<div class="warn">
+  <p>
+    <strong>ทุก <code>has_many</code> ที่ชี้มาหาบทความต้องตัดสินใจ ไม่ใช่แค่ comments</strong> — ผมลองติดป้าย "เผ็ด" ให้ต้มยำกุ้ง
+    แล้วใส่ <code>dependent: :destroy</code> ให้ comments อย่างเดียว · <code>destroy</code> ยังได้ <code>InvalidForeignKey</code> โดยคราวนี้ท่อน <code>on table "taggings"</code>
+    และคอมเมนต์ 2 ใบ<strong>ไม่หาย</strong> (transaction ยกเลิกทั้งชุด) · เติม <code>dependent: :destroy</code> ให้ <code>has_many :taggings</code> แล้วลบได้ —
+    ใบจับคู่หายตาม แต่ตัวป้าย "เผ็ด" ยังอยู่ ใช้กับบทความอื่นต่อได้
+  </p>
+</div>
+
+<p>migration cascade เก็บไว้ตามเดิม · แล้วสั่ง <code>bin/rails db:reset</code> ให้ได้ข้อมูลครบ 6 บทความ 7 คอมเมนต์</p>
+
+<h2 id="sn-sec-8"><code>counter_cache</code> — ป้ายตัวเลขบนหน้าแฟ้ม ไม่ต้องเดินไปนับ</h2>
+
+<p>
+  หน้ารายการบทความมักโชว์ "มีคอมเมนต์กี่ใบ" ข้างทุกชื่อ · ถ้าเขียนตรง ๆ ทุกบทความจะ<strong>เดินไปนับที่ลิ้นชัก comments หนึ่งรอบ</strong> —
+  นี่คือ N+1 แบบที่<a href="./0114-n-plus-one.html">บท 114</a> สอน แต่เป็นรุ่น <code>COUNT</code>:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; Post.all.each { |post| puts "#{post.title}: #{post.comments.size}" }; nil
+  Post Load (39.4ms)  SELECT "posts".* FROM "posts" /*application='WongnokBlog'*/
+  Comment Count (1.3ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 1 /*application='WongnokBlog'*/
+ต้มยำกุ้งน้ำข้น: 2
+  Comment Count (0.9ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 2 /*application='WongnokBlog'*/
+ส้มตำปูปลาร้า: 1
+  Comment Count (0.8ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 3 /*application='WongnokBlog'*/
+ข้าวมันไก่ประตูน้ำ: 1
+  Comment Count (0.8ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 4 /*application='WongnokBlog'*/
+ก๋วยเตี๋ยวเรืออยุธยา: 0
+  Comment Count (0.8ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 5 /*application='WongnokBlog'*/
+ผัดกะเพราหมูสับ: 3
+  Comment Count (0.7ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 6 /*application='WongnokBlog'*/
+แกงเขียวหวานไก่: 0
+=&gt; nil</code></pre>
+
+<ul>
+  <li><code>; nil</code> ท้ายบรรทัด — แค่ให้ console ไม่พิมพ์บทความทั้ง 6 ชิ้นออกมาซ้ำ (บรรทัดนั้นคืนค่า <code>nil</code> แทน)</li>
+  <li>หยิบบทความ 1 รอบ + <code>COUNT(*)</code> (นับว่ามีกี่ใบ) อีก <strong>6 รอบ</strong> = 7 คำสั่ง · บทความ 50 ชิ้นต่อหน้า = 51 คำสั่ง</li>
+</ul>
+
+<p>
+  <strong>counter_cache</strong> แก้ด้วยการ<strong>จดจำนวนไว้บนแฟ้มบทความเลย</strong> — เพิ่มช่อง <code>comments_count</code> ในลิ้นชัก posts
+  แล้วให้ Rails บวก/ลบตัวเลขนี้ให้เองทุกครั้งที่มีใบคอมเมนต์เพิ่มหรือหาย · เวลาอยากรู้จำนวน แค่อ่านช่องนี้ ไม่ต้องเดินไปนับ
+</p>
+
+<div class="analogy">
+  <span class="label">🔢 เทียบให้เห็นภาพ — ป้ายตัวเลขบนหน้าแฟ้ม</span>
+  <p>
+    แทนที่ทุกครั้งที่ลูกค้าถาม "บทความนี้มีกี่คอมเมนต์" แล้วต้องเดินไปเปิดลิ้นชัก comments นับทีละใบ ·
+    คนดูแลสต็อก<strong>ติดป้ายตัวเลขไว้บนหน้าแฟ้มบทความ</strong> ทุกครั้งที่เก็บใบคอมเมนต์ใหม่ก็ +1 ทุกครั้งที่ทิ้งก็ −1 · ใครถามก็อ่านจากป้ายได้ทันที
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงเห็นป้ายเพี้ยนก็สงสัยแล้วไปนับใหม่ · Rails <strong>เชื่อป้ายเสมอ</strong> ไม่เคยไปนับตรวจ ·
+    ถ้ามีคนเพิ่มหรือลบใบคอมเมนต์โดยไม่ผ่านคนดูแลสต็อก (เช่น SQL ตรง ๆ หรือ <code>delete_all</code> ที่ไม่สร้าง object) ป้ายจะผิดไปเงียบ ๆ จนกว่าเราจะสั่งนับใหม่
+  </p>
+</div>
+
+<p><strong>ขั้นที่ 1 · เพิ่มช่องบนแฟ้ม</strong> — สร้าง migration ที่บอกชื่อช่องกับชนิดไปด้วยเลย:</p>
+
+<pre><code><span class="c">$ bin/rails generate migration AddCommentsCountToPosts comments_count:integer</span>
+      invoke  active_record
+      create    db/migrate/20261104121224_add_comments_count_to_posts.rb</code></pre>
+
+<p>generator เขียนให้แค่ <code>add_column :posts, :comments_count, :integer</code> · เติม <code>default: 0, null: false</code> เอง (เริ่มที่ 0 และห้ามว่าง — ไม่งั้นบทความใหม่จะมีป้ายว่างเปล่า):</p>
+
+<pre><code><span class="c"># db/migrate/20261104121224_add_comments_count_to_posts.rb</span>
+<span class="k">class</span> <span class="n">AddCommentsCountToPosts</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:comments_count</span>, <span class="n">:integer</span>, <span class="n">default:</span> <span class="n">0</span>, <span class="n">null:</span> <span class="n">false</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c">$ bin/rails db:migrate</span>
+== 20261104121224 AddCommentsCountToPosts: migrating ==========================
+-- add_column(:posts, :comments_count, :integer, {default: 0, null: false})
+   -&gt; 0.0062s
+== 20261104121224 AddCommentsCountToPosts: migrated (0.0062s) =================</code></pre>
+
+<p><strong>ขั้นที่ 2 · บอก Rails ให้ดูแลป้าย</strong> — ใส่ที่ฝั่ง<strong>ลูก</strong> (<code>belongs_to</code>) เพราะใบคอมเมนต์เป็นคนรู้ว่าตัวเองเพิ่งเกิดหรือเพิ่งหาย:</p>
+
+<pre><code><span class="c"># app/models/comment.rb</span>
+<span class="k">class</span> <span class="n">Comment</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>, <span class="n">counter_cache:</span> <span class="k">true</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+<span class="k">end</span></code></pre>
+
+<p>Rails เดาชื่อช่องจากกฎตั้งชื่อ: <code>comments</code> + <code>_count</code> = <code>comments_count</code> · ถ้าตั้งชื่อช่องอื่นต้องบอกชื่อแทน <code>true</code></p>
+
+<div class="predict">
+  <p>ป้ายพร้อมแล้ว · เปิด console ใหม่ แล้วถามบทความผัดกะเพรา (มีคอมเมนต์จริง 3 ใบ):</p>
+  <pre><code>post = Post.find_by(title: "ผัดกะเพราหมูสับ")
+post.comments.size
+post.comments.count</code></pre>
+  <p class="ask"><code>size</code> กับ <code>count</code> ได้ตัวเลขเท่ากันไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่เท่า</strong> — <code>size</code> ได้ <code>0</code> ซึ่ง<strong>ผิด</strong>:</p>
+    <pre><code>wongnok-blog(dev):002&gt; post.comments.size
+=&gt; 0
+wongnok-blog(dev):003&gt; post.comments.count
+  Comment Count (2.0ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 5 /*application='WongnokBlog'*/
+=&gt; 3</code></pre>
+    <ul>
+      <li><code>size</code> — <strong>ไม่มี SQL เลย</strong> อ่านเลขจากป้าย <code>comments_count</code> ตรง ๆ · แต่ป้ายเพิ่งติดและเริ่มที่ 0 ทุกแฟ้ม ยังไม่มีใครเขียนเลขจริงลงไป</li>
+      <li><code>count</code> — <strong>เดินไปนับที่ตู้ทุกครั้ง</strong> (<code>COUNT(*)</code>) ไม่สนป้าย จึงได้ 3 ที่ถูก</li>
+    </ul>
+    <p>
+      <strong>บทเรียน:</strong> ติดป้ายใหม่ต้อง<strong>เขียนเลขเริ่มต้นให้ถูกก่อน</strong> — งานนี้เรียกว่า <strong>backfill</strong> (เติมข้อมูลย้อนหลังให้แฟ้มที่มีอยู่แล้ว) ·
+      สไลด์บอกแค่ "ต้องเพิ่มคอลัมน์ก่อน" แต่ไม่ได้บอกขั้นนี้ — ถ้าลืม หน้าเว็บจะโชว์ "0 คอมเมนต์" ทุกบทความเก่าโดยไม่มี error สักบรรทัด
+    </p>
+  </div>
+</div>
+
+<p><strong>ขั้นที่ 3 · backfill</strong> — ให้ตู้นับคอมเมนต์ของทุกบทความแล้วเขียนลงป้ายใน<strong>คำสั่งเดียว</strong>:</p>
+
+<pre><code>wongnok-blog(dev):004&gt; Post.update_all("comments_count = (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id)")
+  Post Update All (6.1ms)  UPDATE "posts" SET comments_count = (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id) /*application='WongnokBlog'*/
+=&gt; 6
+wongnok-blog(dev):005&gt; Post.pluck(:title, :comments_count)
+  Post Pluck (1.9ms)  SELECT "posts"."title", "posts"."comments_count" FROM "posts" /*application='WongnokBlog'*/
+=&gt;
+[["ต้มยำกุ้งน้ำข้น", 2],
+ ["ส้มตำปูปลาร้า", 1],
+ ["ข้าวมันไก่ประตูน้ำ", 1],
+ ["ก๋วยเตี๋ยวเรืออยุธยา", 0],
+ ["ผัดกะเพราหมูสับ", 3],
+ ["แกงเขียวหวานไก่", 0]]</code></pre>
+
+<ul>
+  <li><code>Post.update_all("…")</code> — แก้ทุกแฟ้มในคำสั่งเดียว (ทวน<a href="./0113-query-lazy-relation.html">บท 113</a>) · ข้อความในวงเล็บคือ SQL ที่เราเขียนเอง Rails ส่งไปให้ตู้ตามนั้นเลย</li>
+  <li><code>UPDATE "posts" SET comments_count = …</code> — <strong>UPDATE … SET</strong> = "แก้ช่องนี้ของทุกแฟ้มในลิ้นชัก posts ให้เป็น…" (ไม่มี WHERE = ทุกแผ่น)</li>
+  <li><code>(SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id)</code> — วงเล็บคือคำถามย่อย: "นับใบคอมเมนต์ที่ <code>post_id</code> ตรงกับเลขที่ของแฟ้มบทความ<strong>แผ่นที่กำลังแก้อยู่</strong>"</li>
+  <li><code>=&gt; 6</code> — แก้ไป 6 แฟ้ม · <code>pluck</code> (<a href="./0113-query-lazy-relation.html">บท 113</a>) ยืนยันว่าป้ายตรงกับจำนวนจริงแล้ว</li>
+</ul>
+
+<p>
+  อีกท่าที่เอกสาร Rails แนะนำคือ <code>Post.find_each { |post| Post.reset_counters(post.id, :comments) }</code> = "ไล่ทีละบทความ (<code>find_each</code> จาก<a href="./0114-n-plus-one.html">บท 114</a>) แล้วสั่งนับป้ายใหม่" — ได้ผลเท่ากัน แต่ช้ากว่า (2 คำสั่งต่อบทความ)
+  · ⚠️ ใช้ได้<strong>หลังใส่ <code>counter_cache: true</code> แล้วเท่านั้น</strong> — สั่งก่อนจะได้ <code>undefined method 'counter_cache_column' for nil (NoMethodError)</code>
+</p>
+
+<p>
+  backfill ทำครั้งเดียวพอ · ต่อจากนี้ถ้าสั่ง <code>bin/rails db:reset</code> ป้ายจะถูกเองตั้งแต่ต้น เพราะ seeds สร้างคอมเมนต์ผ่าน Rails (<code>p1.comments.create!</code>) ซึ่ง +1 ให้ทุกใบ — ผมลองแล้วได้ 2 · 1 · 1 · 0 · 3 · 0 ตรงกับจำนวนจริง
+</p>
+
+<p><strong>ผลลัพธ์</strong> — loop เดิมเป๊ะ เหลือคำสั่งเดียว:</p>
+
+<pre><code>wongnok-blog(dev):006&gt; Post.all.each { |post| puts "#{post.title}: #{post.comments.size}" }; nil
+  Post Load (2.1ms)  SELECT "posts".* FROM "posts" /*application='WongnokBlog'*/
+ต้มยำกุ้งน้ำข้น: 2
+ส้มตำปูปลาร้า: 1
+ข้าวมันไก่ประตูน้ำ: 1
+ก๋วยเตี๋ยวเรืออยุธยา: 0
+ผัดกะเพราหมูสับ: 3
+แกงเขียวหวานไก่: 0
+=&gt; nil</code></pre>
+
+<p>แล้วป้ายอัปเดตเองจริงไหม? ลองเพิ่มแล้วทิ้งคอมเมนต์หนึ่งใบที่บทความแกงเขียวหวาน (ป้ายเป็น 0):</p>
+
+<pre><code>wongnok-blog(dev):007&gt; post = Post.find_by(title: "แกงเขียวหวานไก่")
+  <span class="c">… (Post Load — ตัดออก)</span>
+wongnok-blog(dev):008&gt; comment = post.comments.create!(user: User.first, body: "รอสูตรอยู่นะ")
+  <span class="c">… (User Load — ตัดออก)</span>
+  TRANSACTION (1.6ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Create (3.9ms)  INSERT INTO "comments" ("body", "post_id", "user_id", "created_at", "updated_at") VALUES ('รอสูตรอยู่นะ', 6, 1, '2026-11-04 12:14:44.371076', '2026-11-04 12:14:44.371076') RETURNING "id" /*application='WongnokBlog'*/
+  Post Update All (1.1ms)  UPDATE "posts" SET "comments_count" = COALESCE("posts"."comments_count", 0) + 1 WHERE "posts"."id" = 6 /*application='WongnokBlog'*/
+  TRANSACTION (1.6ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; #&lt;Comment:0x000000012657e190 id: 8, body: "รอสูตรอยู่นะ", post_id: 6, <span class="c">…</span>&gt;
+wongnok-blog(dev):009&gt; post.reload.comments_count
+  Post Load (1.1ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 6 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 1
+wongnok-blog(dev):010&gt; comment.destroy
+  TRANSACTION (2.2ms)  BEGIN /*application='WongnokBlog'*/
+  Comment Destroy (4.3ms)  DELETE FROM "comments" WHERE "comments"."id" = 8 /*application='WongnokBlog'*/
+  Post Update All (2.0ms)  UPDATE "posts" SET "comments_count" = COALESCE("posts"."comments_count", 0) - 1 WHERE "posts"."id" = 6 /*application='WongnokBlog'*/
+  TRANSACTION (2.2ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; #&lt;Comment:0x000000012657e190 id: 8, <span class="c">…</span>&gt;
+wongnok-blog(dev):011&gt; post.reload.comments_count
+  Post Load (2.6ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 6 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 0</code></pre>
+
+<ul>
+  <li><code>INSERT INTO "comments" (…) VALUES (…) RETURNING "id"</code> — <strong>INSERT</strong> = "เพิ่มแฟ้มใหม่ลงลิ้นชัก comments โดยกรอกช่องในวงเล็บแรกด้วยค่าในวงเล็บหลัง แล้วบอกเลขที่ (<code>id</code>) ที่ได้กลับมา" (แบบเดียวกับ<a href="./0107-console-crud.html">บท 107</a>)</li>
+  <li><code>UPDATE "posts" SET "comments_count" = COALESCE("posts"."comments_count", 0) + 1 WHERE "posts"."id" = 6</code> — <strong>บรรทัดที่ counter_cache เพิ่มให้</strong>:
+      "แก้ป้ายของบทความเลขที่ 6 เป็น เลขเดิม +1" · <code>COALESCE(…, 0)</code> = "ถ้าช่องว่าง ให้ถือเป็น 0" · ตอนทิ้งก็ −1 · อยู่ใน transaction เดียวกับ INSERT/DELETE ใบคอมเมนต์</li>
+  <li><code>post.reload</code> — โหลดแฟ้มบทความจากตู้ใหม่ (<code>Post Load</code>) เพราะตัวแปร <code>post</code> ในมือยังเป็นค่าเก่า</li>
+  <li>เลขที่ใบคอมเมนต์ (<code>8</code>) ของคุณอาจต่าง ถ้าเคยสร้างคอมเมนต์เพิ่มไว้</li>
+</ul>
+
+<p>
+  เทียบกับ Go: GORM ไม่มีป้ายอัตโนมัติ — ต้องเพิ่ม field <code>CommentsCount</code> ใน struct แล้วเขียน
+  <code>UPDATE posts SET comments_count = comments_count + 1</code> เองทุกที่ที่สร้างคอมเมนต์ (และอย่าลืมใส่ใน transaction เดียวกัน) · Rails เขียนให้ทุกที่จากบรรทัดเดียว
+</p>
+
+<div class="warn">
+  <p>
+    <strong>size · count · length ไม่เหมือนกัน</strong> (ทวนจาก<a href="./0113-query-lazy-relation.html">บท 113</a>): หลังติด counter_cache แล้ว
+    loop เดิมถ้าใช้ <code>count</code> ยังได้ 7 คำสั่ง (นับที่ตู้ทุกครั้ง) · ถ้าใช้ <code>length</code> ได้ 7 คำสั่งเหมือนกันแต่<strong>หยิบใบคอมเมนต์ทุกใบขึ้นมา</strong>แล้วนับในมือ — ผมลองทั้งคู่แล้ว ·
+    <strong>อยากได้ประโยชน์จากป้าย ต้องใช้ <code>size</code></strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของ counter_cache</span>
+  <dl>
+    <dt>counter cache</dt>
+    <dd>คอลัมน์ที่เก็บจำนวนลูกไว้บนแฟ้มแม่ (<code>posts.comments_count</code>) ให้ Rails บวก/ลบให้เอง · แก้ N+1 ของ <code>COUNT</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า "add a counter_cache for post.comments, include the migration with default 0 and a backfill"</strong></dd>
+    <dt>backfill</dt>
+    <dd>การเติมค่าให้แฟ้มเก่าที่มีอยู่ก่อนเพิ่มคอลัมน์ใหม่ · ไม่ทำ = ข้อมูลเก่าผิดเงียบ ๆ ·
+        <strong>ถาม senior ได้ว่า "คอลัมน์ใหม่นี้ต้อง backfill ไหม ทำใน migration หรือแยกเป็น task"</strong>
+        (ตารางใหญ่ ๆ อย่าทำทีเดียวในตอน deploy — เรื่องตู้ค้างจาก<a href="./0109-safe-migrations.html">บท 109</a>)</dd>
+    <dt><code>reset_counters</code></dt>
+    <dd>method ของ Rails ที่สั่งนับใหม่แล้วเขียนลงป้าย · ใช้ตอน backfill หรือตอนสงสัยว่าป้ายเพี้ยน ·
+        <strong>ถาม senior ได้ว่า "เคยมีคนแก้ comments ด้วย SQL ตรง ๆ ไหม ควร reset_counters หรือเปล่า"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9"><code>touch</code> และ <code>inverse_of</code> — ของเล็กอีกสองชิ้น</h2>
+
+<p>
+  <strong><code>touch: true</code></strong> = "ทุกครั้งที่ใบคอมเมนต์ถูกเก็บหรือทิ้ง ให้แก้เวลา <code>updated_at</code> (แก้ไขล่าสุดเมื่อ) ของบทความแม่เป็นเวลาปัจจุบันด้วย" ·
+  มีไว้ให้ระบบรู้ว่า "บทความนี้มีอะไรเปลี่ยน" แม้ตัวบทความเองไม่ได้ถูกแก้ — สำคัญมากตอนทำ <strong>cache</strong> (เก็บหน้าเว็บที่ทำเสร็จแล้วไว้ใช้ซ้ำ ไม่ต้องทำใหม่ทุกครั้ง — Day 3)
+</p>
+
+<div class="analogy">
+  <span class="label">🕐 เทียบให้เห็นภาพ — ตราประทับ "แก้ไขล่าสุด" บนหน้าแฟ้ม</span>
+  <p>
+    ทุกครั้งที่มีใบคอมเมนต์ใหม่เสียบเข้าแฟ้มบทความ คนดูแลสต็อกจะ<strong>ประทับตราเวลาใหม่</strong>ที่หน้าแฟ้มบทความด้วย ·
+    พนักงานที่ถ่ายเอกสารแฟ้มนี้เก็บไว้ (cache) แค่ดูตราก็รู้ว่าสำเนาในมือเก่าแล้ว ต้องถ่ายใหม่
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ตราประทับจริงไม่มีต้นทุน · ใน Rails การประทับ = <strong>เขียนลงลิ้นชัก posts อีกหนึ่งครั้ง</strong>
+    ถ้าคอมเมนต์เปลี่ยนถี่มาก (เช่น บทความดังที่มีคนเม้นทุกวินาที) ลิ้นชัก posts ก็โดนเขียนถี่ตามไปด้วย (สไลด์หน้า 43 เตือนไว้)
+  </p>
+</div>
+
+<pre><code><span class="c"># app/models/comment.rb</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>, <span class="n">counter_cache:</span> <span class="k">true</span>, <span class="n">touch:</span> <span class="k">true</span></code></pre>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find_by(title: "ส้มตำปูปลาร้า")
+  <span class="c">… (Post Load — ตัดออก)</span>
+wongnok-blog(dev):002&gt; post.updated_at
+=&gt; 2026-11-04 12:13:58.622813000 UTC +00:00
+wongnok-blog(dev):003&gt; post.comments.create!(user: User.last, body: "ใส่ปูดองด้วยไหม")
+  <span class="c">… (User Load · BEGIN · INSERT ใบคอมเมนต์ — ตัดออก)</span>
+  Post Update All (1.0ms)  UPDATE "posts" SET "comments_count" = COALESCE("posts"."comments_count", 0) + 1, "updated_at" = '2026-11-04 12:15:14.736287' WHERE "posts"."id" = 2 /*application='WongnokBlog'*/
+  TRANSACTION (1.4ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; #&lt;Comment:0x000000012790bfc8 id: 9, body: "ใส่ปูดองด้วยไหม", post_id: 2, <span class="c">…</span>&gt;
+wongnok-blog(dev):004&gt; post.reload.updated_at
+  Post Load (3.1ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 2 LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 2026-11-04 12:15:14.736287000 UTC +00:00</code></pre>
+
+<ul>
+  <li>เวลา <code>updated_at</code> ของบทความเปลี่ยนจาก <code>12:13:58</code> เป็น <code>12:15:14</code> — ทั้งที่เราไม่ได้แตะตัวบทความเลย (ของคุณจะเป็นวันเวลาตอนที่ลอง · <code>UTC</code> = เวลามาตรฐานโลก ช้ากว่าไทย 7 ชั่วโมง)</li>
+  <li>Rails ฉลาดพอ<strong>รวมสองงานไว้ใน UPDATE เดียว</strong>: +1 ที่ป้าย และประทับเวลาใหม่</li>
+</ul>
+
+<p>
+  เทียบกับ Go: GORM ไม่มีตัวเลือกแบบนี้ — ถ้าอยากให้เวลาของบทความเปลี่ยนตามคอมเมนต์ ต้องสั่งแก้ <code>UpdatedAt</code> ของบทความเองทุกที่ที่สร้าง แก้ หรือลบคอมเมนต์ · Rails ทำให้ทุกที่จากคำว่า <code>touch: true</code> คำเดียว
+</p>
+
+<p>
+  <strong><code>inverse_of</code></strong> — แค่รู้จักไว้ · มันบอก Rails ว่า <code>has_many :comments</code> ฝั่ง Post กับ <code>belongs_to :post</code> ฝั่ง Comment
+  คือ<strong>ความสัมพันธ์เส้นเดียวกันมองจากสองฝั่ง</strong> · ประโยชน์คือ ถ้าเราหยิบคอมเมนต์ผ่านบทความ แล้วถามกลับว่า "ใบนี้เป็นของบทความไหน"
+  Rails ตอบด้วย object บทความ<strong>ตัวเดิมในมือ</strong> ไม่เดินไปตู้อีกรอบ · ส่วนใหญ่ Rails เดาเองได้จากชื่อ — ผมลองแล้ว ไม่ต้องเขียนอะไรเพิ่ม:
+</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.find_by(title: "ต้มยำกุ้งน้ำข้น")
+  <span class="c">… (Post Load — ตัดออก)</span>
+wongnok-blog(dev):002&gt; comment = post.comments.first
+  Comment Load (2.5ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = 1 ORDER BY "comments"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;Comment … <span class="c">(ตัดออก)</span>
+wongnok-blog(dev):003&gt; comment.post.equal?(post)
+=&gt; true</code></pre>
+
+<ul>
+  <li><code>post.comments.first</code> — หยิบใบคอมเมนต์ใบแรกของต้มยำกุ้ง (<code>ORDER BY … ASC LIMIT 1</code> = เรียงเลขที่จากน้อยไปมาก แล้วเอาใบแรก)</li>
+  <li><code>comment.post.equal?(post)</code> — <code>equal?</code> = "เป็น object ตัวเดียวกันเป๊ะไหม" (ไม่ใช่แค่ค่าเท่ากัน) → <code>true</code> และ<strong>ไม่มี SQL</strong> เลยตอนเรียก <code>comment.post</code></li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🤲 เทียบให้เห็นภาพ — แฟ้มอยู่ในมืออยู่แล้ว</span>
+  <p>
+    คุณถือแฟ้มบทความต้มยำกุ้งไว้มือซ้าย แล้วดึงใบคอมเมนต์ออกมาถือมือขวา · ถ้ามีคนถามว่า "ใบนี้เป็นของบทความไหน"
+    คุณแค่ยกมือซ้ายให้ดู <strong>ไม่ต้องเดินไปเปิดตู้หยิบแฟ้มต้มยำกุ้งมาอีกฉบับ</strong>
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงรู้เองเสมอว่าถืออะไรอยู่ · Rails รู้ได้ก็ต่อเมื่อ<strong>เดาจากชื่อออก</strong> ·
+    ถ้าตั้งชื่อนอกกฎ เช่น ใส่ <code>foreign_key:</code> เอง (ผมลองแล้ว ได้ <code>false</code> = ไปหยิบแฟ้มมาใหม่อีกฉบับ)
+    หรือใช้ <code>through:</code> ตามเอกสาร Rails — ตรงนั้นแหละที่ต้องเขียน <code>inverse_of:</code> บอกเอง
+    (ส่วน <code>published_posts</code> ใน<a href="./0115-associations.html">บท 115</a> ที่มี <code>class_name</code> กับเงื่อนไข ผมลองแล้ว Rails 8.1 ยังเดาเองได้)
+  </p>
+</div>
+
+<p>
+  เทียบกับ Go: ใน GORM field <code>Post</code> ใน struct Comment เป็นก้อนข้อมูลอีกก้อนที่ต้องสั่งโหลด (<code>Preload</code>) เอง ไม่ได้ชี้กลับไปหาตัวแปร <code>post</code> ที่ถืออยู่อัตโนมัติ
+  · Rails ทำให้เองเมื่อชื่อตรงกฎ
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของ touch และ inverse_of</span>
+  <dl>
+    <dt><code>touch: true</code></dt>
+    <dd>ลูกเปลี่ยน → <code>updated_at</code> ของแม่เปลี่ยนตาม · เป็นฐานของ cache แบบซ้อนชั้นที่เรียกว่า <strong>Russian doll caching</strong> (รอ Day 3) ·
+        <strong>ถาม senior ได้ว่า "touch ตัวนี้ทำให้ตาราง posts โดนเขียนบ่อยเกินไหม ถ้าคอมเมนต์เข้ามาถี่"</strong></dd>
+    <dt><code>inverse_of</code> · bi-directional association</dt>
+    <dd>บอกว่าสองฝั่งคือความสัมพันธ์เดียวกัน ให้ใช้ object ตัวเดิมร่วมกัน · Rails เดาให้เองเมื่อชื่อตรงกฎ ·
+        <strong>พิมพ์บอก AI ได้ว่า "this association uses a custom foreign_key (or :through) — do I need inverse_of here?"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-10">ภารกิจ: ห้ามลบผู้ใช้ที่ยังมีผลงานอยู่</h2>
+
+<p>
+  ตอนนี้บทความจัดการเรียบร้อยแล้ว · แต่ผู้ใช้ (<code>User</code>) ยังไม่มีใครตัดสินว่า "ลบผู้ใช้แล้วบทความกับคอมเมนต์ของเขาไปไหน"
+  · <strong>ธุรกิจตอบมาแล้ว:</strong> "ห้ามลบผู้ใช้ที่ยังมีบทความหรือคอมเมนต์ — ให้แจ้งว่าลบไม่ได้ ไม่ใช่หน้าแดง"
+</p>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ · ปกป้องผู้ใช้ด้วย restrict_with_error (~10 นาที)</h3>
+  <ol>
+    <li>เปิด console แล้วลองลบมานะก่อนแก้อะไร: <code>mana = User.find_by(name: "มานะ")</code> แล้ว <code>mana.destroy</code> — จดชื่อ error และ<strong>ลิ้นชัก</strong>ที่ห้าม (ดูท่อน <code>on table "…"</code>)</li>
+    <li>เปิด <code>app/models/user.rb</code> แล้วเติม <code>dependent:</code> ที่เหมาะกับคำตอบของธุรกิจ ให้ทั้ง <code>has_many :posts</code> และ <code>has_many :comments</code></li>
+    <li>กลับไปที่ console สั่ง <code>reload!</code> แล้ว<strong>หามานะใหม่อีกรอบ</strong> · สั่ง <code>mana.destroy</code> แล้วตามด้วย <code>mana.errors.full_messages</code></li>
+    <li>สร้างผู้ใช้ใหม่ที่ยังไม่มีผลงาน: <code>newbie = User.create!(name: "ทดลอง", email: "test@example.com")</code> แล้ว <code>newbie.destroy</code> · ปิดท้ายด้วย <code>User.count</code></li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> ข้อ 1 ได้ <code>ActiveRecord::InvalidForeignKey</code> · ข้อ 3 ได้ <code>false</code> กับข้อความ <code>Cannot delete record because dependent posts exist</code> ·
+    ข้อ 4 ลบได้ และ <code>User.count</code> ยังเป็น 3</p>
+  <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong></p>
+  <ul>
+    <li>ข้อ 3 ยังได้ <code>ActiveRecord::InvalidForeignKey</code> เหมือนข้อ 1 → console ยังใช้ model รุ่นเก่า · ลืม <code>reload!</code> หรือลืมหา <code>mana</code> ใหม่หลัง reload (ตัวแปรเก่ายังจำกฎเก่า)</li>
+    <li><code>The :dependent option must be one of [:destroy, :delete_all, :nullify, :restrict_with_error, :restrict_with_exception, :destroy_async], but is :restrict (ArgumentError)</code>
+        → พิมพ์ค่า <code>dependent:</code> ผิด (ตัวอย่างนี้พิมพ์แค่ <code>:restrict</code>) · error บอกค่าที่ใช้ได้ทั้งหมดมาให้แล้ว เลือกจากในวงเล็บ</li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <pre><code><span class="c"># app/models/user.rb (โชว์เฉพาะสองบรรทัดที่แก้ · validates และ has_many อื่นจากบท 110–115 คงไว้)</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>, <span class="n">dependent:</span> <span class="n">:restrict_with_error</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>, <span class="n">dependent:</span> <span class="n">:restrict_with_error</span>
+<span class="k">end</span></code></pre>
+    <p>ผลจริง ข้อ 1 (ก่อนแก้) — คราวนี้คนห้ามคือลิ้นชัก <strong>comments</strong> (เพราะมานะเคยคอมเมนต์ไว้) · ตู้ตอบกลับแค่กฎแรกที่ชน:</p>
+    <pre><code>wongnok-blog(dev):001&gt; mana = User.find_by(name: "มานะ")
+  User Load (1.9ms)  SELECT "users".* FROM "users" WHERE "users"."name" = 'มานะ' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;User:0x000000012374cc90 id: 3, name: "มานะ", email: "[FILTERED]", <span class="c">…</span>&gt;
+wongnok-blog(dev):002&gt; mana.destroy
+  TRANSACTION (1.2ms)  BEGIN /*application='WongnokBlog'*/
+  User Destroy (3.7ms)  DELETE FROM "users" WHERE "users"."id" = 3 /*application='WongnokBlog'*/
+  TRANSACTION (0.4ms)  ROLLBACK /*application='WongnokBlog'*/
+(wongnok-blog):2:in '&lt;main&gt;': PG::ForeignKeyViolation: ERROR:  update or delete on table "users" violates foreign key constraint "fk_rails_03de2dc08c" on table "comments" (ActiveRecord::InvalidForeignKey)
+DETAIL:  Key (id)=(3) is still referenced from table "comments".
+<span class="c">…</span></code></pre>
+    <p>ข้อ 3–4 (แก้ไฟล์แล้ว + <code>reload!</code> ใน console เดิม):</p>
+    <pre><code>wongnok-blog(dev):003&gt; reload!
+Reloading...
+=&gt; nil
+wongnok-blog(dev):004&gt; mana = User.find_by(name: "มานะ")
+  User Load (0.9ms)  SELECT "users".* FROM "users" WHERE "users"."name" = 'มานะ' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; #&lt;User:0x00000001224d23d0 id: 3, name: "มานะ", email: "[FILTERED]", <span class="c">…</span>&gt;
+wongnok-blog(dev):005&gt; mana.destroy
+  TRANSACTION (1.3ms)  BEGIN /*application='WongnokBlog'*/
+  Post Exists? (1.4ms)  SELECT 1 AS one FROM "posts" WHERE "posts"."user_id" = 3 LIMIT 1 /*application='WongnokBlog'*/
+  TRANSACTION (0.9ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):006&gt; mana.errors.full_messages
+=&gt; ["Cannot delete record because dependent posts exist"]
+wongnok-blog(dev):007&gt; newbie = User.create!(name: "ทดลอง", email: "test@example.com")
+  TRANSACTION (2.1ms)  BEGIN /*application='WongnokBlog'*/
+  User Create (4.1ms)  INSERT INTO "users" ("name", "email", "created_at", "updated_at") VALUES ('ทดลอง', 'test@example.com', '2026-11-04 12:24:36.357292', '2026-11-04 12:24:36.357292') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.8ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; #&lt;User:0x000000011fd0a3c0 id: 4, name: "ทดลอง", email: "[FILTERED]", <span class="c">…</span>&gt;
+wongnok-blog(dev):008&gt; newbie.destroy
+  TRANSACTION (2.1ms)  BEGIN /*application='WongnokBlog'*/
+  Post Exists? (3.9ms)  SELECT 1 AS one FROM "posts" WHERE "posts"."user_id" = 4 LIMIT 1 /*application='WongnokBlog'*/
+  Comment Exists? (1.0ms)  SELECT 1 AS one FROM "comments" WHERE "comments"."user_id" = 4 LIMIT 1 /*application='WongnokBlog'*/
+  User Destroy (1.3ms)  DELETE FROM "users" WHERE "users"."id" = 4 /*application='WongnokBlog'*/
+  TRANSACTION (1.6ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; #&lt;User:0x000000011fd0a3c0 id: 4, name: "ทดลอง", email: "[FILTERED]", <span class="c">…</span>&gt;
+wongnok-blog(dev):009&gt; User.count
+  User Count (2.5ms)  SELECT COUNT(*) FROM "users" /*application='WongnokBlog'*/
+=&gt; 3</code></pre>
+    <ul>
+      <li>มานะ: Rails ถามแค่ลิ้นชัก posts ก็เจอแล้ว เลย<strong>หยุดทันที</strong> ไม่ถามต่อถึง comments — ข้อความจึงพูดถึงแค่ <code>posts</code></li>
+      <li>ผู้ใช้ใหม่: Rails ถามครบทั้งสองลิ้นชัก ไม่เจออะไร → ค่อยส่ง DELETE · ลำดับการถามตรงกับลำดับบรรทัด <code>has_many</code> ในไฟล์</li>
+      <li>ถ้า <code>User</code> ของคุณมี <code>validates :email, uniqueness: true</code> จาก<a href="./0111-four-layers-and-uniqueness.html">บท 111</a>
+          ตอน <code>User.create!</code> จะมีบรรทัด <code>User Exists? … WHERE "users"."email" = 'test@example.com' LIMIT 1</code> เพิ่มก่อน <code>User Create</code> — คือ Rails เช็คอีเมลซ้ำก่อนเก็บ ปกติ</li>
+      <li><code>email: "[FILTERED]"</code> ไม่ใช่ error — Rails ซ่อนอีเมลเวลาโชว์ทั้งแฟ้ม (<a href="./0107-console-crud.html">บท 107</a>) · เลขที่ผู้ใช้ใหม่ (<code>4</code>) ของคุณอาจต่าง</li>
+      <li>ทำไมไม่ใช้ <code>:destroy</code>? เพราะผู้ใช้ลาออกไม่ควรทำให้บทความกับคอมเมนต์ที่คนอื่นตอบไว้หายทั้งหมด — <strong>คำตอบมาจากธุรกิจ</strong> ถ้าธุรกิจตอบต่าง ตัวเลือกก็ต่าง</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">Quiz</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อ 1 · ต้นบท <code>post.destroy</code> ได้ <code>ActiveRecord::InvalidForeignKey</code> และ log มี <code>DELETE FROM "posts" …</code> ตามด้วย <code>ROLLBACK</code> — ใครเป็นคนไม่ยอมให้ลบ?</p>
+  <div class="opts">
+    <button class="opt">Rails เช็คก่อนว่ามีคอมเมนต์ แล้วไม่ยอมส่ง DELETE ออกไป</button>
+    <button class="opt">Ruby เจอค่า nil ในคอมเมนต์ เลยหยุดทำงานกลางคัน</button>
+    <button class="opt">PostgreSQL ปฏิเสธ เพราะกฎ foreign key ของตาราง comments</button>
+    <button class="opt">console ห้ามลบข้อมูล ต้องลบผ่านหน้าเว็บเท่านั้น</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · log ยืนยันว่า Rails <strong>ส่ง DELETE ออกไปแล้ว</strong> ตู้ตอบกลับด้วย <code>PG::ForeignKeyViolation</code> (<code>PG</code> = PostgreSQL) แล้ว Rails จึง ROLLBACK
+    </p>
+    <p>
+      ตัวเลือกที่ 1 คือสิ่งที่ <code>restrict_with_error</code> ทำ (มีบรรทัด <code>Comment Exists?</code> และไม่มี DELETE) — แต่ต้นบทยังไม่ได้ใส่ ·
+      ตัวเลือกที่ 2 ไม่มี nil เกี่ยวเลย error พูดถึง foreign key ตรง ๆ ·
+      ตัวเลือกที่ 4 ผิด — ในกล่องทายผลแรกของบท console ลบก๋วยเตี๋ยวเรือได้ปกติ
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> error ที่ขึ้นต้นด้วย <code>PG::</code> = ตู้เป็นคนพูด · ถ้าไม่บอกล่วงหน้าว่าลูกจะเป็นยังไง Rails ไม่เช็คให้ ส่งคำสั่งไปให้ตู้ตัดสินเลย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อ 2 · ใบคอมเมนต์มี callback ที่ต้องลบรูปแนบออกจากที่เก็บไฟล์ทุกครั้งที่ใบนั้นหายไป — ตอนลบบทความ ควรใช้แบบไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>dependent: :destroy</code> ทิ้งทีละใบผ่าน Rails</button>
+    <button class="opt"><code>dependent: :delete_all</code> ทิ้งทั้งกองคำสั่งเดียว</button>
+    <button class="opt"><code>on_delete: :cascade</code> อย่างเดียว ให้ตู้ทิ้งเอง</button>
+    <button class="opt"><code>dependent: :restrict_with_error</code> ห้ามทิ้ง</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · ในบทนี้มีแค่ทางที่ ① ที่เห็นบรรทัด 📝 ขึ้นทุกใบ — เพราะ Rails หยิบใบคอมเมนต์ขึ้นมาเป็น object ทีละใบ callback จึงได้ทำงาน
+    </p>
+    <p>
+      ตัวเลือกที่ 2 ลบได้เร็ว แต่ไม่มี <code>Comment Load</code> ไม่มี object → ไม่มี 📝 → รูปแนบค้างเป็นขยะ ·
+      ตัวเลือกที่ 3 ตู้ลบเองข้างใน log ไม่พูดถึงคอมเมนต์เลย callback ไม่ทำงานแน่นอน ·
+      ตัวเลือกที่ 4 ไม่ได้ลบคอมเมนต์ (และไม่ลบบทความด้วย) ไม่ตรงกับโจทย์ที่อยากลบบทความ
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> "ลูกมีงานที่ต้องทำตอนหายไปไหม" — มี → <code>:destroy</code> · ยอมจ่ายด้วยจำนวนคำสั่งที่เท่ากับจำนวนลูก</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ข้อ 3 · ใช้ <code>on_delete: :cascade</code> และ<strong>ไม่มี</strong> <code>dependent:</code> ใน Post · ทิ้งบทความที่มีคอมเมนต์ 2 ใบ — log ของ Rails จะมีบรรทัด DELETE กี่บรรทัด?</p>
+  <div class="opts">
+    <button class="opt">3 บรรทัด — คอมเมนต์ 2 ใบ แล้วตามด้วยบทความ</button>
+    <button class="opt">2 บรรทัด — ลบคอมเมนต์ทั้งกอง แล้วตามด้วยบทความ</button>
+    <button class="opt">0 บรรทัด — ตู้ลบทุกอย่างเองโดย Rails ไม่ต้องสั่ง</button>
+    <button class="opt">1 บรรทัด — ลบบทความ ส่วนคอมเมนต์ตู้ลบเองไม่ลง log</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · ผลจริงในหัวข้อทางที่ ③ มี DELETE บรรทัดเดียว (<code>DELETE FROM "posts" WHERE "posts"."id" = 1</code>) ตามด้วย COMMIT · แต่คอมเมนต์ลดจาก 7 เหลือ 5 จริง
+    </p>
+    <p>
+      ตัวเลือกที่ 1 คือหน้าตาของทางที่ ① (<code>:destroy</code>) ·
+      ตัวเลือกที่ 2 คือหน้าตาของทางที่ ② (<code>:delete_all</code>) ·
+      ตัวเลือกที่ 3 ผิดเพราะ<strong>คนเริ่มลบยังเป็น Rails</strong> — Rails สั่งลบบทความ ตู้แค่ลบลูกตามให้ต่อจากนั้น
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> cascade = Rails ไม่รู้เรื่อง · ดู log อย่างเดียวจะไม่รู้เลยว่ามีคอมเมนต์หายไป ต้องดูที่ schema.rb (<code>on_delete: :cascade</code>)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 4 · เพิ่มคอลัมน์ <code>comments_count</code> + ใส่ <code>counter_cache: true</code> + backfill เรียบร้อย · loop โชว์จำนวนคอมเมนต์ของบทความ 6 ชิ้น — ใช้ method ไหนแล้ว log มี SQL แค่คำสั่งเดียว (ตอนหยิบบทความ)?</p>
+  <div class="opts">
+    <button class="opt"><code>post.comments.count</code> เพราะคำว่า count ตรงกับชื่อคอลัมน์</button>
+    <button class="opt"><code>post.comments.size</code> เพราะอ่านจากป้ายบนแฟ้มบทความ</button>
+    <button class="opt"><code>post.comments.length</code> เพราะนับใน Ruby ไม่ต้องไปตู้</button>
+    <button class="opt">ได้คำสั่งเดียวทั้งสามแบบ เพราะมีป้ายแล้ว</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · ผลจริง: loop ที่ใช้ <code>size</code> มีแค่ <code>Post Load</code> บรรทัดเดียว แล้วตัวเลขออกมาครบ 6 บรรทัด</p>
+    <p>
+      ตัวเลือกที่ 1 — <code>count</code> ไปนับที่ตู้ (<code>COUNT(*)</code>) ทุกครั้ง ไม่สนป้าย ผมลองแล้วได้ 7 คำสั่ง ·
+      ตัวเลือกที่ 3 — <code>length</code> ต้องหยิบใบคอมเมนต์ทุกใบขึ้นมาก่อนถึงจะนับในมือได้ ได้ 7 คำสั่งเหมือนกัน (และหนักกว่า) ·
+      ตัวเลือกที่ 4 — ป้ายไม่ได้เปลี่ยนพฤติกรรมของ <code>count</code> กับ <code>length</code>
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> counter_cache ได้ผลเฉพาะ <code>size</code> · และถ้าลืม backfill <code>size</code> จะตอบ 0 อย่างมั่นใจ</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-12">ถามกลับได้เลย</h2>
+
+<p>
+  ถ้าตารางของคุณมีลูกหลายชั้น (บทความ → คอมเมนต์ → ไลก์) แล้วไม่แน่ใจว่าแต่ละชั้นควรใช้ <code>dependent</code> แบบไหน
+  — ส่งให้เพื่อน senior หรือ AI สามอย่าง: <strong><code>db/schema.rb</code> · model ทุกตัวที่เกี่ยว · และคำตอบของธุรกิจว่า "ลบแม่แล้วลูกต้องเป็นยังไง"</strong>
+  · อย่างสุดท้ายสำคัญที่สุด ไม่มีมันใครก็ตอบแทนไม่ได้
+</p>
+
+<h2 id="sn-sec-13">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>42</td><td>"1 post 5000 comment = 5001 query"</td><td>นับจริงกับคอมเมนต์ 100 ใบได้ 104 คำสั่ง (DELETE คอมเมนต์ 100 + หยิบคอมเมนต์ 1 · DELETE บทความ 1 · BEGIN/COMMIT 2)</td><td>ไม่ต้อง — ภาพเดียวกัน: ยิ่งลูกเยอะยิ่งช้าตาม</td></tr>
+    <tr><td>42</td><td>มีสามท่า</td><td>Rails มี 6 ค่าสำหรับ <code>dependent:</code> (ดู error ในภารกิจ) · บทนี้เพิ่ม <code>:restrict_with_error</code> ที่สไลด์หน้า 54 ใช้</td><td>แค่รู้</td></tr>
+    <tr><td>42</td><td><code>delete_all</code>: "ของที่ห้อยใต้ comment จะค้าง"</td><td>ถ้าหลานมี foreign key ตู้จะไม่ยอมลบแทน (ได้ <code>InvalidForeignKey</code>) · จะค้างจริงก็ต่อเมื่อไม่มี foreign key</td><td>แค่รู้</td></tr>
+    <tr><td>43</td><td>counter_cache: "ต้องเพิ่มคอลัมน์ก่อน"</td><td>ต้อง <strong>backfill</strong> ด้วย ไม่งั้น <code>size</code> ได้ 0 · และ <code>reset_counters</code> ใช้ได้หลังใส่ <code>counter_cache: true</code> แล้วเท่านั้น</td><td>สนใจ — ลืมแล้วไม่มี error เตือน</td></tr>
+    <tr><td>43</td><td><code>inverse_of</code>: "ต้องใส่เมื่อใช้ class_name หรือชื่อไม่ตรงกติกา"</td><td>ลอง <code>published_posts</code> (มี <code>class_name</code>) แล้ว Rails 8.1 ยังเดาได้ · ที่เดาไม่ได้จริงคือ <code>foreign_key:</code> (ลองแล้ว) กับ <code>through:</code> ตามเอกสาร · ส่วน "วันเสาร์ทำ Russian doll caching" ในเว็บนี้คือ Day 3</td><td>แค่รู้</td></tr>
+    <tr><td>ทั้งชุด</td><td>Ruby 4.0.6 · Rails 8.1.3</td><td>เครื่องตรวจใช้ Ruby 4.0.9 · Rails 8.1.4</td><td>ไม่ต้อง — ผลในบทนี้ไม่ต่างกัน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0115-associations.html">← บทเรียน 115 · Association</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0117-rest-and-strong-params.html">บทเรียน 117 → REST · params.expect</a>
+</nav>
+
+<h2 id="sn-sec-14">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/association_basics.html#dependent">Rails Guides — Active Record Associations · :dependent</a> —
+      <strong>อ่านหัวข้อ 8.1.2 <em>:dependent</em></strong> รายการค่าทั้งหมดพร้อมคำอธิบายสั้น ๆ ว่าแต่ละค่าเรียก callback หรือไม่</li>
+  <li><a href="https://guides.rubyonrails.org/association_basics.html#counter-cache">Rails Guides — Active Record Associations · Counter Cache</a> —
+      <strong>อ่านหัวข้อ 8.3 <em>Counter Cache</em></strong> (ตัวอย่าง Book/Author แบบเดียวกับ Post/Comment) แล้วต่อด้วย
+      <a href="https://guides.rubyonrails.org/association_basics.html#touch">8.1.5 <em>:touch</em></a> และ
+      <a href="https://guides.rubyonrails.org/association_basics.html#inverse-of">8.1.7 <em>:inverse_of</em></a></li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/CounterCache/ClassMethods.html#method-i-reset_counters">Rails API — reset_counters</a> —
+      <strong>อ่านย่อหน้าแรก</strong> ที่บอกว่าใช้ตอนเพิ่ม counter cache ใหม่ หรือตอนเลขเพี้ยนเพราะมีคนแก้ด้วย SQL ตรง ๆ</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/ConnectionAdapters/SchemaStatements.html#method-i-add_foreign_key">Rails API — add_foreign_key</a> —
+      <strong>อ่านรายการ options ตรง <code>:on_delete</code></strong> (ค่าที่ใช้ได้: <code>:nullify</code> · <code>:cascade</code> · <code>:restrict</code>) ·
+      คู่กับ <a href="https://api.rubyonrails.org/classes/ActiveRecord/ConnectionAdapters/SchemaStatements.html#method-i-remove_foreign_key">remove_foreign_key</a></li>
+  <li><a href="https://www.postgresql.org/docs/17/ddl-constraints.html#DDL-CONSTRAINTS-FK">PostgreSQL 17 — 5.5.5 Foreign Keys</a> —
+      <strong>อ่านช่วงที่อธิบาย <code>ON DELETE CASCADE</code> กับ <code>RESTRICT</code></strong> ด้วยตัวอย่าง orders/products — นี่คือกฎของตู้ที่ทางที่ ③ ใช้</li>
+  <li><a href="https://gorm.io/docs/associations.html#Delete-Associations">GORM — Delete Associations</a> และ
+      <a href="https://gorm.io/docs/constraints.html#Foreign-Key-Constraint">GORM — Foreign Key Constraint</a> —
+      ฝั่ง Go ที่เทียบในบทนี้: <code>Select(...).Delete</code> กับ tag <code>constraint:OnDelete</code></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

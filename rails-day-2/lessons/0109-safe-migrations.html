@@ -1,0 +1,1037 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 109 — Migration ที่ไม่ทำร้านปิด — lock และ expand → migrate → contract</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 109 · Rails · Day 2</p>
+  <h1>Migration ที่ไม่ทำร้านปิด — lock และ expand → migrate → contract</h1>
+  <p class="meta">~25 นาที (ยาวกว่าบทอื่นนิดหน่อย เพราะมีของให้ลองสองหน้าต่าง) · ควรผ่าน <a href="./0107-console-crud.html">บทเรียน 107</a> (console) และ <a href="./0108-migration-basics.html">บทเรียน 108</a> (migration พื้นฐาน) มาก่อน</p>
+  <p class="standfirst">
+    ในบท 108 migration ของเรารันเสร็จใน 0.003 วินาที เพราะตารางมีแค่ 6 แถว และไม่มีใครใช้เว็บอยู่
+    <br>บทนี้เล่าเรื่องของ<strong>ร้านที่เปิดอยู่จริง มีลูกค้าเต็มร้าน</strong> — migration หน้าตาธรรมดาบรรทัดเดียวอาจทำให้ทั้งเว็บค้างได้
+    <br>อ่านจบแล้วคุณจะ: รู้ว่า <strong>lock</strong> กับ <strong>index</strong> คืออะไร (เห็นของจริงในเครื่องตัวเอง) ·
+    สร้าง index แบบไม่ทำให้ใครต้องรอ · และ<strong>เปลี่ยนชื่อคอลัมน์ได้โดยไม่ต้องปิดเว็บ</strong> ด้วยท่า 3 เฟสที่ทีมจริงใช้กัน
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>ตาราง · แถว · คอลัมน์</strong> (บท 106) — ลิ้นชัก posts · แฟ้มหนึ่งแผ่น · ช่องบนแฟ้ม</li>
+    <li><strong>migration</strong> (บท 108) — ใบสั่งช่างมาต่อเติมตู้ (เพิ่มลิ้นชัก เพิ่มช่อง) · รันด้วย <code>bin/rails db:migrate</code> · รื้องานใบล่าสุดด้วย <code>bin/rails db:rollback</code></li>
+    <li><strong><code>db/schema.rb</code></strong> (บท 108) — แปลนตู้ฉบับล่าสุด Rails เขียนให้เองหลัง migrate</li>
+    <li><strong>console</strong> (บท 104, 107) — ครัวทดลองหลังร้าน · ทุกคำสั่งที่ไปถึงตู้ จะมีบรรทัด SQL โผล่ให้ดู พร้อมเวลาเป็น ms (มิลลิวินาที = 1/1000 วินาที)</li>
+    <li><strong>SQL</strong> (บท 106) — ภาษาที่คนดูแลสต็อกใช้สั่งตู้ · Active Record แปลคำสั่ง Ruby เป็น SQL ให้</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17</strong> (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน ใช้แทนกันได้)</p>
+  <p>📦 ตัวอย่างในบทนี้ใช้ตาราง users/posts/comments และข้อมูลตัวอย่าง (seeds) ชุดเดียวกับ<a href="./0107-console-crud.html">บท 107</a> ·
+    หัวข้อ index จะ<strong>เติมบทความทดลอง 200,000 แผ่น</strong>ให้ตารางใหญ่พอเห็นผล (วิธีลบทิ้งอยู่ในกล่อง "เก็บกวาดก่อนไปบทหน้า" ก่อนภารกิจ)</p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · ย่อ path ยาวเป็น <code>~/wongnok_blog</code> และตัดส่วนที่ไม่เกี่ยวเป็น <code>…</code> ·
+    <strong>เวลา (ms / วินาที) · เลข id · เลขเวลาหน้าชื่อไฟล์ migration ของคุณจะไม่ตรงกับในบท</strong> ·
+    ท้ายบรรทัด SQL ทุกบรรทัดจะมี <code>/*application='WongnokBlog'*/</code> — เป็นแค่ป้ายบอกว่ามาจากแอปไหน ไม่ต้องสนใจ</p>
+</div>
+
+<h2 id="sn-sec-1">ร้านที่ไม่เคยปิด — production, deploy และ downtime</h2>
+
+<p>
+  เว็บที่คุณรันในเครื่องตัวเอง (โหมด development) มีลูกค้าคนเดียวคือคุณ · ส่วน<strong>เว็บจริงที่คนอื่นใช้</strong> เรียกว่า <strong>production</strong>
+  <br>production ไม่เคยว่าง — ตีสองก็ยังมีคนเปิดอ่านบทความ มีคนเขียนคอมเมนต์อยู่
+</p>
+
+<p>
+  เวลาเราเขียนโค้ดใหม่เสร็จ แล้วเอาขึ้น production เรียกว่า <strong>deploy</strong> · ขั้นตอนหลัก ๆ มีสามจังหวะ:
+</p>
+<ol>
+  <li>เอาโค้ดใหม่ขึ้นเครื่อง server</li>
+  <li>รัน <code>bin/rails db:migrate</code> กับ database ตัวจริง (ตู้จริงของร้าน)</li>
+  <li>เริ่มแอปใหม่ (restart) ให้หันมาใช้โค้ดใหม่</li>
+</ol>
+<p>
+  ระหว่างนั้น<strong>ลูกค้ายังเข้าเว็บอยู่ตลอด</strong> · ถ้ามีช่วงที่เว็บใช้ไม่ได้ เรียกว่า <strong>downtime</strong> (ช่วงร้านปิด)
+  · บทนี้ทั้งบทคือ "ทำยังไงให้ downtime เป็นศูนย์"
+</p>
+
+<p>
+  สไลด์ยกตัวอย่างว่า: ตาราง posts มี 50 ล้านแถว · มีคน 3,000 คนออนไลน์ · migration ตัวหนึ่งรันนาน 40 วินาที
+  — คำถามคือ <strong>40 วินาทีนั้น 3,000 คนเจออะไร?</strong> ตอบได้ตอนจบหัวข้อ lock
+</p>
+
+<div class="analogy">
+  <span class="label">🏪 เทียบให้เห็นภาพ — ต่อเติมตู้ระหว่างร้านเปิด</span>
+  <p>
+    ในเครื่องเรา เหมือนเรียกช่างมาต่อเติมตู้ตอนร้านปิด ไม่มีใครเดือดร้อน ·
+    production คือ<strong>ร้านที่เปิด 24 ชั่วโมง</strong> ช่างต้องทำงานตอนที่พนักงานยังวิ่งหยิบแฟ้มจากตู้อยู่ตลอด
+    <br>deploy = วันที่ช่างมาตามใบสั่ง แล้วพนักงานทั้งร้านเปลี่ยนไปใช้คู่มือฉบับใหม่ · downtime = ช่วงที่ร้านต้องแขวนป้าย "ปิดปรับปรุง"
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ช่างในร้านจริงมองเห็นว่ามีพนักงานยืนรอ แล้วรีบทำ หรือหลบให้ก่อนได้ ·
+    แต่ migration <strong>มองไม่เห็นใครเลย</strong> มันทำงานของมันไปจนเสร็จ ส่วนคนที่รอก็ไม่ได้รับข้อความอะไร แค่เห็นหน้าเว็บหมุนค้าง
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ปัญหานี้ไม่ใช่ของ Rails อย่างเดียว · ตอนทำ Go คุณ deploy ด้วยการรัน <code>goose up</code> แล้ว restart โปรแกรม
+  (<a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a>) — เจอเรื่องเดียวกันทุกข้อ เพราะต้นเหตุอยู่ที่ <strong>Postgres</strong>
+  (ชื่อเล่นของ PostgreSQL = โปรแกรม database ตัวที่ทั้งแอป Go และแอป Rails ของเราใช้) ไม่ใช่ภาษา
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>production (prod)</dt>
+    <dd>ระบบจริงที่ผู้ใช้ใช้อยู่ · ตรงข้ามกับ development (เครื่องเรา) ·
+        <strong>ถาม senior ได้ว่า “ตาราง posts บน production มีกี่แถว migration นี้รันนานแค่ไหน”</strong></dd>
+    <dt>deploy</dt>
+    <dd>การเอาโค้ดเวอร์ชันใหม่ขึ้น production · ใน Rails มักรวมการรัน migration ไว้ในขั้นตอนนี้ด้วย ·
+        <strong>ถามได้ว่า “ตอน deploy ทีมเรารัน db:migrate ก่อนหรือหลัง restart แอป”</strong></dd>
+    <dt>downtime · zero-downtime deploy</dt>
+    <dd>downtime = ช่วงที่เว็บใช้ไม่ได้ · zero-downtime = deploy โดยไม่มีช่วงนั้นเลย ·
+        <strong>พิมพ์บอก AI ได้ว่า “write this migration for zero-downtime deploy on a large Postgres table”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">index — ป้ายแท็บเรียงตัวอักษรในลิ้นชัก</h2>
+
+<p>
+  ก่อนเข้าเรื่อง lock ต้องรู้จัก <strong>index</strong> ก่อน เพราะตัวอย่างของเราจะใช้มัน
+  <br>ปกติเวลาสั่ง "หาบทความชื่อ X" ตู้ต้อง<strong>หยิบแฟ้มทีละแผ่นจากแผ่นแรกจนแผ่นสุดท้าย</strong>แล้วดูว่าชื่อตรงไหม ·
+  <strong>index</strong> คือรายการเสริมที่ตู้ทำเก็บไว้ เรียงชื่อเป็นลำดับพร้อมบอกว่าแผ่นนั้นอยู่ตรงไหน — หาเจอเร็วโดยไม่ต้องไล่ทุกแผ่น
+  <br>(บท 108 เรียกมันว่า "สารบัญ" ตอนเห็นบรรทัด <code>t.index</code> ใน schema.rb — เป็นของชิ้นเดียวกัน บทนี้ขอเรียกว่าป้ายแท็บ)
+</p>
+
+<div class="analogy">
+  <span class="label">📇 เทียบให้เห็นภาพ — ป้ายแท็บ ก ข ค ในลิ้นชักแฟ้ม</span>
+  <p>
+    ลิ้นชักที่ไม่มีป้ายแท็บ: จะหาแฟ้ม "ผัดกะเพรา" ต้องเปิดดูทีละแผ่น 200,000 แผ่น ·
+    ลิ้นชักที่ติดป้ายแท็บเรียงตัวอักษรไว้: เปิดไปที่แท็บ "ผ" แล้วหาต่อในกองเล็ก ๆ เจอในไม่กี่วินาที
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ป้ายแท็บจริงติดครั้งเดียวจบ · แต่ index ใน database ต้อง<strong>อัปเดตทุกครั้งที่มีแฟ้มใหม่เข้ามา</strong>
+    — เก็บแฟ้มช้าลงนิดหนึ่ง และกินพื้นที่เพิ่ม · และ index ช่วยเฉพาะการหา<strong>ด้วยช่องที่ติดป้ายไว้</strong> (ติดป้ายตามชื่อเรื่อง ก็ไม่ช่วยหาตามยอดวิว)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ใน <a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a> คุณเขียน SQL <code>CREATE INDEX …</code> เองในไฟล์ goose ·
+  และใน <a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a> เห็นป้าย <code>`gorm:"index"`</code> ติดท้าย field ของ struct ·
+  ฝั่ง Rails เขียนเป็น Ruby บรรทัดเดียว <code>add_index</code> แล้ว Rails แปลเป็น <code>CREATE INDEX</code> ให้
+</p>
+
+<h3 id="sn-sub-1">เตรียมลิ้นชักใหญ่ 200,000 แผ่น</h3>
+
+<p>
+  ตาราง posts ของเรามีแค่ 6 แถว เร็วอยู่แล้วไม่ว่าจะทำอะไร · ต้องเติมบทความทดลองให้เยอะก่อน
+  — เปิด <code>bin/rails console</code> แล้ววางโค้ดนี้ทั้งก้อน:
+</p>
+
+<pre><code>ActiveRecord::Base.<span class="f">connection</span>.<span class="f">execute</span>(&lt;&lt;~<span class="n">SQL</span>)
+<span class="s">  INSERT INTO posts (title, body, user_id, created_at, updated_at)
+  SELECT 'บทความทดลอง ' || n, 'เนื้อหาทดลอง', #{User.first.id}, now(), now()
+  FROM generate_series(1, 200000) AS n</span>
+<span class="n">SQL</span></code></pre>
+
+<ul>
+  <li><code>ActiveRecord::Base.connection.execute(…)</code> — "ส่ง SQL นี้ไปให้ตู้ตรง ๆ ไม่ต้องแปลจาก Ruby" · ใช้เพราะเร็วกว่าสร้างทีละแถวด้วย <code>Post.create!</code> สองแสนรอบ</li>
+  <li><code>&lt;&lt;~SQL</code> … <code>SQL</code> — เขียนข้อความยาวหลายบรรทัด (heredoc) เริ่มที่ <code>&lt;&lt;~SQL</code> จบที่บรรทัด <code>SQL</code> · ชื่อ <code>SQL</code> ตั้งเองได้</li>
+  <li><code>INSERT INTO posts (title, …)</code> — SQL แปลว่า "<strong>ใส่แฟ้มใหม่</strong>ลงลิ้นชัก posts โดยกรอกช่อง title, body, user_id, created_at, updated_at"</li>
+  <li><code>SELECT … FROM generate_series(1, 200000) AS n</code> — "สร้างตัวเลข 1 ถึง 200,000 เรียกแต่ละตัวว่า n แล้วทำแฟ้มหนึ่งแผ่นต่อหนึ่งตัวเลข" ·
+      <code>'บทความทดลอง ' || n</code> คือเอาข้อความต่อกับตัวเลข ได้ชื่อ "บทความทดลอง 1" ถึง "บทความทดลอง 200000" ·
+      <code>now()</code> = เวลาตอนนี้ (ใส่ช่อง created_at / updated_at)</li>
+  <li><code>#{User.first.id}</code> — ใส่ id ของผู้ใช้คนแรก เพราะทุกบทความต้องมีเจ้าของ (คอลัมน์ user_id ห้ามว่าง)</li>
+</ul>
+
+<p>ผลจริง (จัดบรรทัดให้อ่านง่าย — จอคุณจะมีเลข prompt ซ้อนอยู่หน้าบรรทัดที่วางเข้าไป):</p>
+
+<pre><code>  User Load (1.8ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+   (632.8ms)  INSERT INTO posts (title, body, user_id, created_at, updated_at)
+SELECT 'บทความทดลอง ' || n, 'เนื้อหาทดลอง', 1, now(), now()
+FROM generate_series(1, 200000) AS n
+ /*application='WongnokBlog'*/
+=&gt; #&lt;PG::Result:0x0000000125e3c490 status=PGRES_COMMAND_OK ntuples=0 nfields=0 cmd_tuples=200000&gt;
+wongnok-blog(dev):006&gt; Post.count
+  Post Count (7.3ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 200006</code></pre>
+
+<ul>
+  <li><code>User Load … LIMIT 1</code> — มาจาก <code>User.first</code> ที่เราแทรกไว้: "เรียงตาม id (<code>ORDER BY</code> = เรียงตาม · <code>ASC</code> = จากน้อยไปมาก) แล้วเอาแผ่นแรกแผ่นเดียว" (<code>LIMIT</code> = เอาไม่เกินกี่แผ่น) → ได้ id 1 ไปใส่ใน SQL</li>
+  <li><code>(632.8ms)</code> — ใส่ 200,000 แผ่นใช้ไม่ถึง 1 วินาที · บรรทัด <code>=&gt; #&lt;PG::Result …&gt;</code> คือใบตอบกลับจากตู้ อ่านแค่ <code>cmd_tuples=200000</code> = "ใส่ไปแล้ว 200,000 แผ่น"</li>
+  <li><code>SELECT COUNT(*) FROM "posts"</code> — "นับจำนวนแฟ้มทั้งหมดในลิ้นชัก posts" · ได้ 200,006 = บทความทดลอง 200,000 + บทความจาก seeds 6</li>
+</ul>
+
+<h3 id="sn-sub-2">หาแบบไม่มีป้ายแท็บ</h3>
+
+<p>
+  ลองหาบทความชื่อ "บทความทดลอง 150000" แล้วขอให้ตู้<strong>เล่าว่ามันหายังไง</strong> ด้วย <code>explain</code>
+  (explain = "ถ้าจะหาแบบนี้ คุณจะเดินหายังไง" · ใส่ <code>:analyze</code> = "ลองหาจริงแล้วจับเวลามาด้วย" · เจออีกทีละเอียดบท 113):
+</p>
+
+<pre><code>Post.<span class="f">where</span>(<span class="n">title:</span> <span class="s">"บทความทดลอง 150000"</span>).<span class="f">explain</span>(<span class="n">:analyze</span>)</code></pre>
+
+<pre><code>  Post Load (21.0ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'บทความทดลอง 150000' …
+=&gt;
+EXPLAIN (ANALYZE) SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'บทความทดลอง 150000' …
+                                                     QUERY PLAN
+---------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..5944.99 rows=1146 width=101) (actual time=8.830..9.824 rows=1 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   -&gt;  Parallel Seq Scan on posts  (cost=0.00..4830.39 rows=478 width=101) (actual time=6.264..6.674 rows=0 loops=3)
+         Filter: ((title)::text = 'บทความทดลอง 150000'::text)
+         Rows Removed by Filter: 66668
+ Planning Time: 0.059 ms
+ Execution Time: 9.842 ms
+(8 rows)</code></pre>
+
+<p>ตัวเลขเยอะ แต่อ่านแค่ 3 จุดก็พอ (บรรทัดอื่น เช่น <code>Post Load</code> กับ <code>=&gt;</code> สองบรรทัดแรก — Rails ค้นจริงหนึ่งรอบก่อนเล่า · <code>Gather</code> · <code>cost=…</code> · <code>Workers</code> ข้ามได้เลย):</p>
+<ul>
+  <li>บรรทัด <code>EXPLAIN (ANALYZE) SELECT …</code> — "ขอแฟ้มทุกช่องจากลิ้นชัก posts <strong>เฉพาะแผ่นที่</strong> (<code>WHERE</code>) ช่อง title เท่ากับ 'บทความทดลอง 150000'"</li>
+  <li><code>Seq Scan</code> — <strong>ไล่ทีละแผ่น</strong>ตั้งแต่แผ่นแรก (Seq = sequential = ตามลำดับ) · คำว่า <code>Parallel</code> กับ <code>loops=3</code> แปลว่าตู้แบ่งพนักงาน 3 คนช่วยกันไล่</li>
+  <li><code>Rows Removed by Filter: 66668</code> — แต่ละคนหยิบขึ้นมาดูแล้ววางคืนราว 66,668 แผ่น สามคนรวมกันเกือบ 200,000 แผ่น <strong>เพื่อหาแผ่นเดียว</strong> ·
+      <code>Execution Time: 9.842 ms</code> คือเวลาที่ใช้</li>
+</ul>
+
+<h3 id="sn-sub-3">ติดป้ายแท็บด้วย migration</h3>
+
+<p>สร้างใบสั่งช่างใบใหม่ (generator ของบท 108):</p>
+
+<pre><code>bin/rails generate migration AddIndexToPostsTitle</code></pre>
+
+<p>Rails สร้างไฟล์ว่าง ๆ ให้ (เลขหน้าชื่อไฟล์ของคุณจะต่าง) · เปิดไฟล์แล้วเติมบรรทัด <code>add_index</code>:</p>
+
+<pre><code><span class="c"># db/migrate/20261104115002_add_index_to_posts_title.rb</span>
+<span class="k">class</span> <span class="n">AddIndexToPostsTitle</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_index</span> <span class="n">:posts</span>, <span class="n">:title</span>   <span class="c"># ติดป้ายแท็บในลิ้นชัก posts เรียงตามช่อง title</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>รัน <code>bin/rails db:migrate</code> (ผลจริง):</p>
+
+<pre><code>== 20261104115002 AddIndexToPostsTitle: migrating =============================
+-- add_index(:posts, :title)
+   -&gt; 15.6751s
+== 20261104115002 AddIndexToPostsTitle: migrated (15.6752s) ===================</code></pre>
+
+<p>
+  <strong>15.7 วินาที</strong> — นานกว่าที่เคยเห็นในบท 108 หลายพันเท่า · เพราะตู้ต้องหยิบแฟ้มทั้ง 200,000 แผ่นมาเรียงชื่อ
+  (เครื่องผมเรียงตัวอักษรไทยช้าเป็นพิเศษ · ลองทำ index ช่องตัวเลข views ใช้แค่ราว 0.03 วินาที · เครื่องคุณอาจเร็วหรือช้ากว่านี้มาก)
+  <br>ใน <code>db/schema.rb</code> จะมีบรรทัดใหม่โผล่ในส่วนของ posts: <code>t.index ["title"], name: "index_posts_on_title"</code>
+</p>
+
+<p>ถามตู้ด้วยคำสั่งเดิมอีกรอบ (ผลจริง):</p>
+
+<pre><code>                                                          QUERY PLAN
+------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using index_posts_on_title on posts  (cost=0.42..8.44 rows=1 width=114) (actual time=0.549..0.550 rows=1 loops=1)
+   Index Cond: ((title)::text = 'บทความทดลอง 150000'::text)
+ Planning Time: 0.071 ms
+ Execution Time: 0.568 ms
+(4 rows)</code></pre>
+
+<ul>
+  <li><code>Index Scan using index_posts_on_title</code> — <strong>เปิดป้ายแท็บ</strong>ชื่อ index_posts_on_title แล้วตรงไปที่แผ่นนั้นเลย · ไม่มีบรรทัด Rows Removed แล้ว เพราะไม่ต้องหยิบแผ่นอื่นขึ้นมาดู</li>
+  <li><code>Execution Time: 0.568 ms</code> — จาก 9.8 ms เหลือ 0.57 ms (เร็วขึ้นราว 17 เท่าที่ 200,000 แถว · ตารางยิ่งใหญ่ ยิ่งต่างมาก)</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>index</dt>
+    <dd>โครงสร้างเสริมที่ database ทำไว้ให้หาข้อมูลตามคอลัมน์หนึ่งได้เร็ว โดยไม่ต้องไล่ทุกแถว · Rails ตั้งชื่อให้เองแบบ <code>index_ตาราง_on_คอลัมน์</code> ·
+        <strong>ถาม senior ได้ว่า “คอลัมน์นี้ถูกใช้ใน WHERE บ่อย ควรมี index ไหม”</strong></dd>
+    <dt>Seq Scan · Index Scan</dt>
+    <dd>สองวิธีหาของที่เห็นใน <code>explain</code> · Seq Scan = ไล่ทีละแถว · Index Scan = ใช้ index ·
+        <strong>พิมพ์บอก AI ได้ว่า “my EXPLAIN shows Seq Scan on a 200k-row table, here is the output”</strong> แล้วแปะผล explain ไปทั้งก้อน</dd>
+  </dl>
+</div>
+
+<div class="note">
+  <p>🧹 <strong>ยังไม่ต้องลบบทความทดลอง</strong> — หัวข้อ lock ข้างล่างใช้ลิ้นชักใหญ่นี้ต่อ ·
+    วิธีเก็บกวาด<strong>ทุกอย่างที่บทนี้ทำ</strong>ให้ตู้กลับเป็นแบบบท 107 รวมไว้ที่เดียว ในกล่อง "เก็บกวาดก่อนไปบทหน้า" ก่อนภารกิจ</p>
+</div>
+
+<h2 id="sn-sec-3">15 วินาทีนั้น ใครต้องรอ — lock</h2>
+
+<p>
+  ระหว่างที่ช่างกำลังทำงานกับลิ้นชัก database ต้อง<strong>กันไม่ให้คนอื่นมาทำอะไรที่ขัดกัน</strong>
+  ไม่งั้นงานช่างกับงานพนักงานจะทับกันจนข้อมูลเพี้ยน · การกันแบบนี้เรียกว่า <strong>lock</strong>
+  <br>lock เองไม่ผิด — ปัญหาคือ <strong>lock ที่นาน</strong> บนตารางที่คนใช้ตลอด
+</p>
+
+<p>
+  อีกเรื่องที่ทำให้ lock นาน: Rails ห่อ migration ทั้งไฟล์ไว้ใน <strong>transaction</strong>
+  (transaction = มัดหลายคำสั่งเป็นงานชิ้นเดียว "ทำครบทั้งหมด หรือไม่ทำเลย" ถ้าพังกลางทางให้ย้อนคืนทั้งหมด · ละเอียดบท 111)
+  — และ lock จะ<strong>ค้างไว้จนกว่างานทั้งไฟล์จะเสร็จ</strong>
+</p>
+
+<p>
+  ลองให้เห็นจริง: เปิด<strong>สองหน้าต่างเทอร์มินัล</strong> ·
+  หน้าต่างที่ 1 สั่ง <code>bin/rails db:rollback</code> (แกะป้ายแท็บที่เพิ่งติดออกก่อน) แล้วรัน migration <code>add_index</code> ตัวเดิมอีกรอบ ·
+  ระหว่างที่มันยังทำงาน 15 วินาที หน้าต่างที่ 2 ซึ่งเปิด <code>bin/rails console</code> ไว้ พิมพ์สองคำสั่งต่อกัน
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># หน้าต่างที่ 1 — ช่างกำลังติดป้ายแท็บ (ใช้เวลา ~15 วินาที)</span>
+bin/rails db:migrate
+
+<span class="c"># หน้าต่างที่ 2 — พิมพ์ระหว่างที่หน้าต่างที่ 1 ยังไม่เสร็จ</span>
+Post.<span class="f">count</span>                                     <span class="c"># อ่าน: นับแฟ้ม</span>
+Post.<span class="f">create!</span>(<span class="n">title:</span> <span class="s">"เขียนระหว่างช่างทำงาน"</span>,      <span class="c"># เขียน: เก็บแฟ้มใหม่</span>
+             <span class="n">body:</span> <span class="s">"ทดสอบ"</span>, <span class="n">user:</span> User.<span class="f">first</span>)</code></pre>
+  <p class="ask">คำสั่งไหนตอบทันที คำสั่งไหนต้องรอ? หรือรอทั้งคู่? หรือมี error?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงจากหน้าต่างที่ 2 (ตัดรายละเอียดของแฟ้มที่ได้ออก):</p>
+<pre><code>wongnok-blog(dev):001&gt; Post.count
+  Post Count (27.7ms)  SELECT COUNT(*) FROM "posts" …
+=&gt; 200006
+wongnok-blog(dev):002&gt; Post.create!(title: "เขียนระหว่างช่างทำงาน", body: "ทดสอบ", user: User.first)
+  User Load (0.8ms)  SELECT "users".* FROM "users" ORDER BY "users"."id" ASC LIMIT 1 …
+  TRANSACTION (0.4ms)  BEGIN …
+  Post Create (12034.5ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id") VALUES ('เขียนระหว่างช่างทำงาน', 'ทดสอบ', …) RETURNING "id" …
+  TRANSACTION (0.4ms)  COMMIT …
+=&gt; #&lt;Post:0x00000001219e0f30 id: 200007, title: "เขียนระหว่างช่างทำงาน", …&gt;</code></pre>
+    <ul>
+      <li><strong>อ่าน (<code>Post.count</code>) ตอบทันที</strong> — 27.7 ms เหมือนปกติ</li>
+      <li><strong>เขียน (<code>INSERT</code> = ใส่แฟ้มใหม่ · <code>RETURNING "id"</code> = ขอเลข id ของแผ่นใหม่กลับมา) รอ 12,034.5 ms = 12 วินาที</strong> — ตรงกับเวลาที่เหลือของช่าง · ไม่มี error เลย แค่<strong>ค้างเงียบ ๆ</strong> จนช่างเสร็จ แล้วค่อยเก็บได้</li>
+      <li>บรรทัดอื่น: <code>User Load … LIMIT 1</code> คือ <code>User.first</code> เหมือนตอนเติมข้อมูล ·
+          <code>BEGIN</code> / <code>COMMIT</code> = เปิดงาน / ปิดงานของ transaction</li>
+    </ul>
+    <p>
+      นี่คือคำตอบของสไลด์: <code>add_index</code> แบบปกติ<strong>ปิดลิ้นชักไม่ให้ใครเก็บแฟ้มเพิ่ม</strong> (ยังอ่านได้) ·
+      ถ้ามันใช้ 40 วินาทีกับลูกค้า 3,000 คน — ทุกคนที่กดโพสต์ กดคอมเมนต์ หรือกดอะไรที่ต้องเขียนลงตาราง posts ในช่วงนั้น จะเห็นหน้าเว็บหมุนค้าง
+    </p>
+  </div>
+</div>
+
+<p>
+  บางคำสั่งหนักกว่านั้น — <strong>ปิดทั้งอ่านและเขียน</strong> · เช่นเปลี่ยนชนิดข้อมูลของคอลัมน์ (<code>change_column</code>)
+  ผมลองเปลี่ยน <code>views</code> จาก integer เป็น bigint (ตัวเลขที่เก็บค่าได้ใหญ่กว่า) แล้ว<strong>ยังไม่ปิดงาน</strong>ต่ออีก 8 วินาที
+  (เหมือนไฟล์ migration ที่มีงานอื่นต่อท้าย) · ระหว่างนั้นอีกหน้าต่างสั่งแค่ <code>Post.count</code> — <strong>รอไป 19 วินาที</strong> ทั้งที่เป็นแค่การนับ (ผลจริง · ไม่ต้องลองตาม)
+</p>
+
+<div class="analogy">
+  <span class="label">🔒 เทียบให้เห็นภาพ — ปิดลิ้นชักไว้ระหว่างช่างทำงาน</span>
+  <p>
+    ช่างมาติดป้ายแท็บในลิ้นชัก posts · ระหว่างนั้นเขาบอกว่า "<strong>ดูได้ แต่ห้ามใส่แฟ้มเพิ่ม</strong> เดี๋ยวป้ายผิดที่" ·
+    พนักงานที่ถือแฟ้มใหม่มาต้องยืนต่อคิวหน้าลิ้นชักจนช่างเสร็จ
+    <br>ส่วนงานที่ต้องรื้อแฟ้มทุกแผ่นออกมาเขียนใหม่ (เปลี่ยนชนิดข้อมูล) ช่าง<strong>ปิดลิ้นชักทั้งลิ้นชัก</strong> ใครจะดูก็ไม่ได้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> lock ปิดแค่ <strong>ลิ้นชักที่ช่างทำ</strong> (ตาราง posts) — ลิ้นชัก users กับ comments ยังใช้ได้ปกติ ·
+    และพนักงานในร้านจริงเห็นช่างแล้วไปทำงานอื่นก่อนได้ · คำสั่งใน database <strong>ไม่รู้ว่ากำลังรออะไร</strong> มันยืนรอเงียบ ๆ จนกว่าจะได้ หรือจนหมดเวลา
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>lock (table lock)</dt>
+    <dd>การที่ database กันไม่ให้คนอื่นทำบางอย่างกับตารางชั่วคราว · มีหลายระดับ เช่น "blocks writes" (ห้ามเขียน อ่านได้) กับ "blocks reads and writes" (ห้ามทั้งคู่) ·
+        <strong>ถาม senior ได้ว่า “migration นี้ lock ตารางระดับไหน นานเท่าไหร่”</strong></dd>
+    <dt>DDL transaction</dt>
+    <dd>DDL = คำสั่ง SQL กลุ่มที่เปลี่ยน<strong>โครงตู้</strong> ไม่ใช่ข้อมูลในแฟ้ม: CREATE (สร้าง) · ALTER (ดัดแปลง) · DROP (รื้อทิ้ง) — ตาราง คอลัมน์ หรือ index · Rails ห่อ migration ทั้งไฟล์ด้วย transaction เดียว พังกลางทางย้อนคืนหมด แต่ lock ค้างจนจบไฟล์ ·
+        <strong>พิมพ์บอก AI ได้ว่า “does this Rails migration run inside a DDL transaction, and how long will it hold the lock?”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">ติดป้ายแท็บแบบไม่ปิดลิ้นชัก — algorithm: :concurrently</h2>
+
+<p>
+  Postgres มีวิธีสร้าง index อีกแบบ ชื่อ <strong>CONCURRENTLY</strong> (แปลว่า "ไปพร้อม ๆ กัน") — ช่างทำงานช้ากว่าเดิมนิดหน่อย
+  แต่<strong>ไม่ห้ามใครเก็บแฟ้ม</strong> · ใน Rails สั่งด้วย <code>algorithm: :concurrently</code>
+  <br>ลอง rollback ตัวเดิมก่อน (<code>bin/rails db:rollback</code>) แล้วแก้ไฟล์ <code>db/migrate/…_add_index_to_posts_title.rb</code> เป็นแบบนี้:
+</p>
+
+<pre><code><span class="k">class</span> <span class="n">AddIndexToPostsTitle</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_index</span> <span class="n">:posts</span>, <span class="n">:title</span>, <span class="n">algorithm:</span> <span class="n">:concurrently</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>รัน <code>bin/rails db:migrate</code> — พังทันที (ผลจริง ตัดส่วนท้าย):</p>
+
+<pre><code>== 20261104115002 AddIndexToPostsTitle: migrating =============================
+-- add_index(:posts, :title, {algorithm: :concurrently})
+bin/rails aborted!
+StandardError: An error has occurred, this and all later migrations canceled: (StandardError)
+
+PG::ActiveSqlTransaction: ERROR:  CREATE INDEX CONCURRENTLY cannot run inside a transaction block
+~/wongnok_blog/db/migrate/20261104115002_add_index_to_posts_title.rb:3:in 'AddIndexToPostsTitle#change'
+…</code></pre>
+
+<ul>
+  <li><code>CREATE INDEX CONCURRENTLY cannot run inside a transaction block</code> — Postgres บอกว่า "การสร้าง index แบบไม่ปิดลิ้นชัก <strong>ห้ามอยู่ใน transaction</strong>"</li>
+  <li>แต่เมื่อกี้เพิ่งเรียนว่า Rails ห่อ migration ทุกไฟล์ด้วย transaction ให้เองเสมอ → ชนกัน</li>
+  <li><code>.rb:3</code> — บรรทัดที่ 3 ของไฟล์ คือบรรทัด <code>add_index</code> · <code>this and all later migrations canceled</code> = ไฟล์นี้และไฟล์ที่ต่อจากนี้ไม่ถูกรัน (ตู้ไม่เปลี่ยนอะไร)</li>
+</ul>
+
+<p>ทางแก้คือบอก Rails ว่า "ไฟล์นี้<strong>ไม่ต้อง</strong>ห่อด้วย transaction" ด้วยบรรทัด <code>disable_ddl_transaction!</code>:</p>
+
+<pre><code><span class="k">class</span> <span class="n">AddIndexToPostsTitle</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="f">disable_ddl_transaction!</span>   <span class="c"># ไฟล์นี้ไม่ต้องห่อด้วย transaction</span>
+
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_index</span> <span class="n">:posts</span>, <span class="n">:title</span>, <span class="n">algorithm:</span> <span class="n">:concurrently</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>รันซ้ำพร้อมเปิดหน้าต่างที่ 2 ไว้เหมือนเดิม (ผลจริงทั้งสองหน้าต่าง):</p>
+
+<pre><code><span class="c"># หน้าต่างที่ 1</span>
+== 20261104115002 AddIndexToPostsTitle: migrating =============================
+-- add_index(:posts, :title, {algorithm: :concurrently})
+   -&gt; 15.6863s
+== 20261104115002 AddIndexToPostsTitle: migrated (15.6863s) ===================
+
+<span class="c"># หน้าต่างที่ 2 — สั่งระหว่างที่หน้าต่างที่ 1 ยังทำงานอยู่</span>
+  Post Create (1.0ms)  INSERT INTO "posts" ("title", "body", …) VALUES ('เขียนระหว่างช่างทำงาน 2', 'ทดสอบ', …) RETURNING "id" …</code></pre>
+
+<p>
+  ช่างยังใช้ 15.7 วินาทีเท่าเดิม แต่การเก็บแฟ้มใหม่ใช้ <strong>1.0 ms</strong> แทน 12,034 ms — ไม่มีใครต้องรอ
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>ลืม <code>disable_ddl_transaction!</code> = migration พังทันที</strong> (ข้อดีคือมันพังดัง ๆ ไม่ได้พังเงียบ) ·
+    และไฟล์ที่ปิด transaction แล้ว <strong>พังกลางทางจะไม่ย้อนคืนให้</strong> — ใส่งานแค่เรื่องเดียวต่อไฟล์</p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> คุณเจอ error <strong>ประโยคเดียวกันเป๊ะ</strong>มาแล้วใน <a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a> ·
+  ฝั่ง goose แก้ด้วยการใส่ <code>-- +goose NO TRANSACTION</code> บรรทัดแรกของไฟล์ ·
+  ฝั่ง Rails คือ <code>disable_ddl_transaction!</code> — คนละภาษา แต่คุยกับ Postgres ตัวเดียวกัน
+</p>
+
+<h2 id="sn-sec-5">คำถามเดียวที่ต้องถามทุกครั้ง: "แตะกี่แถว และระหว่างนั้นใครต้องรอ"</h2>
+
+<p>
+  สไลด์สรุปหลักไว้ประโยคเดียว: ก่อนรัน migration บนตารางใหญ่ ให้ถามว่า<strong>คำสั่งนี้ต้องแตะแฟ้มกี่แผ่น และระหว่างนั้นใครใช้ลิ้นชักนี้ไม่ได้</strong>
+  <br>ตารางนี้ย่อ 5 ท่าจากสไลด์หน้า 16 · ไม่ต้องจำ แค่ดูว่า<strong>แต่ละท่าตอบคำถามนี้ยังไง</strong> ·
+  เวลาในวงเล็บคือผลจริงบนเครื่องผม ตาราง posts 200,000 แถว (ตาราง 50 ล้านแถวใหญ่กว่า 250 เท่า)
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>อยากทำอะไร</th><th>ท่าตรง ๆ</th><th>แตะกี่แผ่น · ใครรอ</th><th>ท่าที่ปลอดภัยกว่า</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>สร้าง index</td><td><code>add_index</code></td><td>อ่านทุกแผ่นมาเรียง · <strong>ห้ามเขียน</strong>จนเสร็จ (~15.7 วินาที)</td><td><code>algorithm: :concurrently</code> + <code>disable_ddl_transaction!</code></td></tr>
+    <tr><td>เปลี่ยนชนิดข้อมูล</td><td><code>change_column :posts, :views, :bigint</code></td><td><strong>เขียนใหม่ทุกแผ่น</strong> · ห้ามทั้งอ่านและเขียน (~0.16 วินาที · แต่ถ้ามีป้ายแท็บติดอยู่ ต้องทำป้ายใหม่ด้วย นานขึ้นเป็น ~16 วินาที)</td><td>คอลัมน์ใหม่ + ย้ายข้อมูล + สลับ (หัวข้อถัดไป)</td></tr>
+    <tr><td>ตั้งกฎว่าช่องนี้ห้ามว่าง (NOT NULL · ละเอียดบท 111)</td><td><code>change_column_null :posts, :title, false</code></td><td>อ่านทุกแผ่นเพื่อตรวจว่าไม่มีช่องว่าง · ปิดลิ้นชักระหว่างตรวจ (~0.01 วินาที)</td><td>มีท่าเลี่ยงหลายขั้น บทนี้ไม่สอน (strong_migrations ข้างล่างบอกให้ได้)</td></tr>
+    <tr><td>เพิ่มคอลัมน์พร้อมค่าเริ่มต้น</td><td><code>add_column … default: "draft"</code></td><td>Postgres รุ่นใหม่<strong>ไม่แตะแผ่นเดิม</strong> จดค่าเริ่มต้นไว้ที่เดียว (ไม่ถึง 0.05 วินาที)</td><td>ท่านี้ปลอดภัยอยู่แล้ว</td></tr>
+    <tr><td>ลบคอลัมน์</td><td><code>remove_column :users, :name</code></td><td>เร็วมาก (~0.001 วินาที) แต่<strong>แอปที่ยังรันโค้ดเก่าอยู่พัง</strong></td><td>บอก Rails ให้ลืมคอลัมน์ก่อน (<code>ignored_columns</code>) แล้วค่อยลบ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สังเกตแถวสุดท้าย: <strong>เร็วไม่ได้แปลว่าปลอดภัย</strong> · การลบคอลัมน์ใช้ราว 1 มิลลิวินาที แต่ทำแอปพังได้ — สองหัวข้อถัดไปจะรันให้ดู
+</p>
+
+<h2 id="sn-sec-6">เปลี่ยนชื่อคอลัมน์โดยไม่ปิดร้าน — expand → migrate → contract</h2>
+
+<p>
+  โจทย์ (สไลด์หน้า 17): เปลี่ยนชื่อคอลัมน์ <code>name</code> ของ users เป็น <code>full_name</code> <strong>โดยไม่มี downtime เลยแม้แต่วินาทีเดียว</strong>
+  <br>ท่าที่คิดออกก่อนคือ <code>rename_column :users, :name, :full_name</code> บรรทัดเดียว — เร็วด้วย · แต่ปัญหาไม่ได้อยู่ที่ตู้ อยู่ที่<strong>จังหวะ deploy</strong>
+</p>
+
+<p>
+  ย้อนไปดูขั้นตอน deploy: รัน migration (ข้อ 2) <strong>ก่อน</strong> restart แอป (ข้อ 3) · แปลว่ามีช่วงหนึ่งที่<strong>ตู้เป็นแบบใหม่แล้ว แต่แอปยังเป็นโค้ดเก่า</strong>
+  · ถ้าสลับลำดับ ก็จะมีช่วงที่โค้ดใหม่วิ่งอยู่กับตู้แบบเก่าแทน — <strong>หนีช่วงนี้ไม่พ้น</strong>
+</p>
+
+<div class="diagram">เวลา ────────────────────────────────────────────────────────▶
+
+ตู้ (DB)   [ มีช่อง name ]  │ช่างรัน rename│  [ มีแต่ full_name ]
+แอป       [ โค้ดเก่า: อ่าน/เขียน name ...................... ]│restart│[ โค้ดใหม่ ]
+                                          ▲
+                                ช่วงอันตราย: โค้ดเก่าหาช่อง name ไม่เจอ → error</div>
+
+<p>
+  ประโยคหลักของสไลด์: <strong>ไม่มี deploy ไหนที่โค้ดกับตู้เปลี่ยนพร้อมกันได้</strong> — ต้องออกแบบให้มีช่วงที่ของเก่ากับของใหม่<strong>อยู่ด้วยกันได้</strong>
+  · ท่ามาตรฐานคือแบ่งเป็น 3 เฟส แต่ละเฟสคือ deploy หนึ่งรอบ:
+</p>
+
+<div class="diagram">  เฟส 1 · EXPAND              เฟส 2 · MIGRATE               เฟส 3 · CONTRACT
+  "เพิ่มของใหม่"               "ย้ายข้อมูล + สลับการอ่าน"      "รื้อของเก่า"
+ ┌─────────────────────┐    ┌──────────────────────────┐    ┌─────────────────────────┐
+ │ + คอลัมน์ full_name │    │ ก็อป name → full_name    │    │ เลิกเขียน name          │
+ │ โค้ดเขียนทั้ง 2 ช่อง │ ─▶ │   ทีละ 1,000 แถว          │ ─▶ │ บอก Rails ให้ลืม name   │
+ │ โค้ดยังอ่าน name    │    │ โค้ดเปลี่ยนไปอ่าน full_name │    │   (ignored_columns)     │
+ │                     │    │ ยังเขียนทั้ง 2 ช่อง        │    │ รอบถัดไป: ลบคอลัมน์ name │
+ └─────────────────────┘    └──────────────────────────┘    └─────────────────────────┘
+       deploy ครั้งที่ 1             deploy ครั้งที่ 2              deploy ครั้งที่ 3 (+4)
+
+ ทุกช่วงระหว่างเฟส: โค้ดเก่าก็ทำงานได้ โค้ดใหม่ก็ทำงานได้ → ไม่มีใครพัง</div>
+
+<div class="analogy">
+  <span class="label">🔨 เทียบให้เห็นภาพ — ปรับปรุงร้านโดยไม่ปิดร้าน: ทำของใหม่ก่อน → ย้าย → ค่อยรื้อของเก่า</span>
+  <p>
+    แฟ้มผู้ใช้ทุกแผ่นมีช่อง "ชื่อ" · อยากเปลี่ยนเป็นช่อง "ชื่อเต็ม" ·
+    เฟส 1: ช่าง<strong>พิมพ์ช่อง "ชื่อเต็ม" เพิ่ม</strong>ลงบนแฟ้มทุกแผ่น (ช่องเดิมยังอยู่) แล้วสั่งพนักงานว่า "ต่อจากนี้กรอกทั้งสองช่อง แต่เวลาอ่านให้อ่านช่องเดิมไปก่อน" ·
+    เฟส 2: ค่อย ๆ <strong>ลอกชื่อจากช่องเดิมไปกรอกช่องใหม่</strong>ให้แฟ้มเก่าทีละกอง แล้วสั่งว่า "อ่านช่องใหม่ได้แล้ว" ·
+    เฟส 3: ประกาศทั้งร้านว่า "ลืมช่องเดิมไปได้เลย" รอให้ทุกคนรับทราบ แล้ว<strong>ค่อยลบช่องเดิมออก</strong>
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริง ประกาศครั้งเดียวทุกคนได้ยินพร้อมกัน ·
+    แต่แอปบน production มักมีหลายตัวรันพร้อมกัน และ<strong>แต่ละตัวจำแปลนตู้ไว้ตั้งแต่ตอนเปิด</strong> — ตัวที่ยังไม่ restart จะยังเชื่อแปลนเก่า
+    (หัวข้อถัดไปจะเห็นว่าพังยังไง)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ทำแบบเดียวกันเป๊ะ แค่เครื่องมือต่าง · goose 3 ไฟล์ (เพิ่มคอลัมน์ · ย้ายข้อมูล · ลบคอลัมน์) และช่วงกลาง struct ของ GORM
+  มีทั้ง field <code>Name</code> และ <code>FullName</code> คู่กัน — เพราะปัญหาอยู่ที่<strong>จังหวะ deploy</strong> ไม่ใช่ภาษา
+</p>
+
+<h3 id="sn-sub-4">เฟส 1 · expand — เพิ่มคอลัมน์ใหม่ เขียนทั้งสองช่อง</h3>
+
+<p>generator เดาให้เองจากชื่อ <code>AddFullNameToUsers</code> + <code>full_name:string</code> (บท 108):</p>
+
+<pre><code>bin/rails generate migration AddFullNameToUsers full_name:string</code></pre>
+
+<pre><code><span class="c"># db/migrate/20261104115236_add_full_name_to_users.rb (ไฟล์ที่ได้จริง ไม่ต้องแก้)</span>
+<span class="k">class</span> <span class="n">AddFullNameToUsers</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_column</span> <span class="n">:users</span>, <span class="n">:full_name</span>, <span class="n">:string</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>รัน <code>bin/rails db:migrate</code> — ได้ <code>-&gt; 0.0032s</code> เพราะเพิ่มคอลัมน์ว่าง ๆ ไม่แตะแฟ้มเดิม (ท่าปลอดภัยในตาราง)</p>
+
+<p>
+  จากนี้โค้ดทุกที่ที่บันทึกชื่อ ต้อง<strong>ส่งค่าเดียวกันลงทั้งสองช่อง</strong> · ตัวอย่างใน console
+  (ก่อนหน้านี้ผมพิมพ์ <code>mana = User.find_by(email: "mana@example.com")</code> ไว้แล้ว — หยิบแฟ้มของมานะมาถือไว้ในตัวแปร <code>mana</code> แบบบท 107 · ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):003&gt; mana.update(name: "มานะ ใจดี", full_name: "มานะ ใจดี")
+  TRANSACTION (1.9ms)  BEGIN …
+  User Update (3.9ms)  UPDATE "users" SET "name" = 'มานะ ใจดี', "updated_at" = '2026-11-04 11:52:46.481872', "full_name" = 'มานะ ใจดี' WHERE "users"."id" = 3 …
+  TRANSACTION (1.6ms)  COMMIT …
+=&gt; true
+wongnok-blog(dev):004&gt; User.pluck(:name, :full_name)
+  User Pluck (2.4ms)  SELECT "users"."name", "users"."full_name" FROM "users" …
+=&gt; [["สมชาย", nil], ["สมหญิง", nil], ["มานะ ใจดี", "มานะ ใจดี"]]</code></pre>
+
+<ul>
+  <li><code>mana.update(…)</code> — แก้แฟ้มของมานะแล้วเก็บทันที (บท 107)</li>
+  <li><code>UPDATE "users" SET … WHERE "users"."id" = 3</code> — "แก้แฟ้มในลิ้นชัก users เฉพาะแผ่นที่ id เป็น 3 ให้ช่อง name และ full_name เป็นค่าใหม่"</li>
+  <li><code>User.pluck(:name, :full_name)</code> — "ขอแค่สองช่องนี้จากทุกแผ่น" (pluck = เด็ดมาแค่บางช่อง · บท 113) ·
+      เห็นว่า<strong>คนเก่ายังมี full_name เป็น <code>nil</code></strong> — เพราะเฟส 1 ดูแลแค่ข้อมูลที่เขียนใหม่ ของเก่ารอเฟส 2</li>
+  <li>ในแอปจริง การ "เขียนทั้งสองช่อง" มักอยู่ใน controller หรือให้ model ทำให้อัตโนมัติด้วย callback (บท 112)</li>
+</ul>
+
+<h3 id="sn-sub-5">เฟส 2 · migrate — ย้ายข้อมูลเก่าทีละกอง แล้วสลับไปอ่านช่องใหม่</h3>
+
+<p>
+  ต้องก็อป <code>name</code> ไปใส่ <code>full_name</code> ให้คนเก่าทุกคน · สมมุติว่าบน production ตาราง users มี 20 ล้านแถว — ถ้าสั่งทีเดียวทั้งตาราง จะกลายเป็นงานใหญ่ที่ lock นาน
+  → แบ่งเป็น<strong>กองละ 1,000 แถว</strong> แต่ละกองเสร็จเร็วแล้วปล่อยลิ้นชัก (ตัวอย่างนี้สั่งใน console · งานจริงใส่ในงานแยก เช่น <code>bin/rails runner</code> — ดูกฎข้อ 2 ท้ายบท):
+</p>
+
+<pre><code>User.<span class="f">where</span>(<span class="n">full_name:</span> <span class="k">nil</span>).<span class="f">in_batches</span>(<span class="n">of:</span> <span class="n">1000</span>) <span class="k">do</span> |batch|
+  batch.<span class="f">update_all</span>(<span class="s">"full_name = name"</span>)
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>User.where(full_name: nil)</code> — เฉพาะคนที่ full_name ยังว่าง · รันซ้ำได้ ไม่ทับคนที่ทำไปแล้ว</li>
+  <li><code>.in_batches(of: 1000) do |batch| … end</code> — แบ่งเป็นกองละ 1,000 แผ่น แล้วส่งแต่ละกองเข้า block ในชื่อ <code>batch</code> (block = ก้อนโค้ด <code>do … end</code> บท 93 · in_batches ละเอียดบท 114)</li>
+  <li><code>batch.update_all("full_name = name")</code> — สั่งตู้ทีเดียวทั้งกองว่า "ให้ช่อง full_name เท่ากับช่อง name ของแผ่นตัวเอง" · ไม่ได้หยิบทีละแผ่นมาเข้า Ruby</li>
+</ul>
+
+<p>ผลจริง (users มีแค่ 3 คน ได้กองเดียว):</p>
+
+<pre><code>  User Pluck (2.3ms)  SELECT "users"."id" FROM "users" WHERE "users"."full_name" IS NULL ORDER BY "users"."id" ASC LIMIT 1000 …
+  User Update All (2.2ms)  UPDATE "users" SET full_name = name WHERE "users"."full_name" IS NULL AND "users"."id" IN (1, 2) …
+=&gt; nil
+wongnok-blog(dev):008&gt; User.pluck(:name, :full_name)
+  User Pluck (2.5ms)  SELECT "users"."name", "users"."full_name" FROM "users" …
+=&gt; [["มานะ ใจดี", "มานะ ใจดี"], ["สมชาย", "สมชาย"], ["สมหญิง", "สมหญิง"]]</code></pre>
+
+<ul>
+  <li>บรรทัดแรก — "ขอเลข id ของแผ่นที่ full_name ว่าง (<code>IS NULL</code>) เรียงตาม id เอาแค่ 1,000 แผ่นแรก" → ได้ id 1 กับ 2</li>
+  <li>บรรทัดที่สอง — "แก้เฉพาะแผ่นที่ id อยู่ในกอง (1, 2)" · ถ้ามี 20 ล้านแถว จะเห็นสองบรรทัดนี้ซ้ำ 20,000 รอบ แต่ละรอบสั้น ๆ</li>
+  <li>ผลสุดท้ายทุกคนมี full_name ครบ (ลำดับสลับเพราะไม่ได้สั่งเรียง ไม่ต้องสนใจ)</li>
+</ul>
+
+<p>
+  พอข้อมูลครบแล้ว ค่อยเปลี่ยนโค้ดให้<strong>อ่านจาก <code>full_name</code></strong> (เช่น view เปลี่ยนจาก <code>user.name</code> เป็น <code>user.full_name</code>)
+  แต่<strong>ยังเขียนทั้งสองช่อง</strong> — เผื่อมีแอปตัวเก่าที่ยังไม่ restart ยังอ่าน name อยู่ · แล้ว deploy ครั้งที่ 2
+</p>
+
+<h3 id="sn-sub-6">เฟส 3 · contract — บอก Rails ให้ลืมช่องเก่า แล้วค่อยรื้อ</h3>
+
+<p>เลิกเขียน <code>name</code> ทุกที่ และเพิ่มบรรทัดเดียวใน model:</p>
+
+<pre><code><span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="k">self</span>.<span class="f">ignored_columns</span> += [<span class="s">"name"</span>]   <span class="c"># ทำเหมือนคอลัมน์ name ไม่มีอยู่</span>
+
+  <span class="f">has_many</span> <span class="n">:posts</span>      <span class="c"># สองบรรทัดนี้มีอยู่แล้ว (ผูก User กับ posts/comments · บท 115)</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>self.ignored_columns</code> — <code>self.</code> ที่อยู่ใน class ตรงนี้หมายถึง<strong>ตัว class User ทั้ง class</strong> (ตั้งค่าให้ผู้ใช้ทุกคน ไม่ใช่คนใดคนหนึ่ง)</li>
+  <li><code>+= ["name"]</code> — เติม <code>"name"</code> เข้าไปในรายการเดิม (ย่อมาจาก <code>x = x + ["name"]</code>)</li>
+  <li>รวมกันแปลว่า "คนดูแลสต็อกของ User ให้<strong>ทำเป็นไม่เห็นช่อง name</strong>" ทั้งที่ช่องยังอยู่ในตู้</li>
+</ul>
+
+<p>
+  deploy ครั้งที่ 3 · พอแน่ใจว่าแอปทุกตัว restart แล้ว ค่อยรื้อจริงด้วย migration (deploy ครั้งถัดไป):
+</p>
+
+<pre><code>bin/rails generate migration RemoveNameFromUsers name:string</code></pre>
+
+<pre><code><span class="c"># db/migrate/20261104115259_remove_name_from_users.rb (ไฟล์ที่ได้จริง)</span>
+<span class="k">class</span> <span class="n">RemoveNameFromUsers</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">remove_column</span> <span class="n">:users</span>, <span class="n">:name</span>, <span class="n">:string</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>
+  <code>:string</code> ท้ายบรรทัดไม่จำเป็นต่อการลบ แต่ทำให้ตอน rollback Rails รู้ว่าต้องสร้างช่องคืนเป็นชนิดอะไร (จะเห็นผลในหัวข้อ IrreversibleMigration)
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>ถ้าทำตามในเครื่อง</strong>: หลังหัวข้อนี้ตาราง users ของคุณจะไม่มีช่อง name แล้ว แต่บทถัดไปยังใช้ name อยู่ ·
+    ไม่ต้องรีบแก้ตอนนี้ — กล่อง "เก็บกวาดก่อนไปบทหน้า" ก่อนภารกิจคืนตู้ให้ครบทุกอย่างในทีเดียว</p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>expand → migrate → contract (expand/contract pattern)</dt>
+    <dd>ท่าเปลี่ยน schema โดยไม่มี downtime: เพิ่มของใหม่ → ย้ายข้อมูลและสลับการอ่าน → รื้อของเก่า · คั่นด้วย deploy ทุกเฟส ·
+        <strong>พิมพ์บอก AI ได้ว่า “plan an expand/contract migration to rename users.name to full_name, list each deploy separately”</strong></dd>
+    <dt>backfill · batch</dt>
+    <dd>backfill = เติมข้อมูลให้คอลัมน์ใหม่ย้อนหลังสำหรับแถวที่มีอยู่แล้ว · batch = ทำทีละกอง ·
+        <strong>ถาม senior ได้ว่า “backfill ตารางนี้ควรใช้ batch ขนาดเท่าไหร่ และรันจากที่ไหน”</strong></dd>
+    <dt>dual write</dt>
+    <dd>ช่วงที่โค้ดเขียนลงทั้งคอลัมน์เก่าและใหม่พร้อมกัน (เฟส 1–2) · ทำให้แอปตัวเก่ากับตัวใหม่อยู่ด้วยกันได้ ·
+        <strong>ถามได้ว่า “ตอนนี้เราอยู่ช่วง dual write หรือยัง ปิดได้หรือยัง”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">ทำไมต้อง ignored_columns — แอปที่เปิดอยู่จำแปลนตู้เก่า</h2>
+
+<p>
+  Rails <strong>จำรายชื่อช่องของตาราง</strong>ไว้ตอนใช้ครั้งแรก แล้วใช้รายชื่อนั้นไปตลอดจนกว่าจะ restart
+  (ช่องมาจากตารางตอนรัน · บท 106) · ทดลองให้เห็น: ใช้ console ที่เปิดค้างไว้แทน "แอปตัวเก่าที่ยังไม่ restart"
+</p>
+
+<div class="predict">
+<pre><code><span class="c"># สมมุติว่าข้ามขั้น ignored_columns ไป · เปิด console ทิ้งไว้ แล้วให้ Rails รู้จัก User ก่อน</span>
+User.<span class="f">first</span>
+
+<span class="c"># อีกหน้าต่าง: bin/rails db:migrate  ← รัน RemoveNameFromUsers ลบช่อง name ทิ้ง</span>
+
+<span class="c"># กลับมาที่ console เดิม — โค้ดนี้ไม่ได้พูดถึง name เลยสักตัว</span>
+User.<span class="f">create!</span>(<span class="n">full_name:</span> <span class="s">"ปิติ"</span>, <span class="n">email:</span> <span class="s">"piti@example.com"</span>)</code></pre>
+  <p class="ask">โค้ดไม่ได้แตะ name เลย — คิดว่าสร้างผู้ใช้ได้ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>พัง (ผลจริง ตัด stack trace — รายการบรรทัดโค้ดที่ error วิ่งผ่าน ยาวหลายสิบบรรทัด — ออก):</p>
+<pre><code>  TRANSACTION (2.0ms)  BEGIN …
+  User Create (4.5ms)  INSERT INTO "users" ("name", "email", "created_at", "updated_at", "full_name") VALUES (NULL, 'piti@example.com', '2026-11-04 12:37:38.676789', '2026-11-04 12:37:38.676789', 'ปิติ') RETURNING "id" …
+  TRANSACTION (0.8ms)  ROLLBACK …
+(wongnok-blog):2:in '&lt;main&gt;': PG::UndefinedColumn: ERROR:  column "name" of relation "users" does not exist (ActiveRecord::StatementInvalid)
+LINE 1: INSERT INTO "users" ("name", "email", "created_at", "updated...
+                             ^
+…</code></pre>
+    <ul>
+      <li>ดูในวงเล็บของ <code>INSERT INTO "users" ("name", …)</code> — Rails <strong>ใส่ช่อง name ไปเอง</strong>เป็นช่องแรก ด้วยค่า <code>NULL</code> (ว่าง) เพราะยังจำว่าตารางมีช่องนี้ · ลูกศร <code>^</code> ใต้บรรทัด <code>LINE 1</code> ชี้ตรงคำว่า name ที่ตู้หาไม่เจอ</li>
+      <li>ตู้ตอบ <code>column "name" of relation "users" does not exist</code> = "ลิ้นชัก users ไม่มีช่อง name" (relation = คำที่ Postgres ใช้เรียกตาราง และใช้เรียก index ด้วย) · <code>ROLLBACK</code> = ยกเลิกงานชิ้นนี้ทั้งหมด</li>
+      <li>บน production นี่คือ<strong>ทุกคนที่สมัครสมาชิกได้หน้า error</strong> จนกว่าแอปทุกตัวจะ restart</li>
+    </ul>
+  </div>
+</div>
+
+<p>ทำซ้ำอีกรอบ คราวนี้ใส่ <code>ignored_columns</code> ใน model ก่อนเปิด console (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):001&gt; User.column_names
+=&gt; ["id", "email", "created_at", "updated_at", "full_name"]
+wongnok-blog(dev):002&gt; User.first
+  User Load (1.4ms)  SELECT "users"."id", "users"."email", "users"."created_at", "users"."updated_at", "users"."full_name" FROM "users" ORDER BY "users"."id" ASC LIMIT 1 …
+<span class="c">#   (อีกหน้าต่าง: bin/rails db:migrate ลบช่อง name)</span>
+wongnok-blog(dev):003&gt; User.create!(full_name: "ปิติ", email: "piti@example.com")
+  User Create (1.0ms)  INSERT INTO "users" ("email", "created_at", "updated_at", "full_name") VALUES ('piti@example.com', …, 'ปิติ') RETURNING "id" …
+  TRANSACTION (0.5ms)  COMMIT …</code></pre>
+
+<ul>
+  <li><code>User.column_names</code> — ไม่มี <code>"name"</code> แล้ว ทั้งที่ช่องยังอยู่ในตู้ตอนนั้น</li>
+  <li><code>SELECT "users"."id", "users"."email", …</code> — ปกติ Rails ขอ <code>"users".*</code> (ทุกช่อง) · พอมี ignored_columns มัน<strong>ระบุชื่อช่องทีละช่อง ข้าม name</strong></li>
+  <li><code>INSERT</code> ไม่มี name ในวงเล็บแล้ว → ลบช่องทิ้งตอนไหนก็ไม่พัง → <code>COMMIT</code> สำเร็จ</li>
+</ul>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM ก็พังแบบเดียวกัน แต่ต้นเหตุคนละที่ · GORM ใส่ทุก field ของ struct ลงใน INSERT —
+  โปรแกรม Go ตัวเก่าที่ยังมี field <code>Name</code> อยู่จึงส่ง name ไปหาตู้ที่ไม่มีช่องนี้แล้ว ·
+  Rails ไม่มี struct · มันจำรายชื่อช่องจาก<strong>ตาราง</strong>ตอนใช้ครั้งแรก · <code>ignored_columns</code> คือวิธีบอกให้ "ลืม" ช่องนั้นก่อนถึงวันลบ
+</p>
+
+<h2 id="sn-sec-8">migration ที่ย้อนกลับไม่ได้ — IrreversibleMigration</h2>
+
+<p>
+  ในบท 108 Rails เดาวิธีย้อน (<code>rollback</code>) จาก <code>change</code> ได้เอง (add_column ย้อนเป็น remove_column)
+  <br>แต่ "ย้อนโครงได้" ไม่ได้แปลว่า "ข้อมูลกลับมา" · ผมลอง rollback ตัว <code>RemoveNameFromUsers</code> (ผลจริง):
+</p>
+
+<pre><code>== 20261104115259 RemoveNameFromUsers: reverting ==============================
+-- add_column(:users, :name, :string)
+   -&gt; 0.0033s
+
+<span class="c"># แล้วดูข้อมูล</span>
+[[nil, "มานะ ใจดี"], [nil, "สมชาย"], [nil, "สมหญิง"]]     <span class="c"># ← User.pluck(:name, :full_name)</span></code></pre>
+
+<p>ช่อง name กลับมาแล้ว แต่<strong>ว่างทุกแถว</strong> — ช่างต่อลิ้นชักคืนให้ได้ แต่แฟ้มที่ทิ้งไปแล้วไม่กลับมา</p>
+
+<p>
+  บางงาน Rails <strong>เดาวิธีย้อนไม่ได้เลย</strong> เช่นสั่ง SQL ตรง ๆ ด้วย <code>execute</code> · ตัวอย่าง: แปลงอีเมลทุกคนเป็นตัวพิมพ์เล็ก (ไฟล์ <code>db/migrate/…_downcase_user_emails.rb</code>):
+</p>
+
+<pre><code><span class="k">class</span> <span class="n">DowncaseUserEmails</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">execute</span> <span class="s">"UPDATE users SET email = LOWER(email)"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p><code>UPDATE users SET email = LOWER(email)</code> = "แก้ทุกแผ่นในลิ้นชัก users ให้ช่อง email เป็นตัวพิมพ์เล็ก" · migrate ผ่าน แต่พอ rollback (ผลจริง ตัดท้าย):</p>
+
+<pre><code>== 20261104115338 DowncaseUserEmails: reverting ===============================
+bin/rails aborted!
+StandardError: An error has occurred, this and all later migrations canceled: (StandardError)
+
+This migration uses execute, which is not automatically reversible.
+To make the migration reversible you can either:
+1. Define #up and #down methods in place of the #change method.
+2. Use the #reversible method to define reversible behavior.
+…</code></pre>
+
+<p>
+  Rails บอกตรง ๆ ว่า "ไฟล์นี้ใช้ execute ฉันย้อนให้เองไม่ได้" · ทางที่ 1 คือแยกเป็น <code>up</code> (ทำ) กับ <code>down</code> (ย้อน) เอง (บท 108) ·
+  งานนี้ย้อนไม่ได้จริง ๆ เพราะไม่มีใครรู้แล้วว่าอีเมลเดิมตัวไหนเป็นตัวใหญ่ → เขียน <code>down</code> ให้<strong>ระเบิดพร้อมเหตุผล</strong>:
+</p>
+
+<pre><code><span class="k">class</span> <span class="n">DowncaseUserEmails</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">up</span>
+    <span class="f">execute</span> <span class="s">"UPDATE users SET email = LOWER(email)"</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="f">down</span>
+    <span class="k">raise</span> <span class="n">ActiveRecord::IrreversibleMigration</span>, <span class="s">"อีเมลตัวพิมพ์ใหญ่เดิมหายไปแล้ว ย้อนกลับไม่ได้"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<p>rollback อีกรอบ (ผลจริง ตัดท้าย):</p>
+
+<pre><code>== 20261104115338 DowncaseUserEmails: reverting ===============================
+bin/rails aborted!
+StandardError: An error has occurred, this and all later migrations canceled: (StandardError)
+
+อีเมลตัวพิมพ์ใหญ่เดิมหายไปแล้ว ย้อนกลับไม่ได้
+
+~/wongnok_blog/db/migrate/20261104115338_downcase_user_emails.rb:7:in 'DowncaseUserEmails#down'
+…</code></pre>
+
+<ul>
+  <li><code>raise</code> — โยน error (บท 96) · <code>ActiveRecord::IrreversibleMigration</code> คือชนิด error ที่ Rails เตรียมไว้สำหรับ "ย้อนไม่ได้"</li>
+  <li><code>.rb:7</code> = บรรทัด <code>raise</code> · <code>migrate:status</code> ยังเป็น <code>up</code> — ตู้ไม่ถูกแตะ คนที่สั่ง rollback รู้ทันทีว่าต้องหาทางอื่น (เช่นกู้จาก backup = สำเนาตู้ที่เก็บไว้ก่อนหน้า)</li>
+  <li>ทำไมดีกว่าปล่อย <code>down</code> ว่าง: ถ้า down ว่าง rollback จะ "ผ่าน" แต่ข้อมูลไม่ได้ย้อน — คนจะเข้าใจผิดว่าย้อนแล้ว</li>
+</ul>
+
+<p>
+  <strong>เทียบกับ Go:</strong> goose ไม่มีการเดาขากลับ — ทุกไฟล์คุณเขียนท่อน <code>-- +goose Down</code> เองเสมอ (<a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a>) ·
+  <code>up</code> / <code>down</code> ของ Rails คือท่าเดียวกันนั้น · ส่วน <code>change</code> คือของแถมที่ Rails เดาขากลับให้ เมื่อมันเดาได้
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>ignored_columns</dt>
+    <dd>รายชื่อคอลัมน์ที่บอกให้ model ทำเป็นไม่เห็น ใช้ก่อนลบคอลัมน์ เพื่อให้แอปที่ยังรันอยู่เลิกใส่คอลัมน์นั้นใน SQL ·
+        <strong>ถาม senior ได้ว่า “ใส่ ignored_columns แล้ว deploy ครบทุกเครื่องหรือยัง ลบคอลัมน์ได้หรือยัง”</strong></dd>
+    <dt>IrreversibleMigration · up / down</dt>
+    <dd>error ที่บอกว่า migration นี้ย้อนกลับไม่ได้ · up = ทางไป down = ทางกลับ เขียนเองเมื่อ <code>change</code> เดาไม่ได้ ·
+        <strong>พิมพ์บอก AI ได้ว่า “this migration uses execute, write explicit up/down or raise IrreversibleMigration with a reason”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9">ของที่ช่วยกันไม่ให้พลาด — strong_migrations และกฎ 4 ข้อ</h2>
+
+<p>
+  <strong>strong_migrations</strong> คือ gem (อุปกรณ์สำเร็จรูป บท 98) ที่<strong>ดักทุกคำสั่งใน migration ก่อนส่งไปถึงตู้</strong> ถ้าเจอท่าอันตรายจากตารางข้างบน มันจะหยุด migration ทันที
+  แล้วบอกท่าที่ปลอดภัยให้ · แอปของเราไม่ได้ติดตั้ง บทนี้แค่ให้รู้จัก (<a href="https://github.com/ankane/strong_migrations">หน้า GitHub ของ gem</a>)
+</p>
+
+<p>ตัวอย่างข้อความจาก README ของ gem (<strong>ไม่ได้รันในบทนี้</strong> · ตัดมาบางส่วน) — บังเอิญเป็นเรื่องเดียวกับที่เราเพิ่งพังเอง:</p>
+
+<pre><code>=== Dangerous operation detected #strong_migrations ===
+
+Active Record caches attributes, which causes problems
+when removing columns. Be sure to ignore the column:
+…</code></pre>
+
+<p>
+  คือ "Active Record จำรายชื่อช่องไว้ ลบคอลัมน์แล้วจะมีปัญหา ให้ใส่ ignored_columns ก่อน" — ตรงกับหัวข้อที่แล้วทุกคำ ·
+  ถ้าทีมของคุณใช้ gem นี้ migration อันตรายจะรันไม่ผ่านตั้งแต่เครื่องคุณ
+</p>
+
+<p>กฎส่วนตัวของผู้สอน (สไลด์หน้า 18) — เลือก 4 ข้อที่ใช้ได้ตั้งแต่วันแรก:</p>
+<ol>
+  <li><strong>1 migration = 1 เรื่อง</strong> — พังแล้วรู้ทันทีว่าเรื่องไหน · โดยเฉพาะไฟล์ที่ปิด transaction</li>
+  <li><strong>ย้ายข้อมูลเยอะ ๆ ไม่ทำใน migration</strong> — ให้ไปทำในงานแยก (เช่น <code>bin/rails runner</code> หรือ rake task = คำสั่งที่เราเขียนเพิ่มเอง แล้วรันด้วย <code>bin/rails ชื่องาน</code>) แบบเฟส 2 ข้างบน · Rails Guides ก็แนะนำแบบเดียวกัน</li>
+  <li><strong>ก่อน merge (รวมโค้ดของเราเข้ากิ่งหลักของทีม): rollback แล้ว migrate อีกรอบ</strong> — คำสั่งเดียวคือ <code>bin/rails db:migrate:redo</code> (ผลจริง: เห็น <code>reverting</code> ตามด้วย <code>migrating</code>) · ถ้า redo ไม่ผ่าน แปลว่า rollback ใช้ไม่ได้จริง</li>
+  <li><strong>ตารางเกิน 1 ล้านแถว = คิดเรื่อง lock ทุกครั้ง</strong> — ถามคำถามประจำบท "แตะกี่แถว ใครต้องรอ"</li>
+</ol>
+
+<p>
+  ไม่แน่ใจว่า migration ของงานจริงอันตรายไหม → ส่งให้ senior หรือ AI สามอย่าง:
+  <strong>ไฟล์ migration ทั้งไฟล์ · ตารางนั้นมีกี่แถว · มีคนเขียนตารางนี้บ่อยแค่ไหน</strong> แล้วถามคำถามประจำบทนี้
+</p>
+
+<div class="note">
+  <p>🧹 <strong>เก็บกวาดก่อนไปบทหน้า</strong> — ถ้าคุณลองตามบทนี้ในเครื่อง (ทำบางหัวข้อหรือทุกหัวข้อก็ได้) ทำ 4 ขั้นนี้ ตู้จะกลับเป็นแบบบท 107 เป๊ะ:</p>
+  <ol>
+    <li><strong>ปิด console และ server ทุกหน้าต่าง</strong>ก่อน (ถ้ายังมีหน้าต่างไหนต่อตู้อยู่ ขั้นที่ 4 จะลบตู้ไม่ได้ ขึ้น <code>PG::ObjectInUse: ERROR:  database "…" is being accessed by other users</code>)</li>
+    <li>ลบไฟล์ใน <code>db/migrate/</code> ที่บทนี้สร้าง (มีเท่าที่คุณทำ): <code>…_add_index_to_posts_title.rb</code> · <code>…_add_full_name_to_users.rb</code> ·
+        <code>…_remove_name_from_users.rb</code> · <code>…_downcase_user_emails.rb</code> — ต้องเหลือ 5 ไฟล์จากบท 107</li>
+    <li>ลบบรรทัด <code>self.ignored_columns += ["name"]</code> ออกจาก <code>app/models/user.rb</code> (ถ้าใส่ไว้)</li>
+    <li><code>bin/rails db:migrate:reset</code> แล้วตามด้วย <code>bin/rails db:seed</code> — คู่เดียวกับบท 107</li>
+  </ol>
+<pre><code>$ bin/rails db:migrate:reset
+Dropped database '…'
+Created database '…'
+== 20261104113601 CreatePosts: migrating ======================================
+…
+== 20261104113607 CreateComments: migrated (0.0033s) ==========================
+$ bin/rails db:seed
+$ bin/rails runner 'p [User.count, Post.count, Comment.count]; p User.column_names; p User.pluck(:name)'
+[3, 6, 7]
+["id", "name", "email", "created_at", "updated_at"]
+["สมชาย", "สมหญิง", "มานะ"]</code></pre>
+  <p>ผลจริง (ตัดกลางเป็น <code>…</code> · ชื่อฐานข้อมูลกับเลขไฟล์ของคุณจะต่าง) — ได้ users 3 · posts 6 · comments 7 และช่อง name กลับมาพร้อมชื่อเดิม ·
+    บทความทดลอง 200,000 แผ่นหายไปพร้อมตู้เก่า · <code>db:migrate:reset</code> สร้างตู้ใหม่<strong>จากไฟล์ใบสั่ง</strong>ทีละใบ แล้วเขียน <code>db/schema.rb</code> ใหม่ให้ตรงกับ 5 ใบนั้นเอง
+    (ผมเทียบแล้ว ได้ schema.rb ตรงกับก่อนเริ่มบททุกตัวอักษร)</p>
+</div>
+
+<h2 id="sn-sec-10">ภารกิจ</h2>
+
+<div class="task">
+  <h3 id="sn-sub-7">🎯 ภารกิจ · แผน 3 เฟสบนกระดาษ + ติดป้ายแท็บแบบไม่ปิดลิ้นชัก (~10 นาที)</h3>
+  <p><strong>ส่วน A — เขียนลงกระดาษ (มาจาก Quiz 2 ของสไลด์)</strong></p>
+  <p>
+    ตาราง users มี 20 ล้านแถว มีคนใช้ตลอดเวลา · หัวหน้าบอกว่า <em>"เปลี่ยนชื่อคอลัมน์ <code>email</code> เป็น <code>email_address</code> ให้หน่อย ห้ามดับระบบ"</em>
+    <br>เขียนว่าจะทำกี่ขั้น · แต่ละขั้นมี migration อะไร · โค้ดอ่าน/เขียนช่องไหน · <strong>มี deploy คั่นกี่ครั้ง</strong>
+  </p>
+  <p><strong>ส่วน B — ลองในเครื่อง</strong> (แอปที่มีตาราง posts จากบท 107 · ถ้าลองตามบทนี้ไปแล้ว ทำกล่อง "เก็บกวาดก่อนไปบทหน้า" ข้างบนก่อน)</p>
+  <ol>
+    <li><code>bin/rails generate migration AddIndexToPostsTitle</code></li>
+    <li>เปิดไฟล์ที่ได้ เติม <code>add_index :posts, :title, algorithm: :concurrently</code> ใน <code>change</code> — <strong>ยังไม่ต้องใส่ <code>disable_ddl_transaction!</code></strong></li>
+    <li><code>bin/rails db:migrate</code> → จด error ที่เห็น</li>
+    <li>เติม <code>disable_ddl_transaction!</code> ไว้ใต้บรรทัด <code>class</code> แล้ว migrate อีกรอบ</li>
+    <li>เปิด <code>db/schema.rb</code> หาบรรทัดที่มีคำว่า <code>title</code></li>
+    <li>ลอง <code>bin/rails db:migrate:redo</code> ว่าย้อนแล้วทำใหม่ผ่านไหม</li>
+    <li>เก็บกวาด: <code>bin/rails db:rollback</code> แล้วลบไฟล์ migration นี้</li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> ข้อ 3 ได้ <code>CREATE INDEX CONCURRENTLY cannot run inside a transaction block</code> ·
+    ข้อ 4 ได้ <code>migrated</code> · ข้อ 5 เห็น <code>t.index ["title"], name: "index_posts_on_title"</code> · ข้อ 6 เห็น <code>reverting</code> แล้ว <code>migrating</code></p>
+  <p><strong>ถ้าเจอ error แปลว่า…</strong></p>
+  <ul>
+    <li><code>CREATE INDEX CONCURRENTLY cannot run inside a transaction block</code> ตอนข้อ 4 → <code>disable_ddl_transaction!</code> ยังไม่เข้า · เช็คว่าอยู่<strong>ใน</strong> class แต่<strong>นอก</strong> <code>def change</code> และสะกดมี <code>!</code> ท้าย</li>
+    <li><code>Another migration is already named add_index_to_posts_title</code> ตอนข้อ 1 → ไฟล์ชื่อนี้จากหัวข้อ index ยังอยู่ใน <code>db/migrate/</code> · ทำกล่องเก็บกวาดก่อน แล้วเริ่มข้อ 1 ใหม่</li>
+    <li><code>PG::DuplicateTable: ERROR:  relation "index_posts_on_title" already exists</code> → มี index ชื่อนี้อยู่แล้ว (จากตอนลองหัวข้อ index แล้วยังไม่ได้เก็บกวาด) · ทำกล่องเก็บกวาดก่อน แล้วเริ่มข้อ 1 ใหม่</li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ส่วน A</strong> — 3 คำที่สไลด์ใบ้ไว้คือ <strong>expand → migrate → contract</strong> · คั่นด้วย deploy อย่างน้อย 3–4 ครั้ง:</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>เฟส</th><th>ตู้ (migration)</th><th>โค้ด</th><th>deploy</th></tr></thead>
+      <tbody>
+        <tr><td>1 · expand</td><td><code>add_column :users, :email_address, :string</code> (ไม่แตะแถวเดิม เร็ว)</td><td>เขียนลง <code>email</code> และ <code>email_address</code> · ยังอ่านจาก <code>email</code></td><td>ครั้งที่ 1</td></tr>
+        <tr><td>2 · migrate</td><td>ไม่มี migration · backfill ในงานแยก: <code>User.where(email_address: nil).in_batches(of: 1000) { |b| b.update_all("email_address = email") }</code></td><td>เปลี่ยนไปอ่าน <code>email_address</code> · ยังเขียนทั้งสองช่อง</td><td>ครั้งที่ 2</td></tr>
+        <tr><td>3 · contract</td><td>(ยังไม่ลบ)</td><td>เลิกเขียน <code>email</code> · ใส่ <code>self.ignored_columns += ["email"]</code></td><td>ครั้งที่ 3</td></tr>
+        <tr><td>3 · contract (ต่อ)</td><td><code>remove_column :users, :email, :string</code></td><td>— (ถ้าอยาก ลบบรรทัด ignored_columns ได้หลังจากนี้)</td><td>ครั้งที่ 4 หรือรวมกับงานรอบถัดไป</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>
+      ทำไมไม่ใช้ <code>rename_column</code> บรรทัดเดียว: ระหว่าง migrate กับ restart แอปตัวเก่ายังหาช่อง email อยู่ → ทุกคนที่ล็อกอินหรือสมัครได้ error (แบบเดียวกับ predict ของ ignored_columns) ·
+      <strong>แต้มพิเศษ</strong>ถ้าคุณเขียนว่า "ถ้า email เดิมมี index (เช่นห้ามอีเมลซ้ำ บท 111) ต้องสร้าง index ให้ email_address ด้วย <code>algorithm: :concurrently</code> ในเฟส 1 หรือ 2"
+    </p>
+    <p><strong>ส่วน B</strong> — ไฟล์สุดท้ายหน้าตาแบบนี้:</p>
+    <pre><code><span class="k">class</span> <span class="n">AddIndexToPostsTitle</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="f">disable_ddl_transaction!</span>
+
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_index</span> <span class="n">:posts</span>, <span class="n">:title</span>, <span class="n">algorithm:</span> <span class="n">:concurrently</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+    <p>ผลจริงบนแอปที่มี posts 6 แถว (เวลาของคุณจะต่าง):</p>
+    <pre><code><span class="c">$ bin/rails db:migrate</span>
+== 20261104115407 AddIndexToPostsTitle: migrating =============================
+-- add_index(:posts, :title, {algorithm: :concurrently})
+   -&gt; 0.0060s
+== 20261104115407 AddIndexToPostsTitle: migrated (0.0060s) ====================
+
+<span class="c">$ bin/rails db:migrate:redo</span>
+== 20261104115407 AddIndexToPostsTitle: reverting =============================
+-- remove_index(:posts, :title, {algorithm: :concurrently})
+   -&gt; 0.0115s
+== 20261104115407 AddIndexToPostsTitle: reverted (0.0129s) ====================
+
+== 20261104115407 AddIndexToPostsTitle: migrating =============================
+-- add_index(:posts, :title, {algorithm: :concurrently})
+   -&gt; 0.0023s
+== 20261104115407 AddIndexToPostsTitle: migrated (0.0023s) ====================</code></pre>
+    <p>
+      สังเกตตอนย้อน: Rails เดาวิธีย้อนเป็น <code>remove_index</code> แบบ <code>concurrently</code> ให้เอง (ลบป้ายแท็บโดยไม่ปิดลิ้นชักเหมือนกัน) ·
+      ตาราง 6 แถวเร็วทั้งสองแบบ ความต่างจะเห็นเฉพาะตารางใหญ่ — ถ้าอยากเห็นจริง ใช้วิธีเติม 200,000 แถวในหัวข้อ index
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">ทดสอบความเข้าใจ</h2>
+
+<p>ทุกข้อมาจากผลที่รันจริงในบทนี้</p>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อ 1 · ตาราง posts ใหญ่มาก · ระหว่างที่ migration <code>add_index :posts, :title</code> (แบบปกติ ไม่มี concurrently) ยังทำงานอยู่ ผู้ใช้จะเจออะไร?</p>
+  <div class="opts">
+    <button class="opt">ใช้ได้ปกติทุกอย่าง เพราะ index ไม่ได้แก้ข้อมูลเดิม</button>
+    <button class="opt">อ่านไม่ได้ เขียนไม่ได้ ทั้งเว็บขึ้นหน้า error ทันที</button>
+    <button class="opt">อ่านบทความได้ปกติ แต่การเขียนลง posts ค้างรอจนสร้างเสร็จ</button>
+    <button class="opt">เขียนได้ปกติ แต่การอ่านบทความค้างรอจนสร้างเสร็จ</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 3 ถูก · ผลจริงในบท: <code>Post.count</code> ได้ใน 27.7 ms แต่ <code>INSERT</code> รอ 12,034 ms ·
+      ตัวเลือกที่ 1 ผิดเพราะถึง index จะไม่แก้ข้อมูล แต่ต้องกันไม่ให้มีแฟ้มใหม่เข้ามาระหว่างเรียง ·
+      ตัวเลือกที่ 2 ผิดสองจุด: การอ่านยังได้ และการรอ<strong>ไม่ขึ้น error</strong> มันค้างเงียบ ๆ ·
+      ตัวเลือกที่ 4 กลับด้านกับของจริง
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> add_index ปกติ = ห้ามเขียน · ตารางใหญ่ใช้ <code>algorithm: :concurrently</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อ 2 · เขียน <code>add_index :posts, :title, algorithm: :concurrently</code> แต่ลืมใส่ <code>disable_ddl_transaction!</code> แล้วสั่ง migrate — เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">พังทันทีด้วย error ว่าคำสั่งนี้อยู่ใน transaction ไม่ได้</button>
+    <button class="opt">ผ่าน แต่ Rails แอบเปลี่ยนเป็น add_index แบบปกติที่ล็อกตาราง</button>
+    <button class="opt">ผ่าน และ Rails ปิด transaction ให้เองโดยอัตโนมัติ</button>
+    <button class="opt">ค้างไปเรื่อย ๆ ไม่จบ เพราะ transaction รอตัวเองอยู่</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 1 ถูก · ผลจริง: <code>PG::ActiveSqlTransaction: ERROR:  CREATE INDEX CONCURRENTLY cannot run inside a transaction block</code> แล้ว migration ถูกยกเลิก ·
+      ตัวเลือกที่ 2 และ 3 ผิดเพราะ Rails ไม่เดาแทนเรา — ส่งคำสั่ง concurrently ไปตรง ๆ แล้ว Postgres ปฏิเสธ ·
+      ตัวเลือกที่ 4 ผิดเพราะมันพังทันที ไม่ได้ค้าง
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>concurrently</code> มาคู่กับ <code>disable_ddl_transaction!</code> เสมอ · เหมือน <code>-- +goose NO TRANSACTION</code> ใน Go</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 3 · เปลี่ยน name → full_name แบบ 3 เฟส · ในเฟส 1 (เพิ่งเพิ่มคอลัมน์ full_name) ทำไมโค้ดยัง<strong>อ่าน</strong>จาก name อยู่ ไม่เปลี่ยนไปอ่าน full_name เลย?</p>
+  <div class="opts">
+    <button class="opt">เพราะ Rails ยังไม่รู้จักคอลัมน์ใหม่จนกว่าจะลบคอลัมน์เก่า</button>
+    <button class="opt">เพราะคนที่มีอยู่แล้วยังมี full_name เป็น nil จนกว่าจะ backfill</button>
+    <button class="opt">เพราะอ่านจากคอลัมน์ใหม่จะล็อกตาราง users ไว้ทั้งตาราง</button>
+    <button class="opt">เพราะ full_name ยังไม่มี index จึงอ่านไม่ได้เลย</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 2 ถูก · ผลจริงหลังเฟส 1: <code>[["สมชาย", nil], ["สมหญิง", nil], ["มานะ ใจดี", "มานะ ใจดี"]]</code> — มีแค่คนที่เพิ่งแก้ที่มี full_name ·
+      ถ้าเปลี่ยนไปอ่าน full_name ตอนนี้ หน้าเว็บจะโชว์ชื่อว่างให้คนเก่าทุกคน ·
+      ตัวเลือกที่ 1 ผิด — Rails เห็นคอลัมน์ใหม่ทันทีหลัง migrate ·
+      ตัวเลือกที่ 3 ผิด — การอ่านธรรมดาไม่ได้ล็อกตาราง ·
+      ตัวเลือกที่ 4 ผิด — ไม่มี index ก็อ่านได้ แค่ช้ากว่าเมื่อหาด้วยช่องนั้น
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> สลับการอ่านได้<strong>หลัง</strong> backfill ครบ · ระหว่างนั้นเขียนทั้งสองช่อง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ข้อ 4 · ลบคอลัมน์ name ด้วย <code>remove_column</code> ไปแล้ว ต่อมาสั่ง <code>bin/rails db:rollback</code> — ข้อมูลชื่อของผู้ใช้เป็นยังไง?</p>
+  <div class="opts">
+    <button class="opt">กลับมาครบทุกคน เพราะ rollback คือการย้อนเวลา</button>
+    <button class="opt">rollback ไม่ได้ ขึ้น IrreversibleMigration ทุกครั้ง</button>
+    <button class="opt">กลับมาครบ เพราะ Rails สำรองข้อมูลไว้ใน schema.rb</button>
+    <button class="opt">คอลัมน์ name กลับมา แต่ทุกแถวเป็นค่าว่าง (nil)</button>
+  </div>
+  <div class="explain">
+    <p>
+      ตัวเลือกที่ 4 ถูก · ผลจริง: rollback รัน <code>add_column(:users, :name, :string)</code> แล้ว <code>User.pluck(:name, :full_name)</code> ได้
+      <code>[[nil, "มานะ ใจดี"], [nil, "สมชาย"], [nil, "สมหญิง"]]</code> ·
+      ตัวเลือกที่ 1 ผิด — rollback คือ "สั่งช่างทำงานกลับด้าน" ไม่ใช่ย้อนเวลา ข้อมูลที่ทิ้งไปไม่กลับ ·
+      ตัวเลือกที่ 2 ผิด — ไฟล์นี้บอกชนิด <code>:string</code> ไว้ Rails จึงรู้วิธีสร้างคอลัมน์คืน (IrreversibleMigration เกิดกับงานที่เดาวิธีย้อนไม่ได้ เช่น <code>execute</code>) ·
+      ตัวเลือกที่ 3 ผิด — <code>schema.rb</code> คือแปลนตู้ (มีลิ้นชักอะไร ช่องอะไร) ไม่ได้เก็บข้อมูลในแฟ้มสักแผ่น
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> rollback ได้ ≠ ข้อมูลกลับ · ก่อนลบคอลัมน์บน production ต้องมั่นใจว่าไม่มีใครใช้แล้ว (ignored_columns + เฟส 3)</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-12">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>16 ฝั่งอันตราย ข้อ 1</td><td><code>change_column_default</code> ใส่ค่าเริ่มต้นให้คอลัมน์เดิม = ล็อกตาราง</td><td>บน Postgres 17 ใช้ไม่กี่ ms (เครื่องผม 6–16 ms) บน 200,000 แถว ไม่แตะแถวเดิม (มีผลกับแถวที่เพิ่มใหม่เท่านั้น)</td><td>ไม่ต้องกลัวเท่าที่สไลด์ว่า · ท่า <code>add_column … default:</code> ฝั่งขวาก็เร็วเหมือนกัน</td></tr>
+    <tr><td>16 ฝั่งปลอดภัย ข้อ 4</td><td>"ใส่ CHECK ก่อน แล้วค่อย validate"</td><td>เป็นท่าขั้นสูงหลายขั้นของการตั้ง NOT NULL บนตารางใหญ่ · บทนี้ไม่ได้สอน</td><td>แค่รู้ว่ามี · constraint ละเอียดบท 111</td></tr>
+    <tr><td>17 กับ 18</td><td>หน้า 17 backfill ด้วย <code>User.in_batches</code> · หน้า 18 บอก "ห้ามเรียก model ใน migration"</td><td>ไม่ขัดกัน ถ้า backfill อยู่ในงานแยก (runner / rake task) ไม่ใช่ในไฟล์ migration — แบบที่บทนี้ทำ</td><td>สนใจ — อย่าเอาโค้ด in_batches ไปใส่ในไฟล์ migration</td></tr>
+    <tr><td>18 กล่อง strong_migrations</td><td>โชว์ข้อความ <code>=&gt; ERROR: Adding an index non-concurrently …</code></td><td>เป็นข้อความย่อของสไลด์ · ข้อความจริงของ gem ขึ้นต้นด้วย <code>=== Dangerous operation detected #strong_migrations ===</code> (ตาม README · ไม่ได้รันในบทนี้)</td><td>ไม่ต้อง</td></tr>
+    <tr><td>19</td><td>Quiz 2 คำถามปลายเปิด + คำถามต่อ</td><td>บทนี้แปลงข้อหลักเป็นภารกิจส่วน A · ข้อ "ห้ามเรียก Post.find_each ใน migration" คือแถวหน้า 17 กับ 18 ข้างบน · ข้อ "แก้ไฟล์ที่รันไปแล้ว" ตอบไว้ในบท 108 หัวข้อกับดัก · ข้อ schema.rb conflict บทนี้ไม่ได้ตอบ — อ่าน Rails Guides หัวข้อ 6.3 <em>Schema Dumps and Source Control</em></td><td>ไม่ต้อง</td></tr>
+    <tr><td>ทั้งชุด</td><td>Ruby 4.0.6 · Rails 8.1.3</td><td>เครื่องตรวจใช้ Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17</td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0108-migration-basics.html">← บทเรียน 108 · Migration พื้นฐาน</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0110-validations.html">บทเรียน 110 → Validation</a>
+</nav>
+
+<h2 id="sn-sec-13">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_migrations.html#throwing-an-error-to-prevent-reverts">Rails Guides — Active Record Migrations</a> —
+      <strong>อ่านหัวข้อ 3.12 <em>Using the up/down Methods</em> กับ 3.13 <em>Throwing an error to prevent reverts</em></strong> (IrreversibleMigration) ·
+      แล้วข้ามไปหัวข้อ <a href="https://guides.rubyonrails.org/active_record_migrations.html#data-migrations">10.2 <em>Data Migrations</em></a> ที่บอกว่าทำไมไม่ควรย้ายข้อมูลในไฟล์ migration</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Migration.html#method-c-disable_ddl_transaction-21">Rails API — ActiveRecord::Migration.disable_ddl_transaction!</a> —
+      <strong>อ่านคำอธิบายสั้น ๆ ของ method นี้</strong> · และ <a href="https://api.rubyonrails.org/classes/ActiveRecord/ModelSchema/ClassMethods.html#method-i-ignored_columns-3D">ignored_columns=</a> ที่อธิบายว่าใช้ก่อนลบคอลัมน์</li>
+  <li><a href="https://www.postgresql.org/docs/17/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY">PostgreSQL 17 — CREATE INDEX: Building Indexes Concurrently</a> —
+      <strong>อ่านย่อหน้าแรกของหัวข้อนี้</strong> ที่เขียนว่าแบบปกติ คนอื่นยังอ่านตารางได้ แต่การ insert/update/delete จะรอจนสร้าง index เสร็จ — ตรงกับผลที่เราวัดได้</li>
+  <li><a href="https://www.postgresql.org/docs/17/explicit-locking.html#LOCKING-TABLES">PostgreSQL 17 — Table-Level Locks</a> —
+      <strong>ไม่ต้องอ่านทั้งหน้า</strong> ดูแค่หัวข้อ <code>ACCESS EXCLUSIVE</code> ที่เขียนว่า ALTER TABLE หลายแบบใช้ lock ระดับนี้ ซึ่งกันทั้งอ่านและเขียน · และย่อหน้าถัดมาที่บอกว่า lock ค้างจนจบ transaction</li>
+  <li><a href="https://github.com/ankane/strong_migrations">strong_migrations (GitHub)</a> —
+      <strong>อ่านหัวข้อ <em>Checks</em> ด้านบน</strong> เป็นรายการท่าอันตรายพร้อมท่าที่ปลอดภัย · ดูหัวข้อ <em>Removing a column</em> กับ <em>Renaming a column</em> ประกอบหัวข้อ expand → contract</li>
+  <li><a href="https://github.com/pressly/goose">pressly/goose (GitHub)</a> — ค้นคำว่า <code>NO TRANSACTION</code> ใน README · ตัวเดียวกับ <code>disable_ddl_transaction!</code> ฝั่ง Go (เคยเจอใน<a href="../../day-7/lessons/0031-goose-migration.html">บท 31</a>)</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

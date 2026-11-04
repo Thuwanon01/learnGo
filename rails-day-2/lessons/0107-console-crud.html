@@ -1,0 +1,958 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 107 — ลองในครัวทดลอง — สร้าง อ่าน แก้ ลบบทความด้วย console</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 107 · Rails · Day 2</p>
+  <h1>ลองในครัวทดลอง — สร้าง อ่าน แก้ ลบบทความด้วย console</h1>
+  <p class="meta">~25 นาที (ครึ่งหลังเป็นการเตรียมข้อมูลของวันที่ 2 ราว 10 นาที) · ควรผ่าน <a href="./0106-active-record-intro.html">บทเรียน 106</a> (Active Record คืออะไร) และ <a href="../../rails-day-1/lessons/0104-rails-debug-and-console.html">บทเรียน 104</a> (bin/rails console) มาก่อน</p>
+  <p class="standfirst">
+    บท 106 บอกว่าแฟ้มของ Rails “เดินเข้าลิ้นชักเองได้” · บทนี้เราจะ<strong>สั่งให้มันเดินจริง</strong>
+    <br>อ่านจบแล้วคุณจะ <strong>สร้าง · หยิบมาอ่าน · แก้ · ทิ้ง</strong> บทความได้เองจาก <code>bin/rails console</code>
+    และ<strong>อ่านบรรทัด SQL</strong> ที่ console พิมพ์ออกมาได้ว่าแต่ละบรรทัดสั่งตู้ทำอะไร
+    <br>ท้ายบทคุณจะมี<strong>ข้อมูลตัวอย่างของวันที่ 2</strong> (ผู้ใช้ 3 คน · บทความ 6 ชิ้น · คอมเมนต์ 7 อัน) อยู่ในเครื่อง พร้อมใช้ในบทที่เหลือทั้งหมด
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>model</strong> (บท 99, 106) — class อย่าง <code>Post</code> ที่เป็น “คนดูแลสต็อก” ของลิ้นชัก <code>posts</code></li>
+    <li><strong>ตาราง · แถว · คอลัมน์ · SQL</strong> (บท 106) — ลิ้นชัก · แฟ้มหนึ่งแผ่น · ช่องบนแฟ้ม (เช่นช่อง <code>title</code>) · SQL = ภาษาที่คนดูแลสต็อกใช้สั่งตู้</li>
+    <li><strong><code>bin/rails console</code></strong> (บท 104) — ครัวทดลองหลังร้าน พิมพ์ Ruby ทีละบรรทัด · <code>=&gt;</code> นำหน้าผลลัพธ์</li>
+    <li><strong><code>nil</code></strong> (บท 94) — “ไม่มีค่า” · เรียก method บน <code>nil</code> จะได้ <code>NoMethodError</code></li>
+    <li><strong><code>title: "…"</code></strong> (บท 92) — ส่งค่าเป็นคู่ “ชื่อช่อง: ค่า” (hash ที่ใช้ symbol เป็นชื่อ)</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 17</strong>
+    (สไลด์ใช้ Ruby 4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน ใช้แทนกันได้)</p>
+  <p>📦 <strong>ข้อมูลที่บทนี้ใช้:</strong> ครึ่งแรกใช้ตาราง <code>posts</code> ที่มีแค่ <code>title</code> กับ <code>body</code> (แบบเดียวกับบท 99) ·
+    ครึ่งหลังเราจะสร้าง<strong>ข้อมูลกลางของวันที่ 2</strong> ที่บท 108–119 ใช้ร่วมกัน</p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · <strong>เวลา (ms) · วันเวลาในแฟ้ม · เลข <code>0x…</code> · เลขบรรทัดของ prompt ของคุณจะไม่ตรงกับในบท</strong> และจอคุณจะมีสี</p>
+</div>
+
+<h2 id="sn-sec-1">CRUD — งานสี่อย่างของคนดูแลสต็อก</h2>
+
+<p>
+  ไม่ว่าเว็บไหน งานที่ทำกับข้อมูลมีแค่สี่แบบ: <strong>เก็บของใหม่ · หยิบมาดู · แก้ · ทิ้ง</strong>
+  <br>คนในวงการเรียกรวมว่า <strong>CRUD</strong> (อ่านว่า “ครัด”) ย่อมาจาก Create · Read · Update · Delete
+  <br>บล็อกของเราก็คือ CRUD ของบทความ: เขียนบทความใหม่ · เปิดอ่าน · แก้คำผิด · ลบทิ้ง
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ตัวอักษร</th><th>ภาษาคน</th><th>คำสั่ง Rails ที่จะได้ลอง</th><th>คำ SQL ที่ console จะโชว์</th></tr></thead>
+  <tbody>
+    <tr><td><strong>C</strong>reate</td><td>เก็บแฟ้มใหม่ลงลิ้นชัก</td><td><code>Post.new</code> + <code>save</code> · <code>Post.create</code></td><td><code>INSERT</code></td></tr>
+    <tr><td><strong>R</strong>ead</td><td>หยิบแฟ้มมาอ่าน</td><td><code>find</code> · <code>find_by</code> · <code>where</code> · <code>first</code> · <code>last</code> · <code>all</code> · <code>count</code></td><td><code>SELECT</code></td></tr>
+    <tr><td><strong>U</strong>pdate</td><td>แก้แฟ้มที่อยู่ในลิ้นชัก</td><td><code>update</code></td><td><code>UPDATE</code></td></tr>
+    <tr><td><strong>D</strong>elete</td><td>ทิ้งแฟ้มออกจากลิ้นชัก</td><td><code>destroy</code></td><td><code>DELETE</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ในบท 27 คุณเขียน repository (ไฟล์ที่รวมคำสั่งคุยกับฐานข้อมูลไว้ที่เดียว) ที่มี <code>Create</code> · <code>FindByID</code> · <code>FindAll</code> ด้วย GORM —
+  นั่นคือตัว C กับ R ของ CRUD · บทนี้คือของชุดเดียวกันฝั่ง Rails แต่<strong>ไม่ต้องเขียน repository เอง</strong> เพราะ model ทำให้หมดแล้ว
+</p>
+
+<div class="analogy">
+  <span class="label">🗄️ เทียบให้เห็นภาพ — คนดูแลสต็อกมีงานแค่สี่อย่าง</span>
+  <p>
+    ห้องเก็บของของร้าน มีตู้เก็บแฟ้ม (database) และลิ้นชัก <code>posts</code> ·
+    คนดูแลสต็อก (model <code>Post</code>) ทั้งวันทำแค่สี่อย่าง: รับแฟ้มใหม่มาเก็บ · หยิบแฟ้มให้คนที่ขอ · แก้ข้อความบนแฟ้ม · ทิ้งแฟ้มที่ไม่ใช้
+    <br>ทุกครั้งที่ทำ เขาสั่งตู้ด้วยภาษาเฉพาะของตู้ชื่อ <strong>SQL</strong> · เราพูด Ruby กับเขา เขาแปลเป็น SQL ให้เอง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงทิ้งแฟ้มลงถังขยะ ยังคุ้ยคืนได้ ·
+    <code>destroy</code> ใน Rails ลบออกจากตู้จริง ไม่มีถังขยะให้คุ้ย (ยกเว้นเปิด console แบบ <code>--sandbox</code> จากบท 104 ที่ยกเลิกทุกอย่างตอนออก)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>CRUD</dt>
+    <dd>Create · Read · Update · Delete = งานพื้นฐานสี่อย่างกับข้อมูล · หน้าเว็บส่วนใหญ่คือ CRUD ของอะไรสักอย่าง ·
+        <strong>พิมพ์บอก AI ได้ว่า “build basic CRUD for posts in Rails”</strong> แล้วจะได้ของครบสี่อย่าง (บท 118 จะสอนอ่านสิ่งที่ได้มา)</dd>
+    <dt>SQL</dt>
+    <dd>ภาษาที่ใช้สั่งฐานข้อมูล เช่น PostgreSQL · Active Record แปลคำสั่ง Ruby เป็น SQL ให้ · เราไม่ต้องเขียนเอง แต่<strong>ต้องอ่านออก</strong> ·
+        <strong>ถาม senior ได้ว่า “บรรทัดนี้ Active Record ยิง SQL อะไรออกไป”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">เปิดครัวทดลอง แล้วถาม Post ว่ารู้อะไรบ้าง</h2>
+
+<p>
+  ทำในโปรเจกต์ <code>wongnok_blog</code> เดิมจากบท 106 · เปิด terminal หน้าต่างใหม่ต้อง <code>export DATABASE_URL=…</code> ก่อนทุกครั้ง (แบบบท 105)
+  <br>ต้องมี model <code>Post</code> กับตาราง <code>posts</code> ก่อน · เช็คด้วย <code>ls app/models</code> ในโฟลเดอร์โปรเจกต์
+  <br>ถ้า<strong>ยังไม่มี</strong>ไฟล์ <code>post.rb</code> ให้สร้างแบบเดียวกับบท 99 (ถ้ามีแล้วจากบท 106 ข้ามได้เลย):
+</p>
+
+<pre><code>$ bin/rails generate model Post title:string body:text
+$ bin/rails db:migrate</code></pre>
+
+<ul>
+  <li>บรรทัดแรก = สร้างไฟล์ model กับ “ใบสั่งช่าง” (migration) ที่ขอลิ้นชัก <code>posts</code> มีช่อง <code>title</code> กับ <code>body</code></li>
+  <li>บรรทัดสอง = สั่งช่างลงมือตามใบสั่ง · ลิ้นชักเกิดขึ้นจริงในตู้ (บท 108 อธิบายเต็ม)</li>
+  <li>ถ้าเผลอสั่งบรรทัดแรกซ้ำ จะได้ <code>The name 'Post' is either already used in your application…</code> — ไม่มีอะไรเสีย แค่บอกว่ามีอยู่แล้ว</li>
+</ul>
+
+<p>เปิด console แล้วถามว่า “ตอนนี้ลิ้นชักมีกี่แผ่น” (ผลจริง):</p>
+
+<pre><code>$ bin/rails console
+Loading development environment (Rails 8.1.4)
+wongnok-blog(dev):001&gt; Post.count
+  Post Count (54.6ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 0</code></pre>
+
+<p>บรรทัดกลางคือของใหม่ที่ Day 1 ยังไม่เคยเห็น (บท 106 แอบเห็นมาแล้วหนึ่งครั้ง) — <strong>console บอกเราว่ามันเพิ่งไปคุยกับตู้มา</strong> · แยกทีละส่วน:</p>
+
+<ul>
+  <li><code>Post Count</code> — ใครทำอะไร: “คนดูแลสต็อกของ Post กำลังนับ”</li>
+  <li><code>(54.6ms)</code> — ใช้เวลากี่มิลลิวินาที · ครั้งแรกหลังเปิด console มักช้ากว่าครั้งต่อ ๆ ไป · ของคุณจะได้เลขอื่น</li>
+  <li><code>SELECT COUNT(*) FROM "posts"</code> — SQL ที่ส่งไปจริง · <code>SELECT</code> = “ขอ/หยิบ” · <code>COUNT(*)</code> = “นับจำนวนแผ่น” · <code>FROM "posts"</code> = “จากลิ้นชัก posts”
+      <br>→ อ่านรวมว่า <strong>“นับให้หน่อยว่าลิ้นชัก posts มีแฟ้มกี่แผ่น”</strong></li>
+  <li><code>/*application='WongnokBlog'*/</code> — ป้ายชื่อแอปที่ Rails แปะท้ายทุกคำสั่ง (<code>/* */</code> คือโน้ตใน SQL ตู้ไม่สนใจ) · ข้ามไปได้เลย</li>
+  <li><code>=&gt; 0</code> — คำตอบ: ยังไม่มีแฟ้มสักแผ่น</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">📒 เทียบให้เห็นภาพ — สมุดบันทึกการเบิกของ</span>
+  <p>
+    ทุกครั้งที่คนดูแลสต็อกเดินไปที่ตู้ เขาจดลงสมุดหนึ่งบรรทัด: ใครไป · ไปทำอะไร · ใช้เวลาเท่าไหร่ · พูดกับตู้ว่าอะไร ·
+    บรรทัดที่ขึ้นต้นด้วย <code>Post Count (…ms)</code> คือหน้าสมุดเล่มนั้น
+    <br>อยากรู้ว่าคำสั่ง Ruby หนึ่งบรรทัดทำให้เดินไปตู้กี่รอบ → นับบรรทัดในสมุด
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> สมุดจริงต้องมีคนนั่งจด · ที่นี่ Rails จดให้เองทุกครั้งโดยไม่ต้องสั่ง ·
+    และจดเป็นภาษา SQL ไม่ใช่ภาษาคน — งานของเราคืออ่านให้ออก (บทนี้จะแปลให้ทุกบรรทัด)
+  </p>
+</div>
+
+<p>
+  คำถามเรื่อง<strong>โครงของลิ้นชัก</strong> (<code>Post.table_name</code> · <code>Post.column_names</code> · <code>Post.columns_hash</code>) คุณลองไปแล้วในภารกิจบท 106 ·
+  บทนี้จึงข้ามไปที่ของใหม่เลย: <strong>สั่งให้แฟ้มเข้าออกลิ้นชักจริง</strong> แล้วอ่านสมุดบันทึกทุกบรรทัด
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>SQL log (log ของ query)</dt>
+    <dd>บรรทัดที่ Rails พิมพ์บอกทุกครั้งที่คุยกับฐานข้อมูล (ใครทำ · ใช้เวลาเท่าไหร่ · SQL ที่ส่งไป) · ในบทนี้เห็นใน console · ตอนรันเว็บจะเห็นในหน้าต่าง server ·
+        <strong>พิมพ์บอก AI ได้ว่า “here is the SQL log from rails console” แล้วแปะทั้งก้อน</strong> — ได้คำตอบตรงกว่าเล่าเป็นคำพูดมาก</dd>
+    <dt><code>COUNT(*)</code></dt>
+    <dd>คำ SQL “นับจำนวนแถว” · ฝั่ง Ruby คือ <code>Post.count</code> · ใช้เช็คเร็ว ๆ ว่ามีข้อมูลอยู่กี่แถวโดยไม่ต้องหยิบออกมาทั้งหมด ·
+        <strong>ถาม senior ได้ว่า “ตารางนี้ตอนนี้มีกี่ row ใน dev กับใน production”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">C — สร้าง: new ยังอยู่ในมือ · save ถึงลงลิ้นชัก</h2>
+
+<p>
+  สร้างบทความมีสองจังหวะ: <strong>กรอกแฟ้ม</strong> กับ <strong>เอาแฟ้มเข้าลิ้นชัก</strong>
+  <br><code>Post.new(...)</code> ทำแค่จังหวะแรก · ลองดู (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):002&gt; post = Post.new(title: "ต้มยำกุ้งน้ำข้น", body: "สูตรต้มยำกุ้งแบบร้านดัง")
+=&gt;
+#&lt;Post:0x0000000127dc4650
+...
+wongnok-blog(dev):003&gt; post
+=&gt;
+#&lt;Post:0x0000000127dc4650
+ id: nil,
+ title: "ต้มยำกุ้งน้ำข้น",
+ body: "สูตรต้มยำกุ้งแบบร้านดัง",
+ created_at: nil,
+ updated_at: nil&gt;
+wongnok-blog(dev):004&gt; post.new_record?
+=&gt; true
+wongnok-blog(dev):005&gt; post.persisted?
+=&gt; false
+wongnok-blog(dev):006&gt; post.id
+=&gt; nil</code></pre>
+
+<ul>
+  <li><code>post = Post.new(title: …, body: …)</code> — สร้างบทความหนึ่งชิ้นแล้วกรอกช่อง · เก็บไว้ในตัวแปร <code>post</code>
+      <br>console ย่อผลเหลือ <code>...</code> เพราะเป็นบรรทัดตั้งตัวแปร · พิมพ์ <code>post</code> เฉย ๆ อีกบรรทัดเพื่อดูเต็ม</li>
+  <li><code>#&lt;Post:0x0000000127dc4650 … &gt;</code> — วิธีที่ Ruby โชว์ object หนึ่งตัว: “นี่คือบทความ (object ของ class <code>Post</code>)” ·
+      เลข <code>0x…</code> คือที่อยู่ในหน่วยความจำ ไม่ต้องสนใจ (ของคุณจะต่าง) · บรรทัดข้างในคือช่องบนแฟ้มทีละช่อง</li>
+  <li><code>id: nil</code> · <code>created_at: nil</code> — ยังไม่มีเลขที่แฟ้ม ยังไม่มีเวลาเก็บ</li>
+  <li><code>new_record?</code> — “เป็นแฟ้มใหม่ที่ยังไม่เคยเข้าลิ้นชักใช่ไหม” → <code>true</code> · ชื่อลงท้ายด้วย <code>?</code> = ถามตอบใช่/ไม่ใช่ (บท 93)</li>
+  <li><code>persisted?</code> — “อยู่ในลิ้นชักแล้วใช่ไหม” → <code>false</code> · เป็นคำถามกลับด้านของ <code>new_record?</code></li>
+  <li><strong>ไม่มีบรรทัด SQL สักบรรทัด</strong> — ยังไม่มีใครเดินไปตู้</li>
+</ul>
+
+<div class="predict">
+<pre><code>wongnok-blog(dev):007&gt; Post.count</code></pre>
+  <p class="ask">ก่อนหน้านี้ <code>Post.count</code> ได้ <code>0</code> · หลังจาก <code>Post.new(...)</code> ไปหนึ่งชิ้น ตอนนี้จะได้เท่าไหร่?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — <strong>ยังเป็น 0</strong>:</p>
+<pre><code>  Post Count (1.6ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 0</code></pre>
+    <p><code>count</code> ไปนับที่ลิ้นชักจริง · แฟ้มที่ <code>new</code> ไว้ยังอยู่ในมือเรา (ในหน่วยความจำของ console) ไม่ได้อยู่ในลิ้นชัก ·
+      ถ้าปิด console ตอนนี้ แฟ้มนี้หายไปเลย ไม่มีใครรู้ว่าเคยมี</p>
+  </div>
+</div>
+
+<p>จังหวะที่สอง — <code>save</code> คือ “เดินเอาแฟ้มเข้าลิ้นชัก” (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):008&gt; post.save
+  TRANSACTION (1.4ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (3.1ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at") VALUES ('ต้มยำกุ้งน้ำข้น', 'สูตรต้มยำกุ้งแบบร้านดัง', '2026-11-04 12:17:23.004987', '2026-11-04 12:17:23.004987') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.7ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):009&gt; post.id
+=&gt; 1
+wongnok-blog(dev):010&gt; post.new_record?
+=&gt; false
+wongnok-blog(dev):011&gt; post.persisted?
+=&gt; true</code></pre>
+
+<p>สมุดบันทึกมีสามบรรทัด · แปลทีละบรรทัด:</p>
+
+<ul>
+  <li><code>BEGIN</code> — “<strong>เริ่มกรอบงาน</strong>” · ทุกอย่างหลังจากนี้ ถ้าสำเร็จหมดค่อยนับ ถ้ามีอะไรพังกลางทางให้ยกเลิกทั้งหมด</li>
+  <li><code>INSERT INTO "posts" ("title", "body", "created_at", "updated_at") VALUES ('ต้มยำกุ้งน้ำข้น', …)</code>
+      — “<strong>ใส่แฟ้มใหม่ลงลิ้นชัก posts</strong> ช่อง title เขียนว่า ต้มยำกุ้งน้ำข้น · ช่อง body เขียนว่า … · ช่องเวลาสร้างกับเวลาแก้เขียนเวลานี้”
+      <br><code>INSERT INTO</code> = ใส่เข้าไปใน · วงเล็บแรก = ชื่อช่อง · <code>VALUES (…)</code> = ค่าของแต่ละช่อง เรียงตามลำดับเดียวกัน
+      <br>สังเกตเครื่องหมายคำพูด: ใน SQL <strong>ชื่อ</strong>ลิ้นชักกับชื่อช่องอยู่ใน <code>"…"</code> ส่วน<strong>ค่า</strong>ที่เป็นข้อความอยู่ใน <code>'…'</code> (ต่างจาก Ruby ที่ใช้ได้ทั้งคู่)</li>
+  <li>เวลาสองช่องนั้น Rails เติมให้เอง · เป็นเวลาสากล (UTC) ช้ากว่าเวลาไทย 7 ชั่วโมง — ตั้งเปลี่ยนได้ ยังไม่ต้องสนใจ</li>
+  <li><code>RETURNING "id"</code> — “<strong>เก็บเสร็จแล้วบอกเลขที่แฟ้มกลับมาด้วย</strong>” · ตู้เป็นคนแจกเลข ไม่ใช่เรา</li>
+  <li><code>COMMIT</code> — “<strong>ยืนยัน ปิดกรอบงาน</strong>” · ตั้งแต่ตอนนี้แฟ้มอยู่ในลิ้นชักจริง คนอื่นเห็นแล้ว</li>
+  <li><code>=&gt; true</code> — <code>save</code> ตอบว่าสำเร็จ · จากนั้น <code>id</code> กลายเป็น <code>1</code> และคำถามสองข้อกลับด้านหมด</li>
+</ul>
+
+<p>
+  กรอบ <code>BEGIN</code> … <code>COMMIT</code> ชื่อทางการคือ <strong>transaction</strong> = “ทำทั้งหมด หรือไม่ทำเลย” ·
+  <strong>เทียบกับ Go:</strong> คือ <code>tx, _ := db.Begin()</code> … <code>tx.Commit()</code> ในบท 8 (คู่กับ <code>defer tx.Rollback()</code>) — Rails ครอบให้ทุกครั้งที่ save โดยไม่ต้องเขียนเอง ·
+  ทำไมต้องครอบแม้มีคำสั่งเดียว และใช้เองยังไง อยู่บท 111
+</p>
+
+<div class="analogy">
+  <span class="label">📝 เทียบให้เห็นภาพ — กรอกแฟ้มในมือ กับ เดินเอาเข้าลิ้นชัก</span>
+  <p>
+    <code>Post.new</code> = หยิบแฟ้มเปล่ามากรอกข้อความ แล้ว<strong>ถือไว้ในมือ</strong> · ยังไม่มีเลขที่แฟ้ม ลิ้นชักไม่รู้ว่ามีแฟ้มนี้ ·
+    <code>save</code> = แฟ้มเดินเข้าลิ้นชักเอง (บท 106) ตู้ประทับเลขที่ให้ แล้วแฟ้มก็จำเลขนั้นไว้
+    <br><code>new_record?</code> คือถามว่า “ยังถืออยู่ในมือใช่ไหม” · <code>persisted?</code> คือถามว่า “เข้าลิ้นชักแล้วใช่ไหม”
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> แฟ้มกระดาษในมือ วางลืมไว้ก็ยังอยู่บนโต๊ะ ·
+    แฟ้มที่ <code>new</code> แล้วไม่ได้ <code>save</code> อยู่แค่ในหน่วยความจำ — ปิด console หรือ request จบ ก็หายไปทันทีโดยไม่มีอะไรเตือน
+  </p>
+</div>
+
+<p>ถ้าไม่ต้องการถือแฟ้มไว้ก่อน มีคำสั่งที่ทำสองจังหวะในคำเดียว — <code>Post.create</code> = <code>new</code> แล้ว <code>save</code> ทันที (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):012&gt; Post.create(title: "ส้มตำปูปลาร้า", body: "ตำให้นัวต้องใส่อะไร")
+  TRANSACTION (2.4ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (4.8ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at") VALUES ('ส้มตำปูปลาร้า', 'ตำให้นัวต้องใส่อะไร', '2026-11-04 12:17:24.245476', '2026-11-04 12:17:24.245476') RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (2.4ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000124efb7d8
+ id: 2,
+ title: "ส้มตำปูปลาร้า",
+ body: "ตำให้นัวต้องใส่อะไร",
+ created_at: "2026-11-04 12:17:24.245476000 +0000",
+ updated_at: "2026-11-04 12:17:24.245476000 +0000"&gt;
+wongnok-blog(dev):013&gt; Post.count
+  Post Count (2.1ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 2</code></pre>
+
+<ul>
+  <li>SQL หน้าตาเหมือน <code>save</code> ทุกอย่าง — เพราะข้างในมันคือ <code>save</code> นั่นเอง</li>
+  <li>ต่างกันที่<strong>สิ่งที่ตอบกลับ</strong>: <code>save</code> ตอบ <code>true</code>/<code>false</code> · <code>create</code> ตอบตัวบทความกลับมา (ได้ <code>id: 2</code> แล้ว)</li>
+  <li><code>+0000</code> ท้ายเวลา = ห่างจากเวลาสากล 0 ชั่วโมง (เวลาไทยคือ <code>+0700</code>)</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ <strong>บทนี้ใช้ <code>bin/rails console</code> ธรรมดา ไม่ใช่ <code>--sandbox</code></strong> เพราะอยากให้ข้อมูลลงตู้จริง ·
+    ถ้าเปิดแบบ <code>--sandbox</code> (บท 104) คุณจะเห็นคำว่า <code>SAVEPOINT</code> กับ <code>RELEASE SAVEPOINT</code> แทน <code>COMMIT</code> (ผมลองแล้ว) —
+    ไม่ได้พัง แค่หน้าตาไม่ตรงกับในบท เพราะ sandbox ครอบกรอบงานใหญ่ไว้อีกชั้นเพื่อยกเลิกทุกอย่างตอนออก</p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>INSERT</code> · <code>RETURNING</code></dt>
+    <dd>คำ SQL สำหรับ “ใส่แถวใหม่” · <code>RETURNING "id"</code> = ขอเลขที่ได้กลับมา (ของ PostgreSQL) ·
+        <strong>ถาม senior ได้ว่า “save หนึ่งครั้งยิง INSERT กี่ครั้ง ดูจาก log ตรงไหน”</strong></dd>
+    <dt>transaction (<code>BEGIN</code> / <code>COMMIT</code>)</dt>
+    <dd>กรอบงาน “ทำทั้งหมดหรือไม่ทำเลย” · <code>BEGIN</code> = เริ่ม · <code>COMMIT</code> = ยืนยัน · <code>ROLLBACK</code> = ยกเลิกทั้งกรอบ ·
+        <strong>พิมพ์บอก AI ได้ว่า “wrap these two saves in a transaction”</strong> (เรื่องเต็มบท 111)</dd>
+    <dt><code>new_record?</code> · <code>persisted?</code></dt>
+    <dd>ถามสถานะของแฟ้ม: ยังอยู่ในมือ / อยู่ในลิ้นชักแล้ว · ใช้ตอนงงว่า “ตกลง save ไปหรือยัง” ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ object persisted แล้วหรือยัง”</strong> — คนทำ Rails ใช้คำนี้คุยกันจริง</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">R — อ่าน: find · find_by · where · first · last · all</h2>
+
+<p>
+  ตอนนี้ลิ้นชักมีสองแผ่น · มีหลายวิธีขอแฟ้มจากคนดูแลสต็อก ต่างกันที่<strong>บอกเงื่อนไขยังไง</strong> และ<strong>ได้กลับมากี่แผ่น</strong>
+  <br>เริ่มจากขอตามเลขที่แฟ้ม (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog(dev):014&gt; Post.find(1)
+  Post Load (2.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000124c90a20
+ id: 1,
+ title: "ต้มยำกุ้งน้ำข้น",
+ body: "สูตรต้มยำกุ้งแบบร้านดัง",
+ created_at: "2026-11-04 12:17:23.004987000 +0000",
+ updated_at: "2026-11-04 12:17:23.004987000 +0000"&gt;</code></pre>
+
+<p>SQL บรรทัดนี้คือแม่แบบของการอ่านเกือบทั้งหมด · อ่านทีละท่อน:</p>
+
+<ul>
+  <li><code>SELECT "posts".*</code> — “ขอ<strong>ทุกช่อง</strong>ของแฟ้มในลิ้นชัก posts” · <code>*</code> = ทุกช่อง · <code>"posts".</code> ข้างหน้าแค่บอกว่าช่องของลิ้นชักไหน</li>
+  <li><code>FROM "posts"</code> — “จากลิ้นชัก posts”</li>
+  <li><code>WHERE "posts"."id" = 1</code> — “<strong>เฉพาะแผ่นที่</strong>ช่อง id เป็น 1” · <code>"posts"."id"</code> อ่านว่า “ช่อง id ของลิ้นชัก posts” (จุดคั่นเหมือน <code>post.id</code> ใน Ruby)</li>
+  <li><code>LIMIT 1</code> — “<strong>เอามาแผ่นเดียวพอ</strong>”</li>
+</ul>
+
+<p>→ รวมกัน: <strong>“ขอแฟ้มทุกช่องจากลิ้นชัก posts เฉพาะแผ่นเลขที่ 1 เอามาแผ่นเดียว”</strong></p>
+
+<p>ขอตามช่องอื่น และขอแบบรายการ (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):015&gt; Post.find_by(title: "ส้มตำปูปลาร้า")
+  Post Load (2.4ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ส้มตำปูปลาร้า' LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000124808fc0
+ id: 2,
+ title: "ส้มตำปูปลาร้า",
+ …
+wongnok-blog(dev):016&gt; Post.where(title: "ส้มตำปูปลาร้า")
+  Post Load (2.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ส้มตำปูปลาร้า' /* loading for pp */ LIMIT 11 /*application='WongnokBlog'*/
+=&gt;
+[#&lt;Post:0x000000012454f3d8
+  id: 2,
+  title: "ส้มตำปูปลาร้า",
+  …</code></pre>
+
+<ul>
+  <li><code>find_by(title: …)</code> — “หาแผ่นแรกที่ช่อง title ตรงกับคำนี้” · SQL เหมือน <code>find</code> แค่เปลี่ยนช่องในเงื่อนไข · ได้กลับมา<strong>หนึ่งแผ่น</strong></li>
+  <li><code>where(title: …)</code> — “หา<strong>ทุกแผ่น</strong>ที่ตรงเงื่อนไข” · ได้กลับมาเป็น<strong>รายการ</strong> สังเกตวงเล็บ <code>[ … ]</code> ครอบ แม้มีแผ่นเดียว</li>
+  <li><code>/* loading for pp */ LIMIT 11</code> — console แอบเติมเองเพื่อโชว์บนจอ (<code>pp</code> คือคำสั่งพิมพ์ผลแบบจัดบรรทัดสวย ๆ ที่ console ใช้ · ขอมาแค่พอโชว์) <strong>ไม่ใช่คำสั่งของคุณ</strong> ·
+      ทำไม <code>where</code> ถึงรอให้ถูกโชว์ก่อนค่อยไปตู้ เป็นเรื่องสนุกของบท 113</li>
+  <li>ผมตัดบรรทัดท้ายของผลเป็น <code>…</code> เพราะซ้ำกับข้างบน</li>
+</ul>
+
+<p>อีกสามคำที่ใช้บ่อย (ผลจริง ตัดเหลือบรรทัดที่สำคัญ):</p>
+
+<pre><code>wongnok-blog(dev):017&gt; Post.first
+  Post Load (3.2ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x00000001051b52a0
+ id: 1,
+ …
+wongnok-blog(dev):018&gt; Post.last
+  Post Load (2.6ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" DESC LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000127caed88
+ id: 2,
+ …
+wongnok-blog(dev):019&gt; Post.all
+  Post Load (2.2ms)  SELECT "posts".* FROM "posts" /* loading for pp */ LIMIT 11 /*application='WongnokBlog'*/
+=&gt;
+[#&lt;Post:0x0000000127c0b408
+  id: 1,
+  …
+ #&lt;Post:0x0000000127c0b2c8
+  id: 2,
+  …</code></pre>
+
+<ul>
+  <li><code>first</code> — <code>ORDER BY "posts"."id" ASC</code> = “<strong>เรียงตามเลขที่ จากน้อยไปมาก</strong>” แล้ว <code>LIMIT 1</code> เอาแผ่นแรก → ได้แผ่นเลขน้อยสุด</li>
+  <li><code>last</code> — เหมือนกันแต่ <code>DESC</code> = เรียงจากมากไปน้อย → ได้แผ่นเลขมากสุด</li>
+  <li><code>all</code> — ไม่มี <code>WHERE</code> = ไม่มีเงื่อนไข เอาทุกแผ่น · ได้รายการ</li>
+</ul>
+
+<h3 id="sn-sub-1">ถ้าหาไม่เจอ — สามคำตอบที่ต่างกัน</h3>
+
+<p>ลองขอของที่ไม่มีในลิ้นชัก ด้วยสามวิธี (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):020&gt; Post.find(99)
+  Post Load (2.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 99 LIMIT 1 /*application='WongnokBlog'*/
+(wongnok-blog):20:in '&lt;main&gt;': Couldn't find Post with 'id'=99 (ActiveRecord::RecordNotFound)
+wongnok-blog(dev):021&gt; Post.find_by(title: "ไม่มีเรื่องนี้")
+  Post Load (2.5ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ไม่มีเรื่องนี้' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; nil
+wongnok-blog(dev):022&gt; Post.where(title: "ไม่มีเรื่องนี้")
+  Post Load (1.8ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ไม่มีเรื่องนี้' /* loading for pp */ LIMIT 11 /*application='WongnokBlog'*/
+=&gt; []</code></pre>
+
+<ul>
+  <li><code>find(99)</code> — <strong>ระเบิดเป็น error</strong> ชื่อ <code>ActiveRecord::RecordNotFound</code> · ข้อความแปลว่า “หาบทความเลขที่ 99 ไม่เจอ” · <code>(wongnok-blog):20</code> = บรรทัดที่ 20 ของ console (ตรงกับเลขใน prompt)</li>
+  <li><code>find_by(…)</code> — ไม่ระเบิด ตอบ <code>nil</code> = “ไม่มี” (บท 94)</li>
+  <li><code>where(…)</code> — ไม่ระเบิด ตอบ <code>[]</code> = รายการเปล่า</li>
+  <li>ทั้งสามวิธีไปตู้เหมือนกันทุกอย่าง (SQL หน้าตาเดียวกัน) · <strong>ต่างกันแค่ตอนกลับมาบอกเรา</strong></li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🙋 เทียบให้เห็นภาพ — ถามคนดูแลสต็อกสามแบบ</span>
+  <p>
+    <code>find(99)</code> = “<strong>เอาแฟ้มเลขที่ 99 มาให้ที</strong>” · คนดูแลสต็อกถือว่าคุณมั่นใจว่ามี — ไม่มีก็<strong>โวยวายเสียงดัง</strong> ให้รู้ว่ามีอะไรผิดปกติ
+    <br><code>find_by(…)</code> = “<strong>มีแฟ้มชื่อนี้ไหม</strong> ถ้ามีเอาแผ่นแรกมา” · ไม่มีก็ยักไหล่ตอบ “ไม่มีครับ” (<code>nil</code>)
+    <br><code>where(…)</code> = “<strong>เอาทุกแผ่นที่ตรงเงื่อนไขใส่ตะกร้ามา</strong>” · ไม่มีก็ยื่นตะกร้าเปล่ามาให้ (<code>[]</code>)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจริงตอบ “ไม่มีครับ” แล้วเราก็รู้ทันที ·
+    แต่ <code>nil</code> ไม่ร้องเตือน ถ้าเราไม่เช็คแล้วเอาไปใช้ต่อ เช่น <code>.title</code> จะพังทีหลังด้วย <code>NoMethodError</code> ในบรรทัดที่ห่างจากต้นเหตุ (เจอจริงในภารกิจท้ายบท)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> บท 27 เจอเรื่องเดียวกันใน GORM — <code>db.First(&amp;missing, 9999)</code> คืน <code>gorm.ErrRecordNotFound</code> (ตรงกับ <code>find</code>) ·
+  ส่วน <code>db.Where(…).Find(&amp;list)</code> ไม่ถือว่าเป็น error แค่ได้ slice ว่าง (ตรงกับ <code>where</code>) · ต่างกันที่ Go คืน error มาให้เช็ค ส่วน Ruby <strong>โยน</strong> error ออกมา (rescue บท 96)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>SELECT</code> · <code>WHERE</code> · <code>ORDER BY</code> · <code>LIMIT</code></dt>
+    <dd>สี่คำที่จะเจอในทุก query อ่าน: ขอช่องไหน · เฉพาะแผ่นที่… · เรียงตาม… · เอามากี่แผ่น ·
+        <strong>ถาม senior ได้ว่า “query นี้มี WHERE ด้วยช่องไหน ช่องนั้นมี index ไหม”</strong> (index คือสารบัญของลิ้นชัก บท 109)</dd>
+    <dt><code>ActiveRecord::RecordNotFound</code></dt>
+    <dd>error ของ <code>find</code> เมื่อหาไม่เจอ · ใน controller Rails แปลงเป็นหน้า 404 ให้ในเว็บจริง ·
+        <strong>พิมพ์บอก AI ได้ว่า “use find_by and handle nil instead of find here”</strong> ถ้าการไม่เจอเป็นเรื่องปกติของหน้านั้น</dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">หน้าค้นหาบทความ: ผู้ใช้พิมพ์ชื่อเรื่องมา ซึ่ง<strong>อาจไม่มีอยู่จริง</strong> · ถ้าไม่เจอ อยากโชว์ข้อความ “ไม่พบบทความ” แทนที่หน้าเว็บจะพัง ควรใช้คำสั่งไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>Post.find(title)</code> แล้วเช็คว่าผลเป็น <code>nil</code> หรือเปล่า</button>
+    <button class="opt"><code>Post.find_by(title: title)</code> แล้วเช็คว่าผลเป็น <code>nil</code> หรือเปล่า</button>
+    <button class="opt"><code>Post.first(title: title)</code> แล้วเช็คว่าผลเป็น <code>nil</code> หรือเปล่า</button>
+    <button class="opt"><code>Post.count(title)</code> แล้วเช็คว่าผลเป็น <code>0</code> หรือเปล่า</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — <code>find_by</code> ค้นตามช่องไหนก็ได้ ไม่เจอก็ตอบ <code>nil</code> เงียบ ๆ (ผลจริง: <code>Post.find_by(title: "ไม่มีเรื่องนี้")</code> → <code>=&gt; nil</code>) · เราเช็ค <code>nil</code> แล้วโชว์ข้อความเองได้</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะ <code>find</code> รับ<strong>เลขที่แฟ้ม</strong> ไม่ใช่ชื่อเรื่อง · ไม่เจอมันระเบิดเป็น <code>RecordNotFound</code> ไม่เคยคืน <code>nil</code> (ผมลองส่งชื่อเรื่องเข้าไป ได้ <code>RecordNotFound</code> จริง) ·
+       ตัวเลือกที่ 3 ผิด เพราะ <code>first</code> รับได้แค่ “จำนวนแผ่น” เช่น <code>first(3)</code> ไม่รับเงื่อนไข · ลองแล้วได้ <code>TypeError</code> ·
+       ตัวเลือกที่ 4 ผิด เพราะ <code>count</code> คิดว่าคำที่ส่งไปเป็น<strong>ชื่อช่อง</strong> · ลองแล้วพังเป็น <code>PG::UndefinedColumn</code> และต่อให้ไม่พังก็ได้แค่ตัวเลข ไม่ได้ตัวบทความไปโชว์</p>
+    <p><strong>จุดที่ต้องจำ:</strong> มั่นใจว่ามีแน่ (เลขที่จากลิงก์) → <code>find</code> · อาจไม่มีก็ได้ → <code>find_by</code> แล้วเช็ค <code>nil</code> · อยากได้หลายแผ่น → <code>where</code></p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">U กับ D — แก้ด้วย update · ทิ้งด้วย destroy</h2>
+
+<p>จะแก้หรือทิ้ง ต้อง<strong>หยิบแฟ้มแผ่นนั้นออกมาก่อน</strong> แล้วสั่งที่ตัวแฟ้ม (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):023&gt; post = Post.find(1)
+  Post Load (2.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000127c05008
+...
+wongnok-blog(dev):024&gt; post.update(title: "ต้มยำกุ้งน้ำใส")
+  TRANSACTION (2.0ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (3.9ms)  UPDATE "posts" SET "title" = 'ต้มยำกุ้งน้ำใส', "updated_at" = '2026-11-04 12:17:28.032069' WHERE "posts"."id" = 1 /*application='WongnokBlog'*/
+  TRANSACTION (3.6ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):025&gt; post.title
+=&gt; "ต้มยำกุ้งน้ำใส"</code></pre>
+
+<ul>
+  <li><code>post.update(title: …)</code> — แก้ช่องที่บอก แล้ว save ให้ทันทีในคำเดียว · ตอบ <code>true</code> = สำเร็จ</li>
+  <li><code>UPDATE "posts" SET "title" = 'ต้มยำกุ้งน้ำใส', "updated_at" = '…' WHERE "posts"."id" = 1</code>
+      — “<strong>แก้แฟ้มในลิ้นชัก posts</strong>: ช่อง title เปลี่ยนเป็น ต้มยำกุ้งน้ำใส · ช่องเวลาแก้ล่าสุดเปลี่ยนเป็นเวลานี้ · <strong>เฉพาะแผ่นเลขที่ 1</strong>”
+      <br><code>SET</code> = เปลี่ยนช่องนี้เป็นค่านี้</li>
+  <li>สังเกต: <strong>ไม่มีช่อง body ใน SQL</strong> — Rails ส่งเฉพาะช่องที่เปลี่ยนจริง · และเติม <code>updated_at</code> ให้เอง</li>
+  <li><code>WHERE "posts"."id" = 1</code> คือสิ่งที่ทำให้แก้แค่แผ่นเดียว · Rails ใส่ให้เสมอเพราะแฟ้มจำเลขที่ของตัวเองได้</li>
+</ul>
+
+<p>ทิ้งแฟ้มแผ่นเดิม (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):026&gt; post.destroy
+  TRANSACTION (1.4ms)  BEGIN /*application='WongnokBlog'*/
+  Post Destroy (2.6ms)  DELETE FROM "posts" WHERE "posts"."id" = 1 /*application='WongnokBlog'*/
+  TRANSACTION (1.4ms)  COMMIT /*application='WongnokBlog'*/
+=&gt;
+#&lt;Post:0x0000000127c05008
+ id: 1,
+ title: "ต้มยำกุ้งน้ำใส",
+ …
+wongnok-blog(dev):027&gt; Post.count
+  Post Count (1.5ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 1</code></pre>
+
+<ul>
+  <li><code>DELETE FROM "posts" WHERE "posts"."id" = 1</code> — “<strong>ทิ้งแฟ้มเลขที่ 1 ออกจากลิ้นชัก posts</strong>” · <code>DELETE FROM</code> = เอาออกจาก</li>
+  <li><code>destroy</code> ตอบตัวบทความที่เพิ่งทิ้งกลับมา · <code>Post.count</code> เหลือ <code>1</code></li>
+</ul>
+
+<div class="predict">
+<pre><code>wongnok-blog(dev):028&gt; post.persisted?
+wongnok-blog(dev):029&gt; post.title
+wongnok-blog(dev):030&gt; Post.find(1)</code></pre>
+  <p class="ask">แฟ้มเลขที่ 1 เพิ่งถูกทิ้งไป · ตัวแปร <code>post</code> ยังอยู่ใน console · สามบรรทัดนี้จะได้อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง:</p>
+<pre><code>wongnok-blog(dev):028&gt; post.persisted?
+=&gt; false
+wongnok-blog(dev):029&gt; post.title
+=&gt; "ต้มยำกุ้งน้ำใส"
+wongnok-blog(dev):030&gt; Post.find(1)
+  Post Load (2.5ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 1 LIMIT 1 /*application='WongnokBlog'*/
+(wongnok-blog):30:in '&lt;main&gt;': Couldn't find Post with 'id'=1 (ActiveRecord::RecordNotFound)</code></pre>
+    <p>
+      ตัวแปร <code>post</code> เหมือน<strong>สำเนาของแฟ้มที่ถือค้างไว้ในมือ</strong> · ทิ้งแฟ้มตัวจริงในลิ้นชักไปแล้ว สำเนาในมือก็ยังอ่านได้ (<code>title</code> ยังอยู่) ·
+      แต่มันรู้ตัวว่าไม่ได้อยู่ในลิ้นชักแล้ว (<code>persisted?</code> เป็น <code>false</code>) ·
+      ถ้าไปขอจากลิ้นชักใหม่ด้วย <code>find(1)</code> จึงไม่เจอ
+    </p>
+  </div>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> GORM ใช้ <code>db.Model(&amp;p).Update("Title", "ต้มยำกุ้งน้ำใส")</code> และ <code>db.Delete(&amp;p)</code> (บท 27 เคยเห็น <code>Update</code>/<code>Delete</code> แบบนี้) —
+  ต้องเรียกผ่าน <code>db</code> แล้วส่ง pointer ของ struct (<code>&amp;p</code>) เข้าไปทุกครั้ง · Rails สั่งที่ตัวแฟ้มตรง ๆ <code>post.update(…)</code> · <code>post.destroy</code> เพราะแฟ้มรู้ทางไปลิ้นชักเอง (บท 106)
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>UPDATE … SET … WHERE</code> · <code>DELETE FROM … WHERE</code></dt>
+    <dd>คำ SQL สำหรับแก้และลบ · <code>WHERE</code> ตัวท้ายคือตัวกำหนดว่าโดนกี่แผ่น — ถ้าไม่มี <code>WHERE</code> = โดนทั้งลิ้นชัก ·
+        <strong>ถาม senior ได้ว่า “ก่อนรัน UPDATE/DELETE เองใน production ทีมนี้ตรวจกันยังไง”</strong></dd>
+    <dt>dirty tracking (Rails จำว่าช่องไหนเปลี่ยน)</dt>
+    <dd>เหตุผลที่ <code>UPDATE</code> มีแค่ช่องที่เปลี่ยน · Rails จำค่าเดิมของแต่ละช่องไว้ · สไลด์หน้า 8 มี <code>post.changed?</code> ไว้ถามว่ามีช่องไหนเปลี่ยนแต่ยังไม่ save ·
+        <strong>พิมพ์บอก AI ได้ว่า “only update the title column, don't touch body”</strong> — แล้วตรวจจาก SQL log ว่าจริงไหม</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">เทียบกับ GORM ทั้งชุด</h2>
+
+<p>สไลด์หน้า 10 ให้จับคู่ GORM กับ Active Record · รวมของทั้งบทไว้ตารางเดียว (ฝั่ง Go มาจากบท 27):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>อยากทำ</th><th>Go · GORM</th><th>Ruby · Active Record</th></tr></thead>
+  <tbody>
+    <tr><td>สร้างแล้วเก็บ</td><td><code>db.Create(&amp;p)</code></td><td><code>post.save</code> · <code>Post.create(…)</code></td></tr>
+    <tr><td>หยิบตามเลขที่</td><td><code>db.First(&amp;p, 1)</code></td><td><code>Post.find(1)</code></td></tr>
+    <tr><td>หยิบตามเงื่อนไข</td><td><code>db.Where("title = ?", x).Find(&amp;list)</code></td><td><code>Post.where(title: x)</code></td></tr>
+    <tr><td>หยิบทั้งหมด</td><td><code>db.Find(&amp;list)</code></td><td><code>Post.all</code></td></tr>
+    <tr><td>แก้</td><td><code>db.Model(&amp;p).Update("Title", x)</code></td><td><code>post.update(title: x)</code></td></tr>
+    <tr><td>ลบ</td><td><code>db.Delete(&amp;p)</code></td><td><code>post.destroy</code></td></tr>
+    <tr><td>หาตามเลขที่ไม่เจอ</td><td><code>First</code> คืน <code>gorm.ErrRecordNotFound</code></td><td><code>find</code> โยน <code>ActiveRecord::RecordNotFound</code></td></tr>
+    <tr><td>ชื่อตาราง</td><td>struct <code>Post</code> → ตาราง <code>posts</code> เอง · ชื่อไม่ตามกติกาค่อยเขียน method <code>TableName()</code></td><td>class <code>Post</code> → ลิ้นชัก <code>posts</code> เอง · ชื่อไม่ตามกติกาค่อยเขียน <code>self.table_name = "…"</code></td></tr>
+    <tr><td>ช่องในตาราง</td><td>เขียนเองใน struct (หรือ embed <code>gorm.Model</code> ได้ ID + เวลา)</td><td>ไม่ต้องเขียนใน class · Rails อ่านจากตารางจริงตอนรัน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<ul>
+  <li><code>&amp;p</code> · <code>&amp;list</code> ฝั่ง Go = ส่ง pointer ของ struct/slice ให้ GORM เติมค่าลงไป · ฝั่ง Ruby ไม่มี เพราะ <code>find</code> คืนแฟ้มกลับมาให้เลย</li>
+  <li><code>"title = ?"</code> ฝั่ง Go — <code>?</code> คือช่องว่างที่ GORM เติมค่า <code>x</code> ให้ · ฝั่ง Ruby เขียนเป็น hash <code>title: x</code> แทน (SQL ที่ได้หน้าตาเดียวกัน)</li>
+</ul>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ใน GORM ถ้าอยากใช้ชื่อตารางแปลก ๆ ต้องเขียน method <code>TableName()</code> · ใน Rails ถ้า class ชื่อ <code>Post</code> และตารางชื่อ <code>posts</code> (ตามกติกา) ต้องเขียนอะไรเพิ่มใน <code>post.rb</code>?</p>
+  <div class="opts">
+    <button class="opt">เขียน <code>self.table_name = "posts"</code> ไว้ใน class</button>
+    <button class="opt">เขียน <code>def table_name; "posts"; end</code> ไว้ใน class</button>
+    <button class="opt">ใส่ชื่อตารางไว้ท้ายบรรทัด <code>class Post &lt; ApplicationRecord</code></button>
+    <button class="opt">ไม่ต้องเขียนอะไรเลย Rails เดาชื่อ <code>posts</code> ให้เอง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — ผลจริง: <code>post.rb</code> มีแค่ <code>class Post &lt; ApplicationRecord</code> กับ <code>end</code> แต่ <code>Post.table_name</code> ได้ <code>=&gt; "posts"</code> · นี่คือ Convention over Configuration (ร้านแฟรนไชส์ ทุกสาขาวางของที่เดิม)</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะเขียนได้แต่<strong>ไม่จำเป็น</strong> — ใช้เฉพาะตอนชื่อตารางไม่ตามกติกา เช่นต่อกับฐานข้อมูลเก่าที่ตั้งชื่อไว้แล้ว ·
+       ตัวเลือกที่ 2 ผิด เพราะชื่อตารางเป็นเรื่องของทั้ง class ไม่ใช่ของแฟ้มแต่ละแผ่น · method แบบนี้จึงไม่ได้ช่วยให้ <code>Post.table_name</code> เปลี่ยน ·
+       ตัวเลือกที่ 3 ผิด เพราะบรรทัดนั้นบอกแค่ว่าสืบทอดจากใคร Ruby ไม่ได้มีที่ให้ใส่ชื่อตาราง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ตั้งชื่อตามกติกา = ไม่ต้องเขียนอะไร · <code>self.table_name</code> มีไว้สำหรับกรณีพิเศษเท่านั้น (ทั้งสองภาษาคิดแบบเดียวกัน)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">เพื่อนแปะ log มาให้ดูหนึ่งบรรทัด (ตารางของเพื่อนมีช่อง <code>views</code> = ยอดวิว ซึ่งเราจะเพิ่มกันในหัวข้อถัดไป):
+    <code>UPDATE "posts" SET "views" = 121, "updated_at" = '…' WHERE "posts"."id" = 1</code>
+    — คำสั่ง Ruby ที่ทำให้เกิดบรรทัดนี้น่าจะเป็นอันไหน?</p>
+  <div class="opts">
+    <button class="opt"><code>Post.create(views: 121)</code> — สร้างบทความใหม่ที่ยอดวิว 121</button>
+    <button class="opt"><code>Post.where(views: 121)</code> — หาบทความที่ยอดวิวเท่ากับ 121</button>
+    <button class="opt"><code>Post.find(1).update(views: 121)</code> — แก้ยอดวิวของบทความเลขที่ 1</button>
+    <button class="opt"><code>Post.find(121).destroy</code> — ทิ้งบทความเลขที่ 121 ออกจากตู้</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — <code>UPDATE … SET "views" = 121 … WHERE "posts"."id" = 1</code> แปลว่า “แก้แฟ้มแผ่นเลขที่ 1 ให้ช่อง views เป็น 121” · ตรงกับ <code>update</code> บนแฟ้มเลขที่ 1</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะสร้างใหม่จะเห็น <code>INSERT INTO</code> ไม่ใช่ <code>UPDATE</code> ·
+       ตัวเลือกที่ 2 ผิด เพราะการหาจะเห็น <code>SELECT … WHERE "posts"."views" = 121</code> · ไม่มีอะไรถูกแก้ ·
+       ตัวเลือกที่ 4 ผิด เพราะการทิ้งจะเห็น <code>DELETE FROM</code> และเลข 121 จะอยู่หลัง <code>"id" =</code></p>
+    <p><strong>จุดที่ต้องจำ:</strong> อ่านคำแรกของ SQL ก่อน — <code>INSERT</code> สร้าง · <code>SELECT</code> อ่าน · <code>UPDATE</code> แก้ · <code>DELETE</code> ลบ · แล้วดู <code>WHERE</code> ว่าโดนแผ่นไหน</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-7">เตรียมตู้ของวันที่ 2 — ข้อมูลตัวอย่างที่ทุกบทหลังจากนี้ใช้</h2>
+
+<p>
+  ตั้งแต่บท 108 ถึง 119 ทุกบทใช้<strong>ข้อมูลชุดเดียวกัน</strong>: ผู้ใช้ 3 คน (สมชาย · สมหญิง · มานะ) · บทความ 6 ชิ้น · คอมเมนต์ 7 อัน ·
+  ถ้าคุณมีชุดเดียวกันในเครื่อง ผลที่พิมพ์ตามบทจะตรงกับในบท
+  <br><strong>ตอนนี้ทำตามไปก่อน</strong> · ทุกคำสั่งในหัวข้อนี้มีคำอธิบายเต็มในบท 108 (migration) และบท 115 (ความสัมพันธ์ระหว่างตาราง)
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>ขั้นที่ 6 ล้างข้อมูลทั้งหมดในฐานข้อมูลของแอปนี้ (ในเครื่องคุณ) แล้วสร้างใหม่</strong> ·
+    ถ้าในแอปนี้มีข้อมูลที่อยากเก็บ ให้ทำในแอปใหม่ที่สร้างด้วย <code>rails new</code> แทน</p>
+</div>
+
+<p><strong>ขั้นที่ 1 · ปิด console ก่อน</strong> — พิมพ์ <code>exit</code> · ถ้าเปิดค้างไว้ ขั้นที่ 6 จะพัง (ดู error ในภารกิจ)</p>
+
+<p><strong>ขั้นที่ 2 · สั่งสร้างใบสั่งช่างอีก 4 ใบ</strong> พิมพ์ทีละบรรทัดในโฟลเดอร์โปรเจกต์ (ผลจริง · เลขเวลาหน้าชื่อไฟล์ของคุณจะต่าง):</p>
+
+<pre><code>$ bin/rails generate migration AddPublishedAndViewsToPosts published:boolean views:integer
+      invoke  active_record
+      create    db/migrate/20261104114643_add_published_and_views_to_posts.rb
+$ bin/rails generate model User name:string email:string
+      invoke  active_record
+      create    db/migrate/20261104114645_create_users.rb
+      create    app/models/user.rb
+      invoke    test_unit
+      create      test/models/user_test.rb
+      create      test/fixtures/users.yml
+$ bin/rails generate migration AddUserToPosts user:references
+      invoke  active_record
+      create    db/migrate/20261104114646_add_user_to_posts.rb
+$ bin/rails generate model Comment body:text post:references user:references
+      invoke  active_record
+      create    db/migrate/20261104114648_create_comments.rb
+      create    app/models/comment.rb
+      invoke    test_unit
+      create      test/models/comment_test.rb
+      create      test/fixtures/comments.yml</code></pre>
+
+<ul>
+  <li>ใบที่ 1 — เพิ่มสองช่องให้บทความ: <code>published</code> (เผยแพร่แล้วหรือยัง · <code>boolean</code> = จริง/เท็จ) กับ <code>views</code> (ยอดวิว · <code>integer</code> = จำนวนเต็ม)</li>
+  <li>ใบที่ 2 — model ใหม่ <code>User</code> (ผู้เขียน) พร้อมลิ้นชัก <code>users</code> ช่องชื่อกับอีเมล</li>
+  <li>ใบที่ 3 — เพิ่มช่อง <code>user_id</code> บนแฟ้มบทความ = “<strong>บทความนี้เป็นของผู้ใช้เลขที่ …</strong>” · <code>references</code> คือวิธีบอก Rails ว่า “ช่องนี้ชี้ไปหาแฟ้มในลิ้นชักอื่น”
+      <br>ในไฟล์ที่ได้ generator เขียน <code>null: false, foreign_key: true</code> ให้เองด้วย = “<strong>ห้ามว่าง</strong> และเลขที่ใส่ต้องมีผู้ใช้คนนั้นอยู่จริง” (เรื่องเต็มบท 115–116)</li>
+  <li>ใบที่ 4 — model ใหม่ <code>Comment</code> (คอมเมนต์) ที่มีช่องชี้ไปหาทั้งบทความและผู้ใช้</li>
+</ul>
+
+<p><strong>ขั้นที่ 3 · แก้ใบสั่งใบแรกให้มีค่าเริ่มต้น</strong> — เปิดไฟล์ <code>db/migrate/…_add_published_and_views_to_posts.rb</code> แล้วเติมท้ายสองบรรทัดให้เป็นแบบนี้:</p>
+
+<pre><code><span class="c"># db/migrate/…_add_published_and_views_to_posts.rb</span>
+<span class="k">class</span> <span class="n">AddPublishedAndViewsToPosts</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:published</span>, <span class="n">:boolean</span>, <span class="n">default:</span> <span class="k">false</span>, <span class="n">null:</span> <span class="k">false</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:views</span>, <span class="n">:integer</span>, <span class="n">default:</span> <span class="n">0</span>, <span class="n">null:</span> <span class="k">false</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>class AddPublishedAndViewsToPosts &lt; ActiveRecord::Migration[8.1]</code> — หัวใบสั่งช่าง: ชื่อใบ + “เขียนตามแบบฟอร์มของ Rails 8.1” · generator เขียนให้ ไม่ต้องแตะ</li>
+  <li><code>def change</code> … <code>end</code> — “งานที่ช่างต้องทำ” อยู่ข้างใน (บท 108 อธิบายเต็ม)</li>
+  <li><code>add_column :posts, :published, :boolean</code> — “เพิ่มช่อง published ชนิดจริง/เท็จ ให้ลิ้นชัก posts” (ส่วนนี้ generator เขียนให้แล้ว)</li>
+  <li><code>default: false</code> — ส่วนที่เราเติม: ถ้าไม่บอก ให้ถือว่า<strong>ยังไม่เผยแพร่</strong> · <code>default: 0</code> = ยอดวิวเริ่มที่ 0</li>
+  <li><code>null: false</code> — ห้ามเว้นช่องนี้ว่าง (<code>null</code> คือ “ว่าง” ของฐานข้อมูล คล้าย <code>nil</code>) · ทำไมต้องมีกฎที่ตู้ อยู่บท 111</li>
+</ul>
+
+<p><strong>ขั้นที่ 4 · บอก model ว่าใครเป็นของใคร</strong> — <code>comment.rb</code> generator เขียนให้ครบแล้ว · อีกสองไฟล์แก้ให้เป็นแบบนี้:</p>
+
+<pre><code><span class="c"># app/models/post.rb</span>
+<span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c"># app/models/user.rb</span>
+<span class="k">class</span> <span class="n">User</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">has_many</span> <span class="n">:posts</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>
+<span class="k">end</span></code></pre>
+
+<pre><code><span class="c"># app/models/comment.rb — generator เขียนให้แล้ว แค่เปิดดู</span>
+<span class="k">class</span> <span class="n">Comment</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>
+  <span class="f">belongs_to</span> <span class="n">:user</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>belongs_to :user</code> — “บทความ<strong>เป็นของ</strong>ผู้ใช้หนึ่งคน” · ทำให้ถาม <code>post.user</code> ได้ และ<strong>ห้ามมีบทความที่ไม่มีเจ้าของ</strong> (เดี๋ยวเห็นผล)</li>
+  <li><code>has_many :comments</code> — “บทความหนึ่งชิ้น<strong>มีได้หลาย</strong>คอมเมนต์” · ทำให้ถาม <code>post.comments</code> ได้</li>
+  <li>ทั้งหมดนี้เรื่องเต็มอยู่บท 115 · ตอนนี้แค่รู้ว่ามันเชื่อมแฟ้มต่างลิ้นชักเข้าหากัน</li>
+</ul>
+
+<p><strong>ขั้นที่ 5 · ใส่ข้อมูลตัวอย่าง</strong> — เปิดไฟล์ <code>db/seeds.rb</code> (มีอยู่แล้วตั้งแต่ <code>rails new</code>) <strong>ลบของเดิมทิ้งทั้งไฟล์</strong> แล้ววางอันนี้แทน:</p>
+
+<pre><code><span class="c"># ข้อมูลตัวอย่างของ wongnok_blog (Day 2)</span>
+somchai = <span class="n">User</span>.<span class="f">create!</span>(name: <span class="s">"สมชาย"</span>, email: <span class="s">"somchai@example.com"</span>)
+somying = <span class="n">User</span>.<span class="f">create!</span>(name: <span class="s">"สมหญิง"</span>, email: <span class="s">"somying@example.com"</span>)
+mana    = <span class="n">User</span>.<span class="f">create!</span>(name: <span class="s">"มานะ"</span>,   email: <span class="s">"mana@example.com"</span>)
+
+p1 = somchai.posts.<span class="f">create!</span>(title: <span class="s">"ต้มยำกุ้งน้ำข้น"</span>, body: <span class="s">"สูตรต้มยำกุ้งแบบร้านดัง"</span>, published: <span class="k">true</span>,  views: <span class="n">120</span>)
+p2 = somchai.posts.<span class="f">create!</span>(title: <span class="s">"ส้มตำปูปลาร้า"</span>,   body: <span class="s">"ตำให้นัวต้องใส่อะไร"</span>,     published: <span class="k">true</span>,  views: <span class="n">340</span>)
+p3 = somying.posts.<span class="f">create!</span>(title: <span class="s">"ข้าวมันไก่ประตูน้ำ"</span>, body: <span class="s">"ร้านเด็ดย่านประตูน้ำ"</span>,  published: <span class="k">true</span>,  views: <span class="n">85</span>)
+p4 = somying.posts.<span class="f">create!</span>(title: <span class="s">"ก๋วยเตี๋ยวเรืออยุธยา"</span>, body: <span class="s">"ยังเขียนไม่เสร็จ"</span>,     published: <span class="k">false</span>, views: <span class="n">0</span>)
+p5 = mana.posts.<span class="f">create!</span>(title: <span class="s">"ผัดกะเพราหมูสับ"</span>,    body: <span class="s">"ไข่ดาวต้องกรอบ"</span>,          published: <span class="k">true</span>,  views: <span class="n">510</span>)
+p6 = mana.posts.<span class="f">create!</span>(title: <span class="s">"แกงเขียวหวานไก่"</span>,    body: <span class="s">"ร่างไว้ก่อน"</span>,              published: <span class="k">false</span>, views: <span class="n">0</span>)
+
+p1.comments.<span class="f">create!</span>(user: somying, body: <span class="s">"น่ากินมาก"</span>)
+p1.comments.<span class="f">create!</span>(user: mana,    body: <span class="s">"ขอสูตรน้ำพริกเผาด้วย"</span>)
+p2.comments.<span class="f">create!</span>(user: mana,    body: <span class="s">"เผ็ดแค่ไหนดี"</span>)
+p3.comments.<span class="f">create!</span>(user: somchai, body: <span class="s">"ร้านนี้คิวยาวไหม"</span>)
+p5.comments.<span class="f">create!</span>(user: somchai, body: <span class="s">"ไข่ดาวกรอบคือที่สุด"</span>)
+p5.comments.<span class="f">create!</span>(user: somying, body: <span class="s">"ใส่ถั่วฝักยาวด้วยไหม"</span>)
+p5.comments.<span class="f">create!</span>(user: mana,    body: <span class="s">"ขอบคุณทุกคนที่อ่าน"</span>)</code></pre>
+
+<ul>
+  <li><code>User.create!(…)</code> — <code>create</code> ที่เพิ่งเรียน แต่มี <code>!</code> ต่อท้าย = “<strong>ถ้าเก็บไม่ได้ ให้ระเบิดทันที</strong>” แทนที่จะเงียบ (เรื่องเต็มบท 110) · ไฟล์ข้อมูลตัวอย่างควรพังให้เห็น ไม่ใช่ใส่ไม่ครบแบบเงียบ ๆ</li>
+  <li><code>somchai.posts.create!(…)</code> — สร้างบทความ<strong>ในชื่อของสมชาย</strong> · Rails เติม <code>user_id</code> ให้เอง (ได้มาจาก <code>has_many :posts</code> · บท 115)</li>
+  <li><code>p1.comments.create!(user: somying, …)</code> — คอมเมนต์บนบทความ <code>p1</code> เขียนโดยสมหญิง</li>
+</ul>
+
+<p><strong>ขั้นที่ 6 · ให้ช่างสร้างตู้ใหม่ทั้งตู้ แล้วใส่ข้อมูลตัวอย่าง</strong> (ผลจริง ตัดกลางเป็น <code>…</code>):</p>
+
+<pre><code>$ bin/rails db:migrate:reset
+Dropped database 'a107'
+Created database 'a107'
+== 20261104123046 CreatePosts: migrating ======================================
+-- create_table(:posts)
+   -&gt; 0.0019s
+== 20261104123046 CreatePosts: migrated (0.0019s) =============================
+…
+== 20261104123156 CreateComments: migrating ===================================
+-- create_table(:comments)
+   -&gt; 0.0039s
+== 20261104123156 CreateComments: migrated (0.0039s) ==========================
+
+$ bin/rails db:seed
+$ bin/rails runner 'p [User.count, Post.count, Comment.count]'
+[3, 6, 7]</code></pre>
+
+<ul>
+  <li><code>db:migrate:reset</code> — “<strong>ทิ้งตู้เก่าทั้งตู้ ตั้งตู้ใหม่ แล้วให้ช่างทำใบสั่งทุกใบใหม่ตั้งแต่ใบแรก</strong>” · ห้าใบรันเรียงกันตามเลขเวลาหน้าชื่อไฟล์
+      <br>อ่านผล: <code>Dropped</code> / <code>Created database</code> = ทิ้งตู้ / ตั้งตู้ใหม่ · <code>== … CreatePosts: migrating</code> = ช่างเริ่มทำใบนี้ ·
+      <code>-- create_table(:posts)</code> = งานย่อยในใบ · <code>-&gt; 0.0019s</code> = ใช้เวลา (วินาที) · <code>migrated</code> = ใบนี้เสร็จ
+      <br>ชื่อในบรรทัด <code>Dropped</code> / <code>Created</code> คือชื่อท้าย <code>DATABASE_URL</code> ของคุณ (ของผมคือ <code>a107</code>) ·
+      ถ้าคุณไม่ได้ตั้ง <code>DATABASE_URL</code> แต่ใช้ค่าในไฟล์ <code>config/database.yml</code> จะเห็นสองชื่อ <code>wongnok_blog_development</code> กับ <code>wongnok_blog_test</code> (ตู้สำรองไว้เขียนเทส Day 4)</li>
+  <li><code>db:seed</code> — รันไฟล์ <code>db/seeds.rb</code> · <strong>ไม่มีอะไรพิมพ์ออกมา = สำเร็จ</strong></li>
+  <li><code>bin/rails runner '…'</code> — รัน Ruby บรรทัดเดียวโดยโหลดแอปให้ (บท 99) · ได้ <code>[3, 6, 7]</code> = ผู้ใช้ 3 · บทความ 6 · คอมเมนต์ 7 ✅</li>
+  <li><strong>ทำไมไม่ใช้ <code>db:migrate</code> ธรรมดา?</strong> สองเหตุผล: บทความที่เราสร้างครึ่งแรกยังไม่มีเจ้าของ ใบสั่งที่ 3 ที่ห้ามช่อง <code>user_id</code> ว่างจะพัง (error จริงอยู่ในภารกิจ) ·
+      และตู้ใหม่ทำให้เลขที่แฟ้มเริ่มจาก 1 ตรงกับทุกบทหลังจากนี้ · คู่มือทางการของ Rails ก็แนะนำคู่ <code>db:migrate:reset</code> + <code>db:seed</code> นี้ (ลิงก์ท้ายบท)</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🔨 เทียบให้เห็นภาพ — รื้อตู้ทั้งตู้แล้วต่อใหม่ตามแฟ้มใบสั่งช่าง</span>
+  <p>
+    ร้านเก็บ<strong>ใบสั่งช่างทุกใบ</strong>ไว้ในแฟ้ม (<code>db/migrate/</code>) ตั้งแต่วันเปิดร้าน ·
+    <code>db:migrate:reset</code> คือยกตู้เก่าทิ้ง ยกตู้เปล่ามาตั้ง แล้วยื่นแฟ้มใบสั่งทั้งหมดให้ช่างทำตามทีละใบ ได้ตู้หน้าตาเดียวกับตู้ล่าสุดเป๊ะ ·
+    <code>db:seed</code> คือเอา<strong>ของตัวอย่าง</strong>ใส่ตู้ ให้มีอะไรหยิบลองเล่น
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ช่างจริงรื้อตู้แล้ว แฟ้มเก่ายังกองอยู่ในกล่องให้ย้ายกลับ ·
+    <code>db:migrate:reset</code> <strong>ทิ้งข้อมูลทั้งหมดจริง</strong> ไม่มีกล่องพักของ — ทำได้สบายใจกับแอปฝึกในเครื่อง แต่ห้ามสั่งกับฐานข้อมูลที่มีข้อมูลจริง
+  </p>
+</div>
+
+<p>ลองของใหม่ที่ได้มา · เปิด <code>bin/rails console</code> ใหม่ แล้วลองสร้างบทความแบบที่ทำได้ในครึ่งแรก (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):001&gt; post = Post.new(title: "ข้าวซอยไก่", body: "ของดีเชียงใหม่")
+=&gt;
+#&lt;Post:0x0000000122946d58
+...
+wongnok-blog(dev):002&gt; post.save
+  TRANSACTION (2.0ms)  BEGIN /*application='WongnokBlog'*/
+  TRANSACTION (0.8ms)  ROLLBACK /*application='WongnokBlog'*/
+=&gt; false
+wongnok-blog(dev):003&gt; post.errors.full_messages
+=&gt; ["User must exist"]
+wongnok-blog(dev):004&gt; post.id
+=&gt; nil</code></pre>
+
+<ul>
+  <li><code>post.save</code> ได้ <code>=&gt; false</code> และ<strong>ไม่มีบรรทัด <code>INSERT</code></strong> — คนดูแลสต็อกตรวจแฟ้มแล้วไม่รับ ไม่ได้ใส่อะไรลงลิ้นชัก</li>
+  <li><code>BEGIN</code> แล้ว <code>ROLLBACK</code> ทันที = เปิดกรอบงาน แล้ว<strong>ยกเลิกทั้งกรอบ</strong> (คำที่สามของ transaction) · ไม่มีอะไรเปลี่ยนในตู้ ·
+      ถ้าสั่ง <code>post.save</code> ซ้ำอีกรอบ ผมได้ <code>=&gt; false</code> โดยไม่เห็นแม้แต่สองบรรทัดนี้ — ของคุณอาจเห็นหรือไม่เห็นก็ได้ สิ่งที่ต้องดูคือ<strong>ไม่มี INSERT</strong></li>
+  <li><code>post.errors.full_messages</code> — ถามว่า “ไม่รับเพราะอะไร” · <code>User must exist</code> = “<strong>ต้องมีผู้เขียน</strong>” · มาจาก <code>belongs_to :user</code> ที่เพิ่งเขียน</li>
+  <li>การตรวจก่อนเก็บแบบนี้ชื่อ validation (บท 110) · ทำไม <code>belongs_to</code> ถึงตรวจให้เอง (บท 115)</li>
+</ul>
+
+<p>บอกว่าใครเป็นคนเขียน แล้ว save ใหม่ (ผลจริง):</p>
+
+<pre><code>wongnok-blog(dev):005&gt; somchai = User.find_by(name: "สมชาย")
+  User Load (1.6ms)  SELECT "users".* FROM "users" WHERE "users"."name" = 'สมชาย' LIMIT 1 /*application='WongnokBlog'*/
+=&gt;
+#&lt;User:0x0000000122fa5910
+...
+wongnok-blog(dev):006&gt; post.user = somchai
+=&gt;
+#&lt;User:0x0000000122fa5910
+...
+wongnok-blog(dev):007&gt; post.save
+  TRANSACTION (1.3ms)  BEGIN /*application='WongnokBlog'*/
+  Post Create (3.2ms)  INSERT INTO "posts" ("title", "body", "created_at", "updated_at", "published", "views", "user_id") VALUES ('ข้าวซอยไก่', 'ของดีเชียงใหม่', '2026-11-04 12:17:34.499959', '2026-11-04 12:17:34.499959', FALSE, 0, 1) RETURNING "id" /*application='WongnokBlog'*/
+  TRANSACTION (1.5ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+wongnok-blog(dev):008&gt; post.id
+=&gt; 7
+wongnok-blog(dev):009&gt; post.user.name
+=&gt; "สมชาย"</code></pre>
+
+<ul>
+  <li><code>somchai = User.find_by(name: "สมชาย")</code> — หยิบแฟ้มของสมชายจากลิ้นชัก <code>users</code> (SQL แบบเดียวกับ <code>find_by</code> ของบทความ)</li>
+  <li><code>post.user = somchai</code> — ใส่ผู้เขียนให้บทความ (ได้จาก <code>belongs_to</code>)</li>
+  <li>ใน <code>INSERT</code> ตอนนี้มีช่องเพิ่ม: <code>"published"</code> = <code>FALSE</code> และ <code>"views"</code> = <code>0</code> (ค่าเริ่มต้นจากขั้นที่ 3) · <code>"user_id"</code> = <code>1</code> = “เป็นของผู้ใช้เลขที่ 1” คือสมชาย</li>
+  <li><code>post.id</code> ได้ <code>7</code> เพราะข้อมูลตัวอย่างใช้เลข 1–6 ไปแล้ว</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>seeds · <code>db:seed</code></dt>
+    <dd>ข้อมูลตัวอย่างที่เขียนเป็นโค้ดไว้ใน <code>db/seeds.rb</code> ให้ทุกคนในทีมได้ข้อมูลชุดเดียวกันด้วยคำสั่งเดียว ·
+        <strong>ถาม senior ได้ว่า “seeds ของโปรเจกต์นี้รันซ้ำได้ไหม หรือต้อง reset ก่อน”</strong></dd>
+    <dt><code>db:migrate:reset</code></dt>
+    <dd>ลบฐานข้อมูลทิ้ง สร้างใหม่ แล้วรัน migration ทุกไฟล์ตั้งแต่ไฟล์แรก · ใช้กับเครื่องตัวเองเท่านั้น (คำสั่งตระกูล reset อื่น ๆ บท 108) ·
+        <strong>พิมพ์บอก AI ได้ว่า “my dev database is messed up, how do I rebuild it from migrations and seeds”</strong></dd>
+    <dt><code>belongs_to</code> · foreign key</dt>
+    <dd><code>belongs_to :user</code> = แฟ้มนี้เป็นของผู้ใช้หนึ่งคน · ช่อง <code>user_id</code> ที่ชี้ไปหาแฟ้มในลิ้นชักอื่นเรียกว่า foreign key (บท 115) ·
+        <strong>ถาม senior ได้ว่า “belongs_to ตัวนี้ควรเป็น optional ไหม”</strong> (optional = ยอมให้ไม่มีเจ้าของได้) — เจอ <code>User must exist</code> เมื่อไหร่ ให้นึกถึงคำนี้</dd>
+  </dl>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">หลังเพิ่ม <code>belongs_to :user</code> ใน <code>Post</code> แล้ว · <code>post.save</code> ตอบ <code>=&gt; false</code> และ <code>full_messages</code> ได้ <code>["User must exist"]</code> · ข้อไหนถูก?</p>
+  <div class="opts">
+    <button class="opt">บทความไม่ได้ถูกเก็บ ไม่มี <code>INSERT</code> ส่งไปตู้ และ <code>post.id</code> ยังเป็น <code>nil</code></button>
+    <button class="opt">บทความถูกเก็บแล้ว แต่ช่อง <code>user_id</code> ถูกเว้นว่างไว้ให้เติมทีหลัง</button>
+    <button class="opt">ตู้ปฏิเสธคำสั่ง <code>INSERT</code> ที่ส่งไป แล้วยกเลิกด้วย <code>ROLLBACK</code></button>
+    <button class="opt">console พังกลางทาง ต้องปิดแล้วเปิดใหม่ก่อนจะ save ได้อีกครั้ง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — ผลจริงหลัง <code>post.save</code> ไม่มีบรรทัด <code>INSERT</code> เลย · คนดูแลสต็อกตรวจแล้วไม่รับตั้งแต่ก่อนใส่ลิ้นชัก · <code>post.id</code> จึงยังเป็น <code>nil</code></p>
+    <p>ตัวเลือกที่ 2 ผิด เพราะ <code>false</code> แปลว่าไม่ได้เก็บ และช่อง <code>user_id</code> ถูกตั้งห้ามว่างไว้ด้วย ·
+       ตัวเลือกที่ 3 ผิด เพราะไม่มี <code>INSERT</code> ถูกส่งไปให้ตู้ปฏิเสธเลย — <code>ROLLBACK</code> ที่อาจเห็นคือ Rails ยกเลิกกรอบงานเองหลังตรวจแฟ้มไม่ผ่าน ไม่ใช่ตู้ปฏิเสธ ·
+       ตัวเลือกที่ 4 ผิด เพราะ console ยังใช้ได้ปกติ ใส่ <code>post.user = …</code> แล้ว <code>save</code> ใหม่ก็ได้ <code>true</code></p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>save</code> ตอบ <code>false</code> = ไม่ได้เก็บ · ถามเหตุผลด้วย <code>errors.full_messages</code> · ดู log ว่ามี <code>INSERT</code> หรือเปล่า</p>
+  </div>
+</div>
+
+<div class="task">
+  <h3 id="sn-sub-2">🎯 ภารกิจ — CRUD ครบวงบนข้อมูลของวันที่ 2 (~10 นาที)</h3>
+  <p>ทำหลังเตรียมตู้ครบ 6 ขั้นแล้ว · <strong>ข้อ 1 ห้ามข้าม</strong> เพราะบทความ “ข้าวซอยไก่” ที่เพิ่งลองสร้างกินเลขที่ 7 ไปแล้ว:</p>
+  <ol>
+    <li><strong>ล้างตู้ก่อน:</strong> <code>exit</code> ออกจาก console · สั่งขั้นที่ 6 ซ้ำทั้งสองบรรทัด (<code>bin/rails db:migrate:reset</code> แล้ว <code>bin/rails db:seed</code>) · เปิด <code>bin/rails console</code> ใหม่ แล้วพิมพ์ข้อถัดไปทีละบรรทัด</li>
+    <li><code>Post.count</code> และ <code>User.count</code> — เช็คว่าข้อมูลตัวอย่างครบ</li>
+    <li><code>Post.find_by(title: "ผัดกะเพราหมูสับ").views</code> — บทความนี้มีคนอ่านกี่ครั้ง</li>
+    <li><code>Post.where(published: false).count</code> — มีบทความที่ยังไม่เผยแพร่กี่ชิ้น</li>
+    <li><code>mana = User.find_by(name: "มานะ")</code> แล้ว <code>post = Post.create(title: "ข้าวผัดปู", body: "ใส่ปูเยอะ ๆ", user: mana)</code> แล้ว <code>post.id</code></li>
+    <li><code>post.update(title: "ข้าวผัดปูก้อน")</code> — ดู SQL ว่ามีช่องไหนบ้าง</li>
+    <li><code>post.destroy</code> · <code>Post.count</code> · แล้ว <code>Post.find(7)</code></li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ข้อ 4 ได้เท่าไหร่ (ย้อนดูข้อมูลตัวอย่าง) · ข้อ 5 <code>post.id</code> เป็นเลขอะไร · และข้อ 7 บรรทัดสุดท้ายได้อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>สิ่งที่ควรเห็น</strong> (ผลจริง ตัดผลยาวเป็น <code>…</code>):</p>
+<pre><code>wongnok-blog(dev):001&gt; Post.count
+  Post Count (41.1ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 6
+wongnok-blog(dev):002&gt; User.count
+  User Count (2.6ms)  SELECT COUNT(*) FROM "users" /*application='WongnokBlog'*/
+=&gt; 3
+wongnok-blog(dev):003&gt; Post.find_by(title: "ผัดกะเพราหมูสับ").views
+  Post Load (1.0ms)  SELECT "posts".* FROM "posts" WHERE "posts"."title" = 'ผัดกะเพราหมูสับ' LIMIT 1 /*application='WongnokBlog'*/
+=&gt; 510
+wongnok-blog(dev):004&gt; Post.where(published: false).count
+  Post Count (1.8ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."published" = FALSE /*application='WongnokBlog'*/
+=&gt; 2
+…
+wongnok-blog(dev):007&gt; post.id
+=&gt; 7
+wongnok-blog(dev):008&gt; post.update(title: "ข้าวผัดปูก้อน")
+  TRANSACTION (1.4ms)  BEGIN /*application='WongnokBlog'*/
+  Post Update (3.0ms)  UPDATE "posts" SET "title" = 'ข้าวผัดปูก้อน', "updated_at" = '2026-11-04 11:50:49.801073' WHERE "posts"."id" = 7 /*application='WongnokBlog'*/
+  TRANSACTION (1.7ms)  COMMIT /*application='WongnokBlog'*/
+=&gt; true
+…
+wongnok-blog(dev):010&gt; Post.count
+  Post Count (1.4ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlog'*/
+=&gt; 6
+wongnok-blog(dev):011&gt; Post.find(7)
+  Post Load (1.3ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 7 LIMIT 1 /*application='WongnokBlog'*/
+(wongnok-blog):11:in '&lt;main&gt;': Couldn't find Post with 'id'=7 (ActiveRecord::RecordNotFound)</code></pre>
+    <ul>
+      <li>ข้อ 2 — บทความ <code>6</code> · ผู้ใช้ <code>3</code> · ข้อ 3 — ยอดวิวผัดกะเพรา <code>510</code></li>
+      <li>ข้อ 4 — <code>2</code> (ก๋วยเตี๋ยวเรือ กับ แกงเขียวหวาน) · SQL มี <code>WHERE "posts"."published" = FALSE</code> = “นับเฉพาะแผ่นที่ช่อง published เป็นเท็จ”</li>
+      <li>ข้อ 5 — <code>7</code> · ถ้าข้ามข้อ 1 จะได้ <code>8</code> หรือมากกว่า · <strong>ตู้ไม่เอาเลขที่เคยแจกไปแล้วกลับมาแจกซ้ำ</strong> แม้แฟ้มนั้นจะถูกทิ้งไปแล้ว (ผมลองทิ้งเลข 7 แล้วสร้างใหม่ ได้ <code>8</code>)</li>
+      <li>ข้อ 6 — SQL มีแค่ <code>title</code> กับ <code>updated_at</code> ไม่มี <code>body</code></li>
+      <li>ข้อ 7 — <code>RecordNotFound</code> เพราะทิ้งไปแล้ว · <code>Post.count</code> กลับมาเป็น <code>6</code> เท่าเดิม ✅ ข้อมูลพร้อมสำหรับบท 108</li>
+    </ul>
+    <p><strong>ถ้าเจอ error นี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong><code>PG::NotNullViolation: ERROR:  column "user_id" of relation "posts" contains null values</code></strong> ตอนเตรียมตู้ —
+          คุณสั่ง <code>bin/rails db:migrate</code> แทน <code>db:migrate:reset</code> · บทความจากครึ่งแรกไม่มีเจ้าของ ใบสั่งที่ 3 ห้ามช่องนี้ว่างเลยพัง (ผมลองแล้ว ได้ข้อความนี้จริง) → สั่งขั้นที่ 6 ตามที่เขียน</li>
+      <li><strong><code>PG::ObjectInUse: ERROR:  database "…" is being accessed by other users</code></strong> —
+          ยังมี console (หรือ <code>bin/rails server</code>) เปิดค้างอยู่ จึงทิ้งตู้ไม่ได้ → <code>exit</code> ทุกหน้าต่างแล้วสั่งใหม่</li>
+      <li><strong><code>Post.count</code> ได้ <code>12</code> และ <code>User.count</code> ได้ <code>6</code></strong> — สั่ง <code>db:seed</code> ไปสองรอบ ข้อมูลเลยเบิ้ล (ผมลองแล้ว ได้ <code>[6, 12, 14]</code>) → สั่งขั้นที่ 6 ใหม่ทั้งสองบรรทัด</li>
+      <li><strong>ข้อ 5 ได้ <code>post.id</code> เป็น <code>nil</code></strong> — พิมพ์ชื่อผิด เช่น <code>"มานา"</code> · <code>find_by</code> ตอบ <code>nil</code> เงียบ ๆ แล้ว <code>create</code> ไม่ได้เก็บเพราะไม่มีผู้เขียน ·
+          ลอง <code>post.errors.full_messages</code> จะได้ <code>["User must exist"]</code> (ผลจริง) · <code>create</code> ไม่ระเบิด มันแค่คืนแฟ้มที่ยังไม่ได้เก็บมาให้</li>
+      <li><strong><code>undefined method 'name' for nil (NoMethodError)</code></strong> — ตัวแปรที่ได้จาก <code>find_by</code> เป็น <code>nil</code> แล้วคุณเรียก <code>.name</code> ต่อ (ผลจริงตอนผมลองพิมพ์ชื่อผิดแล้วเรียก <code>.name</code> ต่อ) · ย้อนไปเช็คบรรทัดที่ <code>find_by</code></li>
+      <li><strong>เห็น <code>email: "[FILTERED]"</code></strong> ตอนโชว์ผู้ใช้ — ไม่ใช่ error · Rails ซ่อนอีเมลเวลาพิมพ์ทั้งแฟ้มออกจอ (กันข้อมูลส่วนตัวหลุดลง log) · <code>User.find(3).email</code> ยังได้ <code>"mana@example.com"</code> ตามจริง</li>
+    </ul>
+    <p>อยากได้ข้อมูลกลับมาสะอาดเหมือนเดิมเมื่อไหร่ ก็สั่งขั้นที่ 6 ซ้ำได้เสมอ · ติดตรงไหน หรือผลของคุณไม่ตรงกับที่เขียนไว้ <strong>ถามกลับมาได้เลย</strong> พร้อมแปะสิ่งที่จอขึ้นมาทั้งก้อน</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-8">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>9</td><td>“พังไม่ได้ เพราะไม่มีการเขียนอะไรลง DB”</td><td>จริงสำหรับคำสั่งในหน้านั้น (ถามโครงตาราง · <code>Post.new</code>) · แต่ <code>save</code> · <code>update</code> · <code>destroy</code> ในบทนี้เขียนลงตู้จริง</td><td>นิดหน่อย</td></tr>
+    <tr><td>9</td><td><code>Post.where(published: true).to_sql</code></td><td>ต้องมีช่อง <code>published</code> ก่อน (ได้หลังเตรียมตู้ของวันที่ 2) · <code>to_sql</code> อยู่บท 113</td><td>ไม่ต้อง — ลองในบท 113</td></tr>
+    <tr><td>9</td><td>คอมเมนต์ “ลบ model ทิ้งยังถามได้” ข้าง <code>Post.ancestors</code></td><td><code>ancestors</code> คือรายชื่อ class แม่และ module ที่ <code>Post</code> สืบทอดมา · บทนี้ข้ามไปเพราะไม่ต้องใช้ทำ CRUD</td><td>ไม่ต้อง</td></tr>
+    <tr><td>10</td><td>จับคู่ <code>gorm.Model</code> embed ↔ <code>&lt; ApplicationRecord</code></td><td><code>gorm.Model</code> ให้<strong>ช่อง</strong> (ID · เวลา) · <code>&lt; ApplicationRecord</code> ให้<strong>ความสามารถ</strong> (save · find) ส่วนช่องมาจากตาราง</td><td>นิดหน่อย — คู่กันแบบหลวม ๆ</td></tr>
+    <tr><td>10</td><td>GORM “struct tag: table name”</td><td>GORM เปลี่ยนชื่อตารางด้วย method <code>TableName()</code> ไม่ใช่ struct tag (struct tag ใช้กับชื่อคอลัมน์)</td><td>ไม่ต้อง — คำตอบยังคู่กับ <code>self.table_name</code> เหมือนเดิม</td></tr>
+    <tr><td>8</td><td><code>save!</code> · <code>valid?</code> · <code>changed?</code> · <code>reload</code> · <code>pluck</code> · <code>exists?</code></td><td>บทนี้ยังไม่ใช้ · <code>save!</code> <code>valid?</code> บท 110 · <code>pluck</code> <code>exists?</code> บท 113</td><td>ไม่ต้อง — สไลด์บอกเองว่าไม่ต้องจำทุกคำ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0106-active-record-intro.html">← บทเรียน 106 · Active Record คืออะไร</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 2</a>
+  <a href="./0108-migration-basics.html">บทเรียน 108 → Migration พื้นฐาน</a>
+</nav>
+
+<h2 id="sn-sec-9">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_record_basics.html#crud-reading-and-writing-data">Rails Guides — Active Record Basics § CRUD: Reading and Writing Data</a> —
+      <strong>อ่านหัวข้อย่อย Create · Read · Update · Delete</strong> · ตัวอย่างในคู่มือใช้ <code>User</code> แทน <code>Post</code> แต่คำสั่งชุดเดียวกับบทนี้ทุกตัว</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#retrieving-a-single-record">Rails Guides — Active Record Query Interface § Retrieving a Single Record</a> —
+      <strong>อ่านแค่ <code>find</code> · <code>first</code> · <code>last</code> · <code>find_by</code></strong> · คู่มือโชว์ SQL ของแต่ละคำ และยืนยันว่า <code>find</code> ไม่เจอจะโยน <code>RecordNotFound</code> ส่วน <code>find_by</code> คืน <code>nil</code></li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Persistence.html#method-i-persisted-3F">Rails API — ActiveRecord::Persistence</a> —
+      หน้ารวม method ของการเก็บ/แก้/ลบ · <strong>ดู <code>new_record?</code> · <code>persisted?</code> · <code>save</code> · <code>update</code> · <code>destroy</code></strong> ที่เหลือข้ามไปก่อน</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_migrations.html#resetting-the-database">Rails Guides — Active Record Migrations § Resetting the Database</a> —
+      <strong>อ่านแค่ย่อหน้าท้ายของหัวข้อ</strong> ที่แนะนำ <code>bin/rails db:migrate:reset</code> ตามด้วย <code>bin/rails db:seed</code> · ที่เหลือของหน้านี้คือบท 108</li>
+  <li><a href="https://gorm.io/docs/query.html#Retrieving-a-single-object">GORM — Query § Retrieving a single object</a> —
+      ฝั่ง Go ที่ใช้เทียบ · <strong>ดูตัวอย่างใต้หัวข้อ Traditional API</strong> (แบบที่บท 27 ใช้) ว่า <code>First</code> ไม่เจอได้ <code>ErrRecordNotFound</code></li>
+  <li><a href="https://gorm.io/docs/conventions.html#Pluralized-Table-Name">GORM — Conventions § Pluralized Table Name</a> —
+      ยืนยันว่า GORM ก็เดาชื่อตารางเป็นพหูพจน์ให้เหมือน Rails (<code>User</code> → <code>users</code>) และเปลี่ยนได้ด้วย <code>TableName()</code></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>
