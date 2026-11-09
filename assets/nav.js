@@ -198,6 +198,25 @@
       { n: '117', f: 'rails-day-2/lessons/0117-rest-and-strong-params.html', t: 'REST · mass assignment · params.expect' },
       { n: '118', f: 'rails-day-2/lessons/0118-scaffold-reading.html', t: 'scaffold — อ่านโค้ดที่เครื่องเขียน' },
       { n: '119', f: 'rails-day-2/lessons/0119-rails-day2-lab.html', t: 'Lab 2 — เติมของที่ scaffold ไม่ให้' }
+    ]},
+    { key: 'rails-day-3', btn: 'Day 3', where: 'Rails Day 3',
+      sheetLabel: 'Cheat sheet Rails Day 3', d: 203, lessons: [
+      { n: '120', f: 'rails-day-3/lessons/0120-day3-setup.html', t: 'เริ่ม Day 3 — โปรเจกต์กลาง + ข้อมูล 30 บทความ' },
+      { n: '121', f: 'rails-day-3/lessons/0121-prompts-and-claude-md.html', t: 'prompts/ และ CLAUDE.md' },
+      { n: '122', f: 'rails-day-3/lessons/0122-view-layer-and-erb.html', t: 'View layer · ERB 4 แบบ' },
+      { n: '123', f: 'rails-day-3/lessons/0123-layout-partial-locals.html', t: 'layout · partial · locals' },
+      { n: '124', f: 'rails-day-3/lessons/0124-view-helpers-and-form-with.html', t: 'helper และ form_with' },
+      { n: '125', f: 'rails-day-3/lessons/0125-xss-and-n-plus-one-in-views.html', t: 'XSS และ N+1 ใน view' },
+      { n: '126', f: 'rails-day-3/lessons/0126-lab-vibe1-views.html', t: 'Lab Vibe 1 — index และ show' },
+      { n: '127', f: 'rails-day-3/lessons/0127-asset-pipeline.html', t: 'fingerprinting · Propshaft · importmap' },
+      { n: '128', f: 'rails-day-3/lessons/0128-tailwind-v4-daisyui.html', t: 'Tailwind v4 · daisyUI' },
+      { n: '129', f: 'rails-day-3/lessons/0129-lab-vibe2-styling.html', t: 'Lab Vibe 2 — navbar · สลับธีม' },
+      { n: '130', f: 'rails-day-3/lessons/0130-hotwire-and-turbo-drive.html', t: 'Hotwire · Turbo Drive' },
+      { n: '131', f: 'rails-day-3/lessons/0131-turbo-frames.html', t: 'Turbo Frames — แก้ในหน้าเดิม' },
+      { n: '132', f: 'rails-day-3/lessons/0132-turbo-streams.html', t: 'Turbo Streams — เปลี่ยนหลายจุด' },
+      { n: '133', f: 'rails-day-3/lessons/0133-broadcast-and-turbo-limits.html', t: 'broadcast — เด้งทุกแท็บ' },
+      { n: '134', f: 'rails-day-3/lessons/0134-stimulus.html', t: 'Stimulus — HTML สั่ง JS' },
+      { n: '135', f: 'rails-day-3/lessons/0135-lab-vibe3-hotwire.html', t: 'Lab Vibe 3 — ตรวจรับงาน Hotwire' }
     ]}
   ];
 

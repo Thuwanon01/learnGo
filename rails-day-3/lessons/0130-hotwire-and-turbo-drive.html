@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 130 — Hotwire — เว็บที่ขยับได้โดยไม่ต้องมี state ชุดที่สอง และ Turbo Drive</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 130 · Rails · Day 3</p>
+  <h1>Hotwire — เว็บที่ขยับได้โดยไม่ต้องมี state ชุดที่สอง และ Turbo Drive</h1>
+  <p class="meta">~22 นาที · ควรผ่าน <a href="./0129-lab-vibe2-styling.html">บทเรียน 129</a> (Lab Vibe 2) และ
+    <a href="./0122-view-layer-and-erb.html">บทเรียน 122</a> (state ใน client · สมุดเล่มที่สอง) มาก่อน</p>
+  <p class="standfirst">
+    บทนี้เปิดบล็อก C — <strong>ทำให้เว็บขยับได้ทันใจแบบแอป React โดยไม่ต้องเก็บสำเนาข้อมูลไว้ในเบราว์เซอร์</strong> ·
+    อ่านจบแล้วคุณจะอธิบายได้ว่า Hotwire คิดต่างจาก React ตรงไหน · รู้ว่าเวลากดลิงก์ในแอปของเรา<strong>หน้าเว็บไม่ได้โหลดใหม่จริง ๆ มาตั้งแต่ Lab แรกแล้ว</strong>
+    (และพิสูจน์เองได้ด้วย DevTools) · สั่งให้ลิงก์บางอันเลิกทำแบบนั้นได้ ·
+    และรู้จักผลข้างเคียงที่ทำให้โค้ด JavaScript แบบเดิม ๆ พัง — ซึ่งคือเหตุผลที่บท 134 ต้องมี Stimulus
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>state ใน client · สมุดเล่มที่สอง</strong> (บท 122) — ข้อมูลที่ก็อปมาเก็บไว้ในเบราว์เซอร์ (เช่น ใน <code>useState</code>) ต้องคอยทำให้ตรงกับของจริงบน server · ลืมเมื่อไหร่ = จอโชว์ของเก่า</li>
+    <li><strong><code>useState</code> · <code>useEffect</code></strong> (บท 73–74) — React จำค่าไว้ในหน้าจอ · และสั่ง "หลังวาดจอแล้วให้ทำ…" (เช่น fetch ข้อมูล)</li>
+    <li><strong><code>&lt;head&gt;</code> ของ layout</strong> (บท 123 · 127) — ส่วนหัวของหน้าที่ลิงก์ไปหาไฟล์ CSS และ JS · ชื่อไฟล์มีเลขรุ่นต่อท้าย (fingerprint) และติดป้าย <code>data-turbo-track="reload"</code> ไว้ ซึ่งบท 127 บอกว่า "ละเอียดบท 130" — คือบทนี้</li>
+    <li><strong>importmap</strong> (บท 127) — สมุดรายชื่อ "ชื่อเล่น → ไฟล์ JS จริง" ทำให้เขียน <code>import "ชื่อเล่น"</code> ได้โดยไม่มี <code>node_modules</code></li>
+    <li><strong><code>data-controller="theme"</code></strong> (บท 129) — ปุ่ม 🌓 ใน navbar ที่เราใช้ Stimulus แบบ "แค่ใช้" · บทนี้จะเฉลยว่าทำไมต้องเขียนแบบนั้น</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · turbo-rails 2.0.23 (Turbo 8.0.23) · Chrome 156</strong>
+    (สไลด์และ repo ของอาจารย์ใช้ Ruby 4.0.5–4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน เรื่องในบทนี้ไม่ต่างกัน)</p>
+  <p>🗂 <strong>โค้ดเริ่มจาก:</strong> แอปหลังจบ Lab บท 129 (มี navbar · การ์ด daisyUI · ปุ่มสลับธีม — ตามไม่ทันดู<a href="./0129-lab-vibe2-styling.html">บท 129</a>) ·
+    บทนี้<strong>ทดลองแล้วทิ้ง</strong> — จบบทให้ <code>git restore .</code> (บอกอีกทีท้ายภารกิจ)</p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · พฤติกรรมในเบราว์เซอร์ตรวจด้วย Chrome จริง ·
+    ขนาดไฟล์ (byte) ของคุณจะต่างไปนิดหน่อย เพราะในหน้ามีข้อความที่เปลี่ยนตามเวลา เช่น "about 1 month ago" ·
+    และ rack-mini-profiler (ป้ายจับเวลาตอน development) ฝังรหัสสุ่มไว้ในหน้า ยิ่งเปิดบ่อยยิ่งยาวขึ้นนิดหน่อย</p>
+</div>
+
+<h2 id="sn-sec-1">บล็อก C: ทำให้เว็บขยับได้ โดยไม่ต้องมีสมุดเล่มที่สอง</h2>
+
+<p>
+  ตลอดบล็อก A และ B เราทำหน้าเว็บที่<strong>สวยและอ่านรู้เรื่อง</strong>แล้ว · แต่มันยังเป็นเว็บแบบ "กดแล้วรอหน้าใหม่" ·
+  ถ้าอยากแก้หัวข้อบทความในหน้าเดิม หรือให้คอมเมนต์ใหม่เด้งขึ้นเองโดยไม่ต้องรีเฟรช — คนส่วนใหญ่จะนึกถึง React ทันที
+</p>
+<p>
+  บล็อก C จะทำของพวกนั้นด้วย <strong>Hotwire</strong> แทน · Hotwire คือชื่อรวมของเครื่องมือชุดหนึ่งจากทีมที่สร้าง Rails ·
+  สองตัวที่เราจะใช้คือ <strong>Turbo</strong> (เปลี่ยนหน้า/เปลี่ยนบางส่วนของหน้าโดยไม่ต้องเขียน JS) และ <strong>Stimulus</strong> (JS ชิ้นเล็ก ๆ ที่ HTML เป็นคนเรียก) ·
+  ทั้งคู่<strong>มากับ Rails ตั้งแต่ <code>rails new</code></strong> ไม่ต้องติดตั้งเพิ่ม
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บท</th><th>เรื่อง</th><th>ของจริงที่จะได้ในแอป</th></tr></thead>
+  <tbody>
+    <tr><td>130 (บทนี้)</td><td>แนวคิด + Turbo Drive</td><td>ไม่มีโค้ดใหม่ — พิสูจน์ว่ามันทำงานอยู่แล้ว</td></tr>
+    <tr><td><a href="./0131-turbo-frames.html">131</a></td><td>Turbo Frames</td><td>แก้หัวข้อบทความในหน้าเดิม</td></tr>
+    <tr><td><a href="./0132-turbo-streams.html">132</a></td><td>Turbo Streams</td><td>เพิ่มคอมเมนต์แล้วหลายจุดในหน้าเปลี่ยนพร้อมกัน</td></tr>
+    <tr><td><a href="./0133-broadcast-and-turbo-limits.html">133</a></td><td>broadcast</td><td>คอมเมนต์เด้งขึ้นทุกแท็บที่เปิดอยู่</td></tr>
+    <tr><td><a href="./0134-stimulus.html">134</a></td><td>Stimulus</td><td>ตัวนับตัวอักษรในช่องคอมเมนต์</td></tr>
+    <tr><td><a href="./0135-lab-vibe3-hotwire.html">135</a></td><td>Lab Vibe 3</td><td>ตรวจรับงานทั้งบล็อก</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-2">คำถามเดียวที่อยู่เบื้องหลัง Hotwire</h2>
+
+<p>
+  ทวนบท 122 ก่อน: แอป React ที่ fetch JSON มาเก็บใน <code>useState</code> จะมีข้อมูล<strong>สองชุด</strong> — ชุดจริงในฐานข้อมูล กับสำเนาในแท็บของผู้ใช้ ·
+  สองชุดนี้ต้องตรงกันตลอด ไม่งั้นจอโชว์ของเก่า (บั๊ก sync)
+</p>
+<p>
+  Hotwire ตั้งคำถามกลับว่า: <strong>"ถ้าเราไม่ยอมให้มีสำเนาชุดที่สองเลย เราจะทำให้หน้าเว็บขยับได้ถึงไหน"</strong> ·
+  สองฝั่งตอบไม่เหมือนกัน:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>ฝั่ง SPA (React ที่ fetch JSON)</th><th>ฝั่ง Hotwire</th></tr></thead>
+  <tbody>
+    <tr><td>สำเนาข้อมูลในเบราว์เซอร์</td><td><strong>ยอมให้มี</strong> แล้วหาเครื่องมือมาช่วยดูแลมัน</td><td><strong>ไม่มี</strong> — ข้อมูลอยู่ที่ server ที่เดียว</td></tr>
+    <tr><td>อยากให้จอเปลี่ยน</td><td>แก้สำเนาใน state → React วาดจอใหม่จากสำเนา</td><td>ไปขอ <strong>HTML ใหม่</strong> จาก server → เอามาแทนเฉพาะส่วนที่ต้องเปลี่ยน</td></tr>
+    <tr><td>ของที่วิ่งผ่านเน็ต</td><td>JSON (ข้อมูลดิบ)</td><td>HTML (จัดหน้าเสร็จแล้ว)</td></tr>
+    <tr><td>โค้ดจัดหน้าตา</td><td>อยู่ในเบราว์เซอร์ (JSX)</td><td>อยู่ใน view ของ Rails (ERB) ที่เดียว</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  เครื่องมือที่ฝั่ง SPA ใช้ดูแลสำเนา มีชื่อที่คุณจะได้ยินบ่อย: <strong>Redux · Zustand</strong> (ที่เก็บ state กลางของทั้งแอป) และ
+  <strong>React Query · SWR</strong> (ตัวช่วย fetch ที่จำว่าข้อมูลไหนเก่าแล้วและไปขอใหม่ให้เอง) ·
+  ถ้าเทียบกับที่เราเรียน: มันคือ <code>useState</code> + <code>useEffect</code> ฉบับอัปเกรด ที่ทำให้ไม่ลืม fetch ใหม่
+</p>
+<p>
+  เครื่องมือพวกนี้เก่งมาก · แต่สังเกตว่า<strong>ทุกตัวเกิดมาแก้ปัญหาเดียวกัน คือทำให้สำเนาตรงกับของจริง</strong> ·
+  Hotwire เลือกตัดปัญหาที่ต้นทาง: ไม่มีสำเนา ก็ไม่มีอะไรต้องทำให้ตรง
+</p>
+
+<div class="analogy">
+  <span class="label">🍳 เทียบให้เห็นภาพ — ส่งวัตถุดิบไปปรุงที่โต๊ะ vs ครัวจัดจานเสร็จแล้วเสิร์ฟ</span>
+  <p>
+    ร้านแบบ SPA ส่ง<strong>วัตถุดิบดิบ</strong> (JSON) ไปที่โต๊ะ · โต๊ะต้องมีเตาของตัวเอง (React) และ<strong>สมุดจดของบนโต๊ะเล่มที่สอง</strong> ·
+    พอร้านใหญ่ขึ้น เจ้าของเลยจ้าง<strong>ผู้ช่วยประจำโต๊ะ</strong> (React Query · Redux) คอยวิ่งไปเช็คกับครัวว่าสมุดบนโต๊ะยังตรงไหม
+  </p>
+  <p>
+    ร้านแบบ Hotwire ไม่มีสมุดบนโต๊ะ · ลูกค้าอยากได้อะไร พนักงานไปบอกครัว ครัวเปิด<strong>สมุดเล่มเดียวของครัว</strong> จัดจานเสร็จ แล้ว<strong>เปลี่ยนเฉพาะจานบนโต๊ะ</strong> ·
+    ไม่ต้องจ้างผู้ช่วยมาคอยเช็คสมุด เพราะไม่มีสมุดให้เช็ค
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้าน Hotwire ต้อง<strong>เดินไปครัวทุกครั้ง</strong>ที่จออยากเปลี่ยน (ต้องมีเน็ต และรอ server ตอบ) ·
+    งานที่ต้องตอบสนองทันทีโดยไม่ต้องถามครัว เช่น นับตัวอักษรขณะพิมพ์ ยังต้องมี JS เล็ก ๆ บนโต๊ะอยู่ดี (Stimulus · บท 134) ·
+    และโต๊ะอื่นจะไม่รู้เองว่าครัวเปลี่ยนอะไร จนกว่าครัวจะประกาศ (broadcast · บท 133)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>Hotwire · HTML over the wire</dt>
+    <dd>แนวคิด "ส่ง HTML ที่จัดเสร็จแล้วผ่านเน็ต แทนการส่ง JSON" และชื่อชุดเครื่องมือ (Turbo + Stimulus) ของแนวคิดนี้ ·
+        <strong>ถาม senior ได้ว่า “หน้านี้ทำแบบ HTML over the wire ด้วย Turbo ได้ไหม หรือจำเป็นต้องเป็น SPA”</strong></dd>
+    <dt>SPA (single-page application)</dt>
+    <dd>เว็บที่โหลดหน้าเดียวแล้วให้ JavaScript ในเบราว์เซอร์วาดจอเองทั้งหมดจาก JSON — แบบที่ React ทำ ·
+        <strong>พิมพ์บอก AI ได้ว่า “don't turn this page into an SPA; render HTML on the server and use Turbo”</strong></dd>
+    <dt>state management library</dt>
+    <dd>เครื่องมือดูแลสำเนาข้อมูลฝั่ง client เช่น Redux · Zustand · React Query · SWR ·
+        <strong>ถาม senior ได้ว่า “ถ้าใช้ Hotwire แล้ว เรายังต้องมี state management library ไหม”</strong> (คำตอบปกติคือไม่ต้อง)</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">วัดจริง: HTML หนักกว่า JSON แค่ไหน</h2>
+
+<p>
+  ข้อเสียที่ทุกคนถามคือ "ส่ง HTML ไม่เปลืองกว่าเหรอ" · ข้อนี้จริง แต่<strong>มากแค่ไหน</strong>ต้องวัดเอง ·
+  แอปของเราตอบได้ทั้งสองแบบอยู่แล้ว (scaffold ทำ <code>.json</code> ไว้ให้ — บท 122)
+  เลยวัดบทความชิ้นที่ 1 ได้เลย · เปิด <code>bin/dev</code> ทิ้งไว้ แล้วเปิด<strong>หน้าต่าง Terminal อีกอัน</strong>ในโฟลเดอร์แอปมารันคำสั่งนี้:
+</p>
+
+<pre><code>$ curl -s localhost:3000/posts/1.json
+{"id":1,"title":"ต้มยำกุ้งน้ำข้น","description":"ต้มยำกุ้งแบบน้ำข้นใส่นมข้นจืด รสเปรี้ยวเผ็ดกลมกล่อม กุ้งแม่น้ำตัวใหญ่ หอมตะไคร้ ข่า ใบมะกรูด กินกับข้าวสวยร้อน ๆ ได้ทั้งถ้วย ร้านนี้เปิดมาสามสิบปีแล้ว คิวยาวทุกวันเสาร์อาทิตย์","category_id":1,"created_at":"2026-10-08T10:52:53.123+07:00","updated_at":"2026-11-07T10:52:53.123+07:00","url":"http://localhost:3000/posts/1.json"}</code></pre>
+
+<p>นี่คือ "วัตถุดิบดิบ" (วันเวลาใน <code>created_at</code> · <code>updated_at</code> ของคุณจะต่าง ตามวันที่คุณรัน seed) · ทีนี้นับขนาด (byte) ด้วย <code>wc -c</code> (นับจำนวน byte ที่ได้มา) และลองบีบด้วย <code>gzip</code> (วิธีบีบไฟล์ที่ server จริงมักเปิดไว้ตอนส่งผ่านเน็ต):</p>
+
+<pre><code>$ curl -s localhost:3000/posts/1.json | wc -c
+     735
+$ curl -s localhost:3000/posts/1 | wc -c
+    6010
+$ curl -s localhost:3000/posts/1.json | gzip | wc -c
+     403
+$ curl -s localhost:3000/posts/1 | gzip | wc -c
+    2279</code></pre>
+
+<ul>
+  <li><code>|</code> — ส่งผลของคำสั่งซ้ายไปให้คำสั่งขวา · อ่านว่า "ขอหน้า แล้ว (บีบ แล้ว) นับ byte"</li>
+  <li>ไม่ใส่ <code>.json</code> = ได้หน้า HTML <strong>ทั้งหน้า</strong> แบบที่เบราว์เซอร์ได้ (มี <code>&lt;head&gt;</code> · navbar · ปุ่ม · ทุกอย่าง)</li>
+</ul>
+
+<div class="predict">
+  <p>ทั้งหน้าใหญ่กว่า JSON ราว 8 เท่า · แต่ถ้าตัดมา<strong>เฉพาะการ์ดบทความ</strong> (<code>&lt;article&gt;</code> ที่มาจาก <code>_post.html.erb</code>) ซึ่งเป็นข้อมูลชุดเดียวกับ JSON:</p>
+  <pre><code>$ curl -s localhost:3000/posts/1 | sed -n '/&lt;article/,/&lt;\/article&gt;/p' | wc -c</code></pre>
+  <p>(<code>sed -n '/A/,/B/p'</code> = พิมพ์เฉพาะบรรทัดตั้งแต่ที่เจอ A จนถึงที่เจอ B · ตรงนี้คือตัดเอาแค่ <code>&lt;article …&gt;</code> ถึง <code>&lt;/article&gt;</code>)</p>
+  <p class="ask">คิดว่าการ์ดหนักกว่า JSON (735 byte) กี่เท่า — 1 เท่ากว่า ๆ · 4 เท่า · หรือ 8 เท่า?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>$ curl -s localhost:3000/posts/1 | sed -n '/&lt;article/,/&lt;\/article&gt;/p' | wc -c
+     943
+$ curl -s localhost:3000/posts/1 | sed -n '/&lt;article/,/&lt;\/article&gt;/p' | gzip | wc -c
+     514</code></pre>
+    <p><strong>แค่ราว 1.3 เท่า</strong> (บีบแล้วก็ราว 1.3 เท่า) · เพราะของที่หนักจริงคือ<strong>ตัวหนังสือไทย</strong> (ตัวละ 3 byte) ซึ่งต้องส่งเท่ากันทั้งสองแบบ ·
+      ส่วนที่ HTML เพิ่มมาคือชื่อแท็กกับชื่อคลาส เช่น <code>class="card bg-base-100 shadow-sm"</code></p>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>สิ่งที่วัด (บทความชิ้นที่ 1)</th><th>ไม่บีบ</th><th>บีบด้วย gzip</th><th>เทียบกับ JSON</th></tr></thead>
+  <tbody>
+    <tr><td>JSON <code>/posts/1.json</code></td><td>735</td><td>403</td><td>—</td></tr>
+    <tr><td>เฉพาะการ์ด <code>&lt;article&gt;</code></td><td>943</td><td>514</td><td>~1.3 เท่า</td></tr>
+    <tr><td>HTML ทั้งหน้า <code>/posts/1</code></td><td>6,010</td><td>2,279</td><td>~8 เท่า (บีบแล้ว ~5.7 เท่า)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แปลว่าอะไร: <strong>HTML หนักกว่าจริง</strong> โดยเฉพาะตอนส่งทั้งหน้า ·
+  (ตอนรันบนเครื่องเรา Rails ยังแถมคอมเมนต์ <code>&lt;!-- BEGIN app/views/... --&gt;</code> ไว้บอกว่าแต่ละท่อนมาจากไฟล์ไหน · เว็บจริงไม่มี)
+</p>
+<p>
+  แต่ทั้งหน้าก็แค่ราว 2–6 KB (KB = พันกว่า byte) · เทียบกับไฟล์ที่หน้าเดียวกันใช้: <code>tailwind-….css</code> 64,279 byte · <code>turbo.min-….js</code> 105,579 byte ·
+  ไฟล์ใหญ่พวกนี้แหละที่ Turbo Drive ทำให้<strong>ไม่ต้องโหลดซ้ำ</strong> (สองหัวข้อถัดไป)
+</p>
+<p>
+  สิ่งที่ได้คืนมาจากการยอมส่ง HTML: ไม่ต้องมี state management library สักตัว · และโค้ดจัดหน้าตาอยู่ใน ERB ที่เดียว ไม่ต้องเขียนซ้ำทั้งฝั่ง Rails และฝั่ง JS
+</p>
+
+<p>
+  สไลด์หน้า 36 อ้างว่า "HTML หนักกว่า JSON ประมาณ 2–4 เท่า" · ของจริง<strong>ขึ้นกับว่าเทียบกับอะไร</strong>:
+  เฉพาะการ์ดต่างกันน้อย · ทั้งหน้าต่างกันหลายเท่าแม้บีบแล้ว · ถ้ามีคนเถียงเรื่องนี้ ให้วัดของจริงแบบที่เพิ่งทำ
+</p>
+
+<h2 id="sn-sec-4">Turbo มี 3 ชิ้น — แผนที่ของบล็อก C</h2>
+
+<p>
+  Turbo แบ่งงานเป็นสามชิ้น ต่างกันที่<strong>ขนาดของส่วนที่เปลี่ยน</strong> · ตารางนี้คือแผนที่ของบท 130–133 · หลงเมื่อไหร่กลับมาดูตรงนี้
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ชิ้น</th><th>เปลี่ยนแค่ไหน</th><th>ในร้านอาหาร</th><th>เราต้องเขียนอะไร</th><th>ใช้ทำอะไรในแอปเรา</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Turbo Drive</strong> (บทนี้)</td><td>ทั้ง <code>&lt;body&gt;</code> เมื่อกดลิงก์หรือส่งฟอร์ม</td><td>เปลี่ยนจานบนโต๊ะเดิม ไม่รื้อโต๊ะจัดใหม่</td><td><strong>ไม่ต้องเขียนเลย</strong> ทำงานเองตั้งแต่ติดตั้ง</td><td>ทุกลิงก์ในเว็บ ไม่กระพริบขาว</td></tr>
+    <tr><td><strong>Turbo Frames</strong> (บท 131)</td><td>เฉพาะกล่องที่ครอบไว้</td><td>เปลี่ยนแค่ถ้วยใบเดียวบนโต๊ะ</td><td>ครอบด้วย <code>turbo_frame_tag</code></td><td>แก้หัวข้อบทความในหน้าเดิม</td></tr>
+    <tr><td><strong>Turbo Streams</strong> (บท 132–133)</td><td>หลายจุดพร้อมกัน · ส่งจาก server มาเองได้</td><td>ใบสั่งงานหลายข้อให้พนักงานเสิร์ฟ</td><td>ไฟล์ <code>.turbo_stream.erb</code> · broadcast</td><td>คอมเมนต์ใหม่เด้งขึ้นทุกแท็บ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  กฎเลือกใช้ (สไลด์หน้า 37): <strong>ไล่จากหยาบไปละเอียด แล้วเลือกชิ้นที่หยาบที่สุดที่ยังทำงานได้</strong> ·
+  ภาษาคน: เริ่มจากของที่ไม่ต้องเขียนอะไร (Drive) · ไม่พอค่อยครอบกล่อง (Frames) · ยังไม่พอค่อยสั่งหลายจุด (Streams) ·
+  ชิ้นที่ละเอียดกว่าทำได้มากกว่า แต่มีโค้ดให้ดูแลมากกว่า
+</p>
+
+<h2 id="sn-sec-5">Turbo Drive — ทำงานอยู่แล้วตั้งแต่ Lab แรก</h2>
+
+<p>
+  ข่าวดี: <strong>เราใช้ Turbo Drive มาตลอดโดยไม่รู้ตัว</strong> · ทุกครั้งที่คุณกดลิงก์ในแอปตั้งแต่บท 120 หน้าเว็บไม่ได้โหลดใหม่ทั้งใบ ·
+  มันมาจากบรรทัดเดียวในไฟล์ JS หลักของแอป — เปิด <code>app/javascript/application.js</code>:
+</p>
+
+<pre><code><span class="c">// Configure your import map in config/importmap.rb. Read more: https://github.com/rails/importmap-rails</span>
+<span class="k">import</span> <span class="s">"@hotwired/turbo-rails"</span>
+<span class="k">import</span> <span class="s">"controllers"</span></code></pre>
+
+<ul>
+  <li><code>import "@hotwired/turbo-rails"</code> — โหลด Turbo · ชื่อเล่นนี้อยู่ในสมุดรายชื่อ <code>config/importmap.rb</code> บรรทัด <code>pin "@hotwired/turbo-rails", to: "turbo.min.js"</code> (บท 127) ·
+      <strong>แค่โหลดมา Turbo Drive ก็เริ่มทำงานทันที</strong> ไม่ต้องเรียกฟังก์ชันอะไรต่อ</li>
+  <li><code>import "controllers"</code> — โหลด Stimulus controller ทุกตัวในโฟลเดอร์ <code>app/javascript/controllers/</code> (เช่น ปุ่มธีมของบท 129 · ละเอียดบท 134)</li>
+</ul>
+
+<h3 id="sn-sub-1">พิสูจน์ด้วยตัวแปรใน JavaScript</h3>
+
+<p>
+  ถ้าหน้าโหลดใหม่จริง เบราว์เซอร์จะทิ้งทุกอย่างของหน้าเก่า รวมถึงตัวแปร JS · ถ้าตัวแปรยังอยู่หลังกดลิงก์ = หน้าไม่ได้โหลดใหม่ ·
+  ผมลองใน Chrome: เปิด <code>/posts</code> → พิมพ์ <code>window.marker = "ยังอยู่"</code> ในแท็บ <strong>Console</strong> ของ DevTools
+  (ช่องพิมพ์ JS ที่ใช้ในบท 129 · <code>window.</code> = ตัวแปรระดับทั้งหน้า) → กดหัวข้อ "นมเย็น" → กด F5 (รีเฟรช)
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ตอนไหน</th><th>URL</th><th><code>window.marker</code></th><th>title ของแท็บ</th><th>เบราว์เซอร์สร้างหน้าใหม่ไหม</th></tr></thead>
+  <tbody>
+    <tr><td>หลังตั้งค่า</td><td><code>/posts</code></td><td><code>'ยังอยู่'</code></td><td>บทความทั้งหมด</td><td>—</td></tr>
+    <tr><td>หลังกดลิงก์</td><td><code>/posts/30</code></td><td><code>'ยังอยู่'</code> ✅</td><td>นมเย็น</td><td><strong>ไม่</strong> — ใบเดิม</td></tr>
+    <tr><td>หลังกด F5</td><td><code>/posts/30</code></td><td><code>undefined</code></td><td>นมเย็น</td><td>ใช่ — ทิ้งของเก่าหมด</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  URL เปลี่ยน · หัวข้อแท็บเปลี่ยน · เนื้อหาเปลี่ยน — <strong>แต่ตัวแปรยังอยู่</strong> · แปลว่าเบราว์เซอร์ไม่ได้เปิดหน้าใหม่ ·
+  Turbo แอบไปเอา HTML ของ <code>/posts/30</code> มาแล้วสลับเนื้อหาให้ (ภารกิจท้ายบทให้คุณลองเองด้วย DevTools)
+</p>
+<p>
+  คุ้นไหม? <a href="../../fe-nextjs-app/lessons/0083-app-layout-navbar.html">บท 83</a> ทำการทดลองเดียวกันกับ <code>&lt;Link&gt;</code> ของ Next.js แล้วตัวแปรก็ยังอยู่ ·
+  ความรู้สึกเหมือนกัน คือกดแล้วไม่กระพริบ · ต่างกันที่ Next.js ต้องใช้ <code>&lt;Link&gt;</code> แทน <code>&lt;a&gt;</code> ·
+  ส่วน Turbo ดัก<strong>ลิงก์ <code>&lt;a&gt;</code> ธรรมดาทุกอัน</strong>ให้เอง (<code>link_to</code> ที่เราเขียนมาตลอดก็ได้ผลทันที)
+</p>
+
+<h3 id="sn-sub-2">request ที่ Turbo ยิง — server ไม่ต้องรู้ด้วยซ้ำ</h3>
+
+<p>ผมดักดู request ที่ Turbo ยิงตอนกดลิงก์นั้น · นอกจาก header (ข้อมูลกำกับ request) ที่เบราว์เซอร์ใส่ให้ทุก request อยู่แล้ว (เช่น <code>User-Agent</code> · <code>Cookie</code>) มีสองตัวนี้ที่ Turbo ใส่เอง:</p>
+
+<pre><code>accept: text/html, application/xhtml+xml
+x-turbo-request-id: 1987ae28-93a8-4e4c-9672-007c2029345c</code></pre>
+
+<ul>
+  <li><code>accept: text/html…</code> — "ขอเป็น HTML นะ" เหมือนที่เบราว์เซอร์ขอปกติ (ไม่ใช่ JSON)</li>
+  <li><code>x-turbo-request-id</code> — เลขสุ่มประจำ request ที่ Turbo ติดไว้ (ของคุณจะเป็นเลขอื่น · ชื่อ header ไม่สนตัวพิมพ์เล็ก-ใหญ่ ใน DevTools อาจเห็นเป็น <code>X-Turbo-Request-Id</code>)</li>
+</ul>
+
+<p>ฝั่ง server (<code>log/development.log</code>) เห็นเหมือนการเปิดหน้าธรรมดาทุกอย่าง:</p>
+
+<pre><code>Started GET "/posts/30" for ::1 at 2026-11-07 11:01:59 +0700
+Processing by PostsController#show as HTML
+Completed 200 OK in 14ms (Views: 8.4ms | ActiveRecord: 2.6ms (2 queries, 0 cached) | GC: 0.0ms)</code></pre>
+
+<ul>
+  <li><code>for ::1</code> — ใครเป็นคนขอ · <code>::1</code> คือ "เครื่องตัวเอง" (localhost) แบบที่อ่านยากหน่อย</li>
+  <li><code>as HTML</code> — controller ตอบเป็น HTML (ถ้าเปิด <code>/posts/30.json</code> จะเป็น <code>as JSON</code>)</li>
+  <li>วันเวลา · <code>14ms</code> · ตัวเลขในวงเล็บ — ของคุณจะต่างทุกครั้ง ไม่ต้องสนใจ</li>
+</ul>
+
+<p>
+  <code>as HTML</code> · controller เดิม · view เดิม · ส่ง HTML ทั้งหน้าเหมือนเดิม — <strong>เราไม่ได้แก้ controller สักบรรทัด</strong> ·
+  งานทั้งหมดเกิดในเบราว์เซอร์ นี่คือเหตุผลที่ Turbo Drive "ฟรี"
+</p>
+
+<h2 id="sn-sec-6">6 ขั้นที่ Turbo Drive ทำตอนเรากดลิงก์</h2>
+
+<p>ลำดับตามสไลด์หน้า 38 · ข้างขวาคือสิ่งที่ผมเห็นจริงใน Chrome ตอนกดจาก <code>/posts</code> ไป <code>/posts/30</code>:</p>
+
+<div class="diagram">กดลิงก์ "นมเย็น"  (href="/posts/30")
+   │
+ ① ดักการกด ไม่ให้เบราว์เซอร์เปลี่ยนหน้าเอง      → เบราว์เซอร์ไม่ได้สร้างหน้าใหม่ (ตัวแปร JS ยังอยู่)
+   │
+ ② fetch "/posts/30" เบื้องหลัง                    → request ใหม่มีแค่ /posts/30 ตัวเดียว
+   │                                                 server ตอบ HTML ทั้งหน้า (มี &lt;head&gt; ด้วย)
+   ▼
+ ③ เอา &lt;body&gt; ของหน้าใหม่มาแทน &lt;body&gt; เดิม         → navbar · main · ทุกอย่างใน body เป็นชิ้นใหม่
+ ④ เทียบ &lt;head&gt; ใส่เพิ่มเฉพาะที่ต่าง               → title เปลี่ยนเป็น "นมเย็น" · &lt;link&gt; CSS เป็นตัวเดิม
+   │                                                 ไม่ได้โหลด CSS/JS ซ้ำ
+ ⑤ เปลี่ยน URL ด้วย History API                    → แถบที่อยู่เป็น /posts/30 · history.length +1
+ ⑥ เก็บภาพหน้าเดิมไว้ใน cache สำหรับปุ่ม back      → กด back: หน้าเก่าโผล่ทันที ไม่มี request ใหม่ใน log</div>
+
+<ul>
+  <li><strong>fetch</strong> ในขั้น ② — คำสั่ง JS ที่ไปขอข้อมูลจาก server แบบเดียวกับที่ใช้ใน <code>useEffect</code> (บท 74) · "เบื้องหลัง" = ระหว่างรอ หน้าเดิมยังโชว์อยู่</li>
+  <li><strong>History API</strong> — ชุดคำสั่งของเบราว์เซอร์ที่ให้ JS เปลี่ยน URL และเพิ่มรายการในประวัติ (ที่ปุ่ม back ใช้) ได้โดยไม่ต้องโหลดหน้า · Turbo ใช้มันทำให้ปุ่ม back ยังทำงานปกติ</li>
+  <li><strong>cache</strong> ในขั้น ⑥ — ที่เก็บของไว้ใช้ซ้ำ · ตรงนี้คือ Turbo จำหน้าตาของหน้าก่อนไว้ในหน่วยความจำของแท็บ</li>
+</ul>
+<p>
+  Turbo เรียกการเปลี่ยนหน้าหนึ่งครั้งว่า <strong>visit</strong> · กดลิงก์ = ขอ server ใหม่ (ขั้น ①–⑥) · กดปุ่ม back = เอาภาพจากขั้น ⑥ มาโชว์ (ถ้ามีภาพเก็บไว้ ไม่ต้องขอ server)
+</p>
+
+<h3 id="sn-sub-3">ขั้น ④ มีข้อยกเว้น: <code>data-turbo-track="reload"</code></h3>
+
+<p>
+  จำป้ายใน <code>&lt;head&gt;</code> จากบท 127 ได้ไหม: <code>&lt;link rel="stylesheet" href="/assets/application-8b441ae0.css" data-turbo-track="reload" /&gt;</code> ·
+  ป้ายนี้บอก Turbo ว่า "<strong>ถ้าหน้าใหม่ชี้ไปไฟล์ชื่ออื่น ให้โหลดใหม่ทั้งหน้า</strong>"
+</p>
+<p>
+  ผมลองแก้ <code>app/assets/stylesheets/application.css</code> (เติมคอมเมนต์บรรทัดเดียว) ระหว่างที่หน้าเปิดอยู่ แล้วกดลิงก์ "บทความ" ·
+  ผล: ชื่อไฟล์ใหม่เป็น <code>application-a9162a1a.css</code> (เลขของคุณจะต่าง ขึ้นกับสิ่งที่เติม) และ <code>window.marker</code> <strong>หายไป</strong> = Turbo ยอมโหลดใหม่ทั้งหน้า ·
+  นี่คือการทำงานร่วมกับ fingerprint ของบท 127: เลขรุ่นใหม่บนปกเมนู → ร้านรู้ว่าต้องจัดโต๊ะใหม่ทั้งโต๊ะ ผู้ใช้จะไม่ค้างอยู่กับ CSS เก่า
+</p>
+<p>
+  ฝั่ง JS ก็เหมือนกัน: <code>&lt;script type="importmap"&gt;</code> (สมุดรายชื่อของบท 127) ก็ติดป้ายนี้ · แก้ <code>application.js</code> เมื่อไหร่
+  การกดลิงก์ครั้งถัดไปจะโหลดใหม่ทั้งหน้าเหมือนกัน (ลองแล้ว) — จำไว้ใช้ในการทดลองข้างล่าง
+</p>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — เปลี่ยนจาน ไม่รื้อโต๊ะ</span>
+  <p>
+    เว็บแบบเก่า: ลูกค้าสั่งเมนูใหม่ทีไร พนักงาน<strong>รื้อโต๊ะทั้งตัว</strong> ผ้าปู ช้อนส้อม แก้วน้ำ แล้วจัดใหม่หมด (หน้าจอกระพริบขาว · โหลด CSS/JS ใหม่) ·
+    Turbo Drive: ครัวยังเป็นเจ้าของสมุดสต็อกเล่มเดียวเหมือนเดิม · พนักงานแค่<strong>ยกจานเก่าออก วางจานใหม่</strong> (<code>&lt;body&gt;</code>) ·
+    ผ้าปูกับช้อนส้อม (<code>&lt;head&gt;</code> · CSS · JS) อยู่ที่เดิม · ถ้าเปลี่ยนแค่ป้ายชื่อเมนู (title) ก็เปลี่ยนแค่ป้าย
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> โต๊ะจริงพนักงานเก็บเศษของบนโต๊ะทิ้งให้ด้วย · แต่ Turbo <strong>ไม่ได้เก็บของที่ JavaScript ทิ้งไว้</strong> —
+    ตัวแปร (อย่าง <code>window.marker</code>) และงานที่ JS ฝากไว้กับ "ตัวโต๊ะ" (ทั้งหน้า) ยังอยู่ครบ · ดีตรงที่จำค่าได้ · เสียตรงที่มันสะสม (หัวข้อ ★ ข้างล่าง) ·
+    และถ้าเมนูเล่มพิมพ์รุ่นใหม่ (ไฟล์ที่ติด <code>data-turbo-track</code> เปลี่ยนชื่อ) ร้านจะยอมรื้อโต๊ะจัดใหม่ทั้งโต๊ะ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>Turbo Drive</dt>
+    <dd>ส่วนของ Turbo ที่ดักทุกลิงก์และฟอร์ม แล้วเปลี่ยนหน้าด้วยการสลับ <code>&lt;body&gt;</code> แทนการโหลดหน้าใหม่ ·
+        <strong>ถาม senior ได้ว่า “ลิงก์นี้ไปผ่าน Turbo Drive หรือเป็น full page load”</strong></dd>
+    <dt>visit (application visit · restoration visit)</dt>
+    <dd>คำที่ Turbo เรียกการเปลี่ยนหน้าหนึ่งครั้ง · กดลิงก์ = application visit (ขอ server ใหม่) · กด back/forward = restoration visit (ใช้ภาพจาก cache ถ้ามี ไม่ต้องขอ server) ·
+        <strong>พิมพ์บอก AI ได้ว่า “this bug only happens on restoration visits (back button)”</strong></dd>
+    <dt>full page load</dt>
+    <dd>เบราว์เซอร์ทิ้งหน้าเดิมแล้วโหลดใหม่ทั้งใบ — แบบที่เกิดตอนกด F5 · ตัวแปร JS หายหมด ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ควรบังคับ full page load ไหม”</strong></dd>
+    <dt><code>data-turbo-track="reload"</code></dt>
+    <dd>ป้ายบน CSS/JS ใน <code>&lt;head&gt;</code> ให้ Turbo โหลดใหม่ทั้งหน้าถ้าไฟล์เปลี่ยนรุ่น (ชื่อไฟล์เปลี่ยน) · Rails ใส่ให้แล้วใน layout ·
+        <strong>ถาม AI ได้ว่า “after deploying new CSS, will Turbo reload users' pages because of data-turbo-track?”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">สั่งให้มันหยุดยุ่ง: <code>data-turbo="false"</code> และ <code>data-turbo-action="replace"</code></h2>
+
+<p>
+  บางลิงก์ไม่อยากให้ Turbo จัดการ หรืออยากให้ทำต่างจากปกติ · ใส่ป้าย <code>data-…</code> บนลิงก์นั้นได้ ·
+  ใน ERB ใส่ผ่าน <code>data: { … }</code> ของ <code>link_to</code> (บท 103) · ลองแก้สองไฟล์นี้ (ทดลองแล้วจะ <code>git restore</code> ทิ้ง)
+</p>
+
+<p>วิธีแก้: หาบรรทัด <code>link_to</code> เดิม แล้ว<strong>เติม <code>, data: { … }</code> ต่อท้ายก่อน <code>%&gt;</code></strong> · ส่วนอื่นของบรรทัดเหมือนเดิมทุกตัว</p>
+
+<p><code>app/views/shared/_navbar.html.erb</code> — ลิงก์ "หมวด":</p>
+<pre><code>&lt;%= <span class="f">link_to</span> <span class="s">"หมวด"</span>, categories_path, <span class="n">class:</span> <span class="s">"btn btn-ghost btn-sm"</span>, <span class="n">data:</span> { <span class="n">turbo:</span> <span class="k">false</span> } %&gt;</code></pre>
+
+<p><code>app/views/shared/_pagination.html.erb</code> — ลิงก์ "ถัดไป":</p>
+<pre><code>&lt;%= <span class="f">link_to</span> <span class="s">"ถัดไป →"</span>, pagy.<span class="f">page_url</span>(<span class="n">:next</span>), <span class="n">class:</span> <span class="s">"join-item btn btn-sm"</span>, <span class="n">data:</span> { <span class="n">turbo_action:</span> <span class="s">"replace"</span> } %&gt;</code></pre>
+
+<p>HTML ที่ได้ออกมา (<code>curl -s localhost:3000/posts</code> · สองบรรทัดนี้อยู่คนละที่ในหน้า ผมตัดมาวางคู่กัน):</p>
+<pre><code>&lt;a class="btn btn-ghost btn-sm" data-turbo="false" href="/categories"&gt;หมวด&lt;/a&gt;
+&lt;a class="join-item btn btn-sm" data-turbo-action="replace" href="/posts?page=2"&gt;ถัดไป →&lt;/a&gt;</code></pre>
+
+<ul>
+  <li><code>data: { turbo: false }</code> → <code>data-turbo="false"</code> — Rails เติม <code>data-</code> ข้างหน้าให้</li>
+  <li><code>turbo_action:</code> → <code>data-turbo-action</code> — <strong>ขีดล่าง <code>_</code> ใน Ruby กลายเป็นขีดกลาง <code>-</code> ใน HTML ให้เอง</strong> (ชื่อ symbol ใน Ruby มีขีดกลางไม่ได้)</li>
+</ul>
+
+<p>ผลใน Chrome (เริ่มที่หน้าหมวด <code>/categories/1</code> แล้วกดตามลำดับ):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กดอะไร</th><th>URL หลังกด</th><th><code>history.length</code></th><th><code>window.marker</code></th></tr></thead>
+  <tbody>
+    <tr><td>(เริ่ม)</td><td><code>/categories/1</code></td><td>2</td><td>ยังอยู่</td></tr>
+    <tr><td>"บทความ" (ลิงก์ปกติ)</td><td><code>/posts</code></td><td>3 (+1)</td><td>ยังอยู่</td></tr>
+    <tr><td>"ถัดไป" (replace)</td><td><code>/posts?page=2</code></td><td>3 (ไม่เพิ่ม)</td><td>ยังอยู่</td></tr>
+    <tr><td>"ถัดไป" (replace)</td><td><code>/posts?page=3</code></td><td>3 (ไม่เพิ่ม)</td><td>ยังอยู่</td></tr>
+    <tr><td>ปุ่ม back ของเบราว์เซอร์</td><td><code>/categories/1</code> ← ข้ามหน้า 1–3 ไปเลย</td><td>3</td><td>ยังอยู่</td></tr>
+    <tr><td>"หมวด" (<code>data-turbo="false"</code>)</td><td><code>/categories</code></td><td>3</td><td><strong>หายไป</strong> (โหลดใหม่ทั้งหน้า)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  (<code>history.length</code> = จำนวนรายการในประวัติของแท็บ · ของผมเริ่มที่ 2 เพราะแท็บเปิดหน้าว่างไว้ก่อน ของคุณอาจเริ่มที่เลขอื่น — ดูที่<strong>การเพิ่ม</strong>)
+</p>
+
+<ul>
+  <li><strong><code>data-turbo-action="replace"</code></strong> — ยังใช้ Turbo แต่<strong>เขียนทับ</strong>รายการประวัติแทนการเพิ่ม · เหมาะกับการเปลี่ยนหน้า/กรอง/เรียงรายการ
+      ที่ผู้ใช้กดหลายครั้ง แล้วไม่อยากให้ปุ่ม back ต้องย้อนทีละขั้น</li>
+  <li><strong><code>data-turbo="false"</code></strong> — ลิงก์นี้ให้เบราว์เซอร์โหลดหน้าใหม่แบบเดิม · เหมาะกับลิงก์ดาวน์โหลดไฟล์ (เช่น PDF) หรือหน้าที่ต้องเริ่มสะอาดทั้งใบ</li>
+</ul>
+
+<h2 id="sn-sec-8">★ ผลข้างเคียงที่ทุกคนต้องเจอ: <code>DOMContentLoaded</code> ยิงครั้งเดียว</h2>
+
+<p>
+  ก่อนไปต่อ ต้องรู้จักสองคำของ JavaScript ฝั่งเบราว์เซอร์:
+</p>
+<ul>
+  <li><strong>event</strong> — "เหตุการณ์" ที่เบราว์เซอร์ประกาศ เช่น ผู้ใช้คลิก (<code>click</code>) · กดปุ่มคีย์บอร์ด (<code>keydown</code>) · อ่าน HTML ของหน้าเสร็จ (<code>DOMContentLoaded</code>)</li>
+  <li><strong><code>addEventListener("ชื่อ event", ฟังก์ชัน)</code></strong> — ฝากบอกว่า "ถ้าเกิด event นี้ ให้เรียกฟังก์ชันนี้" · ฟังก์ชันที่ฝากไว้เรียกว่า <strong>listener</strong> (ผู้รอฟัง) ·
+      ฝากกับอะไรก็ได้ เช่น ปุ่มหนึ่งปุ่ม หรือ <code>document</code> (ตัวแทนของทั้งหน้า)</li>
+</ul>
+<p>
+  ชื่อ <code>DOMContentLoaded</code> มาจาก <strong>DOM</strong> = โครงของหน้าที่เบราว์เซอร์สร้างจาก HTML ให้ JS หยิบจับได้ (แท็กแต่ละตัวกลายเป็น element หนึ่งชิ้น) ·
+  แปลตรง ๆ คือ "สร้างโครงหน้าจาก HTML เสร็จแล้ว"
+</p>
+<p>
+  สมัยก่อนมี Turbo โค้ด JS แทบทุกตัวเริ่มด้วย "รอให้ HTML อ่านเสร็จ (<code>DOMContentLoaded</code>) แล้วค่อยไปหา element มาผูกงาน" — บทความสอน JS เก่า ๆ และโค้ดที่ AI เขียนให้ก็ยังเป็นแบบนี้บ่อย ·
+  เทียบกับ React คือคล้าย <code>useEffect(() =&gt; { … }, [])</code> ที่ทำครั้งเดียวหลังวาดจอ (บท 74)
+</p>
+
+<p>
+  ปัญหาคือ <strong>Turbo ไม่เคยทิ้งหน้าเดิม</strong> (เราเพิ่งพิสูจน์) · หน้าเว็บ "เกิด" แค่ครั้งเดียวตอนเปิดเว็บครั้งแรก ·
+  Turbo จึงมี event ของตัวเองชื่อ <code>turbo:load</code> ที่ยิงทั้งตอนเปิดครั้งแรกและทุกครั้งที่ Turbo เปลี่ยนหน้า · ลองดูว่าสองตัวนี้ยิงกี่ครั้ง
+</p>
+
+<p>เพิ่มต่อท้าย <code>app/javascript/application.js</code> (ทดลองแล้วลบ):</p>
+
+<div class="predict">
+<pre><code><span class="c">// ทดลองบท 130 — ลบทิ้งเมื่อจบบท</span>
+document.<span class="f">addEventListener</span>(<span class="s">"DOMContentLoaded"</span>, () =&gt; {
+  console.<span class="f">log</span>(<span class="s">"DOMContentLoaded ยิงแล้ว"</span>)
+})
+document.<span class="f">addEventListener</span>(<span class="s">"turbo:load"</span>, () =&gt; {
+  console.<span class="f">log</span>(<span class="s">"turbo:load ยิงแล้ว"</span>, location.pathname)
+})</code></pre>
+  <ul>
+    <li><code>() =&gt; { … }</code> — ฟังก์ชันแบบลูกศร (arrow function) แบบที่ใช้ใน React · ตรงนี้คือ "งานที่ฝากไว้"</li>
+    <li><code>console.log(…)</code> — พิมพ์ข้อความลงแท็บ Console ของ DevTools · <code>location.pathname</code> = path ของหน้าปัจจุบัน เช่น <code>/posts</code></li>
+  </ul>
+  <p>บันทึกไฟล์ → เปิด <code>localhost:3000/posts</code> แล้ว<strong>กด F5 หนึ่งครั้ง</strong>
+    (ให้ได้ JS ตัวใหม่ตั้งแต่ต้น · ถ้าไม่กด การกดลิงก์ครั้งแรกจะโหลดใหม่ทั้งหน้าเพราะ <code>data-turbo-track</code> แล้วตัวเลขจะเพี้ยน) → เปิดแท็บ Console (F12 หรือ Cmd+Option+I บน Mac) →
+    กดลิงก์บน navbar: <strong>หมวด → บทความ → หมวด</strong></p>
+  <p class="ask">ใน Console จะมีกี่บรรทัด · <code>DOMContentLoaded</code> กี่บรรทัด · <code>turbo:load</code> กี่บรรทัด?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงใน Chrome — <strong>5 บรรทัด</strong>: <code>DOMContentLoaded</code> <strong>1</strong> · <code>turbo:load</code> <strong>4</strong> (เปิดครั้งแรก 1 + กดลิงก์ 3)</p>
+<pre><code>DOMContentLoaded ยิงแล้ว
+turbo:load ยิงแล้ว /posts
+turbo:load ยิงแล้ว /categories
+turbo:load ยิงแล้ว /posts
+turbo:load ยิงแล้ว /categories</code></pre>
+    <p>ถ้าคุณกด F5 อีกที จะได้ <code>DOMContentLoaded</code> เพิ่มอีกบรรทัด — เพราะ F5 คือ full page load</p>
+  </div>
+</div>
+
+<h3 id="sn-sub-4">โค้ด JS แบบดั้งเดิม — พังตั้งแต่หน้าที่สอง</h3>
+
+<p>ลบโค้ดเมื่อกี้ แล้วลองแบบที่สไลด์หน้า 40 ยกมา (ผมเปลี่ยน <code>.menu</code> เป็น <code>main</code> เพราะแอปเราไม่มีเมนูชื่อนั้น) ·
+  <strong>ทุกครั้งที่แก้ <code>application.js</code> ให้กด F5 ก่อนเริ่มลอง</strong> (เหตุผลเดียวกับข้างบน):</p>
+
+<pre><code><span class="c">// ทดลองบท 130 — ลบทิ้งเมื่อจบบท</span>
+document.<span class="f">addEventListener</span>(<span class="s">"DOMContentLoaded"</span>, () =&gt; {
+  document.<span class="f">querySelector</span>(<span class="s">"main"</span>).<span class="f">addEventListener</span>(<span class="s">"click"</span>, () =&gt; {
+    console.<span class="f">log</span>(<span class="s">"คลิกใน main"</span>)
+  })
+})</code></pre>
+
+<ul>
+  <li><code>document.querySelector("main")</code> — หา element <code>&lt;main&gt;</code> ตัวแรกในหน้า (คือกล่องเนื้อหาใน layout)</li>
+  <li>ทั้งก้อนแปลว่า: "พอหน้าอ่านเสร็จ ไปหา <code>&lt;main&gt;</code> แล้วฝากไว้ว่าถ้ามีคนคลิก ให้พิมพ์ข้อความ"</li>
+</ul>
+
+<p>ผลจริงใน Chrome (คลิกที่ว่าง ๆ ในหน้า ไม่โดนลิงก์):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ทำอะไร</th><th>Console ขึ้น</th></tr></thead>
+  <tbody>
+    <tr><td>เปิด <code>/posts</code> · คลิกในหน้า</td><td><code>คลิกใน main</code> ✅</td></tr>
+    <tr><td>กด "หมวด" · คลิกในหน้า</td><td>(ไม่มีอะไรขึ้น) ❌</td></tr>
+    <tr><td>กด "บทความ" กลับมา <code>/posts</code> · คลิกในหน้า</td><td>(ไม่มีอะไรขึ้น) ❌ — แม้จะเป็นหน้าเดิมก็ตาม</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ทำไม: <code>DOMContentLoaded</code> ยิงครั้งเดียว · ตอนนั้นมันผูกงานไว้กับ <code>&lt;main&gt;</code> <strong>ตัวแรก</strong> ·
+  พอ Turbo เปลี่ยนหน้า <code>&lt;body&gt;</code> ทั้งก้อนเป็นของใหม่ (ขั้น ③) → <code>&lt;main&gt;</code> ตัวใหม่ไม่มีใครผูกงานให้ ·
+  ไม่มี error สักบรรทัด ปุ่มแค่ "ตาย" เงียบ ๆ
+</p>
+
+<h3 id="sn-sub-5">ท่าแก้เฉพาะหน้า: <code>turbo:load</code> — ใช้ได้ แต่ระวังงานสะสม</h3>
+
+<p>
+  เปลี่ยนคำว่า <code>"DOMContentLoaded"</code> ในโค้ดข้างบนเป็น <code>"turbo:load"</code> · ผลจริง: คลิกในหน้าแล้วขึ้น <code>คลิกใน main</code> <strong>ครบทุกหน้า หน้าละหนึ่งบรรทัด</strong> ✅ ·
+  เพราะทุกครั้งที่เปลี่ยนหน้า มันไปผูกงานให้ <code>&lt;main&gt;</code> ตัวใหม่
+</p>
+<p>
+  แต่ถ้างานที่ผูกไว้<strong>ฝากไว้กับของที่ไม่เคยถูกเปลี่ยน</strong> — เช่น <code>document</code> (ตัวแทนทั้งหน้า ซึ่ง Turbo ไม่เคยทิ้ง) — มันจะสะสม ·
+  งานแบบนี้มีจริงบ่อย เช่น "กด Esc แล้วปิดเมนู" หรือ "คลิกที่อื่นแล้วปิด dropdown" · ลองโค้ดนี้แทน:
+</p>
+
+<pre><code><span class="c">// ทดลองบท 130 — ลบทิ้งเมื่อจบบท</span>
+<span class="k">let</span> round = <span class="n">0</span>
+document.<span class="f">addEventListener</span>(<span class="s">"turbo:load"</span>, () =&gt; {
+  round = round + <span class="n">1</span>
+  <span class="k">const</span> myRound = round
+  document.<span class="f">addEventListener</span>(<span class="s">"keydown"</span>, (event) =&gt; {
+    console.<span class="f">log</span>(<span class="s">"กดปุ่ม"</span>, event.key, <span class="s">"— listener ตัวที่"</span>, myRound)
+  })
+})</code></pre>
+
+<ul>
+  <li><code>let round = 0</code> — ตัวนับว่า <code>turbo:load</code> ยิงไปกี่รอบแล้ว · <code>const myRound = round</code> — จำเลขรอบไว้ให้ listener ตัวนั้น จะได้เห็นว่ามีกี่ตัว</li>
+  <li>listener ตัวนอก (<code>turbo:load</code>) ทำหน้าที่ "ฝาก listener ตัวใน (<code>keydown</code>) เพิ่มอีกหนึ่งตัว" ทุกครั้งที่ยิง</li>
+  <li><code>(event) =&gt;</code> — เบราว์เซอร์ส่งรายละเอียดของ event มาให้ในตัวแปรนี้ · <code>event.key</code> = ปุ่มที่กด เช่น <code>k</code></li>
+</ul>
+
+<p>ผลจริงใน Chrome — เปิด <code>/posts</code> กด <code>k</code> → กด "หมวด" → กด "บทความ" → กด <code>k</code> อีกครั้ง:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ทำอะไร</th><th>Console ขึ้น</th></tr></thead>
+  <tbody>
+    <tr><td>เปิด <code>/posts</code> · กด <code>k</code></td><td><code>กดปุ่ม k — listener ตัวที่ 1</code></td></tr>
+    <tr><td>กด "หมวด" · กด "บทความ"</td><td>(ไม่มีอะไรขึ้น)</td></tr>
+    <tr><td>กด <code>k</code> <strong>ครั้งเดียว</strong></td><td><code>กดปุ่ม k — listener ตัวที่ 1</code><br><code>กดปุ่ม k — listener ตัวที่ 2</code><br><code>กดปุ่ม k — listener ตัวที่ 3</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>กดครั้งเดียว ทำงาน 3 รอบ</strong> · เพราะทุก <code>turbo:load</code> ฝากงานใหม่ไว้กับ <code>document</code> ตัวเดิม และไม่มีใครถอดของเก่าออก ·
+  ถ้างานนั้นคือ "สลับเมนูเปิด/ปิด" กด 3 รอบ = เปิด-ปิด-เปิด · ยิ่งเปิดหลายหน้ายิ่งเพี้ยน และ refresh ทีเดียวอาการหายเป็นปลิดทิ้ง (เลยหาบั๊กยาก)
+</p>
+
+<div class="analogy">
+  <span class="label">🔔 เทียบให้เห็นภาพ — กระดิ่งที่ผูกเพิ่มทุกครั้งที่เสิร์ฟจานใหม่</span>
+  <p>
+    พนักงานคนหนึ่งมีนิสัย: ทุกครั้งที่วางจานใหม่ จะ<strong>ผูกกระดิ่งเรียกพนักงานเพิ่มอีกอันไว้ที่ขาโต๊ะ</strong> ·
+    โต๊ะไม่เคยถูกรื้อ (Turbo ไม่ทิ้ง <code>document</code>) → เสิร์ฟไป 3 จาน มีกระดิ่ง 3 อัน → ลูกค้ากดครั้งเดียว พนักงานวิ่งมา 3 คน ·
+    ส่วนกระดิ่งที่ติดไว้<strong>บนจาน</strong> (<code>&lt;main&gt;</code>) ถูกยกออกไปพร้อมจานเก่า จึงไม่สะสม
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> กระดิ่งจริงเรามองเห็นว่ามีกี่อัน · listener ใน JS <strong>มองไม่เห็น</strong> ไม่มี error ไม่มีคำเตือน
+    เห็นแค่อาการ "ทำงานเกิน" · และในร้านจริงพนักงานคนต่อไปอาจเอะใจถอดกระดิ่งเก่าออก แต่โค้ดของเราไม่ถอดให้ จนกว่าเราจะเขียนสั่งเอง
+  </p>
+</div>
+
+<h3 id="sn-sub-6">ทางออกจริง: เปลี่ยนวิธีคิด</h3>
+
+<p>
+  โค้ดทั้งหมดข้างบนเชื่อว่า "หน้าเว็บเกิดครั้งเดียวแล้วตาย" ซึ่งจริงในยุคที่ทุกลิงก์โหลดหน้าใหม่ · พอมี Turbo ความเชื่อนี้ไม่จริงอีกต่อไป ·
+  ทางออกที่สไลด์เสนอคือ<strong>กลับทิศ</strong>:
+</p>
+<ul>
+  <li>แทนที่ JS จะเดินไปตามหา element ตอนหน้าโหลด → ให้ <strong>element ประกาศเองว่าต้องการ JS อะไร</strong> ด้วยป้ายใน HTML</li>
+  <li>แล้วมี "ผู้ดูแล" คอยดูว่า element ที่มีป้ายนั้น<strong>โผล่มาเมื่อไหร่</strong> (ติดตั้งงาน) และ<strong>หายไปเมื่อไหร่</strong> (เก็บกวาด)</li>
+</ul>
+<p>
+  ผู้ดูแลคนนั้นคือ <strong>Stimulus</strong> (บท 134) · และคุณใช้มันไปแล้ว: ปุ่ม 🌓 ใน navbar ของบท 129 เขียนว่า
+  <code>data-controller="theme" data-action="theme#toggle"</code> — ปุ่มประกาศเองว่า "ฉันใช้ JS ชื่อ theme · ถ้าโดนคลิกให้เรียก toggle" ·
+  ปุ่มนี้จึงใช้ได้ทุกหน้าโดยไม่ต้องสนว่า Turbo เปลี่ยนหน้าไปกี่รอบ (ลองกดลิงก์ไปมาแล้วกด 🌓 ดู)
+</p>
+<p>
+  เทียบกับ React: คล้าย <code>useEffect</code> ที่มีทั้งงานตอนติดตั้ง และ <code>return () =&gt; …</code> ไว้เก็บกวาด (cleanup · บท 74) ·
+  ต่างกันที่ Stimulus ผูกกับ<strong>การโผล่/หายของ element ใน HTML</strong> ไม่ใช่ของ component
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>event · event listener</dt>
+    <dd>event = เหตุการณ์ที่เบราว์เซอร์ประกาศ · listener = ฟังก์ชันที่ฝากไว้ด้วย <code>addEventListener</code> ให้ทำงานเมื่อเกิด event ·
+        <strong>ถาม senior ได้ว่า “listener ตัวนี้ผูกกับ element หรือกับ document ครับ”</strong></dd>
+    <dt><code>DOMContentLoaded</code> · <code>turbo:load</code></dt>
+    <dd><code>DOMContentLoaded</code> ยิงครั้งเดียวต่อการโหลดหน้าเต็ม · <code>turbo:load</code> ยิงตอนเปิดครั้งแรกและทุกครั้งที่ Turbo เปลี่ยนหน้า (รวมกด back) ·
+        <strong>พิมพ์บอก AI ได้ว่า “this app uses Turbo Drive; don't rely on DOMContentLoaded”</strong></dd>
+    <dt>duplicate listeners · listener leak</dt>
+    <dd>listener ที่ถูกผูกซ้ำจนทำงานหลายรอบ หรือค้างอยู่ทั้งที่ไม่ใช้แล้ว ·
+        <strong>ถาม senior ได้ว่า “ปุ่มนี้ทำงานสองรอบหลังเปลี่ยนหน้า เป็น duplicate listener จาก turbo:load ไหม”</strong></dd>
+    <dt>Stimulus (ชื่อไว้ก่อน)</dt>
+    <dd>เครื่องมือที่ให้ HTML ประกาศว่าต้องการ JS อะไร แล้วติดตั้ง/เก็บกวาดให้เองเมื่อ element โผล่/หาย · ละเอียดบท 134 ·
+        <strong>พิมพ์บอก AI ได้ว่า “write this as a Stimulus controller, not a turbo:load listener”</strong></dd>
+  </dl>
+</div>
+
+<div class="note">
+  <p><strong>🧹 เก็บกวาดก่อนไปต่อ:</strong> ลบโค้ดทดลองทั้งหมดใน <code>application.js</code> · <code>_navbar</code> · <code>_pagination</code> ด้วย <code>git restore .</code> ·
+    แล้ว <code>git status</code> ต้องขึ้นว่า <code>nothing to commit, working tree clean</code> · บท 131 เริ่มจากสถานะนี้</p>
+</div>
+
+<h2 id="sn-sec-9">ภารกิจ</h2>
+
+<div class="task">
+  <h3 id="sn-sub-7">🎯 ภารกิจ — จับ Turbo Drive คาหนังคาเขาด้วย DevTools (~10 นาที)</h3>
+  <p>ทำในแอปของบท 129 (โค้ดสะอาด ไม่มีของทดลองค้าง) · ใช้ Chrome</p>
+  <ol>
+    <li>รัน <code>bin/dev</code> · เปิด <code>http://localhost:3000/posts</code></li>
+    <li>เปิด DevTools (คลิกขวาที่หน้า → Inspect · หรือ <kbd>F12</kbd> · Mac กด <kbd>Cmd</kbd>+<kbd>Option</kbd>+<kbd>I</kbd>) → ไปแท็บ <strong>Network</strong></li>
+    <li>กด <kbd>F5</kbd> หนึ่งครั้ง → ดูรายการ: ควรเห็นไฟล์ <code>.css</code> และ <code>.js</code> ที่มีเลขรุ่นต่อท้าย (เช่น <code>tailwind-….css</code> · <code>turbo.min-….js</code>)</li>
+    <li>ล้างรายการ (ปุ่มรูปวงกลมขีดทับ 🚫 ด้านบนแท็บ Network) → <strong>กดหัวข้อบทความ</strong>หนึ่งชิ้น → นับว่ามีแถวใหม่อะไรบ้าง</li>
+    <li>ล้างอีกที → กด "หมวด" บน navbar → นับแถวใหม่</li>
+    <li>ไปแท็บ <strong>Console</strong> พิมพ์ <code>window.marker = "ยังอยู่"</code> กด Enter → กดลิงก์ไปหน้าอื่น → พิมพ์ <code>window.marker</code> กด Enter</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ข้อ 4–5 คิดว่าจะเห็นไฟล์ <code>.css</code>/<code>.js</code> ไหม · และข้อ 6 ได้อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>สิ่งที่ควรเห็น</strong> (ตรวจด้วย Chrome จริง — ผมนับจากรายการ resource ของหน้า ซึ่งเป็นรายการเดียวกับที่แท็บ Network โชว์):</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>ข้อ</th><th>แถวใหม่</th></tr></thead>
+      <tbody>
+        <tr><td>3 (F5)</td><td>CSS 2 ไฟล์ · JS 8 ไฟล์ (application · turbo · stimulus · controllers …) · icon 2 ไฟล์ · และของ rack-mini-profiler</td></tr>
+        <tr><td>4 (กดบทความ)</td><td><strong>หน้าที่กดหนึ่งแถว</strong> (เช่น <code>30</code> · ชนิด <code>fetch</code>) + แถว <code>results</code> ของ rack-mini-profiler (ผมเห็น 3 แถว) · <strong>ไม่มี .css / .js</strong></td></tr>
+        <tr><td>5 (กดหมวด)</td><td>แบบเดียวกัน: <code>categories</code> หนึ่งแถว (+ <code>results</code>) · ไม่มี .css / .js</td></tr>
+        <tr><td>6</td><td><code>'ยังอยู่'</code> — หน้าไม่ได้โหลดใหม่</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>แถว <code>results</code> มาจาก <strong>rack-mini-profiler</strong> (ป้ายเวลาเล็ก ๆ มุมซ้ายบนของหน้า ที่มากับ repo ของอาจารย์ · ใช้ใน development เท่านั้น) ไม่เกี่ยวกับ Turbo · ชนิดเป็น <code>fetch</code> คือหลักฐานว่า JS (Turbo) เป็นคนขอ ไม่ใช่เบราว์เซอร์เปิดหน้าเอง</p>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>กดลิงก์แล้ว .css/.js โผล่มาครบทุกครั้ง และ <code>window.marker</code> ได้ <code>undefined</code></strong> — Turbo ไม่ได้ทำงาน · เปิด Console ดูว่ามีตัวแดงไหม ·
+          ผมลองลืมปิดวงเล็บใน <code>application.js</code> ได้ <code>SyntaxError: missing ) after argument list</code> แล้ว Turbo ไม่โหลดเลย ลิงก์ทุกอันกลายเป็นโหลดหน้าเต็ม (และปุ่ม 🌓 ก็พังด้วย) · แก้ไฟล์ให้ถูกหรือ <code>git restore</code></li>
+      <li><strong>เพิ่งแก้ CSS หรือ JS แล้วกดลิงก์ครั้งแรก หน้าโหลดใหม่ทั้งใบ</strong> — ไม่ใช่บั๊ก · คือ <code>data-turbo-track="reload"</code> เห็นว่าไฟล์เปลี่ยนรุ่น · ครั้งต่อไปจะกลับมาเป็นปกติ</li>
+      <li><strong>มีลิงก์เดียวที่โหลดเต็มทุกครั้ง</strong> — ลิงก์นั้นอาจยังมี <code>data-turbo="false"</code> ค้างจากการทดลอง · <code>git status</code> ดูว่ามีไฟล์ค้างไหม</li>
+    </ul>
+    <p>เห็นไม่ตรงกับตาราง หรือหาปุ่มใน DevTools ไม่เจอ <strong>ถามกลับมาได้เลย</strong> พร้อมแคปหน้าจอแท็บ Network</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">Redux · React Query · SWR ต่างกันในรายละเอียด แต่สไลด์บอกว่าทุกตัว "เกิดมาแก้ปัญหาเดียวกัน" · ปัญหานั้นคืออะไร และ Hotwire แก้อย่างไร?</p>
+  <div class="opts">
+    <button class="opt">JSON ช้ากว่า HTML · Hotwire แก้ด้วยการบีบ HTML ให้เล็กกว่า JSON</button>
+    <button class="opt">React วาดจอช้า · Hotwire แก้ด้วยการวาดจอใน JavaScript ให้เร็วกว่า</button>
+    <button class="opt">สำเนาในเบราว์เซอร์ไม่ตรงของจริง · Hotwire แก้โดยไม่เก็บสำเนาเลย</button>
+    <button class="opt">server ส่งข้อมูลผิด · Hotwire แก้ด้วยการตรวจข้อมูลซ้ำในเบราว์เซอร์</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — เครื่องมือพวกนั้นช่วยดูแล "สมุดเล่มที่สอง" ให้ตรงกับครัว · Hotwire ตัดปัญหาที่ต้นทาง: อยากได้จอใหม่ก็ไปขอ HTML ใหม่จาก server ที่เป็นเจ้าของข้อมูลชุดเดียว</p>
+    <p>ตัวเลือกที่ 1 ผิดสองชั้น — HTML หนักกว่า JSON (เราวัดแล้ว) และ Hotwire ไม่ได้ขายความเล็ก ·
+       ตัวเลือกที่ 2 ผิด เพราะ Hotwire ให้ server วาด (ERB) ไม่ได้วาดใน JS ·
+       ตัวเลือกที่ 4 ผิด เพราะ server ไม่ได้ส่งผิด ปัญหาคือสำเนาที่เก็บไว้<strong>เก่า</strong></p>
+    <p><strong>จุดที่ต้องจำ:</strong> ไม่มีสำเนา = ไม่มีบั๊ก sync · ราคาที่จ่ายคือต้องถาม server ทุกครั้ง และ HTML หนักกว่า</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ในแอปของเรา กดลิงก์จาก <code>/posts</code> ไป <code>/posts/30</code> · ข้อไหนบอกสิ่งที่เกิดขึ้นได้ถูก?</p>
+  <div class="opts">
+    <button class="opt">server รู้ว่าเป็น Turbo จึงส่งมาแค่ &lt;body&gt; · เบราว์เซอร์โหลด CSS ใหม่</button>
+    <button class="opt">server ส่ง HTML ทั้งหน้าตามปกติ · Turbo สลับเฉพาะ &lt;body&gt; · CSS/JS เดิมอยู่ต่อ</button>
+    <button class="opt">server ส่ง JSON ของบทความ · Turbo เอาไปสร้าง HTML เองในเบราว์เซอร์</button>
+    <button class="opt">เบราว์เซอร์โหลดหน้าใหม่ทั้งใบ · แต่ Turbo จำตัวแปร JS เดิมไว้ให้</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — log ฝั่ง server เป็น <code>Processing by PostsController#show as HTML</code> เหมือนเปิดหน้าธรรมดา · Turbo เป็นคนเลือกเอาแค่ <code>&lt;body&gt;</code> กับส่วนของ <code>&lt;head&gt;</code> ที่ต่าง (เช่น title)</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะ server ส่งทั้งหน้า (มี <code>&lt;head&gt;</code>) และ CSS ไม่โหลดใหม่ ·
+       ตัวเลือกที่ 3 ผิด เพราะ request ขอ <code>text/html</code> ไม่มี JSON เลย ·
+       ตัวเลือกที่ 4 ผิด เพราะถ้าโหลดหน้าใหม่ทั้งใบ ตัวแปรต้องหาย (แบบตอนกด F5) — ที่ตัวแปรยังอยู่ก็เพราะ<strong>ไม่ได้</strong>โหลดใหม่</p>
+    <p><strong>จุดที่ต้องจำ:</strong> Turbo Drive = เปลี่ยนจาน ไม่รื้อโต๊ะ · server ไม่ต้องรู้อะไรเลย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">โค้ด <code>document.addEventListener("DOMContentLoaded", …)</code> ที่ผูก click ให้ <code>&lt;main&gt;</code> ทำงานหน้าแรก แต่กดลิงก์ไปหน้าอื่นแล้วคลิกไม่ได้ · เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">event ยิงครั้งเดียวตอนเปิดเว็บ · &lt;main&gt; ของหน้าใหม่เป็นตัวใหม่ที่ไม่มีใครผูกงานให้</button>
+    <button class="opt">Turbo ห้ามใช้ addEventListener · ต้องเขียนเป็น Stimulus controller เท่านั้นจึงจะทำงาน</button>
+    <button class="opt">เบราว์เซอร์จำ application.js เก่าไว้ใน cache · หน้าที่สองจึงไม่ได้รันโค้ดชุดใหม่</button>
+    <button class="opt">หน้าที่สองไม่มี &lt;main&gt; เพราะ layout ถูกใช้แค่ตอนเปิดเว็บหน้าแรกเท่านั้น</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — หน้าเว็บไม่ได้เกิดใหม่ <code>DOMContentLoaded</code> จึงไม่ยิงอีก · Turbo สลับ <code>&lt;body&gt;</code> ทั้งก้อน → <code>&lt;main&gt;</code> ที่เคยผูกไว้ถูกยกออกไปพร้อมจานเก่า</p>
+    <p>ตัวเลือกที่ 2 ผิด เพราะ <code>addEventListener</code> ใช้ได้ปกติ (ตัวอย่าง <code>turbo:load</code> ก็ใช้มัน) แค่ต้องรู้ว่าผูกเมื่อไหร่กับอะไร ·
+       ตัวเลือกที่ 3 ผิด เพราะ JS ไม่ได้ถูกโหลดใหม่เลยด้วยซ้ำ ปัญหาไม่ใช่โค้ดเก่า/ใหม่ ·
+       ตัวเลือกที่ 4 ผิด เพราะทุกหน้าที่ server ส่งมามี layout ครบ (มี <code>&lt;main&gt;</code>) — แค่เป็นตัวใหม่</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ใน Turbo หน้าเว็บ "เกิด" ครั้งเดียว · แต่ <code>&lt;body&gt;</code> เกิดใหม่ทุกครั้งที่เปลี่ยนหน้า</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">เพื่อนเขียน <code>document.addEventListener("turbo:load", () =&gt; { document.addEventListener("keydown", (event) =&gt; { ปิดเมนู() }) })</code> แบบเดียวกับตัวอย่างในบท · เปิดเว็บ แล้วเปลี่ยนหน้าอีก 4 ครั้ง แล้วกด Esc ครั้งเดียว · "ปิดเมนู" ทำงานกี่รอบ?</p>
+  <div class="opts">
+    <button class="opt">1 รอบ เพราะ turbo:load ยิงใหม่ทุกครั้งจึงล้าง listener เก่าให้เอง</button>
+    <button class="opt">0 รอบ เพราะ document ของหน้าแรกถูก Turbo ทิ้งไปตั้งแต่เปลี่ยนหน้าครั้งแรก</button>
+    <button class="opt">4 รอบ เพราะนับเฉพาะครั้งที่เปลี่ยนหน้า ไม่นับตอนเปิดเว็บครั้งแรก</button>
+    <button class="opt">5 รอบ เพราะ turbo:load ยิง 5 ครั้งและ document ตัวเดิมเก็บ listener ไว้ครบ</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — <code>turbo:load</code> ยิงตอนเปิดครั้งแรก 1 + เปลี่ยนหน้า 4 = 5 ครั้ง · ทุกครั้งฝาก listener ใหม่ไว้กับ <code>document</code> ตัวเดิม (ในบทเปลี่ยนหน้า 2 ครั้งได้ 3 ตัว แบบเดียวกัน)</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะไม่มีใครล้างให้ — นี่คือปัญหาทั้งหมด ·
+       ตัวเลือกที่ 2 ผิด เพราะ Turbo ไม่เคยทิ้ง <code>document</code> (เปลี่ยนแค่ <code>&lt;body&gt;</code>) ·
+       ตัวเลือกที่ 3 ลืมว่า <code>turbo:load</code> ยิงตอนเปิดเว็บครั้งแรกด้วย</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ผูกงานกับของที่อยู่ถาวร (document · window) ใน <code>turbo:load</code> = สะสม · ทางออกระยะยาวคือ Stimulus ที่ติดตั้งและเก็บกวาดให้ (บท 134)</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Turbo 8.0.23)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>36</td><td>HTML หนักกว่า JSON ประมาณ 2–4 เท่า (gzip แล้วต่างกันน้อยมาก)</td><td>วัดบทความชิ้นที่ 1: เฉพาะการ์ด ~1.3 เท่า · ทั้งหน้า ~8 เท่า (gzip แล้ว ~5.7 เท่า)</td><td>นิดหน่อย — ตัวเลขขึ้นกับว่าเทียบกับอะไร วัดเองได้</td></tr>
+    <tr><td>38</td><td>ขั้น 4: merge <code>&lt;head&gt;</code> เฉพาะที่ต่าง (CSS/JS ไม่โหลดซ้ำ)</td><td>ถูก · แต่ถ้าไฟล์ที่ติด <code>data-turbo-track="reload"</code> เปลี่ยนชื่อ Turbo จะโหลดใหม่ทั้งหน้า (ลองแล้ว)</td><td><strong>สนใจ</strong> — อธิบายอาการ "แก้ CSS แล้วหน้าโหลดเต็มครั้งหนึ่ง"</td></tr>
+    <tr><td>38</td><td>ตัวอย่าง <code>&lt;a href="/report.pdf" data-turbo="false"&gt;</code> เขียนเป็น HTML ตรง ๆ</td><td>ใน ERB ของเราใช้ <code>link_to …, data: { turbo: false }</code> ได้ HTML เดียวกัน</td><td>ไม่ต้อง — ความหมายเดียวกัน</td></tr>
+    <tr><td>40</td><td>ใช้ <code>turbo:load</code> ผูกกับ <code>.menu</code> → "กด 10 หน้าแล้วกดเมนูครั้งเดียว toggle 10 รอบ"</td><td>ลองแล้ว: ผูกกับ element ใน <code>&lt;body&gt;</code> <strong>ไม่</strong>สะสม (body เป็นของใหม่ทุกหน้า) · สะสมจริงเมื่อผูกกับของที่อยู่ถาวร เช่น <code>document</code> (เห็น 3 รอบหลังเปลี่ยน 2 หน้า)</td><td><strong>สนใจ</strong> — หลักการถูก แต่ตัวอย่าง .menu อาจไม่สะสมตามที่สไลด์บอก</td></tr>
+    <tr><td>38</td><td><code>Turbo.session.drive = false</code> ปิดทั้งแอป</td><td>ไม่ได้ลองในบทนี้</td><td>ไม่ต้อง — สไลด์เองก็บอกว่าไม่แนะนำ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0129-lab-vibe2-styling.html">← บทเรียน 129 · Lab Vibe 2</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 3</a>
+  <a href="./0131-turbo-frames.html">บทเรียน 131 → Turbo Frames</a>
+</nav>
+
+<h2 id="sn-sec-12">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://hotwired.dev/">Hotwire — HTML Over The Wire</a> —
+      <strong>อ่านแค่ย่อหน้าแรกกับหัวข้อ Turbo และ Stimulus</strong> · ยืนยันว่า Hotwire คือการส่ง HTML แทน JSON และ Turbo + Stimulus คืออะไร</li>
+  <li><a href="https://turbo.hotwired.dev/handbook/drive">Turbo Handbook — Navigate with Turbo Drive</a> —
+      <strong>อ่าน Page Navigation Basics · Application Visits · Restoration Visits</strong> (ที่มาของ 6 ขั้นและ <code>data-turbo-action="replace"</code>) ·
+      แล้วข้ามไป <a href="https://turbo.hotwired.dev/handbook/drive#disabling-turbo-drive-on-specific-links-or-forms">Disabling Turbo Drive on Specific Links or Forms</a> และ
+      <a href="https://turbo.hotwired.dev/handbook/drive#reloading-when-assets-change">Reloading When Assets Change</a> (ที่มาของ <code>data-turbo-track</code>)</li>
+  <li><a href="https://turbo.hotwired.dev/handbook/building#observing-navigation-events">Turbo Handbook — Building Your Turbo Application § Observing Navigation Events</a> —
+      <strong>อ่านหัวข้อนี้หัวข้อเดียว (สั้น)</strong> · คู่มือบอกตรง ๆ ว่า <code>turbo:load</code> ยิงตอนเปิดครั้งแรกและหลังทุก visit และเตือนให้ "clean up behavior installed for the previous page" — คือเรื่องกระดิ่งสะสมของเรา ·
+      หัวข้อถัดไป Attaching Behavior With Stimulus คือสะพานไปบท 134</li>
+  <li><a href="https://turbo.hotwired.dev/reference/events">Turbo Reference — Events</a> —
+      รายชื่อ event ทั้งหมดของ Turbo · <strong>ดูแค่ <code>turbo:load</code> กับ <code>turbo:click</code></strong> ตัวอื่นยังไม่ต้อง</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Document/DOMContentLoaded_event">MDN — Document: DOMContentLoaded event</a> —
+      <strong>อ่านย่อหน้าแรก</strong> · event ที่ยิงเมื่อ HTML ของหน้าอ่านเสร็จ (ครั้งเดียวต่อการโหลดหน้าเต็ม)</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener">MDN — EventTarget: addEventListener()</a> —
+      <strong>อ่านส่วนต้นหน้า (ก่อนหัวข้อ Syntax)</strong> · ตรงนั้นบอกว่าฟังก์ชัน<strong>ตัวเดิม</strong>จะไม่ถูกเพิ่มซ้ำ — ของเราสะสมเพราะ <code>() =&gt; { … }</code> สร้างฟังก์ชันตัวใหม่ทุกรอบ · หัวข้อ Memory issues ขยายเรื่องนี้</li>
+  <li><a href="https://developer.chrome.com/docs/devtools/network">Chrome DevTools — Inspect network activity</a> —
+      คู่มือแท็บ Network ที่ใช้ในภารกิจ · <strong>อ่านถึงหัวข้อที่สอนกรองรายการ (filter) พอ</strong></li>
+  <li><a href="https://github.com/hotwired/turbo-rails">GitHub — hotwired/turbo-rails</a> —
+      gem ที่ทำให้ Turbo มากับ Rails · <strong>ดูแค่ README ส่วนแรก</strong> ว่ามันติดตั้งอะไรให้ (การ import ใน <code>application.js</code>)</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

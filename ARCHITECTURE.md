@@ -80,8 +80,8 @@ MISSION.md RESOURCES.md GLOSSARY.md NOTES.md learning-records/   ← โคร�
 from_teacher/           PDF ต้นฉบับจากผู้สอน · gitignore ไว้ · ห้าม commit เด็ดขาด
 ```
 
-**ตอนนี้มี HTML 138 ไฟล์** = บทเรียน 119 + cheat sheet 16 + `index` + `docs` + `404`
-(ฝั่ง BACK บท 01–55 · ฝั่ง FRONT บท 56–89 · ฝั่ง RAILS บท 90–119)
+**ตอนนี้มี HTML 155 ไฟล์** = บทเรียน 135 + cheat sheet 17 + `index` + `docs` + `404`
+(ฝั่ง BACK บท 01–55 · ฝั่ง FRONT บท 56–89 · ฝั่ง RAILS บท 90–135)
 
 ---
 
@@ -205,7 +205,7 @@ CSS อยู่ใน `assets/lesson.css` · พฤติกรรมอยู�
 |---|---|---|---|
 | `back` | หนึ่งวันที่เรียน | `day-N/` | 01–55 |
 | `front` | หนึ่งไฟล์สไลด์ | `fe-<slug>/` | 56–89 |
-| `rails` | หนึ่งวันของคอร์ส Rails | `rails-day-N/` | 90–119 |
+| `rails` | หนึ่งวันของคอร์ส Rails | `rails-day-N/` | 90–135 |
 
 ฝั่ง Frontend แบ่งตามชื่อสไลด์เพราะ**อาจารย์ไม่ได้กำกับวันมาให้ในชื่อไฟล์**
 ส่วน**เลขบทเรียนต่อเนื่องกันทั้งเว็บ** ไม่แยกตามฝั่ง — เพราะเลขบทคือคีย์ของ
@@ -216,7 +216,7 @@ CSS อยู่ใน `assets/lesson.css` · พฤติกรรมอยู�
 (Rails Day 1–4) · ถ้าใส่เป็น `day-N` เลขวันจะชนกับสไลด์ Go ที่อาจมาทีหลัง
 
 แต่ละกลุ่มมีเลข `d` ประจำตัว: ฝั่ง BACK ใช้เลขวัน (1–9) · ฝั่ง FRONT ใช้ 101–105 (html-css · ts-fp · nextjs · nextjs-app · agentic) ·
-ฝั่ง RAILS ใช้ 200 + เลขวัน (`rails-day-1` = 201 · `rails-day-2` = 202)
+ฝั่ง RAILS ใช้ 200 + เลขวัน (`rails-day-1` = 201 · `rails-day-2` = 202 · `rails-day-3` = 203)
 **เลขนี้ถูกเขียนไว้สองที่** (`FRONT`/`RAILS` ใน `assets/nav.js` และ `GROUP_ID` ใน
 `tools/build-search-index.py`) — เพิ่มกลุ่มใหม่ต้องแก้ทั้งคู่ ถ้าลืม ตัวสร้าง index
 จะหยุดพร้อมบอกชื่อกลุ่มที่ขาด

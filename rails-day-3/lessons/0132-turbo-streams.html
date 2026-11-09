@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 132 — Turbo Streams — เพิ่มคอมเมนต์แล้วเปลี่ยนหลายจุดในหน้าพร้อมกัน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 132 · Rails · Day 3</p>
+  <h1>Turbo Streams — เพิ่มคอมเมนต์แล้วเปลี่ยนหลายจุดในหน้าพร้อมกัน</h1>
+  <p class="meta">~25 นาทีอ่าน + พิมพ์ตามอีก ~20 นาที · ควรผ่าน
+    <a href="./0131-turbo-frames.html">บท 131</a> (Turbo Frames) ·
+    <a href="./0130-hotwire-and-turbo-drive.html">บท 130</a> (Turbo Drive) ·
+    และ Day 2 <a href="../../rails-day-2/lessons/0115-associations.html">บท 115</a>–<a href="../../rails-day-2/lessons/0117-rest-and-strong-params.html">117</a> มาก่อน</p>
+  <p class="standfirst">
+    บท 131 เราเปลี่ยนของในหน้าได้ทีละ<strong>หนึ่งกล่อง</strong> · บทนี้จะทำช่องคอมเมนต์ใต้บทความ ซึ่งกดส่งครั้งเดียวต้องเปลี่ยน<strong>สามจุดพร้อมกัน</strong>:
+    คอมเมนต์ใหม่ต่อท้ายรายการ · ตัวเลข "ความคิดเห็น (N)" เพิ่มขึ้น · ฟอร์มว่างรอพิมพ์ใหม่ — โดยไม่โหลดหน้าใหม่
+    <br>อ่านจบแล้วคุณจะ <strong>สร้างระบบคอมเมนต์ได้เอง</strong> · <strong>อ่านไฟล์ <code>.turbo_stream.erb</code> ออกทุกบรรทัด</strong> ·
+    เปิดดู "ใบสั่งงาน" ที่ server ส่งมาเป็น · และเลือกได้ว่าเมื่อไหร่ใช้ <code>replace</code> เมื่อไหร่ใช้ <code>update</code>
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — บทนี้ใช้คำพวกนี้ตลอด ถ้าข้อไหนไม่คุ้นให้กลับไปบทนั้นก่อน</p>
+  <ul>
+    <li><strong>Turbo Frame</strong> = เปลี่ยนแค่ถ้วยใบเดียวบนโต๊ะ · ป้ายเลขถ้วย (<code>id</code>) ต้องตรงกันสองฝั่ง (<a href="./0131-turbo-frames.html">บท 131</a>)</li>
+    <li><strong>Turbo Drive</strong> = พนักงานเปลี่ยนจานบนโต๊ะเดิม ไม่รื้อโต๊ะ · Turbo เป็นคนส่งฟอร์มแทนเบราว์เซอร์ (<a href="./0130-hotwire-and-turbo-drive.html">บท 130</a>)</li>
+    <li><strong>partial + strict locals</strong> = แม่พิมพ์ที่บอกไว้บนสุดว่า "ต้องยื่นอะไรใส่มือบ้าง" <code>&lt;%# locals: (post:) %&gt;</code> · <code>render @posts</code> = Rails เดาชื่อแม่พิมพ์ให้ (<a href="./0123-layout-partial-locals.html">บท 123</a>)</li>
+    <li><strong><code>form_with</code></strong> = ฟอร์มที่ตั้งชื่อช่องให้เอง เช่น <code>post[title]</code> และแนบ CSRF token ให้ (<a href="./0124-view-helpers-and-form-with.html">บท 124</a>)</li>
+    <li><strong>has_many / belongs_to / dependent</strong> (<a href="../../rails-day-2/lessons/0115-associations.html">บท 115</a> · <a href="../../rails-day-2/lessons/0116-dependent-and-helpers.html">116</a>) · <strong>route ซ้อน</strong> <code>/posts/:post_id/comments</code> และ <code>params.expect</code> (<a href="../../rails-day-2/lessons/0117-rest-and-strong-params.html">บท 117</a>)</li>
+  </ul>
+  <p>
+    <strong>🍜 เริ่มจากโค้ดสถานะไหน:</strong> โปรเจกต์ <code>wongnok-blog-all-in-one</code> ตอนจบ<a href="./0131-turbo-frames.html">บท 131</a>
+    (หน้า show กด "แก้ไขหัวข้อ" แล้วช่องพิมพ์โผล่ในที่เดิม) · <code>git status</code> ต้องสะอาด · เปิด <code>bin/dev</code> ค้างไว้
+    (มีคลาส Tailwind ใหม่ในบทนี้ ต้องให้ตัว watch สร้าง CSS ให้ — บท 128) ·
+    ตามไม่ทัน → กลับไปทำบท 131 ให้จบก่อน (branch <code>day3-c-done</code> ของอาจารย์มีระบบคอมเมนต์ แต่หน้าตาไฟล์ต่างจากบทเรียนนี้มาก)
+  </p>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · turbo-rails 2.0.23 (Turbo 8.0.23) · PostgreSQL 18
+    (สไลด์เขียน Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน)
+  </p>
+  <p>
+    ผลรันทุกก้อนรันจริงแล้วก็อปมา · พฤติกรรมในเบราว์เซอร์ตรวจด้วย Chrome จริง · ตัวอย่างใช้บทความ <strong>"นมเย็น"</strong> ซึ่งในเครื่องที่ตรวจเป็นเลข <code>30</code> ·
+    ค่าที่เปลี่ยนทุกครั้ง เช่น <strong>เลข id · เวลา ms · เลขในชื่อไฟล์ migration · token ยาว ๆ · "less than a minute ago"</strong> ของคุณจะต่าง ·
+    log ตัดคอมเมนต์ SQL <code>/*action=…*/</code> กับบรรทัด <code>↳</code> ออกให้อ่านง่าย
+  </p>
+</div>
+
+<h2 id="sn-sec-1">โจทย์ — ส่งครั้งเดียว ต้องเปลี่ยนสามกล่อง</h2>
+
+<p>
+  เป้าหมายของบทนี้คือส่วนคอมเมนต์ใต้บทความ หน้าตาแบบนี้ · ตอนกดปุ่ม "ส่งความคิดเห็น" มี<strong>สามกล่อง</strong>ในหน้าที่ต้องเปลี่ยน และอยู่คนละที่กัน:
+</p>
+
+<div class="diagram">หน้า /posts/30 (นมเย็น)
+  บทความ … แถวปุ่ม แก้ไข / ลบ                    ← ไม่ต้องขยับ
+
+  ความคิดเห็น ( 2 )                              ← กล่อง ② id="comment_count"   ตัวเลขต้องเพิ่ม
+  ┌ id="comments" ──────────────────────
+  │  ทดลอง · ส่งก่อนมีไฟล์ stream
+  │  ต้นกล้า · ชาเย็นร้านนี้หวานกำลังดี
+  │  + คอมเมนต์ใหม่มาต่อท้ายตรงนี้                ← กล่อง ① ต่อท้ายรายการ
+  └─────────────────────────────────────
+  ┌ form id="comment_form" ─────────────
+  │  ชื่อ [          ]                           ← กล่อง ③ ล้างให้ว่าง
+  │  ความคิดเห็น [          ]   [ส่งความคิดเห็น]       (หรือโชว์ error ถ้าส่งว่าง)
+  └─────────────────────────────────────</div>
+
+<p>
+  ถ้าใช้ <strong>Turbo Frame</strong> (บท 131) เราเปลี่ยนได้แค่กรอบเดียว — กรอบที่ฟอร์มอยู่ข้างใน · กล่อง ① กับ ② อยู่นอกกรอบ เลยไม่ขยับ ·
+  ถ้าใช้ <code>redirect_to</code> แบบ scaffold ก็ได้ผลถูก แต่ได้<strong>ทั้งหน้าใหม่</strong>ทั้งที่อยากเปลี่ยนแค่สามจุด ·
+  ของที่ตอบโจทย์นี้พอดีชื่อ <strong>Turbo Stream</strong> · แต่ก่อนจะถึงตรงนั้น ต้องมีคอมเมนต์ให้ส่งก่อน
+</p>
+
+<h2 id="sn-sec-2">ทวน Day 2 — สร้าง Comment (พิมพ์ตาม ~5 นาที)</h2>
+
+<p>
+  ส่วนนี้ไม่มีเรื่องใหม่ · เป็นท่าเดียวกับที่ทำใน Day 2 ทั้งหมด · คอมเมนต์หนึ่งชิ้นมี <strong>ข้อความ</strong> (<code>body</code>) · <strong>ชื่อคนเขียน</strong> (<code>author_name</code> — แอปนี้ยังไม่มีระบบล็อกอิน เลยให้พิมพ์ชื่อเอง ระบบล็อกอินรออยู่ Day 4) · และ<strong>เป็นของบทความไหน</strong> (<code>post</code>)
+</p>
+
+<p><strong>ขั้น 1 · สร้าง model</strong> (คำสั่งตามสไลด์หน้า 52) — รันในโฟลเดอร์โปรเจกต์:</p>
+<pre><code>$ bin/rails generate model Comment body:text author_name:string post:references
+      invoke  active_record
+      create    db/migrate/20261107035534_create_comments.rb
+      create    app/models/comment.rb
+      invoke    test_unit
+      create      test/models/comment_test.rb
+      create      test/fixtures/comments.yml</code></pre>
+<p>
+  <code>post:references</code> = "คอมเมนต์ชี้ไปหาบทความ" → ได้คอลัมน์ <code>post_id</code> + index + foreign key ให้เอง (<a href="../../rails-day-2/lessons/0115-associations.html">บท 115</a>) ·
+  เลขยาว ๆ หน้าชื่อไฟล์ migration คือเวลาที่คุณรัน ของคุณจะต่าง · ไฟล์ test สองไฟล์ปล่อยไว้ก่อน (เรื่อง test รออยู่ Day 4)
+</p>
+
+<p><strong>ขั้น 2 · เติม "ห้ามว่าง" ให้ตู้</strong> — เปิดไฟล์ migration ที่เพิ่งได้ เติม <code>, null: false</code> ท้ายบรรทัด <code>body</code> และ <code>author_name</code>:</p>
+<div class="compare">
+  <div class="side bad">
+    <h4>generator ให้มา</h4>
+<pre><code>      t.<span class="f">text</span> <span class="n">:body</span>
+      t.<span class="f">string</span> <span class="n">:author_name</span>
+      t.<span class="f">references</span> <span class="n">:post</span>, <span class="n">null:</span> <span class="k">false</span>, <span class="n">foreign_key:</span> <span class="k">true</span></code></pre>
+  </div>
+  <div class="side good">
+    <h4>หลังแก้</h4>
+<pre><code>      t.<span class="f">text</span> <span class="n">:body</span>, <span class="n">null:</span> <span class="k">false</span>
+      t.<span class="f">string</span> <span class="n">:author_name</span>, <span class="n">null:</span> <span class="k">false</span>
+      t.<span class="f">references</span> <span class="n">:post</span>, <span class="n">null:</span> <span class="k">false</span>, <span class="n">foreign_key:</span> <span class="k">true</span></code></pre>
+  </div>
+</div>
+<div class="warn">
+  <p><strong>generator ใส่ <code>null: false</code> ให้แค่บรรทัด <code>references</code></strong> · อีกสองบรรทัดต้องเติมเอง<strong>ก่อน</strong> <code>db:migrate</code> ·
+    "validation + NOT NULL ต้องมาเป็นคู่" คือกฎข้อเดียวกับ<a href="../../rails-day-2/lessons/0111-four-layers-and-uniqueness.html">บท 111</a> — validation กันที่หน้าร้าน NOT NULL กันที่ตัวตู้</p>
+</div>
+
+<p>ไฟล์ทั้งไฟล์หลังแก้ (ของคุณชื่อไฟล์ต่างแค่เลขเวลา):</p>
+<pre><code>class CreateComments &lt; ActiveRecord::Migration[8.1]
+  def change
+    create_table :comments do |t|
+      t.text :body, null: false
+      t.string :author_name, null: false
+      t.references :post, null: false, foreign_key: true
+
+      t.timestamps
+    end
+  end
+end</code></pre>
+
+<p><strong>ขั้น 3 · สร้างลิ้นชักใหม่ในตู้</strong>:</p>
+<pre><code>$ bin/rails db:migrate
+== 20261107035534 CreateComments: migrating ===================================
+-- create_table(:comments)
+   -&gt; 0.0030s
+== 20261107035534 CreateComments: migrated (0.0044s) ==========================</code></pre>
+
+<p><strong>ขั้น 4 · กฎของคอมเมนต์ + ความสัมพันธ์</strong> — <code>app/models/comment.rb</code> ทั้งไฟล์ (generator เขียน <code>belongs_to</code> ให้แล้ว เราเติม <code>validates</code> สองบรรทัด):</p>
+<pre><code>class Comment &lt; ApplicationRecord
+  belongs_to :post
+
+  validates :author_name, presence: true, length: { maximum: 50 }
+  validates :body, presence: true, length: { maximum: 1000 }
+end</code></pre>
+<p>แล้วเปิด <code>app/models/post.rb</code> เพิ่ม<strong>หนึ่งบรรทัด</strong>ใต้ <code>belongs_to :category</code>:</p>
+<pre><code>  <span class="f">has_many</span> <span class="n">:comments</span>, <span class="n">dependent:</span> <span class="n">:destroy</span></code></pre>
+<ul>
+  <li><code>validates … presence: true, length: { maximum: 50 }</code> = ห้ามว่าง และยาวไม่เกิน 50 ตัวอักษร (ชื่อคนสั้น ๆ) · ข้อความไม่เกิน 1000 (<a href="../../rails-day-2/lessons/0110-validations.html">บท 110</a>)</li>
+  <li><code>has_many :comments</code> = "บทความหนึ่งมีหลายคอมเมนต์" → ได้ <code>@post.comments</code> มาใช้ (<a href="../../rails-day-2/lessons/0115-associations.html">บท 115</a>)</li>
+  <li><code>dependent: :destroy</code> = ลบบทความแล้วลบคอมเมนต์ของมันตาม · ถ้าไม่ใส่ ตู้จะไม่ยอมให้ลบบทความที่มีคอมเมนต์ (foreign key ฟ้อง — <a href="../../rails-day-2/lessons/0116-dependent-and-helpers.html">บท 116</a>) ·
+    เลือก <code>:destroy</code> เพราะคอมเมนต์ไม่มีความหมายถ้าไม่มีบทความ (ต่างจากหมวดที่ใช้ <code>:restrict_with_error</code> "ห้ามลบถ้ายังมีบทความ")</li>
+</ul>
+
+<h2 id="sn-sec-3">ทางเข้าของคอมเมนต์ — route ซ้อน และ controller</h2>
+
+<p>
+  คอมเมนต์<strong>ต้องรู้ว่าเป็นของบทความไหน</strong> · เราเลยให้ URL บอกเลขบทความไว้ในตัว: <code>POST /posts/30/comments</code> = "ส่งคอมเมนต์ให้บทความเลข 30" ·
+  เปิด <code>config/routes.rb</code> เปลี่ยน <code>resources :posts</code> บรรทัดเดียว ให้เป็นสามบรรทัดนี้ (ท่า "ซ้อนกัน" ของ<a href="../../rails-day-2/lessons/0117-rest-and-strong-params.html">บท 117</a>):
+</p>
+<pre><code>  <span class="f">resources</span> <span class="n">:posts</span> <span class="k">do</span>
+    <span class="f">resources</span> <span class="n">:comments</span>, <span class="n">only:</span> <span class="n">:create</span>
+  <span class="k">end</span></code></pre>
+<pre><code>$ bin/rails routes -c comments
+       Prefix Verb URI Pattern                        Controller#Action
+post_comments POST /posts/:post_id/comments(.:format) comments#create</code></pre>
+<p>
+  <code>only: :create</code> = เปิดแค่ประตูเดียว คือ "สร้างคอมเมนต์" (ยังไม่ต้องมีหน้ารวมคอมเมนต์ หน้าแก้ หน้าลบ) ·
+  <code>:post_id</code> = ช่องในใบสั่งที่บอกเลขบทความ · ได้ชื่อเล่น <code>post_comments</code> → ใช้เป็น <code>post_comments_path(@post)</code> ได้
+</p>
+
+<p>
+  ต่อไปคือ<strong>หัวหน้าเชฟแผนกคอมเมนต์</strong> · ไม่มี generator ให้ — สร้างไฟล์ใหม่ <code>app/controllers/comments_controller.rb</code> แล้วพิมพ์ทั้งไฟล์:
+</p>
+<pre><code>class CommentsController &lt; ApplicationController
+  before_action :set_post
+
+  # POST /posts/1/comments
+  def create
+    @comment = @post.comments.build(comment_params)
+
+    respond_to do |format|
+      if @comment.save
+        format.turbo_stream # ใช้ create.turbo_stream.erb
+        format.html { redirect_to @post, notice: "เพิ่มความคิดเห็นแล้ว" }
+      else
+        format.turbo_stream do
+          render turbo_stream: turbo_stream.replace("comment_form", partial: "comments/form", locals: { post: @post, comment: @comment }),
+                 status: :unprocessable_content
+        end
+        format.html do
+          @comments = @post.comments.order(:created_at)
+          render "posts/show", status: :unprocessable_content
+        end
+      end
+    end
+  end
+
+  private
+    def set_post
+      @post = Post.find(params.expect(:post_id))
+    end
+
+    def comment_params
+      params.expect(comment: [ :author_name, :body ])
+    end
+end</code></pre>
+<ul>
+  <li><strong><code>before_action :set_post</code></strong> + <strong><code>set_post</code></strong> = ก่อนทำอะไร หาบทความจากเลขใน URL ก่อน · <code>params.expect(:post_id)</code> = "ต้องมีเลขบทความ" · ไม่มีบทความเลขนั้นได้ 404</li>
+  <li><strong><code>@post.comments.build(comment_params)</code></strong> = สร้างคอมเมนต์ใหม่ที่ผูกกับบทความนี้ให้แล้ว (เติม <code>post_id</code> เอง) แต่<strong>ยังไม่บันทึก</strong></li>
+  <li><strong><code>comment_params</code></strong> = รับเฉพาะช่อง <code>author_name</code> กับ <code>body</code> · ใครแอบส่ง <code>post_id</code> มาในฟอร์มก็ถูกทิ้ง (strong parameters — <a href="../../rails-day-2/lessons/0117-rest-and-strong-params.html">บท 117</a>)</li>
+  <li><strong><code>respond_to do |format|</code></strong> = "ลูกค้าอยากได้คำตอบแบบไหน ก็เตรียมแบบนั้น" · <code>format.html</code> คือแบบหน้าเว็บเต็ม (เหมือน scaffold) · <strong><code>format.turbo_stream</code> คือของใหม่ของบทนี้</strong> — อธิบายละเอียดในสองหัวข้อถัดไป</li>
+  <li><strong>ทางที่ไม่ผ่าน</strong> (<code>else</code>) = ส่งฟอร์มเดิมที่มี error กลับไปพร้อมรหัส <code>422</code> (รหัส "ข้อมูลไม่ผ่าน" แบบเดียวกับ scaffold ใน<a href="../../rails-day-2/lessons/0118-scaffold-reading.html">บท 118</a>) — ดูหัวข้อ "ส่งว่าง" ข้างล่าง</li>
+  <li><strong><code>format.html do … end</code> ในทาง <code>else</code></strong> = ทางสำรองตอนไม่มี Turbo (เช่นเบราว์เซอร์ปิด JavaScript — ลองในหัวข้อ Accept) · วาดหน้า show เดิมพร้อม error ·
+    ต้องเตรียม <code>@comments</code> เองตรงนี้ เพราะหน้า show ใช้ตัวแปรนี้ แต่คำขอนี้ไม่ได้ผ่าน <code>PostsController#show</code> ที่ปกติเตรียมให้</li>
+  <li><code># POST /posts/1/comments</code> = คอมเมนต์บอกว่า action นี้รับคำขอแบบไหน (ตามสไตล์ scaffold) · <code>private</code> = method ข้างล่างใช้กันเองในไฟล์นี้ route เรียกตรง ๆ ไม่ได้</li>
+</ul>
+
+<h2 id="sn-sec-4">หน้าจอ — หน้า show และแม่พิมพ์สองตัว</h2>
+
+<p>
+  <strong>ถาดหน้าครัวของหน้า show</strong> — เปิด <code>app/controllers/posts_controller.rb</code> เติมสองบรรทัดใน <code>def show</code> (เดิมว่าง):
+</p>
+<pre><code>  <span class="k">def</span> <span class="f">show</span>
+    @comments = @post.comments.<span class="f">order</span>(<span class="n">:created_at</span>)
+    @comment = <span class="n">Comment</span>.<span class="f">new</span>
+  <span class="k">end</span></code></pre>
+<p>
+  <code>@comments</code> = คอมเมนต์ของบทความนี้ <strong>เรียงเก่า → ใหม่</strong> (ของใหม่อยู่ล่างสุด ตรงกับ "ต่อท้าย") · <code>@comment</code> = คอมเมนต์เปล่าไว้วาดฟอร์ม
+</p>
+
+<p>
+  <strong>หน้า show</strong> — เปิด <code>app/views/posts/show.html.erb</code> เลื่อนไปท้ายไฟล์ · ตอนนี้ท้ายไฟล์หน้าตาแบบนี้ (แถวปุ่ม แก้ไข / กลับ / ลบ แล้วปิดด้วย <code>&lt;/div&gt;</code> สองตัว):
+</p>
+<pre><code>    &lt;%= <span class="f">button_to</span> <span class="s">"ลบบทความ"</span>, @post, … %&gt;
+  &lt;/div&gt;      <span class="c">← ปิดแถวปุ่ม</span>
+                <span class="c">← ★ วางก้อนใหม่ตรงนี้ (เว้นบรรทัดว่างหนึ่งบรรทัดก่อน)</span>
+&lt;/div&gt;        <span class="c">← บรรทัดสุดท้ายของไฟล์ ปิดกล่องใหญ่ทั้งหน้า</span></code></pre>
+<p>ก้อนที่วาง:</p>
+<pre><code>  &lt;section class=<span class="s">"mt-10 space-y-4"</span>&gt;
+    &lt;h2 class=<span class="s">"text-xl font-bold"</span>&gt;
+      ความคิดเห็น (&lt;span <strong>id=<span class="s">"comment_count"</span></strong>&gt;&lt;%= @post.comments.<span class="f">count</span> %&gt;&lt;/span&gt;)
+    &lt;/h2&gt;
+
+    &lt;div <strong>id=<span class="s">"comments"</span></strong> class=<span class="s">"space-y-3"</span>&gt;
+      &lt;%= <span class="f">render</span> @comments %&gt;
+    &lt;/div&gt;
+
+    &lt;%= <span class="f">render</span> <span class="s">"comments/form"</span>, <span class="n">post:</span> @post, <span class="n">comment:</span> @comment %&gt;
+  &lt;/section&gt;</code></pre>
+<ul>
+  <li><strong>สาม <code>id</code> ที่ตัวหนา</strong> = ป้ายบนกล่องที่จะถูกสั่งเปลี่ยนทีหลัง (<code>comment_count</code> · <code>comments</code> · และ <code>comment_form</code> ซึ่งอยู่ในแม่พิมพ์ฟอร์ม) · <strong>จำสามชื่อนี้ไว้</strong> ใช้ทั้งบท</li>
+  <li><code>&lt;span&gt;</code> = กล่องเล็กที่ครอบเฉพาะตัวเลข · มีไว้ให้เปลี่ยนแค่ตัวเลขได้โดยไม่แตะคำว่า "ความคิดเห็น"</li>
+  <li><code>&lt;%= render @comments %&gt;</code> = "ใช้แม่พิมพ์ <code>comments/_comment</code> กับทุกชิ้น" (Rails เดาชื่อแม่พิมพ์จากชนิดของแฟ้ม — <a href="./0123-layout-partial-locals.html">บท 123</a>) · ยังไม่มีคอมเมนต์ก็ไม่วาดอะไร</li>
+  <li><code>&lt;%= render "comments/form", post: @post, comment: @comment %&gt;</code> = ใช้แม่พิมพ์ฟอร์ม (สร้างข้างล่าง) และยื่นของใส่มือสองอย่าง</li>
+  <li>คลาส Tailwind (<a href="../../fe-nextjs/lessons/0072-tailwindcss.html">บท 72</a>): <code>mt-10</code> = เว้นที่ว่างด้านบน · <code>space-y-4</code> / <code>space-y-3</code> = เว้นระยะแนวตั้งระหว่างของข้างใน · <code>text-xl font-bold</code> = ตัวใหญ่ หนา</li>
+</ul>
+
+<p>
+  <strong>แม่พิมพ์คอมเมนต์หนึ่งชิ้น</strong> — สร้างโฟลเดอร์ <code>app/views/comments/</code> แล้วสร้างไฟล์ <code>_comment.html.erb</code>:
+</p>
+<pre><code>&lt;%# locals: (comment:) -%&gt;
+&lt;article id="&lt;%= dom_id comment %&gt;" class="card bg-base-100 shadow-sm"&gt;
+  &lt;div class="card-body p-4 gap-1"&gt;
+    &lt;p class="text-sm text-base-content/70"&gt;
+      &lt;span class="font-semibold text-base-content"&gt;&lt;%= comment.author_name %&gt;&lt;/span&gt;
+      · &lt;%= time_ago_in_words(comment.created_at) %&gt; ago
+    &lt;/p&gt;
+    &lt;p class="whitespace-pre-line break-words"&gt;&lt;%= comment.body %&gt;&lt;/p&gt;
+  &lt;/div&gt;
+&lt;/article&gt;</code></pre>
+<ul>
+  <li>บรรทัด 1 strict locals: แม่พิมพ์นี้รับ <code>comment</code> อย่างเดียว (แบบเดียวกับ <code>_post</code> ใน<a href="./0126-lab-vibe1-views.html">บท 126</a>) · <code>-%&gt;</code> ที่มีขีด = ไม่ทิ้งบรรทัดว่างไว้ใน HTML</li>
+  <li><code>id="&lt;%= dom_id comment %&gt;"</code> → ได้ <code>comment_1</code> · <code>comment_2</code> … ป้ายเลขถ้วยของแต่ละชิ้น (เจอแล้วในบท 131)</li>
+  <li><code>&lt;%= time_ago_in_words(comment.created_at) %&gt; ago</code> = helper "ผ่านมานานแค่ไหน" ได้แค่ <code>less than a minute</code> ไม่มีคำว่า ago · เลยพิมพ์ <code>ago</code> ต่อท้ายเอง (<a href="./0124-view-helpers-and-form-with.html">บท 124</a>)</li>
+  <li><code>&lt;%= comment.author_name %&gt;</code> · <code>&lt;%= comment.body %&gt;</code> = ของที่ลูกค้าพิมพ์มา · <code>&lt;%= %&gt;</code> ใส่ซองใสให้เอง (escape) ใครพิมพ์ <code>&lt;script&gt;</code> มาก็ขึ้นเป็นตัวหนังสือ ไม่ทำงาน (<a href="./0125-xss-and-n-plus-one-in-views.html">บท 125</a>)</li>
+  <li><code>whitespace-pre-line</code> = คลาส Tailwind "ขึ้นบรรทัดใหม่ตามที่คนพิมพ์" · <code>break-words</code> = คำยาวไม่มีเว้นวรรคให้ตัดลงบรรทัดใหม่ ไม่ล้นจอมือถือ</li>
+  <li>คลาสหน้าตา: <code>card</code> <code>card-body</code> = การ์ดของ daisyUI · <code>bg-base-100</code> = สีพื้นการ์ดตามธีม · <code>shadow-sm</code> = เงาบาง ๆ · <code>p-4 gap-1</code> = ขอบในและช่องไฟ ·
+    <code>text-base-content/70</code> = สีตัวหนังสือหลักของธีม แต่จางลงเหลือ 70% (ตัวเลขหลัง <code>/</code> คือความเข้ม) · <code>text-sm</code> = ตัวเล็ก · <code>font-semibold</code> = ค่อนข้างหนา (บท 128)</li>
+</ul>
+
+<p>
+  <strong>แม่พิมพ์ฟอร์ม</strong> — สร้าง <code>app/views/comments/_form.html.erb</code> · หน้าตาเกือบเหมือน <code>posts/_form.html.erb</code> ที่ Lab Vibe 2 แต่งไว้ (กล่อง error สีแดง · กรอบแดงรอบช่องที่ผิด):
+</p>
+<pre><code>&lt;%# locals: (post:, comment:) -%&gt;
+&lt;%= form_with model: [ post, comment ], id: "comment_form", class: "card bg-base-100 shadow-sm" do |form| %&gt;
+  &lt;div class="card-body gap-4"&gt;
+    &lt;h3 class="card-title text-lg"&gt;เขียนความคิดเห็น&lt;/h3&gt;
+
+    &lt;% if comment.errors.any? %&gt;
+      &lt;div role="alert" class="alert alert-error"&gt;
+        &lt;div&gt;
+          &lt;p class="font-bold"&gt;ส่งไม่ได้ มี &lt;%= comment.errors.count %&gt; จุดที่ต้องแก้:&lt;/p&gt;
+          &lt;ul class="list-disc ml-6"&gt;
+            &lt;% comment.errors.each do |error| %&gt;
+              &lt;li&gt;&lt;%= error.full_message %&gt;&lt;/li&gt;
+            &lt;% end %&gt;
+          &lt;/ul&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;% end %&gt;
+
+    &lt;div&gt;
+      &lt;%= form.label :author_name, "ชื่อ", class: "block font-medium" %&gt;
+      &lt;%= form.text_field :author_name, class: ["input w-full mt-2", { "input-error": comment.errors[:author_name].any? }] %&gt;
+    &lt;/div&gt;
+
+    &lt;div&gt;
+      &lt;%= form.label :body, "ความคิดเห็น", class: "block font-medium" %&gt;
+      &lt;%= form.textarea :body, rows: 3, class: ["textarea w-full mt-2", { "textarea-error": comment.errors[:body].any? }] %&gt;
+    &lt;/div&gt;
+
+    &lt;div class="card-actions justify-end"&gt;
+      &lt;%= form.submit "ส่งความคิดเห็น", class: "btn btn-primary" %&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;% end %&gt;</code></pre>
+<p>มีแค่สามจุดที่ต่างจากฟอร์มบทความ:</p>
+<ul>
+  <li><strong><code>locals: (post:, comment:)</code></strong> = แม่พิมพ์นี้ต้องยื่นของ<strong>สองอย่าง</strong> — ต้องรู้บทความ เพราะ URL ที่ส่งไปมีเลขบทความ</li>
+  <li><strong><code>form_with model: [ post, comment ]</code></strong> = ใส่สองแฟ้มเป็นรายการ → Rails ต่อ URL ให้แบบซ้อน · ผลจริงที่ได้คือ <code>action="/posts/30/comments" method="post"</code> ตรงกับ route ที่เพิ่งเพิ่มพอดี</li>
+  <li><strong><code>id: "comment_form"</code></strong> = ติดป้าย <code>id</code> บนแท็ก <code>&lt;form&gt;</code> เอง — สำคัญมากในหัวข้อ replace / update</li>
+</ul>
+<p>ที่เหลือคือของเดิมจากฟอร์มบทความ ทวนเร็ว ๆ:</p>
+<ul>
+  <li><code>&lt;% if comment.errors.any? %&gt;</code> … <code>&lt;% end %&gt;</code> = วาดกล่องแดงเฉพาะตอน save ไม่ผ่าน · <code>comment.errors.each</code> วนทีละข้อ · <code>error.full_message</code> = ประโยค error เต็ม ๆ (<a href="../../rails-day-2/lessons/0110-validations.html">บท 110</a>) · ฟอร์มเปล่าตอนเปิดหน้าครั้งแรกไม่มี error เลยไม่มีกล่องนี้</li>
+  <li><code>role="alert" class="alert alert-error"</code> = กล่องแจ้งเตือนสีแดงของ daisyUI · <code>list-disc ml-6</code> = รายการมีจุดนำหน้า เยื้องเข้า</li>
+  <li><code>form.label :author_name, "ชื่อ"</code> = ป้ายช่องที่เขียนว่า "ชื่อ" · <code>form.text_field</code> = ช่องพิมพ์บรรทัดเดียว · <code>form.textarea :body, rows: 3</code> = ช่องพิมพ์หลายบรรทัด สูง 3 บรรทัด (<a href="./0124-view-helpers-and-form-with.html">บท 124</a>)</li>
+  <li><code>class: ["input w-full mt-2", { "input-error": … }]</code> = "คลาสพวกนี้ใส่เสมอ ส่วน <code>input-error</code> (กรอบแดง) ใส่เฉพาะตอนช่องนี้มี error"</li>
+  <li><code>card-title</code> = หัวข้อการ์ด · <code>card-actions justify-end</code> = แถวปุ่มชิดขวา · <code>btn btn-primary</code> = ปุ่มสีหลักของธีม (บท 128)</li>
+</ul>
+
+<div class="predict">
+  <p><strong>ลองก่อนเขียนต่อ</strong> — ตอนนี้ยัง<strong>ไม่มี</strong>ไฟล์ <code>app/views/comments/create.turbo_stream.erb</code> · เปิด <code>http://localhost:3000/posts/30</code> (หรือบทความไหนก็ได้) ·
+    พิมพ์ชื่อ <code>ทดลอง</code> ข้อความ <code>ส่งก่อนมีไฟล์ stream</code> แล้วกดส่ง</p>
+  <p class="ask">คิดว่าเกิดอะไร? หน้า error สีแดง? คอมเมนต์ขึ้น? หรืออย่างอื่น? แล้วคอมเมนต์ถูกบันทึกลงตู้ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่มีอะไรเกิดขึ้นเลยบนหน้าจอ</strong> — ไม่มี error · รายการยังว่าง · ตัวนับยัง <code>(0)</code> · <strong>ช่องที่พิมพ์ไว้ยังมีข้อความค้างอยู่</strong> (ตรวจใน Chrome) · แต่ log บอกความจริง
+      (log = บันทึกของ server · ดูได้ใน terminal ที่รัน <code>bin/dev</code> ตรงบรรทัดที่ขึ้นต้นด้วย <code>web.1 |</code> หรือเปิดไฟล์ <code>log/development.log</code>):</p>
+<pre><code>Started POST "/posts/30/comments" for ::1 at 2026-11-07 11:00:23 +0700
+Processing by CommentsController#create as TURBO_STREAM
+  Parameters: {"authenticity_token" =&gt; "[FILTERED]", "comment" =&gt; {"author_name" =&gt; "ทดลอง", "body" =&gt; "ส่งก่อนมีไฟล์ stream"}, "commit" =&gt; "ส่งความคิดเห็น", "post_id" =&gt; "30"}
+  Post Load (1.3ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 30 LIMIT 1
+  TRANSACTION (1.1ms)  BEGIN
+  Comment Create (2.7ms)  INSERT INTO "comments" ("body", "author_name", "post_id", "created_at", "updated_at") VALUES ('ส่งก่อนมีไฟล์ stream', 'ทดลอง', 30, '2026-11-07 04:00:23.752225', '2026-11-07 04:00:23.752225') RETURNING "id"
+  TRANSACTION (1.1ms)  COMMIT
+No template found for CommentsController#create, rendering head :no_content
+Completed 204 No Content in 12ms (ActiveRecord: 4.6ms (2 queries, 0 cached) | GC: 0.2ms)</code></pre>
+    <ul>
+      <li><code>INSERT</code> + <code>COMMIT</code> = <strong>บันทึกลงตู้แล้วจริง</strong> · กดรีเฟรชหน้าจะเห็น <code>ความคิดเห็น (1)</code> และคอมเมนต์ "ทดลอง" โผล่</li>
+      <li><code>No template found … rendering head :no_content</code> = เชฟทำอาหารเสร็จ แต่ไม่มีแม่แบบจาน · Rails เลยตอบ <strong><code>204 No Content</code></strong> = "เรียบร้อย แต่ไม่มีอะไรให้" · Turbo ได้ของว่าง ก็ไม่เปลี่ยนอะไรบนหน้า</li>
+    </ul>
+    <p>อาการ <strong>"บันทึกแล้วแต่หน้าจอไม่ขยับ"</strong> นี้เจอบ่อยมากตอนสั่ง AI แล้วมันลืมสร้างไฟล์ stream · <strong>ดู log หาคำว่า <code>No template found</code></strong> คือทางลัด · คอมเมนต์ "ทดลอง" เก็บไว้ได้เลย ตัวอย่างข้างล่างนับต่อจากมัน</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">Turbo Stream คืออะไร — ใบสั่งงานหลายข้อ</h2>
+
+<p>
+  ปกติ server ตอบกลับมาเป็น<strong>หน้าเว็บ</strong> · Turbo Stream คือคำตอบอีกแบบที่<strong>ไม่ใช่หน้าเว็บ แต่เป็นรายการคำสั่ง</strong> ·
+  แต่ละข้อบอกสามอย่าง: <strong>ทำอะไร</strong> (ต่อท้าย / แทน / ลบ…) · <strong>กับกล่อง id ไหน</strong> · <strong>ด้วย HTML ชิ้นไหน</strong> ·
+  Turbo ในเบราว์เซอร์อ่านทีละข้อแล้วทำตาม — ข้อเดียวก็ได้ สิบข้อก็ได้ กล่องอยู่ตรงไหนของหน้าก็ได้
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    บท 131 (Frame) เหมือนพนักงานยกถ้วยใหม่มาเปลี่ยน<strong>ถ้วยเดียว</strong>บนโต๊ะ ·
+    Turbo Stream เหมือนครัวยื่น<strong>ใบสั่งงานหลายข้อ</strong>ให้พนักงานเสิร์ฟถือไปที่โต๊ะ:
+    "① วางจานนี้ต่อท้ายแถวจานคอมเมนต์ · ② เปลี่ยนป้ายจำนวนเป็น 2 · ③ เก็บกระดาษสั่งที่เขียนแล้ว วางใบใหม่ที่ว่าง" ·
+    พนักงานทำตามทีละข้อ โต๊ะเดิม ผ้าปูเดิม ลูกค้าไม่ต้องลุก ·
+    ของที่วางลงโต๊ะ<strong>ครัวจัดจานเสร็จแล้ว</strong>ทุกชิ้น (HTML) พนักงานไม่ได้ปรุงอะไรเอง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานคนนี้<strong>ไม่ถามกลับ</strong> — ถ้าหาโต๊ะ/ป้ายตามที่ใบสั่งเขียนไม่เจอ เขาข้ามข้อนั้นไปเงียบ ๆ ไม่มีใครรู้ (ภารกิจท้ายบทจะเจอกับตัว) ·
+    และใบสั่งไปถึงแค่<strong>โต๊ะที่สั่ง</strong> (แท็บที่กดส่ง) · โต๊ะอื่นที่เปิดหน้าเดียวกันอยู่ไม่รู้เรื่อง (ลองแล้ว: เปิดสองแท็บ ส่งจากแท็บซ้าย แท็บขวายังเป็นตัวเลขเดิมจนกว่าจะรีเฟรช — ทำให้ทุกโต๊ะได้ยินคือ<a href="./0133-broadcast-and-turbo-limits.html">บท 133</a>)
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ React ที่เพิ่งเรียน</strong> (<a href="../../fe-nextjs/lessons/0073-usestate.html">บท 73</a>): ถ้าทำหน้านี้ด้วย React เราจะได้ข้อมูลคอมเมนต์ใหม่มาเป็น JSON แล้วต้องเขียนเองในเบราว์เซอร์ว่า
+  "เติมเข้า state รายการ · บวกตัวนับ 1 · ล้าง state ของฟอร์ม" — สามบรรทัด <code>setXxx(…)</code> และเบราว์เซอร์ต้องจำข้อมูลชุดที่สอง (สมุดจดบนโต๊ะลูกค้า) ·
+  แบบ Turbo Stream เบราว์เซอร์<strong>ไม่ได้จำอะไรเลย</strong> · ตัวเลข <code>2</code> มาจาก server นับในตู้ใหม่ทุกครั้ง · นี่คือประโยคหลักข้อ ① ของวัน: ถ้า server เป็นเจ้าของข้อมูลชุดเดียว บั๊ก "ตัวเลขไม่ตรงกัน" ก็ไม่มี
+</p>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>Turbo Stream</dt>
+    <dd>คำตอบจาก server ที่เป็นรายการคำสั่งเปลี่ยน HTML ในหน้า หลายจุดพร้อมกัน · พิมพ์บอก AI ได้ว่า "ตอบ create ด้วย Turbo Stream: append รายการ, update ตัวนับ, replace ฟอร์ม"</dd>
+    <dt>action</dt>
+    <dd>คำสั่งในแต่ละข้อ เช่น <code>append</code> <code>update</code> <code>replace</code> (มีทั้งหมด 8 ตัว — ตารางข้างล่าง)</dd>
+    <dt>target</dt>
+    <dd><code>id</code> ของกล่องที่คำสั่งนั้นทำงานด้วย · ถาม senior ได้ว่า "target ของ stream นี้ควรเป็น id ธรรมดาหรือใช้ <code>dom_id</code> ดีครับ"</dd>
+    <dt><code>&lt;template&gt;</code></dt>
+    <dd>แท็ก HTML มาตรฐานที่ห่อ "ของที่จะเอาไปวาง" ไว้ · เนื้อในแท็กนี้เบราว์เซอร์<strong>ไม่โชว์</strong>จนกว่าโค้ดจะหยิบออกไปใช้ — Turbo หยิบไปวางตาม action</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">เขียน <code>create.turbo_stream.erb</code> — ใบสั่งงานสามข้อ</h2>
+
+<p>สร้างไฟล์ <code>app/views/comments/create.turbo_stream.erb</code> — ทั้งไฟล์มีแค่นี้:</p>
+<pre><code>&lt;%# 1) ต่อท้ายรายการ  2) อัปเดตตัวนับ  3) แทนฟอร์มด้วยฟอร์มว่าง %&gt;
+&lt;%= turbo_stream.append "comments", @comment %&gt;
+&lt;%= turbo_stream.update "comment_count", @post.comments.count %&gt;
+&lt;%= turbo_stream.replace "comment_form", partial: "comments/form", locals: { post: @post, comment: Comment.new } %&gt;</code></pre>
+<p><strong>ชื่อไฟล์อ่านเป็นสามท่อน:</strong> <code>create</code> = ใช้กับ action <code>create</code> · <code>turbo_stream</code> = ใช้ตอนลูกค้าขอคำตอบแบบใบสั่งงาน · <code>erb</code> = แม่แบบที่มีช่องให้เติมเหมือนไฟล์ view ทุกไฟล์ (บท 122)</p>
+<ul>
+  <li><strong>บรรทัด 1</strong> <code>&lt;%# … %&gt;</code> = คอมเมนต์ ไม่ขึ้นจาน</li>
+  <li><strong>บรรทัด 2</strong> <code>turbo_stream.append "comments", @comment</code> = "ข้อ ①: <strong>ต่อท้าย</strong>ในกล่อง <code>id="comments"</code> ด้วยคอมเมนต์นี้" ·
+    ส่ง <code>@comment</code> (แฟ้ม) ไปเฉย ๆ Rails เดาแม่พิมพ์ <code>comments/_comment</code> ให้ แบบเดียวกับ <code>render @comment</code></li>
+  <li><strong>บรรทัด 3</strong> <code>turbo_stream.update "comment_count", @post.comments.count</code> = "ข้อ ②: <strong>เปลี่ยนของข้างใน</strong> <code>&lt;span id="comment_count"&gt;</code> เป็นตัวเลขนี้" ·
+    <code>count</code> = ถามตู้นับใหม่ (<code>SELECT COUNT(*)</code>) ได้เลขจริงเสมอ</li>
+  <li><strong>บรรทัด 4</strong> <code>turbo_stream.replace "comment_form", partial: "comments/form", locals: { post: @post, comment: Comment.new }</code> =
+    "ข้อ ③: <strong>เอาฟอร์มใบเก่าออกทั้งใบ</strong> แล้ววางฟอร์มใหม่จากแม่พิมพ์ <code>_form</code> ที่ใส่คอมเมนต์เปล่า" → ช่องว่างทั้งหมด</li>
+</ul>
+<p>
+  <strong>ทำไม controller แทบไม่ต้องแก้:</strong> บรรทัด <code>format.turbo_stream</code> ใน controller <strong>ไม่มีบล็อก <code>{ … }</code> ต่อท้าย</strong> แปลว่า
+  "ทำตามแม่แบบชื่อเดียวกับ action" → Rails ไปหา <code>create.turbo_stream.erb</code> เอง · ตอนที่ยังไม่มีไฟล์ก็เลยได้ 204 อย่างที่เห็นข้างบน
+</p>
+
+<h2 id="sn-sec-7">Rails รู้ได้ยังไงว่าต้องตอบเป็นใบสั่งงาน</h2>
+
+<p>
+  ใบสั่ง (request) ทุกใบมี<strong>บรรทัดข้อมูลแนบหัวกระดาษ</strong>ที่คนใช้เว็บมองไม่เห็น เรียกว่า <strong>header</strong> · หนึ่งในนั้นชื่อ <code>Accept</code> = "รับคำตอบแบบไหนได้บ้าง เรียงตามที่อยากได้" ·
+  ตอนกดส่งฟอร์ม Turbo เป็นคนส่งแทนเบราว์เซอร์ (บท 130) และ<strong>เขียน Accept ให้เอง</strong> · ค่าที่ดักได้จริงใน Chrome:
+</p>
+<pre><code>Accept: text/vnd.turbo-stream.html, text/html, application/xhtml+xml</code></pre>
+<p>
+  ตัวแรก <code>text/vnd.turbo-stream.html</code> = "ขอเป็นใบสั่งงานก่อนนะ" · ถ้าไม่มีค่อยเอาหน้าเว็บ (<code>text/html</code>) ·
+  Rails อ่านแล้วจดใน log ว่า <code>Processing by CommentsController#create <strong>as TURBO_STREAM</strong></code> → <code>respond_to</code> จึงเลือกทาง <code>format.turbo_stream</code>
+</p>
+<p>
+  <strong>เคยเจอแล้วฝั่ง Go:</strong> header <code>Accept: application/json</code> ใน<a href="../../day-8/lessons/0035-query-body-header.html">บท 35</a> คือของชิ้นเดียวกัน — ตอนนั้น client ขอ JSON · ตอนนี้ Turbo ขอ "ใบสั่งงาน" ·
+  ส่วน <code>respond_to</code> ก็คือ "อ่าน Accept แล้วเลือกวิธีตอบ" ที่ Rails ทำให้ แทนที่เราจะต้องเขียน <code>if</code> ดู header เอง
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    ใบสั่งอาหารมีช่องเล็ก ๆ ให้ติ๊ก "ขอแบบไหน": <strong>☑ ขอเป็นใบสั่งงานให้พนักงานเปลี่ยนของบนโต๊ะ · ☐ ถ้าไม่ได้ เสิร์ฟจานใหม่ทั้งชุด</strong> ·
+    หัวหน้าเชฟ (<code>respond_to</code>) ดูช่องนี้แล้วเลือกเตรียมให้ตรง — ครัวเดียวกัน ทำอาหารเหมือนกัน (บันทึกคอมเมนต์เหมือนกัน) ต่างกันแค่<strong>วิธีเสิร์ฟ</strong>
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ลูกค้า (คนที่ใช้เว็บ) ไม่ได้ติ๊กเอง — <strong>Turbo ติ๊กให้</strong> · ถ้าเบราว์เซอร์ปิด JavaScript ก็ไม่มี Turbo ไม่มีใครติ๊ก ·
+    ใบสั่งไปแบบธรรมดา → Rails เลือก <code>format.html</code> → <code>redirect_to</code> ทั้งหน้า + ข้อความ "เพิ่มความคิดเห็นแล้ว" ·
+    ลองแล้วใน Chrome ที่ปิด JavaScript: ส่งได้ คอมเมนต์ขึ้น แค่หน้าโหลดใหม่ทั้งหน้า (log: <code>as HTML</code> · <code>302 Found</code>) = เว็บยังใช้ได้แม้ JavaScript พัง
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>Accept header</dt>
+    <dd>บรรทัดในใบสั่ง (request) ที่บอกว่ารับคำตอบชนิดไหนได้ · ถาม AI ได้ว่า "request นี้ Accept อะไร ทำไม Rails ถึงตอบเป็น HTML แทน turbo stream"</dd>
+    <dt>MIME type / format</dt>
+    <dd>ชื่อชนิดของข้อมูล เช่น <code>text/html</code> · <code>text/vnd.turbo-stream.html</code> · Rails ย่อเป็น format <code>:html</code> <code>:turbo_stream</code> ใช้ใน <code>respond_to</code></dd>
+    <dt><code>respond_to</code></dt>
+    <dd>ตัวเลือกวิธีตอบตามชนิดที่ลูกค้าขอ · พูดกับ senior ได้ว่า "create มี respond_to สองทาง: turbo_stream ใช้ template, html ทำ redirect เป็น fallback"</dd>
+    <dt>204 No Content</dt>
+    <dd>รหัสตอบ "สำเร็จ แต่ไม่มีเนื้อหา" · ถ้าเจอหลังส่งฟอร์มแล้วหน้าไม่ขยับ ให้สงสัยว่าลืมไฟล์ template</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">ของจริงที่ server ส่งกลับ — ใบสั่งงานหน้าตาแบบนี้</h2>
+
+<p>
+  <strong>เปิดดูใบสั่งด้วยตาตัวเองไปพร้อมกัน:</strong> ใน Chrome คลิกขวาที่หน้า → <strong>Inspect</strong> (ตรวจสอบ) → แท็บ <strong>Network</strong> เปิดค้างไว้<strong>ก่อน</strong>กดส่ง (แท็บนี้จดเฉพาะคำขอที่เกิดหลังเปิด — บท 130) ·
+  แล้วพิมพ์ชื่อ <code>ต้นกล้า</code> ข้อความ <code>ชาเย็นร้านนี้หวานกำลังดี</code> กดส่ง · ผลที่ตรวจใน Chrome จริง:
+</p>
+<ul>
+  <li>✅ คอมเมนต์ของต้นกล้า<strong>ต่อท้าย</strong>ใต้คอมเมนต์ "ทดลอง" (id <code>comment_2</code>)</li>
+  <li>✅ หัวข้อเปลี่ยนเป็น <code>ความคิดเห็น (2)</code></li>
+  <li>✅ ช่องชื่อและช่องข้อความ<strong>ว่าง</strong></li>
+  <li>✅ แถบที่อยู่ยังเป็น <code>/posts/30</code> และหน้า<strong>ไม่ได้โหลดใหม่</strong> (วิธีที่เราตรวจ: ฝากค่าไว้ในหน้าผ่าน Console ก่อนกด หลังกดค่านั้นยังอยู่ — ถ้าหน้าโหลดใหม่ ค่าที่ฝากไว้จะหายหมด)</li>
+</ul>
+
+<p>
+  ในแท็บ Network คลิกแถวชื่อ <code>comments</code> → แท็บ <strong>Response</strong> · นี่คือของที่ server ส่งมาจริง (ตัด token ยาว ๆ และไส้ฟอร์มบางส่วนออก):
+</p>
+<pre><code>&lt;turbo-stream action="append" target="comments"&gt;&lt;template&gt;&lt;!-- BEGIN app/views/comments/_comment.html.erb
+--&gt;&lt;article id="comment_2" class="card bg-base-100 shadow-sm"&gt;
+  &lt;div class="card-body p-4 gap-1"&gt;
+    &lt;p class="text-sm text-base-content/70"&gt;
+      &lt;span class="font-semibold text-base-content"&gt;ต้นกล้า&lt;/span&gt;
+      · less than a minute ago
+    &lt;/p&gt;
+    &lt;p class="whitespace-pre-line break-words"&gt;ชาเย็นร้านนี้หวานกำลังดี&lt;/p&gt;
+  &lt;/div&gt;
+&lt;/article&gt;
+&lt;!-- END app/views/comments/_comment.html.erb --&gt;&lt;/template&gt;&lt;/turbo-stream&gt;
+&lt;turbo-stream action="update" target="comment_count"&gt;&lt;template&gt;2&lt;/template&gt;&lt;/turbo-stream&gt;
+&lt;turbo-stream action="replace" target="comment_form"&gt;&lt;template&gt;&lt;!-- BEGIN app/views/comments/_form.html.erb
+--&gt;&lt;form id="comment_form" class="card bg-base-100 shadow-sm" action="/posts/30/comments" accept-charset="UTF-8" method="post"&gt;&lt;input type="hidden" name="authenticity_token" value="(ตัด)" /&gt;
+  &lt;div class="card-body gap-4"&gt;
+    &lt;h3 class="card-title text-lg"&gt;เขียนความคิดเห็น&lt;/h3&gt;
+    …(ช่องชื่อ · ช่องความคิดเห็น · ปุ่มส่ง — ว่างทั้งหมด)…
+  &lt;/div&gt;
+&lt;/form&gt;&lt;!-- END app/views/comments/_form.html.erb --&gt;&lt;/template&gt;&lt;/turbo-stream&gt;</code></pre>
+<p>อ่านทีละก้อน:</p>
+<ul>
+  <li><strong>สามแท็ก <code>&lt;turbo-stream&gt;</code></strong> = สามบรรทัดใน <code>create.turbo_stream.erb</code> ตรงตัว · <code>action="append" target="comments"</code> มาจากบรรทัด 2 · <code>update</code> / <code>comment_count</code> จากบรรทัด 3 · <code>replace</code> / <code>comment_form</code> จากบรรทัด 4</li>
+  <li><strong>ใน <code>&lt;template&gt;</code> ของข้อ ①</strong> = HTML ที่แม่พิมพ์ <code>_comment</code> วาดเสร็จแล้ว (การ์ด <code>id="comment_2"</code>)</li>
+  <li><strong>ข้อ ②</strong> มีแค่ <code>2</code> — server นับมาให้แล้ว เบราว์เซอร์ไม่ได้บวกเอง</li>
+  <li><strong>ข้อ ③</strong> = ฟอร์มใหม่ทั้งใบ มี <code>id="comment_form"</code> ติดมาด้วย และมี <code>authenticity_token</code> ใหม่ฝังมา (CSRF — บท 124) จึงส่งครั้งต่อไปได้เลย</li>
+  <li><code>&lt;!-- BEGIN app/views/… --&gt;</code> / <code>&lt;!-- END … --&gt;</code> = ป้ายบอกว่า HTML ก้อนนี้มาจากไฟล์ไหน · Rails ใส่ให้เฉพาะตอน development ช่วยไล่หาไฟล์ · production ไม่มี</li>
+</ul>
+<p>log ของใบสั่งเดียวกัน:</p>
+<pre><code>Processing by CommentsController#create as TURBO_STREAM
+  Parameters: {"authenticity_token" =&gt; "[FILTERED]", "comment" =&gt; {"author_name" =&gt; "ต้นกล้า", "body" =&gt; "ชาเย็นร้านนี้หวานกำลังดี"}, "commit" =&gt; "ส่งความคิดเห็น", "post_id" =&gt; "30"}
+  Post Load (1.3ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 30 LIMIT 1
+  TRANSACTION (0.9ms)  BEGIN
+  Comment Create (2.6ms)  INSERT INTO "comments" ("body", "author_name", "post_id", "created_at", "updated_at") VALUES (…) RETURNING "id"
+  TRANSACTION (1.2ms)  COMMIT
+  Rendering comments/create.turbo_stream.erb
+  Rendered comments/_comment.html.erb (Duration: 0.2ms | GC: 0.0ms)
+  Comment Count (1.0ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 30
+  Rendered comments/_form.html.erb (Duration: 0.4ms | GC: 0.0ms)
+  Rendered comments/create.turbo_stream.erb (Duration: 3.3ms | GC: 0.0ms)
+Completed 200 OK in 13ms (Views: 3.6ms | ActiveRecord: 4.6ms (3 queries, 0 cached) | GC: 0.0ms)</code></pre>
+<p>
+  เทียบกับตอนยังไม่มีไฟล์: คราวนี้มี <code>Rendering comments/create.turbo_stream.erb</code> และได้ <code>200 OK</code> แทน <code>204</code> ·
+  <code>Comment Count</code> คือบรรทัด 3 ของไฟล์ stream ไปถามตู้นับ
+</p>
+
+<h2 id="sn-sec-9">ส่งว่าง — error โผล่ในฟอร์ม ที่เดิม</h2>
+
+<p>
+  กดส่งโดยไม่พิมพ์อะไรเลย · ผลใน Chrome: กล่องแดง <strong>"ส่งไม่ได้ มี 2 จุดที่ต้องแก้: Author name can't be blank · Body can't be blank"</strong> ขึ้นในฟอร์ม · ช่องทั้งสองมีกรอบแดง ·
+  รายการยัง 2 ชิ้น ตัวนับยัง <code>(2)</code> · URL ไม่เปลี่ยน · ถ้าพิมพ์ข้อความไว้แต่ลืมชื่อ ข้อความที่พิมพ์<strong>ไม่หาย</strong> (ฟอร์มใหม่วาดจาก <code>@comment</code> ตัวที่มีค่าเดิม)
+</p>
+<p>ทางนี้มาจาก <code>else</code> ใน controller:</p>
+<pre><code>        <span class="f">format</span>.turbo_stream <span class="k">do</span>
+          <span class="f">render</span> <span class="n">turbo_stream:</span> turbo_stream.<span class="f">replace</span>(<span class="s">"comment_form"</span>, <span class="n">partial:</span> <span class="s">"comments/form"</span>, <span class="n">locals:</span> { <span class="n">post:</span> @post, <span class="n">comment:</span> @comment }),
+                 <span class="n">status:</span> <span class="n">:unprocessable_content</span>
+        <span class="k">end</span></code></pre>
+<p>
+  เป็นใบสั่ง<strong>ข้อเดียว</strong>เขียนตรงใน controller (ไม่ต้องมีไฟล์แยก) — "แทนฟอร์มด้วยฟอร์มที่มี error" · <code>@comment</code> ตัวนี้ save ไม่ผ่าน เลยมี <code>errors</code> ติดอยู่ให้แม่พิมพ์วาดกล่องแดง ·
+  คำตอบจริงจาก server (ตัดบางส่วน):
+</p>
+<pre><code>&lt;turbo-stream action="replace" target="comment_form"&gt;&lt;template&gt;&lt;!-- BEGIN app/views/comments/_form.html.erb
+--&gt;&lt;form id="comment_form" class="card bg-base-100 shadow-sm" action="/posts/30/comments" accept-charset="UTF-8" method="post"&gt;&lt;input type="hidden" name="authenticity_token" value="(ตัด)" /&gt;
+  &lt;div class="card-body gap-4"&gt;
+    &lt;h3 class="card-title text-lg"&gt;เขียนความคิดเห็น&lt;/h3&gt;
+
+      &lt;div role="alert" class="alert alert-error"&gt;
+        &lt;div&gt;
+          &lt;p class="font-bold"&gt;ส่งไม่ได้ มี 2 จุดที่ต้องแก้:&lt;/p&gt;
+          &lt;ul class="list-disc ml-6"&gt;
+              &lt;li&gt;Author name can&amp;#39;t be blank&lt;/li&gt;
+              &lt;li&gt;Body can&amp;#39;t be blank&lt;/li&gt;
+          &lt;/ul&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+    &lt;div&gt;
+      &lt;div class="field_with_errors"&gt;&lt;label class="block font-medium" for="comment_author_name"&gt;ชื่อ&lt;/label&gt;&lt;/div&gt;
+      &lt;div class="field_with_errors"&gt;&lt;input class="input w-full mt-2 input-error" type="text" value="" name="comment[author_name]" id="comment_author_name" /&gt;&lt;/div&gt;
+    &lt;/div&gt;
+
+    …(ช่องความคิดเห็นหน้าตาแบบเดียวกัน · ปุ่มส่ง)…
+  &lt;/div&gt;
+&lt;/form&gt;&lt;!-- END app/views/comments/_form.html.erb --&gt;&lt;/template&gt;&lt;/turbo-stream&gt;</code></pre>
+<ul>
+  <li><strong>แท็กเดียว</strong> <code>replace</code> → รายการกับตัวนับไม่ถูกแตะ</li>
+  <li><code>&lt;div class="field_with_errors"&gt;</code> = Rails ห่อช่องที่ผิดให้เองอัตโนมัติ (ไม่ได้เขียนเอง ไม่มีผลกับหน้าตาในแอปนี้)</li>
+  <li><strong>ข้อความ error เป็นภาษาอังกฤษ</strong> (<code>Author name</code> แปลงมาจากชื่อคอลัมน์ <code>author_name</code>) เพราะแอปยังไม่ได้ตั้งภาษาไทย — ปกติ ไม่ใช่บั๊กของคุณ</li>
+  <li>ใน Console ของ Chrome จะมีบรรทัดแดง <code>Failed to load resource: the server responded with a status of 422 (Unprocessable Content)</code> = <strong>ปกติ</strong> เบราว์เซอร์แค่รายงานว่าได้รหัส 422</li>
+</ul>
+<div class="warn">
+  <p><strong><code>status: :unprocessable_content</code> (รหัส 422) อย่าลืม</strong> — ลองแล้ว: เปลี่ยนเป็น 200 หน้าจอก็ยังโชว์ error เหมือนเดิม (Turbo ทำตามใบสั่งโดยไม่ดูรหัส) ·
+    แต่รหัสคือ<strong>การบอกความจริง</strong>ว่า "ไม่สำเร็จ" ให้ log · test (Day 4) และเครื่องมือที่นับ error อ่านถูก · และเป็นข้อห้ามในโจทย์ Lab ของสไลด์หน้า 52 ด้วย</p>
+</div>
+
+<h2 id="sn-sec-10">คำสั่งทั้ง 8 ของ Turbo Stream</h2>
+
+<p>
+  ในไฟล์เราใช้แค่สามคำสั่ง · ของจริงมีแปด (สไลด์หน้า 44 นับ before/after เป็นข้อเดียวเลยได้ 7 แถว) ·
+  ทุกตัวในตารางนี้<strong>ลองแล้วใน Chrome</strong>กับหน้าคอมเมนต์ของเรา:
+</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>คำสั่ง</th><th>ทำอะไรกับกล่อง target</th><th>ในร้านอาหาร</th><th>ใช้ตอนไหน</th></tr></thead>
+  <tbody>
+    <tr><td><code>append</code></td><td>เติมของใหม่<strong>ต่อท้าย</strong>ข้างในกล่อง</td><td>วางจานใหม่ปลายแถว</td><td>คอมเมนต์ใหม่ (เรียงเก่า→ใหม่)</td></tr>
+    <tr><td><code>prepend</code></td><td>เติมของใหม่<strong>ไว้บนสุด</strong>ข้างในกล่อง</td><td>วางจานใหม่หัวแถว</td><td>รายการที่ของใหม่อยู่บน เช่น แจ้งเตือน</td></tr>
+    <tr><td><code>replace</code></td><td>เอากล่อง<strong>ทั้งกล่อง</strong>ออก (รวมตัวมันเองและ id) วางของใหม่แทน</td><td>ยกถ้วยทั้งใบออก วางใบใหม่</td><td>ฟอร์ม · การ์ดที่ถูกแก้ทั้งใบ</td></tr>
+    <tr><td><code>update</code></td><td>เปลี่ยน<strong>เฉพาะของข้างใน</strong> กล่องเดิมอยู่ที่เดิม</td><td>เทของในถ้วยออก เติมใหม่ ถ้วยเดิม</td><td>ตัวเลข · ข้อความสั้น ๆ</td></tr>
+    <tr><td><code>remove</code></td><td>ลบกล่องทิ้ง (ไม่ต้องมี <code>&lt;template&gt;</code>)</td><td>เก็บจานออกจากโต๊ะ</td><td>ลบคอมเมนต์</td></tr>
+    <tr><td><code>before</code> / <code>after</code></td><td>แทรกของใหม่<strong>ข้างนอก</strong>กล่อง ก่อน / หลังมัน</td><td>วางจานข้าง ๆ ถ้วย ไม่ใส่ในถ้วย</td><td>ข้อความแจ้งเหนือฟอร์ม (ภารกิจ)</td></tr>
+    <tr><td><code>refresh</code></td><td>ให้หน้าไปขอหน้าเดิมจาก server ใหม่ (ผ่าน Turbo Drive · ไม่ต้องมี target)</td><td>จัดโต๊ะใหม่ตามสมุดสต็อกของครัว</td><td>เปลี่ยนหลายจุดจนเขียนทีละข้อไม่ไหว (บท 133)</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  <strong>ลองเล่นเองได้โดยไม่แก้ไฟล์ (ไม่บังคับ ข้ามได้):</strong> เปิดแท็บ <strong>Console</strong> ของ Chrome ที่หน้าบทความ แล้วพิมพ์บรรทัดนี้ กด Enter — คือการยื่นใบสั่งงานที่เราเขียนเองให้ Turbo ทำตาม:
+</p>
+<pre><code>Turbo.<span class="f">renderStreamMessage</span>(<span class="s">'&lt;turbo-stream action="remove" target="comment_1"&gt;&lt;/turbo-stream&gt;'</span>)</code></pre>
+<ul>
+  <li><code>Turbo</code> = ตัว Turbo ที่โหลดอยู่ในหน้าแล้ว · <code>.renderStreamMessage(…)</code> = "ทำตามใบสั่งนี้" · ข้อความในเครื่องหมาย <code>' '</code> คือใบสั่งหนึ่งข้อ หน้าตาเดียวกับที่ server ส่งมา</li>
+  <li><code>comment_1</code> = id ของคอมเมนต์ "ทดลอง" ในเครื่องที่ตรวจ · ของคุณอาจเป็นเลขอื่น — คลิกขวาที่การ์ดคอมเมนต์ → Inspect ดู <code>id="comment_…"</code> แล้วเปลี่ยนตาม</li>
+  <li>ถ้าวางแล้ว Chrome ขึ้นข้อความเตือนเรื่องการวางโค้ดและไม่ยอมให้วาง ให้ทำตามที่ข้อความบอก หรือพิมพ์เองทีละตัวอักษร</li>
+</ul>
+<p>
+  คอมเมนต์นั้นหายจากหน้าทันที · <strong>กดรีเฟรชแล้วมันกลับมา</strong> เพราะ Turbo Stream เปลี่ยนแค่ HTML บนจอ <strong>ไม่ได้แตะตู้</strong> — การลบจริงต้องผ่าน controller เสมอ
+</p>
+
+<h2 id="sn-sec-11">replace กับ update — ต่างกันคำเดียว แต่พังคนละแบบ</h2>
+
+<p>
+  สองคำนี้คนสับสนมากที่สุด · กติกาจำง่าย: <strong>ป้าย id ติดอยู่ที่ตัวกล่อง</strong> ·
+  <code>update</code> เก็บกล่อง (และป้าย) ไว้ เปลี่ยนแค่ของข้างใน · <code>replace</code> ยกกล่องพร้อมป้ายทิ้ง → ของใหม่<strong>ต้องมีป้ายเดิมติดมาเอง</strong> ไม่งั้นครั้งหน้าหาไม่เจอ
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    ถ้วยน้ำจิ้มมีป้ายเลข "comment_count" แปะที่ตัวถ้วย · <strong><code>update</code></strong> = เทน้ำจิ้มเก่าออก เติมใหม่ ถ้วยใบเดิม ป้ายยังอยู่ ·
+    <strong><code>replace</code></strong> = ยกถ้วยทั้งใบไปล้าง วางของใหม่ลงแทน — ถ้าของใหม่เป็นแค่ "น้ำจิ้มเปล่า ๆ ไม่มีถ้วย" ป้ายก็หายไปกับถ้วยเก่า ·
+    ใบสั่งงานรอบหน้าที่เขียนว่า "เปลี่ยนน้ำจิ้มในถ้วย comment_count" พนักงานก็หาไม่เจอ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริงพนักงานจะเดินกลับมาถามว่า "ถ้วยเบอร์นี้ไม่มีครับ" · Turbo <strong>ไม่ถาม ไม่ฟ้อง</strong> — console ว่างเปล่า หน้าดูปกติ แค่ตัวเลขค้าง
+  </p>
+</div>
+
+<div class="predict">
+  <p>แก้บรรทัด 3 ของ <code>create.turbo_stream.erb</code> จาก <code>update</code> เป็น <code>replace</code> แบบนี้ (ทดลองชั่วคราว):</p>
+<pre><code>&lt;%= turbo_stream.<span class="f">replace</span> <span class="s">"comment_count"</span>, @post.comments.<span class="f">count</span> %&gt;</code></pre>
+  <p>บันทึกไฟล์ แล้วรีเฟรชหน้าบทความหนึ่งครั้ง · ถ้าทำตามบทมาตลอด หัวข้อตอนนี้คือ <code>ความคิดเห็น (2)</code> (ทดลอง + ต้นกล้า · ถ้าคุณส่งเล่นไว้เพิ่ม เลขจะมากกว่านี้ ไม่เป็นไร ดูแค่ว่าตัวเลข<strong>ขยับไหม</strong>) · ส่งคอมเมนต์ใหม่ <strong>สองครั้งติดกัน</strong></p>
+  <p class="ask">หลังส่งครั้งแรก หัวข้อเป็นอะไร? หลังส่งครั้งที่สองล่ะ? และ Console มี error ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลใน Chrome จริง:</p>
+<pre><code>ก่อนส่ง          ความคิดเห็น (2)    รายการ 2 ชิ้น    &lt;span id="comment_count"&gt;2&lt;/span&gt;
+ส่งครั้งที่ 1      ความคิดเห็น (3)    รายการ 3 ชิ้น    (ไม่มี span แล้ว เหลือแค่ตัวหนังสือ 3)
+ส่งครั้งที่ 2      ความคิดเห็น (3)    รายการ 4 ชิ้น    ← ตัวเลขค้าง
+Console: ว่าง ไม่มี error</code></pre>
+    <ul>
+      <li><strong>ครั้งแรกดูเหมือนถูก</strong> — <code>replace</code> เอา <code>&lt;span id="comment_count"&gt;</code> ทั้งก้อนออก แล้ววางตัวเลข <code>3</code> เปล่า ๆ แทน · ตัวเลขถูก แต่<strong>ป้าย id หายไปแล้ว</strong></li>
+      <li><strong>ครั้งที่สอง</strong> Turbo หากล่อง <code>comment_count</code> ไม่เจอ → ข้ามข้อนี้เงียบ ๆ · ข้อ ① กับ ③ ยังทำงาน รายการเลยเพิ่มแต่ตัวเลขค้าง</li>
+    </ul>
+    <p>
+      นี่คือบั๊กที่<strong>ทดสอบครั้งเดียวไม่เจอ</strong> · ต้องส่งอย่างน้อยสองครั้งเสมอ ·
+      กลับด้านก็พัง: ถ้าบรรทัด 4 ใช้ <code>update "comment_form"</code> จะได้<strong>ฟอร์มซ้อนในฟอร์ม</strong> (เพราะ <code>id</code> อยู่บนแท็ก <code>&lt;form&gt;</code> เอง และแม่พิมพ์ก็สร้าง <code>&lt;form&gt;</code> ใหม่ทั้งใบ) — ลองแล้ว ส่งครั้งที่สองหน้าโหลดใหม่ทั้งหน้าแทนที่จะเปลี่ยนแค่สามจุด ·
+      <strong>แก้กลับเป็น <code>update</code> ด้วยมือก่อนไปต่อ</strong> (ไฟล์นี้ยังไม่เคย commit จึงใช้ <code>git restore</code> ย้อนไม่ได้)
+    </p>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>replace (outerHTML)</dt>
+    <dd>แทนทั้ง element รวมแท็กของมันเอง · ภาษา JavaScript เรียกส่วนนี้ว่า <code>outerHTML</code> · บอก AI ได้ว่า "ฟอร์มมี id บน &lt;form&gt; เองต้องใช้ replace และ partial ต้องคืน id เดิม"</dd>
+    <dt>update (innerHTML)</dt>
+    <dd>แทนเฉพาะเนื้อข้างใน element · JavaScript เรียกว่า <code>innerHTML</code> · เหมาะกับตัวเลข/ข้อความในกล่องที่มี id อยู่แล้ว</dd>
+    <dt>target ไม่มีในหน้า</dt>
+    <dd>Turbo ข้ามคำสั่งนั้นไปโดยไม่ฟ้อง · เวลาตัวเลขค้างให้ถามตัวเองก่อนว่า "หลังคำสั่งรอบที่แล้ว id นี้ยังอยู่ในหน้าไหม"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-12">Frame หรือ Stream — เลือกยังไง</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Turbo Frame (บท 131)</th><th>Turbo Stream ตอบฟอร์ม (บทนี้)</th></tr></thead>
+  <tbody>
+    <tr><td>เปลี่ยนได้กี่กล่อง</td><td>1 กรอบ — กรอบที่ลิงก์/ฟอร์มอยู่ข้างใน</td><td>กี่กล่องก็ได้ อยู่ตรงไหนของหน้าก็ได้</td></tr>
+    <tr><td>ใครเลือกกล่อง</td><td>เบราว์เซอร์ — หา <code>&lt;turbo-frame id&gt;</code> ที่ตรงกันในคำตอบ</td><td>server — เขียน <code>target</code> ไว้ในใบสั่งทุกข้อ</td></tr>
+    <tr><td>server ตอบอะไร</td><td>หน้า HTML ธรรมดาที่มีกรอบ id เดียวกัน</td><td>ใบสั่งงาน <code>&lt;turbo-stream&gt;</code> (ชนิด <code>text/vnd.turbo-stream.html</code>)</td></tr>
+    <tr><td>เหมาะกับ</td><td>แก้ในที่เดิม · แท็บ · โหลดทีหลัง</td><td>ส่งฟอร์มแล้วต้องเปลี่ยนหลายจุด · เพิ่ม/ลบของในรายการ</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  <strong>กฎง่าย ๆ:</strong> ถามตัวเองว่า "กดแล้วต้องเปลี่ยน<strong>กี่กล่อง</strong>" · หนึ่งกล่องและเป็นกล่องที่กดอยู่ข้างใน → Frame · มากกว่าหนึ่ง หรืออยู่คนละที่ → Stream ·
+  และถามต่ออีกข้อว่า "ต้องเปลี่ยน<strong>แค่แท็บของคนกด</strong> หรือ<strong>ทุกคนที่เปิดหน้านี้</strong>" · แท็บคนกด = Stream ตอบฟอร์ม (บทนี้) · ทุกคน = Stream แบบ broadcast (<a href="./0133-broadcast-and-turbo-limits.html">บท 133</a>) — สองแบบนี้คือข้อที่สไลด์หน้า 51 บอกว่าคนตอบผิดเยอะที่สุด
+</p>
+
+<h2 id="sn-sec-13">เก็บงาน — commit</h2>
+
+<p>ก่อน commit ดูว่ามีไฟล์ครบไหม (ผลจริง · เลขในชื่อ migration ของคุณจะต่าง):</p>
+<pre><code>$ git status --short
+ M app/controllers/posts_controller.rb
+ M app/models/post.rb
+ M app/views/posts/show.html.erb
+ M config/routes.rb
+ M db/schema.rb
+?? app/controllers/comments_controller.rb
+?? app/models/comment.rb
+?? app/views/comments/
+?? db/migrate/20261107035534_create_comments.rb
+?? test/fixtures/comments.yml
+?? test/models/comment_test.rb</code></pre>
+<p>
+  <code>app/views/comments/</code> ข้างในต้องมีสามไฟล์ (<code>_comment.html.erb</code> · <code>_form.html.erb</code> · <code>create.turbo_stream.erb</code>) ·
+  ตรวจว่าบรรทัด 3 ของไฟล์ stream กลับเป็น <code>update</code> แล้ว · จากนั้น:
+</p>
+<pre><code>$ git add . &amp;&amp; git commit -m "Comment + ฟอร์มคอมเมนต์ตอบด้วย Turbo Stream"</code></pre>
+<p>โค้ดของคุณตอนนี้คือจุดเริ่มต้นของ<a href="./0133-broadcast-and-turbo-limits.html">บท 133</a></p>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ — ใบสั่งข้อที่ 4: ข้อความ "เพิ่มความคิดเห็นแล้ว" (~10 นาที)</h3>
+  <p>สไลด์หน้า 44 มีข้อ 4 ที่เรายังไม่ได้ทำ: โชว์ข้อความสำเร็จหลังส่ง · ลองเติมเองแล้วดูว่าเกิดอะไร · ต้อง commit ตามหัวข้อก่อนหน้าแล้ว (<code>git status</code> สะอาด)</p>
+  <ol>
+    <li>เปิด <code>app/views/comments/create.turbo_stream.erb</code> เพิ่มก้อนนี้ต่อท้ายไฟล์ (บรรทัดที่ 5 เป็นต้นไป) <strong>ตามสไลด์เป๊ะ ๆ</strong>:
+<pre><code>&lt;%= turbo_stream.<span class="f">prepend</span> <span class="s">"flash"</span> <span class="k">do</span> %&gt;
+  &lt;div class=<span class="s">"alert"</span>&gt;เพิ่มความคิดเห็นแล้ว&lt;/div&gt;
+&lt;% <span class="k">end</span> %&gt;</code></pre>
+      (<code>do … end</code> = แบบมีบล็อก: HTML ที่อยู่ระหว่างกลางคือของที่จะเอาไปวาง ใช้แทนการชี้ไปที่แม่พิมพ์)</li>
+    <li>ส่งคอมเมนต์หนึ่งครั้ง · ดูหน้าจอ และดูแท็บ Console</li>
+    <li>แก้บรรทัดแรกของก้อนนั้นเป็น <code>&lt;%= turbo_stream.before "comment_form" do %&gt;</code> และแก้คลาสเป็น <code>class="alert alert-success"</code> · ส่งคอมเมนต์<strong>สองครั้ง</strong></li>
+    <li>เก็บกวาด: <code>git restore app/views/comments/create.turbo_stream.erb</code> แล้ว <code>git status</code> ต้องว่าง</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ข้อ 2 เห็นข้อความสำเร็จไหม เพราะอะไร? ข้อ 3 ส่งสองครั้งแล้วเห็นข้อความกี่กล่อง เพราะอะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ข้อ 2 — ไม่มีข้อความโผล่เลย</strong> (ตรวจใน Chrome: ทั้งหน้าไม่มีกล่อง <code>.alert</code> สักกล่อง · Console ว่าง) · แต่คอมเมนต์ต่อท้าย ตัวนับเพิ่ม ฟอร์มว่าง ตามปกติ ·
+      เหตุผล: ในหน้าของเรา<strong>ไม่มีกล่องไหนชื่อ <code>id="flash"</code></strong> (layout ของแอปนี้ไม่มี · ข้อความ notice อยู่ในแต่ละหน้าด้วย <code>id="notice"</code> และโผล่เฉพาะตอนมีข้อความ) →
+      พนักงานหาป้ายไม่เจอ ข้ามข้อนี้เงียบ ๆ = "ที่ไม่เหมือนกัน" ของภาพใบสั่งงาน</p>
+    <p><strong>ข้อ 3 — ข้อความขึ้นเหนือฟอร์ม · ส่งครั้งที่สองได้สองกล่องซ้อนกัน</strong> (ผลจริงใน Chrome: ครั้งแรก 1 กล่อง ครั้งที่สอง 2 กล่อง "เพิ่มความคิดเห็นแล้ว") ·
+      เพราะ <code>before</code> = "<strong>แทรกเพิ่ม</strong>ข้างนอกกล่อง" ทุกครั้งที่ส่ง ไม่ได้แทนของเดิม · กล่อง <code>comment_form</code> ยังมีอยู่เสมอ (ข้อ ③ วางฟอร์มใหม่ที่มี id เดิมกลับมา) จึงหาเจอทุกรอบ</p>
+    <p>ถ้าอยากให้มีข้อความเดียวเสมอ ทางหนึ่งคือเตรียมกล่องว่างที่มี id ไว้ในหน้า show แล้วใช้ <code>update</code> กับกล่องนั้น · บทนี้ไม่ทำต่อ — เป้าหมายคือเห็นว่า<strong>คำสั่งต่างกันให้ผลต่างกัน และ target ต้องมีอยู่จริง</strong></p>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>หน้า error <code>ActionView::StrictLocalsError in Comments#create</code> · log มี <code>missing local: :post for app/views/comments/_form.html.erb</code></strong> —
+        คุณก็อปข้อ 3 ของสไลด์ (<code>render "comments/form", comment: Comment.new</code>) มาด้วย · แม่พิมพ์ฟอร์มของเราประกาศว่าต้องยื่น <code>post:</code> ด้วย ·
+        ลองแล้ว: คอมเมนต์<strong>ถูกบันทึกไปแล้ว</strong>ก่อนพัง (พังตอนวาดใบสั่ง) · แก้ด้วยการใช้บรรทัด 4 แบบในบทเรียน</li>
+      <li><strong>ข้อ 3 แล้วข้อความยังไม่ขึ้น</strong> — สะกด <code>"comment_form"</code> ผิด (เช่น <code>comments_form</code>) · target ผิดตัวเดียวก็ถูกข้ามเงียบ ๆ เหมือนข้อ 2</li>
+      <li><strong><code>git status</code> หลังข้อ 4 ยังเห็นไฟล์อื่น</strong> — คุณยังไม่ได้ commit งานของบทนี้ก่อนเริ่มภารกิจ · อย่า <code>git restore .</code> ทั้งโฟลเดอร์ จะลบงานทั้งบท · <code>git add . &amp;&amp; git commit</code> ก่อน</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-14">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ผู้ใช้กดส่งคอมเมนต์ แล้วต้องเปลี่ยน 3 จุดในหน้า<strong>เฉพาะแท็บของคนที่กดส่ง</strong> · ควรใช้อะไร? (ดัดแปลงจาก Quiz C สไลด์หน้า 51)</p>
+  <div class="opts">
+    <button class="opt">Turbo Frame ครอบฟอร์ม แล้วให้ create ตอบหน้า show กลับมา</button>
+    <button class="opt">Turbo Stream ที่ตอบกลับฟอร์ม — ไฟล์ <code>create.turbo_stream.erb</code></button>
+    <button class="opt">Turbo Stream แบบ broadcast ไปหาทุกคนที่เปิดหน้านี้อยู่</button>
+    <button class="opt">Turbo Drive เฉย ๆ เพราะมันไม่โหลดหน้าใหม่อยู่แล้ว</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — หลายกล่อง + เฉพาะคนกด = ใบสั่งงานที่ตอบกลับคำขอของคนนั้น</p>
+    <p>ตัวเลือกที่ 1 Frame เปลี่ยนได้แค่กรอบเดียว รายการกับตัวนับอยู่นอกกรอบจึงไม่ขยับ ·
+       ตัวเลือกที่ 3 broadcast คือส่งให้<strong>ทุกคน</strong> — เกินโจทย์ (และคือข้อที่สไลด์บอกว่าคนสับสนกับข้อนี้มากที่สุด เรื่องของบท 133) ·
+       ตัวเลือกที่ 4 Turbo Drive ได้หน้าใหม่ทั้งหน้าหลัง redirect ไม่ใช่การเปลี่ยนสามจุด</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ถามสองข้อ — เปลี่ยนกี่กล่อง (1 = Frame · หลาย = Stream) และเปลี่ยนให้ใคร (คนกด = ตอบฟอร์ม · ทุกคน = broadcast)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ทำไมบรรทัด "ล้างฟอร์ม" ใน <code>create.turbo_stream.erb</code> ใช้ <code>replace "comment_form"</code> ไม่ใช่ <code>update "comment_form"</code>?</p>
+  <div class="opts">
+    <button class="opt"><code>update</code> ใช้ได้กับตัวเลขและข้อความสั้นเท่านั้น ใช้กับฟอร์มไม่ได้</button>
+    <button class="opt"><code>replace</code> ล้างค่าในช่องให้เอง ส่วน <code>update</code> เก็บค่าที่พิมพ์ไว้</button>
+    <button class="opt">id อยู่บนแท็ก form เอง update จะได้ฟอร์มซ้อนในฟอร์ม</button>
+    <button class="opt"><code>update</code> ต้องโหลดหน้าใหม่ทั้งหน้า ส่วน <code>replace</code> ไม่ต้อง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — แม่พิมพ์ <code>_form</code> สร้าง <code>&lt;form id="comment_form"&gt;</code> ใหม่ทั้งใบ · <code>replace</code> เอาใบเก่าออกแล้ววางใบใหม่ (id เดิมติดมา ส่งรอบหน้าก็หาเจอ) · <code>update</code> จะเอาใบใหม่ไปใส่<strong>ข้างใน</strong>ใบเก่า (ลองแล้ว: ได้ฟอร์มซ้อนกันสองชั้น)</p>
+    <p>ตัวเลือกที่ 1 ผิด — update ใส่ HTML อะไรก็ได้ · ตัวเลือกที่ 2 ผิด — ช่องว่างเพราะเราส่ง <code>Comment.new</code> ไปวาด ไม่ใช่เพราะคำสั่ง ·
+       ตัวเลือกที่ 4 ผิด — ไม่มีคำสั่งไหนในแปดตัวที่โหลดหน้าใหม่ ยกเว้น <code>refresh</code></p>
+    <p><strong>จุดที่ต้องจำ:</strong> id อยู่บนกล่องที่จะถูกแทนทั้งก้อน → replace + ของใหม่ต้องมี id เดิม · id อยู่บนกล่องที่แค่เปลี่ยนไส้ → update</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">Rails รู้ได้ยังไงว่าต้องตอบด้วย <code>create.turbo_stream.erb</code> แทนที่จะ <code>redirect_to</code>?</p>
+  <div class="opts">
+    <button class="opt">Turbo แนบ Accept header บอกว่ารับใบสั่งงาน (turbo stream) ได้</button>
+    <button class="opt">ฟอร์มที่ <code>form_with</code> สร้างมีช่องซ่อนชื่อ <code>format=turbo_stream</code></button>
+    <button class="opt">Rails เลือกไฟล์ <code>.turbo_stream.erb</code> ก่อนเสมอ ถ้ามีไฟล์นี้อยู่</button>
+    <button class="opt">Turbo ต่อท้าย URL ที่ส่งไปด้วย <code>.turbo_stream</code> ให้เองอัตโนมัติ</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — ค่าที่ดักได้จริง <code>text/vnd.turbo-stream.html, text/html, application/xhtml+xml</code> · log จึงเขียน <code>as TURBO_STREAM</code> แล้ว <code>respond_to</code> เลือก <code>format.turbo_stream</code></p>
+    <p>ตัวเลือกที่ 2 ผิด — ช่องซ่อนในฟอร์มมีแค่ <code>authenticity_token</code> (ดูได้ใน Response) · ตัวเลือกที่ 3 ผิด — ปิด JavaScript แล้วไฟล์ก็ยังอยู่ แต่ Rails ตอบ redirect (ลองแล้ว: <code>as HTML</code> · 302) ·
+       ตัวเลือกที่ 4 ผิด — URL จริงคือ <code>/posts/30/comments</code> ไม่มีนามสกุล</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ลูกค้าบอก "ขอแบบไหน" ผ่าน Accept · Turbo ติ๊กให้ · ไม่มี Turbo ก็ได้หน้าเต็มแบบเดิม</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">หลังส่งคอมเมนต์ ตัวเลขใน <code>ความคิดเห็น (2)</code> มาจากไหน?</p>
+  <div class="opts">
+    <button class="opt">Turbo บวก 1 ให้ตัวเลขเดิมที่โชว์อยู่ในหน้านั้น</button>
+    <button class="opt">Turbo นับจำนวนการ์ดใน <code>#comments</code> แล้วเขียนให้</button>
+    <button class="opt">เบราว์เซอร์จำจำนวนไว้ตั้งแต่เปิดหน้า แล้วบวกเอง</button>
+    <button class="opt">server นับในตู้ใหม่ แล้วส่งตัวเลขมาในใบสั่ง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — ใน response เห็น <code>&lt;turbo-stream action="update" target="comment_count"&gt;&lt;template&gt;2&lt;/template&gt;</code> และใน log เห็น <code>Comment Count … SELECT COUNT(*)</code></p>
+    <p>ตัวเลือกที่ 1–3 คือการให้เบราว์เซอร์มี "สมุดจดเล่มที่สอง" ซึ่งเป็นสิ่งที่ Hotwire ตั้งใจเลี่ยง · ถ้าคนอื่นเพิ่มคอมเมนต์ระหว่างนั้น การบวกเองจะได้เลขผิด ส่วนการนับจากตู้ได้เลขจริงเสมอ</p>
+    <p><strong>จุดที่ต้องจำ:</strong> server เป็นเจ้าของข้อมูลชุดเดียว เบราว์เซอร์แค่วางสิ่งที่ server จัดจานมาให้ → ไม่มีบั๊ก sync</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-15">ถามกลับได้เลย</h2>
+<p>
+  ติดตรงไหนถามได้ทุกเรื่อง เช่น "ทำไมต้องมี <code>&lt;template&gt;</code> ห่อ" · "ถ้าอยากให้คอมเมนต์ใหม่อยู่บนสุดต้องแก้กี่ที่" (ใบ้: คำสั่งในไฟล์ stream <strong>และ</strong>การเรียงใน controller) ·
+  หรือวาง log / Response ของคุณมาให้ดูด้วยกัน
+</p>
+
+<h2 id="sn-sec-16">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>44</td><td><code>render "comments/form", comment: Comment.new</code></td><td>แม่พิมพ์ฟอร์มของเรามี strict locals <code>(post:, comment:)</code> · พิมพ์ตามได้ <code>missing local: :post</code> (ลองแล้ว)</td><td><strong>สนใจ</strong> ถ้าพิมพ์ตาม — ใช้บรรทัด 4 ของบทนี้</td></tr>
+    <tr><td>44</td><td><code>turbo_stream.prepend "flash"</code></td><td>หน้าของเราไม่มี <code>id="flash"</code> · ไม่มีอะไรขึ้นและไม่มี error (ภารกิจ)</td><td>สนใจ — ภารกิจพาลองแล้ว</td></tr>
+    <tr><td>44</td><td><code>@post.comments.size</code></td><td>บทนี้ใช้ <code>.count</code> ถามตู้ทุกครั้ง · ตอน save ไม่ผ่าน <code>size</code> นับคอมเมนต์ที่ <code>build</code> ค้างไว้ (ยังไม่บันทึก) รวมด้วย · ลองแล้ว: ในตู้มี 7 · <code>size</code> ได้ 8 · <code>count</code> ได้ 7</td><td>ไม่ต้อง — ใช้ตามบทเรียน</td></tr>
+    <tr><td>44</td><td>"controller ไม่ต้องแก้เลย"</td><td>controller ของเรามี <code>respond_to</code> จึงต้องมีบรรทัด <code>format.turbo_stream</code> ด้วย · ไม่มีไฟล์ template ได้ <code>204 No Content</code> (ลองแล้ว)</td><td>สนใจนิดหนึ่ง</td></tr>
+    <tr><td>44</td><td>"7 คำสั่งที่มีให้ใช้"</td><td>เอกสาร Turbo เรียก "The eight actions" — สไลด์รวม before/after เป็นแถวเดียว</td><td>ไม่ต้อง</td></tr>
+    <tr><td>52</td><td>"real-time ใช้ <code>broadcasts_to :post</code> พร้อม <code>later: true</code>"</td><td>เรื่องของ<a href="./0133-broadcast-and-turbo-limits.html">บท 133</a> · บทนี้ทำแค่ข้อ "append + update ตัวนับ + ล้างฟอร์ม"</td><td>ยังไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0131-turbo-frames.html">← บทเรียน 131 · Turbo Frames</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 3</a>
+  <a href="./0133-broadcast-and-turbo-limits.html">บทเรียน 133 → broadcast · ขอบเขต Turbo</a>
+</nav>
+
+<h2 id="sn-sec-17">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://turbo.hotwired.dev/handbook/streams">Turbo Handbook — Come Alive with Turbo Streams</a> —
+      <strong>อ่านหัวข้อ "Stream Messages and Actions" กับ "Streaming From HTTP Responses"</strong> · ยืนยันเรื่อง Accept header และรูปแบบ <code>&lt;turbo-stream&gt;&lt;template&gt;</code> · ส่วน WebSocket ข้ามไปก่อน (บท 133)</li>
+  <li><a href="https://turbo.hotwired.dev/reference/streams#the-eight-actions">Turbo Reference — Streams § The Eight Actions</a> —
+      ตัวอย่าง HTML ของทั้ง 8 คำสั่ง · อ่านคู่กับตารางในบทนี้ · ดูความต่างของ replace กับ update ให้ชัด</li>
+  <li><a href="https://github.com/hotwired/turbo-rails/blob/main/app/models/turbo/streams/tag_builder.rb">turbo-rails — tag_builder.rb</a> —
+      ที่มาของ <code>turbo_stream.append</code> / <code>update</code> / <code>replace</code> ในไฟล์ <code>.erb</code> · อ่านแค่คอมเมนต์เหนือแต่ละ method พอ (มีตัวอย่างการเรียกทุกแบบ)</li>
+  <li><a href="https://guides.rubyonrails.org/routing.html#nested-resources">Rails Guides — Routing § Nested Resources</a> —
+      ทวน route ซ้อน <code>/posts/:post_id/comments</code> · อ่านถึงหัวข้อ "Limits to Nesting" แล้วหยุด</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionController/MimeResponds.html#method-i-respond_to">Rails API — respond_to</a> —
+      อ่านตัวอย่างแรก (<code>format.html</code> / <code>format.xml</code>) และประโยคในวงเล็บที่บอกว่า Rails ดูชนิดคำตอบจาก Accept header</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/template">MDN — &lt;template&gt;</a> —
+      ย่อหน้าแรกพอ: ทำไมเนื้อใน <code>&lt;template&gt;</code> ไม่โชว์บนจอ</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

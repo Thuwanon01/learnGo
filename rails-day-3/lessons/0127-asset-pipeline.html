@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 127 — ไฟล์ CSS และ JS เดินทางยังไง — fingerprinting, Propshaft และ importmap</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 127 · Rails · Day 3</p>
+  <h1>ไฟล์ CSS และ JS เดินทางยังไง — fingerprinting, Propshaft และ importmap</h1>
+  <p class="meta">~20 นาที · ควรผ่าน <a href="./0126-lab-vibe1-views.html">บทเรียน 126</a> (Lab Vibe 1) และ
+    <a href="./0120-day3-setup.html">บทเรียน 120</a> (เปิดโปรเจกต์กลางของคอร์ส) มาก่อน</p>
+  <p class="standfirst">
+    เคยไหม แก้ CSS แล้วกด refresh แต่หน้าเว็บยังหน้าตาเดิม? ปัญหานี้เกิดกับทุกเว็บในโลก ·
+    บทนี้เปิดบล็อก B (CSS) ด้วยการตามดูว่า<strong>ไฟล์ CSS และ JavaScript เดินทางจากโฟลเดอร์ของเราไปถึงเบราว์เซอร์ยังไง</strong>
+    <br>อ่านจบแล้วคุณจะอธิบายได้ว่าทำไมชื่อไฟล์ CSS ในหน้าเว็บมีเลขแปลก ๆ ต่อท้าย ·
+    รู้ว่าเลขนั้นช่วยให้ผู้ใช้ไม่เห็นของเก่ายังไง · รู้ว่า <code>bin/rails assets:precompile</code> ทำอะไร ·
+    และตอบได้ว่า<strong>ทำไมโปรเจกต์ Rails 8 ไม่มีโฟลเดอร์ <code>node_modules</code></strong> เหมือนโปรเจกต์ Next.js
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>layout</strong> (บท 103 · 123) — "จานรองมาตรฐาน" ไฟล์ <code>app/views/layouts/application.html.erb</code> ที่ห่อทุกหน้า · ส่วน <code>&lt;head&gt;</code> ของมันคือที่ที่บทนี้จะแกะดู</li>
+    <li><strong><code>curl</code></strong> (บท 99–105) — ขอหน้าเว็บจาก server แล้วโชว์ HTML ดิบ ๆ ที่เบราว์เซอร์ได้รับจริง · <code>curl -sI</code> = ขอดูแค่ <strong>header</strong> ไม่เอาเนื้อ
+      (header = "หัวจดหมาย" ข้อมูลกำกับที่ server แนบมาก่อนตัวไฟล์ เช่น ไฟล์นี้ชนิดอะไร ใหญ่เท่าไหร่ — บท 56)</li>
+    <li><strong>Tailwind</strong> (บท 72) — เขียนคลาสสั้น ๆ อย่าง <code>text-3xl</code> ใน HTML แล้วเครื่องมือสร้างไฟล์ CSS ให้ · ในแอปนี้ไฟล์ที่สร้างได้คือ <code>app/assets/builds/tailwind.css</code> (สร้างโดย <code>bin/dev</code> หรือ <code>bin/rails tailwindcss:build</code> · ละเอียดในบท 128)</li>
+    <li><strong><code>npm install</code> · <code>node_modules</code> · <code>npm run build</code></strong> (บท 70) — ฝั่ง Next.js ต้องโหลด library มากองในเครื่องก่อน และมีขั้น build ก่อนขึ้นเครื่องจริง ·
+      <strong>deploy</strong> (บท 109) = เอาโค้ดขึ้นเครื่อง server จริง (production) ให้คนอื่นใช้</li>
+    <li><strong><code>import … from "…"</code></strong> (บท 63–71) — ดึงโค้ดจากไฟล์อื่นหรือ library อื่นมาใช้ใน JavaScript/TypeScript</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · propshaft 1.3.2 · importmap-rails 2.2.3 · tailwindcss-rails 4.7.0 (Tailwind 4.3.3)</strong>
+    (สไลด์และ repo ของอาจารย์ใช้ Ruby 4.0.5–4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน เรื่องในบทนี้ไม่ต่างกัน)</p>
+  <p>🗂 <strong>โค้ดเริ่มจาก:</strong> แอปหลังจบ Lab บท 126 (ตามไม่ทันดู<a href="./0126-lab-vibe1-views.html">บท 126</a>) · บทนี้<strong>ทดลองแล้วทิ้ง</strong> —
+    จบบทให้ <code>git restore</code> ไฟล์ที่แก้ + <code>bin/rails assets:clobber</code> + <code>bin/rails tailwindcss:build</code> (บอกอีกทีท้ายภารกิจ)</p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · ตัดบรรทัดที่ไม่เกี่ยวเป็น <code>…</code> ·
+    <strong>เลขท้ายชื่อไฟล์ (<code>-8b441ae0</code>) คำนวณจากเนื้อไฟล์</strong> — ถ้าไฟล์ของคุณเหมือนของเราทุกตัวอักษร เลขจะตรงกัน ถ้าต่างแม้ตัวเดียว เลขจะต่าง (เดี๋ยวรู้ว่าทำไม)</p>
+</div>
+
+<h2 id="sn-sec-1">asset คืออะไร — ของในร้านที่ไม่ได้ทำใหม่ทุกจาน</h2>
+
+<p>
+  หน้าเว็บหนึ่งหน้าไม่ได้มีแค่ HTML · HTML บอกว่ามีอะไรบนหน้า แต่<strong>หน้าตา</strong>มาจากไฟล์ CSS · <strong>การขยับได้</strong>มาจากไฟล์ JavaScript ·
+  และยังมีรูป ฟอนต์ ไอคอนอีก
+  <br>ไฟล์พวกนี้ที่ไม่ใช่ HTML เรียกรวม ๆ ว่า <strong>asset</strong> · ต่างจาก HTML ตรงที่<strong>ทุกคนได้ไฟล์เดียวกันเป๊ะ</strong> ไม่ต้องทำใหม่ต่อคำขอ
+</p>
+
+<p>
+  เทียบกับร้านอาหาร: HTML คือจานอาหารที่ครัวทำใหม่ทุกออร์เดอร์ (บทความไม่เหมือนกันแต่ละหน้า) ·
+  ส่วน asset คือ<strong>ของตกแต่งร้านและเมนูเล่ม</strong> — พิมพ์ครั้งเดียว ทุกโต๊ะใช้เล่มเดียวกัน
+</p>
+
+<p>ในแอปของเรา asset อยู่ตรงนี้:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ไฟล์/โฟลเดอร์</th><th>คืออะไร</th></tr></thead>
+  <tbody>
+    <tr><td><code>app/assets/stylesheets/application.css</code></td><td>CSS ที่เราเขียนเอง (ตอนนี้มีแต่คอมเมนต์ ยังว่าง)</td></tr>
+    <tr><td><code>app/assets/builds/tailwind.css</code></td><td>CSS ที่ Tailwind <strong>สร้างให้</strong> จากคลาสใน view · ไม่ได้เก็บใน git · ห้ามแก้มือ (สร้างใหม่ทับทุกรอบ)</td></tr>
+    <tr><td><code>app/javascript/</code></td><td>JavaScript ของเรา (<code>application.js</code> และโฟลเดอร์ <code>controllers/</code> ของ Stimulus — บท 134)</td></tr>
+    <tr><td><code>app/assets/images/</code></td><td>รูปภาพ (ตอนนี้ว่าง)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แล้วเบราว์เซอร์รู้ได้ยังไงว่าต้องไปเอาไฟล์พวกนี้? เพราะ layout เขียนบอกไว้ใน <code>&lt;head&gt;</code> ·
+  ดูสองบรรทัดนี้ใน <code>app/views/layouts/application.html.erb</code>:
+</p>
+
+<pre><code>&lt;%= <span class="f">stylesheet_link_tag</span> <span class="n">:app</span>, <span class="s">"data-turbo-track"</span>: <span class="s">"reload"</span> %&gt;
+&lt;%= <span class="f">javascript_importmap_tags</span> %&gt;</code></pre>
+
+<ul>
+  <li><code>stylesheet_link_tag :app</code> — helper ที่เขียนแท็ก <code>&lt;link rel="stylesheet"&gt;</code> ให้ <strong>ทุกไฟล์ CSS ในแอป</strong> (<code>:app</code> = "เอาของแอปทั้งหมด") · ของเรามีสองไฟล์ จึงได้สองบรรทัด</li>
+  <li><code>"data-turbo-track": "reload"</code> — ป้ายให้ Turbo คอยดูว่าชื่อไฟล์นี้เปลี่ยนไหม ถ้าเปลี่ยนให้โหลดใหม่ทั้งหน้า (Turbo คือตัวที่ทำให้เปลี่ยนหน้าโดยไม่โหลดใหม่ทั้งหน้า — ละเอียดบท 130) · ตอนนี้แค่รู้ว่ามี</li>
+  <li><code>javascript_importmap_tags</code> — helper ที่เขียนส่วน JavaScript ทั้งหมดให้ (หัวข้อ importmap ท้ายบท)</li>
+</ul>
+
+<p>เปิด server (<code>bin/dev</code> แบบบท 120) แล้วดูว่าเบราว์เซอร์ได้อะไรจริง — ตัดเอาเฉพาะช่วงนั้นของ <code>&lt;head&gt;</code>:</p>
+
+<pre><code>$ curl -s localhost:3000/posts | sed -n '/rel="stylesheet"/,/type="module"/p'
+    &lt;link rel="stylesheet" href="/assets/application-8b441ae0.css" data-turbo-track="reload" /&gt;
+&lt;link rel="stylesheet" href="/assets/tailwind-798e8e3d.css" data-turbo-track="reload" /&gt;
+    &lt;script type="importmap" data-turbo-track="reload"&gt;{
+  "imports": {
+    "application": "/assets/application-bfcdf840.js",
+    "@hotwired/turbo-rails": "/assets/turbo.min-9fd88cd5.js",
+    …
+  }
+}&lt;/script&gt;
+&lt;link rel="modulepreload" href="/assets/application-bfcdf840.js"&gt;
+…
+&lt;script type="module"&gt;import "application"&lt;/script&gt;</code></pre>
+
+<p>
+  <code>sed -n '/A/,/B/p'</code> แปลว่า "พิมพ์ตั้งแต่บรรทัดที่มี A ถึงบรรทัดที่มี B" — แค่ตัดให้สั้น ไม่ต้องจำ ·
+  สังเกตบรรทัดแรก: ไฟล์ของเราชื่อ <code>application.css</code> แต่ในหน้าเว็บกลายเป็น <strong><code>application-8b441ae0.css</code></strong> ·
+  เลขต่อท้ายนี้คือพระเอกของบท · แต่ก่อนจะรู้ว่ามันมาทำไม ต้องรู้จัก cache ก่อน
+</p>
+
+<p>
+  ส่วน <code>&lt;script type="importmap"&gt;</code> · <code>modulepreload</code> · <code>&lt;script type="module"&gt;</code> คือส่วนของ JavaScript ·
+  ตอนนี้ข้ามไปก่อน เดี๋ยวแกะทีละบรรทัดในหัวข้อ importmap · <code>…</code> คือบรรทัดที่เราตัดออกให้สั้น
+</p>
+
+<h2 id="sn-sec-2">cache ของเบราว์เซอร์ — ลูกค้าประจำที่จำเมนูเล่มเก่า</h2>
+
+<p>
+  เบราว์เซอร์ฉลาดพอจะไม่โหลดไฟล์เดิมซ้ำ ๆ · ไฟล์ไหนเคยโหลดแล้ว มันจะเก็บสำเนาไว้ในเครื่อง ครั้งหน้าใช้สำเนาเลย ไม่ต้องรอเน็ต ·
+  ที่เก็บสำเนานี้เรียกว่า <strong>cache</strong> (อ่านว่า "แคช")
+  <br>เก็บไว้นานแค่ไหน — server เป็นคนบอก ผ่าน header (หัวจดหมาย) ที่แนบมากับไฟล์
+</p>
+
+<p>
+  ไอเดียเดียวกับ <code>includes</code> ใน Day 2 (<a href="../../rails-day-2/lessons/0114-n-plus-one.html">บท 114</a>):
+  ของที่หยิบมาแล้ว อย่าเดินไปขอซ้ำ · ต่างกันแค่ <code>includes</code> ลดการเดินไปตู้เก็บแฟ้ม ส่วน cache ลดการเดินไปขอไฟล์จาก server
+</p>
+
+<p>เราเปิดหน้าเว็บด้วย Chrome จริง แล้ววัดว่าไฟล์ CSS แต่ละไฟล์ต้องโหลดผ่านเน็ตกี่ byte (<code>0</code> = ไม่ได้โหลดเลย หยิบจากสำเนา):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เปิดหน้า</th><th><code>application-8b441ae0.css</code></th><th><code>tailwind-798e8e3d.css</code></th></tr></thead>
+  <tbody>
+    <tr><td>ครั้งแรก <code>/posts</code></td><td>791</td><td>34,446</td></tr>
+    <tr><td>ต่อมา <code>/posts/30</code> (หน้าอื่น แต่ใช้ CSS ชุดเดียวกัน)</td><td><strong>0</strong></td><td><strong>0</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  หน้าที่สองไม่โหลด CSS ผ่านเน็ตเลยสักไบต์ · นี่คือสิ่งที่ทำให้เว็บเปิดหน้าถัดไปเร็ว
+  (ตัวเลขรวม header ด้วย จึงมากกว่าขนาดไฟล์นิดหน่อย · ของคุณดูได้ในแท็บ Network ของ DevTools แบบบท 56 คอลัมน์ Size —
+  ไฟล์ที่หยิบจากสำเนาจะขึ้นเป็นคำว่า <em>memory cache</em> หรือ <em>disk cache</em> แทนตัวเลข · ถ้าติ๊ก <em>Disable cache</em> ไว้ จะโหลดใหม่ทุกครั้ง)
+  <br>แต่ข้อดีนี้มีด้านมืด: ถ้าเราแก้ไฟล์ CSS แล้ว<strong>ชื่อไฟล์ยังเหมือนเดิม</strong> เบราว์เซอร์จะคิดว่า "อันนี้มีแล้ว" แล้วใช้สำเนาเก่าต่อไป
+</p>
+
+<div class="analogy">
+  <span class="label">📖 เทียบให้เห็นภาพ — ลูกค้าประจำที่จำเมนูเล่มเก่าได้</span>
+  <p>
+    ลูกค้าประจำมาร้านบ่อยจนจำเมนูได้ขึ้นใจ เลยไม่หยิบเมนูเล่มบนโต๊ะมาเปิดอีก — สั่งจากความจำเลย เร็วดี ·
+    วันหนึ่งร้านเปลี่ยนราคาและเพิ่มเมนูใหม่ แต่<strong>หน้าปกเมนูเหมือนเดิมทุกอย่าง</strong> ·
+    ลูกค้าประจำก็ยังสั่งจากความจำ ไม่รู้เลยว่ามีของใหม่
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ลูกค้าคนจริงอาจสังเกตป้ายหน้าร้านหรือถามพนักงานเอง ·
+    เบราว์เซอร์<strong>ไม่ถามเลย</strong> ถ้า server เคยบอกว่า "เก็บไว้ได้หนึ่งปี" มันก็เชื่อตามนั้นหนึ่งปีเต็ม ไม่สนว่าเนื้อในเปลี่ยนไปแล้ว
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>asset</dt>
+    <dd>ไฟล์ที่ไม่ใช่ HTML ที่หน้าเว็บต้องใช้: CSS · JavaScript · รูป · ฟอนต์ ·
+        <strong>ถาม senior ได้ว่า “asset ของโปรเจกต์นี้เสิร์ฟจาก Rails เองหรือผ่าน CDN”</strong> (CDN = บริการเก็บไฟล์ไว้หลายประเทศให้โหลดใกล้ ๆ)</dd>
+    <dt>browser cache</dt>
+    <dd>ที่เบราว์เซอร์เก็บสำเนาไฟล์ที่เคยโหลดไว้ เพื่อไม่ต้องโหลดซ้ำ ·
+        <strong>พิมพ์บอก AI ได้ว่า “after deploy, users still see the old CSS — is it a browser cache problem?”</strong></dd>
+    <dt><code>Cache-Control</code> header</dt>
+    <dd>บรรทัดในหัวจดหมายที่ server บอกเบราว์เซอร์ว่าเก็บสำเนาได้นานแค่ไหน เช่น <code>max-age=31536000</code> = เก็บได้ 31,536,000 วินาที (หนึ่งปี) ·
+        <strong>ถาม senior ได้ว่า “ไฟล์ asset ของเราตั้ง Cache-Control ไว้เท่าไหร่”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">สามปัญหาที่ asset pipeline มีไว้แก้</h2>
+
+<p>
+  <strong>asset pipeline</strong> คือชื่อรวมของ "ขั้นตอนที่พาไฟล์ asset จากโฟลเดอร์ของเราไปถึงเบราว์เซอร์" ·
+  สไลด์หน้า 24 บอกว่ามันเกิดมาเพื่อแก้สามปัญหาที่ทุกเว็บเจอ ไม่ว่าเขียนด้วยภาษาอะไร:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ปัญหา</th><th>ภาษาคน</th><th>วิธีแก้เดิม</th><th>ตอนนี้ยังสำคัญไหม</th></tr></thead>
+  <tbody>
+    <tr><td><strong>1 · cache ตามชื่อ</strong></td><td>แก้ CSS แล้ว deploy แต่ผู้ใช้ยังเห็นของเก่าเป็นวัน (หัวข้อที่แล้ว)</td><td>fingerprinting</td><td><strong>สำคัญเสมอ</strong> แก้ทางอื่นไม่ได้</td></tr>
+    <tr><td>2 · ไฟล์เยอะ = ช้า</td><td>สมัยก่อนโหลดได้ทีละไม่กี่ไฟล์พร้อมกัน 50 ไฟล์ต้องต่อคิวนาน</td><td><strong>bundling</strong> = มัดหลายไฟล์เป็นก้อนเดียว</td><td>น้อยลงมาก</td></tr>
+    <tr><td>3 · ไฟล์ใหญ่เกินจำเป็น</td><td>ช่องว่าง คอมเมนต์ ชื่อตัวแปรยาว ๆ เบราว์เซอร์ไม่ได้ใช้</td><td><strong>minify</strong> = บีบเอาช่องว่าง/คอมเมนต์ออก · <strong>compress</strong> = บีบอัดแบบไฟล์ zip</td><td>น้อยลงมาก</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ทำไมข้อ 2–3 สำคัญน้อยลง (แค่รู้ไว้ ไม่ต้องลงลึก):</p>
+<ul>
+  <li><strong>HTTP/2</strong> — "ภาษาที่เบราว์เซอร์คุยกับ server" รุ่นใหม่ ส่งหลายไฟล์พร้อมกันบนสายเดียวได้ ไฟล์เยอะจึงไม่ต้องต่อคิวเหมือนเมื่อก่อน</li>
+  <li><strong>gzip · brotli</strong> — วิธีบีบอัดข้อมูลที่ server (หรือตัวกลางหน้า server) ทำให้อัตโนมัติตอนส่ง ไม่ต้องบีบไว้ล่วงหน้าเอง</li>
+  <li><strong>ES module</strong> — การเขียน <code>import … from</code> ที่เบราว์เซอร์ทุกตัวเข้าใจเองแล้ว ไม่ต้องมีเครื่องมือมัดรวมให้ก่อน (หัวข้อ importmap)</li>
+</ul>
+
+<p>
+  แต่ข้อ 1 ไม่มีเทคโนโลยีไหนมาช่วย เพราะมันเป็นเรื่องของ<strong>ชื่อ</strong> ·
+  สไลด์สรุปว่านี่คือเหตุผลที่ Rails 8 ยอมทิ้งเครื่องมือมัดรวมไฟล์ แต่<strong>ยังเก็บ fingerprinting ไว้</strong>
+</p>
+
+<h2 id="sn-sec-4">fingerprinting — เปลี่ยนเนื้อใน ชื่อเปลี่ยนตาม</h2>
+
+<p>
+  ทางแก้ข้อ 1 ง่ายจนน่าตกใจ: <strong>ถ้าเนื้อไฟล์เปลี่ยน ก็เปลี่ยนชื่อไฟล์ด้วย</strong> · ชื่อใหม่ที่เบราว์เซอร์ไม่เคยเห็น = ต้องโหลดใหม่แน่นอน
+  <br>เลขท้ายชื่อคำนวณจากเนื้อไฟล์ทุกตัวอักษร เรียกว่า <strong>hash</strong> — คิดว่าเป็น "ลายนิ้วมือของเนื้อไฟล์" ก็ได้:
+  เนื้อเดิมได้เลขเดิมทุกครั้ง · แก้แม้ตัวเดียวได้เลขใหม่ทันที
+</p>
+
+<div class="diagram">ครั้งที่ 1   application.css ──คำนวณลายนิ้วมือ──▶ application-8b441ae0.css ──▶ เบราว์เซอร์เก็บสำเนาไว้
+
+             แก้ CSS 1 บรรทัด
+
+ครั้งที่ 2   application.css ──ลายนิ้วมือใหม่────▶ application-ab636f88.css ──▶ "ชื่อนี้ไม่เคยเห็น" → โหลดใหม่ทันที
+
+             application-8b441ae0.css  ← ไม่มี HTML ไหนชี้มาอีกแล้ว ไม่ต้องลบก็ไม่มีใครใช้</div>
+
+<div class="predict">
+<pre><code><span class="c">/* เปิด /posts แล้ว /posts/30 ไปแล้ว (สำเนาของ CSS ทั้งสองไฟล์อยู่ในเครื่อง) */</span>
+<span class="c">/* จากนั้นเพิ่มบรรทัดนี้ใน app/assets/stylesheets/application.css แล้วเปิด /posts อีกครั้ง */</span>
+<span class="f">body</span> { <span class="n">background</span>: <span class="n">#fffbeb</span>; }</code></pre>
+  <p class="ask">รอบนี้เบราว์เซอร์ต้องโหลดไฟล์ CSS ไหนผ่านเน็ตใหม่ — <code>application</code> อย่างเดียว · <code>tailwind</code> อย่างเดียว · หรือทั้งคู่?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงจาก Chrome (ต่อจากตารางในหัวข้อ cache) — <strong>โหลดใหม่แค่ <code>application</code></strong>:</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>เปิดหน้า</th><th>ไฟล์ application</th><th>ไฟล์ tailwind</th></tr></thead>
+      <tbody>
+        <tr><td><code>/posts</code> หลังแก้ CSS</td><td><code>application-ab636f88.css</code> · <strong>822</strong> byte</td><td><code>tailwind-798e8e3d.css</code> · <strong>0</strong></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>
+      ไฟล์ที่ชื่อเปลี่ยนถูกโหลดใหม่ทันที · ไฟล์ที่ชื่อเดิม (34 KB ของ Tailwind) ยังหยิบจากสำเนาได้ ไม่เสียเน็ตเลย ·
+      และพื้นหลังเป็นสีครีมจริง (Chrome รายงานสี body เป็น <code>rgb(255, 251, 235)</code> = <code>#fffbeb</code>)
+      <br>นี่คือข้อดีที่ซ่อนอยู่: <strong>แก้ไฟล์ไหน ผู้ใช้โหลดใหม่แค่ไฟล์นั้น</strong> ที่เหลือยังเร็วเหมือนเดิม
+    </p>
+  </div>
+</div>
+
+<p>ทีนี้ดูด้วยตาตัวเองผ่าน <code>curl</code> · เปิด <code>app/assets/stylesheets/application.css</code> ไปล่างสุด (ต่อจากบรรทัด <code>*/</code>)
+  <strong>เว้นบรรทัดว่างหนึ่งบรรทัด</strong> แล้วเพิ่มบรรทัดนี้ (ทำให้พื้นหลังเป็นสีครีม):</p>
+
+<pre><code><span class="c"> */</span>
+
+<span class="f">body</span> { <span class="n">background</span>: <span class="n">#fffbeb</span>; }</code></pre>
+
+<p>
+  ทำไมต้องเว้นบรรทัดให้ตรง? เพราะเลขคำนวณจาก<strong>ทุกตัวอักษร รวมบรรทัดว่าง</strong> · เราลองไม่เว้นบรรทัด ได้ <code>application-6b521159.css</code> แทน ·
+  ถ้าเลขของคุณไม่ตรงกับในบท ไม่ผิด — ที่ต้องเห็นคือ<strong>เลขเปลี่ยน</strong>
+</p>
+
+<p>บันทึกไฟล์ แล้วขอหน้าเว็บใหม่ — <strong>ไม่ต้อง restart server ไม่ต้องสั่ง build อะไร</strong>:</p>
+
+<pre><code>$ curl -s localhost:3000/posts | grep stylesheet
+    &lt;link rel="stylesheet" href="/assets/application-<strong>ab636f88</strong>.css" data-turbo-track="reload" /&gt;
+&lt;link rel="stylesheet" href="/assets/tailwind-798e8e3d.css" data-turbo-track="reload" /&gt;</code></pre>
+
+<ul>
+  <li><code>application-8b441ae0</code> กลายเป็น <code>application-ab636f88</code> — เพราะเนื้อเปลี่ยน</li>
+  <li><code>tailwind-798e8e3d</code> <strong>เหมือนเดิม</strong> — เราไม่ได้แตะไฟล์นั้น เลขจึงไม่เปลี่ยน</li>
+  <li>ไม่ต้อง build เพราะในเครื่องเรา (development) Rails คำนวณลายนิ้วมือใหม่ทุกครั้งที่มีคนขอหน้า</li>
+</ul>
+
+<p>แล้วชื่อเก่ายังขอได้ไหม? และชื่อใหม่ server แนบหัวจดหมายอะไรมา?</p>
+
+<pre><code>$ curl -sI localhost:3000/assets/application-8b441ae0.css
+HTTP/1.1 404 Not Found
+…
+
+$ curl -sI localhost:3000/assets/application-ab636f88.css
+HTTP/1.1 200 OK
+content-type: text/css; charset=utf-8
+vary: Accept-Encoding
+etag: "ab636f88"
+cache-control: public, max-age=31536000, immutable
+set-cookie: __profilin=p%3Dt; path=/; httponly; samesite=lax
+content-length: 522</code></pre>
+
+<ul>
+  <li><code>404 Not Found</code> — ในเครื่องเรา Rails เสิร์ฟเฉพาะไฟล์ "ฉบับปัจจุบัน" ชื่อเก่าจึงหาไม่เจอแล้ว</li>
+  <li><code>cache-control: public, max-age=31536000, immutable</code> — "เก็บไว้ได้<strong>หนึ่งปี</strong> และไฟล์ชื่อนี้<strong>ไม่มีวันเปลี่ยนเนื้อ</strong> (<code>immutable</code>) ไม่ต้องมาถามซ้ำ" ·
+    กล้าสั่งแบบนี้ได้เพราะถ้าเนื้อเปลี่ยน ชื่อก็เปลี่ยนไปแล้ว</li>
+  <li><code>content-type: text/css</code> = "นี่คือไฟล์ CSS" · <code>content-length: 522</code> = ขนาด 522 byte</li>
+  <li>บรรทัดที่เหลือ (<code>vary</code> · <code>etag</code> · <code>set-cookie</code>) ไม่เกี่ยวกับบทนี้ ข้ามได้</li>
+</ul>
+
+<p>
+  ก่อนไปต่อ <strong>ลบบรรทัด <code>body { … }</code> ที่เพิ่งเพิ่มออก</strong> (หรือ <code>git restore app/assets/stylesheets/application.css</code>) ·
+  เนื้อไฟล์กลับเป็นเหมือนตอนแรกทุกตัวอักษร แล้วเลขจะเป็นอะไร? เก็บไว้ทายในภารกิจท้ายบท
+</p>
+
+<div class="analogy">
+  <span class="label">🏷 เทียบให้เห็นภาพ — พิมพ์เลขรุ่นบนปกเมนูทุกครั้งที่แก้</span>
+  <p>
+    ร้านตั้งกฎว่า แก้เมนูเมื่อไหร่ต้องพิมพ์เลขรุ่นใหม่บนปก เช่น "เมนู-8b441ae0" → "เมนู-ab636f88" ·
+    ลูกค้าประจำเห็นเลขบนปกไม่ตรงกับที่จำไว้ ก็รู้ทันทีว่าต้องหยิบเล่มใหม่มาอ่าน ·
+    ส่วนป้ายตกแต่งผนังที่ไม่ได้แก้ เลขเดิม ลูกค้าก็ไม่ต้องดูซ้ำ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> เลขรุ่นในร้านจริงคนตั้งเองตามใจ (รุ่น 1, 2, 3) ·
+    ในเว็บเลขมาจาก<strong>เนื้อไฟล์</strong> ล้วน ๆ — แก้แล้วแก้กลับ เลขก็กลับเป็นเลขเดิม ·
+    และเมนูเล่มเก่าในร้านต้องมีคนเก็บทิ้ง แต่ไฟล์ชื่อเก่าไม่ต้องมีใครไปลบจากเครื่องผู้ใช้ — แค่ไม่มีหน้าไหนเรียกถึงมันอีก
+  </p>
+</div>
+
+<p>
+  สไลด์หน้า 25 ให้จำประโยคนี้ไว้: <strong>"ไม่ต้องไปลบของเก่า — ให้ key เปลี่ยน แล้วของเก่าจะหมดความหมายไปเอง"</strong> ·
+  key ในที่นี้คือชื่อไฟล์ · หลักการเดียวกันนี้จะกลับมาอีกครั้งตอนเรียนเรื่อง cache ของหน้าเว็บใน Day 3 ครึ่งหลัง (ยังไม่มาในชุดนี้)
+</p>
+
+<div class="note">
+  <p>📝 สังเกตว่าแม้ในเครื่องเรา (development) ไฟล์ก็ได้ "เก็บได้หนึ่งปี" และ Chrome ก็เก็บสำเนาจริง (ตาราง 0 byte ข้างบน) ·
+    ไม่มีปัญหาเพราะชื่อเปลี่ยนเองทุกครั้งที่แก้ไฟล์ — แก้แล้ว refresh ก็เห็นของใหม่</p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>fingerprinting · digest</dt>
+    <dd>ต่อเลขที่คำนวณจากเนื้อไฟล์ไว้ท้ายชื่อ (<code>application-8b441ae0.css</code>) · เลขนั้นเรียกว่า digest หรือ hash ·
+        <strong>ถาม senior ได้ว่า “ไฟล์นี้ผ่าน fingerprinting หรือยัง ทำไมชื่อไม่มี digest”</strong></dd>
+    <dt>cache busting</dt>
+    <dd>ชื่อเรียกเทคนิค "บังคับให้เบราว์เซอร์ทิ้งสำเนาเก่า" ซึ่ง fingerprinting เป็นวิธีที่นิยมที่สุด ·
+        <strong>พิมพ์บอก AI ได้ว่า “use digest-based cache busting, don't add ?v=123 by hand”</strong></dd>
+    <dt><code>immutable</code></dt>
+    <dd>คำใน <code>Cache-Control</code> ที่บอกว่า "ไฟล์ชื่อนี้ไม่มีวันเปลี่ยนเนื้อ ไม่ต้องถามซ้ำ" · ใช้ได้ปลอดภัยก็ต่อเมื่อชื่อมี digest ·
+        <strong>ถาม senior ได้ว่า “ไฟล์ที่ไม่มี digest ห้ามตั้ง immutable ใช่ไหม”</strong></dd>
+    <dt>key-based cache expiration</dt>
+    <dd>ชื่อทางการของประโยค "ให้ key เปลี่ยน แทนการลบของเก่า" · เจอเต็ม ๆ ใน Day 3 ครึ่งหลัง ·
+        <strong>ถาม senior ได้ว่า “ตรงนี้ใช้ key-based expiration ได้ไหม แทนการสั่งลบ cache”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">Propshaft — พนักงานที่ติดเลขรุ่นแล้ววางบนชั้น</h2>
+
+<p>
+  คนที่คำนวณลายนิ้วมือ · เสิร์ฟไฟล์ที่ <code>/assets/…</code> · และบอก <code>stylesheet_link_tag</code> ว่าตอนนี้ไฟล์ชื่ออะไร คือ gem ชื่อ <strong>Propshaft</strong> ·
+  เป็นค่าเริ่มต้นของ Rails 8 และ<strong>ทำแค่นั้นจริง ๆ</strong> — ไม่มัดรวมไฟล์ ไม่แปลงภาษา ไม่บีบไฟล์
+  <br>รุ่นก่อนหน้าคือ <strong>Sprockets</strong> ที่ทำทุกอย่างเอง (สไลด์หน้า 26):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Sprockets (ของเดิม)</th><th>Propshaft (Rails 8 ค่าเริ่มต้น)</th></tr></thead>
+  <tbody>
+    <tr><td>ทำอะไร</td><td>fingerprint + มัดรวม + บีบ + แปลงภาษา (เช่น Sass → CSS · Sass คือภาษาเขียน CSS แบบย่อที่ต้องแปลงก่อนใช้)</td><td>fingerprint + เสิร์ฟไฟล์ <strong>เท่านั้น</strong></td></tr>
+    <tr><td>ภาษาของตัวเอง</td><td>มี เช่นบรรทัด <code>//= require</code> ในหัวไฟล์ = "เอาไฟล์นี้มารวมด้วย"</td><td>ไม่มี · CSS/JS ธรรมดา</td></tr>
+    <tr><td>ข้อเสีย</td><td>ทำเยอะ จึงช้าและหาบั๊กยาก</td><td>ต้องการมัดรวมหรือแปลงภาษา ต้องใช้เครื่องมืออื่นช่วย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  เหตุผลเบื้องหลัง (สไลด์): Sprockets เกิดตอนที่เบราว์เซอร์ทำอะไรเองไม่ค่อยได้ เครื่องมือจึงต้องทำแทนหมด ·
+  ทุกวันนี้เบราว์เซอร์ทำเองได้เกือบหมดแล้ว (หัวข้อสามปัญหา) เครื่องมือที่ทำเยอะเลยกลายเป็นภาระแทน
+</p>
+
+<p>
+  เทียบกับ Next.js (บท 70): งานมัดรวม · บีบ · แปลง TypeScript ทั้งหมดซ่อนอยู่ใน <code>npm run build</code> ที่เครื่องมือของ Next.js ทำให้ ·
+  Rails 8 แยกงานออกเป็นชิ้นเล็ก ๆ แล้วให้ Propshaft ถือแค่ชิ้นที่เล็กที่สุด
+</p>
+
+<h3 id="sn-sub-1">ในเครื่องเรา vs ตอนขึ้นเครื่องจริง</h3>
+
+<p>
+  ในเครื่องเรา (development) Propshaft คำนวณสด ๆ ทุกครั้งที่มีคนขอ — ที่เห็นไปเมื่อกี้ ·
+  แต่บนเครื่องจริง (production) ไม่มีใครอยากให้คำนวณซ้ำทุกคำขอ · จึงมีคำสั่งทำทีเดียวตอน deploy:
+  <strong><code>bin/rails assets:precompile</code></strong> = "ทำไฟล์ asset ทุกไฟล์ให้มีชื่อพร้อม digest แล้ววางไว้ใน <code>public/assets/</code>"
+</p>
+
+<p>ลองรันตามในเครื่องได้ · <strong>แต่รันแล้วต้องเก็บกวาดตามกล่อง ⚠️ ข้างล่างทันที</strong> ไม่งั้นแก้ CSS ต่อจากนี้จะไม่เห็นผล</p>
+
+<pre><code>$ bin/rails assets:precompile
+≈ tailwindcss v4.3.3
+
+/*! 🌼 daisyUI 5.7.50 */
+Done in 81ms
+Warning: You are precompiling assets in development. Rails will not serve any changed assets until you delete public/assets/.manifest.json</code></pre>
+
+<ul>
+  <li>บรรทัดก่อน <code>Warning</code> — tailwindcss-rails แอบสั่ง build Tailwind ให้ก่อน เพื่อให้ได้ <code>tailwind.css</code> ฉบับล่าสุด (เวลา ms ของคุณจะต่าง)</li>
+  <li><code>Warning: …</code> — "คุณกำลัง precompile ในเครื่อง development · Rails จะไม่เสิร์ฟไฟล์ที่แก้ใหม่จนกว่าคุณจะลบ <code>public/assets/.manifest.json</code>" · จำไว้ เดี๋ยวเจอกับดัก</li>
+</ul>
+
+<pre><code>$ ls public/assets
+action_cable-5212cfee.js
+…
+application-8b441ae0.css
+application-bfcdf840.js
+controllers
+…
+tailwind-798e8e3d.css
+trix-4bf79781.js
+trix-65afdb1d.css
+turbo-736fb387.js
+turbo.min-5eb167c2.js.map
+turbo.min-9fd88cd5.js</code></pre>
+
+<p>
+  ได้ไฟล์ของเราพร้อมชื่อชุดเดียวกับที่เห็นในหน้าเว็บ · มีไฟล์ของ gem อื่นติดมาด้วย (<code>trix</code> <code>action_cable</code> ฯลฯ) เพราะ Propshaft คัดลอกทุกไฟล์ในโฟลเดอร์ที่มันดูแล ไม่ได้ดูว่าใช้จริงไหม ·
+  และมีไฟล์ซ่อนหนึ่งไฟล์ (ชื่อขึ้นต้นด้วยจุด) คือ <strong>ตารางแมปชื่อ</strong>:
+</p>
+
+<pre><code>$ head -c 260 public/assets/.manifest.json
+{"tailwind.css":{"digested_path":"tailwind-798e8e3d.css","integrity":null},"application.css":{"digested_path":"application-8b441ae0.css","integrity":null},"application.js":{"digested_path":"application-bfcdf840.js","integrity":null},"controllers/hello_controll</code></pre>
+
+<p>(<code>head -c 260</code> = เอาแค่ 260 ตัวอักษรแรก ไฟล์จริงยาวกว่านี้ จึงขาดกลางคำ · <code>"integrity":null</code> ไม่ต้องสนใจ)</p>
+
+<p>
+  อ่านว่า "<code>application.css</code> → ตอนนี้ชื่อ <code>application-8b441ae0.css</code>" ·
+  บนเครื่องจริง <code>stylesheet_link_tag</code> เปิดตารางนี้ดูว่าจะเขียนชื่ออะไรลงใน HTML · และ <code>config/environments/production.rb</code> ของแอปนี้ตั้งหัวจดหมายของไฟล์ใน <code>public/</code> ไว้ว่า:
+</p>
+
+<pre><code><span class="n">config</span>.<span class="f">public_file_server</span>.<span class="f">headers</span> = { <span class="s">"cache-control"</span> =&gt; <span class="s">"public, max-age=#{1.year.to_i}"</span> }</code></pre>
+
+<p><code>1.year.to_i</code> = จำนวนวินาทีในหนึ่งปี · คือ "เก็บสำเนาได้หนึ่งปี" แบบเดียวกับที่เห็นในเครื่องเรา</p>
+
+<div class="warn">
+  <p><strong>⚠️ กับดัก: precompile ในเครื่องแล้วลืมลบ</strong> — เราลองแล้ว: precompile → แก้ CSS → ปิดแล้วเปิด server ใหม่ ·
+    หน้าเว็บ<strong>ยังชี้ไฟล์ชื่อเดิม และสียังเป็นสีเก่า</strong> ทั้งที่ไฟล์ในโฟลเดอร์เปลี่ยนแล้ว — เพราะ Rails เห็นตาราง <code>.manifest.json</code> แล้วใช้ตารางนั้นแทนการคำนวณสด</p>
+  <p>ทางแก้คือ <code>bin/rails assets:clobber</code> (ลบ <code>public/assets</code> ทิ้งทั้งโฟลเดอร์) ·
+    แต่มัน<strong>ลบ <code>app/assets/builds/tailwind.css</code> ไปด้วย</strong> → หน้าเว็บจะไม่มีสไตล์ Tailwind เลย จนกว่าจะสั่ง <code>bin/rails tailwindcss:build</code> (หรือปิดแล้วเปิด <code>bin/dev</code> ใหม่):</p>
+<pre><code>$ bin/rails assets:clobber
+$ ls public/assets app/assets/builds
+ls: public/assets: No such file or directory
+app/assets/builds:
+tailwind
+$ bin/rails tailwindcss:build
+≈ tailwindcss v4.3.3
+
+/*! 🌼 daisyUI 5.7.50 */
+Done in 90ms
+$ ls app/assets/builds
+tailwind
+tailwind.css</code></pre>
+  <p><code>assets:clobber</code> ทำงานเงียบ ๆ ไม่พิมพ์อะไรเลย · (<code>tailwind</code> ที่เหลืออยู่คือโฟลเดอร์ว่าง ไม่ต้องสนใจ) · <code>public/assets</code> ไม่ได้เก็บใน git อยู่แล้ว ลบได้ไม่ต้องกลัว</p>
+</div>
+
+<div class="analogy">
+  <span class="label">📚 เทียบให้เห็นภาพ — พนักงานติดเลขรุ่นแล้ววางบนชั้น</span>
+  <p>
+    Propshaft คือพนักงานหน้าร้านที่รับเมนูเล่มที่พิมพ์เสร็จแล้ว ติดเลขรุ่นที่ปก วางบนชั้น แล้วจดในสมุดว่า "เมนูอาหาร → ตอนนี้คือเล่ม 8b441ae0" ·
+    <strong>เขาไม่แก้เนื้อในเมนู ไม่เย็บหลายเล่มรวมกัน</strong> — ใครอยากได้เมนูเล่มรวม ต้องให้โรงพิมพ์ข้างนอกทำมาก่อน ·
+    <code>assets:precompile</code> คือการติดเลขและวางบนชั้นให้ครบทุกเล่มก่อนร้านเปิด แทนที่จะทำตอนลูกค้าขอ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานคนจริงเห็นเมนูเล่มใหม่วางอยู่ก็คงเปลี่ยนสมุดเอง ·
+    Rails ไม่ทำแบบนั้น — ถ้ามีสมุด (<code>.manifest.json</code>) อยู่แล้ว มันเชื่อสมุดตอนเปิด server จนกว่าคุณจะทิ้งสมุดเอง (กับดักข้างบน)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>Propshaft · Sprockets</dt>
+    <dd>gem จัดการ asset ของ Rails · Propshaft (Rails 8) ทำแค่ fingerprint + เสิร์ฟ · Sprockets (รุ่นเก่า) ทำทุกอย่าง · โปรเจกต์เก่ามักยังใช้ Sprockets ·
+        <strong>ถาม senior ได้ว่า “โปรเจกต์นี้ใช้ Propshaft หรือ Sprockets” — ดูได้จาก Gemfile</strong></dd>
+    <dt><code>assets:precompile</code></dt>
+    <dd>คำสั่งเตรียม asset ทุกไฟล์ (ชื่อ + digest) ไว้ใน <code>public/assets/</code> ตอน deploy ·
+        <strong>พิมพ์บอก AI ได้ว่า “CSS works locally but not in production — check that assets:precompile ran during deploy”</strong></dd>
+    <dt>manifest</dt>
+    <dd>ตารางแมป "ชื่อเดิม → ชื่อที่มี digest" (<code>public/assets/.manifest.json</code>) ·
+        <strong>ถาม senior ได้ว่า “หลัง precompile ในเครื่องแล้วหน้าไม่อัปเดต ต้อง clobber ใช่ไหม”</strong></dd>
+    <dt><code>assets:clobber</code></dt>
+    <dd>ลบไฟล์ที่ precompile ไว้ทิ้งทั้งหมด (และ <code>tailwind.css</code> ที่ build ไว้ด้วย) · ใช้ตอนเจอของเก่าค้าง ·
+        <strong>พิมพ์บอก AI ได้ว่า “I ran assets:clobber, now rebuild Tailwind before starting the server”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">importmap — JavaScript โดยไม่มี node_modules</h2>
+
+<p>
+  ตอนทำ Next.js (บท 70) สิ่งแรกที่ทำคือ <code>npm install</code> แล้วได้โฟลเดอร์ <code>node_modules</code> ก้อนโต ·
+  ก่อนขึ้นเครื่องจริงต้อง <code>npm run build</code> ให้เครื่องมือมัด JavaScript ทั้งหมดเป็นก้อน · ในโปรเจกต์ Rails ของเรา:
+</p>
+
+<pre><code>$ ls node_modules package.json
+ls: node_modules: No such file or directory
+ls: package.json: No such file or directory</code></pre>
+
+<p>ไม่มีทั้งคู่ · แต่ไฟล์ <code>app/javascript/application.js</code> ของเราเขียนแบบนี้:</p>
+
+<pre><code><span class="c">// Configure your import map in config/importmap.rb. Read more: https://github.com/rails/importmap-rails</span>
+<span class="k">import</span> <span class="s">"@hotwired/turbo-rails"</span>
+<span class="k">import</span> <span class="s">"controllers"</span></code></pre>
+
+<p>
+  <code>import "…"</code> แบบไม่มี <code>from</code> = "โหลดไฟล์นั้นมารันเลย" ไม่ได้หยิบตัวแปรอะไรออกมาใช้ ·
+  <code>"@hotwired/turbo-rails"</code> ไม่ใช่ที่อยู่ไฟล์ — มันเป็นแค่<strong>ชื่อเล่น</strong> · เบราว์เซอร์เปล่า ๆ ไม่รู้ว่าชื่อนี้คือไฟล์ไหน ·
+  ใน Next.js เครื่องมือ build ไปหาใน <code>node_modules</code> ให้ · ใน Rails 8 ใช้วิธีที่เบราว์เซอร์เข้าใจเอง ชื่อ <strong>import map</strong> =
+  "สมุดรายชื่อที่บอกเบราว์เซอร์ว่า ชื่อเล่นนี้ → ไฟล์ที่อยู่ตรงไหน"
+</p>
+
+<p>สมุดนี้เราเขียนที่ <code>config/importmap.rb</code> (ไฟล์จริงของแอป):</p>
+
+<pre><code><span class="c"># Pin npm packages by running ./bin/importmap</span>
+
+<span class="f">pin</span> <span class="s">"application"</span>
+<span class="f">pin</span> <span class="s">"@hotwired/turbo-rails"</span>, <span class="n">to:</span> <span class="s">"turbo.min.js"</span>
+<span class="f">pin</span> <span class="s">"@hotwired/stimulus"</span>, <span class="n">to:</span> <span class="s">"stimulus.min.js"</span>
+<span class="f">pin</span> <span class="s">"@hotwired/stimulus-loading"</span>, <span class="n">to:</span> <span class="s">"stimulus-loading.js"</span>
+<span class="f">pin_all_from</span> <span class="s">"app/javascript/controllers"</span>, <span class="n">under:</span> <span class="s">"controllers"</span></code></pre>
+
+<ul>
+  <li><code>pin "application"</code> — จดชื่อ <code>application</code> → ไฟล์ <code>application.js</code> (ไม่มี <code>to:</code> = ชื่อไฟล์เหมือนชื่อเล่น)</li>
+  <li><code>pin "@hotwired/turbo-rails", to: "turbo.min.js"</code> — ชื่อเล่น <code>@hotwired/turbo-rails</code> → ไฟล์ <code>turbo.min.js</code> (<code>.min</code> = ฉบับที่บีบช่องว่างออกแล้ว)</li>
+  <li>สองบรรทัด <code>@hotwired/stimulus…</code> — แบบเดียวกัน แต่เป็นของ Stimulus (ตัวช่วยเขียน JS เล็ก ๆ ผูกกับ HTML — บท 134)</li>
+  <li><code>pin_all_from "app/javascript/controllers", under: "controllers"</code> — จดทุกไฟล์ในโฟลเดอร์นั้นทีเดียว โดยขึ้นต้นชื่อเล่นด้วย <code>controllers/</code> (ใช้ในบท 134)</li>
+</ul>
+
+<p>ดูสมุดฉบับที่ Rails แปลงแล้ว (มีชื่อพร้อม digest) ด้วยคำสั่งอ่านอย่างเดียว:</p>
+
+<pre><code>$ bin/importmap json
+{
+  "imports": {
+    "application": "/assets/application-bfcdf840.js",
+    "@hotwired/turbo-rails": "/assets/turbo.min-9fd88cd5.js",
+    "@hotwired/stimulus": "/assets/stimulus.min-4b1e420e.js",
+    "@hotwired/stimulus-loading": "/assets/stimulus-loading-1fc53fe7.js",
+    "controllers/application": "/assets/controllers/application-3affb389.js",
+    "controllers/hello_controller": "/assets/controllers/hello_controller-708796bd.js",
+    "controllers": "/assets/controllers/index-ee64e1f1.js"
+  }
+}</code></pre>
+
+<p>
+  นี่คือก้อนเดียวกับที่อยู่ใน <code>&lt;script type="importmap"&gt;</code> ของหน้าเว็บ (หัวข้อแรก) · ไฟล์ JS ก็ได้ fingerprint เหมือน CSS เพราะ Propshaft คนเดิมเป็นคนเสิร์ฟ ·
+  ทีนี้ไล่ตามลำดับที่เบราว์เซอร์ทำ:
+</p>
+
+<div class="diagram">1  อ่าน &lt;script type="importmap"&gt;           → จดสมุดรายชื่อไว้ในหัว
+2  เจอ &lt;link rel="modulepreload" …&gt;          → เริ่มโหลดไฟล์ JS ล่วงหน้าเลย ไม่ต้องรอ
+3  เจอ &lt;script type="module"&gt;import "application"
+   → เปิดสมุด: application = /assets/application-bfcdf840.js → โหลด → รัน
+4  ในไฟล์นั้นเจอ import "@hotwired/turbo-rails"
+   → เปิดสมุด: = /assets/turbo.min-9fd88cd5.js → โหลด → รัน</div>
+
+<p>แล้ว <code>turbo.min.js</code> อยู่ไหน ในเมื่อโปรเจกต์ไม่มี <code>node_modules</code>? ถาม Propshaft ว่ามันหาเจอที่ไหน:</p>
+
+<pre><code>$ bin/rails runner 'puts Rails.application.assets.load_path.find("turbo.min.js").path'
+…/gems/turbo-rails-2.0.23/app/assets/javascripts/turbo.min.js</code></pre>
+
+<p>
+  อยู่ใน <strong>gem <code>turbo-rails</code></strong> ที่ลงมากับ Gemfile — library JS ที่ Rails ใช้ประจำมากับ gem เลย ไม่ต้องผ่าน npm ·
+  (<code>bin/rails runner '…'</code> = รันโค้ด Ruby หนึ่งบรรทัดในแอปโดยไม่ต้องเปิด console ·
+  <code>load_path</code> = รายชื่อโฟลเดอร์ที่ Propshaft ไล่หาไฟล์ ซึ่งรวมโฟลเดอร์ใน gem ด้วย · ส่วนหน้า path ของคุณจะต่างตามเครื่อง)
+</p>
+
+<h3 id="sn-sub-2">อยากเพิ่ม library ใหม่ทำยังไง</h3>
+
+<p>
+  สไลด์หน้า 27 ยกตัวอย่าง <code>bin/importmap pin sortablejs</code> (library ลากวางรายการ) ·
+  คำสั่งนี้<strong>ไปถามบริการ CDN ชื่อ jspm.io</strong> แล้วดาวน์โหลดไฟล์ JS มาเก็บใน <code>vendor/javascript/</code> (โฟลเดอร์เก็บโค้ดของคนอื่นที่เอามาใช้) พร้อมเพิ่มบรรทัด <code>pin</code> ลงใน <code>config/importmap.rb</code> ·
+  <strong>บทนี้ไม่ได้รันคำสั่งนี้</strong> (ไม่ได้ใช้ library นั้น และไม่อยากโหลดของจากเน็ตเข้าโปรเจกต์โดยไม่จำเป็น) — ถ้าวันหนึ่งต้องใช้ ให้เปิดดูไฟล์ที่ได้มาก่อน commit
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ได้อะไร</th><th>เสียอะไร</th></tr></thead>
+  <tbody>
+    <tr><td>ไม่มี <code>node_modules</code> ไม่มี <code>package.json</code> <strong>ไม่มีขั้น build ของ JS</strong></td><td>ไม่มี <strong>tree-shaking</strong> (การตัดส่วนของ library ที่เราไม่ได้ใช้ทิ้ง) — ได้ library มาทั้งก้อน</td></tr>
+    <tr><td>แก้ไฟล์ JS แล้ว refresh เห็นเลย</td><td>เขียน TypeScript / JSX ตรง ๆ ไม่ได้ (ต้องมีตัวแปลงเป็น JS ก่อน แบบที่ <code>tsc</code> ทำในบท 63)</td></tr>
+    <tr><td>ไม่ต้องกังวล library แปลก ๆ ที่ npm ลากเข้ามาเป็นร้อยตัว</td><td>library รุ่นเก่าที่ไม่ได้เขียนแบบ <code>import</code>/<code>export</code> ใช้ไม่ได้</td></tr>
+    <tr><td>deploy เร็วขึ้น (สไลด์อ้าง)</td><td>ถ้า JS เยอะมาก ๆ จะมีไฟล์เล็ก ๆ เต็มไปหมด</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">📒 เทียบให้เห็นภาพ — สมุดรายชื่อ "ชื่อเล่น → อยู่ชั้นไหน"</span>
+  <p>
+    Next.js เหมือนร้านที่สั่งวัตถุดิบมากองเต็มโกดัง (<code>node_modules</code>) แล้วให้ครัวกลางปรุงรวมเป็นชุดสำเร็จก่อนเปิดร้าน (<code>npm run build</code>) ·
+    Rails 8 แค่แปะสมุดรายชื่อไว้หน้าร้าน: "ขอ <em>turbo</em> → ไปหยิบที่ชั้น A เล่ม 9fd88cd5" · ลูกค้า (เบราว์เซอร์) เปิดสมุดแล้วเดินไปหยิบเอง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> สมุดรายชื่อไม่ได้ทำให้ของเบาลง — ถ้าชั้นนั้นมีหนังสือหนาพันหน้า ลูกค้าก็ต้องแบกไปทั้งเล่ม แม้จะอ่านแค่หน้าเดียว (ไม่มี tree-shaking) ·
+    และสมุดใช้ได้เฉพาะของที่ "หยิบได้เลย" ถ้าต้องปรุงก่อน (TypeScript · JSX) ต้องมีครัวแยกมาช่วย
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>import map · <code>pin</code></dt>
+    <dd>ตารางที่บอกเบราว์เซอร์ว่าชื่อใน <code>import "…"</code> คือไฟล์ไหน · <code>pin</code> = เพิ่มหนึ่งบรรทัดในตารางนั้น ·
+        <strong>พิมพ์บอก AI ได้ว่า “this app uses importmap-rails, not npm — pin the library instead of npm install”</strong> (ไม่บอก AI มักสั่ง <code>npm install</code> มา)</dd>
+    <dt>bundler · bundling</dt>
+    <dd>เครื่องมือที่มัด JS หลายไฟล์ (และ library) รวมเป็นก้อนเดียว เช่น esbuild · Vite · ที่ Next.js ใช้ตอน build ·
+        <strong>ถาม senior ได้ว่า “แอปนี้ JS เยอะพอจะต้องมี bundler หรือยัง”</strong></dd>
+    <dt>tree-shaking</dt>
+    <dd>การที่ bundler ตัดส่วนของ library ที่โค้ดเราไม่ได้เรียกทิ้ง ให้ไฟล์เล็กลง · importmap ไม่มีสิ่งนี้ ·
+        <strong>ถาม senior ได้ว่า “library ตัวนี้ใหญ่แค่ไหน ถ้าไม่มี tree-shaking คุ้มไหม”</strong></dd>
+    <dt>ES module</dt>
+    <dd>มาตรฐานการเขียน <code>import</code> / <code>export</code> ที่เบราว์เซอร์เข้าใจเอง · <code>&lt;script type="module"&gt;</code> คือการบอกว่าไฟล์นี้เขียนแบบนั้น ·
+        <strong>ถาม senior ได้ว่า “library นี้มีเวอร์ชัน ES module ไหม ใช้กับ importmap ได้หรือเปล่า”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">ทางเลือกทั้งหมด — เลือกจากสองคำถาม</h2>
+
+<p>สไลด์หน้า 28 รวมเครื่องมือที่ Rails มีให้เลือก · ไม่ต้องจำชื่อ gem และไม่ต้องรู้จักชื่อเครื่องมือในวงเล็บ — จำ<strong>เกณฑ์เลือก</strong>:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>gem</th><th>ดูแล</th><th>ทำอะไร</th><th>เหมาะกับ</th></tr></thead>
+  <tbody>
+    <tr><td><strong>importmap-rails</strong> ✅</td><td>JS</td><td>ไม่มีขั้น build · เบราว์เซอร์ import เอง</td><td>แอปที่ JS ไม่เยอะ · ค่าเริ่มต้น Rails 8</td></tr>
+    <tr><td>jsbundling-rails</td><td>JS</td><td>เรียก bundler (esbuild · rollup · Bun · Webpack) มามัด JS ให้</td><td>ต้องใช้ TypeScript หรือ library ที่ต้องมัดรวม</td></tr>
+    <tr><td>cssbundling-rails</td><td>CSS</td><td>เรียกเครื่องมือ CSS (Tailwind · Bootstrap · Sass) ผ่าน <code>yarn</code> จึงต้องมี Node</td><td>framework CSS ที่ต้อง build</td></tr>
+    <tr><td><strong>tailwindcss-rails</strong> ✅</td><td>CSS</td><td>Tailwind ฉบับไม่ต้องมี Node เลย</td><td>ใช้ Tailwind อย่างเดียว (บท 128)</td></tr>
+    <tr><td><strong>propshaft</strong> ✅</td><td>ทั้งคู่</td><td>fingerprint + เสิร์ฟ ไม่มัดรวม</td><td>เป็นฐานของทุกตัวข้างบน</td></tr>
+    <tr><td>vite_rails</td><td>ทั้งคู่</td><td>ยก Vite มาทั้งชุด (แก้โค้ดแล้วหน้าเปลี่ยนทันทีแบบ <code>npm run dev</code>)</td><td>ทีมที่คุ้น Vite และ JS เยอะมาก</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>✅ = แอปของเราใช้ตัวนี้ (ดูได้จาก <code>Gemfile</code>) · <strong>ไม่มี Node ในโปรเจกต์เลยสักตัว</strong> · เวลาต้องเลือก ถามตัวเองสองข้อ:</p>
+<ol>
+  <li><strong>JS เยอะแค่ไหน?</strong> — แค่ปุ่มเปิด/ปิด ตัวนับอักษร (Stimulus · บท 134) → importmap พอ · ทั้งหน้าเป็นแอปแบบ React → ต้อง bundler</li>
+  <li><strong>ยอมมีขั้น build ไหม?</strong> — มี build = ได้ TypeScript · tree-shaking แต่ต้องดูแล Node และรอ build ทุกครั้ง</li>
+</ol>
+
+<div class="task">
+  <h3 id="sn-sub-3">🎯 ภารกิจ: เปลี่ยนสีพื้นหลัง แล้วดูชื่อไฟล์เปลี่ยนตาม (~10 นาที)</h3>
+  <ol>
+    <li>เปิด server ไว้ (<code>bin/dev</code>) · อีกหน้าต่าง terminal รัน <code>curl -s localhost:3000/posts | grep stylesheet</code> · จดเลขท้าย <code>application-…</code> ไว้</li>
+    <li>เพิ่มบรรทัด <code>body { background: #fef3c7; }</code> ท้ายไฟล์ <code>app/assets/stylesheets/application.css</code> (เว้นบรรทัดว่างหนึ่งบรรทัดก่อน แบบเดียวกับข้างบน) แล้วบันทึก</li>
+    <li>รันคำสั่ง <code>curl</code> เดิมอีกรอบ · เลขเปลี่ยนไหม? เลขของ <code>tailwind-…</code> เปลี่ยนไหม? · เปิด <code>http://localhost:3000/posts</code> ในเบราว์เซอร์ดูสีด้วย</li>
+    <li>แก้เฉพาะรหัสสีในบรรทัดเดิมเป็น <code>#dcfce7</code> แล้ว <code>curl</code> อีกรอบ</li>
+    <li><code>git restore app/assets/stylesheets/application.css</code> แล้ว <code>curl</code> อีกรอบ · <strong>ทายก่อนรัน</strong>ว่าจะได้เลขอะไร</li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> ข้อ 3 เลขของ application เปลี่ยน แต่ tailwind เลขเดิม · พื้นหลังเป็นสีเหลืองอ่อน · ข้อ 5 ได้เลขเดียวกับที่จดไว้ในข้อ 1</p>
+  <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+  <ul>
+    <li><strong>แก้ไฟล์แล้วเลขไม่เปลี่ยนเลย</strong> → มี <code>public/assets/.manifest.json</code> ค้างจากการ precompile (กับดักในหัวข้อ Propshaft) · สั่ง <code>bin/rails assets:clobber</code> แล้ว <code>bin/rails tailwindcss:build</code> แล้วเปิด server ใหม่</li>
+    <li><strong>หน้าเว็บโล่ง ไม่มีสไตล์เลย · บรรทัด <code>tailwind-…</code> หายไปจาก <code>curl</code></strong> → <code>tailwind.css</code> ถูกลบ (เช่นหลัง <code>assets:clobber</code>) · สั่ง <code>bin/rails tailwindcss:build</code></li>
+    <li><strong>เลข <code>tailwind-…</code> ของคุณไม่ตรงกับในบท</strong> → ปกติ · Tailwind อ่านไฟล์ในโปรเจกต์เพื่อหาคลาส (บท 128) ไฟล์ต่างกันนิดเดียวเนื้อ CSS ก็ต่าง เลขก็ต่าง · เราเจอเองตอนมีไฟล์ทดลองค้างในโฟลเดอร์โปรเจกต์</li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงตามลำดับ (ข้อ 1 · 3 · 4 · 5) · เลขของข้อ 3–4 จะตรงกับของเราถ้าเว้นบรรทัดแบบเดียวกัน ถ้าไม่ตรงไม่ผิด ขอแค่มันเปลี่ยน:</p>
+<pre><code>$ curl -s localhost:3000/posts | grep stylesheet
+    &lt;link rel="stylesheet" href="/assets/application-8b441ae0.css" data-turbo-track="reload" /&gt;
+&lt;link rel="stylesheet" href="/assets/tailwind-798e8e3d.css" data-turbo-track="reload" /&gt;
+
+$ curl -s localhost:3000/posts | grep stylesheet      <span class="c"># #fef3c7</span>
+    &lt;link rel="stylesheet" href="/assets/application-6c48751d.css" data-turbo-track="reload" /&gt;
+&lt;link rel="stylesheet" href="/assets/tailwind-798e8e3d.css" data-turbo-track="reload" /&gt;
+
+$ curl -s localhost:3000/posts | grep stylesheet      <span class="c"># #dcfce7</span>
+    &lt;link rel="stylesheet" href="/assets/application-3cafeaa9.css" data-turbo-track="reload" /&gt;
+&lt;link rel="stylesheet" href="/assets/tailwind-798e8e3d.css" data-turbo-track="reload" /&gt;
+
+$ curl -s localhost:3000/posts | grep stylesheet      <span class="c"># หลัง git restore</span>
+    &lt;link rel="stylesheet" href="/assets/application-8b441ae0.css" data-turbo-track="reload" /&gt;
+&lt;link rel="stylesheet" href="/assets/tailwind-798e8e3d.css" data-turbo-track="reload" /&gt;</code></pre>
+    <p>
+      ทุกครั้งที่เนื้อ <code>application.css</code> เปลี่ยน ชื่อเปลี่ยนตาม · <code>tailwind-798e8e3d</code> นิ่งตลอดเพราะไม่ได้แตะ ·
+      และ <code>git restore</code> คืนเนื้อเดิม → ได้ <code>8b441ae0</code> กลับมา (ถ้า <code>application.css</code> ของคุณเหมือนในแอปกลางทุกตัวอักษร เลขของคุณจะตรงกับนี้ด้วย)
+    </p>
+    <p><strong>ก่อนไปบท 128:</strong> ถ้าลอง <code>assets:precompile</code> ตามหัวข้อ Propshaft ไว้ ให้เก็บกวาดให้ครบ:</p>
+<pre><code>$ git restore app/assets/stylesheets/application.css
+$ bin/rails assets:clobber
+$ bin/rails tailwindcss:build</code></pre>
+    <p><code>git status</code> ควรไม่เหลืออะไรที่แก้ · โค้ดกลับมาเป็นสถานะเดียวกับตอนจบบท 126</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-8">แบบฝึกหัด</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">สไลด์หน้า 33 ถามว่า ถ้าเราไม่ทำ fingerprinting เลย แต่ตั้งหัวจดหมายบอกเบราว์เซอร์ว่า "ห้ามเก็บสำเนาไฟล์ CSS" แทน จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">ผู้ใช้ยังเห็น CSS เก่าต่อไป เพราะเบราว์เซอร์จำชื่อไฟล์เดิมได้อยู่แล้ว</button>
+    <button class="opt">ผู้ใช้ได้ CSS ใหม่ทันที แต่ทุกหน้าต้องโหลดหรือถาม server ใหม่ เว็บช้าลง</button>
+    <button class="opt">Rails จะเปลี่ยนไปต่อเลขท้ายชื่อไฟล์ให้เองทุกครั้งที่มีคนขอหน้า</button>
+    <button class="opt">ไม่ต่างจากเดิม เพราะเบราว์เซอร์สมัยนี้ไม่เก็บสำเนา CSS อยู่แล้ว</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ห้ามเก็บสำเนา = ไม่มีของเก่าค้าง แต่ก็เสียข้อดีของ cache ไปทั้งหมด · ตาราง Chrome ในบทนี้ หน้าที่สองโหลด CSS 0 byte เพราะมีสำเนา · ถ้าห้ามเก็บ ทุกหน้าต้องโหลดใหม่ (34 KB ของ Tailwind ทุกหน้า) server ก็เหนื่อยขึ้น ·
+      fingerprinting ได้ทั้งสองอย่าง: เก็บได้นานหนึ่งปี <em>และ</em> ได้ของใหม่ทันทีที่แก้</p>
+    <p>ตัวเลือกที่ 1 ผิดเพราะสั่งห้ามเก็บแล้ว จะไม่มีสำเนาเก่าให้จำ ·
+       ตัวเลือกที่ 3 ผิดเพราะการต่อเลขคือ fingerprinting ที่โจทย์บอกว่าไม่ทำ ·
+       ตัวเลือกที่ 4 ผิดเพราะเราวัดแล้วว่าเบราว์เซอร์เก็บสำเนาจริง (0 byte ในหน้าที่สอง)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ปิด cache = ได้ของใหม่แต่ช้า · cache ยาวโดยไม่มี digest = เร็วแต่ได้ของเก่า · fingerprinting = เร็วและใหม่</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อไหนบอกหน้าที่ของ <strong>Propshaft</strong> ได้ตรงที่สุด?</p>
+  <div class="opts">
+    <button class="opt">สร้างไฟล์ CSS จากชื่อคลาสที่มันอ่านเจอในไฟล์ view ทั้งหมดของเรา</button>
+    <button class="opt">จดว่าชื่อใน import ของ JavaScript แต่ละชื่อคือไฟล์ไหนบน server</button>
+    <button class="opt">ต่อ digest ท้ายชื่อ asset เสิร์ฟไฟล์ และบอก helper ว่าตอนนี้ชื่ออะไร</button>
+    <button class="opt">มัดไฟล์ JS ทั้งหมดรวมเป็นก้อนเดียว บีบให้เล็ก แล้วแปลง TypeScript ให้</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — Propshaft ทำแค่ fingerprint + เสิร์ฟ (+ ทำตาราง manifest ให้ <code>stylesheet_link_tag</code> รู้ชื่อ) ไม่ทำอย่างอื่น</p>
+    <p>ตัวเลือกที่ 1 คืองานของ tailwindcss-rails (บท 128) ·
+       ตัวเลือกที่ 2 คืองานของ importmap ·
+       ตัวเลือกที่ 4 คืองานของ bundler (jsbundling-rails · Vite) หรือ Sprockets สมัยก่อน — Propshaft ตั้งใจ<strong>ไม่</strong>ทำ</p>
+    <p><strong>จุดที่ต้องจำ:</strong> Propshaft = เลขรุ่น + เสิร์ฟ · Tailwind = สร้าง CSS · importmap = สมุดชื่อเล่นของ JS</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">เพื่อนลอง <code>bin/rails assets:precompile</code> ในเครื่องเมื่อวาน · วันนี้แก้ <code>application.css</code> แล้วเปิด server ใหม่ · สีไม่เปลี่ยน และชื่อไฟล์ใน HTML ก็ยังเป็นชื่อเดิม · เกิดจากอะไร?</p>
+  <div class="opts">
+    <button class="opt">ตาราง <code>.manifest.json</code> จาก precompile ยังค้าง Rails เลยใช้ชื่อเดิมในตาราง</button>
+    <button class="opt">เบราว์เซอร์ยังเก็บสำเนาเก่าไว้ ต้องล้าง cache ของเบราว์เซอร์ทุกเครื่องก่อน</button>
+    <button class="opt">ลืมสั่ง <code>bin/importmap pin</code> ไฟล์ CSS ใหม่ให้อยู่ในสมุดรายชื่อก่อน</button>
+    <button class="opt">Propshaft คำนวณ digest จากเวลาที่แก้ไฟล์ เวลาจึงต้องผ่านไปสักพักก่อน</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — คำเตือนตอน precompile บอกไว้ตรง ๆ ว่า "Rails will not serve any changed assets until you delete public/assets/.manifest.json" · เราลองแล้วได้อาการนี้เป๊ะ · แก้ด้วย <code>assets:clobber</code> แล้วอย่าลืม <code>tailwindcss:build</code></p>
+    <p>ตัวเลือกที่ 2 ผิดเพราะ<strong>ชื่อใน HTML</strong>ยังเป็นชื่อเดิม — ปัญหาอยู่ฝั่ง server ไม่ใช่เบราว์เซอร์ (ถ้าชื่อเปลี่ยน เบราว์เซอร์โหลดใหม่เองอยู่แล้ว) ·
+       ตัวเลือกที่ 3 ผิดเพราะ importmap ดูแลแค่ JS ไม่เกี่ยวกับ CSS ·
+       ตัวเลือกที่ 4 ผิดเพราะ digest มาจากเนื้อไฟล์ล้วน ๆ (แก้แล้วแก้กลับได้เลขเดิม)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ชื่อใน HTML ไม่เปลี่ยน = ดูฝั่ง server ก่อน · precompile ในเครื่องแล้วต้อง clobber</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">โปรเจกต์ไม่มี <code>node_modules</code> แต่ <code>app/javascript/application.js</code> เขียน <code>import "@hotwired/turbo-rails"</code> แล้วทำงานได้ · เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">Rails มัด JS ทุกไฟล์รวมเป็นก้อนเดียวก่อนส่ง ชื่อนี้จึงถูกแทนด้วยโค้ดจริงไปแล้ว</button>
+    <button class="opt">เบราว์เซอร์ไปดาวน์โหลด turbo จาก npm เองทุกครั้งที่เปิดหน้าเว็บ</button>
+    <button class="opt">Ruby แปลงบรรทัด import ให้เป็นคำสั่ง require ของ Ruby ตอน server ทำงาน</button>
+    <button class="opt">import map ในหน้าเว็บบอกว่าชื่อนี้คือไฟล์ <code>/assets/turbo.min-….js</code> ที่มาจาก gem</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — <code>&lt;script type="importmap"&gt;</code> แมปชื่อเล่นไปที่ไฟล์ · ไฟล์นั้นจริง ๆ อยู่ใน gem <code>turbo-rails</code> และ Propshaft เป็นคนเสิร์ฟ (พร้อม digest)</p>
+    <p>ตัวเลือกที่ 1 คือสิ่งที่ bundler ทำ — importmap ไม่มัดรวม (ไฟล์ส่งแยกกัน เห็นได้จาก <code>modulepreload</code> 7 บรรทัด) ·
+       ตัวเลือกที่ 2 ผิดเพราะไฟล์มาจาก server ของเราเอง ที่ <code>/assets/</code> · npm ไม่เกี่ยวเลย ·
+       ตัวเลือกที่ 3 ผิดเพราะ JS รันในเบราว์เซอร์ Ruby ไม่ได้แตะบรรทัดนั้น</p>
+    <p><strong>จุดที่ต้องจำ:</strong> importmap = สมุดชื่อเล่น → ไฟล์ · เบราว์เซอร์อ่านสมุดแล้วโหลดเอง ไม่มีขั้น build</p>
+  </div>
+</div>
+
+<p>ติดตรงไหน ลองถามผู้สอนหรือ AI ด้วยประโยคในกล่องศัพท์ได้เลย · หรือแปะผล <code>curl -sI</code> ของไฟล์ที่สงสัยแล้วถามว่า "ทำไมไฟล์นี้ cache แบบนี้"</p>
+
+<h2 id="sn-sec-9">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · propshaft 1.3.2)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>26</td><td>เรียกใน view ด้วย <code>stylesheet_link_tag "application"</code></td><td>layout จริงใช้ <code>stylesheet_link_tag :app</code> = ได้ทั้ง <code>application</code> และ <code>tailwind</code></td><td><strong>สนใจ</strong> — อย่าแก้ตามสไลด์ ไม่งั้น Tailwind หายทั้งเว็บ</td></tr>
+    <tr><td>26</td><td>ไฟล์วางที่ <code>app/assets/stylesheets/</code> · <code>app/assets/images/</code></td><td>มี <code>app/assets/builds/</code> (Tailwind สร้าง ห้ามแก้มือ) และ <code>app/javascript/</code> ด้วย</td><td>นิดหน่อย — แก้ CSS ของเราที่ <code>stylesheets/</code> เท่านั้น</td></tr>
+    <tr><td>25</td><td>ชื่อตัวอย่าง <code>app-9a8b7c.css</code></td><td>ชื่อจริงเต็ม + 8 ตัว เช่น <code>application-8b441ae0.css</code></td><td>ไม่ต้อง — หลักการเดียวกัน</td></tr>
+    <tr><td>27</td><td>ตัวอย่าง importmap มี <code>turbo-c3d4.js</code> สองบรรทัด</td><td>จริงมี 7 ชื่อ · turbo คือ <code>turbo.min-9fd88cd5.js</code> · มี <code>modulepreload</code> ตามมาอีก 7 บรรทัด</td><td>ไม่ต้อง</td></tr>
+    <tr><td>27</td><td><code>bin/importmap pin sortablejs</code></td><td>ดาวน์โหลดไฟล์จาก jspm.io มาไว้ <code>vendor/javascript/</code> · บทนี้ไม่ได้รัน</td><td>สนใจตอนจะเพิ่ม library — ตรวจไฟล์ที่ได้ก่อน commit</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0126-lab-vibe1-views.html">← บทเรียน 126 · Lab Vibe 1</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 3</a>
+  <a href="./0128-tailwind-v4-daisyui.html">บทเรียน 128 → Tailwind v4 · daisyUI</a>
+</nav>
+
+<h2 id="sn-sec-10">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/asset_pipeline.html#fingerprinting-versioning-with-digest-based-urls">Rails Guides — Asset Pipeline § Fingerprinting: Versioning with Digest-Based URLs</a> —
+      <strong>อ่านถึงหัวข้อ Manifest Files แล้วหยุด</strong> · ยืนยันเรื่องชื่อ + digest และตาราง <code>.manifest.json</code> ที่เราเปิดดู</li>
+  <li><a href="https://guides.rubyonrails.org/asset_pipeline.html#sprockets-vs-propshaft">Rails Guides — Asset Pipeline § Sprockets vs. Propshaft</a> —
+      <strong>อ่านแค่ Load Order กับ Precompilation</strong> · ที่มาของตาราง Sprockets/Propshaft ในบทนี้</li>
+  <li><a href="https://guides.rubyonrails.org/working_with_javascript_in_rails.html#import-maps">Rails Guides — Working with JavaScript in Rails § Import Maps</a> —
+      <strong>อ่านหัวข้อ Import Maps และ Choosing Between Import Maps and a JavaScript Bundler</strong> · เกณฑ์เลือกเดียวกับสองคำถามท้ายบท</li>
+  <li><a href="https://github.com/rails/propshaft">github.com/rails/propshaft</a> —
+      <strong>อ่าน README ส่วนแรกกับหัวข้อ Usage</strong> · บอกตรง ๆ ว่า Propshaft ไม่ทำอะไรและทำแค่สี่อย่าง (รวม digest และ manifest) · Usage ยืนยันว่า precompile คัดลอก<em>ทุก</em>ไฟล์ใน load path ไป <code>public/assets</code> (ที่มาของ trix ที่เราไม่ได้ใช้)</li>
+  <li><a href="https://github.com/rails/importmap-rails">github.com/rails/importmap-rails</a> —
+      <strong>อ่าน README ส่วน Usage กับ Using npm packages via JavaScript CDNs</strong> · อธิบายว่า <code>bin/importmap pin</code> โหลดไฟล์มาไว้ <code>vendor/javascript</code></li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching#cache_busting">MDN — HTTP caching § Cache Busting</a> —
+      <strong>อ่านหัวข้อ Cache Busting และย้อนไปอ่าน What's lost by no-store</strong> · เรื่องเดียวกับ fingerprinting เล่าจากฝั่งเบราว์เซอร์ และตรงกับ quiz ข้อ 1</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script/type/importmap">MDN — &lt;script type="importmap"&gt;</a> —
+      <strong>ดูตัวอย่างแรกของหน้าพอ</strong> · ยืนยันว่า import map เป็นของมาตรฐานเบราว์เซอร์ ไม่ใช่ของ Rails</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

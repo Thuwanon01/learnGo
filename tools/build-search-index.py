@@ -329,6 +329,7 @@ GROUP_ID = {
     "fe-agentic": 105,
     "rails-day-1": 201,
     "rails-day-2": 202,
+    "rails-day-3": 203,
 }
 
 

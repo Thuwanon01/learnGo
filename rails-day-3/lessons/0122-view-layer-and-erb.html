@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 122 — View layer — ทำไม Rails ไม่ต้องมีชั้น API และ ERB 4 แบบ</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 122 · Rails · Day 3</p>
+  <h1>View layer — ทำไม Rails ไม่ต้องมีชั้น API และ ERB 4 แบบ</h1>
+  <p class="meta">~20 นาที · ควรผ่าน <a href="./0120-day3-setup.html">บทเรียน 120</a> (เปิดโปรเจกต์กลาง + ข้อมูล 30 บทความ) ·
+    <a href="../../rails-day-1/lessons/0103-rails-views-and-helpers.html">บทเรียน 103</a> (ERB ครั้งแรก) ·
+    และ <a href="../../fe-nextjs/lessons/0074-useeffect.html">บทเรียน 73–74</a> (useState · useEffect) มาก่อน</p>
+  <p class="standfirst">
+    ตอนเรียน Next.js + Go คุณทำหน้ารายการด้วย <strong>สองโปรแกรม</strong>: Go ส่งข้อมูลเป็น JSON แล้ว React ในเบราว์เซอร์เอาไปวาดเป็นหน้าจอ ·
+    Rails ทำงานเดียวกันด้วย <strong>ไฟล์เดียว</strong> แล้วชั้น API ที่หายไปนั้นไปไหน?
+    <br>อ่านจบบทนี้ คุณจะ<strong>อธิบายได้ว่าสองแบบต่างกันตรงไหน</strong> และแต่ละแบบได้อะไร เสียอะไร ·
+    เห็นด้วยตาว่าแอปเดียวกันส่งได้ทั้ง HTML และ JSON ·
+    และใช้ ERB ทั้ง 4 แบบได้โดยไม่ตกกับดัก "หน้าว่างแต่ไม่มี error"
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>view · ERB</strong> (บท 103) — ไฟล์แม่แบบที่ Rails เติมข้อมูลแล้วได้ HTML · <code>&lt;%= %&gt;</code> = วางลงจาน · <code>&lt;% %&gt;</code> = คำสั่งถึงคนจัด ไม่ลงจาน · <code>&lt;%# %&gt;</code> = โน้ตของเชฟ</li>
+    <li><strong><code>@posts</code> = ถาดหน้าครัว</strong> (บท 102–103) — controller วางของไว้ view หยิบไปจัดจาน</li>
+    <li><strong>scaffold</strong> (บท 118) — คำสั่งที่สร้าง route · controller · view ครบ 7 action ให้ในทีเดียว · แอปของ Day 3 เริ่มจาก scaffold ดิบ ๆ</li>
+    <li><strong>useState · useEffect</strong> (บท 73–74) — useState = ความจำของ component · useEffect = งานที่ทำหลังวาดหน้าจอเสร็จ</li>
+    <li><strong>curl</strong> (บท 103 · 114) — โปรแกรมเปิดหน้าเว็บจากเทอร์มินัล ได้ HTML เป็นข้อความ เห็นสิ่งที่เบราว์เซอร์ได้รับจริงทุกตัวอักษร</li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18</strong>
+    (สไลด์และ repo ของอาจารย์ใช้ Ruby 4.0.5–4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน ใช้แทนกันได้)</p>
+  <p>🗂 <strong>โค้ดเริ่มต้น:</strong> ต่อจาก<a href="./0120-day3-setup.html">บท 120</a> — แอป <code>wongnok-blog-all-in-one</code> branch <code>my-day3</code> (แตกจาก <code>day3-start</code> ของอาจารย์) + ข้อมูลตัวอย่าง 30 บทความที่ commit ไว้แล้ว ·
+    ตามไม่ทันให้ทำบท 120 ก่อน · <strong>บทนี้แก้ไฟล์เพื่อทดลองเท่านั้น จบบทสั่ง <code>git restore</code> คืนทุกอย่าง</strong></p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · ตัดบรรทัดที่ไม่เกี่ยวเป็น <code>…</code> · <strong>วันเวลา · เวลา (ms) · รหัสยาว ๆ ในฟอร์มของคุณจะไม่ตรงกับในบท</strong></p>
+</div>
+
+<h2 id="sn-sec-1">บล็อก A ของ Day 3: ทั้งบล็อกคือเรื่องของ "คนจัดจาน"</h2>
+
+<p>
+  Day 3 ช่วงเช้ามี 3 บล็อก · <strong>บล็อก A คือ view</strong> (คนจัดจาน) · บล็อก B คือ CSS · บล็อก C คือทำให้หน้าเว็บขยับได้ ·
+  บล็อก A ยาว 5 บท และจบด้วยหน้า index กับ show ที่อ่านรู้เรื่อง (บท 126)
+</p>
+
+<ul>
+  <li><strong>122 (บทนี้)</strong> — ทำไม Rails ส่ง HTML ไม่ใช่ JSON · ERB 4 แบบ</li>
+  <li><strong>123</strong> — layout กับ partial (แม่พิมพ์ที่ใช้ซ้ำได้) · <strong>124</strong> — helper กับฟอร์ม · <strong>125</strong> — ช่องโหว่ที่ซ่อนใน view · <strong>126</strong> — Lab</li>
+</ul>
+
+<h2 id="sn-sec-2">งานเดียวกัน สองเส้นทาง</h2>
+
+<p>
+  โจทย์: <strong>โชว์รายการบทความทั้งหมดบนหน้าเว็บ</strong> (แอปของเรามี 30 ชิ้น) · ฝั่ง FRONT + BACK ของคอร์สนี้สอนให้ทำแบบ ① · Rails ทำแบบ ② ·
+  อ่านจากบนลงล่าง = ข้อมูลเดินทางจากฐานข้อมูลไปถึงตาคน (ภาพจากสไลด์หน้า 10)
+</p>
+
+<div class="diagram">① Next.js + Go — 7 กล่อง
+
+   PostgreSQL
+      ▼
+   Go handler            ส่ง c.JSON(…) (บท 38)          ← server
+      ▼
+   ~~ JSON ผ่านเน็ต ~~    ข้อมูลล้วน ๆ ยังไม่มีหน้าตา
+      ▼
+   fetch ใน browser      ขอข้อมูลใน useEffect           ← browser
+      ▼
+ ★ state ใน client       เก็บไว้ด้วย useState (บท 73)
+      ▼
+   React render          เอา state มาวาดเป็น HTML
+      ▼
+   DOM                   สิ่งที่ตาเห็นบนจอ
+
+
+② Rails — 5 กล่อง
+
+   PostgreSQL
+      ▼
+   Rails controller      @posts = Post.all              ← server
+      ▼
+   ERB render เป็น HTML   index.html.erb จัดจานเสร็จในครัว
+      ▼
+   ~~ HTML ผ่านเน็ต ~~    หน้าเว็บพร้อมโชว์
+      ▼
+   DOM                   สิ่งที่ตาเห็นบนจอ               ← browser</div>
+
+<p>
+  คำในภาพสองคำ: <strong>render</strong> = แปลงข้อมูลให้กลายเป็นหน้าตา (HTML) ·
+  <strong>DOM</strong> = หน้าเว็บที่เบราว์เซอร์อ่าน HTML แล้วสร้างเก็บไว้ในหน่วยความจำ ก่อนวาดออกจอ (ตัวที่เห็นในแท็บ Elements ของ DevTools) · บทนี้ให้คิดว่ามันคือ "จานที่วางอยู่บนโต๊ะแล้ว" พอ
+</p>
+
+<p>
+  ฝั่ง ① server ส่ง <strong>JSON</strong> ออกไป — ข้อมูลล้วน ๆ แบบที่ Go ส่งในบท 38 ยังไม่มีหน้าตา ·
+  แล้วโค้ด React ที่รันในเบราว์เซอร์ต้องรับมา เก็บไว้ แล้ววาดเอง
+</p>
+<p>
+  ฝั่ง ② server ทำทุกอย่างจนเสร็จ ส่ง <strong>HTML</strong> ที่พร้อมโชว์ออกไป · เบราว์เซอร์แค่เอาไปแสดง ·
+  <strong>ไม่มีใครต้อง "เรียก API"</strong> เพราะ controller กับ view อยู่ในแอปเดียวกัน ส่งของกันผ่าน <code>@posts</code> ได้เลย — ชั้น API ไม่ได้หายไปไหน แค่<strong>ไม่จำเป็นต้องมี</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">🍳 เทียบให้เห็นภาพ — จัดจานเสร็จในครัว vs ส่งวัตถุดิบไปปรุงที่โต๊ะ</span>
+  <p>
+    แบบ ② (Rails) เหมือนร้านอาหารทั่วไป: ครัวปรุงและจัดจานเสร็จ พนักงานยกจานพร้อมกินไปวางที่โต๊ะ · ลูกค้าแค่กิน
+    <br>แบบ ① เหมือนร้านหมูกระทะ: ครัวส่ง<strong>วัตถุดิบดิบ</strong> (JSON) ไปที่โต๊ะ · โต๊ะต้องมี<strong>เตาของตัวเอง</strong> (React) และ<strong>สมุดจดว่าบนโต๊ะมีอะไรเหลือบ้าง</strong> (state) แล้วปรุงเอง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านหมูกระทะ ลูกค้าต้องปรุงเองจนเหนื่อย · แต่ในเว็บ "เตาบนโต๊ะ" คือโค้ด JavaScript ที่ทีม frontend เขียนไว้ให้ ลูกค้าไม่ได้ทำอะไรเพิ่ม ·
+    คนที่เหนื่อยจริงคือ<strong>ทีมที่ต้องดูแลสองครัว</strong> — ครัวหลัง (Go) กับเตาบนโต๊ะ (React)
+  </p>
+</div>
+
+<div class="note">
+  <p>Next.js รุ่นใหม่ render HTML บน server ได้ด้วย (Server Component — คือ component ที่<strong>ไม่มี</strong> <code>'use client'</code> ที่เจอในบท 73) ·
+    ภาพ ① คือแบบที่ข้อมูลถูก <code>fetch</code> ในเบราว์เซอร์ ซึ่งเป็นแบบที่สไลด์เทียบ และเป็นแบบที่เจอบ่อยเวลา frontend กับ backend แยกทีมกัน</p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>API layer · JSON API</dt>
+    <dd>ชั้นที่ server ส่งข้อมูลเป็น JSON ให้โปรแกรมอื่นมาเรียกใช้ (เช่น React · แอปมือถือ) · Go handler ในบท 38 คือ JSON API ·
+        <strong>ถาม senior ได้ว่า “หน้านี้ดึงข้อมูลผ่าน JSON API หรือ server render HTML มาเลย”</strong></dd>
+    <dt>server-rendered HTML · client-side rendering</dt>
+    <dd>server-rendered = server สร้าง HTML ให้เสร็จแล้วส่ง (แบบ ②) · client-side rendering = เบราว์เซอร์รับ JSON แล้วสร้างหน้าจอเอง (แบบ ①) ·
+        <strong>พิมพ์บอก AI ได้ว่า “this is a Rails app with server-rendered ERB views, not a React SPA — don't add a JSON API for this page”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">กล่องที่หายไป: "state ใน client" — ที่เกิดของบั๊ก "ทำไมหน้าจอไม่อัปเดต"</h2>
+
+<p>
+  เทียบสองภาพข้างบน กล่องที่ ② ไม่มีคือ <strong>★ state ใน client</strong> · ฟังดูเป็นแค่กล่องเดียว แต่สไลด์หน้า 10 บอกว่า
+  <strong>บั๊กประเภท "ทำไมหน้าจอไม่อัปเดต" เกิดที่กล่องนี้เกือบทั้งหมด</strong> · มาดูว่าทำไม
+</p>
+
+<p>นี่คือหน้ารายการแบบ ① ด้วยของที่คุณเพิ่งเรียน (ไฟล์ <code>PostList.tsx</code> · สมมติว่า Go รันอยู่ที่พอร์ต 8080 · แค่อ่าน ไม่ต้องพิมพ์ตาม):</p>
+
+<pre><code><span class="s">'use client'</span>
+<span class="k">import</span> { <span class="f">useEffect</span>, <span class="f">useState</span> } <span class="k">from</span> <span class="s">'react'</span>
+
+<span class="k">type</span> <span class="n">Post</span> = { id: <span class="n">number</span>; title: <span class="n">string</span> }
+
+<span class="k">export default function</span> <span class="f">PostList</span>() {
+  <span class="k">const</span> [posts, setPosts] = <span class="f">useState</span>&lt;<span class="n">Post</span>[]&gt;([])
+
+  <span class="f">useEffect</span>(() =&gt; {
+    <span class="f">fetch</span>(<span class="s">'http://localhost:8080/posts'</span>)
+      .<span class="f">then</span>((res) =&gt; res.<span class="f">json</span>())
+      .<span class="f">then</span>((data: <span class="n">Post</span>[]) =&gt; <span class="f">setPosts</span>(data))
+  }, [])
+
+  <span class="k">return</span> (
+    &lt;ul&gt;
+      {posts.<span class="f">map</span>((p) =&gt; (
+        &lt;li key={p.id}&gt;{p.title}&lt;/li&gt;
+      ))}
+    &lt;/ul&gt;
+  )
+}</code></pre>
+
+<ul>
+  <li><code>'use client'</code> — บอก Next.js ว่า component นี้รันในเบราว์เซอร์ (บท 73) · <code>type Post</code> — บอกว่าบทความหนึ่งชิ้นมี <code>id</code> กับ <code>title</code> (บท 63–64)</li>
+  <li><code>useState&lt;Post[]&gt;([])</code> — สร้างความจำชื่อ <code>posts</code> เริ่มจากรายการว่าง <strong>← นี่คือ ★ state ใน client</strong></li>
+  <li><code>useEffect(() =&gt; { … }, [])</code> — หลังวาดจอครั้งแรก ให้ทำงานข้างใน <strong>ครั้งเดียว</strong> (<code>[]</code> = ไม่ต้องทำซ้ำ · บท 74)</li>
+  <li><code>fetch(…)</code> — <strong>คำสั่งของเบราว์เซอร์สำหรับขอข้อมูลจาก URL</strong> (คล้าย <code>curl</code> แต่สั่งจากในโค้ด JavaScript) · ตรงนี้ขอ JSON จาก Go</li>
+  <li><code>.then(…)</code> — "ได้ของมาแล้วค่อยทำต่อ" (ต้องรอเพราะของเดินทางผ่านเน็ต) · <code>(res) =&gt; res.json()</code> = ฟังก์ชันสั้น ๆ ที่รับคำตอบ <code>res</code> แล้วแปลงข้อความ JSON เป็นข้อมูลที่ใช้ได้</li>
+  <li><code>setPosts(data)</code> — จดรายการบทความลงความจำ → React วาดจอใหม่</li>
+  <li><code>posts.map(…)</code> — วนทุกบทความ สร้าง <code>&lt;li&gt;</code> หนึ่งอันต่อหนึ่งชิ้น (<code>key</code> = ป้ายประจำแต่ละแถว ให้ React จำได้)</li>
+</ul>
+
+<p>
+  ตอนนี้ข้อมูลบทความมี <strong>สองชุด</strong>: ชุดจริงในฐานข้อมูล กับ<strong>ชุดที่ก็อปมาไว้ในหน่วยความจำของแท็บนี้</strong> ·
+  ถ้าเพื่อนเปิดอีกแท็บแล้วแก้ชื่อบทความ — ฐานข้อมูลเปลี่ยนแล้ว แต่ <code>posts</code> ในแท็บของคุณ<strong>ไม่มีใครบอกมัน</strong> ·
+  <code>useEffect</code> ก็สั่งไว้ให้ fetch แค่ครั้งเดียว จอจึงโชว์ชื่อเก่าต่อไป
+</p>
+<p>
+  ทีมที่ใช้แบบ ① จึงต้องเขียนโค้ดเพิ่มเพื่อ<strong>ตามล้างชุดที่สอง</strong>: แก้เสร็จแล้ว fetch ใหม่ · ทุกกี่วินาทีไปถามใหม่ · หน้าไหนใช้ข้อมูลเดียวกันต้องบอกกัน — ลืมจุดเดียว = บั๊ก
+</p>
+
+<div class="analogy">
+  <span class="label">📒 เทียบให้เห็นภาพ — สมุดจดสต็อกเล่มที่สองบนโต๊ะลูกค้า</span>
+  <p>
+    ร้านหมูกระทะจดของบนโต๊ะไว้ในสมุดเล่มเล็ก "หมูสามชั้นเหลือ 2 จาน" · แต่ครัวเพิ่งประกาศว่าหมูสามชั้นหมดแล้ว ·
+    สมุดบนโต๊ะ<strong>ไม่รู้</strong> ยังเขียนว่า 2 จาน ลูกค้าสั่งไปก็ได้คำตอบว่าไม่มี · ปัญหาไม่ได้อยู่ที่ครัวหรือโต๊ะ แต่อยู่ที่<strong>มีสมุดสองเล่มที่ต้องตรงกัน</strong>
+    <br>ร้านแบบ ② (Rails) ไม่มีสมุดบนโต๊ะ · ทุกครั้งที่ลูกค้าขออะไร ครัวเปิดสมุดเล่มเดียวของครัวแล้วจัดจานใหม่
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> อย่าเข้าใจว่าหน้า Rails อัปเดตเองได้ · ผมเปิดหน้า <code>/posts/1</code> สองแท็บใน Chrome จริง แก้ชื่อจากแท็บที่สอง —
+    <strong>แท็บแรกก็ยังโชว์ชื่อเก่า</strong>เหมือนกัน จนกดรีเฟรชถึงเห็นชื่อใหม่ ·
+    ที่ต่างคือ<strong>แค่คลิกหรือรีเฟรชก็ได้ของล่าสุดจากครัวทันที</strong> ไม่มีสมุดเล่มที่สองให้ลืมล้าง ·
+    ทำให้แท็บแรกเด้งเองได้โดยไม่ต้องมีสมุดเล่มที่สอง คือเรื่องของบล็อก C (<a href="./0133-broadcast-and-turbo-limits.html">บท 133</a>)
+  </p>
+</div>
+
+<p>
+  นี่คือประโยคหลักข้อแรกของ Day 3 (สไลด์หน้า 8): <strong>เว็บที่โต้ตอบได้ไม่จำเป็นต้องมี state สองชุด —
+  ถ้า server เป็นเจ้าของข้อมูลชุดเดียว บั๊ก sync ก็ไม่มี</strong> · บล็อก C (<a href="./0130-hotwire-and-turbo-drive.html">บท 130</a>) จะพากลับมาที่ประโยคนี้อีกครั้ง
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>client state</dt>
+    <dd>ข้อมูลที่ก็อปมาเก็บไว้ในเบราว์เซอร์ (เช่น ใน <code>useState</code>) · สะดวก แต่ต้องคอยทำให้ตรงกับของจริงบน server ·
+        <strong>ถาม senior ได้ว่า “ข้อมูลหน้านี้เก็บเป็น client state ไหม แล้วอะไรเป็นตัวสั่งให้ fetch ใหม่”</strong></dd>
+    <dt>single source of truth</dt>
+    <dd>ข้อมูลมีเจ้าของเพียงที่เดียว ที่อื่นแค่ขอดู ไม่เก็บสำเนาของตัวเอง · ใน Rails เจ้าของคือฐานข้อมูลบน server ·
+        <strong>พิมพ์บอก AI ได้ว่า “keep the server as the single source of truth; don't keep a separate copy of posts in client state”</strong></dd>
+    <dt>stale data · sync bug</dt>
+    <dd>stale = ข้อมูลค้าง (เก่าแล้วแต่ยังโชว์) · sync bug = บั๊กที่เกิดเพราะสองชุดไม่ตรงกัน · อาการคลาสสิก "แก้แล้วแต่จออีกหน้ายังเห็นของเก่า" ·
+        <strong>ถาม senior ได้ว่า “บั๊กนี้เป็น stale data ฝั่ง client หรือ server ส่งข้อมูลผิดมาจริง ๆ”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">แฟร์ ๆ: ฝั่ง ① ไม่ได้ผิด มันแลกมาเพื่อของบางอย่าง</h2>
+
+<p>สไลด์หน้า 10 ย้ำไว้เองว่า "ไม่ใช่ว่าฝั่งซ้ายผิด" · ฝั่ง ① ยอมรับความยุ่งของสมุดเล่มที่สอง เพื่อแลกกับสองเรื่องนี้:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>① Next.js + Go (ส่ง JSON)</th><th>② Rails (ส่ง HTML)</th></tr></thead>
+  <tbody>
+    <tr><td><strong>ได้</strong></td>
+        <td>ทีม frontend กับ backend ทำงานแยกกันได้ ตกลงกันแค่หน้าตา JSON ·
+            <strong>JSON ชุดเดียวใช้ได้หลายแบบ</strong> — เว็บ · แอปมือถือ · ระบบของพาร์ตเนอร์</td>
+        <td>โค้ดน้อยกว่า ทีมเดียวทำได้ทั้งหน้า · <strong>ข้อมูลชุดเดียว</strong> ไม่มีบั๊ก sync ระหว่างสองชุด</td></tr>
+    <tr><td><strong>เสีย</strong></td>
+        <td>ต้องดูแลสองโปรแกรม · ต้องคอยให้ state ในเบราว์เซอร์ตรงกับของจริง</td>
+        <td>แอปมือถือหรือพาร์ตเนอร์อ่าน HTML ไม่สะดวก ต้องทำ JSON เพิ่ม ·
+            หน้าที่โต้ตอบซับซ้อนมาก ๆ ยังต้องพึ่ง JavaScript (เรื่องของบล็อก C)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ช่อง "เสีย" ของ Rails มีทางแก้ที่ซ่อนอยู่ในแอปของคุณแล้ว — <strong>scaffold ทำ JSON ไว้ให้ด้วย</strong> · มาดูของจริงกัน
+</p>
+
+<h2 id="sn-sec-5">ดูของจริง: แอปเดียวกัน เสิร์ฟได้ทั้ง HTML และ JSON</h2>
+
+<p>
+  เปิด server ในโฟลเดอร์แอป (<code>bin/dev</code> ตามบท 120) แล้วเปิดเทอร์มินัลอีกหน้าต่าง ลองขอหน้า <code>/posts</code> แบบที่เบราว์เซอร์ขอ ·
+  (<code>-s</code> = เงียบ ไม่ต้องโชว์แถบความคืบหน้า · บท 102) · ด้านล่างตัดมาเฉพาะต้นไฟล์กับบทความชิ้นแรก (ผลจริง · ทั้งหน้ายาวมาก):
+</p>
+
+<pre><code>$ curl -s localhost:3000/posts
+&lt;!-- BEGIN app/views/layouts/application.html.erb
+--&gt;&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+  &lt;head&gt;
+    &lt;title&gt;Posts&lt;/title&gt;
+…
+  &lt;div id="posts" class="min-w-full divide-y divide-gray-200 space-y-5"&gt;
+        &lt;div class="flex flex-col sm:flex-row justify-between items-center pb-5 sm:pb-0"&gt;
+          &lt;!-- BEGIN app/views/posts/_post.html.erb
+--&gt;&lt;div id="post_1" class="w-full sm:w-auto my-5 space-y-5"&gt;
+  &lt;div&gt;
+    &lt;strong class="block font-medium mb-1"&gt;Title:&lt;/strong&gt;
+    ต้มยำกุ้งน้ำข้น
+  &lt;/div&gt;
+…</code></pre>
+
+<ul>
+  <li>ได้ <strong>HTML พร้อมโชว์</strong> — มีทั้งหัวหน้าเว็บ (<code>&lt;head&gt;</code>) · กล่อง · ป้าย "Title:" · ชื่อบทความ "ต้มยำกุ้งน้ำข้น" ถูกวางลงจานแล้ว</li>
+  <li><code>class="min-w-full divide-y …"</code> — คลาสของ Tailwind (บท 72) ที่ scaffold ใส่มาให้ · ตอนนี้ไม่ต้องสนใจ เรื่องหน้าตาอยู่บล็อก B</li>
+  <li><code>&lt;!-- BEGIN … --&gt;</code> — โน้ตที่ Rails แปะให้ตอนพัฒนา บอกว่าส่วนนี้มาจากไฟล์ไหน (บท 103) · <code>_post.html.erb</code> คือแม่พิมพ์ของบทความหนึ่งชิ้น (เจอละเอียดในบท 123)</li>
+</ul>
+
+<p>ทีนี้ขอ URL เดิม แต่<strong>เติม <code>.json</code> ท้าย</strong> · ขอบทความชิ้นเดียว (<code>/posts/1.json</code>) จะได้อ่านง่าย ·
+  ท่อน <code>| python3 -m json.tool --no-ensure-ascii</code> แค่จัดบรรทัดให้สวยและโชว์ภาษาไทยตรง ๆ (ไม่ต้องจำ):</p>
+
+<pre><code>$ curl -s localhost:3000/posts/1.json | python3 -m json.tool --no-ensure-ascii
+{
+    "id": 1,
+    "title": "ต้มยำกุ้งน้ำข้น",
+    "description": "ต้มยำกุ้งแบบน้ำข้นใส่นมข้นจืด รสเปรี้ยวเผ็ดกลมกล่อม กุ้งแม่น้ำตัวใหญ่ หอมตะไคร้ ข่า ใบมะกรูด กินกับข้าวสวยร้อน ๆ ได้ทั้งถ้วย ร้านนี้เปิดมาสามสิบปีแล้ว คิวยาวทุกวันเสาร์อาทิตย์",
+    "category_id": 1,
+    "created_at": "2026-10-08T03:38:59.900Z",
+    "updated_at": "2026-11-07T03:38:59.900Z",
+    "url": "http://localhost:3000/posts/1.json"
+}</code></pre>
+
+<p>
+  บทความชิ้นเดียวกัน แต่คราวนี้เป็น<strong>วัตถุดิบดิบ</strong> — ไม่มีกล่อง ไม่มีป้าย ไม่มีสี · เหมือน JSON ที่ Go ส่งในบท 38 ทุกอย่าง ·
+  (วันที่ <code>created_at</code> ของคุณจะต่าง เพราะข้อมูลตัวอย่างนับย้อนจากวันที่คุณรัน seed) ·
+  ช่อง <code>url</code> ไม่ได้อยู่ในตาราง — แม่แบบ JSON ของ scaffold เติมที่อยู่ของบทความชิ้นนั้นให้
+</p>
+
+<p>ทีนี้สั่ง <code>curl -s localhost:3000/posts</code> แล้วตามด้วย <code>curl -s localhost:3000/posts.json</code> (รายการทั้งหมดแบบ JSON) ·
+  ใน log ของ server (<code>log/development.log</code>) เห็นชัดว่า<strong>เป็น action เดียวกัน</strong> แค่เลือกแม่แบบคนละไฟล์ (ผลจริง · ตัดบรรทัดที่ไม่เกี่ยวออก):</p>
+
+<pre><code>Started GET "/posts" for ::1 at 2026-11-07 11:22:43 +0700
+Processing by PostsController#index as */*
+  Rendering layout layouts/application.html.erb
+  Rendering posts/index.html.erb within layouts/application
+…
+Started GET "/posts.json" for ::1 at 2026-11-07 11:22:44 +0700
+Processing by PostsController#index as JSON
+  Rendering posts/index.json.jbuilder
+…</code></pre>
+
+<ul>
+  <li><code>for ::1</code> — ใบสั่งมาจากเครื่องตัวเอง (<code>::1</code> คือ localhost แบบเขียนอีกแบบ) · วันเวลาของคุณจะต่าง</li>
+  <li><code>PostsController#index</code> — action เดียวกันทั้งสองครั้ง (โค้ดข้างในมีแค่ <code>@posts = Post.all</code>)</li>
+  <li><code>as */*</code> / <code>as JSON</code> — Rails ดูว่าลูกค้าขอ<strong>แบบไหน</strong> (เรียกว่า format) · ท้าย URL เป็น <code>.json</code> = ขอ JSON ·
+      <code>*/*</code> = curl บอกว่า "รับได้ทุกแบบ" Rails เลยให้ HTML · (ถ้าเปิด <code>/posts</code> ด้วยเบราว์เซอร์ บรรทัดนี้จะเป็น <code>as HTML</code> — ผมเช็คกับ Chrome จริงแล้ว)</li>
+  <li><code>Rendering posts/index.json.jbuilder</code> กับ <code>posts/index.html.erb</code> — แม่แบบคนละไฟล์ · HTML มี layout (จานรองมาตรฐาน) ครอบด้วย · JSON ไม่มี</li>
+</ul>
+
+<p>
+  ลองวัดขนาดหน้ารายการ 30 บทความ (<code>-o /dev/null</code> = ไม่ต้องโชว์เนื้อ · <code>-w '%{size_download}'</code> = บอกขนาดที่ได้มาเป็นไบต์) — ผลจริงในเครื่องที่ใช้ตรวจ:
+</p>
+
+<pre><code>$ curl -s -o /dev/null -w '%{size_download}\n' localhost:3000/posts
+53937
+$ curl -s -o /dev/null -w '%{size_download}\n' localhost:3000/posts.json
+13566</code></pre>
+
+<p>
+  HTML ใหญ่กว่าราว 4 เท่า เพราะมีของหน้าตาติดมาด้วย (ชื่อ class ยาว ๆ · ปุ่ม Show/Edit/Destroy · โน้ต BEGIN/END ของโหมดพัฒนา) ·
+  ตัวเลข HTML ของคุณจะต่างเล็กน้อย และโตขึ้นนิดหน่อยทุกครั้งที่สั่งซ้ำ (เครื่องมือวัดความเร็ว rack-mini-profiler ที่ติดมากับแอปแปะรหัสเพิ่มท้ายหน้า) ·
+  ตัวเลขนี้คือหน้า scaffold ในเครื่องพัฒนา ไม่ใช่กฎตายตัว · ประเด็นคือ <strong>Rails ไม่ได้ "ทำ API ไม่ได้"</strong> — ถ้าวันหนึ่งต้องมีแอปมือถือ JSON ก็อยู่ตรงนี้แล้ว แค่ไม่<strong>บังคับ</strong>ให้หน้าเว็บต้องผ่านมัน
+</p>
+
+<h2 id="sn-sec-6">ชื่อไฟล์บอกทุกอย่าง: <code>index.html.erb</code> กับ <code>index.json.jbuilder</code></h2>
+
+<p>ดูโฟลเดอร์ view ของบทความ (ผลจริง · ในเทอร์มินัลของคุณชื่ออาจเรียงเป็นหลายคอลัมน์ แต่เป็นไฟล์ชุดเดียวกัน):</p>
+
+<pre><code>$ ls app/views/posts
+_form.html.erb
+_post.html.erb
+_post.json.jbuilder
+edit.html.erb
+index.html.erb
+index.json.jbuilder
+new.html.erb
+show.html.erb
+show.json.jbuilder</code></pre>
+
+<p>
+  ไฟล์มาเป็น<strong>คู่</strong> — <code>index</code> มีทั้ง <code>.html.erb</code> และ <code>.json.jbuilder</code> · <code>show</code> ก็เหมือนกัน ·
+  ชื่อไฟล์แบ่งเป็น 3 ท่อน อ่านจากขวาไปซ้าย (สไลด์หน้า 11):
+</p>
+
+<div class="diagram">index . html . erb
+  │      │      └── ประมวลผลด้วยอะไร  → erb       (HTML ที่แทรก Ruby ได้)
+  │      └───────── ส่งออกเป็นอะไร      → html
+  └──────────────── ของ action ไหน      → index
+
+index . json . jbuilder
+  │      │      └── ประมวลผลด้วยอะไร  → jbuilder  (Ruby ที่เขียนสร้าง JSON)
+  │      └───────── ส่งออกเป็นอะไร      → json
+  └──────────────── ของ action ไหน      → index</div>
+
+<p>ไฟล์ <code>index.json.jbuilder</code> สั้นมาก — มีบรรทัดเดียว:</p>
+
+<pre><code><span class="c"># app/views/posts/index.json.jbuilder</span>
+json.<span class="f">array!</span> @posts, <span class="n">partial:</span> <span class="s">"posts/post"</span>, <span class="n">as:</span> <span class="n">:post</span></code></pre>
+
+<ul>
+  <li><code>json.array! @posts</code> — "สร้าง JSON เป็นรายการ จากบทความทุกชิ้นบนถาด <code>@posts</code>"</li>
+  <li><code>partial: "posts/post", as: :post</code> — "แต่ละชิ้นให้จัดตามแม่พิมพ์ <code>_post.json.jbuilder</code>" (แม่พิมพ์แบบนี้คือ partial — ละเอียดในบท 123)</li>
+</ul>
+
+<p>บทนี้แค่ให้รู้ว่ามันอยู่ตรงนี้ · <strong>Day 3 ทั้งวันเราทำงานกับไฟล์ <code>.html.erb</code></strong></p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>format · <code>respond_to</code></dt>
+    <dd>"ลูกค้าขอผลแบบไหน" — HTML · JSON ฯลฯ · ดูจากท้าย URL (<code>.json</code>) หรือหัวใบสั่ง (header — ข้อมูลกำกับที่เบราว์เซอร์แนบมากับ request บอกว่า "รับ HTML นะ") · action ไหนต้องทำต่างกันตามแบบจะเขียน <code>respond_to do |format|</code> (เปิดดูได้ในเมธอด <code>create</code> ของ <code>app/controllers/posts_controller.rb</code>) ·
+        <strong>ถาม senior ได้ว่า “action นี้ต้องตอบ JSON ด้วยไหม หรือลบ .json.jbuilder ทิ้งได้”</strong></dd>
+    <dt>template handler · jbuilder</dt>
+    <dd>ท่อนท้ายสุดของชื่อไฟล์ บอกว่าใช้เครื่องมืออะไรแปลงแม่แบบ · <code>erb</code> สำหรับ HTML · <code>jbuilder</code> (gem ที่มากับ Rails) สำหรับสร้าง JSON ·
+        <strong>พิมพ์บอก AI ได้ว่า “add the category name to the JSON in app/views/posts/_post.json.jbuilder”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">ERB 4 แบบ — ทวนบท 103 แล้วลองบนหน้าจริง</h2>
+
+<p>บท 103 รู้จักไปแล้ว 3 แท็ก · สไลด์หน้า 11 นับเป็น 4 แบบ เพราะแยก "วนลูป" ออกมาเป็นอีกแบบ (จริง ๆ คือสองแท็กแรกทำงานร่วมกัน):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>แบบ</th><th>หน้าตา</th><th>Ruby ทำงานไหม</th><th>ผลไปถึงเบราว์เซอร์ไหม</th></tr></thead>
+  <tbody>
+    <tr><td>① พิมพ์ผล</td><td><code>&lt;%= @post.title %&gt;</code></td><td>✅</td><td>✅ ผลลัพธ์ถูกวางลงตรงนั้น</td></tr>
+    <tr><td>② รันอย่างเดียว</td><td><code>&lt;% if … %&gt;</code> … <code>&lt;% end %&gt;</code></td><td>✅</td><td>❌ ตัวมันไม่ไป (แต่ HTML ที่มันคุมไปได้)</td></tr>
+    <tr><td>③ วนลูป</td><td><code>&lt;% @posts.each do |post| %&gt;</code> … <code>&lt;% end %&gt;</code></td><td>✅</td><td>❌ ตัวมันไม่ไป · ของข้างในถูกพิมพ์ซ้ำทุกรอบ</td></tr>
+    <tr><td>④ คอมเมนต์</td><td><code>&lt;%# โน้ต %&gt;</code></td><td>❌</td><td>❌ หายตั้งแต่ในครัว</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  มาลองบนหน้า <code>/posts</code> ของแอปจริง · เปิดไฟล์ <code>app/views/posts/index.html.erb</code> หาบรรทัดที่ 3 <code>&lt;div class="w-full"&gt;</code> ·
+  แล้ว<strong>แทรก 9 บรรทัดนี้ต่อจากมัน</strong> (โค้ดทดลอง · จบบทจะลบทิ้ง):
+</p>
+
+<pre><code>  <span class="c">&lt;%# ทดลองบท 122: โน้ตของเชฟ ลูกค้าไม่เห็น %&gt;</span>
+  &lt;!-- ทดลองบท 122: โน้ต HTML ลูกค้าเปิดดูได้ --&gt;
+  &lt;p&gt;มีบทความทั้งหมด &lt;%= @posts.<span class="f">size</span> %&gt; ชิ้น&lt;/p&gt;
+  &lt;p&gt;บทความแรก: &lt;%= @posts.<span class="f">first</span>.title %&gt;&lt;/p&gt;
+  &lt;ul&gt;
+    &lt;% @posts.<span class="f">first</span>(<span class="n">3</span>).<span class="f">each</span> <span class="k">do</span> |post| %&gt;
+      &lt;li&gt;&lt;%= post.title %&gt;&lt;/li&gt;
+    &lt;% <span class="k">end</span> %&gt;
+  &lt;/ul&gt;</code></pre>
+
+<ul>
+  <li>บรรทัด <code>&lt;%# … %&gt;</code> — แบบ ④ โน้ตของ ERB</li>
+  <li>บรรทัด <code>&lt;!-- … --&gt;</code> — <strong>ไม่ใช่ ERB</strong> · เป็นคอมเมนต์ของ HTML ธรรมดา (ข้อความที่เบราว์เซอร์ไม่โชว์บนจอ) · ใส่ไว้เทียบกัน</li>
+  <li><code>@posts.size</code> — นับว่ามีกี่ชิ้น (บท 113) · แบบ ① จึงโชว์ตัวเลข</li>
+  <li><code>@posts.first.title</code> — ชื่อของชิ้นแรก · <code>first</code> = ชิ้นแรกเรียงตามเลขที่</li>
+  <li><code>@posts.first(3).each do |post|</code> — แบบ ③ · <code>first(3)</code> = เอา 3 ชิ้นแรก แล้ววนทีละชิ้น</li>
+</ul>
+
+<p>
+  เซฟแล้วไม่ต้องรีสตาร์ต server (โหมดพัฒนาอ่านไฟล์ view ใหม่ทุกครั้งเอง) · <code>curl</code> ดูเฉพาะช่วงที่แทรก (ผลจริง · ตัดส่วนอื่นออก):
+</p>
+
+<pre><code>$ curl -s localhost:3000/posts
+…
+      &lt;!-- BEGIN app/views/posts/index.html.erb
+--&gt;
+&lt;div class="w-full"&gt;
+  &lt;!-- ทดลองบท 122: โน้ต HTML ลูกค้าเปิดดูได้ --&gt;
+  &lt;p&gt;มีบทความทั้งหมด 30 ชิ้น&lt;/p&gt;
+  &lt;p&gt;บทความแรก: ต้มยำกุ้งน้ำข้น&lt;/p&gt;
+  &lt;ul&gt;
+      &lt;li&gt;ต้มยำกุ้งน้ำข้น&lt;/li&gt;
+      &lt;li&gt;ก๋วยเตี๋ยวเรืออยุธยา&lt;/li&gt;
+      &lt;li&gt;ข้าวเหนียวมะม่วง&lt;/li&gt;
+  &lt;/ul&gt;
+…</code></pre>
+
+<ul>
+  <li><strong>โน้ต <code>&lt;%# %&gt;</code> หายไปทั้งบรรทัด</strong> — ไม่ถูกส่งออกจากครัวเลย</li>
+  <li><strong>โน้ต <code>&lt;!-- --&gt;</code> ยังอยู่</strong> — ถูกส่งไปถึงเบราว์เซอร์ · ผมเปิดใน Chrome จริง: บนจอไม่โชว์ แต่ใครกด "ดูซอร์สของหน้า" (View Page Source) ก็อ่านได้</li>
+  <li><code>&lt;%= @posts.size %&gt;</code> กลายเป็น <code>30</code> · <code>&lt;%= @posts.first.title %&gt;</code> กลายเป็นชื่อบทความ</li>
+  <li>บรรทัด <code>&lt;% … each … %&gt;</code> กับ <code>&lt;% end %&gt;</code> หายไป · แต่ <code>&lt;li&gt;</code> ข้างในถูกพิมพ์ <strong>3 รอบ</strong></li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🍱 เทียบให้เห็นภาพ — แม่แบบจานที่มีช่องให้เติม</span>
+  <p>
+    ไฟล์ <code>.html.erb</code> คือแม่แบบจานที่ติดไว้ในครัว · <code>&lt;%= %&gt;</code> = "เติมของในช่องนี้แล้ว<strong>วางลงจาน</strong>" ·
+    <code>&lt;% %&gt;</code> = งานที่คนจัดจาน<strong>ทำในครัวเงียบ ๆ</strong> เช่น "ทำซ้ำ 3 ที่" — ตัวคำสั่งไม่ขึ้นจาน ·
+    <code>&lt;%# %&gt;</code> = โน้ตดินสอบนแม่แบบ ไม่ออกจากครัว
+    <br>ส่วน <code>&lt;!-- --&gt;</code> คือ<strong>กระดาษโน้ตที่แปะติดใต้จาน</strong> — ลูกค้ามองจากด้านบนไม่เห็น แต่ใครพลิกจานดูก็อ่านได้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจัดจานจริงเห็นช่องว่างก็ทักว่า "ช่องนี้ลืมใส่อะไรหรือเปล่า" ·
+    แต่ ERB <strong>ไม่ทักอะไรเลย</strong> — ใช้แท็กผิดแบบ มันทำตามตัวอักษรเป๊ะ ๆ แล้วเสิร์ฟจานนั้นออกไปเงียบ ๆ ไม่มี error · สามหัวข้อถัดไปคือกับดักจากเรื่องนี้
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>output tag <code>&lt;%= %&gt;</code> · execution tag <code>&lt;% %&gt;</code></dt>
+    <dd>แท็กที่รันแล้วพิมพ์ผล กับแท็กที่รันอย่างเดียว · <strong>พิมพ์บอก AI ได้ว่า “the title is blank in the HTML — check whether I used an execution tag instead of an output tag”</strong></dd>
+    <dt>ERB comment <code>&lt;%# %&gt;</code> · HTML comment <code>&lt;!-- --&gt;</code></dt>
+    <dd>คอมเมนต์ของ ERB หายตั้งแต่บน server · คอมเมนต์ของ HTML ถูกส่งไปถึงเบราว์เซอร์และใครก็เปิดซอร์สอ่านได้ ·
+        <strong>ถาม senior ได้ว่า “ทีมเราห้ามใส่ HTML comment ใน view ไหม หรือให้ใช้ ERB comment อย่างเดียว”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">กับดัก ①: ลืม <code>=</code> ตัวเดียว — หน้าว่าง ไม่มี error</h2>
+
+<p>สไลด์หน้า 11 บอกว่านี่คือบั๊กที่มือใหม่เจอบ่อยที่สุด · บท 103 เห็นมาแล้วกับข้อมูลจำลอง · คราวนี้ลองกับฐานข้อมูลจริง แล้วดูให้ลึกกว่าเดิม</p>
+
+<div class="predict">
+<pre><code><span class="c">&lt;%# แก้บรรทัดเดียวในโค้ดทดลอง: ลบ = ออกจาก "บทความแรก" %&gt;</span>
+  &lt;p&gt;บทความแรก: &lt;% @posts.<span class="f">first</span>.title %&gt;&lt;/p&gt;</code></pre>
+  <p class="ask">เซฟแล้ว <code>curl</code> ใหม่ · บรรทัดนี้ได้ HTML หน้าตาแบบไหน? แล้ว Rails <strong>ยังไปหยิบบทความแรกจากฐานข้อมูลไหม</strong> ทั้งที่ไม่ได้โชว์?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — ชื่อหายไป เหลือแค่ป้าย · หน้าเว็บตอบ <code>200 OK</code> ปกติ ไม่มี error:</p>
+<pre><code>  &lt;p&gt;มีบทความทั้งหมด 30 ชิ้น&lt;/p&gt;
+  &lt;p&gt;บทความแรก: &lt;/p&gt;</code></pre>
+    <p>และ log บอกว่า<strong>ยังไปหยิบจริง</strong> (ผลจริง · ตัดมาสองบรรทัด):</p>
+<pre><code>  Post Load (0.8ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" ASC LIMIT 1 /*action='index',application='WongnokBlogAllInOne',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:8</code></pre>
+    <ul>
+      <li><code>ORDER BY "posts"."id" ASC LIMIT 1</code> = "เรียงตามเลขที่ เอาแผ่นแรกแผ่นเดียว" — นี่คือ <code>@posts.first</code></li>
+      <li><code>/*action='index',…*/</code> ท้าย SQL = ป้ายที่ Rails แปะบอกว่า query นี้มาจาก controller/action ไหน · <code>(0.8ms)</code> = เวลาที่ใช้ ของคุณจะต่าง</li>
+      <li><code>↳ …index.html.erb:8</code> = บรรทัดที่สั่ง · ในไฟล์คือบรรทัด 7 แต่ log นับเกิน 1 เพราะโน้ต BEGIN (เรื่องเดียวกับบท 114)</li>
+    </ul>
+    <p>นี่คือความหมายของประโยคในสไลด์ว่า "<strong>มันรันจริง แค่ไม่พิมพ์ผลออกมา</strong>" · Ruby ไปตู้ หยิบแฟ้ม อ่านชื่อ — แล้ว<strong>ทิ้ง</strong> เพราะแท็กไม่มี <code>=</code></p>
+  </div>
+</div>
+
+<div class="warn">
+  <p>ถ้าหน้าเว็บ "ว่างตรงที่ควรมีข้อมูล" แต่ไม่มี error — <strong>เช็ค <code>=</code> ก่อนอย่างอื่น</strong> · เปิดไฟล์ view แล้วไล่ดูทุกแท็กที่ควรโชว์ของ ว่าขึ้นต้นด้วย <code>&lt;%=</code> ครบไหม</p>
+</div>
+
+<h2 id="sn-sec-9">กับดัก ②: ใส่ <code>=</code> เกินที่บรรทัด <code>each</code></h2>
+
+<p>ทิศกลับกันก็พัง · ลองคืน <code>=</code> ให้บรรทัด "บทความแรก" แล้ว<strong>เผลอใส่ <code>=</code> ที่บรรทัด each</strong> แทน:</p>
+
+<pre><code>    &lt;%= @posts.<span class="f">first</span>(<span class="n">3</span>).<span class="f">each</span> <span class="k">do</span> |post| %&gt;</code></pre>
+
+<p>ผลจริงจาก <code>curl</code> (ตัดมาเฉพาะ <code>&lt;ul&gt;</code> · บรรทัดยาวมากจนต้องเลื่อนดู):</p>
+
+<pre><code>  &lt;ul&gt;
+
+      &lt;li&gt;ต้มยำกุ้งน้ำข้น&lt;/li&gt;
+
+      &lt;li&gt;ก๋วยเตี๋ยวเรืออยุธยา&lt;/li&gt;
+
+      &lt;li&gt;ข้าวเหนียวมะม่วง&lt;/li&gt;
+[#&amp;lt;Post id: 1, title: &amp;quot;ต้มยำกุ้งน้ำข้น&amp;quot;, description: &amp;quot;ต้มยำกุ้งแบบน้ำข้นใส่นมข้นจืด รสเปรี้ยวเผ็ดกลมกล่อ...&amp;quot;, category_id: 1, created_at: &amp;quot;2026-10-08 03:38:59.900313000 +0000&amp;quot;, updated_at: &amp;quot;2026-11-07 03:38:59.900694000 +0000&amp;quot;&amp;gt;, #&amp;lt;Post id: 2, … &amp;gt;]  &lt;/ul&gt;</code></pre>
+
+<ul>
+  <li>รายการ 3 ชิ้นยังโผล่ครบ · แต่<strong>ต่อท้ายด้วยก้อนข้อความยาวเหยียด</strong> ที่ขึ้นต้นด้วย <code>[#&amp;lt;Post id: 1, …</code></li>
+  <li>ทำไม: <code>each</code> วนครบแล้ว<strong>คืนรายการเดิมทั้งก้อนกลับมา</strong> · <code>&lt;%=</code> แปลว่า "เอาผลไปวางลงจาน" มันจึงวางรายการบทความทั้งก้อนลงไป ในรูปที่ Ruby ใช้โชว์ข้อมูลใน console</li>
+  <li><code>&amp;lt;</code> · <code>&amp;quot;</code> — คือ <code>&lt;</code> กับ <code>"</code> ที่ Rails แปลงให้ไม่ทำงานเป็น HTML (เรื่องกัน XSS · บท 103 และลงลึกในบท 125)</li>
+</ul>
+
+<p>
+  ผมเปิดหน้านี้ใน Chrome จริง: ใต้รายการมีข้อความ <code>[#&lt;Post id: 1, title: "ต้มยำกุ้งน้ำข้น", …</code> โชว์อยู่บนจอให้ทุกคนเห็น ·
+  (วันที่ในข้อความของคุณจะต่าง)
+</p>
+
+<div class="warn">
+  <p>เห็นข้อความแปลก ๆ หน้าตา <code>[#&lt;Post id: …&gt;]</code> โผล่บนหน้าเว็บ = มี <code>&lt;%=</code> อยู่หน้า <code>each</code> · <strong>บรรทัด <code>each</code> · <code>if</code> · <code>end</code> ใช้ <code>&lt;%</code> (ไม่มี <code>=</code>)</strong> —
+    ผมลอง <code>&lt;%= if … %&gt;</code> แล้วได้หน้า error <code>ActionView::SyntaxErrorInTemplate</code> เลย ·
+    ข้อยกเว้นเดียวที่จะเจอ: helper ที่สร้าง HTML ครอบเนื้อหาข้างใน เช่น <code>&lt;%= form_with … do |f| %&gt;</code> (บท 124) ตัวนั้นต้องมี <code>=</code></p>
+</div>
+
+<h2 id="sn-sec-10">กับดัก ③: <code>&lt;!-- --&gt;</code> ไม่ได้หยุด Ruby</h2>
+
+<p>
+  มือใหม่ชอบ "ปิดบรรทัดชั่วคราว" ด้วยคอมเมนต์ HTML เพราะคุ้นจากตอนเขียน HTML ล้วน ๆ · ลองครอบบรรทัด "บทความแรก" (ที่มี <code>=</code> ครบแล้ว) ด้วย <code>&lt;!-- --&gt;</code>:
+</p>
+
+<pre><code>  &lt;!-- &lt;p&gt;บทความแรก: &lt;%= @posts.<span class="f">first</span>.title %&gt;&lt;/p&gt; --&gt;</code></pre>
+
+<p>ผลจริง:</p>
+
+<pre><code>  &lt;!-- &lt;p&gt;บทความแรก: ต้มยำกุ้งน้ำข้น&lt;/p&gt; --&gt;</code></pre>
+
+<p>
+  ชื่อบทความ<strong>ยังถูกเติมเข้าไป</strong>ในคอมเมนต์ · และ log ยังมีบรรทัด <code>Post Load … LIMIT 1</code> ครบ ·
+  ERB ไม่รู้จัก <code>&lt;!-- --&gt;</code> — สำหรับมันนั่นคือ HTML ธรรมดา ก้อนหนึ่ง มันเติมช่อง <code>&lt;%= %&gt;</code> ข้างในตามปกติ แล้วเบราว์เซอร์ค่อยซ่อน ·
+  ถ้าในนั้นเป็นข้อมูลที่ไม่ควรให้ใครเห็น ก็<strong>หลุดไปถึงเบราว์เซอร์แล้ว</strong>
+</p>
+
+<p>วิธีที่ถูก: เติม <code>#</code> หลัง <code>&lt;%</code> ให้กลายเป็นคอมเมนต์ของ ERB:</p>
+
+<pre><code>  &lt;p&gt;บทความแรก: <span class="c">&lt;%#= @posts.first.title %&gt;</span>&lt;/p&gt;</code></pre>
+
+<p>
+  ผลจริง: ได้ <code>&lt;p&gt;บทความแรก: &lt;/p&gt;</code> และใน log <strong>ไม่มีบรรทัด <code>LIMIT 1</code> แล้ว</strong> — Ruby ไม่ได้ทำงานเลย ·
+  แอปของคุณใช้ท่านี้อยู่แล้ว: เปิด <code>app/views/layouts/application.html.erb</code> จะเจอบรรทัด <code>&lt;%#= tag.link rel: "manifest", … %&gt;</code> ที่ Rails ปิดไว้ให้
+</p>
+
+<h2 id="sn-sec-11">เทียบกับ JSX: ทิศกลับกัน</h2>
+
+<p>สไลด์หน้า 11 สรุปไว้ประโยคเดียว: <strong>JSX คือ JavaScript ที่เขียน HTML ได้ · ERB คือ HTML ที่เขียน Ruby ได้</strong> · วางงานเดียวกันข้างกันจะเห็นชัด:</p>
+
+<div class="compare">
+  <div class="side">
+    <h4>JSX (ไฟล์ <code>.tsx</code>) — markup อยู่ในภาษา</h4>
+<pre><code>&lt;ul&gt;
+  {posts.<span class="f">map</span>((p) =&gt; (
+    &lt;li key={p.id}&gt;{p.title}&lt;/li&gt;
+  ))}
+&lt;/ul&gt;</code></pre>
+  </div>
+  <div class="side">
+    <h4>ERB (ไฟล์ <code>.html.erb</code>) — ภาษาอยู่ใน markup</h4>
+<pre><code>&lt;ul&gt;
+  &lt;% @posts.<span class="f">each</span> <span class="k">do</span> |post| %&gt;
+    &lt;li&gt;&lt;%= post.title %&gt;&lt;/li&gt;
+  &lt;% <span class="k">end</span> %&gt;
+&lt;/ul&gt;</code></pre>
+  </div>
+</div>
+
+<ul>
+  <li><strong>ไฟล์ทั้งไฟล์เป็นภาษาอะไร</strong> — <code>.tsx</code> คือ TypeScript ที่มีก้อน HTML แทรก · <code>.html.erb</code> คือ HTML ที่มีช่อง Ruby แทรก (ส่วนที่ไม่อยู่ในแท็ก <code>&lt;% %&gt;</code> ส่งออกไปตามตัวอักษร)</li>
+  <li><strong>ช่องสำหรับโชว์ค่า</strong> — JSX ใช้ <code>{ }</code> · ERB ใช้ <code>&lt;%= %&gt;</code></li>
+  <li><strong>วนลูป</strong> — JSX ใช้ <code>map</code> ที่<strong>คืน</strong>รายการ <code>&lt;li&gt;</code> ออกมา · ERB ใช้ <code>each</code> ที่ "พิมพ์ทุกรอบ" แล้วผลของ <code>each</code> เองต้องทิ้ง (เพราะอย่างนี้ใส่ <code>=</code> ที่ each จึงพัง — กับดัก ②)</li>
+  <li><strong>รันที่ไหน</strong> — JSX ของ client component รันในเบราว์เซอร์ และวาดใหม่ทุกครั้งที่ state เปลี่ยน · ERB รันบน server <strong>ครั้งเดียวต่อหนึ่งใบสั่ง</strong> ได้ HTML แล้วจบ</li>
+</ul>
+
+<h2 id="sn-sec-12">ภารกิจ</h2>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ — กล่องสรุปบนหน้า /posts แล้วจงใจทำพังสองแบบ (~10 นาที)</h3>
+  <p>ทำในแอป <code>wongnok-blog-all-in-one</code> (สถานะจากบท 120) · ถ้ายังมีโค้ดทดลองของบทนี้ค้างอยู่ สั่ง <code>git restore app/views/posts/index.html.erb</code> ก่อน · เปิด server ด้วย <code>bin/dev</code></p>
+  <ol>
+    <li>ใน <code>app/views/posts/index.html.erb</code> แทรกต่อจาก <code>&lt;div class="w-full"&gt;</code>:
+<pre><code>  <span class="c">&lt;%# กล่องสรุป (ภารกิจบท 122) %&gt;</span>
+  &lt;!-- กล่องสรุป เริ่มตรงนี้ --&gt;
+  &lt;p&gt;มีบทความทั้งหมด &lt;%= @posts.<span class="f">size</span> %&gt; ชิ้น&lt;/p&gt;
+  &lt;ol&gt;
+    &lt;% @posts.<span class="f">first</span>(<span class="n">5</span>).<span class="f">each</span> <span class="k">do</span> |post| %&gt;
+      &lt;li&gt;&lt;%= post.title %&gt;&lt;/li&gt;
+    &lt;% <span class="k">end</span> %&gt;
+  &lt;/ol&gt;</code></pre></li>
+    <li>เปิด <code>http://localhost:3000/posts</code> ในเบราว์เซอร์ · แล้วดูซอร์สของหน้า (Mac: <kbd>⌥ Option</kbd>+<kbd>⌘ Cmd</kbd>+<kbd>U</kbd> · Windows: <kbd>Ctrl</kbd>+<kbd>U</kbd>) หรือ <code>curl -s localhost:3000/posts</code> ·
+        จดว่า<strong>คอมเมนต์อันไหนอยู่ในซอร์ส อันไหนไม่อยู่</strong></li>
+    <li>พังแบบที่ 1: ลบ <code>=</code> ออกจาก <code>&lt;%= post.title %&gt;</code> → รีเฟรช → ดูทั้งบนจอและในซอร์ส</li>
+    <li>คืน <code>=</code> · พังแบบที่ 2: ลบบรรทัด <code>&lt;% end %&gt;</code> ทิ้ง → รีเฟรช</li>
+    <li>เก็บกวาด: <code>git restore app/views/posts/index.html.erb</code> แล้ว <code>git status</code> ต้องไม่เหลือไฟล์ที่แก้</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ขั้น 3 จะได้ error ไหม? และขั้น 4 ต่างจากขั้น 3 ยังไง?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ขั้น 2</strong> — ในซอร์สมี <code>&lt;!-- กล่องสรุป เริ่มตรงนี้ --&gt;</code> แต่<strong>ไม่มี</strong>บรรทัด "ภารกิจบท 122" ·
+      บนจอเห็นประโยค "มีบทความทั้งหมด 30 ชิ้น" กับชื่อบทความ 5 บรรทัด (ไม่มีเลขนำหน้า — อธิบายในขั้น 3) · ในซอร์สส่วนนี้หน้าตาแบบนี้ (ผลจริง):</p>
+<pre><code>  &lt;p&gt;มีบทความทั้งหมด 30 ชิ้น&lt;/p&gt;
+  &lt;ol&gt;
+      &lt;li&gt;ต้มยำกุ้งน้ำข้น&lt;/li&gt;
+      &lt;li&gt;ก๋วยเตี๋ยวเรืออยุธยา&lt;/li&gt;
+      &lt;li&gt;ข้าวเหนียวมะม่วง&lt;/li&gt;
+      &lt;li&gt;หมูปิ้งข้าวเหนียว&lt;/li&gt;
+      &lt;li&gt;ชาไทยเย็น&lt;/li&gt;
+  &lt;/ol&gt;</code></pre>
+    <p><strong>ขั้น 3</strong> — <strong>ไม่มี error</strong> หน้าโหลดปกติ · บนจอรายการหายไปเฉย ๆ เหลือแค่บรรทัด "มีบทความทั้งหมด 30 ชิ้น" ·
+      แต่ในซอร์สมี <code>&lt;li&gt;&lt;/li&gt;</code> ว่าง ๆ ห้าอัน (ผลจริง) — กับดัก ① แบบในลูป ·
+      (ที่บนจอไม่เห็นแม้แต่เลข 1–5 เพราะ Tailwind ของแอปปิดเลขหน้ารายการไว้ และ <code>&lt;li&gt;</code> ที่ว่างก็ไม่มีความสูง — ผมเช็คใน Chrome จริง: รายการสูง 0 พิกเซล)</p>
+    <p><strong>ขั้น 4</strong> — <strong>พังทั้งหน้า</strong> ได้หน้า error สีแดงของ Rails หัวข้อ <code>ActionView::SyntaxErrorInTemplate in PostsController#index</code> ·
+      ต่างจากขั้น 3 เพราะลืม <code>end</code> = <strong>Ruby อ่านโค้ดไม่ออก</strong> (เปิดบล็อกแล้วไม่ปิด) · ส่วนลืม <code>=</code> = Ruby อ่านออกและรันได้ แค่ไม่พิมพ์</p>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>log เขียนว่า <code>ActionView::SyntaxErrorInTemplate (Encountered a syntax error while rendering template located at: app/views/posts/index.html.erb)</code></strong> —
+          มี <code>do</code> หรือ <code>if</code> ที่ไม่มี <code>&lt;% end %&gt;</code> คู่กัน · นับคู่ให้ครบ (เลขบรรทัดใน error มักชี้ไปท้ายไฟล์ ไม่ใช่จุดที่ลืม)</li>
+      <li><strong>มีข้อความ <code>[#&lt;Post id: 1, …</code> โผล่ใต้รายการ</strong> — คุณพิมพ์ <code>&lt;%= @posts.first(5).each …</code> (มี <code>=</code> เกิน) · กลับไปดูกับดัก ②</li>
+      <li><strong>ไม่เห็นกล่องสรุปเลย ทั้งที่เซฟแล้ว</strong> — แก้ผิดไฟล์ (เช่น <code>show.html.erb</code>) หรือเปิดผิดหน้า (<code>/posts/1</code>) · กล่องอยู่ที่ <code>/posts</code> เท่านั้น</li>
+      <li><strong>ชื่อบทความไม่ตรงกับเฉลย</strong> — ไม่เป็นไร ถ้าข้อมูลของคุณไม่ได้มาจาก seed ของบท 120 · ที่ต้องตรงคือ<strong>จำนวน</strong>และ<strong>อาการ</strong></li>
+    </ul>
+    <p>ทำแล้วผลไม่ตรง ลองถาม Claude Code (บท 86) โดยแปะ<strong>โค้ดที่แทรก</strong>กับ<strong>ผล curl ช่วงนั้น</strong>ไปด้วย — ได้คำตอบตรงกว่าเล่าอาการเฉย ๆ</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-13">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">หน้ารายการแบบ ① (React fetch ใน useEffect แล้ว setPosts) เปิดค้างไว้ · เพื่อนแก้ชื่อบทความจากอีกแท็บสำเร็จ แต่จอนี้ยังโชว์ชื่อเก่า · สาเหตุหลักคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">ฐานข้อมูลยังไม่ได้บันทึกชื่อใหม่ ต้องรอสักพักถึงจะเขียนลงจริง</button>
+    <button class="opt">แท็บนี้ถือสำเนาไว้ใน state ของตัวเอง และไม่มีใครสั่งให้ไปเอาใหม่</button>
+    <button class="opt">JSON ส่งช้ากว่า HTML ข้อมูลใหม่จึงยังเดินทางมาไม่ถึงแท็บนี้</button>
+    <button class="opt">เบราว์เซอร์จำไฟล์ CSS ไว้ หน้าตาเลยไม่เปลี่ยนตามข้อมูลใหม่</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ข้อมูลมีสองชุด: ในฐานข้อมูล (เปลี่ยนแล้ว) กับใน <code>useState</code> ของแท็บนี้ (ยังเป็นของเก่า) · <code>useEffect</code> ที่มี <code>[]</code> fetch แค่ครั้งเดียว ไม่มีอะไรไปบอกให้ fetch ใหม่</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะเพื่อนแก้สำเร็จแล้ว ชื่อใหม่อยู่ในฐานข้อมูลแล้ว ·
+       ตัวเลือกที่ 3 ผิด เพราะไม่มีข้อมูลใหม่กำลัง "เดินทาง" มาเลย แท็บนี้ไม่ได้ขอใหม่ ·
+       ตัวเลือกที่ 4 ผิด เพราะ CSS เป็นเรื่องหน้าตา ไม่เกี่ยวกับข้อความชื่อบทความ</p>
+    <p><strong>จุดที่ต้องจำ:</strong> มีสำเนาข้อมูลสองชุด = ต้องคอยทำให้ตรงกัน · ลืมจุดเดียว = บั๊ก "ทำไมหน้าจอไม่อัปเดต"</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ใน <code>index.html.erb</code> เขียนว่า <code>&lt;p&gt;บทความแรก: &lt;% @posts.first.title %&gt;&lt;/p&gt;</code> · เปิดหน้าแล้วเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">ขึ้น error ว่าหาเมธอด title ไม่เจอ และหน้าเว็บโหลดไม่ขึ้นเลย</button>
+    <button class="opt">โชว์ชื่อบทความตามปกติ เพราะ Rails เดาให้ว่าเราตั้งใจจะโชว์ค่า</button>
+    <button class="opt">ได้ <code>&lt;p&gt;บทความแรก: &lt;/p&gt;</code> ไม่มี error และยังไปหยิบบทความจริง</button>
+    <button class="opt">บรรทัด <code>&lt;p&gt;</code> ทั้งบรรทัดหายไปจาก HTML เพราะแท็กไม่มี =</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — ผลจริงในกับดัก ①: ป้ายยังอยู่ ชื่อหาย · log มี <code>Post Load … LIMIT 1</code> แปลว่า Ruby รันจริง แค่ไม่พิมพ์</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะโค้ดถูกไวยากรณ์ทุกตัว ไม่มีอะไรให้ error ·
+       ตัวเลือกที่ 2 ผิด เพราะ ERB ไม่เดาใจ ทำตามแท็กเป๊ะ ๆ ·
+       ตัวเลือกที่ 4 ผิด เพราะสิ่งที่หายคือแค่ผลของแท็ก ส่วน <code>&lt;p&gt;บทความแรก:</code> เป็น HTML ธรรมดานอกแท็ก จึงถูกส่งออกไป</p>
+    <p><strong>จุดที่ต้องจำ:</strong> จะโชว์ค่า ต้องมี <code>=</code> · ไม่มี <code>=</code> = รันแล้วทิ้ง เงียบ ๆ ไม่มี error</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">แอป scaffold มีทั้ง <code>index.html.erb</code> และ <code>index.json.jbuilder</code> · เปิด <code>/posts.json</code> แล้ว Rails ใช้อะไรสร้างคำตอบ?</p>
+  <div class="opts">
+    <button class="opt">ใช้ <code>index.html.erb</code> ก่อนเสมอ แล้วแปลง HTML ที่ได้เป็น JSON</button>
+    <button class="opt">ใช้ <code>_post.html.erb</code> ทีละชิ้น แล้วรวมผลทั้งหมดเป็นรายการ</button>
+    <button class="opt">ไม่ใช้ไฟล์ view เลย controller เขียน JSON เองในเมธอด <code>index</code></button>
+    <button class="opt">ใช้ <code>index.json.jbuilder</code> เพราะท้าย URL ขอ format เป็น JSON</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — log จริง: <code>Processing by PostsController#index as JSON</code> แล้ว <code>Rendering posts/index.json.jbuilder</code> · action เดียวกัน เลือกแม่แบบตาม format</p>
+    <p>ตัวเลือกที่ 1 ผิด เพราะ Rails ไม่แปลง HTML เป็น JSON · ไฟล์ <code>.html.erb</code> ใช้เฉพาะเมื่อขอ HTML ·
+       ตัวเลือกที่ 2 ผิด เพราะ <code>_post.html.erb</code> สร้าง HTML · ฝั่ง JSON ใช้ <code>_post.json.jbuilder</code> ·
+       ตัวเลือกที่ 3 ผิด เพราะ <code>index</code> ของ scaffold มีแค่ <code>@posts = Post.all</code> ไม่ได้เขียน JSON เอง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ชื่อไฟล์ = action . ส่งออกเป็นอะไร . ประมวลผลด้วยอะไร · Rails เลือกไฟล์จาก format ที่ลูกค้าขอ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อไหนอธิบายความต่างของ <code>&lt;%# โน้ต %&gt;</code> กับ <code>&lt;!-- โน้ต --&gt;</code> ในไฟล์ <code>.html.erb</code> ได้ถูกต้อง?</p>
+  <div class="opts">
+    <button class="opt"><code>&lt;%#</code> หายตั้งแต่บน server · <code>&lt;!--</code> ไปถึงเบราว์เซอร์ และ Ruby ข้างในยังรัน</button>
+    <button class="opt">ทั้งสองแบบหายตั้งแต่บน server ไม่มีแบบไหนถูกส่งไปถึงเบราว์เซอร์เลย</button>
+    <button class="opt"><code>&lt;!--</code> หายตั้งแต่บน server · <code>&lt;%#</code> ถูกส่งไปแต่เบราว์เซอร์ไม่โชว์</button>
+    <button class="opt">ทั้งสองแบบถูกส่งไปถึงเบราว์เซอร์ เพียงแต่เบราว์เซอร์ซ่อนไว้ไม่โชว์บนจอ</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — ผลจริงจาก curl: บรรทัด <code>&lt;%#</code> ไม่มีในซอร์สเลย · บรรทัด <code>&lt;!--</code> อยู่ในซอร์ส และ <code>&lt;%= %&gt;</code> ที่อยู่ข้างในถูกเติมค่าตามปกติ (กับดัก ③)</p>
+    <p>ตัวเลือกที่ 2 ผิด เพราะ ERB ไม่รู้จัก <code>&lt;!--</code> มันส่งออกไปเหมือน HTML ทั่วไป ·
+       ตัวเลือกที่ 3 สลับสองแบบกัน ·
+       ตัวเลือกที่ 4 ผิดครึ่งหนึ่ง: <code>&lt;!--</code> ถูกส่งและซ่อนจริง แต่ <code>&lt;%#</code> ไม่เคยออกจาก server</p>
+    <p><strong>จุดที่ต้องจำ:</strong> จะปิดโค้ด Ruby ใน view ชั่วคราว ใช้ <code>&lt;%#</code> (เช่น <code>&lt;%#=</code>) ไม่ใช่ <code>&lt;!-- --&gt;</code></p>
+  </div>
+</div>
+
+<h2 id="sn-sec-14">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของ Day 3)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>11</td><td><code>&lt;% if @post.published? %&gt;</code></td><td>บทความของเราไม่มีช่อง published · พิมพ์ตามใน <code>show.html.erb</code> ได้หน้า error <code>undefined method 'published?' for an instance of Post</code></td><td><strong>สนใจ</strong> ถ้าจะพิมพ์ตาม — เป็นแค่ตัวอย่างรูปแบบ <code>if</code></td></tr>
+    <tr><td>10</td><td>"โชว์รายการโพสต์ 20 อัน"</td><td>แอปของเรามี 30 บทความ</td><td>ไม่ต้อง — ภาพเดียวกัน</td></tr>
+    <tr><td>10</td><td>Next.js + Go = fetch ใน browser → state ใน client</td><td>Next.js render บน server ได้ด้วย (Server Component) · ภาพนี้คือแบบ client fetch</td><td>ไม่ต้อง — แค่รู้ว่าไม่ใช่ Next.js ทุกแบบ</td></tr>
+    <tr><td>11</td><td>"ชื่อไฟล์บอกทุกอย่าง" ยกตัวอย่างแค่ <code>index.html.erb</code></td><td>scaffold สร้าง <code>index.json.jbuilder</code> ไว้ข้างกันด้วย · <code>/posts.json</code> ใช้ได้ทันที</td><td>ไม่ต้อง — แต่ดีที่รู้ว่ามันอยู่ตรงนั้น</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0121-prompts-and-claude-md.html">← บทเรียน 121 · prompts/ · CLAUDE.md</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 3</a>
+  <a href="./0123-layout-partial-locals.html">บทเรียน 123 → layout · partial · locals</a>
+</nav>
+
+<h2 id="sn-sec-15">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/action_view_overview.html#erb">Rails Guides — Action View Overview § ERB</a> —
+      <strong>อ่านแค่หัวข้อ ERB</strong> (สั้น) · ยืนยัน <code>&lt;% %&gt;</code> · <code>&lt;%= %&gt;</code> และคอมเมนต์ <code>&lt;%# %&gt;</code> ·
+      หัวข้อถัดไป <a href="https://guides.rubyonrails.org/action_view_overview.html#jbuilder">§ Jbuilder</a> อ่านแค่ย่อหน้าแรกพอรู้ว่าไฟล์ <code>.json.jbuilder</code> คืออะไร</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionView/Base.html#class-ActionView::Base-label-ERB">Rails API — ActionView::Base § ERB</a> —
+      <strong>ดูตัวอย่างวนลูปย่อหน้าแรก</strong> (<code>each</code> ใช้ <code>&lt;% %&gt;</code> · ชื่อใช้ <code>&lt;%= %&gt;</code>) กับตัวอย่าง <code>WRONG</code> ถัดมาที่บอกว่า <code>puts</code> ใช้พิมพ์ใน ERB ไม่ได้</li>
+  <li><a href="https://guides.rubyonrails.org/api_app.html#why-use-rails-for-json-apis-questionmark">Rails Guides — Using Rails for API-only Applications § Why Use Rails for JSON APIs?</a> —
+      ฝั่งตรงข้ามของบทนี้: ถ้าทีมเลือกแบบ ① Rails ก็เป็น JSON API ล้วน ๆ ได้ · <strong>อ่านแค่หัวข้อนี้กับหัวข้อก่อนหน้า (What is an API Application?)</strong></li>
+  <li><a href="https://react.dev/learn/writing-markup-with-jsx">React — Writing Markup with JSX</a> —
+      ฝั่ง JSX ที่เทียบกัน · <strong>อ่านถึงหัวข้อ The Rules of JSX</strong> จะเห็นว่า JSX คือ JavaScript ที่เขียน markup ได้</li>
+  <li><a href="https://react.dev/learn/you-might-not-need-an-effect">React — You Might Not Need an Effect</a> —
+      สำหรับคนที่อยากรู้ว่าทีม React เองก็ระวังการเก็บสำเนาข้อมูลไว้ใน state · <strong>อ่านแค่ย่อหน้าแรกกับหัวข้อ How to remove unnecessary Effects</strong></li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Guides/Comments">MDN — HTML Comments</a> —
+      ยืนยันว่าคอมเมนต์ HTML เป็นส่วนหนึ่งของเอกสารที่ส่งไปถึงเบราว์เซอร์ แค่ไม่ถูกแสดง · <strong>อ่านส่วน Syntax</strong></li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

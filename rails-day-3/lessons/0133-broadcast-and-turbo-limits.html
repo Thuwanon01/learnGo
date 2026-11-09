@@ -1,0 +1,831 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 133 — broadcast — คอมเมนต์เด้งขึ้นทุกแท็บ และ Turbo เหมาะกับงานแบบไหน</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 133 · Rails · Day 3</p>
+  <h1>broadcast — คอมเมนต์เด้งขึ้นทุกแท็บ และ Turbo เหมาะกับงานแบบไหน</h1>
+  <p class="meta">~22 นาที · ควรผ่าน <a href="./0132-turbo-streams.html">บทเรียน 132</a> (Turbo Streams · ฟอร์มคอมเมนต์) และ
+    <a href="../../rails-day-2/lessons/0112-callbacks-and-logic.html">บทเรียน 112</a> (callback · after_commit) มาก่อน</p>
+  <p class="standfirst">
+    บท 132 เราส่งคอมเมนต์แล้วหน้า<strong>ของเรา</strong>เปลี่ยนทันที · แต่ถ้าเพื่อนเปิดบทความเดียวกันอยู่อีกเครื่อง เขาจะไม่เห็นอะไรเลยจนกว่าจะกด refresh
+    <br>อ่านจบบทนี้ คุณจะทำให้<strong>คอมเมนต์ใหม่เด้งขึ้นเองในทุกแท็บ</strong>ที่เปิดบทความนั้นอยู่ ด้วยโค้ดแค่ 3 บรรทัด ·
+    อ่าน log ออกว่าข้อความวิ่งไปถึงใครบ้าง · รู้ว่าบรรทัดที่ดูง่ายนี้มี "ราคา" อะไร ·
+    และตอบได้ว่างานแบบไหนควรใช้ Turbo งานแบบไหนไม่ควร
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำจากบทก่อน ๆ ที่บทนี้ใช้</p>
+  <ul>
+    <li><strong>Turbo Stream</strong> (บท 132) — "ใบสั่งงานให้พนักงานเสิร์ฟ" หน้าตาแบบ <code>&lt;turbo-stream action="append" target="comments"&gt;</code> =
+      "เอาของในซองไปต่อท้ายกล่องที่ id เป็น <code>comments</code>" · ในบท 132 ใบสั่งนี้มาจาก <code>create.turbo_stream.erb</code> และ<strong>ส่งกลับไปให้แท็บที่กดส่งเท่านั้น</strong></li>
+    <li><strong><code>dom_id</code></strong> (บท 131) — ตั้งป้ายเลขถ้วยให้ HTML เช่นคอมเมนต์เลข 8 ได้ <code>id="comment_8"</code></li>
+    <li><strong>callback</strong> (บท 112) — กฎ "ทำทุกครั้ง" ที่ติดไว้ข้างตู้ · <code>after_commit</code> = ทำหลังตู้เซ็นรับแฟ้มแล้วเท่านั้น</li>
+    <li><strong>transaction</strong> (บท 111) — กล่อง "ทำทั้งหมด หรือไม่ทำเลย" · log เห็นเป็น <code>BEGIN</code> … <code>COMMIT</code> (ยืนยัน) หรือ <code>ROLLBACK</code> (ยกเลิกทั้งกล่อง)</li>
+    <li><strong>หน้า show ของบทความ</strong> (บท 132) — มีจุดที่มี id อยู่ 3 จุด: ตัวนับ <code>#comment_count</code> · รายการ <code>#comments</code> · ฟอร์ม <code>#comment_form</code></li>
+  </ul>
+  <p>🧰 ตรวจด้วย <strong>Ruby 4.0.9 · Rails 8.1.4 · turbo-rails 2.0.23 (Turbo 8.0.23) · PostgreSQL 18</strong>
+    (สไลด์และ repo ของอาจารย์ใช้ Ruby 4.0.5–4.0.6 · Rails 8.1.3 — รุ่นแก้บั๊กในสายเดียวกัน)</p>
+  <p>🗂 <strong>โค้ดเริ่มจาก:</strong> แอปหลังจบบท 132 (คอมเมนต์ + ฟอร์มที่ตอบด้วย Turbo Stream · ตามไม่ทันดู<a href="./0132-turbo-streams.html">บท 132</a>) ·
+    บทนี้<strong>เพิ่มโค้ดจริง 3 บรรทัดแล้วเก็บไว้</strong> (commit ท้ายภารกิจ) · ส่วนการทดลองอื่น ๆ ในบทให้ <code>git restore</code> ทิ้ง ·
+    branch <code>day3-c-done</code> ของอาจารย์มีไว้ตามทันได้ แต่หน้าตาไฟล์ต่างจากบทเรียน (ใช้ i18n และข้อมูลคนละชุด)</p>
+  <p>ผลทุกก้อนรันจริงแล้วก็อปมา · ตัดบรรทัดที่ไม่เกี่ยวเป็น <code>…</code> และตัดคอมเมนต์ SQL <code>/*application=…*/</code> ท้ายบรรทัดออก ·
+    <strong>เลขบทความ · เลขคอมเมนต์ · Job ID · เวลา (ms) · ชื่อช่องยาว ๆ ที่ขึ้นต้น <code>Z2lk</code> · ลายเซ็นหลัง <code>--</code> ของคุณจะไม่ตรงกับในบท</strong></p>
+</div>
+
+<h2 id="sn-sec-1">ปัญหา: แท็บอื่นไม่รู้ว่ามีคอมเมนต์ใหม่</h2>
+
+<p>
+  ลองนึกภาพ: คุณเปิดบทความ "ราดหน้าหมูหมัก" ไว้สองแท็บ · ส่งคอมเมนต์จากแท็บซ้าย แท็บซ้ายเปลี่ยนทันที (บท 132) ·
+  แต่<strong>แท็บขวานิ่งสนิท</strong> ต้องกด refresh เองถึงจะเห็น
+</p>
+
+<p>
+  เหตุผลอยู่ที่วิธีคุยของเว็บปกติ (HTTP): <strong>เบราว์เซอร์ต้องถามก่อน server ถึงจะตอบ</strong> · ถามหนึ่งครั้งได้คำตอบหนึ่งครั้ง แล้วจบ ·
+  server ไม่มีทางวิ่งไปบอกแท็บขวาเองได้ เพราะแท็บขวาไม่ได้ถามอะไรอยู่
+</p>
+
+<p>
+  สิ่งที่เราอยากได้เรียกว่า <strong>real-time</strong> — ข้อมูลใหม่<strong>วิ่งมาหาเราเอง</strong>ทันทีที่เกิด โดยเราไม่ต้องกดอะไร ·
+  ทางแก้คือให้เบราว์เซอร์<strong>ต่อสายค้างไว้</strong>กับ server ตั้งแต่เปิดหน้า · สายแบบนี้ชื่อ <strong>WebSocket</strong> ·
+  ต่อครั้งเดียวแล้วคุยได้สองทาง ใครมีเรื่องก็พูดได้เลย ไม่ต้องรออีกฝั่งถาม
+</p>
+
+<div class="analogy">
+  <span class="label">📢 เทียบให้เห็นภาพ — ใบสั่งทีละใบ vs สายที่ต่อค้างไว้</span>
+  <p>
+    HTTP ปกติเหมือน<strong>ใบสั่งอาหาร</strong>: โต๊ะยื่นใบสั่ง → ครัวทำ → เสิร์ฟจาน → จบ · ครัวไม่เดินไปหาโต๊ะไหนเองถ้าโต๊ะนั้นไม่ได้สั่ง ·
+    โต๊ะขวาจะรู้ว่ามีเมนูใหม่ก็ต่อเมื่อยื่นใบสั่งไปถามเอง (กด refresh)
+  </p>
+  <p>
+    WebSocket เหมือนร้านที่ติด<strong>ลำโพงเสียงตามสาย</strong>ไว้ทุกโต๊ะ · สายต่อค้างไว้ตลอดที่ลูกค้านั่งอยู่ ·
+    พอครัวมีข่าว ประกาศครั้งเดียว ทุกโต๊ะที่เปิดลำโพงได้ยินพร้อมกัน
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> เสียงตามสายจริงเป็นทางเดียว (ครัวพูด โต๊ะฟัง) แต่ WebSocket คุยได้สองทาง — แค่ในบทนี้เราใช้ทางเดียว ·
+    และโต๊ะที่เพิ่งมานั่ง<strong>ไม่ได้ยินประกาศที่ผ่านไปแล้ว</strong> — เขาเห็นคอมเมนต์เก่าได้เพราะตอนเปิดหน้า Rails ดึงจากฐานข้อมูลมาให้ ไม่ใช่เพราะลำโพงเล่นย้อนหลัง
+  </p>
+</div>
+
+<p>
+  เทียบกับฝั่ง React ที่เพิ่งเรียน: ใน <a href="../../fe-nextjs/lessons/0074-useeffect.html">บท 74</a> การ "เปิด WebSocket" คือตัวอย่างงานที่ต้องเขียนใน <code>useEffect</code> เอง
+  พร้อม cleanup ตอนปิด · ใน Rails บทนี้<strong>เราไม่เขียน JavaScript สักบรรทัด</strong> — Turbo เปิดและปิดสายให้เอง
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ชุดแรก</span>
+  <dl>
+    <dt>real-time</dt>
+    <dd>ข้อมูลใหม่ไปโผล่ที่หน้าจอคนอื่นทันทีโดยเขาไม่ต้องกดอะไร · <strong>พิมพ์บอก AI ได้ว่า “make new comments appear in real time for everyone viewing the post”</strong></dd>
+    <dt>WebSocket</dt>
+    <dd>การเชื่อมต่อที่เปิดค้างไว้ระหว่างเบราว์เซอร์กับ server คุยได้สองทาง · ต่างจาก HTTP ที่ถามหนึ่งครั้งตอบหนึ่งครั้ง ·
+      <strong>ถาม senior ได้ว่า “ตอนขึ้น server จริง WebSocket ต้องตั้งค่าอะไรเพิ่มไหม”</strong></dd>
+    <dt>Action Cable</dt>
+    <dd>ส่วนของ Rails ที่จัดการ WebSocket ให้ (รับสาย · จำว่าใครฟังช่องไหน · ส่งข้อความ) · เปิดอยู่ที่ path <code>/cable</code> โดยไม่ต้องแก้ routes ·
+      <strong>ถาม AI ได้ว่า “how does Action Cable know which browser is listening to which stream?”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">สองชิ้นที่ต้องมี — คนประกาศ กับ โต๊ะที่เปิดลำโพง</h2>
+
+<p>
+  real-time ใน Rails ต้องมี<strong>สองฝั่งเสมอ</strong>: ฝั่งที่ประกาศ (เกิดคอมเมนต์ใหม่ → ส่งข่าว) กับฝั่งที่ฟัง (หน้าเว็บที่รอรับข่าว) ·
+  ขาดฝั่งไหนก็ไม่ทำงาน · เราจะใส่ทีละฝั่ง แล้วดูผลจริงแต่ละขั้น
+</p>
+
+<h3 id="sn-sub-1">ชิ้นที่ 1 — คนประกาศ: <code>broadcasts_to :post</code> ใน model</h3>
+
+<p>เปิดไฟล์ <code>app/models/comment.rb</code> แล้วเพิ่ม 2 บรรทัดใต้ <code>belongs_to :post</code> พร้อมบรรทัดว่างคั่นก่อน <code>validates</code> ให้หน้าตาเป็นแบบนี้ (บรรทัดคอมเมนต์ <code>#</code> พิมพ์ตามไว้ด้วย ไฟล์จะได้ตรงกับบทเรียน):</p>
+
+<pre><code><span class="k">class</span> <span class="n">Comment</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>
+
+  <span class="c"># คอมเมนต์ใหม่เด้งขึ้นทุกแท็บที่เปิดหน้าโพสต์นี้ (ส่งต่อให้ job · หลัง commit)</span>
+  <span class="f">broadcasts_to</span> <span class="n">:post</span>
+
+  <span class="f">validates</span> <span class="n">:author_name</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">maximum:</span> <span class="n">50</span> }
+  <span class="f">validates</span> <span class="n">:body</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">maximum:</span> <span class="n">1000</span> }
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>broadcasts_to</code> — แปลว่า "ทุกครั้งที่คอมเมนต์ถูกสร้าง · แก้ · ลบ <strong>ให้ประกาศข่าว</strong>" · broadcast = ประกาศถึงทุกคนที่ฟังอยู่</li>
+  <li><code>:post</code> — "ประกาศใน<strong>ช่องของบทความ</strong>ที่คอมเมนต์นี้อยู่" · Rails เรียก <code>comment.post</code> แล้วใช้บทความนั้นเป็นชื่อช่อง ·
+    คอมเมนต์ของบทความ 23 จึงประกาศในช่องของบทความ 23 เท่านั้น คนเปิดบทความ 24 ไม่ได้ยิน</li>
+  <li>ข่าวที่ประกาศตอนสร้างคือ<strong>ใบสั่ง Turbo Stream</strong> แบบเดียวกับบท 132: "append คอมเมนต์นี้ ต่อท้ายกล่อง <code>comments</code>" ·
+    Rails เดาให้หมด: ใช้ partial <code>comments/_comment</code> (ชื่อตาม model) และ target <code>comments</code> (ชื่อ model แบบพหูพจน์)</li>
+  <li>บรรทัดคอมเมนต์ <code>(ส่งต่อให้ job · หลัง commit)</code> — <strong>job</strong> คืองานที่ฝากไว้ให้ทำทีหลัง (ละเอียดใน Day 3 Part 2 ซึ่งยังไม่มา) ·
+    <strong>commit</strong> คือจังหวะ <code>COMMIT</code> ที่ตู้เซ็นรับแฟ้ม (บท 111) · ทั้งสองอย่างจะเห็นด้วยตาในหัวข้อ "อ่าน log" ข้างล่าง</li>
+</ul>
+
+<p>ไม่ต้อง restart server — แก้ไฟล์ใน <code>app/</code> ตอน development Rails โหลดใหม่ให้เอง</p>
+
+<div class="predict">
+  <p class="ask">ตอนนี้มีแค่คนประกาศ ยังไม่ได้แตะหน้า show เลย · เปิดบทความเดียวกันสองแท็บ ส่งคอมเมนต์จากแท็บซ้าย — แท็บขวาจะเห็นคอมเมนต์ใหม่ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ไม่เห็น</strong> — ผลจริงจาก Chrome สองแท็บ (บทความเลข 30 · สถานะก่อนและหลังกดส่ง 2.5 วินาที):</p>
+<pre><code>before A {"marker":"A","count":"0","n":0,"ids":[],"source":false,"connected":null}
+before B {"marker":"B","count":"0","n":0,"ids":[],"source":false,"connected":null}
+after  A {"marker":"A","count":"1","n":1,"ids":["comment_1"],"source":false,"connected":null}
+after  B {"marker":"B","count":"0","n":0,"ids":[],"source":false,"connected":null}</code></pre>
+    <p>วิธีอ่าน: <code>count</code> = เลขในตัวนับ · <code>n</code> = จำนวนคอมเมนต์ในกล่อง · <code>ids</code> = id ของคอมเมนต์ในกล่อง ·
+      <code>source</code> / <code>connected</code> = หน้านี้มี "ลำโพง" หรือยัง และต่อสายติดไหม (เดี๋ยวรู้จัก) ·
+      <code>marker</code> = ป้ายที่เราแปะไว้ในหน้าด้วย JavaScript ก่อนกดส่ง ถ้าหน้าโหลดใหม่ป้ายจะหาย — ยังอยู่ทุกรอบ = ไม่มีแท็บไหนโหลดหน้าใหม่</p>
+    <p>แท็บซ้าย (A) ได้คอมเมนต์จากคำตอบของฟอร์มตามบท 132 · แท็บขวา (B) <strong>นิ่ง</strong> ·
+      (การทดลองแต่ละรอบในบทนี้ใช้บทความคนละเลข ตัวนับจะได้เริ่มที่ 0 ทุกรอบ)</p>
+    <p>แต่ใน log ของ server <strong>มีการประกาศจริง</strong> (ตัดท้ายบรรทัด):</p>
+<pre><code>Started POST "/posts/30/comments" for ::1 at …
+…
+[ActiveJob] [Turbo::Streams::ActionBroadcastJob] […] [ActionCable] Broadcasting to Z2lkOi8vd29uZ25vay1ibG9nLWFsbC1pbi1vbmUvUG9zdC8zMA: "&lt;turbo-stream action=\"append\" target=\"comments\"…</code></pre>
+    <p><code>Z2lkOi8v…</code> ที่อ่านไม่ออกคือ<strong>ชื่อช่องของบทความ 30</strong> ที่ถูกแปลงเป็นตัวอักษรชุดหนึ่ง (เดี๋ยวเจออีกในหัวข้อถัดไป) ·
+      ครัวประกาศแล้ว แต่<strong>ไม่มีโต๊ะไหนเปิดลำโพง</strong> · และไม่มี error ทั้งในเบราว์เซอร์และใน log — พังแบบเงียบ ๆ (สไลด์หน้า 53 บอกว่าเป็นจุดที่ AI ลืมบ่อย)</p>
+  </div>
+</div>
+
+<h3 id="sn-sub-2">ชิ้นที่ 2 — เปิดลำโพง: <code>turbo_stream_from @post</code> ในหน้า show</h3>
+
+<p>เปิด <code>app/views/posts/show.html.erb</code> · หา <code>&lt;section class="mt-10 space-y-4"&gt;</code> (ส่วนความคิดเห็นจากบท 132) แล้วเพิ่ม 2 บรรทัดนี้ (บรรทัดที่สองคือบรรทัดว่าง) เป็นบรรทัดแรกในนั้น:</p>
+
+<pre><code>  &lt;section class=<span class="s">"mt-10 space-y-4"</span>&gt;
+    <span class="k">&lt;%=</span> <span class="f">turbo_stream_from</span> @post <span class="k">%&gt;</span>
+
+    &lt;h2 class=<span class="s">"text-xl font-bold"</span>&gt;
+      ความคิดเห็น (&lt;span id=<span class="s">"comment_count"</span>&gt;<span class="k">&lt;%=</span> @post.comments.<span class="f">count</span> <span class="k">%&gt;</span>&lt;/span&gt;)
+    &lt;/h2&gt;</code></pre>
+
+<ul>
+  <li><code>turbo_stream_from @post</code> — "หน้านี้<strong>ขอฟังช่องของบทความนี้</strong>" · ต้องเป็นของชิ้นเดียวกับที่ model ประกาศ (<code>:post</code> ↔ <code>@post</code>) ไม่งั้นต่างคนต่างอยู่คนละช่อง</li>
+  <li>ใช้ <code>&lt;%= %&gt;</code> (มีเครื่องหมาย <code>=</code>) เพราะมันต้อง<strong>วางแท็กลงบนจาน</strong> — ลืม <code>=</code> แล้วไม่มีลำโพง (บท 122)</li>
+  <li>วางไว้ตรงไหนในหน้าก็ได้ · ที่วางใน <code>&lt;section&gt;</code> เพราะอยู่ใกล้ส่วนที่มันจะเปลี่ยน อ่านแล้วเข้าใจ · แท็กนี้ไม่มีหน้าตาให้เห็นบนจอ</li>
+</ul>
+
+<p>ดูว่าเบราว์เซอร์ได้อะไรจริง (บทความเลข 23 ของเรา · ของคุณใช้เลขไหนก็ได้):</p>
+
+<pre><code>$ curl -s localhost:3000/posts/23 | grep -B1 -A4 turbo-cable-stream-source</code></pre>
+<pre><code>  &lt;section class="mt-10 space-y-4"&gt;
+    &lt;turbo-cable-stream-source channel="Turbo::StreamsChannel" signed-stream-name="IloybGtPaTh2ZDI5dVoyNXZheTFpYkc5bkxXRnNiQzFwYmkxdmJtVXZVRzl6ZEM4eU13Ig==--5bd6c5ff5bee9fefc0a058276b908435619e744c593415866dc65f0536ff2a9c"&gt;&lt;/turbo-cable-stream-source&gt;
+
+    &lt;h2 class="text-xl font-bold"&gt;
+      ความคิดเห็น (&lt;span id="comment_count"&gt;1&lt;/span&gt;)
+    &lt;/h2&gt;</code></pre>
+
+<ul>
+  <li>ตัวนับเป็น <code>1</code> เพราะบทความ 23 ของเรามีคอมเมนต์จากการทดลองอยู่แล้ว 1 อัน · บรรทัด <code>&lt;%= turbo_stream_from @post %&gt;</code> กลายเป็นแท็กยาว ๆ บรรทัดที่สอง</li>
+  <li><code>&lt;turbo-cable-stream-source&gt;</code> — นี่แหละ<strong>ลำโพง</strong> · เป็นแท็กพิเศษของ Turbo พอเบราว์เซอร์เจอแท็กนี้ JavaScript ของ Turbo จะต่อ WebSocket ไปที่ <code>/cable</code> ให้เอง</li>
+  <li><code>channel="Turbo::StreamsChannel"</code> — ใช้ "สายประเภท Turbo Stream" ของ Action Cable</li>
+  <li><code>signed-stream-name="…--5bd6…"</code> — <strong>ชื่อช่องแบบมีลายเซ็น</strong> · ข้างในคือ "บทความเลข 23 ของแอปนี้" (<code>gid://wongnok-blog-all-in-one/Post/23</code>)
+    ที่ถูกแปลงเป็นตัวอักษรชุดหนึ่ง (ไม่ใช่ความลับ ใครก็ถอดกลับได้ — ส่วนที่ขึ้นต้น <code>Z2lk</code> ใน log ก็คือชื่อนี้) ·
+    ส่วนหลัง <code>--</code> คือลายเซ็นจาก server — ใครแอบแก้ชื่อในเบราว์เซอร์ให้ไปฟังช่องอื่น ลายเซ็นจะไม่ตรง server ไม่ยอม ·
+    ลายเซ็นของคุณจะต่างจากในบทแน่นอน เพราะแต่ละเครื่องมีกุญแจลับสำหรับเซ็นของตัวเอง</li>
+  <li>เปิด Chrome DevTools แท็บ Elements จะเห็นแท็กนี้มีคำว่า <code>connected</code> ต่อท้ายเพิ่มมา = ต่อสายติดแล้ว (เราตรวจด้วยสคริปต์ว่า attribute นี้มีจริงหลังโหลดหน้า)</li>
+</ul>
+
+<p>ส่งคอมเมนต์จากแท็บซ้ายอีกครั้ง (บทความเลข 29) — ผลจริง:</p>
+
+<pre><code>before A {"marker":"A","count":"0","n":0,"ids":[],"source":true,"connected":true}
+before B {"marker":"B","count":"0","n":0,"ids":[],"source":true,"connected":true}
+after  A {"marker":"A","count":"1","n":1,"ids":["comment_2"],"source":true,"connected":true}
+after  B {"marker":"B","count":"0","n":1,"ids":["comment_2"],"source":true,"connected":true}</code></pre>
+
+<p>
+  แท็บขวา (<code>after  B</code>) ได้คอมเมนต์ <code>comment_2</code> โดยไม่ต้องกดอะไร และ <code>marker</code> ยังเป็น <code>"B"</code> = มาโดยไม่โหลดหน้าใหม่ 🎉 · แต่สังเกต <code>"count":"0"</code> — หัวข้อยังเขียนว่า "ความคิดเห็น (0)" ทั้งที่มีคอมเมนต์ 1 อัน ·
+  เพราะ <code>broadcasts_to</code> ประกาศแค่ "append คอมเมนต์" <strong>ไม่ได้ประกาศเรื่องตัวนับ</strong> · ต้องเพิ่มเอง (หัวข้อถัดไป)
+</p>
+
+<div class="analogy">
+  <span class="label">📻 เทียบให้เห็นภาพ — ช่องประกาศของแต่ละเมนู</span>
+  <p>
+    ร้านมีเสียงตามสายหลายช่อง ช่องละหนึ่งบทความ · <code>broadcasts_to :post</code> คือกฎของครัว: "มีคอมเมนต์ใหม่เมื่อไหร่ ประกาศในช่องของบทความนั้น" ·
+    <code>turbo_stream_from @post</code> คือโต๊ะที่<strong>หมุนลำโพงไปที่ช่องของบทความที่กำลังดู</strong> ·
+    ข่าวที่ประกาศเป็นใบสั่งงานแบบเดียวกับบท 132 พนักงานเสิร์ฟ (Turbo) ที่โต๊ะได้ยินแล้วเอาไปจัดจานตามนั้นทันที
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ลำโพงจริงหมุนผิดช่องก็ยังได้ยินเสียงอะไรสักอย่าง · ในเว็บ ถ้าชื่อช่องสองฝั่งไม่ตรงกัน หรือลืมลำโพง
+    <strong>ไม่มีเสียงอะไรเลย และไม่มีใครแจ้ง error</strong> — ต้องเปิดสองแท็บทดสอบเองถึงจะรู้
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของสองฝั่ง</span>
+  <dl>
+    <dt>broadcast</dt>
+    <dd>ส่งข้อความครั้งเดียวไปถึงทุกคนที่ฟังช่องนั้นอยู่ · <code>broadcasts_to</code> = ให้ model ประกาศเองทุกครั้งที่สร้าง/แก้/ลบ ·
+      <strong>พิมพ์บอก AI ได้ว่า “Comment should broadcast to its post's stream with broadcasts_to :post”</strong></dd>
+    <dt>stream (ช่อง) · subscribe</dt>
+    <dd>stream คือชื่อช่องที่ใช้ประกาศ (ในที่นี้ = บทความหนึ่งชิ้น) · subscribe คือ "ขอฟังช่องนี้" ซึ่ง <code>turbo_stream_from</code> ทำให้ ·
+      <strong>ถาม senior ได้ว่า “stream ควรผูกกับ record ไหน ถ้าอยากให้คนละหน้าไม่ได้ยินกัน”</strong></dd>
+    <dt><code>&lt;turbo-cable-stream-source&gt;</code> · signed stream name</dt>
+    <dd>แท็กที่ <code>turbo_stream_from</code> สร้าง = ลำโพงในหน้าเว็บ · ชื่อช่องในแท็กมีลายเซ็นกันการปลอม ·
+      <strong>ใช้ตอนดีบัก: “the page has turbo-cable-stream-source but no connected attribute — why?”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">ให้ตัวนับในแท็บอื่นขยับด้วย — บรรทัดที่สาม</h2>
+
+<p>กลับไปที่ <code>app/models/comment.rb</code> เพิ่มอีก 2 บรรทัดต่อจาก <code>broadcasts_to :post</code> (ก่อนบรรทัดว่าง) · ไฟล์ทั้งไฟล์จะเป็นแบบนี้ (ตรงกับโค้ดของบทเรียนทุกบรรทัด):</p>
+
+<pre><code><span class="k">class</span> <span class="n">Comment</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>
+
+  <span class="c"># คอมเมนต์ใหม่เด้งขึ้นทุกแท็บที่เปิดหน้าโพสต์นี้ (ส่งต่อให้ job · หลัง commit)</span>
+  <span class="f">broadcasts_to</span> <span class="n">:post</span>
+  <span class="c"># ตัวนับในแท็บอื่นต้องเปลี่ยนตามด้วย</span>
+  <span class="f">after_create_commit</span> -&gt; { <span class="f">broadcast_update_later_to</span> post, <span class="n">target:</span> <span class="s">"comment_count"</span>, <span class="n">html:</span> post.comments.<span class="f">count</span> }
+
+  <span class="f">validates</span> <span class="n">:author_name</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">maximum:</span> <span class="n">50</span> }
+  <span class="f">validates</span> <span class="n">:body</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">maximum:</span> <span class="n">1000</span> }
+<span class="k">end</span></code></pre>
+
+<p>แกะบรรทัดยาวทีละท่อน:</p>
+<ul>
+  <li><code>after_create_commit</code> — callback (บท 112) "หลังตู้<strong>เซ็นรับ</strong>คอมเมนต์ใหม่แล้ว" · เฉพาะตอนสร้าง ไม่รวมแก้/ลบ</li>
+  <li><code>-&gt; { … }</code> — ก้อนโค้ดที่<strong>เก็บไว้รันทีหลัง</strong> (Ruby เรียกว่า lambda) · คล้าย block <code>{ |x| … }</code> ที่ใช้กับ <code>each</code> แต่ตั้งไว้ก่อน รอ Rails เรียกตอนถึงจังหวะ</li>
+  <li><code>broadcast_update_later_to post</code> — "ประกาศในช่องของบทความนี้ ให้<strong>เปลี่ยนเนื้อใน</strong> (update) ของ…" · คำว่า <code>later</code> = ฝากเป็นงานไว้ให้ทำต่อ ไม่ทำตรงนี้ (เดี๋ยวเห็นใน log)</li>
+  <li><code>post</code> (ไม่มี <code>@</code>) — โค้ดนี้อยู่ใน model ของคอมเมนต์ · <code>post</code> เฉย ๆ จึงแปลว่า "บทความของคอมเมนต์ตัวนี้" (เหมือนเขียน <code>comment.post</code> ใน console) ได้มาจาก <code>belongs_to :post</code> · <code>@post</code> เป็นของ controller/view ใช้ใน model ไม่ได้</li>
+  <li><code>target: "comment_count"</code> — ของที่จะเปลี่ยนคือ <code>&lt;span id="comment_count"&gt;</code> ที่มีอยู่แล้วตั้งแต่บท 132</li>
+  <li><code>html: post.comments.count</code> — เนื้อใหม่ = นับคอมเมนต์ของบทความนี้ใหม่จากฐานข้อมูล</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ <strong><code>html:</code> ใส่ของลงใบสั่งตรง ๆ ไม่ใส่ซองใส</strong> (ไม่ escape — ทวน XSS บท 125) · เราลองส่ง <code>html: "&lt;b&gt;ตัวหนา&lt;/b&gt;"</code> แล้ว log ได้
+    <code>&lt;template&gt;&lt;b&gt;ตัวหนา&lt;/b&gt;&lt;/template&gt;</code> เป็นแท็กจริง ·
+    ตัวเลขจาก <code>count</code> ปลอดภัย แต่<strong>ห้ามส่งข้อความที่ผู้ใช้พิมพ์ผ่าน <code>html:</code></strong> — ของแบบนั้นให้ใช้ partial ซึ่ง escape ให้เอง</p>
+</div>
+
+<p>ทดลองรอบที่สาม (บทความเลข 28) — ผลจริง:</p>
+
+<pre><code>after  A {"marker":"A","count":"1","n":1,"ids":["comment_3"],"source":true,"connected":true}
+after  B {"marker":"B","count":"1","n":1,"ids":["comment_3"],"source":true,"connected":true}</code></pre>
+<p>แท็บขวา <code>"count":"1"</code> แล้ว — ตัวนับขยับตาม</p>
+
+<p>ไม่ต้องรัน <code>tailwindcss:build</code> ใหม่ (ไม่มีคลาส CSS ใหม่) และไม่มี gem หรือ migration ใหม่</p>
+
+<h2 id="sn-sec-4">แท็บที่กดส่งเอง ได้ใบสั่งสองใบ — ทำไมคอมเมนต์ไม่ซ้ำ</h2>
+
+<p>
+  มีเรื่องแปลกที่ต้องสังเกต: แท็บซ้าย<strong>ก็เปิดลำโพงอยู่เหมือนกัน</strong> · ตอนกดส่ง มันจึงได้ใบสั่ง "append คอมเมนต์" <strong>สองใบ</strong> —
+  ใบแรกจากคำตอบของฟอร์ม (<code>create.turbo_stream.erb</code> บท 132) ใบที่สองจากเสียงตามสาย
+</p>
+
+<div class="predict">
+  <p class="ask">แท็บซ้ายได้ append คอมเมนต์ใบเดียวกันสองรอบ — ในกล่องจะมีคอมเมนต์กี่อัน? แล้วถ้าลบ <code>id="&lt;%= dom_id comment %&gt;"</code> ออกจาก <code>_comment.html.erb</code> ล่ะ?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง — เราดักดูว่ามีอะไรถูกใส่เข้ากล่อง <code>#comments</code> บ้าง (<code>appended</code>) เทียบกับของที่เหลือจริง:</p>
+<pre><code>after  A {"marker":"A","count":"1","n":1,"ids":["comment_3"],"source":true,"connected":true}
+A appended ids: ["comment_3","comment_3"]</code></pre>
+    <p>บรรทัดล่าง: <code>comment_3</code> ถูกใส่เข้ากล่อง<strong>สองรอบจริง</strong> · บรรทัดบน: แต่ในกล่องเหลือ<strong>อันเดียว</strong> (<code>"n":1</code>)</p>
+    <p>พอลบ <code>id</code> ออกจาก partial ชั่วคราว (ใส่บั๊กกลับเพื่อพิสูจน์):</p>
+<pre><code>after  A {"marker":"A","count":"1","n":2,"ids":["",""],"source":true,"connected":true}
+after  B {"marker":"B","count":"1","n":1,"ids":[""],"source":true,"connected":true}</code></pre>
+    <p>แท็บซ้าย <code>"n":2</code> = เห็นคอมเมนต์<strong>ซ้ำ 2 อัน</strong> (id ว่างทั้งคู่) · แท็บขวาปกติเพราะได้ใบสั่งใบเดียว</p>
+    <p>
+      เพราะ Turbo มีกฎว่า <strong>ถ้าของใหม่มี id ซ้ำกับของที่อยู่ในกล่องแล้ว ให้เอาอันเก่าออกแล้วใส่อันใหม่แทน</strong> (เอกสาร Turbo หน้า Streams เขียนไว้ใต้หัวข้อ Append) ·
+      ป้ายเลขถ้วย <code>comment_3</code> จึงช่วยให้ไม่ซ้ำ · ไม่มีป้าย Turbo เทียบไม่ได้ ก็ใส่ทั้งสองอัน
+      <br>บทเรียน: <strong><code>dom_id</code> ใน partial ไม่ใช่ของประดับ</strong> — มันคือสิ่งที่ทำให้ broadcast กับคำตอบฟอร์มอยู่ด้วยกันได้ ·
+      อย่าลืม <code>git restore app/views/comments/_comment.html.erb</code> ถ้าลองตาม
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-5">อ่าน log ของ server — ข่าววิ่งไปถึงใครบ้าง</h2>
+
+<p>ภาพรวมของสิ่งที่เกิดขึ้นตอนกดส่งหนึ่งครั้ง:</p>
+
+<div class="diagram">แท็บ A (คนกดส่ง)            server (Rails)                  แท็บ B (เปิดดูเฉย ๆ)
+───────────────            ──────────────                  ────────────────────
+① POST ฟอร์ม ────────────▶ บันทึกคอมเมนต์ → COMMIT
+                           │ after_create_commit
+                           ▼
+                           ② ฝากงาน 2 ชิ้น (job)
+◀──── ③ คำตอบของฟอร์ม       │  "render _comment แล้วประกาศ"
+      (append · ตัวนับ ·    │  "ประกาศตัวนับใหม่"
+       ล้างฟอร์ม)           ▼
+                           ④ ประกาศในช่องของบทความ 23
+◀──────────── ⑤ ลำโพงแท็บ A ─┴─ ⑤ ลำโพงแท็บ B ─────────────▶ คอมเมนต์ + ตัวนับเปลี่ยน</div>
+
+<p>log จริงของการกดส่งหนึ่งครั้ง (มีสองแท็บเปิดบทความ 23 อยู่ · ส่วนที่ตัดออกแทนด้วย <code>…</code>: บรรทัดที่ไม่เกี่ยว · บรรทัด <code>↳</code> · ท้ายบรรทัดที่ยาวเกิน · ชื่อช่องย่อเหลือ <code>Z2lk…UG9zdC8yMw</code>):</p>
+
+<pre><code>Started POST "/posts/23/comments" for ::1 at 2026-11-07 11:01:29 +0700
+Processing by CommentsController#create as TURBO_STREAM
+  …
+  TRANSACTION (1.1ms)  BEGIN
+  Comment Create (3.0ms)  INSERT INTO "comments" (…) VALUES ('สวัสดีจากแท็บซ้าย', 'ต้นกล้า', 23, …) RETURNING "id"
+  TRANSACTION (1.2ms)  COMMIT
+[ActiveJob] Enqueued Turbo::Streams::ActionBroadcastJob (Job ID: 1e8b4d1c-…) to Async(default) with arguments: "Z2lk…UG9zdC8yMw", {action: :append, target: "comments", …
+  Comment Count (1.1ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 23
+[ActiveJob] Enqueued Turbo::Streams::ActionBroadcastJob (Job ID: 09095142-…) to Async(default) with arguments: "Z2lk…UG9zdC8yMw", {action: :update, target: "comment_count", …
+…
+[ActiveJob] [Turbo::Streams::ActionBroadcastJob] [1e8b4d1c-…]   Rendered comments/_comment.html.erb (Duration: 0.3ms | GC: 0.0ms)
+[ActiveJob] [Turbo::Streams::ActionBroadcastJob] [1e8b4d1c-…] [ActionCable] Broadcasting to Z2lk…UG9zdC8yMw: "&lt;turbo-stream action=\"append\" target=\"comments\"&gt;…
+…
+Turbo::StreamsChannel transmitting "&lt;turbo-stream action=\"append\" target=\"comments\"&gt;&lt;template&gt;…&lt;article id=\"comment_8\" …
+Turbo::StreamsChannel transmitting "&lt;turbo-stream action=\"append\" target=\"comments\"&gt;&lt;template&gt;…&lt;article id=\"comment_8\" …
+  Rendering comments/create.turbo_stream.erb
+  …
+Completed 200 OK in 37ms (Views: 7.1ms | ActiveRecord: 5.9ms (4 queries, 1 cached) | GC: 0.0ms)
+…
+[ActiveJob] [Turbo::Streams::ActionBroadcastJob] [09095142-…] [ActionCable] Broadcasting to Z2lk…UG9zdC8yMw: "&lt;turbo-stream action=\"update\" target=\"comment_count\"&gt;&lt;template&gt;1&lt;/template&gt;&lt;/turbo-stream&gt;"
+…
+Turbo::StreamsChannel transmitting "&lt;turbo-stream action=\"update\" target=\"comment_count\"&gt;&lt;template&gt;1&lt;/template&gt;&lt;/turbo-stream&gt;" (via streamed from Z2lk…UG9zdC8yMw)
+Turbo::StreamsChannel transmitting "&lt;turbo-stream action=\"update\" target=\"comment_count\"&gt;&lt;template&gt;1&lt;/template&gt;&lt;/turbo-stream&gt;" (via streamed from Z2lk…UG9zdC8yMw)</code></pre>
+
+<p>อ่านทีละกลุ่ม:</p>
+<ul>
+  <li><strong><code>Enqueued … ActionBroadcastJob</code> อยู่หลัง <code>COMMIT</code></strong> — Enqueued = "ฝากงาน (job) ประกาศไว้ในคิว" · เกิดหลังตู้เซ็นรับแล้วเท่านั้น (เพราะเป็น <code>after_*_commit</code>) ·
+    มี 2 บรรทัด = งานรายการคอมเมนต์ (<code>append</code>) กับงานตัวนับ (<code>update</code>)</li>
+  <li><code>Async(default)</code> — ในเครื่องเรา job ทำใน server ตัวเดิมเลย ไม่ต้องเปิดโปรแกรมอื่น · บรรทัดที่ขึ้นต้น <code>[ActiveJob] [Turbo::Streams::ActionBroadcastJob]</code> คือตัว job กำลังทำงาน</li>
+  <li><code>Rendered comments/_comment.html.erb</code> — job ทำ HTML ของคอมเมนต์จาก partial ตัวเดียวกับที่หน้า show ใช้ → หน้าตาตรงกันทุกที่</li>
+  <li><strong><code>Broadcasting to Z2lk…</code></strong> = ครัวประกาศ <strong>1 ครั้ง</strong> ในช่องของบทความ 23 (ต่องาน — งานตัวนับก็มีบรรทัดนี้ของตัวเองด้านล่าง)</li>
+  <li><strong><code>transmitting</code> 2 บรรทัด</strong> = ส่งถึงลำโพง <strong>2 ตัว</strong> (แท็บ A และ B) · ยิ่งเปิดหลายแท็บ บรรทัดนี้ยิ่งมากตาม</li>
+  <li>ลำดับบรรทัดอาจสลับกันได้ในเครื่องคุณ (job ทำงานคู่ขนานกับคำขอ) ไม่ใช่ปัญหา</li>
+</ul>
+
+<div class="win">
+  <p>✅ <strong>วิธีดีบักที่ใช้ได้ตลอด:</strong> เห็น <code>Broadcasting to</code> แต่<strong>ไม่มี</strong> <code>transmitting</code> ตามมา = ประกาศแล้วแต่ไม่มีใครฟัง →
+    ไปดูว่าหน้าเว็บมี <code>turbo_stream_from</code> ไหม และชื่อช่องตรงกันไหม ·
+    ตอนเปิดหน้า log ต้องมี <code>Started GET "/cable" [WebSocket]</code> และ <code>Turbo::StreamsChannel is streaming from Z2lk…</code> = ลำโพงต่อสายสำเร็จ</p>
+</div>
+
+<h2 id="sn-sec-6">เบื้องหลังที่ Rails ทำให้ — เทียบกับการเขียนเองใน Go</h2>
+
+<p>
+  สไลด์หน้า 45 เทียบว่าถ้าทำเรื่องเดียวกันใน Go ต้องเขียนเองหลายชิ้น (คอร์ส Go ของเราไม่ได้ทำ WebSocket — เล่าเป็นภาษาคนพอให้เห็นขนาดงาน):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>งาน</th><th>ใน Go (เช่นใช้ gorilla/websocket)</th><th>ใน Rails บทนี้</th></tr></thead>
+  <tbody>
+    <tr><td>เปิดทางให้เบราว์เซอร์ต่อสาย</td><td>เขียน endpoint รับ WebSocket เอง</td><td>Action Cable เปิด <code>/cable</code> ให้</td></tr>
+    <tr><td>จำว่าใครต่อสายอยู่บ้าง</td><td>เขียน <strong>hub</strong> (สมุดรายชื่อโต๊ะที่ต่อสาย) · register ตอนต่อ · unregister ตอนหลุด · heartbeat เช็คว่ายังอยู่</td><td>Action Cable ทำให้ (log: <code>is streaming from</code> / <code>stopped streaming from</code>)</td></tr>
+    <tr><td>รูปแบบข้อความ</td><td>ออกแบบเอง (เช่น JSON)</td><td>ใบสั่ง Turbo Stream (HTML)</td></tr>
+    <tr><td>ฝั่งเบราว์เซอร์</td><td>เขียน JS รับข้อความแล้วไปแก้ HTML ในหน้าเอง</td><td>Turbo ทำให้ · เราเขียน JS 0 บรรทัด</td></tr>
+    <tr><td>มี server หลายเครื่อง</td><td>ต้องมี Redis pub/sub ให้ทุกเครื่องได้ยินกัน</td><td>เปลี่ยน adapter ใน <code>config/cable.yml</code> (ด้านล่าง)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แถวสุดท้ายสำคัญ: ถ้าแอปรันบน server สองเครื่อง แท็บ A ต่อสายกับเครื่อง 1 แท็บ B ต่อกับเครื่อง 2 ·
+  ประกาศที่เกิดในเครื่อง 1 ต้องมี<strong>สถานีกลาง</strong>ส่งต่อให้เครื่อง 2 ด้วย · สถานีกลางนี้เรียกว่า <strong>pub/sub</strong>
+  (publish = ประกาศ · subscribe = ขอฟัง) · ใน Go นิยมใช้ Redis (<a href="../../day-7/lessons/0032-redis-cache.html">บท 32</a> ใช้ Redis ทำ cache — คนละงานแต่ตัวเดียวกัน)
+</p>
+
+<p>Rails เรียกสถานีกลางนี้ว่า <strong>adapter</strong> และตั้งไว้ใน <code>config/cable.yml</code> · เปิดไฟล์จริงในโปรเจกต์ (ไม่ต้องแก้):</p>
+
+<pre><code><span class="c"># Async adapter only works within the same process, so for manually triggering cable updates from a console,</span>
+<span class="c"># and seeing results in the browser, you must do so from the web console (running inside the dev process),</span>
+<span class="c"># not a terminal started via bin/rails console! Add "console" to any action or any ERB template view</span>
+<span class="c"># to make the web console appear.</span>
+<span class="n">development:</span>
+  <span class="n">adapter:</span> async
+
+<span class="n">test:</span>
+  <span class="n">adapter:</span> test
+
+<span class="n">production:</span>
+  <span class="n">adapter:</span> solid_cable
+  <span class="n">connects_to:</span>
+    <span class="n">database:</span>
+      <span class="n">writing:</span> cable
+  <span class="n">polling_interval:</span> <span class="n">0.1</span>.seconds
+  …</code></pre>
+
+<ul>
+  <li><code>development: adapter: async</code> — ในเครื่องเรา สถานีกลางคือ<strong>หน่วยความจำของ server ตัวที่รันอยู่</strong> · ไม่มี Redis ไม่ใช้ฐานข้อมูล · พอ เพราะมี server ตัวเดียว</li>
+  <li><code>production: adapter: solid_cable</code> — ตอนขึ้นเครื่องจริง ใช้ <strong>Solid Cable</strong>: ประกาศถูกเขียนลง<strong>ตารางในฐานข้อมูล</strong> แล้วทุก server คอยเปิดดูตารางนั้นถี่ ๆ
+    (<code>polling_interval: 0.1.seconds</code> = ดูทุก 0.1 วินาที) · ได้สถานีกลางโดยไม่ต้องดูแล Redis เพิ่มอีกตัว</li>
+  <li>คอมเมนต์ภาษาอังกฤษบนสุดเตือนเรื่องสำคัญ: async ใช้ได้<strong>เฉพาะใน process เดียวกัน</strong> ·
+    <strong>process</strong> = โปรแกรมหนึ่งตัวที่กำลังรันอยู่ · server Rails (ที่ <code>bin/dev</code> เปิดให้) คือหนึ่งตัว · <code>bin/rails console</code> ที่เปิดอีกหน้าต่างคืออีกตัว ความจำไม่ได้แชร์กัน</li>
+</ul>
+
+<p>ผลจริง: เปิดแท็บดูบทความ 26 ไว้ แล้วสร้างคอมเมนต์จาก terminal อีกหน้าต่างด้วย <code>bin/rails runner '…'</code>
+  (คำสั่งที่รันโค้ด Ruby ในแอปครั้งเดียวแล้วจบ เหมือนพิมพ์ใน console หนึ่งบรรทัด = อีก process หนึ่ง แยกจาก server):</p>
+
+<pre><code>B before {"count":"0","n":0}
+saved
+B after 3s {"count":"0","n":0}       ← ไม่เด้ง
+B after reload {"count":"1","n":1}   ← คอมเมนต์อยู่ในฐานข้อมูลจริง กด refresh ถึงเห็น</code></pre>
+
+<div class="analogy">
+  <span class="label">🏢 เทียบให้เห็นภาพ — สถานีกลางของเสียงตามสาย</span>
+  <p>
+    <strong>async</strong> เหมือนร้านสาขาเดียวที่ไมค์ต่อตรงกับลำโพงในร้าน · คนที่พูดจาก<strong>ตึกข้าง ๆ</strong> (terminal อีกหน้าต่าง) ไมค์ไม่ได้ต่อกับลำโพงร้านเรา ลูกค้าเลยไม่ได้ยิน ·
+    <strong>Solid Cable</strong> เหมือนร้านหลายสาขาที่ตกลงกันว่าจะ<strong>เขียนประกาศลงกระดานกลาง</strong> แล้วทุกสาขาส่งคนไปดูกระดานทุก 0.1 วินาที เจอข่าวใหม่ก็ประกาศในสาขาตัวเอง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนเดินไปดูกระดานทุก 0.1 วินาทีฟังดูเหนื่อยและช้า แต่คอมพิวเตอร์ทำได้สบาย ·
+    สไลด์อ้างว่าความหน่วงอยู่ระดับไม่กี่สิบมิลลิวินาทีและพอสำหรับงานส่วนใหญ่ — เราไม่ได้วัดใน production เอง ·
+    และ Redis ไม่ได้ "ดูกระดาน" แต่ส่งข่าวต่อทันที — แลกกับต้องมีอีกโปรแกรมให้ดูแล
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ฝั่ง server</span>
+  <dl>
+    <dt>pub/sub (publish/subscribe)</dt>
+    <dd>รูปแบบที่ฝั่งหนึ่งประกาศในช่อง อีกฝั่งขอฟังช่อง โดยสองฝั่งไม่ต้องรู้จักกัน · <strong>ถาม senior ได้ว่า “ตอนนี้ pub/sub ของ Action Cable เราใช้ adapter อะไรใน production”</strong></dd>
+    <dt>cable adapter · async · Solid Cable</dt>
+    <dd>adapter = สถานีกลางที่ Action Cable ใช้ส่งข่าวข้าม server · async = เก็บในหน่วยความจำ ใช้ได้แค่ process เดียว (development) ·
+      Solid Cable = ใช้ตารางในฐานข้อมูล (production ของ Rails 8) · <strong>พิมพ์บอก AI ได้ว่า “we use the async cable adapter in development, so broadcasts from bin/rails console won't reach the browser”</strong></dd>
+    <dt>hub (ในโลก Go)</dt>
+    <dd>โค้ดที่เก็บรายชื่อการเชื่อมต่อทั้งหมดแล้วกระจายข้อความ · Action Cable คือ hub สำเร็จรูป · <strong>ใช้อธิบายให้คนสาย Go ฟังว่า “Action Cable is the hub, Turbo is the client”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">ราคาของบรรทัดเดียว — ข้อควรระวัง</h2>
+
+<p>
+  สไลด์หน้า 46 เตือนว่า <code>broadcasts_to</code> คือ <strong>callback ใน model ที่ไปทำเรื่องของคนอื่น</strong> ·
+  ทวนบท 112: callback ที่ทำเรื่องของตัวเอง (เช่นสร้าง slug) ใช้สบาย · แต่ callback ที่แตะของนอกตัว (ส่งอีเมล · ประกาศ) เริ่มมีผลข้างเคียง ·
+  บรรทัดนี้ทำ 2 เรื่องที่ไม่ใช่งานของคนดูแลสต็อก: <strong>จัดจาน</strong> (render partial ของ view) และ<strong>ประกาศ</strong>
+</p>
+
+<h3 id="sn-sub-3">ราคาที่ 1 — สร้างข้อมูลเยอะ ๆ = ประกาศเยอะ ๆ</h3>
+
+<p>
+  callback ทำงาน<strong>ทุกครั้ง</strong>ที่สร้างคอมเมนต์ ไม่ว่าจะมาจากหน้าเว็บ · seed · หรือสคริปต์นำเข้าข้อมูล ·
+  เราลองสร้างคอมเมนต์ 100 อันด้วย <code>bin/rails runner</code> แล้วนับจาก log: <strong>มีงานประกาศถูกฝากไว้ 200 ชิ้น</strong> (2 ชิ้นต่อคอมเมนต์ — รายการ + ตัวนับ) ·
+  สไลด์ยกตัวอย่าง 10,000 แถว = ประกาศ 10,000 ครั้ง (คิดตามสัดส่วนที่วัดได้ ของเราจะเป็น 20,000 งาน เพราะมีบรรทัดตัวนับด้วย)
+</p>
+
+<p>ทางแก้ตอน seed/import คือห่อด้วย <code>suppressing_turbo_broadcasts</code> = "ช่วงนี้ห้ามประกาศ" · ลองใน <code>bin/rails console</code> (ผลจริง ตัดบางส่วนเป็น <code>…</code>):</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; Comment.suppressing_turbo_broadcasts { Post.find(25).comments.create!(author_name: "seed", body: "เงียบ") }; nil
+  Post Load (2.0ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 25 LIMIT 1
+  TRANSACTION (0.7ms)  BEGIN
+  Comment Create (1.4ms)  INSERT INTO "comments" (…) VALUES ('เงียบ', 'seed', 25, …) RETURNING "id"
+  TRANSACTION (0.5ms)  COMMIT
+  Comment Count (0.4ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 25
+=&gt; nil
+wongnok-blog-all-in-one(dev):002&gt; Post.find(25).comments.create!(author_name: "ปกติ", body: "ดัง"); nil
+  Post Load (3.0ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 25 LIMIT 1
+  TRANSACTION (1.4ms)  BEGIN
+  Comment Create (3.6ms)  INSERT INTO "comments" (…) VALUES ('ดัง', 'ปกติ', 25, …) RETURNING "id"
+  TRANSACTION (1.7ms)  COMMIT
+Enqueued Turbo::Streams::ActionBroadcastJob (Job ID: b1ac1546-…) to Async(default) with arguments: "Z2lk…UG9zdC8yNQ", {action: :append, target: "comments", …
+↳ (wongnok-blog-all-in-one):2:in '&lt;main&gt;'
+  Comment Count (1.1ms)  SELECT COUNT(*) FROM "comments" WHERE "comments"."post_id" = 25
+Enqueued Turbo::Streams::ActionBroadcastJob (Job ID: b1b59b6c-…) to Async(default) with arguments: "Z2lk…UG9zdC8yNQ", {action: :update, target: "comment_count", …, html: 2, …
+↳ app/models/comment.rb:7:in 'block in &lt;class:Comment&gt;'
+=&gt; nil
+…</code></pre>
+
+<ul>
+  <li><code>Comment.suppressing_turbo_broadcasts { … }</code> — ทุกอย่างในปีกกา Comment จะไม่ประกาศ · ออกจากปีกกาแล้วกลับมาประกาศตามปกติเอง</li>
+  <li><code>; nil</code> ท้ายคำสั่ง — แค่ให้ console ไม่พิมพ์คอมเมนต์ทั้งก้อนออกมา (อ่านง่ายขึ้น)</li>
+  <li>บรรทัด 001: <strong>ไม่มี <code>Enqueued</code> เลย</strong> ทั้งรายการและตัวนับ · บรรทัด 002 (นอกปีกกา): <code>Enqueued</code> 2 ชิ้นตามปกติ</li>
+  <li>สังเกตว่าในปีกกายังมี <code>Comment Count</code> — Ruby นับ <code>post.comments.count</code> ก่อนแล้วค่อยเช็คว่า "ห้ามประกาศ" · ข้อมูลไม่ผิด แค่เสีย query เปล่าหนึ่งครั้งต่อแถว
+    (100 แถวที่ลองใน runner = <code>Comment Count</code> 100 ครั้ง · งานประกาศ 0 ชิ้น)</li>
+  <li>console เป็นอีก process หนึ่ง (เหมือน runner) — ต่อให้ประกาศ เบราว์เซอร์ก็ไม่ได้ยินอยู่ดี เพราะ adapter async · แต่งานยังถูกสร้างและทำจริง
+    (บรรทัดที่ตัดเป็น <code>…</code> ท้ายสุดคือ job ที่ทำงานใน console เองจนถึง <code>Broadcasting to</code> — ประกาศออกไปโดยไม่มีใครฟัง เปลืองแรงเปล่า) จึงควรห่อเสมอ</li>
+  <li>seeds ของเรา (บท 120) ไม่ได้สร้างคอมเมนต์ จึงยังไม่ต้องห่อ · ถ้าวันหลังเพิ่มคอมเมนต์ใน seeds ให้ห่อด้วยบล็อกนี้</li>
+</ul>
+
+<h3 id="sn-sub-4">ราคาที่ 2 — model รู้จัก view</h3>
+
+<p>
+  ปกติคนดูแลสต็อก (model) ไม่ยุ่งกับการจัดจาน (view) · แต่ <code>broadcasts_to</code> ทำให้ model ไปเรียก partial <code>comments/_comment</code> เอง ·
+  ผลที่สไลด์เตือน: เปลี่ยนชื่อ partial แล้ว model พังโดยไม่รู้ตัว · test ของ model ต้อง render HTML ด้วยจึงช้าลง (เรื่อง test อยู่ Day 4)
+</p>
+
+<p>
+  <strong>ทางเลือกที่สไลด์เสนอ:</strong> ไม่ใส่ใน model แต่ให้ <strong>controller เป็นคนสั่งประกาศ</strong> หลังบันทึกสำเร็จ — seed/console ไม่โดนลูกหลง เพราะไม่ได้ผ่าน controller ·
+  หน้าตาประมาณนี้ (เราลองเรียกคำสั่งนี้จาก runner แล้วได้ <code>Broadcasting to</code> จริง · <strong>บทเรียนไม่ได้เปลี่ยนไปใช้แบบนี้</strong> ไม่ต้องพิมพ์ตาม ·
+  สไลด์เขียน <code>broadcast_append_to</code> ซึ่งทำ HTML และประกาศทันทีในคำขอ · ตรงนี้ใช้รุ่น <code>_later_</code> ให้ส่งต่อให้ job ตามหลักเดียวกับ <code>broadcasts_to</code>):
+</p>
+
+<pre><code><span class="c"># ใน CommentsController#create หลัง @comment.save สำเร็จ (ตัวอย่างเท่านั้น)</span>
+<span class="n">Turbo</span>::<span class="n">StreamsChannel</span>.<span class="f">broadcast_append_later_to</span>(
+  @post, <span class="n">target:</span> <span class="s">"comments"</span>, <span class="n">partial:</span> <span class="s">"comments/comment"</span>, <span class="n">locals:</span> { <span class="n">comment:</span> @comment }
+)</code></pre>
+
+<ul>
+  <li><code>Turbo::StreamsChannel</code> — "ตัวประกาศ" ตัวเดียวกับที่ <code>broadcasts_to</code> ใช้อยู่เบื้องหลัง แต่คราวนี้เราเรียกเองตรง ๆ</li>
+  <li><code>broadcast_append_later_to(@post, …)</code> — ประกาศ append ในช่องของ <code>@post</code> · <code>later</code> = ฝากเป็นงาน · บอก target · partial · locals เองทั้งหมด (ไม่มีการเดาให้)</li>
+</ul>
+
+<p>ข้อดี: อ่าน controller แล้วรู้เลยว่าใครสั่งประกาศ · ข้อเสีย: ทุกที่ที่สร้างคอมเมนต์ (เช่นหน้า admin ในอนาคต) ต้องจำใส่เอง · ไม่มีคำตอบเดียว — สไลด์สรุปว่า "ความสะดวกบรรทัดเดียวมีราคาเสมอ แค่ต้องรู้ว่าราคาคืออะไร"</p>
+
+<h3 id="sn-sub-5">ทำไมต้องหลัง commit — และ <code>later: true</code> ในสไลด์</h3>
+
+<p>
+  <code>broadcasts_to</code> และบรรทัดตัวนับของเราใช้ <code>after_*_commit</code> ทั้งหมด · ทวนบท 112: ถ้าประกาศตอน <code>after_save</code> (ก่อน COMMIT) แล้ว transaction ถูกยกเลิก
+  ทุกแท็บจะเห็น<strong>คอมเมนต์ที่ไม่มีอยู่จริง</strong> — เหมือนส่งไลน์บอกลูกค้าก่อนตู้เซ็นรับ ·
+  เราลองสร้างคอมเมนต์ใน transaction แล้วสั่ง <code>raise ActiveRecord::Rollback</code> (คำสั่ง "ยกเลิกทั้งกล่อง" ของ transaction): log มี <code>BEGIN</code> → <code>ROLLBACK</code> และ<strong>ไม่มี <code>Enqueued</code> สักบรรทัด</strong> = ไม่ประกาศของที่ถูกยกเลิก ✅
+</p>
+
+<div class="warn">
+  <p>⚠️ สไลด์หน้า 46 และ 52 ให้เขียน <code>broadcasts_to :post, later: true</code> · ใน turbo-rails 2.0.23 ที่เราใช้ <strong><code>broadcasts_to</code> ไม่มีตัวเลือก <code>later:</code></strong> ·
+    ใส่แล้วไม่ error แต่ไม่มีผลอะไร (มันใช้ job ให้อยู่แล้วตอนสร้างและแก้ — เห็น <code>Enqueued</code> ใน log ข้างบน) · <strong>บทเรียนจึงไม่ใส่</strong> — รายละเอียดท้ายบท</p>
+</div>
+
+<h2 id="sn-sec-8">morphing และ data-turbo-permanent — refresh ทั้งหน้าแบบไม่สะดุด</h2>
+
+<p>
+  สไลด์หน้า 47 พูดถึงอีกความสามารถหนึ่งของ Turbo 8 (รุ่นที่เราใช้) ซึ่งไม่ได้อยู่ในโค้ดของบทเรียน แต่ควรรู้จัก · ก่อนอื่นต้องรู้จัก <strong>page refresh</strong> = Turbo โหลด<strong>หน้าเดิม</strong>ซ้ำ ·
+  เกิดบ่อยตอนส่งฟอร์มแล้ว server พากลับมาหน้าเดิม (redirect) หรือตอน server ประกาศว่า "ทุกคนโหลดหน้านี้ใหม่" (คำสั่ง <code>broadcasts_refreshes_to</code> — อีกทางเลือกแทน <code>broadcasts_to</code> ไม่ได้ใช้ในบทนี้)
+</p>
+
+<p>
+  ปกติ Turbo เปลี่ยนทั้ง <code>&lt;body&gt;</code> (บท 130) → หน้าเลื่อนกลับไปบนสุด ช่องที่กำลังพิมพ์หลุด ·
+  ถ้าใส่ 2 บรรทัดนี้ใน <code>&lt;head&gt;</code> ของ layout Turbo จะ<strong>เทียบหน้าเก่ากับหน้าใหม่ทีละชิ้น แล้วแก้เฉพาะจุดที่ต่าง</strong> (เรียกว่า morphing):
+</p>
+
+<pre><code>&lt;meta name=<span class="s">"turbo-refresh-method"</span> content=<span class="s">"morph"</span>&gt;     <span class="c">&lt;%# refresh แบบเทียบแล้วแก้เฉพาะที่ต่าง %&gt;</span>
+&lt;meta name=<span class="s">"turbo-refresh-scroll"</span> content=<span class="s">"preserve"</span>&gt;  <span class="c">&lt;%# refresh แล้วไม่เลื่อนกลับบนสุด %&gt;</span></code></pre>
+
+<p>และถ้ามีชิ้นไหนที่<strong>ห้ามแตะเด็ดขาด</strong> (เช่นเครื่องเล่นเพลงที่กำลังเล่น) ให้ติด <code>data-turbo-permanent</code> พร้อม id:</p>
+
+<pre><code>&lt;div id=<span class="s">"player"</span> data-turbo-permanent&gt;
+  &lt;audio controls src=<span class="s">"…"</span>&gt;&lt;/audio&gt;
+&lt;/div&gt;</code></pre>
+
+<div class="predict">
+  <p class="ask">เปิดหน้า morph แล้ว · กำลังพิมพ์คอมเมนต์ค้างไว้ (ยังไม่กดส่ง) แล้วหน้าเกิด refresh — ข้อความที่พิมพ์ค้างจะอยู่ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>เราทดลองบนหน้าบทความ (ใส่ meta ชั่วคราว · พิมพ์ในช่องความคิดเห็น · เลื่อนจอลง · สั่ง refresh ด้วย <code>Turbo.session.refresh(location.href)</code> ใน Chrome) — ผลจริง:</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>แบบ</th><th>ข้อความที่พิมพ์ค้าง</th><th>เคอร์เซอร์ยังอยู่ในช่อง</th><th>ตำแหน่งเลื่อนจอ</th></tr></thead>
+      <tbody>
+        <tr><td>ปกติ (ไม่มี meta)</td><td>❌ หาย</td><td>❌ หลุด</td><td>❌ กลับบนสุด (297 → 0 · ตัวเลขขึ้นกับขนาดหน้าต่าง)</td></tr>
+        <tr><td>morph + preserve</td><td>❌ <strong>หาย</strong></td><td>✅ อยู่</td><td>✅ คงที่ (297)</td></tr>
+        <tr><td>morph + ติด <code>data-turbo-permanent</code> ที่ช่องพิมพ์ (ตอนทดลองติดด้วย JavaScript ก่อนสั่ง refresh)</td><td>✅ อยู่</td><td>✅ อยู่</td><td>✅ คงที่</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>
+      morph ทำให้หน้า<strong>ตรงกับ HTML ใหม่จาก server</strong> · HTML ใหม่มีช่องความคิดเห็นว่าง ๆ → morph จึงทำให้ช่องเราว่างตาม (แต่ยังเป็นช่องเดิม เคอร์เซอร์ไม่หลุด) ·
+      <code>data-turbo-permanent</code> คือการบอกว่า "ชิ้นนี้ไม่ต้องเทียบ ปล่อยไว้แบบที่ผู้ใช้ทำ" ข้อความจึงรอด ·
+      สรุป: morph ช่วยเรื่อง<strong>ตำแหน่งและ focus</strong> · ของที่ผู้ใช้กรอกค้างต้องกันเองด้วย permanent
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — เก็บโต๊ะใหม่ทั้งโต๊ะ vs เทียบทีละจาน</span>
+  <p>
+    refresh แบบปกติเหมือนพนักงาน<strong>ยกของบนโต๊ะออกหมดแล้ววางชุดใหม่</strong> · morph เหมือนพนักงานถือรายการใหม่มาเทียบกับโต๊ะทีละจาน
+    จานไหนเหมือนเดิมไม่แตะ จานไหนต่างค่อยเปลี่ยน ลูกค้าแทบไม่รู้สึก ·
+    <code>data-turbo-permanent</code> คือป้าย <strong>"ของลูกค้า ห้ามเก็บ"</strong> ที่วางบนแก้วของเขาเอง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงเห็นกระดาษที่ลูกค้าเขียนค้างไว้ก็คงไม่ลบ · morph ไม่รู้ว่าอะไรคือ "ของที่ลูกค้ากำลังทำ" มันทำให้ตรงกับรายการใหม่เป๊ะ ๆ ·
+    ต้องติดป้าย permanent เองทุกชิ้นที่อยากให้รอด
+  </p>
+</div>
+
+<p>
+  ลองเองได้ (ไม่บังคับ): ใส่ 2 บรรทัด <code>&lt;meta&gt;</code> ข้างบนไว้ใต้ <code>&lt;%= yield :head %&gt;</code> ใน <code>app/views/layouts/application.html.erb</code> ·
+  พิมพ์ในช่องความคิดเห็น เลื่อนจอลง เปิด DevTools แท็บ Console แล้วพิมพ์ <code>Turbo.session.refresh(location.href)</code>
+  (JavaScript หนึ่งบรรทัด: "Turbo ช่วย refresh หน้านี้" · <code>location.href</code> = URL ของหน้าที่เปิดอยู่) ·
+  ดูเสร็จแล้ว <code>git restore app/views/layouts/application.html.erb</code> — โค้ดของบทเรียนไม่ได้ใช้ morph
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของ refresh</span>
+  <dl>
+    <dt>page refresh · morphing</dt>
+    <dd>page refresh = Turbo โหลดหน้าเดิมซ้ำ · morphing = แทนที่จะเปลี่ยนทั้ง body ให้เทียบทีละชิ้นแล้วแก้เฉพาะที่ต่าง (Turbo ใช้ library ชื่อ idiomorph) ·
+      <strong>พิมพ์บอก AI ได้ว่า “enable morphing with turbo-refresh-method=morph and preserve scroll on refresh”</strong></dd>
+    <dt><code>data-turbo-permanent</code></dt>
+    <dd>ติดที่ element ที่มี id เพื่อบอก Turbo ว่าห้ามแตะชิ้นนี้ (ทั้งตอน morph และตอนเปลี่ยนหน้า) ·
+      <strong>ถาม senior ได้ว่า “ช่องไหนในหน้านี้ควรเป็น permanent ถ้าเปิด morph”</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-9">Turbo เหมาะกับงานแบบไหน</h2>
+
+<p>
+  หลักง่าย ๆ: Turbo เก่งเมื่อ <strong>server เป็นคนตัดสินว่าหน้าจอควรเป็นแบบไหน และการรอ server ตอบสักครู่ไม่เป็นปัญหา</strong> ·
+  ทุกอย่างที่เราทำมาตั้งแต่บท 130 อยู่ในหลักนี้ — ข้อมูลชุดเดียวอยู่ที่ครัว (ประโยคหลักข้อ 1 ของวัน: ไม่มีสมุดจดเล่มที่สองบนโต๊ะ ก็ไม่มีบั๊ก sync)
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>✅ เหมาะ (สไลด์หน้า 47)</th><th>ทำไม</th></tr></thead>
+  <tbody>
+    <tr><td>รายการที่เพิ่ม ลบ แก้ (CRUD ทั่วไป)</td><td>ทุกการเปลี่ยนต้องผ่าน server อยู่แล้ว</td></tr>
+    <tr><td>ฟอร์มและ validation error</td><td>กฎตรวจอยู่ที่ model บน server (บท 132 แทนฟอร์มที่มี error)</td></tr>
+    <tr><td>แจ้งเตือน · ตัวนับ · สถานะที่เปลี่ยนเป็นครั้งคราว</td><td>เปลี่ยนไม่บ่อย ส่ง HTML ชิ้นเล็กพอ</td></tr>
+    <tr><td>แชท · คอมเมนต์ · กระดานงาน</td><td>คือสิ่งที่เพิ่งทำในบทนี้</td></tr>
+    <tr><td>dashboard ที่อัปเดตทุกไม่กี่วินาที</td><td>ไม่กี่วินาทีครั้ง = server ตามทัน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>❌ ไม่เหมาะ (สไลด์หน้า 47)</th><th>ทำไม</th></tr></thead>
+  <tbody>
+    <tr><td>ลากวาง เรียงลำดับด้วยเมาส์</td><td>ต้องขยับตามมือทุกเสี้ยววินาที รอ server ไม่ทัน</td></tr>
+    <tr><td>canvas (พื้นที่วาดรูปในหน้าเว็บ) · แผนที่ · กราฟที่ซูมและลากเลื่อนได้</td><td>หน้าจอเปลี่ยนตามเมาส์ล้วน ๆ ไม่ใช่ HTML จาก server</td></tr>
+    <tr><td>เห็น cursor ของคนอื่นขยับแบบ Figma</td><td>ข้อความถี่มาก ส่งเป็นใบสั่ง HTML หนักเกินไป</td></tr>
+    <tr><td>แอปที่ต้องทำงานตอนไม่มีเน็ต</td><td>Turbo ต้องถาม server ทุกครั้ง ไม่มีเน็ต = ไม่มีครัว</td></tr>
+    <tr><td>ของที่ต้องตอบสนองทุกครั้งที่กดแป้นพิมพ์ โดยไม่รอ server</td><td>เช่นตัวนับอักษรตอนพิมพ์ — ไม่ต้องถามครัวเลย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  งานแบบตารางที่สอง ถ้าเป็นชิ้นเล็ก ๆ ในหน้า (เช่นตัวนับอักษร · ปุ่มคัดลอก) ใช้ <strong>Stimulus</strong> = JavaScript ชิ้นเล็กที่ HTML เป็นคนเรียก (<a href="./0134-stimulus.html">บท 134</a>) ·
+  ถ้าทั้งแอปเป็นแบบนั้น (เช่นโปรแกรมวาดรูป) เครื่องมืออย่าง React ที่เรียนในฝั่ง FRONT จะเหมาะกว่า
+</p>
+
+<h2 id="sn-sec-10">ให้ AI ทำ แล้วตรวจยังไง</h2>
+
+<p>ตอนนี้คุณทำเองเป็นแล้ว · ถ้าจะสั่ง AI ทำ real-time ให้ส่วนอื่น ใช้ prompt 4 ส่วน (บท 89 · 121) แบบนี้ — <strong>อย่าก็อป <code>later: true</code> จากสไลด์ไปด้วย</strong>:</p>
+
+<pre><code>## เป้าหมาย
+คอมเมนต์ใหม่เด้งขึ้นทุกแท็บที่เปิดหน้าบทความเดียวกัน · ตัวนับเปลี่ยนตาม
+
+## ข้อกำหนด
+- ใช้ broadcasts_to :post ใน app/models/comment.rb
+- ใส่ turbo_stream_from @post ใน app/views/posts/show.html.erb
+- partial comments/_comment ต้องมี id="&lt;%= dom_id comment %&gt;"
+
+## ห้าม
+- ใช้ after_save (ต้องเป็น after_commit)
+- ส่งข้อความที่ผู้ใช้พิมพ์ผ่าน html:
+- เขียน JavaScript เอง
+
+## เกณฑ์ตรวจรับ
+- [ ] เปิดสองหน้าต่างวางข้างกัน พิมพ์หน้าซ้าย หน้าขวาขึ้นเองทั้งคอมเมนต์และตัวนับ
+- [ ] หน้าที่กดส่งเองไม่มีคอมเมนต์ซ้ำ</code></pre>
+
+<p><strong>Checklist ตรวจงาน AI</strong> (ทำเองได้ทุกข้อ ไม่ต้องเชื่อคำบอกของ AI):</p>
+<ul>
+  <li><code>grep -n "turbo_stream_from" app/views/posts/show.html.erb</code> — ต้องเจอ 1 บรรทัด (ลืม = พังเงียบ)</li>
+  <li><code>grep -n "after_save" app/models/comment.rb</code> — ต้องไม่เจอ</li>
+  <li><code>grep -n "dom_id" app/views/comments/_comment.html.erb</code> — ต้องเจอ</li>
+  <li>เปิดสองหน้าต่างแล้วลองจริง + ดู log ว่ามี <code>transmitting</code> เท่าจำนวนแท็บ — สไลด์หน้า 52 บอกว่าเกณฑ์แบบนี้ "AI โกงไม่ได้" เพราะพิสูจน์ด้วยการรัน</li>
+</ul>
+
+<div class="task">
+  <h3 id="sn-sub-6">🎯 ภารกิจ: เปิดสองหน้าต่างวางข้างกัน แล้วพิมพ์ (~10 นาที)</h3>
+  <ol>
+    <li>ถ้ายังไม่ได้ทำตามบท: แก้ <code>app/models/comment.rb</code> ให้ตรงกับไฟล์เต็มในหัวข้อ "ให้ตัวนับในแท็บอื่นขยับด้วย" และเพิ่ม <code>&lt;%= turbo_stream_from @post %&gt;</code> ในหน้า show ตามหัวข้อ "ชิ้นที่ 2"</li>
+    <li>เปิด server ด้วย <code>bin/dev</code> (ถ้ายังไม่ได้เปิด)</li>
+    <li>เปิด<strong>สองหน้าต่าง</strong>เบราว์เซอร์ (ไม่ใช่สองแท็บในหน้าต่างเดียว — จะได้เห็นพร้อมกัน) ไปที่ <code>http://localhost:3000/posts/1</code> ทั้งคู่ แล้ววางซ้าย–ขวา</li>
+    <li>พิมพ์ชื่อและความคิดเห็นในหน้าต่างซ้าย กดส่ง · มองหน้าต่างขวา</li>
+    <li>ดู terminal ที่รัน <code>bin/dev</code> หาบรรทัด <code>Broadcasting to</code> และนับ <code>transmitting</code></li>
+    <li>ถ้าทุกอย่างถูก: <code>git add . &amp;&amp; git commit -m "hotwire: broadcast คอมเมนต์ทุกแท็บ"</code></li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> หน้าต่างขวามีคอมเมนต์ใหม่ต่อท้าย และเลขใน "ความคิดเห็น (…)" เพิ่มขึ้น 1 เองโดยไม่ต้องกด refresh ·
+    หน้าต่างซ้ายมีคอมเมนต์<strong>อันเดียว</strong> · log มี <code>Broadcasting to</code> 2 บรรทัด (รายการ · ตัวนับ) และแต่ละอันตามด้วย <code>transmitting</code> 2 บรรทัด (สองหน้าต่าง)</p>
+  <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+  <ul>
+    <li>หน้าต่างขวาไม่ขยับ · log มี <code>Broadcasting to</code> แต่ไม่มี <code>transmitting</code> → หน้า show ยังไม่มี <code>turbo_stream_from</code> หรือพิมพ์เป็น <code>&lt;% %&gt;</code> (ไม่มี <code>=</code>) · แก้แล้วกด refresh ทั้งสองหน้าต่าง</li>
+    <li>คอมเมนต์ขึ้นในหน้าต่างขวา แต่ตัวนับยังเป็นเลขเดิม → ยังไม่ได้เพิ่มบรรทัด <code>after_create_commit … comment_count …</code></li>
+    <li>หน้าต่างซ้ายมีคอมเมนต์ซ้ำ 2 อัน → <code>_comment.html.erb</code> ไม่มี <code>id="&lt;%= dom_id comment %&gt;"</code> แล้ว · <code>git restore app/views/comments/_comment.html.erb</code></li>
+    <li>ลองสร้างคอมเมนต์จาก <code>bin/rails console</code> แล้วไม่เด้ง → ปกติ ไม่ใช่บั๊ก · development ใช้ adapter async ซึ่งได้ยินกันแค่ใน server ตัวเดียว</li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ก่อน commit ตรวจว่าเปลี่ยนแค่ 2 ไฟล์ 7 บรรทัด (ผลจริงจากโค้ดของบทเรียน):</p>
+<pre><code>$ git diff --stat
+ app/models/comment.rb         | 5 +++++
+ app/views/posts/show.html.erb | 2 ++
+ 2 files changed, 7 insertions(+)</code></pre>
+    <p>
+      ถ้าตัวเลขต่าง (เช่นมี <code>layouts/application.html.erb</code> หรือ <code>_comment.html.erb</code> โผล่มา) แปลว่ายังมีของจากการทดลองค้างอยู่ — <code>git restore &lt;ไฟล์นั้น&gt;</code> ก่อน commit ·
+      ไม่แน่ใจว่าหน้าต่างขวาขึ้นเพราะ broadcast หรือเพราะเผลอ refresh: ลองพิมพ์อะไรสักตัวในช่องชื่อของหน้าต่างขวาไว้ก่อน แล้วส่งจากหน้าต่างซ้าย ·
+      ถ้าตัวอักษรในหน้าต่างขวายังอยู่ แปลว่าหน้าไม่ได้โหลดใหม่ คอมเมนต์มาทางเสียงตามสายจริง (เราลองแล้ว: พิมพ์ค้างในช่องชื่อของแท็บขวา → คอมเมนต์ใหม่โผล่ + ตัวนับเปลี่ยน + ข้อความในช่องชื่อยังอยู่ครบ)
+    </p>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">Quiz</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">1. ส่งคอมเมนต์จากแท็บ A แล้วแท็บ B ไม่ขยับ · ใน log เห็น <code>Broadcasting to Z2lk…</code> แต่ไม่มี <code>transmitting</code> เลย · สาเหตุที่น่าจะเป็นที่สุดคือ?</p>
+  <div class="opts">
+    <button class="opt">model ยังไม่มี <code>broadcasts_to :post</code> จึงไม่มีอะไรถูกประกาศออกไป</button>
+    <button class="opt">ใช้ <code>after_save</code> แทน <code>after_commit</code> ข่าวจึงหายไประหว่างทาง</button>
+    <button class="opt">หน้า show ไม่มี <code>turbo_stream_from @post</code> จึงไม่มีแท็บไหนฟังช่องนี้</button>
+    <button class="opt">ต้อง restart server ทุกครั้งที่แก้ model ไม่งั้นการประกาศจะไม่ทำงาน</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 1 ผิด เพราะเห็น <code>Broadcasting to</code> แปลว่า model ประกาศแล้ว ·
+      ตัวเลือกที่ 2 ผิด เพราะ <code>broadcasts_to</code> ใช้ <code>after_*_commit</code> ให้เองอยู่แล้ว และต่อให้ใช้ after_save ข่าวก็ยังถูกส่ง ไม่ได้หาย ·
+      ตัวเลือกที่ 4 ผิด เพราะ development โหลดไฟล์ใน <code>app/</code> ใหม่ให้เอง (เราทดลองทั้งบทโดยไม่ restart) ·
+      ตัวเลือกที่ 3 ถูก: <code>transmitting</code> คือการส่งถึงลำโพงแต่ละตัว ไม่มีเลย = ไม่มีลำโพง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> real-time ต้องมีสองฝั่ง — คนประกาศ (model) กับคนฟัง (<code>turbo_stream_from</code> ใน view) · ขาดฝั่งฟังแล้วพังเงียบ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">2. (ดัดแปลงจากสไลด์หน้า 51) "เพิ่มคอมเมนต์แล้วหน้า<strong>เรา</strong>เปลี่ยน 3 จุด" (บท 132) กับ "<strong>คนอื่น</strong>เพิ่มคอมเมนต์แล้วหน้าเราขึ้นเอง" (บทนี้) ใช้ Turbo Stream ทั้งคู่ · ต่างกันตรงไหน?</p>
+  <div class="opts">
+    <button class="opt">แบบแรกส่ง HTML แบบที่สองส่ง JSON ให้ JavaScript แปลงเป็นหน้าเว็บเอง</button>
+    <button class="opt">แบบแรกเป็นคำตอบของคำขอที่เราส่งเอง · แบบที่สองมาทางสาย WebSocket ถึงทุกคนที่ฟัง</button>
+    <button class="opt">แบบแรกใช้ได้แค่ append · แบบที่สองใช้ได้ทุกคำสั่งรวมถึง update และ remove</button>
+    <button class="opt">แบบแรกต้องมี <code>turbo_stream_from</code> · แบบที่สองไม่ต้องมีเพราะ model ส่งให้เอง</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 1 ผิด เพราะทั้งคู่เป็นใบสั่ง <code>&lt;turbo-stream&gt;</code> ที่เป็น HTML เหมือนกัน (เห็นใน log) ·
+      ตัวเลือกที่ 3 ผิด เพราะทั้งสองทางใช้คำสั่งได้เหมือนกัน — บทนี้เองก็ broadcast ทั้ง append และ update ·
+      ตัวเลือกที่ 4 สลับกัน: แบบที่สองต่างหากที่ต้องมี <code>turbo_stream_from</code> · แบบแรกเป็นคำตอบของฟอร์มจึงไม่ต้องฟังอะไร ·
+      ตัวเลือกที่ 2 ถูก: ของข้างในเหมือนกัน ต่างแค่<strong>ทางที่มันเดินทางมา</strong></p>
+    <p><strong>จุดที่ต้องจำ:</strong> Turbo Stream คือ "ใบสั่งงาน" · ส่งได้สองทาง — เป็นคำตอบของคำขอ (ถึงคนที่ถามคนเดียว) หรือ broadcast ผ่าน WebSocket (ถึงทุกคนที่ฟังช่องนั้น)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">3. ทำไมการประกาศคอมเมนต์ใหม่ต้องเกิด<strong>หลัง COMMIT</strong> (after_commit) ไม่ใช่ตอน after_save?</p>
+  <div class="opts">
+    <button class="opt">ถ้า transaction ถูกยกเลิกทีหลัง ทุกแท็บจะเห็นคอมเมนต์ที่ไม่ได้ถูกบันทึกจริง</button>
+    <button class="opt">after_save ทำงานช้ากว่า after_commit ทำให้แท็บอื่นเห็นคอมเมนต์ช้าลงหลายวินาที</button>
+    <button class="opt">after_save ใช้กับ model ที่มี <code>belongs_to</code> ไม่ได้ จึงหาบทความที่จะประกาศไม่เจอ</button>
+    <button class="opt">WebSocket จะยอมส่งข้อความก็ต่อเมื่อฐานข้อมูลปิด transaction เรียบร้อยแล้วเท่านั้น</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ผิด เพราะ after_save เกิด<strong>ก่อน</strong> after_commit ไม่ได้ช้ากว่า ·
+      ตัวเลือกที่ 3 ผิด เพราะ after_save ใช้กับ model ไหนก็ได้ · ตัวเลือกที่ 4 ผิด เพราะ WebSocket ไม่รู้จักฐานข้อมูลเลย ใครสั่งส่งมันก็ส่ง ·
+      ตัวเลือกที่ 1 ถูก: เราลอง ROLLBACK แล้วไม่มีการประกาศ เพราะ after_commit ไม่ทำงานเมื่อกล่องถูกยกเลิก</p>
+    <p><strong>จุดที่ต้องจำ:</strong> เรื่องที่ออกไปนอกร้าน (ประกาศ · อีเมล) ทำหลังตู้เซ็นรับเท่านั้น — ส่งออกไปแล้วดึงกลับไม่ได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">4. งานไหน<strong>ไม่เหมาะ</strong>จะทำด้วย Turbo มากที่สุด?</p>
+  <div class="opts">
+    <button class="opt">กระดานงานที่คนในทีมย้ายสถานะการ์ดแล้วทุกคนเห็นสถานะใหม่</button>
+    <button class="opt">ฟอร์มสมัครสมาชิกที่ต้องโชว์ error ใต้ช่องที่กรอกผิดหลังกดส่ง</button>
+    <button class="opt">ตัวเลขจำนวนคนออนไลน์มุมจอที่เปลี่ยนเองทุก ๆ สองสามวินาที</button>
+    <button class="opt">กระดานวาดรูปที่เส้นต้องขยับตามเมาส์ทันทีทุกเสี้ยววินาที</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 1 เหมาะ — เปลี่ยนเป็นครั้งคราว ข้อมูลอยู่ที่ server (เหมือนคอมเมนต์ในบทนี้) ·
+      ตัวเลือกที่ 2 เหมาะ — กฎตรวจอยู่บน server ส่งฟอร์มที่มี error กลับมาแทนที่ (บท 132) ·
+      ตัวเลือกที่ 3 เหมาะ — ทุกสองสามวินาที server ตามทัน ·
+      ตัวเลือกที่ 4 ไม่เหมาะ: ต้องตอบสนองตามมือทุกเสี้ยววินาที รอ server ไม่ได้ และหน้าจอไม่ได้มาจาก HTML ของ server</p>
+    <p><strong>จุดที่ต้องจำ:</strong> Turbo เหมาะเมื่อ server เป็นคนตัดสินหน้าจอและรอสักครู่ได้ · งานที่ต้องตอบทุกการขยับของมือ ใช้ JavaScript ฝั่งเบราว์เซอร์</p>
+  </div>
+</div>
+
+<div class="note">
+  <p>💬 <strong>ถามกลับได้เลย</strong> — เช่น "ถ้าอยากให้คอมเมนต์ใหม่ขึ้น<strong>บนสุด</strong>แทนต่อท้าย ต้องแก้ตรงไหน" หรือ "ถ้าลบคอมเมนต์ ตัวนับในแท็บอื่นจะลดไหม"
+    (ใบ้: ดูว่า <code>broadcasts_to</code> ทำอะไรตอนลบ และบรรทัดตัวนับของเราเป็น <code>after_create_commit</code>)</p>
+</div>
+
+<h2 id="sn-sec-12">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>46 · 52</td><td><code>broadcasts_to :post, later: true</code></td>
+      <td>ใน turbo-rails 2.0.23 <code>broadcasts_to</code> รับแค่ <code>inserts_by:</code> · <code>target:</code> และตัวเลือกของ partial · <code>later: true</code> ตกไปเป็นตัวเลือกของ partial ซึ่งไม่มีผล ·
+        ตอนสร้าง/แก้ใช้ job (<code>*_later_to</code>) ให้อยู่แล้ว (ลองทั้งแบบใส่และไม่ใส่ log ได้ <code>Enqueued</code> เหมือนกัน)</td>
+      <td>สนใจ — อย่าก็อปไปใส่ prompt · หลักการ "ส่งต่อให้ job" ยังถูก แค่มันทำให้เองแล้ว</td></tr>
+    <tr><td>45</td><td>Solid Cable — Rails 8 ใช้ตาราง PostgreSQL เป็นช่องทาง pub/sub</td>
+      <td>จริงเฉพาะ production · <code>config/cable.yml</code> ของ repo นี้ development ใช้ <code>async</code> (ในหน่วยความจำ)</td>
+      <td>สนใจ — เป็นเหตุผลที่สร้างคอมเมนต์จาก console แล้วไม่เด้ง</td></tr>
+    <tr><td>45</td><td>latency "ไม่กี่สิบมิลลิวินาที"</td><td>ไม่ได้วัดใน production · config ตั้งให้ดูตารางทุก 0.1 วินาที</td><td>ไม่ต้อง</td></tr>
+    <tr><td>45</td><td><code>&lt;%= render @post.comments %&gt;</code></td><td>ของเราใช้ <code>render @comments</code> (เรียงตามเวลา จากบท 132)</td><td>ไม่ต้อง</td></tr>
+    <tr><td>52</td><td>เกณฑ์ "ตัวนับจำนวน comment อัปเดตพร้อมกัน"</td><td><code>broadcasts_to</code> อย่างเดียวไม่ทำ (ผลจริง: ตัวนับแท็บขวาค้าง 0) ต้องเพิ่มบรรทัด <code>after_create_commit</code> เอง</td><td>สนใจ</td></tr>
+    <tr><td>47</td><td>morph — "ช่องที่กำลังพิมพ์อยู่ไม่เสีย focus"</td><td>focus กับตำแหน่งจออยู่จริง แต่<strong>ข้อความที่พิมพ์ค้างหาย</strong> ถ้าไม่ติด <code>data-turbo-permanent</code> (ผลทดลองในบท)</td><td>สนใจถ้าจะเปิด morph</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0132-turbo-streams.html">← บทเรียน 132 · Turbo Streams</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 3</a>
+  <a href="./0134-stimulus.html">บทเรียน 134 → Stimulus</a>
+</nav>
+
+<h2 id="sn-sec-13">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://turbo.hotwired.dev/handbook/streams#integration-with-server-side-frameworks">Turbo Handbook — Come Alive with Turbo Streams</a> — อ่านหัวข้อ Integration with Server-Side Frameworks (ส่ง Stream ผ่าน WebSocket)</li>
+  <li><a href="https://turbo.hotwired.dev/reference/streams">Turbo Reference — Streams</a> — อ่านใต้ Append: ประโยคเรื่อง id ซ้ำแล้ว "replaced instead of appended" (เหตุผลที่แท็บซ้ายไม่ซ้ำ)</li>
+  <li><a href="https://github.com/hotwired/turbo-rails/blob/v2.0.23/app/models/concerns/turbo/broadcastable.rb">turbo-rails 2.0.23 — broadcastable.rb</a> — ดู <code>def broadcasts_to</code> (ไม่มี <code>later:</code>) และ <code>def suppressing_turbo_broadcasts</code> · คอมเมนต์ต้นไฟล์อธิบายว่าทำไมควรใช้ <code>_later</code></li>
+  <li><a href="https://guides.rubyonrails.org/action_cable_overview.html#subscription-adapter">Rails Guides — Action Cable Overview</a> — หัวข้อ Subscription Adapter (async · Solid Cable · Redis) และ Terminology (pub/sub · broadcastings)</li>
+  <li><a href="https://github.com/rails/solid_cable">rails/solid_cable</a> — README อธิบายว่าใช้ตารางในฐานข้อมูลแทน Redis และ <code>polling_interval</code></li>
+  <li><a href="https://guides.rubyonrails.org/active_record_callbacks.html#transaction-callbacks">Rails Guides — Active Record Callbacks</a> — หัวข้อ Transaction Callbacks (<code>after_commit</code> · <code>after_create_commit</code>)</li>
+  <li><a href="https://turbo.hotwired.dev/handbook/page_refreshes#morphing">Turbo Handbook — Smooth page refreshes with morphing</a> — หัวข้อ Morphing · Scroll preservation · Exclude sections from morphing (<code>data-turbo-permanent</code>)</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API">MDN — The WebSocket API</a> — ย่อหน้าแรก: WebSocket คืออะไร ต่างจากการถาม-ตอบปกติยังไง</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

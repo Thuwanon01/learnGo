@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 125 — ช่องโหว่ XSS และ N+1 ที่ซ่อนอยู่ใน view</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 125 · Rails · Day 3</p>
+  <h1>ช่องโหว่ XSS และ N+1 ที่ซ่อนอยู่ใน view</h1>
+  <p class="meta">~20 นาที · ควรผ่าน <a href="./0123-layout-partial-locals.html">บทเรียน 123</a> (partial) · <a href="../../rails-day-1/lessons/0103-rails-views-and-helpers.html">บทเรียน 103</a> (XSS ขั้นต้น) และ <a href="../../rails-day-2/lessons/0114-n-plus-one.html">บทเรียน 114</a> (N+1) มาก่อน</p>
+  <p class="standfirst">
+    view คือที่ที่บั๊กสองแบบชอบซ่อนตัว: <strong>บั๊กที่ทำให้คนร้ายรันโปรแกรมในเบราว์เซอร์ของคนอื่นได้</strong> และ<strong>บั๊กที่ทำให้หน้าเว็บช้าลงทุกครั้งที่มีบทความเพิ่ม</strong>
+    <br>อ่านจบบทนี้ คุณจะรู้ว่าคำไหนใน view ที่<strong>ปิดระบบกันภัยของ Rails</strong> (<code>raw</code> · <code>html_safe</code>) และค้นหามันได้ในคำสั่งเดียว ·
+    จับ N+1 ที่ซ่อนอยู่ใน partial ได้จาก log และจากคำเตือนของ <code>bullet</code> · แล้วแก้ที่ controller บรรทัดเดียว
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้</p>
+  <ul>
+    <li><strong>XSS · escape</strong> (<a href="../../rails-day-1/lessons/0103-rails-views-and-helpers.html">บท 103</a>) — คนร้ายใส่ <code>&lt;script&gt;</code> ไว้ในข้อมูล ให้ไปรันในเบราว์เซอร์คนอื่น · <code>&lt;%= %&gt;</code> กันให้เองด้วยการแปลง <code>&lt;</code> เป็น <code>&amp;lt;</code></li>
+    <li><strong>partial · <code>render post</code></strong> (<a href="./0123-layout-partial-locals.html">บท 123</a>) — แม่พิมพ์ <code>_post.html.erb</code> ที่หน้า index ใช้ซ้ำทีละบทความ · ในแม่พิมพ์เรียกบทความว่า <code>post</code> (ไม่มี @)</li>
+    <li><strong>N+1 · <code>includes</code></strong> (<a href="../../rails-day-2/lessons/0114-n-plus-one.html">บท 114</a>) — ไปตู้ 1 รอบเอารายการ แล้วไปอีกรอบต่อทุกชิ้น · แก้ด้วยใบเบิกที่บอกล่วงหน้าว่า "หยิบของที่ผูกกันมาด้วย"</li>
+    <li><strong>อ่าน log</strong> (<a href="../../rails-day-2/lessons/0113-query-lazy-relation.html">บท 113</a>) — <code>… Load</code> = ไปตู้ 1 รอบ · <code>↳ ไฟล์:บรรทัด</code> = บรรทัดที่สั่ง (ไฟล์ <code>.erb</code> <strong>ลบหนึ่ง</strong>) · <code>(N queries, M cached)</code> ท้ายใบสั่ง = รวมกี่รอบ</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18 · bullet 8.3.1 (สไลด์และ repo ของอาจารย์เขียน Ruby 4.0.5 · Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน)
+    <br><strong>📍 โค้ดเริ่มจาก:</strong> โปรเจกต์ที่ทำเสร็จใน<a href="./0120-day3-setup.html">บท 120</a> (หมวด 5 · บทความ 30 ชิ้น) ·
+    บทนี้<strong>ทดลองแล้วคืนทิ้งตอนจบ</strong>ด้วย <code>git restore</code> — ของจริงเราทำกันใน <a href="./0126-lab-vibe1-views.html">Lab บท 126</a>
+    <br><strong>🖥 เปิดค้างไว้:</strong> <code>bin/dev</code> หนึ่งหน้าต่าง (เว็บอยู่ที่ <code>localhost:3000</code>) · อีกหน้าต่างไว้พิมพ์คำสั่ง ·
+    ผลรันทุกกล่องมาจากเครื่องจริง · <strong>เวลา ms · วันที่ · เลข <code>0x…</code> · id ของบทความ ของคุณอาจไม่ตรงกับในบท</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">XSS ทวน 30 วินาที — แล้วทำไมต้องลงลึกอีก</h2>
+
+<p>
+  บท 103 เห็นแล้วว่าถ้าชื่อบทความเป็น <code>&lt;script&gt;…&lt;/script&gt;</code> แล้วหน้าเว็บวางลงไปตรง ๆ <strong>เบราว์เซอร์ของทุกคนที่เปิดหน้านั้นจะรันโปรแกรมของคนร้าย</strong> ·
+  และ <code>&lt;%= %&gt;</code> กันให้แล้วโดยไม่ต้องสั่ง
+</p>
+<p>
+  ที่ต้องลงลึกเพราะ Day 3 เราจะ<strong>เริ่มให้ AI เขียน view</strong> · และมีคำสั้น ๆ ไม่กี่คำที่<strong>ปิดระบบกันภัยนี้</strong>ได้ ซึ่ง AI (หรือคนที่รีบ) อาจหยิบมาใช้ตอนอยากให้ HTML "โชว์ออกมาสวย ๆ" ·
+  บทนี้จะลองของจริงทั้ง 4 แบบในสไลด์หน้า 17 แล้วดูว่าเบราว์เซอร์ได้รับอะไรจริง
+</p>
+
+<h2 id="sn-sec-2">สร้างบทความอันตรายของจริงหนึ่งชิ้น</h2>
+
+<p>
+  เปิด <code>bin/rails console</code> (บท 107) ในหน้าต่างที่สองแล้วสร้างบทความที่ชื่อเป็นโปรแกรม ·
+  เราใช้ <code>alert('XSS!')</code> (<code>alert</code> = คำสั่ง JavaScript ที่เด้งกล่องข้อความขึ้นมาบนหน้าเว็บ) — <strong>แค่เด้งกล่อง</strong> ไม่ทำอะไรเสียหาย ·
+  คนร้ายจริงจะใส่โปรแกรมขโมยข้อมูลแทน (สไลด์หน้า 17)
+</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; post = <span class="n">Post</span>.<span class="f">create!</span>(title: <span class="s">"&lt;script&gt;alert('XSS!')&lt;/script&gt;"</span>, description: <span class="s">"บทความทดลอง XSS"</span>, category: <span class="n">Category</span>.<span class="f">first</span>)
+  Category Load (0.5ms)  SELECT "categories".* FROM "categories" ORDER BY "categories"."id" ASC LIMIT 1 /*application='WongnokBlogAllInOne'*/
+  TRANSACTION (0.3ms)  BEGIN /*application='WongnokBlogAllInOne'*/
+  Post Create (0.8ms)  INSERT INTO "posts" ("title", "description", "category_id", "created_at", "updated_at") VALUES ('&lt;script&gt;alert(''XSS!'')&lt;/script&gt;', 'บทความทดลอง XSS', 1, '2026-11-07 03:44:18.637441', '2026-11-07 03:44:18.637441') RETURNING "id" /*application='WongnokBlogAllInOne'*/
+  TRANSACTION (0.7ms)  COMMIT /*application='WongnokBlogAllInOne'*/
+=&gt;
+#&lt;Post:0x0000000126ae2118
+…
+wongnok-blog-all-in-one(dev):002&gt; post.id
+=&gt; 31</code></pre>
+
+<ul>
+  <li><code>Post.create!(…)</code> — สร้างแฟ้มใหม่ใส่ลิ้นชัก <code>posts</code> (บท 107) · <code>category: Category.first</code> = ใส่หมวดแรก (อาหารไทย)</li>
+  <li><code>VALUES ('&lt;script&gt;alert(''XSS!'')…</code> — <strong>ฐานข้อมูลเก็บตัวอักษรตามที่พิมพ์ทุกตัว</strong> ไม่มีใครกรอง · (<code>''</code> สองตัวคือวิธีที่ SQL เขียน <code>'</code> หนึ่งตัว ไม่ต้องสนใจ)</li>
+  <li><code>#&lt;Post:0x…</code> แล้วตามด้วย <code>…</code> — console โชว์แฟ้มที่เพิ่งสร้างทีละช่องอีกหลายบรรทัด ผมตัดออกเพราะไม่ใช่เรื่องของบทนี้</li>
+  <li><code>post.id</code> → <code>31</code> — จดเลขนี้ไว้ · <strong>ของคุณอาจเป็นเลขอื่น</strong> ถ้าเคยเพิ่มบทความเอง ให้ใช้เลขของคุณแทน 31 ในทุกคำสั่งข้างล่าง</li>
+</ul>
+
+<p>
+  สังเกตว่า Rails <strong>ยอมให้บันทึก</strong> · ระบบกันภัยของ Rails <strong>ไม่ได้อยู่ตอนเก็บ แต่อยู่ตอนโชว์</strong> — ตรงนี้แหละที่บทนี้จะเจาะ
+</p>
+
+<h2 id="sn-sec-3">ลอง 4 แบบ — ดูว่าเบราว์เซอร์ได้รับอะไรจริง</h2>
+
+<p>
+  หน้า <code>/posts/31</code> โชว์บทความผ่านแม่พิมพ์ <code>app/views/posts/_post.html.erb</code> (ของเดิมจาก scaffold) · เปิดไฟล์ดูทั้งไฟล์ก่อน — <strong>ครึ่งหลังของบทก็ใช้ไฟล์นี้</strong>:
+</p>
+
+<pre><code><span class="c">&lt;%# app/views/posts/_post.html.erb — เลขบรรทัดอยู่ซ้ายสุด (ไม่ได้อยู่ในไฟล์) %&gt;</span>
+ 1  &lt;div id="&lt;%= dom_id post %&gt;" class="w-full sm:w-auto my-5 space-y-5"&gt;
+ 2    &lt;div&gt;
+ 3      &lt;strong class="block font-medium mb-1"&gt;Title:&lt;/strong&gt;
+ 4      &lt;%= post.title %&gt;
+ 5    &lt;/div&gt;
+ 6    &lt;div&gt;
+ 7      &lt;strong class="block font-medium mb-1"&gt;Description:&lt;/strong&gt;
+ 8      &lt;%= post.description %&gt;
+ 9    &lt;/div&gt;
+10    &lt;div&gt;
+11      &lt;strong class="block font-medium mb-1"&gt;Category:&lt;/strong&gt;
+12      &lt;%= post.category_id %&gt;
+13    &lt;/div&gt;
+14  &lt;/div&gt;</code></pre>
+
+<ul>
+  <li><strong>บรรทัด 4</strong> <code>&lt;%= post.title %&gt;</code> — ชื่อบทความ · <strong>ครึ่งแรกของบทเราแก้บรรทัดนี้</strong></li>
+  <li><strong>บรรทัด 12</strong> <code>&lt;%= post.category_id %&gt;</code> — เลขหมวด · ครึ่งหลัง (N+1) แก้บรรทัดนี้</li>
+  <li><code>dom_id post</code> ได้ id เช่น <code>post_31</code> (เรื่องของบท 131) · <code>class="block font-medium mb-1"</code> ฯลฯ คือคลาส Tailwind (บท 72) ที่ scaffold ใส่มาจัดหน้าตา — ข้ามได้ ไม่เกี่ยวกับบทนี้</li>
+</ul>
+
+<p>
+  เราจะเปลี่ยนบรรทัด 4 ทีละแบบ แล้วดู HTML ที่ได้ด้วย <code>curl</code> (โปรแกรมเปิดหน้าเว็บจากเทอร์มินัล โชว์ HTML เป็นข้อความ — เห็น<strong>ของที่เบราว์เซอร์ได้รับจริง</strong> ก่อนเบราว์เซอร์จะแปลเป็นหน้าจอ · <code>-s</code> = เงียบ ๆ ไม่โชว์แถบความคืบหน้า) ·
+  HTML ทั้งหน้ายาวมาก ข้างล่างตัดมาเฉพาะสองบรรทัดถัดจากคำว่า <code>Title:</code> · ของคุณให้ไล่หาคำว่า <code>Title:</code> แบบเดียวกัน
+</p>
+
+<h3 id="sn-sub-1">แบบ ① <code>&lt;%= post.title %&gt;</code> — ของเดิม</h3>
+
+<pre><code>$ curl -s localhost:3000/posts/31
+…
+    &lt;strong class="block font-medium mb-1"&gt;Title:&lt;/strong&gt;
+    &amp;lt;script&amp;gt;alert(&amp;#39;XSS!&amp;#39;)&amp;lt;/script&amp;gt;
+…</code></pre>
+
+<ul>
+  <li><code>&amp;lt;</code> · <code>&amp;gt;</code> · <code>&amp;#39;</code> — รหัสของ <code>&lt;</code> · <code>&gt;</code> · <code>'</code> (บท 103) · เบราว์เซอร์<strong>วาดเป็นตัวอักษร</strong> ไม่ตีความเป็นแท็ก</li>
+  <li>ผลบนจอ: ผู้ใช้เห็นข้อความ <code>&lt;script&gt;alert('XSS!')&lt;/script&gt;</code> ครบทุกตัว · <strong>ไม่มีอะไรรัน</strong></li>
+</ul>
+
+<h3 id="sn-sub-2">แบบ ② <code>&lt;%= raw post.title %&gt;</code></h3>
+
+<p>แก้บรรทัด 4 เป็น <code>&lt;%= <span class="f">raw</span> post.title %&gt;</code> แล้ว curl ใหม่:</p>
+
+<pre><code>$ curl -s localhost:3000/posts/31
+…
+    &lt;strong class="block font-medium mb-1"&gt;Title:&lt;/strong&gt;
+    &lt;script&gt;alert('XSS!')&lt;/script&gt;
+…</code></pre>
+
+<p>
+  <code>&lt;script&gt;</code> ตัวจริงหลุดเข้าไปในหน้าเว็บ · เปิด <code>http://localhost:3000/posts/31</code> ในเบราว์เซอร์ → <strong>กล่อง alert "XSS!" เด้งขึ้นมา</strong> (กด OK ปิดได้) ·
+  (ผมยืนยันด้วย Chrome จริงแล้ว — และเปิดหน้ารวม <code>/posts</code> ก็เด้งเหมือนกัน เพราะใช้แม่พิมพ์เดียวกัน = <strong>ทุกคนที่เปิดหน้ารวมโดนหมด</strong>)
+</p>
+
+<h3 id="sn-sub-3">แบบ ③ <code>&lt;%= post.title.html_safe %&gt;</code></h3>
+
+<p>แก้บรรทัด 4 เป็น <code>&lt;%= post.title.<span class="f">html_safe</span> %&gt;</code> — ผลจริง:</p>
+
+<pre><code>    &lt;strong class="block font-medium mb-1"&gt;Title:&lt;/strong&gt;
+    &lt;script&gt;alert('XSS!')&lt;/script&gt;</code></pre>
+
+<p>
+  <strong>เหมือนแบบ ② ทุกตัวอักษร</strong> · กล่อง alert เด้งเหมือนกัน (ยืนยันด้วย Chrome แล้ว) ·
+  เพราะในโค้ดของ Rails เอง <code>raw</code> คือ <code>to_s.html_safe</code> บรรทัดเดียว — สองคำนี้คือของชิ้นเดียวกัน คนละหน้าตา
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>ชื่อ <code>html_safe</code> หลอกตา</strong> — มัน<strong>ไม่ได้ทำให้ HTML ปลอดภัย</strong> · มันคือการ<strong>แปะป้ายว่า "ข้อความนี้ปลอดภัยแล้ว ไม่ต้อง escape"</strong> ·
+    Rails เชื่อป้ายนั้นทันที ไม่ตรวจอะไรเลย</p>
+</div>
+
+<h3 id="sn-sub-4">แบบ ④ <code>&lt;%= sanitize post.title %&gt;</code></h3>
+
+<div class="predict">
+<pre><code>&lt;%= <span class="f">sanitize</span> post.title %&gt;</code></pre>
+  <p class="ask"><code>sanitize</code> แปลว่า "ฆ่าเชื้อ" · ชื่อบทความคือ <code>&lt;script&gt;alert('XSS!')&lt;/script&gt;</code> · คิดว่าบนจอจะเห็นอะไร —
+    ว่างเปล่า · ตัวหนังสือทั้งก้อนเหมือนแบบ ① · alert เด้ง · หรืออย่างอื่น?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงจาก curl:</p>
+<pre><code>    &lt;strong class="block font-medium mb-1"&gt;Title:&lt;/strong&gt;
+    alert('XSS!')</code></pre>
+    <p>
+      <strong>แท็ก <code>&lt;script&gt;</code> ถูกถอดทิ้ง แต่ตัวหนังสือข้างในยังอยู่</strong> · บนจอจึงเห็นคำว่า <code>alert('XSS!')</code> เป็นตัวหนังสือเฉย ๆ ·
+      ไม่มีอะไรรัน (Chrome ยืนยันว่าตรงชื่อบทความไม่มีแท็ก script เหลือ และกล่องไม่เด้ง)
+    </p>
+  </div>
+</div>
+
+<p>สรุปทั้ง 4 แบบ (ผลจริงทุกช่อง):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ใน view</th><th>HTML ที่ส่งออกไป</th><th>บนจอ</th><th>script รันไหม</th></tr></thead>
+  <tbody>
+    <tr><td><code>&lt;%= post.title %&gt;</code></td><td><code>&amp;lt;script&amp;gt;…</code></td><td>ข้อความเต็ม ๆ</td><td>✅ ไม่รัน</td></tr>
+    <tr><td><code>&lt;%= raw post.title %&gt;</code></td><td><code>&lt;script&gt;…</code></td><td>ว่าง + กล่องเด้ง</td><td>❌ <strong>รัน</strong></td></tr>
+    <tr><td><code>&lt;%= post.title.html_safe %&gt;</code></td><td><code>&lt;script&gt;…</code></td><td>ว่าง + กล่องเด้ง</td><td>❌ <strong>รัน</strong></td></tr>
+    <tr><td><code>&lt;%= sanitize post.title %&gt;</code></td><td><code>alert('XSS!')</code></td><td>ข้อความที่ถอดแท็กแล้ว</td><td>✅ ไม่รัน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">✉️ เทียบให้เห็นภาพ — ซองใส กับการแกะซอง</span>
+  <p>
+    คนจัดจาน (view) เอาทุกอย่างที่ลูกค้าเขียนมา<strong>ใส่ซองใสก่อนวางบนจาน</strong> · ใครดูก็อ่านออกว่าเขียนอะไร แต่มัน<strong>ทำงานไม่ได้</strong> — ใบที่เขียนว่า "จุดประทัด" ก็เป็นแค่กระดาษในซอง ·
+    <code>raw</code> คือสั่งคนจัดจานว่า "<strong>แกะซองออก</strong> วางของจริงลงจานเลย" ·
+    <code>.html_safe</code> คือ<strong>แปะสติกเกอร์ "ตรวจแล้ว"</strong> บนของชิ้นนั้น — คนจัดจานเห็นสติกเกอร์ก็ไม่ใส่ซองให้ ทั้งที่ไม่มีใครตรวจจริง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจัดจานจริงเห็นประทัดก็คงทักว่า "เอ๊ะ แน่ใจเหรอ" ·
+    Rails <strong>ไม่ทักเลย</strong> ไม่มี error ไม่มีคำเตือนใน log — หน้าเว็บโหลดปกติ 200 OK · คนเดียวที่จะจับได้คือคนอ่านโค้ด
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ React (บท 71):</strong> <code>{post.title}</code> ใน JSX ก็ escape ให้เองแบบเดียวกับ <code>&lt;%= %&gt;</code> ·
+  ถ้าอยากวาง HTML ดิบ React บังคับให้พิมพ์ชื่อยาว ๆ ว่า <code>dangerouslySetInnerHTML</code> — ตั้งชื่อให้ดูอันตรายโดยตั้งใจ ·
+  ฝั่ง Rails คำที่ทำหน้าที่นั้นคือ <code>raw</code> กับ <code>html_safe</code> ซึ่งชื่อ<strong>ไม่ได้ฟังดูอันตรายเลย</strong> เราจึงต้องจำเอง
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>stored XSS (persistent XSS)</dt>
+    <dd>XSS ที่โปรแกรมของคนร้าย<strong>ถูกเก็บลงฐานข้อมูล</strong>แล้วไปรันในเบราว์เซอร์ของทุกคนที่เปิดหน้านั้น (แบบที่เราเพิ่งทำ) · ร้ายแรงเพราะโดนทุกคน ไม่ใช่แค่คนที่กดลิงก์แปลก ๆ ·
+        <strong>ถาม senior ได้ว่า "ช่องไหนบ้างที่ผู้ใช้พิมพ์เองแล้วเราเอาไปโชว์ให้คนอื่นดู"</strong></dd>
+    <dt><code>raw</code> · <code>html_safe</code></dt>
+    <dd>สองคำที่บอก Rails ว่า "ไม่ต้อง escape ข้อความนี้" · <code>raw x</code> = <code>x.to_s.html_safe</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า "do not use raw or html_safe on user input; keep ERB's default escaping"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4"><code>sanitize</code> — คัดแท็กตามรายชื่อที่อนุญาต</h2>
+
+<p>
+  แล้วถ้า<strong>อยากให้</strong>ผู้ใช้ทำตัวหนา หรือใส่ลิงก์ได้ล่ะ? (เช่น คำอธิบายร้านที่มี <strong>ตัวหนา</strong>) ·
+  <code>&lt;%= %&gt;</code> จะ escape ทุกแท็ก ส่วน <code>raw</code> ปล่อยทุกแท็ก — <code>sanitize</code> คือทางกลาง: <strong>เก็บแท็กที่อยู่ในรายชื่อที่อนุญาต ถอดที่เหลือทิ้ง</strong>
+</p>
+
+<p>
+  ลองใน console (<code>helper</code> ใน console = กล่องเครื่องมือชุดเดียวกับที่ view ใช้ ยืมมาลองนอกหน้าเว็บได้) — ผลจริง:
+</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; helper.<span class="f">sanitize</span>(<span class="s">'&lt;b&gt;อร่อยมาก&lt;/b&gt;'</span>)
+=&gt; "&lt;b&gt;อร่อยมาก&lt;/b&gt;"
+wongnok-blog-all-in-one(dev):002&gt; helper.<span class="f">sanitize</span>(<span class="s">'&lt;script&gt;alert(1)&lt;/script&gt;สวัสดี'</span>)
+=&gt; "alert(1)สวัสดี"
+wongnok-blog-all-in-one(dev):003&gt; helper.<span class="f">sanitize</span>(<span class="s">'&lt;a href="/posts" onclick="alert(1)"&gt;ร้านอื่น&lt;/a&gt;'</span>)
+=&gt; "&lt;a href=\"/posts\"&gt;ร้านอื่น&lt;/a&gt;"</code></pre>
+
+<ul>
+  <li>บรรทัด 1 — <code>&lt;b&gt;</code> (ตัวหนา) <strong>อยู่ในรายชื่อ</strong> → ผ่านไปทั้งแท็ก</li>
+  <li>บรรทัด 2 — <code>&lt;script&gt;</code> <strong>ไม่อยู่ในรายชื่อ</strong> → ถอดแท็กทิ้ง เหลือแต่ตัวหนังสือ (แบบเดียวกับแบบ ④ เมื่อกี้)</li>
+  <li>บรรทัด 3 — แท็ก <code>&lt;a&gt;</code> (ลิงก์) ผ่าน และ <code>href</code> (ที่อยู่ลิงก์) ผ่าน · แต่ <code>onclick="…"</code> (คำสั่ง "กดแล้วรันโปรแกรมนี้") <strong>ถูกตัดออก</strong> ·
+      <code>\"</code> คือวิธีที่ console โชว์ <code>"</code> ที่อยู่ในข้อความ ไม่ต้องสนใจ</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🌿 เทียบให้เห็นภาพ — คนจัดจานที่ถือรายการของตกแต่งที่อนุญาต</span>
+  <p>
+    ลูกค้าส่งของตกแต่งจานมาเอง · คนจัดจานถือรายการ "ใบโหระพา · พริกซอย · ผักชี วางได้" ·
+    ของที่อยู่ในรายการวางลงจาน · ของนอกรายการ (ประทัด · ไม้ขีด) <strong>ดึงออกทิ้ง</strong> · กระดาษโน้ตที่ติดมากับประทัดยังวางไว้ให้อ่านได้ — แบบที่ <code>alert(1)</code> ยังเหลือเป็นตัวหนังสือ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจัดจานจริง "ดูออก" ว่าอะไรอันตราย · <code>sanitize</code> <strong>ดูไม่ออก มันแค่เทียบกับรายการ</strong> ·
+    ถ้าเราไปเพิ่ม <code>script</code> ลงรายการเอง (<code>sanitize(x, tags: %w[script])</code>) มันก็ปล่อย <code>&lt;script&gt;alert(1)&lt;/script&gt;</code> ผ่านทั้งก้อน (ผมลองแล้ว) ·
+    เอกสารของ Rails เตือนตรง ๆ ว่าให้ใช้รายการเริ่มต้นเท่าที่ทำได้
+  </p>
+</div>
+
+<p>
+  สไลด์หน้า 17 บอกว่า <code>sanitize</code> "ใช้กับ rich text (บ่าย)" — rich text คือช่องที่ผู้ใช้จัดตัวหนา ใส่ลิงก์ได้ เป็นเรื่องของ <strong>Day 3 ช่วงบ่าย (ยังไม่มาในชุดนี้)</strong> ·
+  วันนี้จำแค่ว่า: <strong>ไม่ต้องการ HTML จากผู้ใช้ = ใช้ <code>&lt;%= %&gt;</code> ธรรมดา</strong> · ต้องการจริง ๆ = <code>sanitize</code> · ไม่มีกรณีไหนที่ควร <code>raw</code> ข้อมูลจากผู้ใช้
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>sanitize · sanitizer</dt>
+    <dd>ล้างข้อความ HTML ให้เหลือเฉพาะแท็กและ attribute ที่อนุญาต · ใน Rails คือ helper <code>sanitize</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า "if HTML from users is needed, use sanitize with the default allowlist, never raw"</strong></dd>
+    <dt>allowlist (safe list)</dt>
+    <dd>รายชื่อของที่<strong>อนุญาต</strong> — ไม่อยู่ในรายชื่อ = ไม่ผ่าน (ตรงข้ามกับ denylist ที่ห้ามเฉพาะของที่รู้จัก) ·
+        <strong>ถาม senior ได้ว่า "โปรเจกต์เราแก้ allowlist ของ sanitize ไว้ไหม เพิ่มอะไรเข้าไปบ้าง"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">กฎหนึ่งบรรทัด + หาคำอันตรายด้วยคำสั่งเดียว</h2>
+
+<p>
+  <strong>ค่าเริ่มต้นของ Rails ปลอดภัย — อันตรายเกิดเมื่อเราตั้งใจพิมพ์ <code>raw</code> หรือ <code>html_safe</code> เอง</strong> (สไลด์หน้า 17) ·
+  แปลว่าเวลาตรวจโค้ด (ของเพื่อนหรือของ AI) ไม่ต้องไล่อ่านทุกบรรทัด — <strong>ค้นหาสองคำนี้ก่อน</strong>
+</p>
+
+<p>ตอนนี้บรรทัด 4 ของ <code>_post.html.erb</code> ยังเป็น <code>sanitize</code> อยู่ · เปลี่ยนกลับเป็น <code>&lt;%= raw post.title %&gt;</code> สักครู่ แล้วค้นด้วย <code>grep</code> — ผลจริง:</p>
+
+<pre><code>$ grep -rn "raw\|html_safe" app/views
+app/views/posts/_post.html.erb:4:    &lt;%= raw post.title %&gt;</code></pre>
+
+<ul>
+  <li><code>grep</code> — โปรแกรม<strong>ค้นคำในไฟล์</strong> เหมือนกด Ctrl+F แต่ค้นทุกไฟล์ในโฟลเดอร์ทีเดียว</li>
+  <li><code>-r</code> — ค้นเข้าไปในโฟลเดอร์ย่อยทุกชั้น · <code>-n</code> — บอกเลขบรรทัด (เขียนติดกันเป็น <code>-rn</code>)</li>
+  <li><code>"raw\|html_safe"</code> — คำที่จะหา · <code>\|</code> แปลว่า "<strong>หรือ</strong>" → raw หรือ html_safe</li>
+  <li><code>app/views</code> — ค้นที่ไหน</li>
+  <li>ผล <code>ไฟล์:บรรทัด:ข้อความ</code> — เจอที่ <code>_post.html.erb</code> บรรทัด 4 · (ตรงนี้เลขบรรทัดตรงจริง ไม่ต้องลบหนึ่ง เพราะ grep อ่านไฟล์ตรง ๆ ไม่ใช่ log)</li>
+</ul>
+
+<p>
+  คืนไฟล์เป็นของเดิมแล้วค้นอีกรอบ: <code>git restore app/views/posts/_post.html.erb</code> → <code>grep -rn "raw\|html_safe" app/views</code> → <strong>ไม่มีอะไรขึ้นเลย</strong> = ไม่เจอ = ดี
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>grep หาตัวอักษร ไม่ได้อ่านโค้ดเป็น</strong> — ถ้าค้นทั้งโฟลเดอร์ <code>app</code> ผมได้ผลเกินมา 9 บรรทัดจาก <code>app/assets/tailwind/daisyui.mjs</code>
+    เพราะคำว่า <code>d<strong>raw</strong>er</code> มี raw ซ่อนอยู่ · เติม <code>-w</code> (เฉพาะ<strong>คำเต็ม</strong>) → <code>grep -rnw "raw\|html_safe" app</code> เหลือแต่บรรทัดที่ใช่จริง ·
+    ค้นทั้ง <code>app</code> ดีกว่าค้นแค่ <code>app/views</code> เพราะ <code>html_safe</code> ซ่อนใน helper (<code>app/helpers</code>) ได้ด้วย</p>
+</div>
+
+<p>เจอแล้วทำอะไรต่อ — ถามคำถามเดียวตามสไลด์: <strong>"ข้อมูลตรงนี้มาจากไหน"</strong></p>
+<ul>
+  <li>มาจาก<strong>ผู้ใช้พิมพ์</strong> (ชื่อบทความ · คอมเมนต์ · ชื่อหมวด) → <strong>ลบ <code>raw</code>/<code>html_safe</code> ทิ้ง</strong> ถ้าต้องการ HTML จริงใช้ <code>sanitize</code></li>
+  <li>เป็นข้อความที่<strong>เราเขียนเองในโค้ด</strong> ไม่มีอะไรจากผู้ใช้ปนเลย → ปลอดภัย แต่ส่วนใหญ่มี helper ที่ไม่ต้องใช้ <code>html_safe</code> อยู่แล้ว (เช่น <code>tag.div</code> ใน <a href="./0124-view-helpers-and-form-with.html">บท 124</a>)</li>
+</ul>
+
+<div class="note">
+  <p><strong>🧹 ก่อนไปครึ่งหลัง:</strong> ลบบทความทดลองทิ้งใน console (บทความชิ้นล่าสุดคือชิ้นที่เราเพิ่งสร้าง):</p>
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">Post</span>.<span class="f">last</span>.<span class="f">destroy</span>
+  Post Load (0.5ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" DESC LIMIT 1 /*application='WongnokBlogAllInOne'*/
+  TRANSACTION (0.3ms)  BEGIN /*application='WongnokBlogAllInOne'*/
+  Post Destroy (0.8ms)  DELETE FROM "posts" WHERE "posts"."id" = 31 /*application='WongnokBlogAllInOne'*/
+  TRANSACTION (0.8ms)  COMMIT /*application='WongnokBlogAllInOne'*/
+=&gt;
+#&lt;Post:0x0000000125c6e0f0
+ id: 31,
+ title: "&lt;script&gt;alert('XSS!')&lt;/script&gt;",
+…</code></pre>
+  <p>เห็น <code>DELETE … "id" = 31</code> และ <code>title: "&lt;script&gt;…"</code> = ลบถูกชิ้น · กลับมาเหลือบทความ 30 ชิ้นเท่าเดิม</p>
+</div>
+
+<h2 id="sn-sec-6">N+1 ใน view — ทำไมหายากกว่าที่เห็นในบท 114</h2>
+
+<p>
+  บท 114 เราเจอ N+1 ในไฟล์ view ไฟล์เดียว ที่ <code>@posts.each</code> กับ <code>post.user.name</code> อยู่ติดกัน · ของจริงในโปรเจกต์มักไม่ง่ายขนาดนั้น
+  เพราะ <strong>การวนลูป</strong> อยู่ใน <code>index.html.erb</code> แต่<strong>ของที่ไปตู้</strong>ไปซ่อนอยู่ในแม่พิมพ์ <code>_post.html.erb</code> อีกไฟล์หนึ่ง
+</p>
+
+<p>
+  สมมติเพื่อนในทีมเปิด PR (คำขอรวมโค้ด) หนึ่งอัน: "โชว์ชื่อหมวดแทนเลขหมวด" · ทั้ง PR มีแค่นี้ (ผลจริงจาก <code>git diff</code>):
+</p>
+
+<pre><code>--- a/app/views/posts/_post.html.erb
++++ b/app/views/posts/_post.html.erb
+@@ -9,6 +9,6 @@
+   &lt;/div&gt;
+   &lt;div&gt;
+     &lt;strong class="block font-medium mb-1"&gt;Category:&lt;/strong&gt;
+-    &lt;%= post.category_id %&gt;
++    &lt;%= post.category.name %&gt;
+   &lt;/div&gt;
+ &lt;/div&gt;</code></pre>
+
+<ul>
+  <li>บรรทัดที่ขึ้นต้นด้วย <code>-</code> = ของเดิมที่ถูกลบ · <code>+</code> = ของใหม่ที่ใส่แทน · บรรทัดที่ไม่มีเครื่องหมาย = ของรอบ ๆ ที่ไม่ได้เปลี่ยน โชว์ไว้ให้รู้ตำแหน่ง</li>
+  <li><code>---</code> <code>+++</code> = ชื่อไฟล์ · <code>@@ -9,6 +9,6 @@</code> = "ตัดมาตั้งแต่บรรทัด 9 ยาว 6 บรรทัด" — ไม่ต้องสนใจ</li>
+  <li><code>post.category_id</code> = เลขหมวด<strong>บนแฟ้มบทความ</strong> (อ่านฟรี ไม่ไปตู้) · <code>post.category.name</code> = <strong>เดินไปลิ้นชัก categories</strong> เอาชื่อหมวด (บท 114: ของที่อยู่ลิ้นชักอื่น = ไปตู้)</li>
+</ul>
+
+<p>
+  คนตรวจ PR เห็นแค่นี้ · <strong>controller ไม่อยู่ใน diff เลย</strong> จึงไม่มีใครเห็นว่า controller เขียน <code>@posts = Post.all</code> ไม่มี <code>includes</code> ·
+  สไลด์หน้า 18 สรุปสามเหตุผลที่มันหายาก: คนเขียน controller กับ partial อาจเป็นคนละคน คนละ PR · เพิ่มช่องใหม่ใน partial วันหลัง = เพิ่ม N+1 ใหม่โดยไม่รู้ตัว · controller ไม่เปลี่ยน diff จึงดูไม่มีอะไร
+</p>
+
+<p>ลองทำตาม PR นี้จริง: แก้บรรทัด 12 ของ <code>_post.html.erb</code> จาก <code>post.category_id</code> เป็น <code>post.category.name</code> แล้วรีเฟรชหน้า <code>/posts</code></p>
+
+<div class="predict">
+  <p class="ask">มีบทความ 30 ชิ้น อยู่ใน 5 หมวด · controller ยังเป็น <code>Post.all</code> ·
+    บรรทัด <code>Completed …</code> ใน log จะขึ้น <code>(? queries, ? cached)</code> เท่าไหร่? (ใบ้: บท 114 เห็นแล้วว่า Rails จำคำถามที่ซ้ำเป๊ะ ๆ ได้ภายในใบสั่งเดียว)</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงจาก <code>log/development.log</code> (ตัดบรรทัดกลางที่ซ้ำ ๆ เป็น <code>…</code>):</p>
+<pre><code>Started GET "/posts" for ::1 at 2026-11-07 10:46:02 +0700
+Processing by PostsController#index as */*
+  Rendering layout layouts/application.html.erb
+  Rendering posts/index.html.erb within layouts/application
+  Post Exists? (1.1ms)  SELECT 1 AS one FROM "posts" LIMIT 1 /*action='index',application='WongnokBlogAllInOne',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:15
+  Post Load (1.1ms)  SELECT "posts".* FROM "posts" /*action='index',application='WongnokBlogAllInOne',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:16
+  Category Load (1.7ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" = 1 LIMIT 1 /*action='index',application='WongnokBlogAllInOne',controller='posts'*/
+  ↳ app/views/posts/_post.html.erb:13
+  Rendered posts/_post.html.erb (Duration: 14.6ms | GC: 8.1ms)
+  Category Load (0.9ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" = 2 LIMIT 1 /*action='index',application='WongnokBlogAllInOne',controller='posts'*/
+  ↳ app/views/posts/_post.html.erb:13
+  …  (id = 3, 4, 5 เหมือนกัน)
+  CACHE Category Load (0.3ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" = 1 LIMIT 1
+  ↳ app/views/posts/_post.html.erb:13
+  …  (CACHE วน id 1–5 ไปเรื่อย ๆ อีก 24 ครั้ง)
+  Rendered posts/index.html.erb within layouts/application (Duration: 53.5ms | GC: 17.1ms)
+  Rendered layout layouts/application.html.erb (Duration: 54.5ms | GC: 17.1ms)
+Completed 200 OK in 57ms (Views: 49.3ms | ActiveRecord: 6.2ms (32 queries, 25 cached) | GC: 17.5ms)</code></pre>
+    <p><strong><code>(32 queries, 25 cached)</code></strong> — นับให้ดูทีละกลุ่ม:</p>
+    <ul>
+      <li><code>Post Exists?</code> 1 — มาจาก <code>&lt;% if @posts.any? %&gt;</code> บรรทัด 14 ของ index ("มีบทความสักชิ้นไหม") · log บอก <code>:15</code> → ลบหนึ่ง = 14</li>
+      <li><code>Post Load</code> 1 — หยิบบทความ 30 แผ่น (<code>@posts.each</code> บรรทัด 15)</li>
+      <li><code>Category Load</code> <strong>30</strong> — ตัวจริง 5 (หมวด 1–5) + <code>CACHE</code> 25 (หมวดเดิมซ้ำ Rails ตอบจากความจำ) · ทุกบรรทัดชี้ <code>_post.html.erb:13</code> → ลบหนึ่ง = <strong>บรรทัด 12 = <code>post.category.name</code></strong></li>
+    </ul>
+    <p>
+      บรรทัดอื่นอ่านผ่านได้: <code>Rendered …</code> = วาดแม่พิมพ์/หน้าเสร็จ · <code>Duration</code> <code>GC</code> <code>Views</code> = ตัวเลขเวลา (ms) เปลี่ยนทุกครั้ง ·
+      ผมยิงด้วย curl จึงเห็น <code>for ::1</code> กับ <code>as */*</code> · ถ้าคุณรีเฟรชจากเบราว์เซอร์จะเห็น <code>as HTML</code> แทน ความหมายเดียวกัน
+    </p>
+    <p>1 + 1 + 30 = 32 · ไปตู้จริง 7 รอบ · ที่เหลือ "cached" · <strong>แต่อย่าวางใจ CACHE</strong> (บท 114) — ถ้ามี 30 หมวดไม่ซ้ำกัน ก็ไปตู้จริงครบ 30 รอบ</p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🍚 เทียบให้เห็นภาพ — แม่พิมพ์ที่ต้องเดินไปตู้ทุกจาน</span>
+  <p>
+    หัวหน้าเชฟ (controller) วางแฟ้มบทความ 30 แผ่นไว้บนถาดหน้าครัว · คนจัดจานหยิบ<strong>แม่พิมพ์</strong> (<code>_post</code>) มากดทีละจาน ·
+    แม่พิมพ์รุ่นใหม่มีช่อง "ชื่อหมวด" · แต่บนถาดมีแค่<strong>เลข</strong>หมวด ไม่มีชื่อ → ทุกจาน คนจัดจานต้อง<strong>เดินไปตู้</strong>ถามชื่อหมวดเอง 30 รอบ ·
+    หัวหน้าเชฟไม่รู้เรื่องเลย เพราะเขาไม่ได้ดูแม่พิมพ์ — เขาแค่วางถาด
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนจัดจานจริงเดินไปสองสามรอบก็คงจำได้ว่า "หมวด 1 ชื่ออาหารไทย" แล้วเลิกเดิน ·
+    Rails จำได้แค่<strong>ภายในใบสั่งเดียว</strong> (CACHE) และ<strong>ยังนับว่าถาม</strong>ทุกครั้ง · ใบสั่งใหม่ (ลูกค้าคนถัดไป) ความจำถูกล้าง เริ่มเดินใหม่ทั้งหมด
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>N+1 in a partial</dt>
+    <dd>N+1 ที่ตัวลูป (<code>each</code> / <code>render @posts</code>) อยู่ไฟล์หนึ่ง แต่บรรทัดที่ไปตู้อยู่ในแม่พิมพ์อีกไฟล์ · ดูจาก diff ไม่ออก ต้องดู log ·
+        <strong>พิมพ์บอก AI ได้ว่า "_post.html.erb calls post.category.name; check whether the controller eager loads :category"</strong></dd>
+    <dt>PR (pull request) · diff</dt>
+    <dd>PR = คำขอรวมโค้ดที่เพื่อนตรวจก่อน · diff = รายการบรรทัดที่เปลี่ยน (<code>-</code> ลบ · <code>+</code> เพิ่ม) · ของที่<strong>ไม่ได้เปลี่ยน</strong>จะไม่อยู่ใน diff ·
+        <strong>ถาม senior ได้ว่า "ตอน review PR ที่แก้ partial ต้องเปิดดู controller ด้วยไหม"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">bullet — ผู้ช่วยที่ตะโกนบอกเอง</h2>
+
+<p>
+  นับจาก log ได้ผลแน่นอน แต่ต้องตั้งใจดู · สไลด์หน้า 18 แนะนำให้ "ใส่ gem <code>bullet</code> ไว้ตั้งแต่วันแรก" — <strong>โปรเจกต์ของคอร์สติดตั้งมาให้แล้ว</strong> (ใน <code>Gemfile</code> และเปิดไว้ใน <code>config/environments/development.rb</code>) ·
+  bullet คอยดูระหว่างหน้าเว็บทำงาน ถ้าเห็นรูปแบบ N+1 มันบอกเราสองที่:
+</p>
+
+<p><strong>ที่ ① บนหน้าเว็บ</strong> — กล่องสีชมพูมุมซ้ายล่าง หัวข้อ <strong>Bullet Warnings</strong> · คลิกแล้วกางออก (ข้อความจริงจาก Chrome):</p>
+
+<pre><code>Bullet Warnings
+user: tuwanon USE eager loading detected Post =&gt; [:category] Add to your query: .includes([:category])</code></pre>
+
+<p><strong>ที่ ② ใน <code>log/development.log</code></strong> ต่อท้ายใบสั่งนั้น (ผลจริง · ผมตัด path ยาว ๆ ข้างหน้า <code>app/</code> ออกเป็น <code>…/</code>):</p>
+
+<pre><code>user: tuwanon
+GET /posts
+USE eager loading detected
+  Post =&gt; [:category]
+  Add to your query: .includes([:category])
+Call stack
+  …/app/views/posts/_post.html.erb:13:in '_app_views_posts__post_html_erb__…'
+  …/app/views/posts/index.html.erb:18:in 'block in _app_views_posts_index_html_erb__…'
+  …/app/views/posts/index.html.erb:16:in '_app_views_posts_index_html_erb__…'</code></pre>
+
+<ul>
+  <li><code>user: tuwanon</code> — ชื่อผู้ใช้เครื่องของผม · ของคุณจะเป็นชื่อคุณ · <code>GET /posts</code> = หน้าไหน</li>
+  <li><code>USE eager loading detected</code> — "เจอที่ควรหยิบมาล่วงหน้า" (eager loading = <code>includes</code> · บท 114)</li>
+  <li><code>Post =&gt; [:category]</code> — ตอนวนบทความ มีคนเดินไปเอา <code>category</code> ทีละชิ้น</li>
+  <li><code>Add to your query: .includes([:category])</code> — <strong>บอกวิธีแก้มาเลย</strong> (<code>[:category]</code> เขียนแบบรายการ ความหมายเดียวกับ <code>includes(:category)</code>)</li>
+  <li><code>Call stack</code> — ไล่ว่าใครเรียกใคร · บรรทัดบนสุดคือต้นเหตุ <code>_post.html.erb:13</code> (ลบหนึ่ง = 12) · ข้างล่างคือที่ที่เรียกแม่พิมพ์นั้น (<code>index.html.erb:18</code> → บรรทัด 17 <code>render post</code> · <code>:16</code> → บรรทัด 15 <code>@posts.each</code>)</li>
+</ul>
+
+<p>
+  (ป้ายตัวเลข ms เล็ก ๆ มุมซ้ายบนของหน้าเว็บคือ gem อีกตัวชื่อ <code>rack-mini-profiler</code> ที่ repo ติดมาด้วย — บทนี้ไม่ใช้ ปล่อยไว้ได้)
+</p>
+
+<div class="analogy">
+  <span class="label">📣 เทียบให้เห็นภาพ — ผู้ช่วยครัวที่ยืนนับรอบเดินไปตู้</span>
+  <p>
+    bullet คือผู้ช่วยที่ยืนอยู่ข้างตู้ จดว่าใครเดินมาหยิบอะไรกี่รอบ · พอเห็นคนจัดจานเดินมาถามชื่อหมวดซ้ำ ๆ ทีละจาน ก็<strong>ตะโกนบอก</strong>ว่า
+    "รอบหน้าให้หัวหน้าเชฟเบิกหมวดมาพร้อมแฟ้มบทความเลย!" — พร้อมบอกว่าเขียนใบเบิกว่าอะไร
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ผู้ช่วยตัวจริงอยู่ทุกกะ · bullet <strong>ทำงานเฉพาะในเครื่องเรา (development)</strong> และเห็นเฉพาะ<strong>หน้าที่เราเปิดจริง</strong> ·
+    หน้าที่ไม่มีใครเปิดตอนพัฒนา มันก็ไม่รู้ · และมันเดาผิดได้ — เห็นตัวอย่างในภารกิจท้ายบท
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>bullet</dt>
+    <dd>gem ที่จับ N+1 ระหว่างพัฒนา แล้วเตือนใน log และบนหน้าเว็บ (สองบรรทัดตั้งค่าใน <code>development.rb</code>: <code>Bullet.rails_logger = true</code> = เขียนลง log · <code>Bullet.add_footer = true</code> = แปะกล่องบนหน้าเว็บ) ·
+        <strong>แปะคำเตือนให้ AI ได้ตรง ๆ ว่า "Bullet says: USE eager loading detected Post =&gt; [:category]. Fix it in the controller."</strong></dd>
+    <dt>call stack</dt>
+    <dd>รายการ "ใครเรียกใคร" ตอนเกิดเรื่อง เรียงจากจุดเกิดเหตุขึ้นไปหาต้นทาง · อ่านบรรทัดบนสุดที่เป็นไฟล์ของเราก่อน ·
+        <strong>ถาม senior ได้ว่า "บรรทัดไหนใน stack ที่เป็นโค้ดของเรา"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">แก้ที่ controller ไม่ใช่ที่ view</h2>
+
+<p>ทำตามที่ bullet บอก — แก้ <code>app/controllers/posts_controller.rb</code> บรรทัดเดียว (ของเดิมจาก scaffold คือ <code>@posts = Post.all</code>) · <strong>แม่พิมพ์ไม่ต้องแตะเลย</strong>:</p>
+
+<pre><code><span class="c"># app/controllers/posts_controller.rb — action index</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @posts = <span class="n">Post</span>.<span class="f">includes</span>(<span class="n">:category</span>)
+  <span class="k">end</span></code></pre>
+
+<p>
+  <code>includes(:category)</code> = ใบเบิกที่เขียนต่อท้ายว่า "หยิบหมวดของทุกแผ่นมาใส่ตะกร้าด้วย" (บท 114) · ชื่อ <code>:category</code> ต้องตรงกับใน model (<code>belongs_to :category</code>) ·
+  รีเฟรช <code>/posts</code> — log ใหม่ (ผลจริง · ตัดบรรทัด <code>Rendered posts/_post…</code> 30 บรรทัดออก):
+</p>
+
+<pre><code>  Post Exists? (0.6ms)  SELECT 1 AS one FROM "posts" LIMIT 1 /*action='index',application='WongnokBlogAllInOne',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:15
+  Post Load (0.6ms)  SELECT "posts".* FROM "posts" /*action='index',application='WongnokBlogAllInOne',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:16
+  Category Load (0.7ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" IN (1, 2, 3, 4, 5) /*action='index',application='WongnokBlogAllInOne',controller='posts'*/
+  ↳ app/views/posts/index.html.erb:16
+…
+Completed 200 OK in 23ms (Views: 18.3ms | ActiveRecord: 3.2ms (3 queries, 0 cached) | GC: 5.8ms)</code></pre>
+
+<ul>
+  <li><strong><code>(32 queries, 25 cached)</code> → <code>(3 queries, 0 cached)</code></strong> · หน้าเว็บที่ได้หน้าตาเหมือนเดิม (ผมเทียบ HTML สองรอบแล้ว ต่างกันแค่รหัสกัน CSRF ที่สุ่มใหม่ทุกครั้งอยู่แล้ว กับกล่อง Bullet ที่หายไป)</li>
+  <li><code>WHERE "categories"."id" IN (1, 2, 3, 4, 5)</code> — เดินไปลิ้นชักหมวด<strong>รอบเดียว</strong> หยิบมาครบ 5 หมวด (<code>IN</code> = "ตัวใดตัวหนึ่งในวงเล็บ" · บท 114)</li>
+  <li>ไม่มีบรรทัด <code>↳</code> ไหนชี้ <code>_post.html.erb</code> แล้ว · และ<strong>กล่อง Bullet Warnings หายไป</strong> (ผมเช็คใน HTML แล้ว ไม่มี <code>bullet-footer</code>)</li>
+  <li>ถ้ามีบทความ 3,000 ชิ้น ก็ยัง 3 query · <strong>จำนวนรอบไม่โตตามข้อมูลอีกต่อไป</strong></li>
+</ul>
+
+<p>
+  <strong>เทียบกับ React/Next.js:</strong> คล้ายเวลา component ลูกแต่ละตัวยิง <code>fetch</code> ของตัวเองใน <code>useEffect</code> (บท 74) — รายการ 30 ชิ้นก็ยิง 30 ครั้ง ·
+  ทางแก้ก็หลักเดียวกัน: <strong>ให้ตัวแม่ดึงข้อมูลครบทีเดียว แล้วส่งลงไปให้ลูก</strong> · ฝั่ง Rails ตัวแม่คือ controller
+</p>
+
+<div class="win">
+  <p>✅ <strong>นิสัยที่อยากให้ติดตัว</strong> (สไลด์หน้า 18)</p>
+  <ol>
+    <li>ทุกครั้งที่<strong>เติมจุด</strong>ลงใน partial เช่น <code>post.category.name</code> → <strong>ไปเปิด controller ดูว่า <code>includes</code> แล้วหรือยัง</strong></li>
+    <li>เปิด log ค้างไว้ตอนทำงาน (<code>bin/dev</code> โชว์ log ในหน้าต่างของมันอยู่แล้ว) · ดูบรรทัด <code>Completed … (N queries)</code> ทุกครั้งที่เปิดหน้าใหม่</li>
+    <li>เห็นกล่อง <strong>Bullet Warnings</strong> โผล่ = หยุดแก้ก่อน อย่าปล่อยค้าง</li>
+  </ol>
+</div>
+
+<h2 id="sn-sec-9">ให้ AI ช่วย — แต่ตรวจด้วยของสองอย่างที่เพิ่งเรียน</h2>
+
+<p>
+  สไลด์ Day 3 จะให้เราสั่ง AI เขียน view บ่อย ๆ (Lab บท 126) · AI เขียน <code>post.category.name</code> ในแม่พิมพ์โดยไม่ไปเติม <code>includes</code> ที่ controller ได้ง่ายมาก เพราะ<strong>มันไม่เห็น log ของคุณ</strong> ·
+  ใส่ข้อห้ามไว้ใน prompt ตั้งแต่แรก (โครง 4 ส่วนจาก <a href="./0121-prompts-and-claude-md.html">บท 121</a>) เช่นท่อน "ห้าม" กับ "เกณฑ์ตรวจรับ":
+</p>
+
+<pre><code>ห้าม:
+- ใช้ raw หรือ html_safe กับข้อมูลที่ผู้ใช้พิมพ์
+- เรียก association ใน partial โดยไม่ includes ที่ controller
+เกณฑ์ตรวจรับ:
+- grep -rnw "raw\|html_safe" app ไม่เจออะไร
+- หน้า /posts ไม่มี Bullet Warnings และ log ขึ้นไม่เกิน 3 queries</code></pre>
+
+<p>แล้ว<strong>ตรวจเองทุกครั้ง</strong> อย่าเชื่อคำว่า "เสร็จแล้ว" ของ AI:</p>
+<ol>
+  <li>รัน <code>grep -rnw "raw\|html_safe" app</code> · เจอ → ถาม "ข้อมูลตรงนี้มาจากไหน"</li>
+  <li>เปิดทุกหน้าที่ AI แก้ · ดูมุมซ้ายล่างว่ามี Bullet Warnings ไหม · ดู <code>(N queries)</code> ใน log</li>
+  <li>เจอปัญหา → แปะ log หรือคำเตือนของ bullet ให้ AI ดูตรง ๆ ได้ผลกว่าสั่งลอย ๆ ว่า "ทำให้เร็วขึ้น"</li>
+</ol>
+
+<div class="task">
+  <h3 id="sn-sub-5">🎯 ภารกิจ — หา N+1 ตัวใหม่ด้วยตัวเอง (~10 นาที)</h3>
+  <p>คราวนี้เป็นหน้า<strong>หมวด</strong> · เพื่อนอยากให้หน้า <code>/categories</code> โชว์ชื่อบทความในแต่ละหมวดด้วย · เริ่มจากโค้ดสะอาด: <code>git restore .</code> ก่อน (คืนทุกไฟล์ที่ทดลองไว้ข้างบน)</p>
+  <ol>
+    <li>เปิด <code>app/views/categories/_category.html.erb</code> เพิ่มก้อนนี้<strong>ก่อน <code>&lt;/div&gt;</code> บรรทัดสุดท้าย</strong>:
+<pre><code>  &lt;div&gt;
+    &lt;strong class="block font-medium mb-1"&gt;Posts:&lt;/strong&gt;
+    &lt;%= category.posts.map(&amp;:title).join(", ") %&gt;
+  &lt;/div&gt;</code></pre>
+      (<code>category.posts</code> = บทความทุกชิ้นในหมวดนี้ · <code>map(&amp;:title)</code> = เอาแต่ชื่อ (บท 92) · <code>join(", ")</code> = ต่อเป็นข้อความเดียวคั่นด้วยจุลภาค)</li>
+    <li>เปิด <code>http://localhost:3000/categories</code> · ดูมุมซ้ายล่าง และดู log ของใบสั่งนี้ (หน้าต่าง <code>bin/dev</code> หรือ <code>log/development.log</code> — หาบรรทัด <code>Started GET "/categories"</code> แล้วอ่านลงมา)</li>
+    <li><strong>โดยไม่ดูเฉลย:</strong> จดตัวเลข <code>(N queries)</code> · หาบรรทัดที่ซ้ำ ๆ · ตาม <code>↳</code> ไปหาว่าบรรทัดไหนใน view เป็นต้นเหตุ · แล้วตัดสินใจเองว่าต้องแก้ไฟล์ไหน แก้เป็นอะไร</li>
+    <li>แก้ · รีเฟรช · นับใหม่ · เสร็จแล้ว <code>git restore .</code> คืนทุกไฟล์</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ก่อนแก้กี่ query · หลังแก้กี่ query · และคุณแก้ที่ไฟล์ไหน?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ก่อนแก้</strong> (ผลจริง · ตัดบางบรรทัด):</p>
+<pre><code>  Category Exists? (0.7ms)  SELECT 1 AS one FROM "categories" LIMIT 1 …
+  Category Load (0.6ms)  SELECT "categories".* FROM "categories" …
+  Post Load (0.6ms)  SELECT "posts".* FROM "posts" WHERE "posts"."category_id" = 1 …
+  ↳ app/views/categories/_category.html.erb:13:in 'Enumerable#map'
+  Post Load (0.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."category_id" = 2 …
+  ↳ app/views/categories/_category.html.erb:13:in 'Enumerable#map'
+  …  (category_id = 3, 4, 5 เหมือนกัน)
+Completed 200 OK in 16ms (Views: 10.7ms | ActiveRecord: 4.4ms (7 queries, 0 cached) | GC: 0.2ms)</code></pre>
+    <p>
+      <code>Post Load</code> ซ้ำ 5 บรรทัด ต่างกันแค่เลขหมวด = N+1 · <code>_category.html.erb:13</code> ลบหนึ่ง = บรรทัด 12 = <code>category.posts.map…</code> ที่เพิ่งเติม ·
+      (<code>in 'Enumerable#map'</code> = "เกิดระหว่าง <code>map</code>") · bullet ขึ้น <code>USE eager loading detected Category =&gt; [:posts]</code> · <code>Add to your query: .includes([:posts])</code>
+    </p>
+    <p><strong>แก้ที่ controller</strong> <code>app/controllers/categories_controller.rb</code> action <code>index</code>:</p>
+<pre><code>    @categories = <span class="n">Category</span>.<span class="f">includes</span>(<span class="n">:posts</span>)</code></pre>
+    <p><strong>หลังแก้</strong> (ผลจริง):</p>
+<pre><code>  Post Load (0.7ms)  SELECT "posts".* FROM "posts" WHERE "posts"."category_id" IN (1, 2, 3, 4, 5) …
+Completed 200 OK in 12ms (Views: 7.6ms | ActiveRecord: 3.1ms (3 queries, 0 cached) | GC: 0.0ms)</code></pre>
+    <p><strong>7 → 3 query</strong> และกล่อง Bullet Warnings หายไป · ไม่ได้แตะ <code>_category.html.erb</code> เลย</p>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>หน้า error สีแดง <code>Association named 'post' was not found on Category; perhaps you misspelled it?</code></strong> —
+        คุณเขียน <code>includes(:post)</code> · หมวดหนึ่ง<strong>มีหลาย</strong>บทความ model จึงเขียน <code>has_many :posts</code> (มี s) · ชื่อใน includes ต้องตรงกับใน model</li>
+      <li><strong>ถ้าลองเปลี่ยนไปโชว์แค่จำนวน (<code>category.posts.size</code>) แล้ว bullet ขึ้น <code>Need Counter Cache with Active Record size</code></strong> —
+        เป็นคำแนะนำอีกเรื่อง (เก็บตัวเลขจำนวนไว้บนแฟ้มหมวดเลย) ยังไม่ต้องทำตอนนี้ · และถ้า includes แล้วใช้ <code>size</code> ผมได้ <code>AVOID eager loading detected</code> ("หยิบมาล่วงหน้าแต่ไม่ได้ใช้") กลับมาแทน —
+        <strong>bullet เดาผิดได้</strong> ให้เชื่อตัวเลข <code>(N queries)</code> ใน log เป็นหลัก</li>
+      <li><strong>ตัวเลขไม่ลดเลย</strong> — คุณอาจแก้ <code>posts_controller.rb</code> แทน <code>categories_controller.rb</code> · ดูบรรทัด <code>Processing by …Controller#index</code> ใน log ว่าใบสั่งนี้เป็นของ controller ไหน</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">บรรทัดไหน<strong>เปิดช่อง XSS</strong> ถ้า <code>post.title</code> มาจากที่ผู้ใช้พิมพ์? (ดัดแปลงจาก Quiz A ข้อ 1 สไลด์หน้า 19)</p>
+  <div class="opts">
+    <button class="opt">เฉพาะ <code>&lt;%= post.title %&gt;</code> เพราะไม่มีอะไรกรองเลย</button>
+    <button class="opt">เฉพาะ <code>&lt;%= sanitize post.title %&gt;</code> เพราะยังเหลือตัวหนังสือ</button>
+    <button class="opt"><code>&lt;%= raw post.title %&gt;</code> และ <code>&lt;%= post.title.html_safe %&gt;</code></button>
+    <button class="opt">ไม่มีสักบรรทัด เพราะ Rails escape ให้ทุกบรรทัดอัตโนมัติ</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — ผลจริงจาก curl: ทั้งสองแบบส่ง <code>&lt;script&gt;</code> ตัวจริงออกไป และกล่อง alert เด้งใน Chrome · สองคำนี้คือของชิ้นเดียวกัน (<code>raw</code> = <code>to_s.html_safe</code>)</p>
+    <p>ตัวเลือกที่ 1 กลับด้าน — <code>&lt;%= %&gt;</code> ธรรมดาคือแบบที่<strong>ปลอดภัยที่สุด</strong> มัน escape ให้ ·
+       ตัวเลือกที่ 2 ตัวหนังสือ <code>alert('XSS!')</code> ที่เหลืออยู่<strong>ไม่ได้รัน</strong> เพราะแท็ก script ถูกถอดแล้ว ·
+       ตัวเลือกที่ 4 ผิดเพราะ Rails escape ให้<strong>จนกว่าเราจะสั่งให้หยุด</strong> — <code>raw</code>/<code>html_safe</code> คือคำสั่งให้หยุด</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ค่าเริ่มต้นปลอดภัย · อันตรายเกิดเมื่อพิมพ์ <code>raw</code> หรือ <code>html_safe</code> เอง → ค้นสองคำนี้ก่อนเสมอ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ส่งข้อความ <code>&lt;a href="/posts" onclick="alert(1)"&gt;ร้านอื่น&lt;/a&gt;</code> เข้า <code>sanitize</code> แบบไม่ตั้งค่าอะไรเพิ่ม · ได้อะไรออกมา?</p>
+  <div class="opts">
+    <button class="opt">ข้อความเดิมทั้งก้อน เพราะแท็ก <code>&lt;a&gt;</code> อยู่ในรายชื่อที่อนุญาต</button>
+    <button class="opt">ลิงก์ยังอยู่พร้อม <code>href</code> แต่ <code>onclick</code> ถูกตัดทิ้ง</button>
+    <button class="opt">เหลือแค่ตัวหนังสือ "ร้านอื่น" เพราะลิงก์ทุกอันถูกถอดทิ้ง</button>
+    <button class="opt">ได้ error เพราะ sanitize ไม่รับข้อความที่มีโปรแกรมอยู่ข้างใน</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ผลจริงใน console: <code>"&lt;a href=\"/posts\"&gt;ร้านอื่น&lt;/a&gt;"</code> · รายชื่อที่อนุญาตมีทั้ง<strong>แท็ก</strong>และ<strong>ช่องในแท็ก</strong> (attribute) · <code>href</code> อยู่ในรายชื่อ <code>onclick</code> ไม่อยู่</p>
+    <p>ตัวเลือกที่ 1 ลืมว่าตรวจระดับช่องด้วย ไม่ใช่แค่ระดับแท็ก ·
+       ตัวเลือกที่ 3 คือสิ่งที่เกิดกับแท็กที่<strong>ไม่อยู่</strong>ในรายชื่อ เช่น <code>&lt;script&gt;</code> · <code>&lt;a&gt;</code> อยู่ในรายชื่อจึงรอด ·
+       ตัวเลือกที่ 4 — sanitize ไม่เคย error มันแค่ถอดของที่ไม่อนุญาตออกเงียบ ๆ</p>
+    <p><strong>จุดที่ต้องจำ:</strong> sanitize = เก็บเฉพาะของในรายชื่อ (allowlist) ถอดที่เหลือ · ใช้เมื่อต้องการ HTML จากผู้ใช้จริง ๆ เท่านั้น</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">partial นี้ (ดัดแปลงจาก Quiz A ข้อ 3 สไลด์หน้า 19) ถูก <code>render @posts</code> เรียกในหน้ารวม · ข้อไหนบอก<strong>ปัญหาสองข้อ</strong>ได้ถูก?
+<br><code>&lt;h2&gt;&lt;%= @post.title %&gt;&lt;/h2&gt;</code> · <code>&lt;small&gt;&lt;%= @post.category.name %&gt;&lt;/small&gt;</code></p>
+  <div class="opts">
+    <button class="opt">ใช้ <code>@post</code> แทนตัวแปร <code>post</code> ที่ยื่นมา · และเรียกหมวดในลูปทำให้เกิด N+1</button>
+    <button class="opt"><code>&lt;%= %&gt;</code> ไม่ escape ชื่อบทความ · และ <code>&lt;h2&gt;</code> ใช้ใน partial ไม่ได้</button>
+    <button class="opt">ใช้ <code>@post</code> ทำให้เกิด XSS · และ <code>category.name</code> ต้องใส่ <code>raw</code></button>
+    <button class="opt">partial ต้องชื่อขึ้นต้นด้วย <code>@</code> · และต้องแก้ N+1 ด้วยการ includes ใน partial</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — ① ในหน้ารวม controller วางแค่ <code>@posts</code> (มี s) บนถาด · <code>@post</code> ไม่มีใครวาง = <code>nil</code> → พัง (บท 123: แม่พิมพ์ควรใช้ของที่ยื่นใส่มือ ไม่ควานหาบนถาด) ·
+       ② <code>.category.name</code> ทุกรอบ = เดินไปตู้ทุกบทความ แก้ที่ controller ด้วย <code>includes(:category)</code></p>
+    <p>ตัวเลือกที่ 2 — <code>&lt;%= %&gt;</code> escape ให้เสมอ และ partial ใส่แท็กอะไรก็ได้ ·
+       ตัวเลือกที่ 3 — <code>@post</code> ไม่เกี่ยวกับ XSS และ <code>raw</code> คือตัวเปิดช่อง XSS ไม่ใช่ตัวแก้ ·
+       ตัวเลือกที่ 4 — partial ขึ้นต้นด้วย <code>_</code> ไม่ใช่ <code>@</code> · และ includes ต้องอยู่ที่ใบเบิกใน controller ไม่ใช่ใน view</p>
+    <p><strong>จุดที่ต้องจำ:</strong> partial ใช้ตัวแปรที่ยื่นมา (<code>post</code>) · เติมจุดใน partial แล้วไปเช็ค <code>includes</code> ที่ controller</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">หน้า <code>/posts</code> 30 บทความ log ขึ้น <code>(32 queries, 25 cached)</code> และมีบรรทัด <code>CACHE Category Load</code> เยอะมาก · เพื่อนบอก "cached ตั้ง 25 ตัว ไม่ได้ไปตู้จริง ปล่อยไว้ได้" · ข้อไหนตอบเพื่อนได้ถูก?</p>
+  <div class="opts">
+    <button class="opt">ถูกแล้ว ตัวที่ cached ไม่ได้ไปตู้จริง จึงไม่นับเป็น N+1 ไม่ต้องแก้</button>
+    <button class="opt">ต้องแก้ที่ <code>_post.html.erb</code> โดยลบชื่อหมวดออก เพราะ partial ห้ามเรียกลิ้นชักอื่น</button>
+    <button class="opt">ต้องปิด query cache ของ Rails ไม่งั้นตัวเลขใน log จะเชื่อไม่ได้</button>
+    <button class="opt">CACHE ช่วยแค่หมวดซ้ำในใบสั่งเดียว ควรเติม <code>includes(:category)</code> ที่ controller</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — ผลจริงหลังเติม <code>includes(:category)</code>: <code>(3 queries, 0 cached)</code> · ความจำ CACHE อยู่แค่ในใบสั่งเดียว และช่วยเฉพาะตอนหมวดซ้ำ · ถ้าหมวดไม่ซ้ำกันเลยก็เดินจริงทุกรอบ</p>
+    <p>ตัวเลือกที่ 1 — CACHE ไม่ได้แก้ N+1 แค่บังให้ดูเบาลงในข้อมูลชุดนี้ ·
+       ตัวเลือกที่ 2 — partial เรียกลิ้นชักอื่นได้ ปัญหาอยู่ที่ใบเบิกไม่ได้บอกล่วงหน้า แก้ที่ controller โดยไม่ต้องตัดข้อมูลที่ผู้ใช้อยากเห็น ·
+       ตัวเลือกที่ 3 — ตัวเลขใน log เชื่อได้ดีอยู่แล้ว (มันแยก cached ให้ดูด้วยซ้ำ) ปิด cache ไม่ได้แก้อะไร</p>
+    <p><strong>จุดที่ต้องจำ:</strong> เห็น <code>… Load</code> ซ้ำ ๆ ต่างกันแค่เลข (มี CACHE หรือไม่ก็ตาม) = N+1 → <code>includes</code> ที่ controller</p>
+  </div>
+</div>
+
+<div class="note">
+  <p><strong>🧹 ก่อนไปบทถัดไป:</strong> <code>git restore .</code> คืนทุกไฟล์ที่ทดลอง · <code>git status</code> ต้องไม่เหลือไฟล์ที่ถูกแก้ ·
+    ถ้ายังไม่ได้ลบบทความ XSS ให้ลบใน console ด้วย (ข้อมูลใน DB ไม่ถูก <code>git restore</code> คืนให้) · บทความต้องกลับมาเป็น 30 ชิ้น</p>
+</div>
+
+<h2 id="sn-sec-11">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>17</td><td>ตัวอย่างชื่อโพสต์ <code>&lt;script&gt;fetch('/evil?c='+document.cookie)&lt;/script&gt;</code></td><td>บทนี้ใช้ <code>alert('XSS!')</code> แทน · ผลเดียวกันคือ script ได้รันในเบราว์เซอร์คนอื่น</td><td>ไม่ต้อง — อย่าลองโค้ดขโมยข้อมูลกับเว็บจริง</td></tr>
+    <tr><td>17</td><td><code>&lt;%= sanitize post.body %&gt;</code></td><td>แอปของคอร์สไม่มีช่อง <code>body</code> มีแค่ <code>title</code> กับ <code>description</code> · พิมพ์ตามได้ <code>undefined method 'body' for an instance of Post</code></td><td><strong>สนใจ</strong> ถ้าพิมพ์ตาม — ใช้ <code>description</code></td></tr>
+    <tr><td>17</td><td>อันตรายเกิด "เมื่อพิมพ์ raw หรือ html_safe เท่านั้น"</td><td>ถ้าเพิ่ม <code>script</code> ลงรายชื่อของ <code>sanitize</code> เอง (<code>tags: %w[script]</code>) script ก็ผ่าน (ลองแล้ว)</td><td>สนใจนิดหนึ่ง — อย่าแก้ allowlist โดยไม่จำเป็น</td></tr>
+    <tr><td>18</td><td><code>Post.limit(20)</code> · "21 query → 2 query"</td><td>หน้า scaffold ของเรามี <code>@posts.any?</code> ถามเพิ่ม 1 · วัดจริงด้วย <code>limit(20)</code>: <code>22 queries, 15 cached</code> → <code>3 queries</code> · ไม่ใส่ limit (30 ชิ้น): 32 → 3</td><td>ไม่ต้อง — ทิศเดียวกัน ดูว่าเลขไม่โตตามข้อมูลก็พอ</td></tr>
+    <tr><td>18</td><td>"ใส่ gem bullet ไว้ตั้งแต่วันแรก"</td><td>repo ของคอร์สติดตั้งและเปิดไว้แล้วใน development (log + กล่องบนหน้าเว็บ) ไม่ต้อง <code>bundle add</code></td><td>ไม่ต้อง</td></tr>
+    <tr><td>19</td><td>ข้อ 3 มี <code>@post.description[0..80]</code></td><td>Ruby ตัดตาม<strong>ตัวอักษร</strong> ไม่ใช่ byte · ภาษาไทยไม่พัง (ลองแล้ว) แต่ตัดกลางคำ/ตัดวรรณยุกต์ทิ้งได้ · ตัดข้อความให้สวยใช้ helper ใน <a href="./0124-view-helpers-and-form-with.html">บท 124</a></td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0124-view-helpers-and-form-with.html">← บทเรียน 124 · helper · form_with</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="../reference/cheatsheet.html">📄 Cheat sheet Rails Day 3</a>
+  <a href="./0126-lab-vibe1-views.html">บทเรียน 126 → Lab Vibe 1</a>
+</nav>
+
+<h2 id="sn-sec-12">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/security.html#cross-site-scripting-xss">Rails Guides — Securing Rails Applications § Cross-Site Scripting (XSS)</a> —
+      <strong>อ่านถึงหัวข้อย่อย HTML/JavaScript Injection Countermeasures แล้วหยุด</strong> · ยืนยันว่า escape ตอนโชว์คือทางป้องกันหลัก</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionView/Helpers/OutputSafetyHelper.html#method-i-raw">Rails API — OutputSafetyHelper#raw</a> —
+      <strong>อ่านแค่ย่อหน้าเดียว</strong> ที่เตือนว่าไม่ควรใช้กับข้อมูลจากผู้ใช้</li>
+  <li><a href="https://api.rubyonrails.org/classes/String.html#method-i-html_safe">Rails API — String#html_safe</a> —
+      ยืนยันว่ามัน "ทำเครื่องหมายว่าเชื่อถือได้" ไม่ได้ทำความสะอาดอะไร · อ่านสั้น ๆ</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionView/Helpers/SanitizeHelper.html#method-i-sanitize">Rails API — SanitizeHelper#sanitize</a> —
+      <strong>อ่านกล่อง Warning</strong> เรื่องการเพิ่มแท็กลง allowlist และตัวอย่าง option <code>tags:</code> · <code>attributes:</code></li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/Security/Attacks/XSS">MDN — Cross-site scripting (XSS)</a> —
+      ภาพรวมฝั่งเบราว์เซอร์ · <strong>อ่านส่วนที่พูดถึง stored (persistent) XSS และ output encoding</strong> พอ</li>
+  <li><a href="https://guides.rubyonrails.org/active_record_querying.html#n-1-queries-problem">Rails Guides — Active Record Query Interface § N + 1 Queries Problem</a> —
+      ทวนบท 114 · <strong>อ่านต่อถึง Solution to N + 1 Queries Problem แล้วหยุด</strong></li>
+  <li><a href="https://github.com/flyerhzm/bullet">GitHub — flyerhzm/bullet</a> —
+      <strong>อ่านแค่ส่วน Configuration</strong> ดูความหมายของ <code>Bullet.rails_logger</code> กับ <code>Bullet.add_footer</code> ที่ repo ของคอร์สเปิดไว้</li>
+  <li><a href="https://guides.rubyonrails.org/caching_with_rails.html#sql-caching">Rails Guides — Caching with Rails § SQL Caching</a> —
+      ที่มาของบรรทัด <code>CACHE … Load</code> · <strong>อ่านแค่ย่อหน้าแรก</strong>: ความจำนี้อยู่แค่ช่วงหนึ่ง request</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>
