@@ -1,0 +1,1024 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 143 — idempotency, Active Job และ Solid Queue — job ที่รันซ้ำแล้วไม่พัง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 143 · Rails · Day 4 Part 1</p>
+  <h1>idempotency, Active Job และ Solid Queue — job ที่รันซ้ำแล้วไม่พัง</h1>
+  <p class="meta">~25 นาทีอ่าน + พิมพ์โค้ดตามอีก ~20 นาที · ควรผ่าน
+    <a href="./0142-background-jobs-exactly-once.html">บท 142</a> (job · exactly-once) ·
+    Day 2 <a href="../../rails-day-2/lessons/0109-safe-migrations.html">บท 109</a> (migration ปลอดภัย) ·
+    <a href="../../rails-day-2/lessons/0111-four-layers-and-uniqueness.html">บท 111</a> (ด่านของตู้ · unique index) ·
+    และ Go <a href="../../day-8/lessons/0036-rest-naming-idempotency.html">บท 36</a> มาก่อน</p>
+  <p class="standfirst">
+    บท 142 พิสูจน์ว่างานในคิว<strong>ถูกทำซ้ำได้เสมอ</strong> · บทนี้ตอบคำถามที่ค้างไว้ว่า "ถ้าซ้ำแล้ว จะไม่เป็นไรได้ยังไง" แล้วสร้างของจริงชิ้นแรกของบล็อก E:
+    บทความมีสถานะ <strong>ร่าง · ตั้งเวลา · เผยแพร่แล้ว</strong> · ปุ่ม "เผยแพร่ทันที" ที่ส่งงานเข้าคิวซึ่งเก็บใน<strong>ฐานข้อมูล</strong> (ปิดโปรแกรมแล้วไม่หาย) ·
+    และ <code>PublishPostJob</code> ที่รัน 3 ครั้งผลเท่ากับรันครั้งเดียว
+    <br>อ่านจบแล้วคุณจะ <strong>ดูออกว่า job ไหนรันซ้ำได้ job ไหนรันซ้ำแล้วพัง</strong> · เลือกใช้ 3 ท่าทำให้รันซ้ำได้ ·
+    ตั้ง Solid Queue ในฐานข้อมูลก้อนเดิมแล้วเปิด worker เป็น · และ<strong>พิสูจน์ด้วยการรัน</strong> ไม่ใช่ด้วยการอ่านโค้ด
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — บทนี้ใช้คำพวกนี้</p>
+  <ul>
+    <li><strong>at-least-once</strong> (<a href="./0142-background-jobs-exactly-once.html">บท 142</a>) — คิวที่ไม่ยอมให้งานหาย ต้องยอมให้งาน<strong>ซ้ำ</strong> (worker ทำเสร็จแต่ตายก่อนบอกคิว → คิวแจกใบงานเดิมอีกรอบ)</li>
+    <li><strong><code>perform_later</code> · worker · <code>async</code></strong> (บท 142) — แขวนใบงานแล้วกลับทันที · worker คือโปรแกรมที่หยิบใบงานไปทำ · <code>async</code> เก็บใบงานในหน่วยความจำ ปิดโปรแกรมแล้วหาย</li>
+    <li><strong>idempotency</strong> (Go <a href="../../day-8/lessons/0036-rest-naming-idempotency.html">บท 36</a>) — <code>PUT</code> ยิงซ้ำได้ผลเดิม · <code>POST</code> ยิงซ้ำได้ของเบิ้ล</li>
+    <li><strong>migration ปลอดภัย</strong> (<a href="../../rails-day-2/lessons/0109-safe-migrations.html">บท 109</a>) — <code>add_column</code> พร้อม <code>default</code> ไม่ต้องเขียนทุกแผ่น ·
+      index ใช้ <code>algorithm: :concurrently</code> คู่กับ <code>disable_ddl_transaction!</code> · <strong>strong_migrations</strong> ดักท่าอันตรายก่อนถึงตู้ · การเติมข้อมูลแถวเดิม (backfill) อยู่ใน rake task ไม่ใช่ใน migration</li>
+    <li><strong>ช่องว่างระหว่าง "ตรวจ" กับ "เก็บ"</strong> (<a href="../../rails-day-2/lessons/0111-four-layers-and-uniqueness.html">บท 111</a>) — สองโปรแกรมตรวจพร้อมกัน ผ่านทั้งคู่ แล้วเก็บซ้ำ · <strong>unique index</strong> ที่ตัวตู้คือด่านสุดท้ายที่กันได้จริง</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18 · solid_queue 1.7.0 (สไลด์และ repo ของอาจารย์เขียน Ruby 4.0.5–4.0.6 · Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน)
+    <br><strong>📍 โค้ดเริ่มจาก:</strong> ตอนจบ<a href="./0141-lab-vibe4-content.html">บท 141</a> (rich text + รูปปก + <code>prompts/04-content.md</code>) ที่ commit แล้ว — <code>git status --short</code> ต้องว่าง
+    (ถ้าบท 142 ยังเก็บกวาดไม่ครบ ทำภารกิจท้ายบท 142 ก่อน) · บทนี้<strong>เป็นโค้ดถาวร</strong> จบด้วย commit
+    <br><strong>🖥 เปิดค้างไว้:</strong> <code>docker compose up -d</code> (ฐานข้อมูล + MinIO) · <code>bin/dev</code> หนึ่งหน้าต่าง · อีกหน้าต่างไว้พิมพ์คำสั่ง · เบราว์เซอร์ที่ <code>localhost:3000</code> ·
+    <strong>worker ยังไม่ต้องเปิด</strong> — ขั้น 3 จะเพิ่มมันเข้า <code>bin/dev</code> แล้วบอกให้ปิดเปิดใหม่
+  </p>
+  <p>
+    ผลรันทุกกล่องมาจากเครื่องจริง · SQL ตัดคอมเมนต์ <code>/*application=…*/</code> ท้ายบรรทัดออก · บรรทัดที่ไม่เกี่ยวย่อเป็น <code>…</code> ·
+    <strong>เวลา · เลข ms · Job ID · เลข id ของบทความ · ตัวเลขในชื่อไฟล์ migration ของคุณจะต่าง</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">แผนที่บทนี้ — คิดก่อน แล้วสร้าง 5 ขั้น แล้วพิสูจน์</h2>
+
+<p>
+  เป้าหมายของบล็อก E คือ "ตั้งเวลาเผยแพร่บทความ แล้วให้ระบบเผยแพร่เอง" · บทนี้สร้าง<strong>ครึ่งแรก</strong>: สถานะของบทความ คิวที่ไม่หาย และ job ที่ทำการเผยแพร่ ·
+  ส่วน "ระบบมาตรวจทุกนาที" กับอีเมลถึงผู้ติดตามรออยู่<a href="./0144-retry-recurring-and-mail.html">บท 144</a>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ส่วน</th><th>เรื่อง</th></tr></thead>
+  <tbody>
+    <tr><td>① ความคิด</td><td>idempotent คืออะไร · 3 ท่าทำให้รันซ้ำได้ · Active Job กับ Solid Queue</td></tr>
+    <tr><td>② สร้าง</td><td>ขั้น 1 สถานะของบทความ · ขั้น 2 model + เติมข้อมูลเดิม · ขั้น 3 ติดตั้ง Solid Queue · ขั้น 4 <code>PublishPostJob</code> · ขั้น 5 ปุ่มและหน้าจอ</td></tr>
+    <tr><td>③ พิสูจน์</td><td>รัน job 3 ครั้งติด ผลต้องไม่เปลี่ยน · ปิด worker แล้วกดปุ่ม งานต้องรอในตาราง ไม่หาย</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-2">idempotent — ทำ 1 ครั้งกับทำ 10 ครั้ง ได้ผลเท่ากัน</h2>
+
+<p>
+  งานที่ <strong>idempotent</strong> คืองานที่ทำซ้ำกี่รอบ ผลสุดท้ายก็เหมือนทำรอบเดียว (สไลด์หน้า 19 ให้นิยามสั้น ๆ ว่า "ทำ 1 ครั้งกับทำ 10 ครั้ง ผลลัพธ์เหมือนกัน")
+</p>
+<p>
+  ทำไมต้องสน: บท 142 พิสูจน์แล้วว่าคิวที่ไม่ยอมให้งานหาย<strong>จะส่งงานซ้ำได้เสมอ</strong> · เราห้ามการซ้ำไม่ได้ ·
+  ทางเดียวที่เหลือคือเขียน job ให้ "ซ้ำแล้วไม่เป็นไร" — นี่คือประโยคข้อ ② ของวัน: <strong>exactly-once ไม่มีอยู่จริง ออกแบบให้ทำซ้ำได้แทน</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    ใบงาน "<strong>ตั้งป้ายหน้าร้านเป็น 'เปิด'</strong>" — พนักงานทำรอบเดียวหรือเผลอทำสามรอบ ป้ายก็ยังเป็น "เปิด" · ซ้ำได้ ไม่มีใครเดือดร้อน
+  </p>
+  <p>
+    ใบงาน "<strong>บวกยอดขายวันนี้อีก 100 บาท</strong>" — ทำรอบเดียว +100 · ทำซ้ำเป็น +200 +300 · ยอดในสมุดผิดทุกครั้งที่ซ้ำ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานในร้านเดินไปถึงป้ายแล้ว<strong>เห็นด้วยตา</strong>ว่าเปิดอยู่แล้ว เลยไม่พลิกซ้ำเอง ·
+    worker ไม่เห็นอะไรเลยนอกจากที่โค้ดสั่งให้ "ดู" — ถ้าเราไม่เขียนบรรทัดที่ตรวจสถานะก่อน มันจะทำตามใบงานตรง ๆ ทุกรอบ
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go</strong> (บท 36): <code>PUT /posts/1</code> ส่งข้อมูลทั้งก้อน "ให้บทความ 1 เป็นแบบนี้" ยิงซ้ำได้ผลเดิม ·
+  <code>POST /posts</code> "สร้างบทความใหม่" ยิงซ้ำได้บทความสองชิ้น · job ก็แบ่งได้แบบเดียวกัน: "<strong>ทำให้เป็น</strong>" ซ้ำได้ · "<strong>เพิ่มอีก</strong>" ซ้ำแล้วพัง
+</p>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>idempotent / idempotency</dt>
+    <dd>ทำซ้ำแล้วผลเท่าเดิม · ถาม senior ได้ว่า "job ตัวนี้ idempotent ไหมครับ ถ้า retry แล้วจะเกิดอะไร"</dd>
+    <dt>side effect (ผลข้างเคียง)</dt>
+    <dd>สิ่งที่งานไปเปลี่ยนโลกข้างนอก — เขียนลงตู้ · ส่งอีเมล · เรียกระบบอื่น · งานที่ไม่มี side effect ซ้ำได้เสมอ ปัญหาอยู่ที่งานที่มี</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">3 ท่าที่ใช้จริง — ทำให้ job รันซ้ำแล้วไม่พัง</h2>
+
+<p>สไลด์หน้า 19 สรุปไว้ 3 ท่า · เรียงจาก "ดีที่สุดถ้าทำได้" ไปจนถึง "ท่าสุดท้ายเมื่อไม่มีอะไรให้ดู":</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ท่า</th><th>ทำยังไง</th><th>เหมาะกับ</th></tr></thead>
+  <tbody>
+    <tr><td><strong>1 · ธรรมชาติของงาน</strong></td><td>เขียนงานเป็น "ตั้งค่าให้เป็น" หรือ "คำนวณใหม่จากของจริง" แทน "บวกเพิ่มจากค่าเดิม"</td><td>ดีที่สุด ถ้าออกแบบได้ — ไม่ต้องตรวจอะไรเลย</td></tr>
+    <tr><td><strong>2 · guard สถานะ</strong></td><td>ดูสถานะในตารางก่อน · ทำไปแล้วก็ไม่ทำ</td><td>งานที่มีสถานะให้ดู · สไลด์อ้างว่าใช้ได้ 90% ของงาน · <strong>บทนี้ใช้ท่านี้</strong></td></tr>
+    <tr><td><strong>3 · idempotency key + unique index</strong></td><td>ตั้งชื่อเฉพาะให้งานแต่ละชิ้น จดลงตาราง · ตู้ไม่ยอมให้ชื่อซ้ำ</td><td>งานที่ไม่มีสถานะให้ดู เช่น ส่งอีเมล · ใช้จริงใน<a href="./0144-retry-recurring-and-mail.html">บท 144</a></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ตัวอย่างสั้น ๆ ของแต่ละท่า — <strong>ยังไม่ต้องพิมพ์ เป็นตัวอย่างสมมติทั้งก้อน</strong> (คอลัมน์ <code>comments_count</code> · ตาราง <code>JobRun</code> · method <code>send_the_email</code> ยังไม่มีในแอป ตั้งชื่อขึ้นมาให้อ่านง่าย):</p>
+<pre><code><span class="c"># ท่า 1 — ซ้ำได้: นับใหม่จากของจริงทุกครั้ง (รันกี่รอบก็ได้เลขเท่าจำนวนความเห็นจริง)</span>
+post.<span class="f">update!</span>(<span class="n">comments_count:</span> post.comments.<span class="f">count</span>)
+<span class="c"># ท่า 1 — ซ้ำแล้วพัง: บวกเพิ่มจากค่าเดิม (รันสามรอบ = +3)</span>
+post.<span class="f">update!</span>(<span class="n">comments_count:</span> post.comments_count + <span class="n">1</span>)
+
+<span class="c"># ท่า 2 — guard: ดูสถานะก่อน ทำไปแล้วก็ออกเลย</span>
+<span class="k">return</span> <span class="k">if</span> post.<span class="f">published?</span>
+post.<span class="f">update!</span>(<span class="n">status:</span> <span class="n">:published</span>, <span class="n">published_at:</span> <span class="n">Time</span>.<span class="f">current</span>)
+
+<span class="c"># ท่า 3 — key: จดชื่อเฉพาะของงานลงตาราง ที่คอลัมน์ key มี unique index</span>
+key = <span class="s">"notify-#{post.id}-#{follower.id}"</span>
+<span class="n">JobRun</span>.<span class="f">create!</span>(<span class="n">key:</span> key)   <span class="c"># ชื่อนี้มีแล้ว → ตู้ปฏิเสธ (error) → ไม่ไปส่งซ้ำ</span>
+<span class="f">send_the_email</span></code></pre>
+<ul>
+  <li><strong>ท่า 1</strong> — คุณเจอมาแล้วโดยไม่รู้ตัว: <code>find_or_create_by!</code> ใน seeds (บท 120) "หาก่อน ไม่มีค่อยสร้าง" รันซ้ำแล้วไม่เบิ้ล</li>
+  <li><strong>ท่า 2</strong> — <code>return if …</code> คือ "ถ้า … ก็ออกจาก method เลย" · บรรทัดเดียวที่เปลี่ยน job ธรรมดาให้ซ้ำได้</li>
+  <li><strong>ท่า 3</strong> — ใช้เมื่อ<strong>งานไม่ทิ้งร่องรอยให้ดู</strong> · อีเมลส่งออกไปแล้วไม่มีช่องไหนในตาราง posts บอกได้ว่า "ส่งให้คนนี้แล้ว" จึงต้องสร้างตารางจดเอง ·
+    และต้องเป็น <strong>unique index</strong> (ด่าน ④ ของบท 111) ไม่ใช่แค่ <code>exists?</code> ในโค้ด เพราะสอง worker อาจตรวจพร้อมกันแล้วผ่านทั้งคู่ — ช่องว่างเดียวกับที่บท 111 เจอ</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    <strong>ท่า 2 = ดูป้ายก่อนทำ</strong> · ใบงาน "เปิดร้าน" เขียนกำกับว่า "ถ้าป้ายเป็น 'เปิด' อยู่แล้ว ไม่ต้องทำอะไร" · คนที่หยิบใบงานซ้ำมาเห็นป้ายก็วางใบงานลง
+  </p>
+  <p>
+    <strong>ท่า 3 = สมุดจดเลขใบงานที่ทำแล้ว</strong> · งาน "ส่งข้าวกล่องให้คุณสมชาย" ไม่มีป้ายให้ดู · ร้านเลยมีสมุดเล่มหนึ่ง ใครจะออกไปส่งต้องเขียนเลขใบงานลงสมุดก่อน
+    ถ้าเลขนี้มีอยู่แล้ว = มีคนส่งไปแล้ว ไม่ต้องไป
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> สมุดกระดาษ สองคนเขียนเลขเดียวกันพร้อมกันได้ (ต่างคนต่างเปิดดูแล้วไม่เห็น) ·
+    unique index ของตู้<strong>ไม่ยอมให้แผ่นที่สองเข้าลิ้นชักเลย</strong> — คนที่ช้ากว่าเสี้ยววินาทีได้ error กลับไป นี่คือเหตุที่ท่า 3 ต้องพึ่งตู้ ไม่ใช่โค้ด
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>guard (guard clause)</dt>
+    <dd>บรรทัดตรวจเงื่อนไขต้น method ที่ "ออกก่อน" ถ้าไม่ควรทำ · พิมพ์บอก AI ได้ว่า "add a state guard so the job is a no-op when the post is already published"</dd>
+    <dt>idempotency key</dt>
+    <dd>ชื่อเฉพาะของงานหนึ่งชิ้น ใช้ตรวจว่าเคยทำแล้วหรือยัง · คำเดียวกับหัว <code>Idempotency-Key</code> ที่ client ส่งมากับ <code>POST</code> ใน Go บท 36</dd>
+    <dt>unique constraint</dt>
+    <dd>กฎที่ตัวตู้ "ห้ามซ้ำ" (สร้างด้วย unique index) · ใน Rails ชนแล้วได้ <code>ActiveRecord::RecordNotUnique</code> · ถาม senior ได้ว่า "อันนี้กันซ้ำที่ DB หรือแค่ในโค้ดครับ"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">Active Job คือหน้ากาก · Solid Queue คือคิวที่อยู่ในตาราง Postgres</h2>
+
+<p>
+  <strong>Active Job</strong> คือชุดเครื่องมือเขียน job ที่มากับ Rails — <code>ApplicationJob</code> · <code>perform</code> · <code>perform_later</code> ที่ใช้ในบท 142 ทั้งหมดมาจากมัน ·
+  สไลด์หน้า 20 เรียกมันว่า "<strong>หน้ากาก</strong>": โค้ด job ของเราหน้าตาเหมือนเดิม ไม่ว่าข้างหลังจะเก็บใบงานไว้ที่ไหน
+</p>
+<p>
+  ตัวที่อยู่ข้างหลังคือ <strong>adapter</strong> (ตัวเสียบ — บท 142) · บท 142 ใช้ <code>async</code> (ใบงานอยู่ในหน่วยความจำ ปิดโปรแกรมแล้วหาย) ·
+  บทนี้เปลี่ยนเป็น <strong>Solid Queue</strong> = adapter ที่เก็บใบงานเป็น<strong>แถวในตาราง Postgres</strong> · เปลี่ยน adapter ด้วย config บรรทัดเดียว ไม่ต้องแก้ job
+</p>
+<p>
+  ทำไมเป็น Solid Queue: เป็น adapter ค่าเริ่มต้นของ Rails 8 (production ของเราตั้ง <code>:solid_queue</code> ไว้แล้ว) · ไม่ต้องติดตั้งโปรแกรมคิวเพิ่ม (เช่น Redis — บท 32 ของ Go) ·
+  แบบฐานข้อมูลก้อนเดียวที่เราจะตั้งในขั้น 3 สำรองข้อมูล (backup) ครั้งเดียวได้ทั้งข้อมูลและใบงานที่ค้าง · และ<strong>เปิดดูคิวด้วย SQL ได้</strong>
+</p>
+<p>
+  ที่แลกมา: สไลด์อ้างว่ารับงานต่อวินาทีได้น้อยกว่าคิวบน Redis แต่พอสำหรับงานส่วนใหญ่
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    <strong>Active Job = แบบฟอร์มใบงานมาตรฐานของร้าน</strong> · เชฟกรอกแบบเดียวกันเสมอ (ชื่องาน + เลขแฟ้ม) ·
+    <strong>adapter = ที่แขวนใบงาน</strong> — บท 142 คือโน้ตในกระเป๋าเสื้อเชฟ · บทนี้คือ<strong>ลิ้นชักหนึ่งในตู้แฟ้มเดิม</strong> ที่ร้านกันไว้เป็นกระดานแขวนใบงาน
+  </p>
+  <p>
+    ปิดครัว (ปิด server) แล้วตู้แฟ้มยังอยู่ · ใบงานในลิ้นชักก็ยังอยู่ · <strong>พนักงานหลังร้าน</strong> (โปรแกรม <code>bin/jobs</code>) มาถึงเมื่อไรก็หยิบไปทำต่อได้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงเห็นใบงานใหม่ทันทีที่แขวน · <code>bin/jobs</code> ต้อง<strong>คอยเปิดลิ้นชักดูเป็นรอบ ๆ</strong>
+    (ไฟล์ <code>config/queue.yml</code> ของเราตั้งไว้ทุก 1 วินาที) · และถ้าไม่มีพนักงานมาเลย ใบงานก็นอนในลิ้นชักเงียบ ๆ ไม่มีใครเตือน
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go</strong> (<a href="../../day-6/lessons/0026-worker-pool.html">บท 26</a> worker pool): channel <code>jobs</code> = คิว แต่อยู่ในหน่วยความจำของโปรแกรมเดียวกัน — ตรงกับ <code>async</code> ·
+  Solid Queue ย้าย "channel" ไปเป็นตารางในฐานข้อมูล worker จึงเป็นอีกโปรแกรมหนึ่ง และอยู่คนละเครื่องกับเว็บก็ได้
+</p>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>Active Job</dt>
+    <dd>ชั้นกลางของ Rails ที่ให้เขียน job แบบเดียวกันกับทุก adapter · คู่มือ Rails เขียนว่าเปลี่ยนไป Sidekiq หรือ Resque (โปรแกรมคิวยอดนิยมที่เก็บใบงานใน Redis) "requires only a configuration change"</dd>
+    <dt>Solid Queue</dt>
+    <dd>adapter ค่าเริ่มต้นของ Rails 8 ที่ใช้ฐานข้อมูลเป็นคิว · ถาม senior ได้ว่า "คิวเราอยู่ DB เดียวกับข้อมูลหรือแยกก้อนครับ"</dd>
+    <dt>bin/jobs</dt>
+    <dd>คำสั่งเปิด Solid Queue · มันเปิดโปรแกรมย่อย 3 ตัว: <strong>supervisor</strong> (หัวหน้าที่คอยดูว่าลูกทีมยังอยู่) · <strong>worker</strong> (หยิบใบงานไปทำ) · <strong>dispatcher</strong> (ย้ายใบงานที่ตั้งเวลาไว้มาให้ worker เมื่อถึงเวลา)</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">ขั้น 1 · บทความมีสถานะ — migration สองไฟล์</h2>
+
+<p>
+  ตอนนี้บทความทุกชิ้นโชว์ทันทีที่บันทึก · เราต้องการ 3 สถานะ: <strong>ร่าง</strong> (ยังไม่โชว์) · <strong>ตั้งเวลา</strong> (รอถึงเวลา) · <strong>เผยแพร่แล้ว</strong> ·
+  และเวลาอีกสองช่อง: <code>scheduled_at</code> = เวลาที่<strong>อยาก</strong>ให้ออก · <code>published_at</code> = เวลาที่ออก<strong>จริง</strong>
+</p>
+
+<p><strong>1.1</strong> สร้างไฟล์ migration (หน้าต่างที่สอง):</p>
+<pre><code>$ bin/rails generate migration AddPublishingToPosts status:string scheduled_at:datetime published_at:datetime
+      invoke  active_record
+      create    db/migrate/20261110034656_add_publishing_to_posts.rb</code></pre>
+<p>Rails เขียน <code>add_column</code> มาให้ 3 บรรทัด · เปิดไฟล์นั้นแล้ว<strong>แก้ทั้งไฟล์</strong>เป็น:</p>
+<pre><code><span class="k">class</span> <span class="n">AddPublishingToPosts</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="c"># expand: เพิ่มคอลัมน์อย่างเดียว ไม่ UPDATE แถวเดิมทีละแถว (Postgres 11+ เก็บ default ไว้ที่ตัวตาราง ไม่เขียนทับทุกแถว)</span>
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="c"># บทความเดิมทุกแถวถือว่าเผยแพร่แล้ว → ใส่ default "published" ตอนเพิ่มคอลัมน์</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:status</span>, <span class="n">:string</span>, <span class="n">null:</span> <span class="k">false</span>, <span class="n">default:</span> <span class="s">"published"</span>
+    <span class="c"># จากนี้ไปบทความใหม่เริ่มเป็นฉบับร่าง</span>
+    <span class="f">change_column_default</span> <span class="n">:posts</span>, <span class="n">:status</span>, <span class="n">from:</span> <span class="s">"published"</span>, <span class="n">to:</span> <span class="s">"draft"</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:scheduled_at</span>, <span class="n">:datetime</span>
+    <span class="c"># published_at ของบทความเดิม เติมด้วย rake task (bin/rails posts:backfill_published_at)</span>
+    <span class="f">add_column</span> <span class="n">:posts</span>, <span class="n">:published_at</span>, <span class="n">:datetime</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<ul>
+  <li><code>status, :string</code> — เก็บสถานะเป็น<strong>คำ</strong> (<code>"draft"</code>) ไม่ใช่ตัวเลข · เปิดตารางดูด้วย SQL แล้วอ่านรู้เรื่องทันที</li>
+  <li><code>null: false, default: "published"</code> — ห้ามว่าง · และแถวเดิม 30 แถว<strong>ได้ค่า "published" ทันที</strong> โดยไม่ต้องเขียนทีละแถว (บท 109: Postgres จดค่าเริ่มต้นไว้ที่ตัวตาราง)</li>
+  <li><code>change_column_default … from: "published", to: "draft"</code> — <strong>เปลี่ยนค่าเริ่มต้นทันทีหลังเพิ่ม</strong> · แถวเดิมยังเป็น published · แถวที่สร้างหลังจากนี้ได้ draft ·
+    ใส่ <code>from:</code> ไว้ให้ Rails รู้วิธีย้อนกลับ (rollback)</li>
+  <li>ทำไมไม่ตั้ง default เป็น <code>"draft"</code> แล้วเขียนงานเปลี่ยน "draft → published" ทีหลัง: งานนั้น<strong>รันซ้ำไม่ได้</strong> — รันอีกรอบวันหน้าจะไปเผยแพร่ร่างจริงของผู้ใช้ด้วย · ท่าสองจังหวะนี้ไม่มีงานแบบนั้นเลย</li>
+  <li><code>scheduled_at</code> · <code>published_at</code> — <code>:datetime</code> = วันที่ + เวลา · ว่างได้ (ร่างไม่มีเวลา)</li>
+</ul>
+
+<pre><code>$ bin/rails db:migrate
+== 20261110034656 AddPublishingToPosts: migrating =============================
+-- add_column(:posts, :status, :string, {null: false, default: "published"})
+   -&gt; 0.0013s
+-- change_column_default(:posts, :status, {from: "published", to: "draft"})
+   -&gt; 0.0020s
+-- add_column(:posts, :scheduled_at, :datetime)
+   -&gt; 0.0006s
+-- add_column(:posts, :published_at, :datetime)
+   -&gt; 0.0006s
+== 20261110034656 AddPublishingToPosts: migrated (0.0064s) ====================</code></pre>
+
+<p><strong>1.2</strong> index สองตัว — ไฟล์แยก เพราะต้องปิด transaction (บท 109):</p>
+<pre><code>$ bin/rails generate migration AddPublishingIndexesToPosts
+      invoke  active_record
+      create    db/migrate/20261110034707_add_publishing_indexes_to_posts.rb</code></pre>
+<p>แก้ทั้งไฟล์เป็น:</p>
+<pre><code><span class="k">class</span> <span class="n">AddPublishingIndexesToPosts</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="c"># concurrently = สร้าง index โดยไม่ล็อกการเขียนตาราง posts (ต้องอยู่นอก transaction)</span>
+  <span class="f">disable_ddl_transaction!</span>
+
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="c"># ตัวกวาดทุกนาทีค้น "ถึงเวลาแล้วหรือยัง" ด้วย scheduled_at</span>
+    <span class="f">add_index</span> <span class="n">:posts</span>, <span class="n">:scheduled_at</span>, <span class="n">algorithm:</span> <span class="n">:concurrently</span>
+    <span class="c"># หน้ารวมเรียงบทความตามเวลาเผยแพร่</span>
+    <span class="f">add_index</span> <span class="n">:posts</span>, <span class="n">:published_at</span>, <span class="n">algorithm:</span> <span class="n">:concurrently</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<ul>
+  <li>index ของ <code>scheduled_at</code> — บท 144 จะมีตัวกวาดที่ถามตู้ทุกนาทีว่า "ใครถึงเวลาแล้วบ้าง" · index = ป้ายแท็บข้างลิ้นชัก หาได้โดยไม่ต้องเปิดทุกแฟ้ม</li>
+  <li>index ของ <code>published_at</code> — หน้ารวมจะเปลี่ยนไปเรียงตามเวลาเผยแพร่ (ขั้น 2)</li>
+</ul>
+
+<div class="warn">
+  <p>ถ้าลืม <code>disable_ddl_transaction!</code> กับ <code>algorithm: :concurrently</code> strong_migrations จะหยุดไว้ก่อน (ผลจริง ตัดส่วนท้าย):</p>
+<pre><code>=== Dangerous operation detected #strong_migrations ===
+
+Adding an index non-concurrently blocks writes. Instead, use:</code></pre>
+</div>
+
+<pre><code>$ bin/rails db:migrate
+== 20261110034707 AddPublishingIndexesToPosts: migrating ======================
+-- add_index(:posts, :scheduled_at, {algorithm: :concurrently})
+   -&gt; 0.0025s
+-- add_index(:posts, :published_at, {algorithm: :concurrently})
+   -&gt; 0.0011s
+== 20261110034707 AddPublishingIndexesToPosts: migrated (0.0045s) =============</code></pre>
+
+<h2 id="sn-sec-6">ขั้น 2 · model รู้จักสถานะ และเติม published_at ให้บทความเดิม</h2>
+
+<p>
+  ตู้มีคอลัมน์แล้ว แต่ model ยังไม่รู้ว่า <code>status</code> มีได้แค่ 3 คำ · Rails มีเครื่องมือชื่อ <strong>enum</strong> (ย่อจาก enumeration = "รายการค่าที่เลือกได้")
+  ประกาศครั้งเดียว ได้ทั้งการตรวจค่า และคำถามสำเร็จรูปอย่าง <code>post.draft?</code> · <code>Post.published</code>
+</p>
+
+<p><strong>2.1</strong> เปิด <code>app/models/post.rb</code> · เพิ่มสามจุด · บรรทัดของเดิม (<code>has_one_attached</code> · <code>validates :title</code> · <code>validates :body</code> · <code>scope :recent</code>) ใส่ไว้ให้ดูตำแหน่ง ที่เหลือคือของใหม่:</p>
+<pre><code>  <span class="f">has_one_attached</span> <span class="n">:cover</span>
+
+  <span class="c"># สถานะเก็บเป็นคำ (string) อ่านใน SQL ได้ตรง ๆ · ได้ scope ฟรี: Post.draft / Post.scheduled / Post.published</span>
+  <span class="c"># validate: true = ส่งค่าแปลก ๆ มาจากฟอร์ม → ได้ error ในฟอร์ม ไม่ใช่หน้า error</span>
+  <span class="f">enum</span> <span class="n">:status</span>, { <span class="n">draft:</span> <span class="s">"draft"</span>, <span class="n">scheduled:</span> <span class="s">"scheduled"</span>, <span class="n">published:</span> <span class="s">"published"</span> }, <span class="n">validate:</span> <span class="k">true</span>
+
+  <span class="f">validates</span> <span class="n">:title</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">length:</span> { <span class="n">maximum:</span> <span class="n">120</span> }
+  <span class="f">validates</span> <span class="n">:body</span>, <span class="n">presence:</span> <span class="k">true</span>
+  <span class="f">validates</span> <span class="n">:scheduled_at</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">if:</span> <span class="n">:scheduled?</span>
+  <span class="c"># published ได้ทางเดียวคือ PublishPostJob (ตั้ง published_at ให้) · ฟอร์มส่ง status=published มาเองจะติดข้อนี้</span>
+  <span class="f">validates</span> <span class="n">:published_at</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">if:</span> <span class="n">:published?</span>
+  <span class="c"># ตรวจเฉพาะตอนแนบรูปใหม่ …   (บรรทัดเดิม)</span>
+  …
+  <span class="f">scope</span> <span class="n">:recent</span>, -&gt; { <span class="f">order</span>(<span class="n">created_at:</span> <span class="n">:desc</span>) }
+  <span class="c"># หน้ารวม: เฉพาะที่เผยแพร่แล้ว ใหม่สุดก่อน</span>
+  <span class="f">scope</span> <span class="n">:latest_published</span>, -&gt; { <span class="f">published</span>.<span class="f">order</span>(<span class="n">published_at:</span> <span class="n">:desc</span>) }</code></pre>
+<ul>
+  <li><code>enum :status, { draft: "draft", … }</code> — ชื่อในโค้ด (ซ้าย) กับคำที่เก็บในตู้ (ขวา) ตรงกัน · ได้ของฟรี: <code>post.scheduled?</code> (ถาม) · <code>Post.draft</code> (ค้นเฉพาะร่าง) ·
+    <code>Post.not_published</code> (ทุกอย่างที่ยังไม่เผยแพร่ — ขั้น 5 ใช้)</li>
+  <li><code>validate: true</code> — ค่าที่ไม่อยู่ในรายการกลายเป็นข้อความ error ในฟอร์ม · ไม่ใส่ = Rails โยน error ทั้งหน้า</li>
+  <li><code>validates :scheduled_at, presence: true, if: :scheduled?</code> — <strong>ถ้า</strong>เลือก "ตั้งเวลา" ต้องกรอกเวลาด้วย · <code>if:</code> = กฎนี้ใช้เฉพาะบางกรณี</li>
+  <li><code>validates :published_at, … if: :published?</code> — เผยแพร่แล้วต้องมีเวลาเผยแพร่ · ทำให้ฟอร์มแอบส่ง <code>status=published</code> มาเองไม่ได้ เพราะฟอร์มไม่มีช่อง published_at</li>
+  <li><code>scope :latest_published</code> — คำถามสำเร็จรูปของหน้ารวม แบบเดียวกับ <code>scope :recent</code> ที่สร้างในบท 126</li>
+</ul>
+<p>ลองถาม (ผลจริง หลังเพิ่ม enum):</p>
+<pre><code>$ bin/rails runner 'puts Post.not_published.to_sql; p Post.new.status'
+SELECT "posts".* FROM "posts" WHERE "posts"."status" != 'published'
+"draft"</code></pre>
+<p><code>!=</code> คือ "ไม่เท่ากับ" · บทความใหม่ได้ <code>"draft"</code> จากค่าเริ่มต้นของตู้ที่ตั้งในขั้น 1</p>
+
+<p><strong>2.2</strong> บทความเดิม 30 ชิ้นเป็น published แล้ว แต่ <code>published_at</code> ยังว่าง · เติมด้วย rake task (บท 109: การเติมข้อมูลไม่อยู่ในไฟล์ migration) ·
+  เปิด <code>lib/tasks/posts.rake</code> ที่มี task <code>backfill_body</code> จากบท 137 อยู่แล้ว · <strong>พิมพ์ต่อท้าย ก่อน <code>end</code> บรรทัดสุดท้าย</strong>:</p>
+<pre><code>
+  <span class="f">desc</span> <span class="s">"เติม published_at ให้บทความที่เผยแพร่แล้วแต่ยังไม่มีเวลาเผยแพร่ (ใช้เวลาที่สร้าง) — รันซ้ำได้"</span>
+  <span class="f">task</span> <span class="n">backfill_published_at:</span> <span class="n">:environment</span> <span class="k">do</span>
+    <span class="c"># เลือกเฉพาะแถวที่ยังว่าง → รันรอบสองไม่ทับของเดิม · ทีละ 1,000 แถว ไม่ล็อกทั้งตาราง</span>
+    <span class="n">Post</span>.<span class="f">published</span>.<span class="f">where</span>(<span class="n">published_at:</span> <span class="k">nil</span>).<span class="f">in_batches</span>(<span class="n">of:</span> <span class="n">1000</span>) <span class="k">do</span> |posts|
+      posts.<span class="f">update_all</span>(<span class="s">"published_at = created_at"</span>)
+    <span class="k">end</span>
+
+    <span class="f">puts</span> <span class="s">"เผยแพร่แล้ว #{Post.published.count} · ยังไม่มี published_at #{Post.published.where(published_at: nil).count}"</span>
+  <span class="k">end</span></code></pre>
+<ul>
+  <li><code>Post.published.where(published_at: nil)</code> — <strong>นี่คือท่า 2 (guard)</strong> ในรูปของคำค้น: เลือกเฉพาะแถวที่ยังไม่ได้ทำ</li>
+  <li><code>in_batches(of: 1000)</code> — แบ่งทีละ 1,000 แถว (บท 109) · <code>update_all("published_at = created_at")</code> — ให้ตู้ก็อปเวลาที่สร้างมาใส่เองในคำสั่งเดียว ไม่โหลดแฟ้มมาทีละแผ่น</li>
+</ul>
+<div class="warn">
+  <p>อย่าใช้ <code>bin/rails generate task posts …</code> — ไฟล์ <code>posts.rake</code> มีอยู่แล้ว generator จะถามว่าจะเขียนทับไหม · ตอบ Y แล้ว task <code>backfill_body</code> หายทั้งก้อน</p>
+</div>
+
+<div class="predict">
+  <p>รัน task นี้<strong>สองรอบติดกัน</strong>:</p>
+<pre><code>$ bin/rails posts:backfill_published_at
+$ bin/rails posts:backfill_published_at</code></pre>
+  <p class="ask">รอบที่สองจะพิมพ์ต่างจากรอบแรกไหม · และรอบที่สองไปแก้ published_at ของใครหรือเปล่า?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง:</p>
+<pre><code>$ bin/rails posts:backfill_published_at
+เผยแพร่แล้ว 30 · ยังไม่มี published_at 0
+$ bin/rails posts:backfill_published_at
+เผยแพร่แล้ว 30 · ยังไม่มี published_at 0</code></pre>
+    <ul>
+      <li>สองรอบพิมพ์เหมือนกัน · รอบแรกเติมครบ 30 · รอบสองคำค้น <code>where(published_at: nil)</code> ไม่เจอใครเลย จึงไม่แก้อะไร</li>
+      <li>งานที่เปลี่ยนข้อมูลจริงแต่<strong>รันซ้ำได้</strong> — task ชิ้นแรกของเราที่ idempotent แบบตั้งใจ · <code>posts:backfill_body</code> ของบท 137 ก็ใช้ท่าเดียวกัน (<code>where.missing</code>)</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-7">ขั้น 3 · ติดตั้ง Solid Queue ในฐานข้อมูลก้อนเดิม</h2>
+
+<p>
+  แอปที่สร้างด้วย Rails 8 มีไฟล์ของ Solid Queue ติดมาแล้ว: <code>config/queue.yml</code> (ตั้งค่า worker) · <code>bin/jobs</code> (คำสั่งเปิด worker) · <code>db/queue_schema.rb</code> (แบบของตารางคิว) ·
+  แต่ development ยังไม่ได้ใช้เลย
+</p>
+<p>
+  ส่วน <code>production.rb</code> มีบรรทัด <code>connects_to</code> ที่สั่งให้คิวไปอยู่ใน<strong>ฐานข้อมูลอีกก้อนหนึ่ง</strong> (ตู้แฟ้มใบที่สอง) ·
+  README ของ Solid Queue แนะนำแบบแยกก้อน แต่เราเลือก<strong>ก้อนเดียวกับข้อมูล</strong> เพราะ compose ของเรามี Postgres ก้อนเดียว ตั้งค่าน้อยกว่า
+</p>
+<p>
+  README มีหัวข้อ "Single database configuration" รองรับแบบก้อนเดียว 3 ข้อ: ① ก็อป <code>queue_schema.rb</code> เป็น migration · ② ลบ <code>connects_to</code> จาก production · ③ migrate
+</p>
+
+<p><strong>3.1</strong> สร้าง migration แล้วก็อปตารางมาใส่:</p>
+<pre><code>$ bin/rails generate migration CreateSolidQueueTables
+      invoke  active_record
+      create    db/migrate/20261110034727_create_solid_queue_tables.rb</code></pre>
+<ol>
+  <li>เปิด <code>db/queue_schema.rb</code> · ก็อป<strong>ทุกบรรทัดระหว่าง</strong> บรรทัดแรก <code>ActiveRecord::Schema[7.1].define(version: 1) do</code> กับ <code>end</code> บรรทัดสุดท้าย (ไม่เอาสองบรรทัดนั้น)</li>
+  <li>วางในไฟล์ migration ใหม่ ระหว่าง <code>def change</code> กับ <code>end</code> · เลือกที่วางทั้งก้อนแล้วกด Tab หนึ่งครั้งให้เยื้องเข้าอีก 2 ช่อง (บรรทัดว่างไม่ต้องมีช่องว่าง)</li>
+  <li><code>bin/rails db:migrate</code></li>
+</ol>
+<p>พังทันที — strong_migrations ไม่ยอม (ผลจริง ตัดส่วนท้าย):</p>
+<pre><code>=== Dangerous operation detected #strong_migrations ===
+
+The force option will destroy existing tables.
+If this is intended, drop the existing table first.
+In any case, remove the force option.</code></pre>
+<p>
+  ทุก <code>create_table</code> ใน queue_schema.rb มี <code>force: :cascade</code> ต่อท้าย = "ถ้ามีตารางชื่อนี้อยู่แล้ว ลบทิ้งแล้วสร้างใหม่" — ไฟล์ schema ใช้ได้ แต่ใน migration อันตราย ·
+  ใช้ค้นหาและแทนที่ของ editor ลบข้อความ <code>, force: :cascade</code> ออกทั้ง 13 จุด แล้ว migrate อีกรอบ — พังอีกข้อ:
+</p>
+<pre><code>=== Dangerous operation detected #strong_migrations ===
+
+Adding a foreign key blocks writes on both tables. Instead,
+add the foreign key without validating existing rows,
+then validate them in a separate migration.</code></pre>
+<p>(ไม่ต้องกลัวว่าพังกลางทางแล้วตารางสร้างไปครึ่งเดียว · migration ทั้งไฟล์อยู่ใน transaction เดียว พังแล้ว Postgres ย้อนทั้งหมดให้ (บท 109) · แก้ไฟล์แล้ว migrate ใหม่ได้เลย)</p>
+<p>
+  foreign key (เลขอ้างถึงแฟ้มอื่นต้องมีจริง — บท 111) ตอนเพิ่มต้องตรวจทุกแถวเดิม ระหว่างนั้นห้ามเขียน · strong_migrations อ่านแค่คำสั่ง <strong>ไม่รู้ว่าตารางเพิ่งสร้างในไฟล์เดียวกันและยังว่าง</strong> ·
+  เราบอกมันว่า "รู้แล้ว ปลอดภัย" ด้วย <code>safety_assured do … end</code> (คำสั่งของ strong_migrations) · หัวกับท้ายไฟล์สุดท้ายเป็นแบบนี้:
+</p>
+<pre><code><span class="c"># ตารางของ Solid Queue — ก็อปจาก db/queue_schema.rb (README ของ solid_queue หัวข้อ "Single database configuration")</span>
+<span class="c"># คิวอยู่ใน DB เดียวกับข้อมูล → ตั้งค่าน้อยลง · backup ก้อนเดียวได้ทั้งข้อมูลและงานที่ค้างในคิว</span>
+<span class="c"># แก้จากของเดิม 2 จุด: ลบ force: :cascade (strong_migrations ห้าม) · ครอบ add_foreign_key ด้วย safety_assured</span>
+<span class="k">class</span> <span class="n">CreateSolidQueueTables</span> &lt; <span class="n">ActiveRecord::Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">create_table</span> <span class="s">"solid_queue_blocked_executions"</span> <span class="k">do</span> |t|
+      t.<span class="f">bigint</span> <span class="s">"job_id"</span>, <span class="n">null:</span> <span class="k">false</span>
+      …   <span class="c">(ตาราง 13 ตารางจาก queue_schema.rb ไม่แก้อย่างอื่น)</span>
+    <span class="k">end</span>
+
+    <span class="c"># ตารางเพิ่งสร้างใน migration นี้ ยังไม่มีแถว → ตรวจ foreign key ไม่ล็อกนาน</span>
+    <span class="f">safety_assured</span> <span class="k">do</span>
+      <span class="f">add_foreign_key</span> <span class="s">"solid_queue_batch_executions"</span>, <span class="s">"solid_queue_batches"</span>, <span class="n">column:</span> <span class="s">"batch_id"</span>, <span class="n">on_delete:</span> <span class="n">:cascade</span>
+      …   <span class="c">(add_foreign_key อีก 7 บรรทัดเดิม เยื้องเข้าอีก 2 ช่อง)</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<pre><code>$ bin/rails db:migrate
+== 20261110034727 CreateSolidQueueTables: migrating ===========================
+-- create_table("solid_queue_blocked_executions")
+   …
+== 20261110034727 CreateSolidQueueTables: migrated (0.0483s) ==================
+$ rm db/queue_schema.rb</code></pre>
+<p>ลบ <code>queue_schema.rb</code> ตามข้อ 1 ของ README (ตารางย้ายไปอยู่ใน migration แล้ว) · แล้วเปิดดูตารางที่ได้ด้วยคำสั่งข้างล่าง — แยกเป็นท่อนได้แบบนี้:</p>
+<ul>
+  <li><code>docker compose exec postgres</code> = สั่งโปรแกรม<strong>ในกล่อง postgres</strong> ที่ compose เปิดไว้ (เครื่องเราไม่ต้องติดตั้ง psql เอง)</li>
+  <li><code>psql</code> = โปรแกรมพิมพ์ SQL ของ Postgres (บท 104) · <code>-U postgres</code> = ล็อกอินเป็นผู้ใช้ postgres · <code>-d …</code> = ชื่อฐานข้อมูล · <code>-c '…'</code> = คำสั่งที่จะรันแล้วออกเลย</li>
+  <li><code>\dt solid_queue*</code> = คำสั่งพิเศษของ psql "แสดงรายชื่อตาราง (table) ที่ชื่อขึ้นต้นด้วย solid_queue"</li>
+</ul>
+<pre><code>$ docker compose exec postgres psql -U postgres -d wongnok_blog_all_in_one_development -c '\dt solid_queue*'
+                        List of tables
+ Schema |               Name               | Type  |  Owner
+--------+----------------------------------+-------+----------
+ public | solid_queue_batch_executions     | table | postgres
+ public | solid_queue_batches              | table | postgres
+ public | solid_queue_blocked_executions   | table | postgres
+ public | solid_queue_claimed_executions   | table | postgres
+ public | solid_queue_failed_executions    | table | postgres
+ public | solid_queue_jobs                 | table | postgres
+ public | solid_queue_pauses               | table | postgres
+ public | solid_queue_processes            | table | postgres
+ public | solid_queue_ready_executions     | table | postgres
+ public | solid_queue_recurring_executions | table | postgres
+ public | solid_queue_recurring_tasks      | table | postgres
+ public | solid_queue_scheduled_executions | table | postgres
+ public | solid_queue_semaphores           | table | postgres
+(13 rows)</code></pre>
+<p>13 ตาราง แต่บทนี้ใช้แค่ 3 — ที่เหลือเป็นของงานตั้งเวลา งานพัง และงานกลุ่ม (บท 144 เปิดดูบางตัว):</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ตาราง</th><th>เก็บอะไร</th><th>ในร้านอาหาร</th></tr></thead>
+  <tbody>
+    <tr><td><code>solid_queue_jobs</code></td><td>ใบงานทุกใบ (ชื่อ job · argument · ทำเสร็จเมื่อไร)</td><td>สำเนาใบงานทุกใบ · ทำเสร็จแล้วประทับเวลาไว้</td></tr>
+    <tr><td><code>solid_queue_ready_executions</code></td><td>ใบงานที่พร้อมทำ รอ worker หยิบ</td><td>ใบงานที่ยังแขวนบนกระดาน</td></tr>
+    <tr><td><code>solid_queue_processes</code></td><td>โปรแกรมของ Solid Queue ที่กำลังทำงาน</td><td>รายชื่อพนักงานหลังร้านที่เข้ากะอยู่</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>3.2</strong> ตั้งค่า 4 ไฟล์</p>
+<p><code>config/environments/development.rb</code> — เพิ่มก่อนบรรทัด <code># Don't care if the mailer can't send.</code>:</p>
+<pre><code>  <span class="c"># งานเบื้องหลังเข้าคิว Solid Queue: ตาราง solid_queue_* อยู่ใน DB เดียวกับข้อมูล (ไม่ต้องตั้ง connects_to)</span>
+  <span class="c"># ต้องเปิด bin/jobs (อยู่ใน Procfile.dev แล้ว) ไม่งั้นงานนอนรอในตารางเฉย ๆ</span>
+  config.active_job.<span class="f">queue_adapter</span> = <span class="n">:solid_queue</span>
+</code></pre>
+<p><code>config/environments/production.rb</code> — <strong>ลบ</strong>บรรทัดนี้ (ข้อ 2 ของ README · production ของเราก็ใช้ฐานข้อมูลก้อนเดียว):</p>
+<pre><code>  config.solid_queue.<span class="f">connects_to</span> = { <span class="n">database:</span> { <span class="n">writing:</span> <span class="n">:queue</span> } }</code></pre>
+<p><code>config/database.yml</code> — ในก้อน <code>default:</code> ใต้บรรทัด <code>password:</code>:</p>
+<pre><code>  <span class="c"># macOS: libpq ลองเข้ารหัสแบบ GSSAPI (Kerberos) ก่อน แล้วพังใน process ที่ fork มา</span>
+  <span class="c"># (bin/jobs fork worker ออกมา) → Segmentation fault ใน PG::Connection#connect_start</span>
+  <span class="c"># เราล็อกอินด้วยรหัสผ่าน ไม่ได้ใช้ Kerberos → ปิดไปเลย</span>
+  <span class="n">gssencmode:</span> disable</code></pre>
+<div class="warn">
+  <p>
+    บรรทัด <code>gssencmode: disable</code> ไม่ได้มาจากสไลด์ · บน Mac ที่ใช้ตรวจ ถ้าไม่มีมัน <code>bin/jobs</code> พังวนไม่หยุด (ผลจริง: 8 วินาทีขึ้น <code>[BUG] Segmentation fault</code> 16 ครั้ง):
+  </p>
+<pre><code>…/gems/pg-1.7.0-arm64-darwin/lib/pg/connection.rb:1033: [BUG] Segmentation fault at 0x0000000124a2093d
+ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [arm64-darwin25]</code></pre>
+  <p>
+    ภาษาคน: <code>Segmentation fault</code> = โปรแกรมตายกะทันหัน · ตัวที่ Ruby ใช้ต่อ Postgres (ชื่อ libpq) จะลอง "เข้ารหัสแบบ Kerberos" (ระบบล็อกอินขององค์กรใหญ่) ก่อนทุกครั้ง
+    แล้วพังในโปรแกรมที่ถูก<strong>แตกตัว</strong> (fork = ก็อปตัวเองเป็นโปรแกรมลูก — <code>bin/jobs</code> ทำแบบนี้ตอนเปิด worker)
+  </p>
+  <p>
+    เราล็อกอินด้วยรหัสผ่าน ไม่ได้ใช้ Kerberos จึงปิดทิ้งได้ · <code>bin/rails server</code> ไม่ fork เลยไม่เจอ · Linux/Windows อาจไม่เจอ แต่ใส่ไว้ไม่เสียหาย
+  </p>
+</div>
+<p><code>Procfile.dev</code> — เพิ่มบรรทัดที่สาม ให้ <code>bin/dev</code> เปิด worker ให้ด้วย:</p>
+<pre><code>web: bin/rails server
+css: bin/rails tailwindcss:watch
+jobs: bin/jobs</code></pre>
+<p>
+  คำหน้า <code>:</code> เป็นแค่ป้ายชื่อใน log ของ <code>bin/dev</code> (สไลด์เขียน <code>worker:</code> ก็ทำงานเหมือนกัน) ·
+  ⚠️ <code>bin/jobs</code> <strong>ไม่พิมพ์อะไรออกจอ</strong> — log ของ job ไปอยู่ใน <code>log/development.log</code> · ใน <code>bin/dev</code> จะไม่เห็นบรรทัด <code>jobs.1 |</code> ตอนทำงานปกติ ไม่ใช่อาการพัง
+</p>
+<p><strong>3.3</strong> ปิด <code>bin/dev</code> (Ctrl+C) แล้วเปิดใหม่ ให้มันอ่าน <code>Procfile.dev</code> ใหม่ · ถามแอปว่าตอนนี้ใช้ adapter อะไร (บท 142 ได้ <code>"async"</code>):</p>
+<pre><code>$ bin/rails runner 'p ActiveJob::Base.queue_adapter_name'
+"solid_queue"</code></pre>
+
+<h2 id="sn-sec-8">ขั้น 4 · PublishPostJob ทีละบรรทัด</h2>
+
+<pre><code>$ bin/rails generate job PublishPost
+      invoke  test_unit
+      create    test/jobs/publish_post_job_test.rb
+      create  app/jobs/publish_post_job.rb</code></pre>
+<p>ไฟล์ test ปล่อยไว้ตามที่ generator สร้าง (เรื่อง test อยู่ใน Part 2 ของสไลด์) · เปิด <code>app/jobs/publish_post_job.rb</code> แก้ทั้งไฟล์เป็น:</p>
+<pre><code><span class="c"># เผยแพร่บทความที่ตั้งเวลาไว้ เมื่อถึงเวลาแล้ว</span>
+<span class="c"># ห้ามสมมติว่ารันครั้งเดียว: กดปุ่มซ้ำ · retry · สอง worker หยิบงานพร้อมกัน → รันกี่รอบผลต้องเหมือนรอบเดียว</span>
+<span class="k">class</span> <span class="n">PublishPostJob</span> &lt; <span class="n">ApplicationJob</span>
+  <span class="f">queue_as</span> <span class="n">:default</span>
+
+  <span class="c"># รับแค่ id แล้วโหลดสดจาก DB: ได้สถานะ/เวลาล่าสุดเสมอ (ไม่ใช่ค่าเก่าตอนเข้าคิว)</span>
+  <span class="k">def</span> <span class="f">perform</span>(post_id)
+    post = <span class="n">Post</span>.<span class="f">find</span>(post_id)
+
+    <span class="c"># with_lock = SELECT ... FOR UPDATE แล้วโหลดแถวใหม่: worker ตัวที่สองต้องรอตัวแรกเสร็จก่อน</span>
+    <span class="c"># แล้วเห็นว่า published ไปแล้ว → ไม่ทำซ้ำ</span>
+    post.<span class="f">with_lock</span> <span class="k">do</span>
+      <span class="c"># guard สถานะ: เผยแพร่แล้ว เป็นฉบับร่าง หรือยังไม่ถึงเวลา (ผู้ใช้เลื่อนเวลาออกไป) → ไม่ทำอะไร</span>
+      <span class="k">if</span> post.<span class="f">scheduled?</span> &amp;&amp; post.scheduled_at &lt;= <span class="n">Time</span>.<span class="f">current</span>
+        post.<span class="f">update!</span>(<span class="n">status:</span> <span class="n">:published</span>, <span class="n">published_at:</span> <span class="n">Time</span>.<span class="f">current</span>)
+      <span class="k">end</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<ul>
+  <li><code>queue_as :default</code> — generator ใส่มาให้ = แขวนใบงานไว้ที่กระดานชื่อ <code>default</code> · worker ของเราฟังทุกกระดานอยู่แล้ว (<code>queues: "*"</code> ใน <code>config/queue.yml</code>) ไม่ต้องแก้</li>
+  <li><code>def perform(post_id)</code> + <code>Post.find(post_id)</code> — ใบงานจด<strong>แค่เลข id</strong> · worker ไปหยิบแฟ้มจากตู้เองตอนจะทำ · ได้ของ<strong>ล่าสุด</strong>เสมอ:
+    ถ้าผู้ใช้เปลี่ยนใจกลับเป็นร่างหลังกดปุ่ม job จะเห็นว่าเป็นร่างแล้ว ·
+    ถ้าจดสถานะลงใบงานไปด้วย worker จะทำตามข้อมูลเก่าตอนแขวน</li>
+  <li><code>if post.scheduled? &amp;&amp; post.scheduled_at &lt;= Time.current</code> — <strong>guard (ท่า 2)</strong> · <code>&amp;&amp;</code> = "และ" ·
+    <code>Time.current</code> = เวลาตอนนี้ตามโซนเวลาของแอป (ใน Rails ใช้ตัวนี้แทน <code>Time.now</code>) · <code>&lt;=</code> = "น้อยกว่าหรือเท่ากับ" คือเวลาที่ตั้งไว้มาถึงหรือเลยมาแล้ว ·
+    รวมกันได้ว่า ทำเฉพาะเมื่อ "ตั้งเวลาไว้ <strong>และ</strong> ถึงเวลาแล้ว" ·
+    กันได้ 3 กรณี: เผยแพร่ไปแล้ว (ใบงานซ้ำ) · เป็นร่าง · ผู้ใช้เลื่อนเวลาออกไปหลังแขวนใบงาน (สไลด์เขียนแค่ <code>return if post.published?</code> ซึ่งกันได้กรณีแรกกรณีเดียว)</li>
+  <li><code>post.update!(status: :published, published_at: Time.current)</code> — ที่เดียวในแอปที่ตั้ง <code>published_at</code> · <code>!</code> = บันทึกไม่ผ่านให้พังดัง ๆ (job พังแล้วบท 144 จะสอนให้ลองใหม่)</li>
+  <li><code>post.with_lock do … end</code> — ดูหัวข้อถัดไป</li>
+</ul>
+
+<div class="predict">
+  <p>
+    ถ้า<strong>เอา <code>if</code> ออก</strong> (และ <code>with_lock</code> ด้วย) เหลือ <code>post.update!(status: :published, published_at: Time.current)</code> บรรทัดเดียว ·
+    แล้วรันกับบทความที่ตั้งเวลาไว้ 3 รอบห่างกัน 1 วินาที · และรันกับบทความที่เป็นร่าง
+  </p>
+  <p class="ask">status ได้อะไร · published_at สามรอบเท่ากันไหม · ร่างกลายเป็นอะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง (ผมแก้ไฟล์ชั่วคราวแล้วรันผ่าน <code>bin/rails runner</code> · แล้วคืนไฟล์เดิม — คุณไม่ต้องทำตาม):</p>
+<pre><code>รอบ 1: published 10:49:44.136
+รอบ 2: published 10:49:45.153
+รอบ 3: published 10:49:46.175
+ร่าง → published</code></pre>
+    <ul>
+      <li>status เป็น published ทุกรอบ — ดูเผิน ๆ เหมือน idempotent</li>
+      <li>แต่ <strong>published_at ขยับทุกรอบ</strong> — "เวลาเผยแพร่" ของบทความเปลี่ยนไปเรื่อย ๆ ทั้งที่ออกไปตั้งแต่รอบแรก · ถ้า job นี้ส่งอีเมลด้วย = อีเมล 3 ฉบับ</li>
+      <li><strong>ร่างถูกเผยแพร่</strong> — ใบงานค้างจากตอนที่ผู้ใช้ยังกดเผยแพร่อยู่ ไปเผยแพร่ของที่ผู้ใช้ถอนกลับแล้ว</li>
+      <li>ใส่ <code>if</code> กลับแล้วรันแบบเดียวกัน: <code>รอบ 1–3: published 10:49:53.755</code> (เท่ากันทุกรอบ) · <code>ร่าง → draft</code> · ตั้งเวลาอีก 1 ชั่วโมง → <code>scheduled</code></li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">with_lock — สอง worker หยิบใบงานซ้ำพร้อมกัน</h2>
+
+<p>
+  guard มีช่องโหว่แบบเดียวกับบท 111: ถ้าสอง worker ถือใบงานเดียวกัน<strong>ในเวลาเดียวกัน</strong> ทั้งคู่ตรวจแล้วเห็นว่า "ยัง scheduled" ทั้งคู่ แล้วเผยแพร่ทั้งคู่ ·
+  เกิดได้จริงเมื่อมีใบงานซ้ำในคิว (กดปุ่มสองที · retry = ลองทำใหม่หลังพัง) และ worker ทำหลายใบพร้อมกัน
+  (ของเราตั้งไว้ 3 ใบพร้อมกัน — <code>threads: 3</code> ใน <code>config/queue.yml</code> · thread ≈ goroutine ของ Go)
+</p>
+<p>
+  <code>with_lock</code> คือการ<strong>ล็อกแถว</strong>: เปิด transaction (บท 111) แล้วขอแฟ้มแผ่นนี้แบบ "ห้ามคนอื่นแก้จนกว่าฉันจะเสร็จ" (SQL: <code>SELECT … FOR UPDATE</code>) พร้อมโหลดค่าล่าสุดมาใหม่ ·
+  ล็อกปล่อยตอน <code>COMMIT</code> (จบ transaction) · worker ตัวที่สองต้องรอจนถึงตอนนั้น · พอได้แฟ้มก็เห็นว่า published แล้ว guard จึงไม่ทำอะไร
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    พนักงานสองคนถือใบงาน "เปิดร้าน" ใบเดียวกันมาพร้อมกัน · ไม่มีล็อก = ทั้งคู่เหลือบมองป้ายพร้อมกัน เห็นว่า "ปิด" ทั้งคู่ แล้วเดินไปพลิกทั้งคู่ ·
+    มี <code>with_lock</code> = คนแรก<strong>หยิบแฟ้มของร้านออกจากตู้ไปวางบนโต๊ะตัวเอง</strong> · คนที่สองยืนรอหน้าตู้ · คนแรกพลิกป้าย จดลงแฟ้ม เก็บเข้าตู้ ·
+    คนที่สองได้แฟ้มแล้วอ่านเจอว่า "เปิดแล้ว" → วางใบงานลง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ล็อกนี้กันได้เฉพาะ<strong>การแก้แฟ้มแผ่นนั้น</strong> · ถ้างานมี side effect นอกตู้ (ส่งอีเมล) ตู้ไม่รู้เรื่อง ·
+    งานแบบนั้นต้องจดลงตารางที่มี unique index ด้วย (ท่า 3 — บท 144) · และระหว่างรอ คนที่สองยืนเฉย ๆ ทำอย่างอื่นไม่ได้ จึงต้องทำงานในล็อกให้สั้นที่สุด
+  </p>
+</div>
+
+<p>วัดจริง (สคริปต์เปิด 2 thread ยิง <code>perform_now</code> ใส่บทความเดียวกันพร้อมกัน 5 รอบ แล้วนับคำสั่ง <code>UPDATE "posts"</code> — ผลจริง):</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>job</th><th>จำนวน UPDATE ใน 5 รอบ</th><th>แปลว่า</th></tr></thead>
+  <tbody>
+    <tr><td>guard + <code>with_lock</code> (ไฟล์จริง)</td><td><code>[1, 1, 1, 1, 1]</code></td><td>ทุกรอบเผยแพร่ครั้งเดียว</td></tr>
+    <tr><td>guard อย่างเดียว ไม่มี <code>with_lock</code></td><td><code>[1, 2, 2, 2, 2]</code></td><td>4 ใน 5 รอบ เผยแพร่ซ้ำ</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  ทำไมบทนี้ยังไม่ใช้ท่า 3 (unique index): job นี้เปลี่ยนแค่สถานะของแฟ้มแผ่นเดียว ซึ่ง guard + ล็อกแถวกันได้ครบ (ตารางบน) ·
+  ของที่ซ้ำแล้วเสียหายจริงคือ<strong>อีเมล</strong> — บท 144 สร้างตาราง <code>post_notifications</code> ที่มี unique index คู่ <code>(post_id, follower_id)</code> = "บทความนี้ส่งให้คนนี้ได้ครั้งเดียว"
+</p>
+
+<div class="warn">
+  <p>
+    job รันใน worker ซึ่งเป็น<strong>อีกโปรแกรม</strong> ไม่มี request ไม่มีผู้ใช้ที่กดปุ่ม · ของที่ job ต้องรู้ต้อง<strong>อยู่บนใบงาน</strong> (argument) เท่านั้น ·
+    Part 2 จะมี <code>Current</code> (ที่เก็บ "ใครล็อกอินอยู่" ระหว่าง request) · ห้ามหยิบมันใช้ใน job — ค่าของ request ไม่ตามไปถึง worker
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>race condition</dt>
+    <dd>ผลลัพธ์ขึ้นกับว่าใครทำก่อนเสี้ยววินาที · ตรวจผ่านพร้อมกันทั้งคู่แล้วทำซ้ำ · ถาม senior ได้ว่า "ถ้าสอง worker หยิบใบงานนี้พร้อมกันจะเกิด race ไหมครับ"</dd>
+    <dt>row lock / <code>SELECT … FOR UPDATE</code> / pessimistic locking</dt>
+    <dd>ล็อกแถวไว้ระหว่างแก้ คนอื่นที่จะแก้แถวเดียวกันต้องรอ · Rails เรียกท่านี้ว่า pessimistic (มองโลกแง่ร้าย: "ต้องมีคนแย่งแน่ ล็อกก่อน") · method คือ <code>with_lock</code> / <code>lock!</code></dd>
+    <dt>argument ของ job</dt>
+    <dd>ของที่จดบนใบงาน · กฎในสไลด์หน้า 21: ส่ง id อย่าส่งก้อนข้อมูลใหญ่ ไฟล์ หรือของที่หมดอายุได้ (signed URL · token) · พิมพ์บอก AI ได้ว่า "pass only the record id to the job and reload it inside perform"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-10">ขั้น 5 · ปุ่ม "เผยแพร่ทันที" และหน้าจอ</h2>
+
+<p>
+  job มีแล้ว แต่ยังไม่มีอะไรส่งงานเข้าคิว · ขั้นนี้เพิ่มปุ่มในหน้าบทความที่ยังไม่เผยแพร่ · และให้หน้ารวมโชว์เฉพาะที่เผยแพร่แล้ว ·
+  โค้ดเยอะแต่ไม่มีแนวคิดใหม่ — เป็นของ Day 2–3 ทั้งหมด
+</p>
+
+<p><strong>5.1</strong> <code>config/routes.rb</code> — เพิ่มในบล็อก <code>resources :posts do</code> (เหนือบรรทัด comments):</p>
+<pre><code>  <span class="f">resources</span> <span class="n">:posts</span> <span class="k">do</span>
+    <span class="c"># ปุ่ม "เผยแพร่ทันที": POST /posts/:id/publish → posts#publish</span>
+    <span class="f">post</span> <span class="n">:publish</span>, <span class="n">on:</span> <span class="n">:member</span>
+    <span class="f">resources</span> <span class="n">:comments</span>, <span class="n">only:</span> <span class="n">:create</span>
+  <span class="k">end</span></code></pre>
+<p><code>on: :member</code> = เส้นทางของบทความ<strong>แต่ละชิ้น</strong> (มี <code>:id</code>) · ได้ชื่อ <code>publish_post_path(post)</code> (ผลจริง):</p>
+<pre><code>$ bin/rails routes -g publish
+      Prefix Verb URI Pattern                  Controller#Action
+publish_post POST /posts/:id/publish(.:format) posts#publish</code></pre>
+
+<p><strong>5.2</strong> <code>app/controllers/posts_controller.rb</code> — แก้ 4 จุด:</p>
+<pre><code>  <span class="f">before_action</span> <span class="n">:set_post</span>, <span class="n">only:</span> <span class="n">%i[ show edit update destroy publish ]</span>
+  …
+  <span class="c"># GET /posts or /posts.json</span>
+  <span class="c"># ปกติโชว์เฉพาะที่เผยแพร่แล้ว · ?view=pending = ฉบับร่าง + ที่ตั้งเวลาไว้ (ให้ผู้เขียนกลับไปแก้)</span>
+  <span class="k">def</span> <span class="f">index</span>
+    @pending = params[<span class="n">:view</span>] == <span class="s">"pending"</span>
+    posts = @pending ? <span class="n">Post</span>.<span class="f">not_published</span>.<span class="f">recent</span> : <span class="n">Post</span>.<span class="f">latest_published</span>
+    <span class="c"># with_rich_text_body / with_attached_cover = … (บรรทัดคอมเมนต์เดิม)</span>
+    @pagy, @posts = <span class="f">pagy</span>(posts.<span class="f">includes</span>(<span class="n">:category</span>).<span class="f">with_rich_text_body</span>.<span class="f">with_attached_cover</span>, <span class="n">limit:</span> <span class="n">10</span>)
+  <span class="k">end</span>
+  …   <span class="c">(ใต้ action destroy · เหนือ private)</span>
+  <span class="c"># POST /posts/1/publish — ปุ่ม "เผยแพร่ทันที"</span>
+  <span class="c"># ไม่ได้เผยแพร่ใน request นี้: ตั้งเวลาเป็นตอนนี้ แล้วส่งเข้าคิวให้ PublishPostJob ทำ (ส่งแค่ id)</span>
+  <span class="k">def</span> <span class="f">publish</span>
+    <span class="k">unless</span> @post.<span class="f">published?</span>
+      @post.<span class="f">update!</span>(<span class="n">status:</span> <span class="n">:scheduled</span>, <span class="n">scheduled_at:</span> <span class="n">Time</span>.<span class="f">current</span>)
+      <span class="n">PublishPostJob</span>.<span class="f">perform_later</span>(@post.id)
+    <span class="k">end</span>
+
+    <span class="f">redirect_to</span> @post, <span class="n">notice:</span> <span class="s">"ส่งเข้าคิวเผยแพร่แล้ว"</span>, <span class="n">status:</span> <span class="n">:see_other</span>
+  <span class="k">end</span>
+  …
+    <span class="k">def</span> <span class="f">post_params</span>
+      <span class="c"># ไม่รับ published_at: เผยแพร่ได้ทางเดียวคือ PublishPostJob</span>
+      params.<span class="f">expect</span>(<span class="n">post:</span> [ <span class="n">:title</span>, <span class="n">:body</span>, <span class="n">:cover</span>, <span class="n">:category_id</span>, <span class="n">:status</span>, <span class="n">:scheduled_at</span> ])
+    <span class="k">end</span></code></pre>
+<ul>
+  <li><code>index</code> — <code>เงื่อนไข ? ก : ข</code> คือ if/else บรรทัดเดียว · ปกติได้ <code>latest_published</code> · มี <code>?view=pending</code> ได้ร่างกับที่ตั้งเวลา · บรรทัด <code>pagy</code> เปลี่ยนแค่ต้นทางจาก <code>Post</code> เป็น <code>posts</code> และย้าย <code>.recent</code> ออก</li>
+  <li><code>publish</code> — <strong>ไม่ได้เผยแพร่เอง</strong>: ตั้งเป็น scheduled เวลา "ตอนนี้" แล้วแขวนใบงาน (ส่งแค่ id) · ให้ทุกการเผยแพร่ผ่านทางเดียวคือ job · <code>unless</code> = "ถ้าไม่"</li>
+  <li><code>post_params</code> — รับ <code>:status</code> กับ <code>:scheduled_at</code> จากฟอร์มเพิ่ม (strong params บท 117) · <strong>ไม่รับ</strong> <code>published_at</code></li>
+</ul>
+
+<p><strong>5.3</strong> <code>app/views/posts/_form.html.erb</code> — ใส่ก่อน <code>&lt;div class="inline"&gt;</code> ที่มีปุ่มบันทึก:</p>
+<pre><code>  &lt;%# บทความที่เผยแพร่แล้วเปลี่ยนสถานะจากฟอร์มไม่ได้ · ปุ่ม "เผยแพร่ทันที" อยู่ในหน้า show %&gt;
+  &lt;% if post.published? &amp;&amp; post.published_at? %&gt;
+    &lt;p class="my-5 text-sm text-base-content/70"&gt;เผยแพร่แล้วเมื่อ &lt;%= post.published_at.strftime("%d/%m/%Y %H:%M") %&gt;&lt;/p&gt;
+  &lt;% else %&gt;
+    &lt;fieldset class="fieldset my-5"&gt;
+      &lt;legend class="fieldset-legend"&gt;การเผยแพร่&lt;/legend&gt;
+
+      &lt;label class="label cursor-pointer gap-2"&gt;
+        &lt;%= form.radio_button :status, "draft", class: "radio radio-sm" %&gt;
+        เก็บเป็นฉบับร่าง
+      &lt;/label&gt;
+      &lt;label class="label cursor-pointer gap-2"&gt;
+        &lt;%= form.radio_button :status, "scheduled", class: "radio radio-sm" %&gt;
+        ตั้งเวลาเผยแพร่
+      &lt;/label&gt;
+
+      &lt;%= form.label :scheduled_at, "เวลาเผยแพร่", class: "label mt-2" %&gt;
+      &lt;%# datetime-local ไม่มีโซนเวลา → Rails อ่านเป็นเวลาไทยตาม config.time_zone = "Asia/Bangkok" %&gt;
+      &lt;%= form.datetime_field :scheduled_at, include_seconds: false,
+            class: ["input w-full sm:w-auto", {"input-error": post.errors[:scheduled_at].any?}] %&gt;
+      &lt;p class="text-sm text-base-content/60"&gt;ระบบตรวจทุกนาที ถึงเวลาแล้วเผยแพร่ให้เอง&lt;/p&gt;
+    &lt;/fieldset&gt;
+  &lt;% end %&gt;
+</code></pre>
+<ul>
+  <li><code>post.published_at?</code> — <code>?</code> ท้ายชื่อคอลัมน์ = "มีค่าไหม" · <code>strftime("%d/%m/%Y %H:%M")</code> = จัดรูปเวลาเป็น <code>10/11/2026 10:50</code></li>
+  <li><code>form.radio_button :status, "draft"</code> — ปุ่มเลือกข้อเดียว · ถูกติ๊กเองถ้า <code>post.status</code> เป็น "draft" (บทความใหม่จึงติ๊ก "ฉบับร่าง" ไว้ให้)</li>
+  <li><code>form.datetime_field</code> — ช่องเลือกวันเวลาของเบราว์เซอร์ · <code>include_seconds: false</code> = เลือกแค่ถึงนาที ไม่มีช่องวินาที · <code>class: [ …, {"input-error": …}]</code> = รูปแบบเดียวกับช่องอื่นใน Day 3 (ขอบแดงเมื่อมี error)</li>
+  <li>ข้อความ "ระบบตรวจทุกนาที" — <strong>ตอนนี้ยังไม่มีตัวตรวจ</strong> · บท 144 สร้าง · ตั้งเวลาล่วงหน้าตอนนี้บทความจะค้างเป็น scheduled จนถึงบทนั้น</li>
+</ul>
+
+<p><strong>5.4</strong> <code>app/views/posts/_post.html.erb</code> — แทนบรรทัด <code>&lt;%= time_ago_in_words(post.created_at) %&gt; ago</code> ด้วย:</p>
+<pre><code>      &lt;% if post.published? %&gt;
+        &lt;%= time_ago_in_words(post.published_at) %&gt; ago
+      &lt;% elsif post.scheduled? %&gt;
+        &lt;span class="badge badge-info"&gt;ตั้งเวลา &lt;%= post.scheduled_at.strftime("%d/%m/%Y %H:%M") %&gt;&lt;/span&gt;
+      &lt;% else %&gt;
+        &lt;span class="badge badge-ghost"&gt;ฉบับร่าง&lt;/span&gt;
+      &lt;% end %&gt;</code></pre>
+<p>การ์ดบอกสถานะ · บทความที่เผยแพร่แล้วนับเวลาจาก <code>published_at</code> แทน <code>created_at</code></p>
+
+<p><strong>5.5</strong> <code>app/views/posts/index.html.erb</code> — ใส่เหนือ <code>&lt;div id="posts" …&gt;</code>:</p>
+<pre><code>  &lt;div role="tablist" class="tabs tabs-box mb-6"&gt;
+    &lt;%= link_to "เผยแพร่แล้ว", posts_path, role: "tab", class: ["tab", {"tab-active": !@pending}] %&gt;
+    &lt;%= link_to "ร่างและตั้งเวลา", posts_path(view: "pending"), role: "tab", class: ["tab", {"tab-active": @pending}] %&gt;
+  &lt;/div&gt;
+</code></pre>
+<p>แท็บของ daisyUI (คลาส <code>tabs</code> · <code>tab</code> · <code>tab-active</code>) สองลิงก์ · <code>!@pending</code> = "ไม่ใช่ pending"</p>
+
+<p><strong>5.6</strong> <code>app/views/posts/show.html.erb</code> — ใส่ใต้ <code>&lt;/nav&gt;</code> ของ breadcrumbs เหนือ <code>&lt;%= render @post, full: true %&gt;</code>:</p>
+<pre><code>  &lt;% unless @post.published? %&gt;
+    &lt;div role="status" class="alert alert-info mb-5 flex flex-wrap items-center justify-between gap-3"&gt;
+      &lt;span&gt;
+        &lt;% if @post.scheduled? %&gt;
+          ตั้งเวลาเผยแพร่ไว้ &lt;%= @post.scheduled_at.strftime("%d/%m/%Y %H:%M") %&gt; · ยังไม่โชว์ในหน้ารวม
+        &lt;% else %&gt;
+          ฉบับร่าง · ยังไม่โชว์ในหน้ารวม
+        &lt;% end %&gt;
+      &lt;/span&gt;
+      &lt;%# ส่งเข้าคิว PublishPostJob (posts#publish) — ถ้าปิด bin/jobs อยู่ งานจะรอในคิว %&gt;
+      &lt;%= button_to "เผยแพร่ทันที", publish_post_path(@post), class: "btn btn-primary btn-sm" %&gt;
+    &lt;/div&gt;
+  &lt;% end %&gt;
+</code></pre>
+<p><code>button_to</code> = ปุ่มที่ส่ง <strong>POST</strong> (เป็นฟอร์มเล็ก ๆ หนึ่งปุ่ม · มี token กัน CSRF ให้เอง) — ต่างจาก <code>link_to</code> ที่ส่ง GET</p>
+
+<p><strong>5.7</strong> <code>db/seeds.rb</code> — ในบล็อก <code>Post.find_or_create_by!(title: title) do |post|</code> ใต้บรรทัด <code>post.created_at = …</code>:</p>
+<pre><code>      <span class="c"># บทความตัวอย่างทั้งหมดเผยแพร่แล้ว (ฉบับร่างไม่โชว์ในหน้ารวม)</span>
+      post.status      = <span class="n">:published</span>
+      post.published_at = post.created_at</code></pre>
+<p>คนที่ clone แอปไปแล้ว <code>db:prepare</code> ใหม่จะได้บทความตัวอย่างที่เผยแพร่แล้ว (ไม่ใช่ร่างทั้ง 30 ชิ้น) · ฐานข้อมูลของคุณเติมไปแล้วด้วย rake task ในขั้น 2</p>
+<p><code>bin/dev</code> สร้าง CSS ใหม่ให้เองเมื่อเห็นคลาสใหม่ (<code>tabs</code> · <code>radio</code> · <code>badge-info</code>) · ถ้าไม่ได้เปิด <code>bin/dev</code> ไว้ ให้รัน <code>bin/rails tailwindcss:build</code></p>
+
+<h2 id="sn-sec-11">พิสูจน์ ① — รัน job 3 ครั้งติด สถานะต้องไม่เปลี่ยน</h2>
+
+<p>สไลด์หน้า 24 เรียกเกณฑ์ข้อนี้ว่า "หัวใจของบล็อก" — พิสูจน์ด้วยการรัน ไม่ใช่ด้วยการอ่านโค้ด · เปิด console (หน้าต่างที่สอง) แล้วพิมพ์ทีละบรรทัด:</p>
+<pre><code>$ bin/rails console
+wongnok-blog-all-in-one(dev):001&gt; post = Post.create!(title: "ทดลองเผยแพร่ซ้ำ 2", body: "ทดสอบ job", category: Category.first, status: :scheduled, scheduled_at: 1.minute.ago); post.id
+  …
+=&gt; 32
+wongnok-blog-all-in-one(dev):002&gt; PublishPostJob.perform_now(post.id)</code></pre>
+<ul>
+  <li>บรรทัด 001 — สร้างบทความที่ "ตั้งเวลาไว้เมื่อ 1 นาทีที่แล้ว" (ถึงเวลาแล้ว) · <code>1.minute.ago</code> = "1 นาทีก่อนตอนนี้" (Rails ให้ตัวเลขมี method บอกเวลาแบบนี้) · <code>; post.id</code> = ให้ console โชว์แค่เลข id ไม่โชว์ทั้งแฟ้ม</li>
+  <li><code>perform_now</code> — "<strong>ทำเดี๋ยวนี้</strong>" ในโปรแกรมนี้เลย ไม่ผ่านคิว (ตรงข้ามกับ <code>perform_later</code>) · ใช้ทดสอบ job ด้วยมือ ไม่ต้องเปิด worker</li>
+</ul>
+
+<div class="predict">
+  <p>ต่อจากนั้นพิมพ์คู่นี้ <strong>3 รอบ</strong>: <code>PublishPostJob.perform_now(post.id)</code> แล้ว <code>post.reload.slice(:status, :published_at, :updated_at)</code> (<code>reload</code> = อ่านแฟ้มจากตู้ใหม่ · <code>slice</code> = เลือกโชว์บางช่อง)</p>
+  <p class="ask">รอบ 2 และ 3: SQL ที่ขึ้นจะมี <code>UPDATE</code> ไหม · <code>published_at</code> กับ <code>updated_at</code> ขยับไหม · และ <code>perform_now</code> คืนค่าอะไรกลับมา?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง (ตัด SQL ที่ไม่เกี่ยวเป็น <code>…</code> · Job ID ตัดสั้น):</p>
+<pre><code>wongnok-blog-all-in-one(dev):002&gt; PublishPostJob.perform_now(post.id)
+Performing PublishPostJob (Job ID: 1e62b04c-…) from SolidQueue(default) with arguments: 32
+  …
+  Post Load (1.3ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 32 LIMIT 1 FOR UPDATE
+  …
+  Post Update (0.5ms)  UPDATE "posts" SET "updated_at" = '2026-11-10 03:49:13.861362', "status" = 'published', "published_at" = '2026-11-10 03:49:13.858956' WHERE "posts"."id" = 32
+  TRANSACTION (0.5ms)  COMMIT
+Performed PublishPostJob (Job ID: 1e62b04c-…) from SolidQueue(default) in 8.53ms
+=&gt; true
+wongnok-blog-all-in-one(dev):003&gt; post.reload.slice(:status, :published_at, :updated_at)
+=&gt;
+{"status" =&gt; "published",
+ "published_at" =&gt; 2026-11-10 10:49:13.858956000 +07 +07:00,
+ "updated_at" =&gt; 2026-11-10 10:49:13.861362000 +07 +07:00}
+wongnok-blog-all-in-one(dev):004&gt; PublishPostJob.perform_now(post.id)
+Performing PublishPostJob (Job ID: 524b09b7-…) from SolidQueue(default) with arguments: 32
+  …
+  Post Load (0.9ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 32 LIMIT 1 FOR UPDATE
+  TRANSACTION (0.7ms)  COMMIT
+Performed PublishPostJob (Job ID: 524b09b7-…) from SolidQueue(default) in 3.64ms
+=&gt; nil
+wongnok-blog-all-in-one(dev):005&gt; post.reload.slice(:status, :published_at, :updated_at)
+=&gt;
+{"status" =&gt; "published",
+ "published_at" =&gt; 2026-11-10 10:49:13.858956000 +07 +07:00,
+ "updated_at" =&gt; 2026-11-10 10:49:13.861362000 +07 +07:00}</code></pre>
+    <p>รอบที่ 3 (006–007) ได้เหมือนรอบ 2 ทุกตัวอักษร ยกเว้น Job ID และเวลา ms</p>
+    <ul>
+      <li><strong>รอบ 1</strong> มี <code>Post Update … "status" = 'published'</code> — เผยแพร่จริง · คืน <code>true</code> (ค่าจาก <code>update!</code>)</li>
+      <li><strong>รอบ 2–3 ไม่มี UPDATE เลย</strong> — มีแค่ <code>SELECT … FOR UPDATE</code> (with_lock ขอแฟ้มแบบล็อก) แล้ว <code>COMMIT</code> ปล่อยล็อก · guard บอกว่าไม่ต้องทำ · คืน <code>nil</code> (= "ไม่มีอะไร" เพราะ <code>if</code> ไม่ได้ทำ)</li>
+      <li><strong>published_at และ updated_at เท่ากันทุกรอบ</strong> ถึงหลักไมโครวินาที — หลักฐานว่ารอบ 2–3 ไม่ได้แตะแฟ้มเลย</li>
+      <li><code>from SolidQueue(default)</code> — <code>perform_now</code> ไม่ได้ผ่านคิว แต่ log บอกชื่อ adapter ที่ตั้งไว้ · ส่วน <code>+07 +07:00</code> คือเวลาไทย ขณะที่ SQL เก็บเป็น UTC (<code>03:49</code> = 10:49 ไทย)</li>
+    </ul>
+  </div>
+</div>
+
+<div class="warn">
+  <p>สไลด์หน้า 24 เขียน <code>PublishPostJob.perform_now(post)</code> (ส่งทั้งแฟ้ม) · กับ job ของเราได้ error จริง:
+  <code>You are passing an instance of ActiveRecord::Base to `find`. Please pass the id of the object by calling `.id`. (ArgumentError)</code> — พิมพ์ <code>post.id</code></p>
+</div>
+
+<p>ออกจาก console ด้วย <code>exit</code> · บทความ "ทดลองเผยแพร่ซ้ำ 2" โผล่ในหน้ารวมแล้ว ลบทิ้งด้วยปุ่ม <strong>ลบบทความ</strong> ได้</p>
+
+<h2 id="sn-sec-12">🎯 ภารกิจ — ปิด worker แล้วกด งานต้องรอในตาราง ไม่หาย (~10 นาที)</h2>
+
+<div class="task">
+  <h3 id="sn-sub-1">พิสูจน์ ② — ไม่มี worker ใบงานก็ไม่หาย แค่รอ</h3>
+  <p>บท 142 พิสูจน์ว่า <code>async</code> ปิดโปรแกรมแล้วใบงานหาย · ภารกิจนี้พิสูจน์ว่า Solid Queue <strong>ไม่หาย</strong> · ต้องทำขั้น 1–5 ครบแล้ว</p>
+  <ol>
+    <li><strong>ปิด worker</strong>: หน้าต่าง <code>bin/dev</code> กด Ctrl+C แล้วเปิดแค่เว็บด้วย <code>bin/rails server</code> (CSS สร้างไว้แล้ว ไม่ต้องเปิดตัวสร้าง CSS)</li>
+    <li>เบราว์เซอร์: <code>localhost:3000/posts/new</code> · กรอกหัวข้อ <code>ทดลองปิด worker</code> · เนื้อหาอะไรก็ได้ · เลือกหมวด · ส่วน "การเผยแพร่" <strong>ปล่อยไว้ที่ "เก็บเป็นฉบับร่าง"</strong> · กดบันทึก</li>
+    <li>ในหน้าบทความกด <strong>เผยแพร่ทันที</strong> · ดู log ในหน้าต่าง server</li>
+    <li>รอ 20 วินาที แล้วเปิดคิวดูด้วย SQL (หน้าต่างที่สอง):
+<pre><code>$ docker compose exec postgres psql -U postgres -d wongnok_blog_all_in_one_development -c "SELECT id, class_name, finished_at FROM solid_queue_jobs;" -c "SELECT job_id, queue_name, created_at FROM solid_queue_ready_executions;"</code></pre>
+      (คำสั่งแบบเดียวกับตอนดูรายชื่อตารางในขั้น 3 · ใส่ <code>-c</code> สองตัว = รัน SQL สองคำสั่งต่อกัน: ดูใบงานทุกใบ แล้วดูใบที่ยังแขวนรอ)</li>
+    <li><strong>เปิด worker</strong> (หน้าต่างที่สาม): <code>bin/jobs</code> · รอ 5 วินาที แล้วรันคำสั่ง SQL ในข้อ 4 อีกรอบ · และ
+<pre><code>$ grep "PublishPostJob" log/development.log | grep "Enqueued\|Perform"</code></pre>
+      (ค้นใน log เฉพาะบรรทัดที่มีคำว่า PublishPostJob แล้วกรองต่อเหลือบรรทัดที่มี Enqueued <strong>หรือ</strong> Perform · <code>\|</code> = "หรือ")</li>
+    <li>รีเฟรชหน้าบทความ · เปิดหน้ารวม <code>localhost:3000/posts</code></li>
+    <li><strong>เก็บกวาดและ commit</strong>: Ctrl+C ทั้ง <code>bin/jobs</code> และ server → เปิด <code>bin/dev</code> กลับมา · ลบบทความที่ขึ้นต้นด้วย "ทดลอง" · แล้ว
+<pre><code>$ git add -A
+$ git commit -m "สถานะบทความ + Solid Queue (DB เดียว) + PublishPostJob ที่รันซ้ำได้"</code></pre></li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ข้อ 3 หน้าเว็บจะขึ้น error ไหม · ข้อ 4 ใบงานอยู่ในตารางไหนบ้าง <code>finished_at</code> เป็นอะไร · ข้อ 5 worker ใช้เวลานานแค่ไหนกว่าจะหยิบ · ข้อ 6 บทความอยู่ในหน้ารวมหรือยัง?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ข้อ 3</strong> — ไม่มี error · หน้าเว็บขึ้น "ส่งเข้าคิวเผยแพร่แล้ว" และกล่องสีฟ้าเปลี่ยนเป็น <code>ตั้งเวลาเผยแพร่ไว้ 10/11/2026 10:50 · ยังไม่โชว์ในหน้ารวม</code> · log ของ server (ผลจริง ย่อ):</p>
+<pre><code>Started POST "/posts/31/publish" for ::1 at 2026-11-10 10:50:57 +0700
+Processing by PostsController#publish as TURBO_STREAM
+  …
+  Post Update (0.7ms)  UPDATE "posts" SET "updated_at" = '2026-11-10 03:50:57.923412', "status" = 'scheduled', "scheduled_at" = '2026-11-10 03:50:57.917784' WHERE "posts"."id" = 31
+  …
+[ActiveJob]   SolidQueue::Job Create (2.2ms)  INSERT INTO "solid_queue_jobs" ("queue_name", "class_name", "arguments", …) VALUES ('default', 'PublishPostJob', '{"job_class":"PublishPostJob", … "arguments":[31], …}', …) RETURNING "id"
+  …
+[ActiveJob]   SolidQueue::ReadyExecution Create (1.5ms)  INSERT INTO "solid_queue_ready_executions" ("job_id", "queue_name", "priority", "created_at") VALUES (1, 'default', 0, '2026-11-10 03:50:57.968776') RETURNING "id"
+  …
+[ActiveJob] Enqueued PublishPostJob (Job ID: ba201587-1edf-47b6-be71-2e42bd791812) to SolidQueue(default) with arguments: 31
+Redirected to http://localhost:3000/posts/31
+Completed 303 See Other in 58ms (ActiveRecord: 12.6ms (7 queries, 0 cached) | GC: 10.9ms)</code></pre>
+    <ul>
+      <li>"แขวนใบงาน" ใน Solid Queue = <strong><code>INSERT</code> สองแถว</strong>: สำเนาใบงานลง <code>solid_queue_jobs</code> (จด <code>"arguments":[31]</code> = แค่เลข id) · และป้าย "พร้อมทำ" ลง <code>solid_queue_ready_executions</code></li>
+      <li><code>to SolidQueue(default)</code> — บท 142 ตรงนี้เป็น <code>Async(default)</code></li>
+      <li><code>as TURBO_STREAM</code> ไม่เกี่ยวกับ job — แค่ Turbo บอก server ว่ารับคำตอบแบบ Turbo Stream ได้ (<a href="../../rails-day-3/lessons/0131-turbo-frames.html">บท 131</a>) · action นี้ตอบด้วย redirect ตามปกติ</li>
+    </ul>
+    <p><strong>ข้อ 4</strong> — ใบงานนอนรอ (ผลจริง 49 วินาทีหลังกด · ไม่มี worker):</p>
+<pre><code> id |   class_name   | finished_at
+----+----------------+-------------
+  1 | PublishPostJob |
+(1 row)
+
+ job_id | queue_name |         created_at
+--------+------------+----------------------------
+      1 | default    | 2026-11-10 03:50:57.968776
+(1 row)</code></pre>
+    <p><code>finished_at</code> ว่าง = ยังไม่มีใครทำ · ยังแขวนอยู่ใน ready_executions · เวลาใน psql เป็น UTC (03:50 = 10:50 ไทย) · <strong>นี่คืออาการ "กดแล้วไม่เกิดอะไรขึ้น" ที่สไลด์หน้า 22 เตือน — ไม่มี error ไม่มีอะไรบอก</strong></p>
+    <p><strong>ข้อ 5</strong> — <code>bin/jobs</code> ไม่พิมพ์อะไรเลย (ปกติ) · แต่ภายใน 1 วินาทีหลังเปิด ใบงานก็ถูกทำ (ผลจริง):</p>
+<pre><code> id |   class_name   |        finished_at
+----+----------------+---------------------------
+  1 | PublishPostJob | 2026-11-10 03:51:47.85736
+(1 row)
+
+ job_id | queue_name | created_at
+--------+------------+------------
+(0 rows)</code></pre>
+<pre><code>$ grep "PublishPostJob" log/development.log | grep "Enqueued\|Perform"
+[ActiveJob] Enqueued PublishPostJob (Job ID: ba201587-1edf-47b6-be71-2e42bd791812) to SolidQueue(default) with arguments: 31
+[ActiveJob] [PublishPostJob] [ba201587-1edf-47b6-be71-2e42bd791812] Performing PublishPostJob (Job ID: ba201587-1edf-47b6-be71-2e42bd791812) from SolidQueue(default) enqueued at 2026-11-10T03:50:57.944730000Z with arguments: 31
+[ActiveJob] [PublishPostJob] [ba201587-1edf-47b6-be71-2e42bd791812] Performed PublishPostJob (Job ID: ba201587-1edf-47b6-be71-2e42bd791812) from SolidQueue(default) in 104.95ms</code></pre>
+    <ul>
+      <li>Job ID เดียวกันทั้งสามบรรทัด — ใบงานที่แขวนตอน 10:50:57 คือใบเดียวกับที่ทำตอน 10:51:47 · ไม่หาย แค่รอคน</li>
+      <li><code>finished_at</code> มีเวลาแล้ว · ready_executions ว่าง (ใบงานถูกปลดจากกระดาน)</li>
+      <li>เช็คว่า worker เปิดอยู่จริง: <code>bin/rails runner 'p SolidQueue::Process.pluck(:kind)'</code> → <code>["Supervisor(fork)", "Dispatcher", "Worker"]</code> (ผลจริง) · ปิดแล้วได้ <code>[]</code></li>
+    </ul>
+    <p><strong>ข้อ 6</strong> — กล่องสีฟ้าหายไป · หน้ารวมมี "ทดลองปิด worker" เป็นการ์ดแรก พร้อม <code>less than a minute ago</code> (นับจาก published_at)</p>
+    <p><strong>ข้อ 7</strong> — <code>git status --short</code> ก่อน <code>git add</code> ควรมี 14 บรรทัด <code>M</code> · <code>D db/queue_schema.rb</code> · และ <code>??</code> 5 รายการ (<code>app/jobs/publish_post_job.rb</code> · migration 3 ไฟล์ · <code>test/jobs/</code>)</p>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>log ขึ้น <code>to Async(default)</code> และบทความเผยแพร่ทันทีทั้งที่ไม่ได้เปิด worker</strong> — ยังไม่ได้ใส่ <code>config.active_job.queue_adapter = :solid_queue</code> ใน development.rb · Rails ใช้ async ที่ทำงานในโปรแกรมเว็บเอง (ลองแล้ว: ตาราง solid_queue_jobs ไม่มีใบงานใหม่)</li>
+      <li><strong><code>bin/jobs</code> ขึ้น <code>[BUG] Segmentation fault</code> ซ้ำไม่หยุด</strong> — ยังไม่มี <code>gssencmode: disable</code> ใน <code>default:</code> ของ database.yml (ขั้น 3.2)</li>
+      <li><strong>ข้อ 5 รอแล้ว <code>finished_at</code> ยังว่าง</strong> — worker ไม่ได้เปิดจริง · ดูหน้าต่าง <code>bin/jobs</code> ว่าค้างที่ prompt หรือมี error · ถามด้วยคำสั่ง <code>SolidQueue::Process.pluck(:kind)</code> ข้างบน</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-13">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">job ไหน <strong>idempotent</strong> (รันซ้ำ 3 รอบแล้วผลเท่ารันรอบเดียว)?</p>
+  <div class="opts">
+    <button class="opt">บวกยอดวิวของบทความเพิ่มอีก 1 ทุกครั้งที่ job ทำงาน</button>
+    <button class="opt">ส่งอีเมลแจ้งผู้ติดตามทุกคนว่ามีบทความใหม่ออกแล้ว</button>
+    <button class="opt">เผยแพร่บทความ เฉพาะเมื่อยังเป็น scheduled และถึงเวลาแล้ว</button>
+    <button class="opt">เพิ่มแถวใหม่ลงตารางประวัติทุกครั้งที่ job ทำงาน</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — guard (ท่า 2) · พิสูจน์ ① รันสามรอบ รอบ 2–3 ไม่มี UPDATE และ published_at เท่าเดิม</p>
+    <p>ตัวเลือกที่ 1 ผิด — "บวกเพิ่มจากค่าเดิม" สามรอบได้ +3 · ต้องเปลี่ยนเป็นคำนวณใหม่ (ท่า 1) ·
+       ตัวเลือกที่ 2 ผิด — สามรอบได้อีเมลสามฉบับ ต้องมีท่า 3 (บท 144) ·
+       ตัวเลือกที่ 4 ผิด — แบบเดียวกับ <code>POST</code> ของ Go บท 36 รันซ้ำได้แถวเบิ้ล</p>
+    <p><strong>จุดที่ต้องจำ:</strong> "ทำให้เป็น" ซ้ำได้ · "เพิ่มอีก" ซ้ำแล้วพัง · งานที่ไม่มีสถานะให้ดูต้องจดเองลงตารางที่ห้ามซ้ำ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ถ้า PublishPostJob มีแค่ guard <strong>ไม่มี <code>with_lock</code></strong> แล้วสอง worker หยิบใบงานของบทความเดียวกันพร้อมกันพอดี จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">ตัวที่สองเห็นว่าเผยแพร่แล้วเสมอ เพราะ guard ตรวจก่อนทำ</button>
+    <button class="opt">ทั้งคู่อาจตรวจผ่านพร้อมกัน แล้วเผยแพร่ซ้ำสองครั้ง</button>
+    <button class="opt">Postgres โยน error ให้ตัวที่สองทันที เพราะแก้แถวเดียวกัน</button>
+    <button class="opt">Solid Queue ไม่มีวันแจกใบงานซ้ำ จึงไม่มีทางเกิดขึ้น</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — วัดจริง guard อย่างเดียวได้ <code>[1, 2, 2, 2, 2]</code> (4 ใน 5 รอบ UPDATE สองครั้ง) · ช่องว่างระหว่าง "ตรวจ" กับ "ทำ" แบบบท 111</p>
+    <p>ตัวเลือกที่ 1 ผิด — ทั้งคู่ตรวจในเสี้ยววินาทีเดียวกัน ตอนนั้นยังไม่มีใครเผยแพร่ ·
+       ตัวเลือกที่ 3 ผิด — การแก้แถวเดียวกันสองครั้งไม่ใช่ error ตัวที่สองแค่รอแล้วเขียนทับ ·
+       ตัวเลือกที่ 4 ผิด — ใบงานซ้ำในคิวเกิดได้จาก retry หรือกดปุ่มสองที (ลองแล้ว: กดสองทีขณะปิด worker ได้ใบงาน 2 ใบ worker ทำพร้อมกัน แต่มี UPDATE แค่ครั้งเดียวเพราะ with_lock)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> guard + <code>with_lock</code> = ตรวจกับทำในล็อกเดียวกัน · คนที่สองรอแล้วเห็นของล่าสุด</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ลืมเปิด <code>bin/jobs</code> แล้วกด "เผยแพร่ทันที" · เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">หน้าเว็บขึ้น error ว่าไม่มี worker ให้ส่งใบงานไปหา</button>
+    <button class="opt">ใบงานหายไปเงียบ ๆ แบบเดียวกับ async ที่เจอในบท 142</button>
+    <button class="opt">Rails ทำ job ในโปรแกรมเว็บแทน บทความจึงเผยแพร่ทันที</button>
+    <button class="opt">ใบงานนอนรอในตาราง พอเปิด worker ก็ถูกหยิบไปทำ</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — ภารกิจพิสูจน์: <code>finished_at</code> ว่าง ใบงานอยู่ใน ready_executions · เปิด <code>bin/jobs</code> แล้วถูกทำภายใน 1 วินาที Job ID เดิม</p>
+    <p>ตัวเลือกที่ 1 ผิด — หน้าเว็บขึ้น "ส่งเข้าคิวเผยแพร่แล้ว" ปกติ (สไลด์หน้า 22: "ไม่มี error ไม่มีอะไรบอก") ·
+       ตัวเลือกที่ 2 ผิด — ใบงานเป็นแถวในตาราง Postgres ไม่ได้อยู่ในหน่วยความจำ ·
+       ตัวเลือกที่ 3 ผิด — นั่นคืออาการตอน<strong>ลืมตั้ง adapter</strong> (ได้ async) ไม่ใช่ตอนลืมเปิด worker</p>
+    <p><strong>จุดที่ต้องจำ:</strong> Solid Queue = ใบงานไม่หาย แต่ไม่มีคนทำถ้าไม่เปิด worker · อาการคือ "กดแล้วเงียบ" → เปิดตาราง <code>solid_queue_*</code> ดู</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ทำไม <code>PublishPostJob</code> รับแค่ <code>post_id</code> แล้วค่อย <code>Post.find</code> เอง แทนที่จะจดหัวข้อ สถานะ และเวลาลงใบงานไปด้วย?</p>
+  <div class="opts">
+    <button class="opt">ให้ worker ได้สถานะล่าสุดตอนที่ทำจริง ไม่ใช่ค่าเก่าตอนแขวน</button>
+    <button class="opt">เพราะตาราง solid_queue_jobs เก็บได้แค่ตัวเลข ไม่รับข้อความ</button>
+    <button class="opt">เพราะ Rails บังคับให้ทุก job รับ argument ได้แค่ตัวเดียว</button>
+    <button class="opt">ให้ job ทำงานเร็วขึ้น เพราะไม่ต้องอ่านข้อมูลจากตู้แฟ้ม</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — ระหว่างแขวนกับทำอาจห่างกันเป็นนาที (worker ปิดอยู่) · ผู้ใช้อาจถอนกลับเป็นร่าง หรือเลื่อนเวลา · guard ตรวจกับของล่าสุดถึงจะถูก</p>
+    <p>ตัวเลือกที่ 2 ผิด — log ในภารกิจเห็นแล้วว่า arguments เป็น JSON เก็บข้อความได้ · ตัวเลือกที่ 3 ผิด — <code>perform</code> รับกี่ตัวก็ได้ ·
+       ตัวเลือกที่ 4 ผิด — กลับกัน job ต้องอ่านตู้เพิ่มหนึ่งครั้ง (<code>Post Load</code>) แลกกับความถูกต้อง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ใบงานจดแค่ "แฟ้มเลขที่เท่าไร" · worker ไปเปิดแฟ้มเองตอนทำ · ห้ามจดของที่เปลี่ยนหรือหมดอายุได้</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-14">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>19–20</td><td><code>post.update!(published: true, …)</code> (คอลัมน์ boolean <code>published</code>)</td><td>หน้า 24 สั่งให้ใช้ status 3 ค่า → <code>status: :published</code> · ไม่มีคอลัมน์ <code>published</code></td><td>ไม่ต้อง — อย่าพิมพ์ตาม</td></tr>
+    <tr><td>20 · 24</td><td><code>def perform(post)</code> · <code>perform_now(post)</code></td><td>job เรารับ id → <code>perform_now(post)</code> ได้ <code>ArgumentError</code> (ผลจริงในบท) · พิมพ์ <code>post.id</code></td><td><strong>สนใจ</strong></td></tr>
+    <tr><td>19–20</td><td>guard <code>return if post.published?</code></td><td>ของเราตรวจ "scheduled และถึงเวลา" + <code>with_lock</code> — กันร่างและการเลื่อนเวลาด้วย</td><td>ไม่ต้อง</td></tr>
+    <tr><td>24</td><td>"unique constraint ที่ DB กันสอง worker ชนกัน"</td><td>บทนี้ใช้ row lock (วัดแล้วกันได้) · unique index มากับอีเมลในบท 144</td><td>ยังไม่ต้อง</td></tr>
+    <tr><td>22 · 24</td><td><code>worker: bin/jobs</code> ใน Procfile.dev</td><td>เราใช้ <code>jobs:</code> — ชื่อหน้า <code>:</code> เป็นแค่ป้ายใน log ได้ผลเหมือนกัน</td><td>ไม่ต้อง</td></tr>
+    <tr><td>20</td><td><code>retry_on</code> · <code>discard_on</code> · <code>NotifyFollowersJob</code> · <code>set(wait_until:)</code></td><td>ยังไม่มีในบทนี้ · มาใน<a href="./0144-retry-recurring-and-mail.html">บท 144</a></td><td>ยังไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0142-background-jobs-exactly-once.html">← บทเรียน 142 · job · exactly-once</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0144-retry-recurring-and-mail.html">บทเรียน 144 → retry · recurring · mailer</a>
+</nav>
+
+<h2 id="sn-sec-15">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_job_basics.html#default-backend-solid-queue">Rails Guides — Active Job Basics § Default Backend: Solid Queue</a> —
+      อ่านย่อหน้าแรก: Solid Queue ใช้ฐานข้อมูลที่มีอยู่เก็บและแจกงาน ไม่ต้องมี Redis · แล้วอ่านหัวข้อย่อย "Workers, Dispatchers, Supervisors" ว่าโปรแกรมย่อยแต่ละตัวทำอะไร</li>
+  <li><a href="https://guides.rubyonrails.org/active_job_basics.html#alternate-queuing-backends">Rails Guides — Active Job Basics § Alternate Queuing Backends</a> —
+      ย่อหน้าเดียว: เปลี่ยน adapter "requires only a configuration change" โค้ด job ไม่ต้องแก้ — ที่มาของคำว่า "หน้ากาก"</li>
+  <li><a href="https://github.com/rails/solid_queue#single-database-configuration">rails/solid_queue (README) § Single database configuration</a> —
+      3 ข้อที่ขั้น 3 ทำตาม · อ่านต่อหัวข้อ "Workers, dispatchers, and scheduler" (ตารางไหนเป็นของใคร) และ "Usage in development" (ทำไม <code>bin/jobs</code> ไม่พิมพ์อะไรออกจอ)</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Locking/Pessimistic.html#method-i-with_lock">Rails API — ActiveRecord::Locking::Pessimistic#with_lock</a> —
+      อ่านคำอธิบายด้านบนของหน้า: ล็อกแถวด้วย <code>SELECT … FOR UPDATE</code> · <code>with_lock</code> = เปิด transaction แล้วล็อก "in one go" · และ <code>lock!</code> ที่อยู่ข้างในจะโหลดแฟ้มใหม่ ("Reloads the record")</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveRecord/Enum.html">Rails API — ActiveRecord::Enum</a> —
+      ดูตัวอย่างที่เก็บค่าเป็น string · scope ที่ได้ฟรี (รวม <code>not_</code>) · และตัวเลือก <code>validate: true</code></li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Glossary/Idempotent">MDN — Idempotent</a> —
+      นิยามฝั่ง HTTP สั้น ๆ (ตรงกับ Go บท 36): ดูที่<strong>ผลต่อ server</strong> · และบอกตรง ๆ ว่าคำตอบแต่ละครั้งต่างกันได้ (<code>DELETE</code> ครั้งแรก 200 ครั้งต่อไป 404) — เหมือน job ของเรารอบแรกคืน <code>true</code> รอบหลังคืน <code>nil</code> แต่สถานะในตู้เท่าเดิม</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

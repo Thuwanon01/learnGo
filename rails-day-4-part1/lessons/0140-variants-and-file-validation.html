@@ -1,0 +1,992 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 140 — ย่อรูป ตรวจไฟล์จากเนื้อจริง และไฟล์กำพร้า</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 140 · Rails · Day 4 Part 1</p>
+  <h1>ย่อรูป ตรวจไฟล์จากเนื้อจริง และไฟล์กำพร้า</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="./0138-files-object-storage-minio.html">บทเรียน 138</a> (รูปปก · MinIO) · <a href="./0139-signed-url-direct-upload.html">บทเรียน 139</a> (direct upload) และ <a href="../../rails-day-3/lessons/0125-xss-and-n-plus-one-in-views.html">บทเรียน 125</a> (N+1 ใน view · bullet) มาก่อน</p>
+  <p class="standfirst">
+    บท 138 ให้บทความมีรูปปกได้แล้ว แต่ยังมี<strong>สามเรื่องที่ทุกโปรเจกต์ที่รับไฟล์ต้องทำ</strong> (สไลด์หน้า 12):
+    รูปปกขนาดเต็มใหญ่เกินไปสำหรับการ์ดเล็ก ๆ · ใครจะส่งไฟล์อะไรมาก็ได้แค่ตั้งชื่อลงท้าย <code>.png</code> · และไฟล์ที่อัปขึ้นไปแล้วแต่ไม่ได้ใช้ ค้างอยู่ในโกดังตลอดไป
+    <br>อ่านจบบทนี้ คุณจะ<strong>ทำรูปย่อด้วย <code>variant</code></strong> และดูได้ว่ามันถูกสร้างตอนไหน ·
+    แก้ N+1 ที่รูปปกพามาด้วย <code>with_attached_cover</code> · <strong>พิสูจน์ด้วยไฟล์ปลอมของตัวเอง</strong>ว่าโค้ดตรวจไฟล์ในสไลด์ไม่พอ แล้วเปลี่ยนเป็นตรวจจากเนื้อไฟล์ ·
+    และนับ/เก็บกวาดไฟล์กำพร้าได้
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้</p>
+  <ul>
+    <li><strong>blob · attachment</strong> (<a href="./0138-files-object-storage-minio.html">บท 138</a>) — blob = <strong>ใบรับฝาก</strong> (แถวในตาราง <code>active_storage_blobs</code>: ชื่อไฟล์ ขนาด ชนิด และ <code>key</code> = ชื่อของในโกดัง) · attachment = <strong>ป้าย</strong>ว่าใบรับฝากใบนี้เป็นของแฟ้มไหน (ตาราง <code>active_storage_attachments</code>) · ตัวไฟล์จริงอยู่ใน MinIO</li>
+    <li><strong>direct upload</strong> (<a href="./0139-signed-url-direct-upload.html">บท 139</a>) — ตอนกดบันทึก เบราว์เซอร์ขอใบอนุญาตจาก Rails ก่อน แล้ว<strong>เอาไฟล์ไปฝาก MinIO เอง</strong> · ฟอร์มส่งให้ Rails แค่รหัสของไฟล์</li>
+    <li><strong>N+1 · <code>includes</code> · bullet</strong> (<a href="../../rails-day-2/lessons/0114-n-plus-one.html">บท 114</a> · <a href="../../rails-day-3/lessons/0125-xss-and-n-plus-one-in-views.html">บท 125</a>) — เดินไปตู้ทีละแผ่น vs ใบเบิกทีเดียวทั้งตะกร้า · bullet = ผู้ช่วยที่ตะโกนบอกใน log</li>
+    <li><strong>validation</strong> (<a href="../../rails-day-2/lessons/0110-validations.html">บท 110</a>) — กฎใน model ที่ต้องผ่านก่อนบันทึก · ไม่ผ่าน = ไม่บันทึก + ข้อความใน <code>errors</code></li>
+    <li><strong>console</strong> (<a href="../../rails-day-2/lessons/0107-console-crud.html">บท 107</a>) — <code>bin/rails console</code> คุยกับแอปทีละบรรทัด</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18 · libvips 8.18.7 · image_processing 1.14.0 · marcel 1.2.1 · MinIO (image <code>pgsty/silo</code>) · Chrome (สั่งด้วยสคริปต์) — สไลด์และ repo ของอาจารย์เขียน Ruby 4.0.5–4.0.6 · Rails 8.1.3 เรื่องในบทนี้ไม่ต่างกัน
+    <br><strong>📍 โค้ดเริ่มจาก:</strong> ตอนจบ<a href="./0138-files-object-storage-minio.html">บท 138</a> (มีรูปปก + direct upload) และ<strong>คืนการทดลองของบท 139 แล้ว</strong> (<code>git status --short</code> ว่าง) ·
+    บทนี้<strong>เก็บโค้ดไว้จริง</strong> — จบบทจะแก้ 5 ไฟล์: <code>_post.html.erb</code> · <code>posts_controller.rb</code> · <code>config/application.rb</code> · <code>post.rb</code> · <code>_form.html.erb</code>
+    <br><strong>🖥 เปิดค้างไว้:</strong> <code>docker compose up -d</code> (Postgres + MinIO) · <code>bin/dev</code> หนึ่งหน้าต่าง (เว็บที่ <code>localhost:3000</code> + ตัว build CSS) · อีกหน้าต่างไว้พิมพ์คำสั่ง/เปิด console ·
+    ผลรันทุกกล่องมาจากเครื่องจริง · <strong>เวลา ms · วันเวลา · id · key ของไฟล์ (ตัวอักษรสุ่มยาว ๆ) · ลายเซ็นใน URL · ขนาดไฟล์รูปของคุณ จะไม่ตรงกับในบท</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">เตรียมของ: บทความที่มีรูปปก 2–3 ชิ้น</h2>
+
+<p>
+  ทั้งบทเราดูหน้ารวม <code>/posts</code> · ถ้ายังไม่มีบทความไหนมีรูปปก ให้เปิดหน้าแก้ไขบทความ<strong>ที่อยู่บนสุด 2–3 ชิ้น</strong> แล้วเลือกรูป (png · jpg · webp อะไรก็ได้ในเครื่อง) กดบันทึก แบบที่ทำในบท 138 ·
+  ของผมแนบไว้ 3 ชิ้น: บทความ 30 (<code>cover1.jpg</code> ขนาด 1600×1000 หนัก 618,620 byte) · 29 · 28
+</p>
+<p>
+  ตอนนี้หน้ารวม<strong>ยังไม่โชว์รูปเลย</strong> — บท 138 ใส่รูปปกไว้แค่ในหน้าบทความเดี่ยว (<code>/posts/30</code>) เป็นรูปเต็มขนาด · บทนี้จะเอารูปมาแปะบนการ์ดในหน้ารวม
+</p>
+
+<h2 id="sn-sec-2">รูปต้นฉบับใหญ่เกินไปสำหรับการ์ด — <code>variant</code></h2>
+
+<p>
+  รูปที่ผู้ใช้อัปมักใหญ่มาก (รูปจากมือถือกว้างหลายพันพิกเซล หนักหลาย MB) · ถ้าการ์ดในหน้ารวมใช้<strong>ไฟล์ต้นฉบับ</strong> ผู้ใช้ต้องโหลดรูปใหญ่ 10 รูปเพื่อดูภาพเล็ก ๆ 10 ภาพ ·
+  ทางแก้คือทำ<strong>รูปย่อ</strong> — ไฟล์ใหม่ที่เล็กลง ทำจากรูปเดิม แล้วให้การ์ดใช้ไฟล์นั้น
+</p>
+<p>
+  Active Storage ทำรูปย่อให้เองด้วยคำสั่ง <code>variant</code> (แปลว่า "แบบหนึ่งของของชิ้นเดิม") · เราไม่ต้องเก็บไฟล์ย่อเอง ไม่ต้องเพิ่มคอลัมน์ ·
+  สั่งแค่ใน view ว่า "ขอแบบย่อไม่เกิน 400×300" — <strong>ครั้งแรกที่มีคนขอ Rails ย่อแล้วเก็บไว้ใน MinIO · ครั้งต่อไปหยิบอันเดิม</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">🔪 เทียบให้เห็นภาพ — หั่นชิ้นพอดีคำจากวัตถุดิบเดิม</span>
+  <p>
+    รูปต้นฉบับคือ<strong>ปลาทั้งตัว</strong>ที่ลูกค้าเอามาฝากไว้ในโกดัง · หน้าบทความเดี่ยวเสิร์ฟทั้งตัวได้ · แต่การ์ดในหน้ารวมเป็นจานเล็ก ต้องการแค่<strong>ชิ้นพอดีคำ</strong> ·
+    ครั้งแรกที่มีโต๊ะสั่ง คนครัวไปหยิบปลาจากโกดังมาหั่น แล้ว<strong>เอาชิ้นที่หั่นแล้วไปเก็บในโกดังด้วย</strong> · โต๊ะต่อไปสั่งเมนูเดิม ไม่ต้องหั่นใหม่ หยิบชิ้นเดิมได้เลย ·
+    ปลาทั้งตัวยังอยู่ครบ วันหลังอยากได้ชิ้นขนาดอื่นก็หั่นจากตัวเดิมได้อีก
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงหั่นเตรียมไว้ตั้งแต่ก่อนเปิดร้าน · Rails <strong>ไม่หั่นล่วงหน้า</strong> รอให้มีคนขอครั้งแรกก่อน — ลูกค้าคนแรกเลยรอนานกว่าคนอื่น
+    (ส่วน Rails รู้ได้ยังไงว่าชิ้นไหนหั่นแล้ว เดี๋ยวเห็นใน log ในหัวข้อ "ครั้งแรกหั่น ครั้งต่อไปหยิบ")
+  </p>
+</div>
+
+<p>
+  <strong>เทียบของที่รู้:</strong> ถ้าเคยใช้ <code>&lt;Image&gt;</code> ของ Next.js — มันทำแบบเดียวกัน คือย่อรูปตอนมีคนขอครั้งแรกแล้วเก็บไว้ ·
+  และอีกเดี๋ยวจะเห็นว่า "สูตรการย่อ" ถูกฝังอยู่ใน URL ของรูป แบบเดียวกับเลขรุ่นบนชื่อไฟล์ CSS (fingerprinting <a href="../../rails-day-3/lessons/0127-asset-pipeline.html">บท 127</a>)
+</p>
+
+<h3 id="sn-sub-1">เพิ่มรูปย่อในการ์ด</h3>
+
+<p>
+  เปิด <code>app/views/posts/_post.html.erb</code> · ไฟล์นี้มีสองกิ่ง: <code>if full</code> = หน้าบทความเดี่ยว · <code>else</code> = การ์ดในหน้ารวม ·
+  เพิ่ม <strong>3 บรรทัด</strong> (comment · <code>image_tag</code> · บรรทัดว่าง) ใต้ <code>&lt;% else %&gt;</code> พอดี (บรรทัดที่ขึ้นต้น <code>+</code> คือของใหม่ ไม่ต้องพิมพ์ตัว <code>+</code>):
+</p>
+
+<pre><code><span class="c">&lt;%# app/views/posts/_post.html.erb (ช่วงกิ่ง else) %&gt;</span>
+    &lt;% else %&gt;
++      <span class="c">&lt;%# รูปย่อไม่เกิน 400x300: สร้างครั้งแรกที่มีคนขอ แล้วเก็บไว้ใน MinIO ใช้ซ้ำ %&gt;</span>
++      &lt;%= <span class="f">image_tag</span> post.cover.<span class="f">variant</span>(resize_to_limit: [ <span class="n">400</span>, <span class="n">300</span> ]), alt: <span class="s">""</span>, class: <span class="s">"rounded-box self-start"</span> <span class="k">if</span> post.cover.<span class="f">attached?</span> %&gt;
++
+      &lt;h2 class="card-title"&gt;
+        &lt;%= <span class="f">link_to</span> post.title, post, class: <span class="s">"link link-hover"</span> %&gt;
+      &lt;/h2&gt;</code></pre>
+
+<ul>
+  <li><code>image_tag …</code> — helper ที่สร้างแท็ก <code>&lt;img&gt;</code> (บท 124) · ส่งรูปปกให้มันได้ตรง ๆ แบบที่บท 138 ทำในหน้าเดี่ยว</li>
+  <li><code>post.cover.variant(…)</code> — "ขอรูปปกแบบย่อ" · ยังไม่ย่ออะไรตอนนี้ แค่จดสูตรไว้</li>
+  <li><code>resize_to_limit: [ 400, 300 ]</code> — สูตร: ย่อให้<strong>กว้างไม่เกิน 400 และสูงไม่เกิน 300</strong> โดย<strong>รักษาสัดส่วน</strong> (รูป 1600×1000 ได้ 400×250 ไม่ใช่ 400×300) · รูปที่เล็กกว่านี้อยู่แล้ว<strong>ไม่ถูกขยาย</strong> ·
+      เว้นวรรคใน <code>[ 400, 300 ]</code> เพราะ rubocop (ตัวตรวจรูปแบบโค้ดที่โปรเจกต์ติดมา) ชอบแบบนี้ สไลด์เขียนชิดก็ทำงานเหมือนกัน</li>
+  <li><code>alt: ""</code> — รูปตกแต่ง ไม่มีคำบรรยาย (โปรแกรมอ่านจอจะข้ามไป) · <code>rounded-box</code> = มุมมนของ daisyUI (บท 128)</li>
+  <li><code>self-start</code> — คลาส Tailwind <strong>สำคัญ</strong>: การ์ดของ daisyUI เรียงของในแนวตั้งแล้ว<strong>ยืดทุกชิ้นให้เต็มความกว้าง</strong> · ไม่ใส่ = รูป 400px ถูกยืดเป็น 720px แตก ๆ (วัดจริงใน Chrome) · ใส่แล้วรูปกว้างตามจริง 400px · ถ้าใส่แล้วรูปยังกว้างเต็มการ์ด = ตัว build CSS ใน <code>bin/dev</code> ไม่ได้เปิดอยู่ (คลาส Tailwind ใหม่ต้องถูก build ก่อนถึงจะมีผล · บท 128)</li>
+  <li><code>if post.cover.attached?</code> — โชว์เฉพาะบทความที่มีรูป · บทความไม่มีรูปไม่ต้องมีแท็กรูปเปล่า ๆ (<code>if</code> ท้ายบรรทัด = "ทำบรรทัดนี้ก็ต่อเมื่อ…")</li>
+</ul>
+
+<p>
+  เซฟแล้วรีเฟรช <code>http://localhost:3000/posts</code> → การ์ด 3 ใบบนสุดมีรูปขนาด 400×250 อยู่เหนือหัวข้อ · ดูว่าแท็กรูปหน้าตาเป็นยังไง (ผลจริง ตัดมาใบแรกใบเดียว):
+</p>
+
+<pre><code>$ curl -s localhost:3000/posts | grep '&lt;img'
+      &lt;img alt="" class="rounded-box self-start" src="http://localhost:3000/rails/active_storage/representations/redirect/eyJfcmFpbHMiOnsiZGF0YSI6MSwicHVyIjoiYmxvYl9pZCJ9fQ==--43aa658d7525d1cd4db04eae95f0f904e19f481e/eyJfcmFpbHMiOnsiZGF0YSI6eyJmb3JtYXQiOiJqcGciLCJyZXNpemVfdG9fbGltaXQiOls0MDAsMzAwXX0sInB1ciI6InZhcmlhdGlvbiJ9fQ==--7a3118b7de5256f591925063f8e4b05374960466/cover1.jpg" /&gt;
+…</code></pre>
+
+<p>
+  URL ยาวน่ากลัว แต่แบ่งได้เป็นท่อน ๆ คั่นด้วย <code>/</code> · ท่อนตัวอักษรยาว ๆ เป็น<strong>ข้อความที่ถูกแปลงรหัส</strong> (base64 = วิธีเขียนข้อมูลด้วยตัวอักษรที่ใส่ใน URL ได้) — แกะออกมาดูได้ (ผลจริง):
+</p>
+
+<pre><code>$ echo 'eyJfcmFpbHMiOnsiZGF0YSI6MSwicHVyIjoiYmxvYl9pZCJ9fQ==' | base64 -d
+{"_rails":{"data":1,"pur":"blob_id"}}
+$ echo 'eyJfcmFpbHMiOnsiZGF0YSI6eyJmb3JtYXQiOiJqcGciLCJyZXNpemVfdG9fbGltaXQiOls0MDAsMzAwXX0sInB1ciI6InZhcmlhdGlvbiJ9fQ==' | base64 -d
+{"_rails":{"data":{"format":"jpg","resize_to_limit":[400,300]},"pur":"variation"}}</code></pre>
+
+<ul>
+  <li><code>/rails/active_storage/representations/redirect/</code> — URL ของ <strong>Rails เอง</strong> ไม่ใช่ของ MinIO · เบราว์เซอร์ขอรูปจาก Rails ก่อน แล้ว Rails ค่อยบอกทางไป MinIO (redirect · บท 139)</li>
+  <li>ท่อนแรก <code>{"data":1,"pur":"blob_id"}</code> — "ใบรับฝากเลขที่ 1" (blob id ของรูปปกบทความ 30)</li>
+  <li>ท่อนที่สอง — <strong>สูตรการย่อ</strong>: ชนิด jpg · ไม่เกิน 400×300 · <code>pur</code> ย่อมาจาก purpose (ใช้ทำอะไร)</li>
+  <li><code>--43aa…</code> ต่อท้ายแต่ละท่อน — <strong>ลายเซ็น</strong> ของ Rails (บท 139) · คนนอกแก้ตัวเลขในท่อนข้างหน้าแล้วลายเซ็นจะไม่ตรง Rails ไม่ยอม ·
+      <strong>ใครจะขอสูตรแปลก ๆ เองไม่ได้</strong> (เช่นขอย่อเป็น 99999×99999 ให้เซิร์ฟเวอร์ทำงานหนัก)</li>
+</ul>
+
+<p>สูตรอยู่ใน URL → <strong>เปลี่ยนสูตร = URL ใหม่ = รูปย่อชิ้นใหม่</strong> · ไม่มีใครต้องตามไปลบรูปย่อแบบเก่า — แนวคิดเดียวกับ fingerprinting และจะกลับมาอีกครั้งในเรื่อง cache (บล็อก F)</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>variant · resize_to_limit</dt>
+    <dd>variant = ไฟล์แบบแปลงแล้ว (ย่อ · ครอป · เปลี่ยนชนิด) ที่ Active Storage ทำจากไฟล์ต้นฉบับ · <code>resize_to_limit</code> = ย่อให้อยู่ในกรอบ รักษาสัดส่วน ไม่ขยายรูปเล็ก ·
+        <strong>พิมพ์บอก AI ได้ว่า "show a thumbnail with cover.variant(resize_to_limit: [400, 300]) instead of the original file"</strong></dd>
+    <dt>lazy processing (on-demand)</dt>
+    <dd>ทำงานตอนมีคนขอครั้งแรก ไม่ทำล่วงหน้า · ข้อดี: ไม่ทำรูปย่อที่ไม่มีใครดู · ข้อเสีย: คนแรกรอ ·
+        <strong>ถาม senior ได้ว่า "รูปย่อของเราสร้างตอนอัป หรือตอนมีคนเปิดครั้งแรก — ถ้าคนแรกรอนานควรย้ายไป background job ไหม"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">คนหั่นรูปคือ libvips — ต้องติดตั้งในเครื่อง</h2>
+
+<p>
+  Rails <strong>ไม่ได้ย่อรูปเอง</strong> · มันส่งงานต่อให้ gem <code>image_processing</code> ซึ่งเรียกโปรแกรมย่อรูปที่ชื่อ <strong>libvips</strong> อีกที ·
+  gem มีในโปรเจกต์แล้วตั้งแต่ <code>rails new</code> (ผลจริง):
+</p>
+
+<pre><code>$ grep -n -B1 image_processing Gemfile
+42-# Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
+43:gem "image_processing", "~&gt; 1.2"
+$ vips --version
+vips-8.18.7</code></pre>
+
+<ul>
+  <li>บรรทัด 43 — gem มีอยู่แล้ว ไม่ต้อง <code>bundle add</code> · บรรทัด 42 เป็น comment ที่ Rails เขียนมาให้ (ชี้ไปเอกสารเรื่องเดียวกับบทนี้)</li>
+  <li><code>vips --version</code> — ถามว่าเครื่องมี libvips ไหม · ขึ้นเลขรุ่น = มี · ขึ้น <code>command not found</code> = ยังไม่มี</li>
+</ul>
+
+<p>
+  libvips <strong>ไม่ใช่ gem</strong> แต่เป็นโปรแกรมของระบบปฏิบัติการ ต้องติดตั้งแยก: macOS <code>brew install vips</code> · Ubuntu/Debian <code>sudo apt install libvips42</code> (ชื่อตามคู่มือของ ruby-vips) ·
+  ส่วนบนเซิร์ฟเวอร์จริง <code>Dockerfile</code> (ไฟล์สูตรสร้างกล่องของแอปตอนเอาขึ้นเซิร์ฟเวอร์ — <code>rails new</code> สร้างให้) มีบรรทัด <code>apt-get install … libvips …</code> อยู่แล้ว
+</p>
+
+<div class="warn">
+  <p>⚠️ ถ้ารูปย่อในหน้ารวมไม่ขึ้นและ log มีคำว่า <code>vips</code> ให้เช็ค <code>vips --version</code> ก่อนอย่างอื่น · (ผมลองอาการ "ไม่มี libvips" จริงไม่ได้ เพราะเครื่องที่ใช้ตรวจมีอยู่แล้ว จึงไม่มีข้อความ error ให้ดู)</p>
+</div>
+
+<h2 id="sn-sec-4">รูปปกพา N+1 กลับมา — <code>with_attached_cover</code></h2>
+
+<p>
+  รีเฟรชหน้ารวมแล้วเปิด <code>log/development.log</code> (บท 113) ดูใบสั่ง <code>GET "/posts"</code> · ผลจริง (ตัด comment <code>/*…*/</code> ท้าย SQL · ตัดบรรทัด <code>Rendered …</code> และ <code>↳</code> ส่วนใหญ่ · ย่อแถวที่ซ้ำและท่อนกลาง SQL เป็น <code>…</code> · กล่อง bullet ตัดเหลือ 3 บรรทัด):
+</p>
+
+<pre><code>Started GET "/posts" for ::1 at 2026-11-10 10:15:07 +0700
+Processing by PostsController#index as */*
+  Post Count (0.7ms)  SELECT COUNT(*) FROM "posts"
+  Post Load (0.8ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."created_at" DESC LIMIT 10 OFFSET 0
+  Category Load (0.7ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" IN (5, 4, 3, 2, 1)
+  ActionText::RichText Load (0.9ms)  SELECT "action_text_rich_texts".* FROM "action_text_rich_texts" WHERE … "record_id" IN (30, 29, 28, 27, 26, 25, 24, 23, 22, 21)
+  ActiveStorage::Attachment Load (0.8ms)  SELECT "active_storage_attachments".* FROM "active_storage_attachments" WHERE "active_storage_attachments"."record_id" = 30 AND "active_storage_attachments"."record_type" = 'Post' AND "active_storage_attachments"."name" = 'cover' LIMIT 1
+  ↳ app/views/posts/_post.html.erb:25
+  ActiveStorage::Blob Load (0.8ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 1 LIMIT 1
+  ↳ app/views/posts/_post.html.erb:25
+  ActiveStorage::Attachment Load (0.7ms)  … "record_id" = 29 …
+  ActiveStorage::Blob Load (0.7ms)  … "id" = 2 …
+  ActiveStorage::Attachment Load (0.7ms)  … "record_id" = 28 …
+  ActiveStorage::Blob Load (1.3ms)  … "id" = 3 …
+  ActiveStorage::Attachment Load (1.7ms)  … "record_id" = 27 …
+  …  (record_id = 26, 25, 24, 23, 22, 21 อีกตัวละบรรทัด)
+Completed 200 OK in 154ms (Views: 112.2ms | ActiveRecord: 16.3ms (17 queries, 0 cached) | GC: 28.9ms)
+
+USE eager loading detected
+  Post =&gt; [:cover_attachment]
+  Add to your query: .includes([:cover_attachment])</code></pre>
+
+<ul>
+  <li>4 บรรทัดแรก (<code>Post Count</code> ถึง <code>RichText</code>) — ของเดิมก่อนมีรูป · <code>Post Count</code> มาจาก pagy (นับหน้า · บท 126) · <code>RichText</code> คือเนื้อหา rich text ที่ <code>with_rich_text_body</code> หยิบมาทีเดียว (บท 137)</li>
+  <li><code>ActiveStorage::Attachment Load … "record_id" = 30</code> — "บทความ 30 มีป้ายรูปปกไหม" · ถาม<strong>ทีละบทความ ครบ 10 ใบ</strong> (ทั้งที่ 7 ใบไม่มีรูป ก็ต้องถามถึงจะรู้ว่าไม่มี)</li>
+  <li><code>ActiveStorage::Blob Load … "id" = 1</code> — มีป้าย → ไปหยิบใบรับฝากมาอีกรอบ · เกิด 3 ครั้งตามจำนวนบทความที่มีรูป</li>
+  <li><code>↳ _post.html.erb:25</code> — ต้นเหตุคือบรรทัด 24 ที่เราเพิ่งเพิ่ม (เลขใน log ของไฟล์ <code>.erb</code> <strong>ลบหนึ่ง</strong> · บท 125)</li>
+  <li><code>(17 queries, …)</code> — 4 + 10 + 3 = 17 · <strong>มีรูปมากขึ้น ตัวเลขยิ่งโต</strong> = N+1 ตัวเดิมจากบท 114</li>
+  <li>กล่อง <code>USE eager loading detected</code> — bullet ตะโกนบอก · <code>cover_attachment</code> คือชื่อจริงของป้ายรูปปกที่ <code>has_one_attached :cover</code> สร้างให้เบื้องหลัง</li>
+</ul>
+
+<p>
+  bullet แนะนำ <code>.includes([:cover_attachment])</code> · แต่นั่นหยิบมาแค่<strong>ป้าย</strong> ยังต้องไปหยิบ<strong>ใบรับฝาก</strong>อีกทีละใบ ·
+  Active Storage มีคำสั่งสำเร็จรูปที่หยิบให้ครบทั้งสองอย่าง ชื่อ <code>with_attached_</code> + ชื่อไฟล์แนบ — แบบเดียวกับ <code>with_rich_text_body</code> ของบท 137
+</p>
+
+<p>เปิด <code>app/controllers/posts_controller.rb</code> แก้ 2 บรรทัดใน <code>def index</code> (comment + บรรทัด <code>@pagy</code>) — <code>-</code> คือของเดิม <code>+</code> คือของใหม่:</p>
+
+<pre><code>  <span class="k">def</span> <span class="f">index</span>
+-    <span class="c"># with_rich_text_body = ดึง body ของทั้งหน้ามาในคำสั่งเดียว (ไม่งั้น N+1 ทีละบทความ)</span>
+-    @pagy, @posts = <span class="f">pagy</span>(<span class="n">Post</span>.<span class="f">includes</span>(<span class="n">:category</span>).<span class="f">with_rich_text_body</span>.<span class="f">recent</span>, limit: <span class="n">10</span>)
++    <span class="c"># with_rich_text_body / with_attached_cover = ดึง body และรูปปกของทั้งหน้ามาทีเดียว (ไม่งั้น N+1 ทีละบทความ)</span>
++    @pagy, @posts = <span class="f">pagy</span>(<span class="n">Post</span>.<span class="f">includes</span>(<span class="n">:category</span>).<span class="f">with_rich_text_body</span>.<span class="f">with_attached_cover</span>.<span class="f">recent</span>, limit: <span class="n">10</span>)
+  <span class="k">end</span></code></pre>
+
+<p>
+  ของใหม่มีคำเดียว: <code>.with_attached_cover</code> ต่อท้าย <code>with_rich_text_body</code> = "หยิบป้ายรูปปก<strong>และ</strong>ใบรับฝากของทั้ง 10 บทความมาพร้อมกัน" ·
+  รีเฟรชแล้วดู log อีกรอบ (ผลจริง · ผมเปิดรูปย่อในเบราว์เซอร์ไปแล้วรอบหนึ่ง · ตัดมาเฉพาะส่วนรูปปก ต่อจาก 4 บรรทัดเดิม):
+</p>
+
+<pre><code>  ActiveStorage::Attachment Load (0.7ms)  SELECT "active_storage_attachments".* FROM "active_storage_attachments" WHERE "active_storage_attachments"."record_type" = 'Post' AND "active_storage_attachments"."name" = 'cover' AND "active_storage_attachments"."record_id" IN (30, 29, 28, 27, 26, 25, 24, 23, 22, 21)
+  ActiveStorage::Blob Load (0.7ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" IN (3, 2, 1)
+  ActiveStorage::VariantRecord Load (0.7ms)  SELECT "active_storage_variant_records".* FROM "active_storage_variant_records" WHERE "active_storage_variant_records"."blob_id" IN (1, 2, 3)
+  ActiveStorage::Attachment Load (0.7ms)  SELECT … WHERE "active_storage_attachments"."record_type" = 'ActiveStorage::Blob' AND "active_storage_attachments"."name" = 'preview_image' AND … IN (1, 2, 3)
+  ActiveStorage::Attachment Load (0.7ms)  SELECT … WHERE "active_storage_attachments"."record_type" = 'ActiveStorage::VariantRecord' AND "active_storage_attachments"."name" = 'image' AND … IN (1, 2, 3)
+  ActiveStorage::Blob Load (0.8ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" IN (4, 5, 6)
+Completed 200 OK in 44ms (Views: 27.0ms | ActiveRecord: 9.3ms (10 queries, 0 cached) | GC: 4.6ms)
+
+AVOID eager loading detected
+  ActiveStorage::Blob =&gt; [:variant_records, :preview_image_attachment]
+  Remove from your query: .includes([:variant_records, :preview_image_attachment])
+AVOID eager loading detected
+  ActiveStorage::VariantRecord =&gt; [:image_attachment]
+  Remove from your query: .includes([:image_attachment])</code></pre>
+
+<ul>
+  <li>สองบรรทัดแรก — <code>IN (30, 29, …)</code> และ <code>IN (3, 2, 1)</code> · ป้ายทั้ง 10 ใบ + ใบรับฝากทั้ง 3 ใบ มาใน<strong>รอบเดียว</strong> · N+1 หายแล้ว</li>
+  <li>แต่มีอีก 4 บรรทัดที่เราไม่ได้สั่ง: <code>variant_records</code> (สมุดจดรูปย่อ — อธิบายข้างล่าง) · <code>preview_image</code> (รูปตัวอย่างของไฟล์ที่ไม่ใช่รูป เช่นหน้าแรกของ PDF — ของเราไม่มี) · ป้าย <code>image</code> ของ variant · ใบรับฝาก <code>IN (4, 5, 6)</code> ของรูปย่อ</li>
+  <li><code>AVOID eager loading detected</code> — bullet เตือน<strong>กลับด้าน</strong>: "หยิบมาแล้วไม่ได้ใช้ เอาออก" · 4 + 6 = <strong>10 query</strong> (ถ้าคุณยังไม่เคยเปิดรูปย่อเลยจะได้ 8)</li>
+</ul>
+
+<h3 id="sn-sub-2">ของเกินมาจากไหน — <code>track_variants</code></h3>
+
+<p>
+  ค่าเริ่มต้นของ Rails <strong>จดทุกรูปย่อที่ทำแล้วลงตาราง</strong> <code>active_storage_variant_records</code> (เห็นตอนรูปย่อถูกสร้างครั้งแรก มีบรรทัด <code>INSERT INTO "active_storage_variant_records"</code> ใน log) ·
+  และเพราะมีตารางนี้ <code>with_attached_cover</code> จึงหยิบข้อมูลรูปย่อมาด้วยเผื่อไว้ · หน้ารวมของเราไม่ได้ใช้ (มันแค่สร้าง URL ซึ่งไม่ต้องรู้ว่าย่อแล้วหรือยัง) จึงเป็นของเกิน
+</p>
+<p>
+  ปิดการจดได้ในบรรทัดเดียว · เปิด <code>config/application.rb</code> เพิ่ม <strong>5 บรรทัด</strong> (บรรทัดว่าง · comment 3 · ค่าตั้ง 1) ใต้ <code>config.time_zone</code>:
+</p>
+
+<pre><code>    config.time_zone = <span class="s">"Asia/Bangkok"</span>
++
++    <span class="c"># ไม่จดรูปย่อ (variant) ลงตาราง active_storage_variant_records</span>
++    <span class="c"># ถ้าจด (ค่าเริ่มต้น) with_attached_cover จะดึงตารางนั้นมาด้วยอีก 2-4 query ทั้งที่หน้า index ไม่ได้ใช้</span>
++    <span class="c"># แลกกับ: ตอนเปิดรูปย่อ Rails ถาม MinIO ว่ามีไฟล์รูปย่อหรือยัง แทนการถาม DB</span>
++    config.active_storage.track_variants = <span class="k">false</span>
+    <span class="c"># config.eager_load_paths &lt;&lt; Rails.root.join("extras")</span></code></pre>
+
+<ul>
+  <li><code>config.active_storage.track_variants = false</code> — "ไม่ต้องจดรูปย่อลงตาราง" · ตัวไฟล์รูปย่อยังถูกสร้างและเก็บใน MinIO เหมือนเดิม</li>
+  <li>comment บรรทัดสาม — <strong>ของที่แลกมา</strong>: ไม่มีสมุดจด Rails เลยต้องถาม MinIO ตรง ๆ ว่ารูปย่อมีหรือยัง (เดี๋ยวเห็นใน log)</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ ไฟล์ใน <code>config/</code> ถูกอ่าน<strong>ครั้งเดียวตอนเปิดเซิร์ฟเวอร์</strong> · ต้องหยุด <code>bin/dev</code> (Ctrl+C) แล้วเปิดใหม่ ไม่งั้นตัวเลขไม่เปลี่ยน</p>
+</div>
+
+<p>รีสตาร์ทแล้วรีเฟรชหน้ารวม (ผลจริง · ตัดเหลือส่วนที่ไปตู้):</p>
+
+<pre><code>  Post Count (1.1ms)  SELECT COUNT(*) FROM "posts"
+  Post Load (1.8ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."created_at" DESC LIMIT 10 OFFSET 0
+  Category Load (1.3ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" IN (5, 4, 3, 2, 1)
+  ActionText::RichText Load (1.3ms)  SELECT "action_text_rich_texts".* FROM … "record_id" IN (30, 29, 28, 27, 26, 25, 24, 23, 22, 21)
+  ActiveStorage::Attachment Load (0.8ms)  SELECT "active_storage_attachments".* FROM … "record_id" IN (30, 29, 28, 27, 26, 25, 24, 23, 22, 21)
+  ActiveStorage::Blob Load (1.0ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" IN (3, 2, 1)
+Completed 200 OK in 39ms (Views: 30.0ms | ActiveRecord: 4.0ms (6 queries, 0 cached) | GC: 20.3ms)</code></pre>
+
+<p>
+  <strong>17 → 10 → 6 query</strong> และไม่มีกล่อง bullet เลย · 6 คือ "ของเดิม 4 + ป้ายรูปปก 1 + ใบรับฝาก 1" — <strong>เพิ่มบทความหรือรูปอีกเท่าไรก็ยัง 6</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">🧺 เทียบให้เห็นภาพ — ใบเบิกที่ต้องเขียนให้พอดี</span>
+  <p>
+    ไม่มี <code>with_attached_cover</code> = คนจัดจานเดินไปตู้ถามทีละแฟ้มว่า "แฟ้มนี้มีบัตรรับฝากรูปไหม" (บท 114 อีกแล้ว) ·
+    ใส่แล้ว = หัวหน้าเชฟเขียนใบเบิกทีเดียว "เอาบัตรรับฝากของทั้ง 10 แฟ้มมาด้วย" ·
+    ค่าเริ่มต้นของ Rails ใบเบิกนั้นแถม<strong>สมุดจดว่าชิ้นไหนหั่นแล้ว</strong>มาด้วยทุกครั้ง ทั้งที่จานในหน้ารวมไม่ได้เปิดดู — ปิด <code>track_variants</code> = เลิกใช้สมุดเล่มนั้น
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริง เลิกจดสมุดแล้วก็แค่ไม่มีบันทึก · ใน Rails ของที่แลกมาคือ<strong>ทุกครั้งที่มีคนขอรูปย่อ Rails ต้องไปถามโกดัง (MinIO) ว่ามีชิ้นนั้นหรือยัง</strong> แทนการเปิดสมุด ·
+    ถามโกดังที่อยู่ข้างร้าน (เครื่องเดียวกัน) เร็วมาก แต่ถ้าโกดังอยู่ไกล (S3 ต่างประเทศ) อาจกลับมาคุ้มที่จะจดสมุด
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>with_attached_cover</code> (with_attached_*)</dt>
+    <dd>scope ที่ <code>has_one_attached :cover</code> สร้างให้ = <code>includes</code> ป้าย + ใบรับฝากของไฟล์แนบทีเดียว · ชื่อเปลี่ยนตามชื่อไฟล์แนบ (<code>with_attached_avatar</code>) ·
+        <strong>พิมพ์บอก AI ได้ว่า "the index shows cover thumbnails; add with_attached_cover to the query and check the log stays at a constant number of queries"</strong></dd>
+    <dt>track_variants · AVOID eager loading</dt>
+    <dd>track_variants = จดรูปย่อลงตาราง <code>active_storage_variant_records</code> (ค่าเริ่มต้น true) · AVOID eager loading = bullet บอกว่าหยิบมาล่วงหน้าแต่ไม่ได้ใช้ ·
+        <strong>ถาม senior ได้ว่า "เราควรเปิด track_variants ไหม storage ของเราอยู่ไกลแค่ไหน"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">ครั้งแรกหั่น ครั้งต่อไปหยิบ — ดูใน log</h2>
+
+<p>
+  หลังรีสตาร์ท รูปย่อถูกสร้างใหม่อีกรอบหนึ่ง — ปิดสมุดแล้ว Rails ตั้งชื่อชิ้นย่อในโกดังแบบใหม่ เลยหาชิ้นเดิมไม่เจอ (เกิดครั้งเดียว) · เราเลยได้เห็นจังหวะ "ครั้งแรก" พอดี ·
+  ใน log หาใบสั่งที่ขึ้นต้น <code>Started GET "/rails/active_storage/representations/redirect/…/cover1.jpg"</code> (ผลจริง · URL ยาวผมย่อเป็น <code>…</code>):
+</p>
+
+<pre><code>Processing by ActiveStorage::Representations::RedirectController#show as JPEG
+  ActiveStorage::Blob Load (0.9ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 1 LIMIT 1
+  S3 Storage (11.5ms) Checked if file exists at key: variants/6ims6h1zecgfmejk558tkfdd3vpy/6b68a4a4ccbcccc1886efb4cef49776906bf890a781e7937db17ff54b07368ca (no)
+  S3 Storage (6.9ms) Downloaded file from key: 6ims6h1zecgfmejk558tkfdd3vpy
+  S3 Storage (3.8ms) Uploaded file to key: variants/6ims6h1zecgfmejk558tkfdd3vpy/6b68a4a4ccbcccc1886efb4cef49776906bf890a781e7937db17ff54b07368ca
+  S3 Storage (1.0ms) Generated URL for file at key: variants/6ims6h1zecgfmejk558tkfdd3vpy/6b68… (http://localhost:9000/wongnok-dev/variants/6ims…/6b68…?…&amp;X-Amz-Expires=300&amp;…)
+Redirected to http://localhost:9000/wongnok-dev/variants/6ims6h1zecgfmejk558tkfdd3vpy/6b68…?…
+Completed 302 Found in 46ms (ActiveRecord: 0.6ms (1 query, 0 cached) | GC: 9.4ms)</code></pre>
+
+<ul>
+  <li><code>S3 Storage</code> — คุยกับ MinIO (MinIO พูดภาษาเดียวกับ S3 · บท 138) · <code>6ims6h…</code> คือ key ของรูปต้นฉบับ (ของคุณเป็นตัวอักษรสุ่มอื่น)</li>
+  <li><code>Checked if file exists at key: variants/6ims…/6b68… (no)</code> — ① ถามโกดัง "มีชิ้นย่อหรือยัง" → <strong>ยังไม่มี</strong> · ชื่อชิ้นย่อ = <code>variants/</code> + key ต้นฉบับ + รหัสของสูตร</li>
+  <li><code>Downloaded file from key: 6ims…</code> — ② โหลด<strong>ปลาทั้งตัว</strong> (ต้นฉบับ) มาที่ Rails</li>
+  <li>(ระหว่างบรรทัด ② กับ ③ libvips ย่อรูป — ไม่มีบรรทัด log ของตัวเอง)</li>
+  <li><code>Uploaded file to key: variants/…</code> — ③ เอา<strong>ชิ้นที่หั่นแล้ว</strong>ไปเก็บในโกดัง</li>
+  <li><code>Generated URL …</code> + <code>Redirected to http://localhost:9000/…</code> + <code>302 Found</code> — ④ ออกบัตรผ่านที่หมดอายุใน 300 วินาที (บท 139) แล้วบอกเบราว์เซอร์ให้ไปรับที่โกดังเอง</li>
+</ul>
+
+<div class="predict">
+  <p class="ask">รีเฟรชหน้ารวมอีกรอบ · เบราว์เซอร์ขอรูปย่อใบเดิมอีกครั้ง · ใน log ของใบสั่งรูปนั้นจะยังเห็นบรรทัด <code>Downloaded</code> กับ <code>Uploaded</code> ไหม? และน่าจะเร็วหรือช้ากว่าครั้งแรก?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง (ใบสั่งรูปเดิม ครั้งที่สอง):</p>
+<pre><code>Processing by ActiveStorage::Representations::RedirectController#show as JPEG
+  ActiveStorage::Blob Load (1.8ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 1 LIMIT 1
+  S3 Storage (2.7ms) Checked if file exists at key: variants/6ims6h1zecgfmejk558tkfdd3vpy/6b68a4a4ccbcccc1886efb4cef49776906bf890a781e7937db17ff54b07368ca (yes)
+  S3 Storage (0.8ms) Generated URL for file at key: variants/6ims6h1zecgfmejk558tkfdd3vpy/6b68… (http://localhost:9000/wongnok-dev/variants/6ims…/6b68…?…)
+Redirected to http://localhost:9000/wongnok-dev/variants/6ims6h1zecgfmejk558tkfdd3vpy/6b68…?…
+Completed 302 Found in 8ms (ActiveRecord: 1.3ms (1 query, 0 cached) | GC: 0.0ms)</code></pre>
+    <p>
+      <strong>ไม่มี Downloaded/Uploaded แล้ว</strong> · <code>(yes)</code> = มีชิ้นหั่นแล้ว → ออกบัตรผ่านแล้วส่งไปเลย · ของผม <strong>46ms → 8ms</strong> (ของคุณจะต่าง แต่ครั้งที่สองควรเร็วกว่าชัดเจน) ·
+      ยังเห็น <code>Checked if file exists</code> ทุกครั้ง — นี่คือ "ของที่แลกมา" ของ <code>track_variants = false</code>
+    </p>
+    <p>
+      ชิ้นย่อที่เก็บไว้เล็กกว่าต้นฉบับมาก: ของผมต้นฉบับ <code>cover1.jpg</code> 1600×1000 หนัก 618,620 byte → ชิ้นย่อ 400×250 หนัก 17,583 byte (ดึงไฟล์ออกมาวัดจริง) ·
+      และ<strong>ต้นฉบับยังอยู่ครบ</strong> หน้าบทความเดี่ยวยังใช้รูปเต็ม
+    </p>
+  </div>
+</div>
+
+<p>
+  สไลด์บอกว่า "สร้างครั้งแรกจะช้า → ถ้าไม่อยากให้ผู้ใช้คนแรกรอ ให้สร้างล่วงหน้าใน background job" — background job (งานที่ทำเบื้องหลังโดยไม่ให้ผู้ใช้ยืนรอ) คือเรื่องของบล็อก E บท 142 · ตอนนี้ปล่อยให้คนแรกรอไปก่อน
+</p>
+
+<h2 id="sn-sec-6">content_type เชื่อไม่ได้ — ลองด้วยไฟล์ปลอมของเราเอง</h2>
+
+<p>
+  เรื่องที่สอง: ตอนนี้ช่องรูปปก<strong>รับไฟล์อะไรก็ได้</strong> · สไลด์หน้า 12 ให้โค้ดตรวจมา: ชนิดต้องเป็น PNG/JPEG/WebP และขนาดไม่เกิน 5 MB ·
+  ก่อนเชื่อโค้ดในสไลด์ เรา<strong>ลองโจมตีแอปของตัวเอง</strong>ดูก่อน
+</p>
+
+<div class="warn">
+  <p>⚠️ การทดลองทั้งหมดในบทนี้ทำกับ<strong>แอปในเครื่องของคุณเท่านั้น</strong> · ไฟล์ปลอมของเราเป็นแค่ข้อความธรรมดา ไม่มีอันตราย · <strong>ห้ามลองอัปไฟล์ปลอมกับเว็บของคนอื่น</strong> แม้จะเป็นไฟล์ไม่มีพิษก็ตาม</p>
+</div>
+
+<p>สร้าง "รูปปลอม" — ไฟล์ข้อความธรรมดา แต่ตั้งชื่อลงท้าย <code>.png</code> · เก็บไว้ในโฟลเดอร์ <code>tmp/</code> ของโปรเจกต์ (git ไม่สนโฟลเดอร์นี้):</p>
+
+<pre><code>$ printf 'hello this is just text, not an image\n' &gt; tmp/fake.png</code></pre>
+
+<p>
+  <code>printf '…' &gt; ไฟล์</code> = เขียนข้อความลงไฟล์ · <code>\n</code> = ขึ้นบรรทัดใหม่ · ได้ไฟล์ 38 byte ที่<strong>ชื่อบอกว่าเป็นรูป แต่ข้างในเป็นตัวหนังสือ</strong>
+</p>
+
+<p>เปิด <code>app/models/post.rb</code> แล้วพิมพ์โค้ดตามสไลด์หน้า 12 ก่อน (<strong>เป็นการทดลอง</strong> — อีกเดี๋ยวเราเปลี่ยนทิ้ง) · เพิ่ม 1 บรรทัดใต้ <code>validates :body</code> และ method ใหม่ใต้ <code>private</code>:</p>
+
+<pre><code>  <span class="f">validates</span> <span class="n">:body</span>, presence: <span class="k">true</span>
++  <span class="f">validate</span> <span class="n">:cover_is_valid</span>
+  …
+  <span class="k">private</span>
+    <span class="k">def</span> <span class="f">copy_body_to_plain_text</span>
+      …
+    <span class="k">end</span>
++
++    <span class="k">def</span> <span class="f">cover_is_valid</span>
++      <span class="k">return unless</span> cover.<span class="f">attached?</span>
++
++      <span class="k">unless</span> cover.content_type.<span class="f">in?</span>(<span class="s">%w[ image/png image/jpeg image/webp ]</span>)
++        errors.<span class="f">add</span>(<span class="n">:cover</span>, <span class="s">"รองรับเฉพาะ PNG, JPEG, WebP"</span>)
++      <span class="k">end</span>
++
++      <span class="k">if</span> cover.byte_size &gt; <span class="n">5</span>.<span class="f">megabytes</span>
++        errors.<span class="f">add</span>(<span class="n">:cover</span>, <span class="s">"ไฟล์ต้องไม่เกิน 5 MB"</span>)
++      <span class="k">end</span>
++    <span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>validate :cover_is_valid</code> — <code>validate</code> (ไม่มี s) = "ตรวจด้วย method ที่เราเขียนเอง" · ต่างจาก <code>validates</code> (มี s) ที่ใช้กฎสำเร็จรูป (บท 110)</li>
+  <li><code>return unless cover.attached?</code> — "ถ้า<strong>ไม่</strong>มีรูปปก ก็จบ method ตรงนี้เลย" (<code>return</code> = ออกจาก method · <code>unless</code> = ถ้าไม่) · บทความไม่มีรูปไม่ต้องตรวจอะไร</li>
+  <li><code>cover.content_type</code> — <strong>ชนิดของไฟล์</strong>ที่จดไว้ในใบรับฝาก เขียนแบบ <code>image/png</code> (เรียกว่า MIME type — ป้ายชนิดไฟล์มาตรฐานของเว็บ)</li>
+  <li><code>.in?(%w[ … ])</code> — "อยู่ในรายการนี้ไหม" · <code>%w[ a b ]</code> = รายการคำ <code>["a", "b"]</code> เขียนย่อ (เคยเห็นใน <code>sanitize</code> บท 125)</li>
+  <li><code>errors.add(:cover, "…")</code> — แปะข้อความผิดไว้ที่ช่อง cover · มีข้อความเมื่อไร = บันทึกไม่ได้</li>
+  <li><code>cover.byte_size &gt; 5.megabytes</code> — ขนาดไฟล์ (byte) มากกว่า 5 MB ไหม · <code>5.megabytes</code> = 5,242,880</li>
+</ul>
+
+<div class="predict">
+  <p class="ask">เปิดหน้าแก้ไขบทความที่ยังไม่มีรูปปก (ของผมคือ <code>/posts/27/edit</code>) · ช่องรูปปกเลือก <code>tmp/fake.png</code> · กดบันทึก · โค้ดของสไลด์ตรวจ <code>content_type</code> อยู่ — คิดว่าจะบันทึกได้ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>บันทึกได้</strong> — หน้าเด้งไปหน้าบทความ ขึ้นแถบเขียว "บันทึกการแก้ไขแล้ว" (ยืนยันใน Chrome) · ใน log (ผลจริง ตัดมาเฉพาะบรรทัดที่เกี่ยว):</p>
+<pre><code>Started POST "/rails/active_storage/direct_uploads" for ::1 at 2026-11-10 10:19:39 +0700
+  Parameters: {"blob" =&gt; {"filename" =&gt; "fake.png", "content_type" =&gt; "image/png", "byte_size" =&gt; 38, "checksum" =&gt; "i6qWQX4nSMSe4tJLtV293Q=="}, …}
+  ActiveStorage::Blob Create (2.7ms)  INSERT INTO "active_storage_blobs" ("key", "filename", "content_type", "metadata", "service_name", "byte_size", "checksum", "created_at") VALUES ('iqj0qwd65ukk2uns8664ezy8m2lf', 'fake.png', 'image/png', NULL, 'minio', 38, 'i6qWQX4nSMSe4tJLtV293Q==', '2026-11-10 03:19:39.342756') RETURNING "id"
+…
+Started PATCH "/posts/27" for ::1 at 2026-11-10 10:19:39 +0700
+  ActiveStorage::Attachment Create (1.3ms)  INSERT INTO "active_storage_attachments" ("name", "record_type", "record_id", "blob_id", "created_at") VALUES ('cover', 'Post', 27, 7, '2026-11-10 03:19:39.393646') RETURNING "id"
+Completed 303 See Other in 48ms (ActiveRecord: 8.0ms (11 queries, 0 cached) | GC: 7.7ms)</code></pre>
+    <ul>
+      <li><code>"content_type" =&gt; "image/png"</code> ในบรรทัด <code>Parameters</code> — <strong>เบราว์เซอร์เป็นคนบอก</strong> และมันเดาจาก<strong>นามสกุล</strong> <code>.png</code> ล้วน ๆ ไม่ได้เปิดดูข้างใน ·
+          (<code>checksum</code> ข้าง ๆ คือค่าไว้เช็คว่าไฟล์ไม่เพี้ยนระหว่างส่ง ไม่ได้บอกชนิดไฟล์)</li>
+      <li><code>INSERT INTO "active_storage_blobs" … 'image/png'</code> — Rails จดลงใบรับฝากตามที่เบราว์เซอร์บอก</li>
+      <li><code>Attachment Create … 'cover', 'Post', 27</code> + <code>303 See Other</code> — ผ่าน validation · ติดป้ายเข้าบทความ 27 แล้ว</li>
+    </ul>
+  </div>
+</div>
+
+<p>
+  แล้วผลเสียคืออะไร? เปิดหน้ารวม — การ์ดบทความ 27 <strong>ไม่มีรูป</strong> (ช่องว่าง) · ใบสั่งของรูปย่อใบนั้นใน log (ผลจริง ตัดเหลือ 3 บรรทัดแรกของ error):
+</p>
+
+<pre><code>Completed 500 Internal Server Error in 8ms (ActiveRecord: 0.6ms (1 query, 0 cached) | GC: 0.2ms)
+Vips::Error (VipsForeignLoad: "/var/folders/jc/…/T/ActiveStorage-7-20261110-94944-npebqo.png" is not a known file format
+):</code></pre>
+
+<p>
+  <code>/var/folders/…/ActiveStorage-7-….png</code> คือสำเนาชั่วคราวที่ Rails โหลดมาจาก MinIO ให้ libvips หั่น ·
+  libvips พยายามหั่น "ปลา" ที่เป็นกระดาษ → <code>is not a known file format</code> (ไม่รู้จักไฟล์ชนิดนี้) → <strong>500</strong> (error ฝั่งเซิร์ฟเวอร์) ·
+  ไฟล์ข้อความของเราไม่มีพิษ แต่แปลว่า<strong>ไฟล์อะไรก็ตามที่ไม่มีลายเซ็นให้ Rails จับได้</strong> (อย่างข้อความล้วน) ผ่านด่านของสไลด์ได้หมด — <strong>และเว็บเราเก็บไว้ให้แล้วด้วยป้าย <code>image/png</code></strong>
+</p>
+
+<h3 id="sn-sub-3">ลบรูปปลอมทิ้งด้วย <code>purge</code></h3>
+
+<p>เปิด <code>bin/rails console</code> แล้วลบรูปปกปลอมของบทความ 27 (ใช้เลขบทความของคุณ) · ผลจริง (ตัด comment ท้าย SQL):</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; post = <span class="n">Post</span>.<span class="f">find</span>(<span class="n">27</span>); <span class="k">nil</span>
+  Post Load (0.5ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 27 LIMIT 1
+=&gt; nil
+wongnok-blog-all-in-one(dev):002&gt; post.cover.<span class="f">filename</span>
+  ActiveStorage::Attachment Load (1.7ms)  SELECT "active_storage_attachments".* FROM "active_storage_attachments" WHERE … "record_id" = 27 … "name" = 'cover' LIMIT 1
+  ActiveStorage::Blob Load (0.5ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 7 LIMIT 1
+=&gt; #&lt;ActiveStorage::Filename:0x000000012dbb0750 @filename="fake.png"&gt;
+wongnok-blog-all-in-one(dev):003&gt; post.cover.<span class="f">purge</span>
+  TRANSACTION (1.7ms)  BEGIN
+  ActiveStorage::Attachment Destroy (3.4ms)  DELETE FROM "active_storage_attachments" WHERE "active_storage_attachments"."id" = 7
+  Post Update (1.2ms)  UPDATE "posts" SET "updated_at" = '2026-11-10 03:21:22.332731' WHERE "posts"."id" = 27
+  TRANSACTION (1.3ms)  COMMIT
+  TRANSACTION (0.7ms)  BEGIN
+  ActiveStorage::Attachment Exists? (1.7ms)  SELECT 1 AS one FROM "active_storage_attachments" WHERE "active_storage_attachments"."blob_id" = 7 LIMIT 1
+  ActiveStorage::Attachment Load (0.8ms)  SELECT … "name" = 'preview_image' LIMIT 1
+  ActiveStorage::Blob Destroy (1.7ms)  DELETE FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 7
+  TRANSACTION (0.8ms)  COMMIT
+  S3 Storage (16.1ms) Deleted file from key: iqj0qwd65ukk2uns8664ezy8m2lf
+  S3 Storage (3.2ms) Deleted files by key prefix: variants/iqj0qwd65ukk2uns8664ezy8m2lf/
+=&gt; nil</code></pre>
+
+<ul>
+  <li><code>; nil</code> ท้ายบรรทัด 001 — แค่ให้ console ไม่พิมพ์บทความทั้งก้อนออกมา (ไม่ใส่ก็ได้)</li>
+  <li><code>#&lt;ActiveStorage::Filename:0x… @filename="fake.png"&gt;</code> — กล่องห่อชื่อไฟล์ · ดูแค่ <code>"fake.png"</code> ข้างใน = ใช่รูปปลอมของเรา (เลข <code>0x…</code> เป็นที่อยู่ในหน่วยความจำ ของคุณจะต่าง · บท 95)</li>
+  <li><code>post.cover.purge</code> — "ลบรูปปกทิ้งให้หมด" · log บอกว่ามันลบ <strong>4 อย่าง</strong> ตามลำดับ:
+    <strong>ป้าย</strong> (<code>Attachment Destroy</code>) → <strong>ใบรับฝาก</strong> (<code>Blob Destroy</code>) → <strong>ตัวไฟล์ใน MinIO</strong> (<code>Deleted file from key</code>) → <strong>รูปย่อทุกชิ้นของมัน</strong> (<code>Deleted files by key prefix: variants/…/</code>)</li>
+  <li><code>Post Update … "updated_at"</code> — ถอดป้ายรูปปกแล้ว Rails อัปเดตเวลาแก้ล่าสุดของบทความให้ด้วย (บทความ "เปลี่ยน" เพราะรูปปกหายไป)</li>
+  <li><code>Attachment Exists? … "blob_id" = 7</code> — ก่อนลบใบรับฝาก Rails เช็คว่าไม่มีแฟ้มอื่นใช้ไฟล์เดียวกันอยู่ · บรรทัด <code>preview_image</code> ถัดมาคือหารูปตัวอย่าง (ของไฟล์ PDF ฯลฯ) ไปลบด้วย — ของเราไม่มี</li>
+</ul>
+
+<p>
+  สไลด์หน้า 13 มีโจทย์ "ลูกค้าโทรมาขอให้ลบรูปที่อัปผิด เราลบ attachment ใน DB แล้ว ต้องเช็คอะไรอีก" — คำตอบคือ 4 บรรทัดข้างบน: ลบแค่ป้ายไม่พอ <strong>ไฟล์ยังอยู่ในโกดัง และรูปย่อก็ยังอยู่</strong> ·
+  <code>purge</code> ทำครบทั้ง 4 ให้
+</p>
+
+<h2 id="sn-sec-7">ตรวจจากเนื้อไฟล์ — magic bytes</h2>
+
+<p>
+  ไฟล์รูปทุกชนิดมี<strong>ลายเซ็นประจำตัวอยู่ไม่กี่ byte แรกของไฟล์</strong> ที่โปรแกรมสร้างรูปเขียนไว้เสมอ · เรียกกันว่า <strong>magic bytes</strong> ·
+  ดูด้วยตาได้ (ใช้รูปจริงในเครื่องคุณสักรูป ก็อปมาเป็น <code>tmp/real.png</code>) · ผลจริง:
+</p>
+
+<pre><code>$ head -c 8 tmp/real.png | xxd
+00000000: 8950 4e47 0d0a 1a0a                      .PNG....
+$ head -c 8 tmp/fake.png | xxd
+00000000: 6865 6c6c 6f20 7468                      hello th
+$ file tmp/fake.png tmp/real.png
+tmp/fake.png: ASCII text
+tmp/real.png: PNG image data, 1600 x 1000, 8-bit grayscale, non-interlaced</code></pre>
+
+<ul>
+  <li><code>head -c 8 ไฟล์</code> — อ่าน 8 byte แรก · <code>| xxd</code> — โชว์ byte เป็นเลขฐานสิบหก (ซ้าย) กับตัวอักษร (ขวา)</li>
+  <li><code>8950 4e47 …</code> / <code>.PNG....</code> — <strong>ลายเซ็นของไฟล์ PNG ทุกไฟล์บนโลก</strong> (ตัว <code>.</code> คือ byte ที่พิมพ์ออกมาเป็นตัวอักษรไม่ได้)</li>
+  <li><code>hello th</code> — ไฟล์ปลอมขึ้นต้นด้วยตัวหนังสือ ไม่มีลายเซ็นของรูปชนิดไหนเลย</li>
+  <li><code>file</code> — โปรแกรมที่มากับ macOS/Linux ดูลายเซ็นแล้วบอกชนิด · <strong>ไม่สนนามสกุลเลย</strong> ไฟล์ปลอมจึงเป็น <code>ASCII text</code> (ข้อความธรรมดา) ·
+      ส่วน <code>1600 x 1000, 8-bit grayscale</code> คือรายละเอียดรูปของผม ของคุณจะต่าง</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">📦 เทียบให้เห็นภาพ — ฉลากที่ลูกค้าเขียนเอง vs เปิดดูของข้างใน</span>
+  <p>
+    ลูกค้าเอากล่องมาฝาก <strong>เขียนฉลากเองว่า "ปลา"</strong> (นามสกุล <code>.png</code> · <code>content_type</code> ที่เบราว์เซอร์ส่งมา) · โค้ดของสไลด์คือพนักงานที่<strong>อ่านฉลากแล้วเชื่อ</strong> ·
+    วิธีที่ถูกคือ<strong>แง้มฝากล่องดู</strong> — ปลาทุกตัวมีหน้าตาของปลา (magic bytes) ปลอมฉลากได้ แต่ปลอมของข้างในยากกว่ามาก
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> เราแง้มดูแค่<strong>ปากกล่อง</strong> (ไม่กี่ KB แรก) ไม่ได้รื้อทั้งกล่อง · คนร้ายที่ตั้งใจจริงทำไฟล์ที่หัวเป็น PNG ถูกต้องแต่ท้ายไฟล์ซ่อนของอื่นได้ ·
+    การตรวจนี้กัน "ของผิดชนิด" ได้ ไม่ได้รับประกันว่าไฟล์ปลอดภัย 100% · OWASP (กลุ่มที่ทำคู่มือความปลอดภัยเว็บที่คนทั้งวงการใช้ — เจออีกใน Part 2) จึงแนะนำให้ทำหลายชั้น เช่นจำกัดขนาด เก็บไฟล์ไว้คนละเครื่องกับแอป และสแกนไวรัสถ้าทำได้
+  </p>
+</div>
+
+<p>
+  <strong>เทียบของที่รู้:</strong> <a href="../../day-8/lessons/0037-net-http-server.html">บท 37</a> ของ Go เจอ <code>http.DetectContentType</code> มาแล้ว — ฟังก์ชันที่เดาชนิดจากเนื้อข้อมูลไม่กี่ร้อย byte แรก หลักเดียวกันเป๊ะ ·
+  ฝั่ง Ruby มี gem ชื่อ <strong>Marcel</strong> ทำงานนี้ และ<strong>มากับ Rails อยู่แล้ว</strong> (Active Storage ใช้มันเอง) · ลองใน console (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">Marcel</span>::<span class="n">MimeType</span>.<span class="f">for</span>(<span class="n">File</span>.<span class="f">open</span>(<span class="s">"tmp/fake.png"</span>))
+=&gt; "application/octet-stream"
+wongnok-blog-all-in-one(dev):002&gt; <span class="n">Marcel</span>::<span class="n">MimeType</span>.<span class="f">for</span>(<span class="n">File</span>.<span class="f">open</span>(<span class="s">"tmp/fake.png"</span>), name: <span class="s">"fake.png"</span>)
+=&gt; "image/png"
+wongnok-blog-all-in-one(dev):003&gt; <span class="n">Marcel</span>::<span class="n">MimeType</span>.<span class="f">for</span>(<span class="n">File</span>.<span class="f">open</span>(<span class="s">"tmp/real.png"</span>))
+=&gt; "image/png"
+wongnok-blog-all-in-one(dev):004&gt; <span class="n">Marcel</span>::<span class="n">MimeType</span>.<span class="f">for</span>(<span class="n">File</span>.<span class="f">open</span>(<span class="s">"tmp/real.png"</span>), name: <span class="s">"real.txt"</span>)
+=&gt; "image/png"</code></pre>
+
+<ul>
+  <li><code>File.open("tmp/fake.png")</code> — เปิดไฟล์ให้อ่านได้ (ส่ง<strong>เนื้อ</strong>ให้ Marcel) · <code>name: "…"</code> — บอก<strong>ชื่อไฟล์</strong>ไปด้วย (ไม่ใส่ก็ได้)</li>
+  <li>บรรทัด 001 — ให้แค่เนื้อไฟล์ปลอม → <code>"application/octet-stream"</code> = "ข้อมูลอะไรสักอย่าง ไม่รู้จัก" · <strong>ไม่ใช่รูปแน่นอน</strong></li>
+  <li>บรรทัด 002 — <strong>บอกชื่อไฟล์ไปด้วย</strong> → <code>"image/png"</code> · เนื้อไม่มีลายเซ็นให้ดู Marcel เลย<strong>ถอยไปเชื่อชื่อไฟล์</strong> · นี่แหละสาเหตุที่ Rails เองก็ปล่อยไฟล์ปลอมผ่าน: ตอนแนบไฟล์ Rails เรียก Marcel <strong>พร้อมชื่อไฟล์และชนิดที่เบราว์เซอร์บอก</strong></li>
+  <li>บรรทัด 003–004 — รูปจริงได้ <code>"image/png"</code> เสมอ · แม้ตั้งชื่อเป็น <code>.txt</code> ลายเซ็นก็ชนะชื่อ</li>
+</ul>
+
+<p><strong>กฎที่ได้:</strong> เรียก Marcel ด้วย<strong>เนื้อไฟล์อย่างเดียว</strong> ห้ามบอกชื่อ ห้ามบอกชนิดที่เบราว์เซอร์ส่งมา</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>content_type · MIME type</dt>
+    <dd>ป้ายชนิดไฟล์แบบ <code>image/png</code> · ที่มาจากเบราว์เซอร์คือ<strong>สิ่งที่ client อ้าง</strong> (เดาจากนามสกุล หรือพิมพ์เองด้วย curl ก็ได้) ไม่ใช่ความจริง ·
+        <strong>พิมพ์บอก AI ได้ว่า "never trust the client-provided content_type or file extension; detect the type from the file content"</strong></dd>
+    <dt>magic bytes (file signature) · Marcel</dt>
+    <dd>ลายเซ็นไม่กี่ byte แรกของไฟล์ที่บอกชนิดจริง · Marcel = gem ที่ Rails ใช้อ่านลายเซ็นนั้น · <code>application/octet-stream</code> = ไม่รู้จัก ·
+        <strong>ถาม senior ได้ว่า "เราตรวจชนิดไฟล์จาก magic bytes หรือจาก content_type — แล้วใช้ gem อย่าง active_storage_validations ไหม"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">โค้ดตรวจไฟล์ตัวจริง — ทีละบรรทัด</h2>
+
+<p>
+  <strong>ลบโค้ดของสไลด์ออกทั้งหมด</strong> (บรรทัด <code>validate :cover_is_valid</code> และ method <code>cover_is_valid</code>) ให้ <code>post.rb</code> กลับเป็นแบบตอนต้นบท ·
+  แล้วเพิ่มของใหม่ 3 จุด · <strong>จุดที่ 1</strong> บนสุดของคลาส (บรรทัดค่าคงที่ + บรรทัดว่าง):
+</p>
+
+<pre><code><span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
++  <span class="n">COVER_TYPES</span> = <span class="s">%w[ image/png image/jpeg image/webp ]</span>
++
+  <span class="f">belongs_to</span> <span class="n">:category</span></code></pre>
+
+<p>
+  <code>COVER_TYPES</code> — ชื่อขึ้นต้นตัวใหญ่ = <strong>ค่าคงที่</strong> (ตั้งครั้งเดียวไม่เปลี่ยน · บท 91) · รายการชนิดที่ยอมรับ เขียนไว้ที่เดียว ใช้ทั้งใน model และในฟอร์ม
+</p>
+
+<p><strong>จุดที่ 2</strong> ใต้ <code>validates :body, presence: true</code> (comment 1 + validate 1):</p>
+
+<pre><code>  <span class="f">validates</span> <span class="n">:body</span>, presence: <span class="k">true</span>
++  <span class="c"># ตรวจเฉพาะตอนแนบรูปใหม่ (attachment ยังไม่ได้บันทึก) — แก้แค่หัวข้อไม่ต้องตรวจรูปเดิมซ้ำ</span>
++  <span class="f">validate</span> <span class="n">:cover_must_be_small_image</span>, if: -&gt; { cover.<span class="f">attached?</span> &amp;&amp; cover.attachment.<span class="f">new_record?</span> }</code></pre>
+
+<ul>
+  <li><code>validate :cover_must_be_small_image</code> — ตรวจด้วย method ชื่อนี้ (เขียนในจุดที่ 3)</li>
+  <li><code>if: -&gt; { … }</code> — <strong>ตรวจเฉพาะเมื่อ</strong>เงื่อนไขในปีกกาเป็นจริง · <code>-&gt; { }</code> คือก้อนโค้ดที่เก็บไว้รันทีหลัง (lambda · บท 112 · คล้าย arrow function <code>() =&gt; …</code> ของ JS)</li>
+  <li><code>cover.attached?</code> — มีรูปปกไหม · <code>&amp;&amp;</code> — และ</li>
+  <li><code>cover.attachment.new_record?</code> — ป้ายรูปปก<strong>ยังไม่เคยบันทึก</strong> = เพิ่งแนบรูปใหม่ในรอบนี้ · ถ้าแค่แก้หัวข้อของบทความที่มีรูปเดิมอยู่แล้ว ป้ายเป็นของเก่า → ไม่ต้องตรวจซ้ำ (การตรวจต้องโหลดไฟล์จาก MinIO มีค่าใช้จ่าย)</li>
+</ul>
+
+<p><strong>จุดที่ 3</strong> ใต้ <code>private</code> ต่อจาก method <code>copy_body_to_plain_text</code> (บรรทัดว่างคั่น method เหมือนเดิม):</p>
+
+<pre><code>    <span class="k">def</span> <span class="f">copy_body_to_plain_text</span>
+      <span class="k">self</span>.plain_text = body.<span class="f">to_plain_text</span>
+      <span class="k">self</span>.description = plain_text
+    <span class="k">end</span>
++
++    <span class="k">def</span> <span class="f">cover_must_be_small_image</span>
++      <span class="c"># ชนิดไฟล์: ดูจากเนื้อไฟล์จริง (magic bytes ต้นไฟล์) ไม่ใช่ content_type หรือนามสกุลที่เบราว์เซอร์บอกมา</span>
++      real_type = <span class="n">Marcel</span>::<span class="n">MimeType</span>.<span class="f">for</span>(<span class="n">StringIO</span>.<span class="f">new</span>(<span class="f">cover_head</span>))
++      errors.<span class="f">add</span>(<span class="n">:cover</span>, <span class="s">"รองรับเฉพาะ PNG, JPEG, WebP"</span>) <span class="k">unless</span> real_type.<span class="f">in?</span>(<span class="n">COVER_TYPES</span>)
++      <span class="c"># byte_size ของ direct upload เชื่อได้: MinIO รับไฟล์เฉพาะเมื่อขนาดตรงกับที่ Rails เซ็นไว้</span>
++      errors.<span class="f">add</span>(<span class="n">:cover</span>, <span class="s">"ไฟล์ต้องไม่เกิน 5 MB"</span>) <span class="k">if</span> cover.byte_size &gt; <span class="n">5</span>.<span class="f">megabytes</span>
++    <span class="k">end</span>
++
++    <span class="c"># 4 KB แรกของไฟล์ (พอให้เห็น magic bytes)</span>
++    <span class="k">def</span> <span class="f">cover_head</span>
++      <span class="k">if</span> cover.byte_size.<span class="f">zero?</span>
++        <span class="c"># ไฟล์ว่าง: ไม่มีอะไรให้อ่าน (ขอช่วงไบต์จากไฟล์ว่างใน MinIO จะ error)</span>
++        <span class="s">""</span>
++      <span class="k">elsif</span> cover.blob.<span class="f">persisted?</span>
++        <span class="c"># direct upload: ไฟล์อยู่ใน MinIO แล้ว → ดึงมาแค่ช่วงต้นไฟล์</span>
++        cover.blob.<span class="f">download_chunk</span>(<span class="n">0</span>...<span class="n">4</span>.<span class="f">kilobytes</span>)
++      <span class="k">else</span>
++        <span class="c"># แนบไฟล์ตรง ๆ (เช่น ใน test หรือ console): ไฟล์ยังไม่ขึ้น MinIO → อ่านจากไฟล์ในมือ แล้วกรอกลับไปต้นไฟล์</span>
++        io = <span class="f">attachment_changes</span>[<span class="s">"cover"</span>].attachable
++        io = io[<span class="n">:io</span>] <span class="k">if</span> io.<span class="f">is_a?</span>(<span class="n">Hash</span>)
++        io.<span class="f">rewind</span>
++        io.<span class="f">read</span>(<span class="n">4</span>.<span class="f">kilobytes</span>).<span class="f">to_s</span>.<span class="f">tap</span> { io.<span class="f">rewind</span> }
++      <span class="k">end</span>
++    <span class="k">end</span></code></pre>
+
+<p><strong>method แรก <code>cover_must_be_small_image</code></strong> — ตัวตัดสิน:</p>
+<ul>
+  <li><code>cover_head</code> — เรียก method ที่สอง ได้<strong>ต้นไฟล์ 4 KB</strong> เป็นข้อความ (4 KB = 4,096 byte มากพอให้เห็นลายเซ็นทุกชนิดที่เรารับ)</li>
+  <li><code>StringIO.new(…)</code> — ห่อข้อความให้หน้าตาเหมือนไฟล์ (Marcel อยากได้ของที่ "อ่านได้แบบไฟล์")</li>
+  <li><code>Marcel::MimeType.for(…)</code> — <strong>ส่งแค่เนื้อ ไม่ส่งชื่อ</strong> ตามกฎเมื่อกี้ → ได้ชนิดจริงเก็บใน <code>real_type</code></li>
+  <li><code>errors.add(…) unless real_type.in?(COVER_TYPES)</code> — <code>unless</code> = "ถ้า<strong>ไม่</strong>" · ชนิดจริงไม่อยู่ในรายการ → แปะข้อความผิด · ข้อความเดียวกับของสไลด์</li>
+  <li>บรรทัดขนาด — เหมือนสไลด์ แค่เขียนบรรทัดเดียว · comment บอกเหตุผลว่าทำไม<strong>ขนาด</strong>เชื่อได้ ทั้งที่ชนิดเชื่อไม่ได้: บท 139 เห็นแล้วว่าใบอนุญาตที่ Rails เซ็นให้เบราว์เซอร์<strong>ล็อกขนาดไฟล์ไว้</strong> (<code>X-Amz-SignedHeaders=content-length;…</code>) ส่งไฟล์ขนาดไม่ตรง MinIO ไม่รับ</li>
+</ul>
+
+<p><strong>method ที่สอง <code>cover_head</code></strong> — ไปเอาต้นไฟล์มา ซึ่งอยู่ได้ 3 ที่ จึงมี 3 กิ่ง:</p>
+<ul>
+  <li><code>if cover.byte_size.zero?</code> → <code>""</code> — <strong>ไฟล์ว่าง 0 byte</strong>: ไม่มีอะไรให้อ่าน ตอบข้อความว่าง (Marcel จะบอก "ไม่รู้จัก" → ถูกปฏิเสธ) · ไม่มีกิ่งนี้ การขอช่วง byte จากไฟล์ว่างใน MinIO จะ error</li>
+  <li><code>elsif cover.blob.persisted?</code> — <code>elsif</code> = "ไม่งั้นถ้า…" · <code>persisted?</code> = ใบรับฝากถูกบันทึกแล้ว = <strong>มาทาง direct upload</strong> (ใบรับฝากเกิดตอนขอใบอนุญาต และไฟล์อยู่ใน MinIO แล้ว) →
+      <code>download_chunk(0...4.kilobytes)</code> โหลด<strong>แค่ช่วง byte ที่ 0 ถึง 4,095</strong> ไม่โหลดทั้งไฟล์ (<code>0...4096</code> สามจุด = ไม่รวมตัวท้าย)</li>
+  <li><code>else</code> — แนบไฟล์จากโค้ดตรง ๆ (ใน console หรือ test) ไฟล์ยังอยู่ในมือ ยังไม่ขึ้น MinIO ·
+      <strong>กิ่งนี้หน้าเว็บไม่ได้ใช้ พิมพ์ตามได้เลย ไม่ต้องจำทุกคำ</strong> — อ่านทีละบรรทัดได้ว่า:
+    <ul>
+      <li><code>attachment_changes["cover"].attachable</code> — ของที่กำลังจะแนบ (method ภายในของ Active Storage — ยังไม่มีทางทางการให้อ่านไฟล์ก่อนอัป)</li>
+      <li><code>io = io[:io] if io.is_a?(Hash)</code> — ถ้าแนบมาแบบ <code>{ io: ไฟล์, filename: … }</code> ให้หยิบตัวไฟล์ออกมา</li>
+      <li><code>io.rewind</code> — กรอกกลับไปต้นไฟล์ (เหมือนกรอเทป) · <code>read(4.kilobytes)</code> — อ่าน 4 KB</li>
+      <li><code>.tap { io.rewind }</code> — อ่านเสร็จแล้วกรอกลับอีกรอบ ไม่งั้นตอนอัปจริงจะเริ่มอ่านจากกลางไฟล์</li>
+    </ul>
+  </li>
+</ul>
+
+<div class="win">
+  <p>✅ กิ่ง <code>else</code> ผมลองจริงใน console แล้ว: แนบ <code>tmp/fake.png</code> ด้วย <code>post.cover.attach(io: File.open(…), filename: "fake.png")</code> → ได้ <code>["Cover รองรับเฉพาะ PNG, JPEG, WebP"]</code> และรูปเดิมใน DB ไม่ถูกแทน</p>
+</div>
+
+<h3 id="sn-sub-4">ฟอร์ม: ช่วยกรองไฟล์ + ทำช่องเป็นสีแดง</h3>
+
+<p>เปิด <code>app/views/posts/_form.html.erb</code> · แก้บรรทัด <code>file_field</code> ของรูปปกเป็น 3 บรรทัด (comment + <code>file_field</code> ที่ยาวจนต้องขึ้นบรรทัดใหม่):</p>
+
+<pre><code>    <span class="c">&lt;%# direct_upload: เบราว์เซอร์ส่งไฟล์ขึ้น MinIO (:9000) ตรง ๆ ไม่ผ่าน Rails · ฟอร์มส่งแค่รหัสของไฟล์ %&gt;</span>
+-    &lt;%= form.<span class="f">file_field</span> <span class="n">:cover</span>, direct_upload: <span class="k">true</span>, class: <span class="s">"file-input w-full mt-2"</span> %&gt;
++    <span class="c">&lt;%# accept แค่ช่วยกรองไฟล์ในหน้าต่างเลือกไฟล์ — ของจริงตรวจที่ model จากเนื้อไฟล์ %&gt;</span>
++    &lt;%= form.<span class="f">file_field</span> <span class="n">:cover</span>, direct_upload: <span class="k">true</span>, accept: <span class="n">Post</span>::<span class="n">COVER_TYPES</span>.<span class="f">join</span>(<span class="s">","</span>),
++          class: [<span class="s">"file-input w-full mt-2"</span>, {<span class="s">"file-input-error"</span>: post.errors[<span class="n">:cover</span>].<span class="f">any?</span>}] %&gt;</code></pre>
+
+<ul>
+  <li><code>accept: Post::COVER_TYPES.join(",")</code> — ได้ <code>accept="image/png,image/jpeg,image/webp"</code> ในแท็ก <code>&lt;input&gt;</code> · หน้าต่างเลือกไฟล์ของเบราว์เซอร์<strong>โชว์เฉพาะไฟล์ชนิดนี้</strong> · <code>Post::</code> = หยิบค่าคงที่จากคลาส Post</li>
+  <li>comment บอกตรง ๆ ว่า <code>accept</code> <strong>ไม่ใช่ด่านตรวจ</strong> — มันดูแค่นามสกุลเหมือนกัน · <code>fake.png</code> ของเราก็ยังเลือกได้</li>
+  <li><code>class: [ …, {"file-input-error": … } ]</code> — ท่าเดียวกับช่องหัวข้อในฟอร์มเดิม (บท 129): มี error ที่ cover → เติมคลาส <code>file-input-error</code> ให้ช่องเป็นสีแดง</li>
+</ul>
+
+<h3 id="sn-sub-5">ลองไฟล์ปลอมอีกรอบ</h3>
+
+<p>เปิดหน้าแก้ไขบทความ 27 · เลือก <code>tmp/fake.png</code> · กดบันทึก · ผลจริงบนจอ (กล่องแดงเหนือฟอร์ม):</p>
+
+<pre><code>บันทึกไม่ได้ มี 1 จุดที่ต้องแก้:
+• Cover รองรับเฉพาะ PNG, JPEG, WebP</code></pre>
+
+<p>และใน log (ตัดมาเฉพาะบรรทัดสำคัญ):</p>
+
+<pre><code>Started POST "/rails/active_storage/direct_uploads" for ::1 at 2026-11-10 10:21:38 +0700
+  ActiveStorage::Blob Create (3.0ms)  INSERT INTO "active_storage_blobs" (…) VALUES ('u17psfgqs35172ueghghvdkulwkj', 'fake.png', 'image/png', NULL, 'minio', 38, …) RETURNING "id"
+Completed 200 OK in 13ms (Views: 0.1ms | ActiveRecord: 5.6ms (1 query, 0 cached) | GC: 0.0ms)
+Started PATCH "/posts/27" for ::1 at 2026-11-10 10:21:38 +0700
+  TRANSACTION (0.6ms)  ROLLBACK
+Completed 422 Unprocessable Content in 24ms (Views: 2.3ms | ActiveRecord: 5.3ms (5 queries, 0 cached) | GC: 3.2ms)</code></pre>
+
+<ul>
+  <li><code>Cover รองรับเฉพาะ…</code> — <code>Cover</code> ภาษาอังกฤษนำหน้า เพราะ Rails เติมชื่อช่องให้เอง (แบบเดียวกับ <code>Title can't be blank</code> ของ Day 3)</li>
+  <li><code>ROLLBACK</code> + <code>422</code> — validation ไม่ผ่าน ไม่บันทึก · หน้าแก้ไขถูกวาดใหม่พร้อมกล่องแดง (บท 110)</li>
+  <li>แต่สังเกตบรรทัดแรก: <code>Blob Create … 'fake.png'</code> <strong>เกิดก่อน</strong> PATCH · ใบรับฝากถูกสร้าง และไฟล์ถูกส่งขึ้น MinIO <strong>ก่อนที่ model จะได้ตรวจ</strong> — จำไว้ หัวข้อถัดไปใช้</li>
+</ul>
+
+<p>
+  ไฟล์รูปจริงที่ใหญ่เกินก็โดนเหมือนกัน — ผมลองรูป PNG จริงหนัก 6,346,163 byte ได้ <code>Cover ไฟล์ต้องไม่เกิน 5 MB</code> (ผลจริง) · รูป png/jpg/webp ขนาดปกติบันทึกได้ตามเดิม
+</p>
+
+<h2 id="sn-sec-9">ไฟล์กำพร้า — ฝากแล้วไม่มีใครมารับ</h2>
+
+<p>
+  direct upload ส่งไฟล์ขึ้นโกดัง<strong>ตอนกดบันทึก ก่อน</strong>ที่ Rails จะเห็นฟอร์ม · ถ้า validation ไม่ผ่าน หรือผู้ใช้ปิดหน้าไปกลางทาง
+  ไฟล์อยู่ใน MinIO แล้ว ใบรับฝากอยู่ใน DB แล้ว แต่<strong>ไม่มีป้ายผูกกับบทความไหน</strong> · เรียกว่า<strong>ไฟล์กำพร้า</strong> (orphan · Rails เรียก <code>unattached</code>)
+</p>
+
+<p>นับดูใน console (ผลจริง · หลังจากผมลองไฟล์ปลอม 1 ครั้ง และไฟล์ใหญ่ 1 ครั้ง):</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">ActiveStorage</span>::<span class="n">Blob</span>.<span class="f">unattached</span>.<span class="f">count</span>
+  ActiveStorage::Blob Count (0.5ms)  SELECT COUNT(*) FROM "active_storage_blobs" LEFT OUTER JOIN "active_storage_attachments" ON "active_storage_attachments"."blob_id" = "active_storage_blobs"."id" WHERE "active_storage_attachments"."id" IS NULL
+=&gt; 2
+wongnok-blog-all-in-one(dev):002&gt; <span class="n">ActiveStorage</span>::<span class="n">Blob</span>.<span class="f">unattached</span>.<span class="f">pluck</span>(<span class="n">:filename</span>, <span class="n">:byte_size</span>)
+  ActiveStorage::Blob Pluck (2.6ms)  SELECT "active_storage_blobs"."filename", "active_storage_blobs"."byte_size" FROM … WHERE "active_storage_attachments"."id" IS NULL
+=&gt; [["fake.png", 38], ["big.png", 6346163]]
+wongnok-blog-all-in-one(dev):003&gt; <span class="n">ActiveStorage</span>::<span class="n">Blob</span>.<span class="f">unattached</span>.<span class="f">map</span> { |b| b.service.<span class="f">exist?</span>(b.key) }
+  ActiveStorage::Blob Load (2.5ms)  SELECT "active_storage_blobs".* FROM … WHERE "active_storage_attachments"."id" IS NULL
+  S3 Storage (49.9ms) Checked if file exists at key: tdxomee5263zp0xj82lynsfwkyko (yes)
+  S3 Storage (1.4ms) Checked if file exists at key: w6y2kv8iuzroxbljrd13wci9et72 (yes)
+=&gt; [true, true]</code></pre>
+
+<ul>
+  <li><code>unattached</code> — "ใบรับฝากที่ไม่มีป้ายไหนชี้มา" · SQL คือ <code>LEFT OUTER JOIN</code> ตารางป้ายแล้วเอาแถวที่<strong>หาป้ายไม่เจอ</strong> (<code>… "id" IS NULL</code>)</li>
+  <li><code>pluck(:filename, :byte_size)</code> — หยิบแค่สองช่อง (บท 113) · เห็นชัดว่าเป็นสองไฟล์ที่ถูกปฏิเสธ — ไฟล์ปลอม 38 byte และไฟล์ใหญ่ 6 MB</li>
+  <li><code>b.service.exist?(b.key)</code> — ถาม MinIO ว่าไฟล์จริงยังอยู่ไหม → <code>(yes)</code> ทั้งคู่ · <strong>ไฟล์ที่เราปฏิเสธไปแล้ว ยังนอนอยู่ในโกดังและกินที่</strong></li>
+</ul>
+
+<p>
+  ไฟล์กำพร้ามาจาก <strong>direct upload ที่ถูกปฏิเสธ</strong> หรือรูปที่ลากใส่ช่องเนื้อหา rich text แล้วไม่บันทึก ·
+  แค่เลือกไฟล์แล้วไม่กดบันทึก<strong>ไม่</strong>เกิด (ลองใน Chrome แล้ว — direct upload ของ Rails เริ่มตอนกดบันทึก)
+</p>
+
+<div class="analogy">
+  <span class="label">🏷️ เทียบให้เห็นภาพ — ของฝากที่ไม่มีใครมารับ</span>
+  <p>
+    direct upload คือลูกค้า<strong>เอาของไปฝากโกดังเองก่อน</strong> แล้วค่อยถือบัตรรับฝากมายื่นที่เคาน์เตอร์ · พนักงานตรวจแล้วบอก "รับไม่ได้" — ลูกค้าเดินกลับบ้าน
+    แต่<strong>ของยังวางอยู่ในโกดัง</strong> พร้อมบัตรรับฝากที่ไม่มีแฟ้มไหนอ้างถึง · วันละไม่กี่ชิ้นไม่เป็นไร แต่ปีหนึ่งโกดังเต็ม (และ S3 จริงคิดเงินตามพื้นที่)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> โกดังจริงรู้ว่าของชิ้นไหนค้างนาน · <strong>MinIO/S3 ไม่รู้เลย</strong> ว่าไฟล์ไหนกำพร้า เพราะความรู้ว่า "ของชิ้นนี้เป็นของแฟ้มไหน" (ป้าย) อยู่ใน DB ของเรา ไม่ได้อยู่ในโกดัง ·
+    คนที่ไล่หาของค้างได้จึงต้องเป็นแอปของเราเอง
+  </p>
+</div>
+
+<h3 id="sn-sub-6">ลบได้เลยไหม — เว้นไว้สองวันก่อน</h3>
+
+<p>
+  สไลด์บอก "ต้องมี job ไล่เก็บ" · เอกสาร Rails ให้ตัวอย่างไว้บรรทัดเดียว (ด้านล่าง) · ลองรันเฉพาะส่วน<strong>นับ</strong>ต่อใน console เดิม (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):004&gt; <span class="n">ActiveStorage</span>::<span class="n">Blob</span>.<span class="f">unattached</span>.<span class="f">where</span>(created_at: ..<span class="n">2</span>.<span class="f">days</span>.<span class="f">ago</span>).<span class="f">count</span>
+  ActiveStorage::Blob Count (2.7ms)  SELECT COUNT(*) FROM "active_storage_blobs" LEFT OUTER JOIN … WHERE "active_storage_attachments"."id" IS NULL AND "active_storage_blobs"."created_at" &lt;= '2026-11-08 03:37:40.973843'
+=&gt; 0
+
+<span class="c"># ตัวอย่างในเอกสาร Rails (ยังไม่ต้องรัน): ลบไฟล์กำพร้าที่อายุเกิน 2 วัน</span>
+<span class="n">ActiveStorage</span>::<span class="n">Blob</span>.<span class="f">unattached</span>.<span class="f">where</span>(created_at: ..<span class="n">2</span>.<span class="f">days</span>.<span class="f">ago</span>).<span class="f">find_each</span>(&amp;<span class="n">:purge_later</span>)</code></pre>
+
+<ul>
+  <li><code>created_at: ..2.days.ago</code> — "สร้างไว้<strong>ตั้งแต่สองวันก่อนลงไป</strong>" (<code>..x</code> = ช่วงตั้งแต่อดีตถึง x) · SQL ออกมาเป็น <code>"created_at" &lt;= '2026-11-08 …'</code> (วันนี้ลบสอง · เวลาใน DB เป็นเวลาสากล UTC)</li>
+  <li><code>=&gt; 0</code> — ไฟล์กำพร้าสองไฟล์ของผมเพิ่งเกิดเมื่อกี้ ยังไม่ถึงสองวัน → <strong>บรรทัดของเอกสารจะยังไม่ลบ</strong></li>
+  <li><strong>ทำไมต้องรอสองวัน</strong> — ไฟล์ที่ "ยังไม่มีป้าย" อาจเป็นของคนที่<strong>กำลังกรอกฟอร์มอยู่</strong> (เช่นรูปที่ลากใส่เนื้อหาแล้วยังไม่กดบันทึก) · ลบทันทีคือลบของลูกค้าจากมือ</li>
+  <li><code>find_each(&amp;:purge_later)</code> — ไล่ใบรับฝากที่เจอทีละใบ (ดึงจาก DB ทีละ 1,000 แถว) แล้วสั่ง <code>purge_later</code> ทุกใบ · <code>&amp;:purge_later</code> = เขียนย่อของ <code>{ |b| b.purge_later }</code></li>
+</ul>
+
+<p>
+  บรรทัดนี้ต้องมีคน<strong>รันให้ทุกวันโดยอัตโนมัติ</strong> — นั่นคืองานตามเวลา (recurring job) ของบท 144 · บทนี้รู้แค่ว่าปัญหามีจริงและหน้าตาของคำตอบเป็นแบบไหน
+</p>
+
+<h3 id="sn-sub-7"><code>purge</code> กับ <code>purge_later</code></h3>
+
+<p>
+  ลบไฟล์ได้สองแบบ · <code>purge</code> (ใช้ไปตอนลบรูปปลอม) = <strong>ลบเดี๋ยวนี้ แล้วรอจนเสร็จ</strong> · <code>purge_later</code> = <strong>เขียนใบงาน "ลบไฟล์นี้" แขวนไว้ แล้วไปทำอย่างอื่นต่อเลย</strong> ใครว่างค่อยมาทำ ·
+  ในเครื่องตัวเองไม่ต้องรอสองวัน — ลองแบบ later กับไฟล์กำพร้าทั้งสองเลย (ผลจริง · ตัดบรรทัด SQL ของงานลบเป็น <code>…</code> เพราะเหมือนตอน <code>purge</code>):
+</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):005&gt; <span class="n">ActiveStorage</span>::<span class="n">Blob</span>.<span class="f">unattached</span>.<span class="f">find_each</span>(&amp;<span class="n">:purge_later</span>)
+  ActiveStorage::Blob Load (1.0ms)  SELECT "active_storage_blobs".* FROM … WHERE "active_storage_attachments"."id" IS NULL ORDER BY "active_storage_blobs"."id" ASC LIMIT 1000
+Enqueued ActiveStorage::PurgeJob (Job ID: d5e26f62-8ad8-43e7-9929-b83a5146d5fd) to Async(default) with arguments: #&lt;GlobalID:0x0000000128b1ca00 @uri=#&lt;URI::GID gid://wongnok-blog-all-in-one/ActiveStorage::Blob/13&gt;&gt;
+↳ (wongnok-blog-all-in-one):5:in '&lt;main&gt;'
+Enqueued ActiveStorage::PurgeJob (Job ID: 00faa663-8627-4d3e-bbcf-0a803d5ade7d) to Async(default) with arguments: #&lt;GlobalID:0x0000000128b15a98 @uri=#&lt;URI::GID gid://wongnok-blog-all-in-one/ActiveStorage::Blob/14&gt;&gt;
+↳ (wongnok-blog-all-in-one):5:in '&lt;main&gt;'
+=&gt; nil
+wongnok-blog-all-in-one(dev):006&gt;   ActiveStorage::Blob Load (1.0ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 13 LIMIT 1
+Performing ActiveStorage::PurgeJob (Job ID: d5e26f62-8ad8-43e7-9929-b83a5146d5fd) from Async(default) enqueued at 2026-11-10T03:37:44.992969000Z with arguments: …
+  …
+  S3 Storage (3.6ms) Deleted file from key: tdxomee5263zp0xj82lynsfwkyko
+  S3 Storage (2.5ms) Deleted files by key prefix: variants/tdxomee5263zp0xj82lynsfwkyko/
+Performed ActiveStorage::PurgeJob (Job ID: d5e26f62-8ad8-43e7-9929-b83a5146d5fd) from Async(default) in 13.89ms
+  …  (งานของ Blob/14 แบบเดียวกัน)
+ActiveStorage::Blob.unattached.count
+  ActiveStorage::Blob Count (2.0ms)  SELECT COUNT(*) FROM "active_storage_blobs" LEFT OUTER JOIN … WHERE "active_storage_attachments"."id" IS NULL
+=&gt; 0</code></pre>
+
+<ul>
+  <li><code>Enqueued ActiveStorage::PurgeJob … to Async(default)</code> — "<strong>แขวนใบงาน</strong>ลบไฟล์" 2 ใบ · <code>Job ID</code> = เลขใบงาน (สุ่ม ของคุณจะต่าง) · <code>↳ (wongnok-blog-all-in-one):5</code> = สั่งมาจาก console</li>
+  <li><code>gid://…/ActiveStorage::Blob/13</code> — ที่อยู่ของใบรับฝากเลข 13 เขียนเป็นข้อความ (GlobalID) · ใบงานจด<strong>แค่ที่อยู่</strong> ไม่ได้แนบตัวไฟล์หรือข้อมูลทั้งแถวไปด้วย</li>
+  <li><code>=&gt; nil</code> มา<strong>ทันที</strong> — console ได้ prompt <code>006&gt;</code> คืน<strong>ก่อน</strong>งานลบจะเริ่ม</li>
+  <li><code>Performing …</code> / <code>Performed …</code> — งานลบเริ่ม-จบ<strong>ทีหลัง</strong> เลยโผล่แทรกต่อท้าย prompt 006 · บรรทัด <code>ActiveStorage::Blob.unattached.count</code> คือที่ผมพิมพ์ต่อ ได้ <code>0</code> = ลบครบ</li>
+</ul>
+
+<p>
+  ตอนนี้ "คนทำใบงาน" (<code>Async</code>) คือเธรดในโปรเซส Rails เดียวกัน — <strong>คล้ายสั่ง <code>go func()</code></strong> ใน Go (<a href="../../day-6/lessons/0021-goroutine-waitgroup.html">บท 21</a>) ·
+  ใบงานอยู่ในหน่วยความจำ ไม่ได้จดลงที่ไหน · บล็อก E (บท 142–143) จะเปลี่ยนเป็นกระดานใบงานจริงที่จดลง Postgres
+</p>
+
+<p>
+  อีกเรื่องที่ไม่ต้องทำเอง: <strong>ลบบทความ → Rails ลบรูปปกให้</strong> เพราะ <code>has_one_attached</code> ตั้งค่าเริ่มต้นไว้เป็น <code>dependent: :purge_later</code> (เอกสาร API ของ Rails) — ตรงกับที่สไลด์หน้า 12 บอก
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>orphaned file · unattached blob</dt>
+    <dd>ไฟล์ที่อัปขึ้น storage แล้วแต่ไม่มี record ไหนผูก · ใน Rails หาด้วย <code>ActiveStorage::Blob.unattached</code> · เกิดบ่อยกับ direct upload ·
+        <strong>ถาม senior ได้ว่า "โปรเจกต์เรามี job ลบ unattached blob ไหม รันทุกวันหรือเปล่า เว้นกี่วัน"</strong></dd>
+    <dt>purge · purge_later</dt>
+    <dd>purge = ลบป้าย + ใบรับฝาก + ไฟล์ + รูปย่อ เดี๋ยวนั้น · purge_later = ส่งเป็นงานเบื้องหลัง (Active Job) คืนผลทันที ·
+        <strong>พิมพ์บอก AI ได้ว่า "use purge_later in request paths so the user does not wait for storage deletes"</strong></dd>
+  </dl>
+</div>
+
+<div class="note">
+  <p><strong>📍 ตรวจก่อนไปต่อ:</strong> <code>git status --short</code> ต้องเห็นไฟล์ที่ถูกแก้ <strong>5 ไฟล์พอดี</strong> — <code>app/controllers/posts_controller.rb</code> · <code>app/models/post.rb</code> · <code>app/views/posts/_form.html.erb</code> · <code>app/views/posts/_post.html.erb</code> · <code>config/application.rb</code> ·
+    ใน <code>post.rb</code> <strong>ต้องไม่เหลือ</strong> <code>cover_is_valid</code> ของสไลด์ · ไฟล์ใน <code>tmp/</code> ไม่โผล่ (git ไม่สนโฟลเดอร์นี้) · แล้ว commit ได้ เช่น <code>git commit -am "รูปย่อ + ตรวจรูปปกจากเนื้อไฟล์"</code></p>
+</div>
+
+<div class="task">
+  <h3 id="sn-sub-8">🎯 ภารกิจ — ทำไฟล์ปลอมสองแบบ แล้วเก็บกวาดโกดังเอง (~8 นาที)</h3>
+  <p>ทำบนโค้ดตอนจบบท (validation ตัวจริงแล้ว) · ใช้บทความที่ไม่มีรูปปก</p>
+  <ol>
+    <li>สร้างไฟล์หนัก 6 MB ที่ข้างในเป็นเลข 0 ล้วน (ไม่ใช่รูป) ชื่อลงท้าย .png: <code>mkfile -n 6m tmp/zero.png</code> (macOS) หรือ <code>truncate -s 6M tmp/zero.png</code> (Linux) · ใช้ <code>tmp/fake.png</code> จากในบทด้วย (ถ้าลบไปแล้วสร้างใหม่ด้วย <code>printf</code> เดิม)</li>
+    <li>เปิดหน้าแก้ไขบทความ · เลือก <code>tmp/zero.png</code> (ในหน้าต่างเลือกไฟล์ เข้าโฟลเดอร์โปรเจกต์ → <code>tmp</code>) · กดบันทึก</li>
+    <li>ทำซ้ำด้วย <code>tmp/fake.png</code></li>
+    <li>เปิด <code>bin/rails console</code> แล้วพิมพ์ทีละบรรทัด:
+<pre><code><span class="n">ActiveStorage</span>::<span class="n">Blob</span>.<span class="f">unattached</span>.<span class="f">pluck</span>(<span class="n">:filename</span>)
+<span class="n">ActiveStorage</span>::<span class="n">Blob</span>.<span class="f">unattached</span>.<span class="f">find_each</span>(&amp;<span class="n">:purge</span>)
+<span class="n">ActiveStorage</span>::<span class="n">Blob</span>.<span class="f">unattached</span>.<span class="f">count</span></code></pre>
+      (ใช้ <code>purge</code> ไม่ใช่ <code>purge_later</code> เพื่อเห็นผลทันที · <strong>ลบหมดไม่เว้นสองวันได้เฉพาะในเครื่องตัวเอง</strong>)</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ข้อ 2 กล่องแดงจะมีกี่บรรทัด บรรทัดไหนบ้าง? · ข้อ 4 บรรทัดแรกจะเห็นชื่อไฟล์อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ข้อ 2 — ผลจริง: <strong>2 จุด</strong> เพราะไฟล์ศูนย์ล้วนไม่มีลายเซ็นรูป <em>และ</em>ใหญ่เกิน 5 MB · validation รันครบทุกข้อ ไม่หยุดที่ข้อแรก:</p>
+<pre><code>บันทึกไม่ได้ มี 2 จุดที่ต้องแก้:
+• Cover รองรับเฉพาะ PNG, JPEG, WebP
+• Cover ไฟล์ต้องไม่เกิน 5 MB</code></pre>
+    <p>ข้อ 3 — <code>Cover รองรับเฉพาะ PNG, JPEG, WebP</code> บรรทัดเดียว · ข้อ 4 — ผลจริง (ตัดบรรทัด SQL):</p>
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; ActiveStorage::Blob.unattached.pluck(:filename)
+=&gt; ["zero.png", "fake.png"]
+wongnok-blog-all-in-one(dev):002&gt; ActiveStorage::Blob.unattached.find_each(&amp;:purge)
+  …
+  ActiveStorage::Blob Destroy (1.3ms)  DELETE FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 11
+  …
+  S3 Storage (20.0ms) Deleted file from key: rxqg8puw70j2319aqptw98puznrq
+  S3 Storage (4.3ms) Deleted files by key prefix: variants/rxqg8puw70j2319aqptw98puznrq/
+  …  (ไฟล์ที่สองแบบเดียวกัน)
+=&gt; nil
+wongnok-blog-all-in-one(dev):003&gt; ActiveStorage::Blob.unattached.count
+=&gt; 0</code></pre>
+    <p>ไฟล์ที่ถูกปฏิเสธทั้งสองไปค้างอยู่ใน MinIO ระหว่างข้อ 2–3 · <code>purge</code> ลบทั้งใบรับฝากและตัวไฟล์ · <strong>บทความไม่ถูกแตะเลย</strong> (ไม่มีป้ายให้ลบ)</p>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>ข้อ 2 บันทึกผ่าน ขึ้นแถบเขียว</strong> — <code>post.rb</code> ยังเป็นโค้ดของสไลด์ (ตรวจ <code>content_type</code>) หรือ <code>validate</code> พิมพ์ชื่อ method ไม่ตรงกับ <code>def</code> · เปิด <code>post.rb</code> เทียบกับในบท</li>
+      <li><strong>ข้อ 4 บรรทัดแรกเห็นชื่อไฟล์มากกว่าสองชื่อ</strong> — ปกติ · มีไฟล์กำพร้าจากการทดลองก่อนหน้า (หรือรูปที่ลากใส่เนื้อหาแล้วไม่บันทึก) · <code>purge</code> เก็บหมดเหมือนกัน</li>
+      <li><strong><code>undefined method 'unattached' for module ActiveStorage::Blobs</code></strong> — พิมพ์ <code>Blobs</code> มี s เกิน (ลองแล้ว ได้ข้อความนี้เป๊ะ) · ชื่อที่ถูกคือ <code>ActiveStorage::Blob</code> · ถ้าได้ <code>uninitialized constant Activestorage</code> = พิมพ์ S ตัวเล็ก</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">(ดัดแปลงจาก Recap case 2 สไลด์หน้า 13) หน้ารวมโชว์รูปย่อของรูปปก และข้อความล้วนของเนื้อหา rich text ในการ์ดทุกใบ · controller เขียน <code>Post.includes(:category).limit(20)</code> · ควร<strong>เติมอะไร</strong>ไม่ให้เกิด N+1?</p>
+  <div class="opts">
+    <button class="opt">ไม่ต้องเติม เพราะรูปย่อถูกเก็บไว้ใน MinIO แล้วไม่ต้องไปตู้อีก</button>
+    <button class="opt">เติม <code>.includes(:cover)</code> เพราะใน model ตั้งชื่อไฟล์แนบว่า cover</button>
+    <button class="opt">เติม <code>.with_attached_cover.with_rich_text_body</code> ต่อท้ายใบเบิกเดิม</button>
+    <button class="opt">ย้ายการเรียก <code>variant</code> ไปไว้ใน controller แทนที่จะอยู่ใน partial</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — ผลจริงในบทนี้: ไม่มี <code>with_attached_cover</code> ได้ 17 query (ป้ายทีละบทความ + ใบรับฝากทีละใบ) · ใส่แล้ว + ปิด track_variants เหลือ 6 · ส่วน <code>with_rich_text_body</code> กันเนื้อหา rich text ทีละบทความ (บท 137)</p>
+    <p>ตัวเลือกที่ 1 สับสนระหว่าง<strong>ตัวไฟล์</strong> (อยู่ใน MinIO) กับ<strong>ป้าย/ใบรับฝาก</strong> (อยู่ใน DB) — N+1 เกิดที่ DB ·
+       ตัวเลือกที่ 2 — <code>cover</code> ไม่ใช่ชื่อความสัมพันธ์จริง ลองแล้วได้ <code>Association named 'cover' was not found on Post</code> (ชื่อจริงคือ <code>cover_attachment</code>) ·
+       ตัวเลือกที่ 4 — ย้ายที่เรียกไม่ได้ลดจำนวนครั้งที่ไปตู้ ปัญหาอยู่ที่ใบเบิกไม่ได้บอกล่วงหน้า</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ไฟล์แนบ = ความสัมพันธ์ใน DB เหมือน association อื่น · หน้ารวมที่โชว์ไฟล์แนบต้องมี <code>with_attached_*</code> แล้วดูว่าจำนวน query ใน log ไม่โตตามข้อมูล</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ทำไมโค้ดในสไลด์ที่ตรวจ <code>cover.content_type.in?(%w[image/png image/jpeg image/webp])</code> จึงปล่อยไฟล์ข้อความที่ตั้งชื่อ <code>fake.png</code> ผ่านไปได้?</p>
+  <div class="opts">
+    <button class="opt">content_type มาจากเบราว์เซอร์ที่เดาจากนามสกุล และ Rails ก็ถอยไปเชื่อชื่อไฟล์ด้วย</button>
+    <button class="opt">Rails ไม่รัน validation เมื่อไฟล์มาทาง direct upload เพราะไฟล์ไม่ผ่านเซิร์ฟเวอร์</button>
+    <button class="opt">MinIO แก้ content_type ให้เป็น image/png เองตอนที่ไฟล์ถูกส่งขึ้นไปเก็บ</button>
+    <button class="opt">validation ตรวจขนาดไฟล์ก่อน พอขนาดผ่านแล้วก็ข้ามการตรวจชนิดไฟล์ไปเลย</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — log จริง: <code>"content_type" =&gt; "image/png"</code> มากับใบขอ direct upload ของเบราว์เซอร์ และ Marcel ที่ได้ชื่อไฟล์ไปด้วยตอบ <code>"image/png"</code> · ให้แค่เนื้อ Marcel ตอบ <code>"application/octet-stream"</code></p>
+    <p>ตัวเลือกที่ 2 — validation รันจริง (ตอน PATCH) โค้ดตัวจริงของเราปฏิเสธได้ด้วย 422 · ปัญหาคือ<strong>ข้อมูลที่โค้ดของสไลด์ใช้ตัดสิน</strong> ·
+       ตัวเลือกที่ 3 — content_type ถูกจดลง DB ตั้งแต่ <code>INSERT INTO "active_storage_blobs"</code> ตามที่เบราว์เซอร์บอก MinIO ไม่ได้ยุ่ง ·
+       ตัวเลือกที่ 4 — validation รันทุกข้อ (ภารกิจได้ 2 ข้อความพร้อมกัน) และในสไลด์ตรวจชนิดก่อนขนาดด้วยซ้ำ</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ชื่อไฟล์ นามสกุล content_type = สิ่งที่ client อ้าง · ชนิดจริงต้องดูจากเนื้อไฟล์ (magic bytes) โดยไม่บอกชื่อไฟล์ให้ตัวตรวจ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ลูกค้าคนที่สองเปิดหน้ารวม หลังจากคนแรกเปิดไปแล้ว (โค้ดตอนจบบท) · ตอนเบราว์เซอร์ขอรูปย่อของบทความ 30 Rails ทำอะไร?</p>
+  <div class="opts">
+    <button class="opt">โหลดรูปต้นฉบับจาก MinIO มาย่อใหม่ทุกครั้ง เพราะไม่ได้จดรูปย่อลงตารางไว้แล้ว</button>
+    <button class="opt">ส่งรูปต้นฉบับขนาดเต็มไปให้เบราว์เซอร์ย่อเองด้วย CSS เพื่อประหยัดแรงเซิร์ฟเวอร์</button>
+    <button class="opt">อ่านรูปย่อจากตาราง active_storage_variant_records แล้วส่งไฟล์ให้เบราว์เซอร์ตรง ๆ</button>
+    <button class="opt">ถาม MinIO ว่ารูปย่อมีแล้วไหม เจอแล้วจึงออก URL ที่เซ็นแล้วให้ไปรับที่ MinIO เอง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — log ครั้งที่สอง: <code>Checked if file exists at key: variants/… (yes)</code> → <code>Generated URL</code> → <code>302</code> · ไม่มี Downloaded/Uploaded · 46ms → 8ms</p>
+    <p>ตัวเลือกที่ 1 — ไม่จดลงตาราง ≠ ไม่จำ · ชิ้นย่อยังอยู่ใน MinIO Rails แค่ถามโกดังแทนการเปิดสมุด ·
+       ตัวเลือกที่ 2 — ถ้าทำแบบนั้นก็ไม่ต้องมี variant · ผู้ใช้ได้ไฟล์เล็ก 400×250 จริง ·
+       ตัวเลือกที่ 3 — เราปิด <code>track_variants</code> แล้ว ตารางนั้นไม่ถูกใช้ และตาราง DB ไม่เคยเก็บตัวไฟล์ เก็บแค่ข้อมูลของไฟล์</p>
+    <p><strong>จุดที่ต้องจำ:</strong> variant ทำครั้งแรกตอนมีคนขอ แล้วเก็บใน storage ใช้ซ้ำ · คนแรกรอ คนต่อไปเร็ว</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ผู้ใช้อัปไฟล์ปลอมผ่านฟอร์ม (direct upload) แล้วได้กล่องแดง 422 · ตอนนี้ไฟล์ปลอมนั้น<strong>อยู่ที่ไหน</strong>?</p>
+  <div class="opts">
+    <button class="opt">ไม่มีที่ไหนเลย เพราะ ROLLBACK ยกเลิกทั้งการบันทึกใน DB และการส่งไฟล์ขึ้น MinIO</button>
+    <button class="opt">อยู่ใน MinIO และมีใบรับฝากใน DB ที่ไม่มีบทความไหนผูก จนกว่าจะมีคน purge</button>
+    <button class="opt">อยู่ในโฟลเดอร์ tmp ของเซิร์ฟเวอร์ Rails และจะหายไปเองเมื่อรีสตาร์ทเซิร์ฟเวอร์</button>
+    <button class="opt">ติดเป็นรูปปกของบทความไปแล้ว แต่ถูกซ่อนไว้ไม่ให้แสดงจนกว่าจะแก้ไขให้ถูก</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ผลจริง: <code>ActiveStorage::Blob.unattached.count</code> → <code>2</code> และ <code>exist?</code> ใน MinIO → <code>[true, true]</code> · direct upload ส่งไฟล์และสร้างใบรับฝาก<strong>ก่อน</strong>ฟอร์มถึง model</p>
+    <p>ตัวเลือกที่ 1 — ROLLBACK ยกเลิกแค่สิ่งที่ทำใน transaction ของ PATCH · ใบรับฝากถูก COMMIT ไปตั้งแต่ใบสั่ง <code>direct_uploads</code> ก่อนหน้า และ MinIO ไม่รู้จัก transaction ของ Postgres ·
+       ตัวเลือกที่ 3 — direct upload ไม่ผ่านเซิร์ฟเวอร์ Rails เลย ไฟล์ไปที่ MinIO ตรง ๆ ·
+       ตัวเลือกที่ 4 — ไม่มีป้าย (<code>Attachment Create</code> ไม่เกิด) บทความยังไม่มีรูปปก</p>
+    <p><strong>จุดที่ต้องจำ:</strong> direct upload + validation ไม่ผ่าน = ไฟล์กำพร้า · ต้องมีงานไล่ <code>unattached</code> ที่อายุเกินกำหนดแล้ว <code>purge_later</code></p>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>12</td><td>validation ตรวจ <code>cover.content_type.in?(…)</code></td><td>ไฟล์ข้อความชื่อ <code>fake.png</code> <strong>ผ่าน</strong> บันทึกได้ แล้วรูปย่อพัง 500 (ลองแล้ว) · บทนี้ใช้ Marcel อ่านเนื้อไฟล์แทน</td><td><strong>สนใจ</strong> — ใช้โค้ดในบทนี้</td></tr>
+    <tr><td>12</td><td>"คนร้ายอัป shell script แล้วบอกว่าเป็น image/png ได้สบาย"</td><td>ลองไฟล์ที่ขึ้นต้น <code>#!/bin/sh</code> ชื่อ <code>.png</code> แล้ว — โค้ดของสไลด์<strong>จับได้</strong> เพราะ Marcel รู้จักลายเซ็นนั้น (Rails ตรวจเนื้อซ้ำตอนแนบ) · ที่หลุดคือไฟล์ที่<strong>ไม่มีลายเซ็นอะไรเลย</strong> อย่างข้อความธรรมดา</td><td>ไม่ต้อง — ข้อสรุปเดิมยังถูก: อย่าเชื่อ content_type</td></tr>
+    <tr><td>12</td><td><code>return unless cover.attached?</code> แล้วตรวจทุกครั้งที่บันทึก</td><td>เราตรวจเฉพาะตอนแนบรูปใหม่ (<code>cover.attachment.new_record?</code>) · แก้หัวข้อแล้วไม่ต้องโหลดไฟล์จาก MinIO ซ้ำ</td><td>ไม่ต้อง</td></tr>
+    <tr><td>12</td><td>ใช้ variant ในการ์ด (ไม่พูดถึงจำนวน query)</td><td>ต้องเติม <code>with_attached_cover</code> และปิด <code>track_variants</code> ถึงจะเหลือ 6 query ไม่มีคำเตือน bullet (วัดจริง 17 → 10 → 6)</td><td><strong>สนใจ</strong> ถ้าดู log</td></tr>
+    <tr><td>12</td><td><code>resize_to_limit: [400, 300]</code></td><td>ทำงานเหมือนกัน · โปรเจกต์เขียน <code>[ 400, 300 ]</code> มีเว้นวรรคตามรูปแบบของ rubocop · และต้องมีคลาส <code>self-start</code> ไม่งั้นรูปถูกยืดเป็น 720px</td><td>ไม่ต้อง</td></tr>
+    <tr><td>12</td><td>libvips "เร็วและกิน RAM น้อยกว่า ImageMagick"</td><td>เอกสาร Rails ให้ตัวเลข "เร็วได้ถึง 10 เท่า ใช้หน่วยความจำ 1/10" (ผมไม่ได้วัด)</td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0139-signed-url-direct-upload.html">← บทเรียน 139 · signed URL · direct upload</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0141-lab-vibe4-content.html">บทเรียน 141 → Lab Vibe 4</a>
+</nav>
+
+<h2 id="sn-sec-12">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#transforming-images">Rails Guides — Active Storage Overview § Transforming Images</a> —
+      <strong>อ่านถึงก่อนหัวข้อ ImageMagick Security Policy</strong> · ยืนยันว่า variant ถูกทำตอนเบราว์เซอร์ขอ URL ครั้งแรก · อ่านต่อ § Lazy vs Immediate Loading สั้น ๆ ได้</li>
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#requirements">Rails Guides — Active Storage Overview § Requirements</a> —
+      ที่มาของ "ต้องติดตั้ง libvips เอง" และตัวเลข 10 เท่า · <strong>อ่านแค่ย่อหน้านี้</strong></li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveStorage/Attached/Model.html#method-i-has_one_attached">Rails API — has_one_attached</a> —
+      <strong>อ่านย่อหน้าเรื่อง <code>:dependent</code></strong> (ค่าเริ่มต้น <code>:purge_later</code>) และ <code>with_attached_avatar</code> ที่กัน N+1</li>
+  <li><a href="https://guides.rubyonrails.org/configuring.html#config-active-storage-track-variants">Rails Guides — Configuring § config.active_storage.track_variants</a> —
+      ค่าตั้งที่เราปิด · <strong>อ่านแค่หัวข้อนี้</strong> (บอกว่าค่าเริ่มต้นเป็น true ตั้งแต่ Rails 6.1)</li>
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#removing-files">Rails Guides — Active Storage Overview § Removing Files</a> และ
+      <a href="https://guides.rubyonrails.org/active_storage_overview.html#purging-unattached-uploads">§ Purging Unattached Uploads</a> —
+      <code>purge</code> กับ <code>purge_later</code> · และบรรทัด <code>unattached.where(created_at: ..2.days.ago)</code> ที่ใช้ในบท</li>
+  <li><a href="https://github.com/rails/marcel">GitHub — rails/marcel</a> —
+      <strong>อ่านแค่ README ช่วงตัวอย่าง</strong> ที่เทียบการเรียกแบบให้แค่เนื้อ กับแบบให้ชื่อไฟล์/ชนิดที่ประกาศมาด้วย</li>
+  <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html#file-signature-validation">OWASP — File Upload Cheat Sheet § File Signature Validation</a> —
+      ตรวจ magic bytes · <strong>อ่านต่ออีกหัวข้อ Content-Type Validation</strong> ที่บอกว่า content type จาก client ปลอมได้ · ทั้งหน้ามีรายการป้องกันหลายชั้นถ้าอยากอ่านเพิ่ม</li>
+  <li><a href="https://github.com/libvips/ruby-vips">GitHub — libvips/ruby-vips</a> —
+      <strong>อ่านแค่ส่วน Install on linux and macOS</strong>: คำสั่ง <code>apt install libvips42</code> / <code>brew install vips</code></li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/MIME_types">MDN — MIME types</a> —
+      ป้าย <code>image/png</code> คืออะไร · <strong>อ่านถึงหัวข้อ MIME sniffing</strong> ก็พอ</li>
+</ul>
+
+<p>สงสัยตรงไหน — เช่น "ทำไมไม่ตรวจไฟล์ในเบราว์เซอร์ด้วย JavaScript ไปเลย" หรือ "S3 ของจริงต้องเก็บกวาดแบบนี้ไหม" — ถามกลับมาได้เลย</p>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

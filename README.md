@@ -3,7 +3,7 @@
 **เปิดอ่านได้ที่ <https://learndevpool69.vercel.app/>**
 
 สรุปจากสไลด์คอร์ส **PEA DevPool — Enterprise Go Engineering with AI Integration**
-เรียบเรียงใหม่เป็นเว็บบทเรียนภาษาไทย **135 บท** ที่มี predict-the-output, quiz
+เรียบเรียงใหม่เป็นเว็บบทเรียนภาษาไทย **145 บท** ที่มี predict-the-output, quiz
 ที่ให้ feedback ทันที และภารกิจให้ลงมือเขียนโค้ดทุกบท
 
 แบ่งเป็นสามฝั่ง:
@@ -12,7 +12,7 @@
 |---|---|---|
 | **BACK** | Go — พื้นฐานภาษา · testing · concurrency · database · REST API ด้วย Gin · Keycloak | 01–55 |
 | **FRONT** | HTML/CSS · Functional Programming with TypeScript · Next.js · Next.js App · Agentic Workflow | 56–89 |
-| **RAILS** | Ruby on Rails — Day 1 Ruby · โครงสร้าง · routing · controller · view · Day 2 Active Record · migration · validation · query · association · Day 3 view · CSS · Hotwire | 90–135 |
+| **RAILS** | Ruby on Rails — Day 1 Ruby · โครงสร้าง · routing · controller · view · Day 2 Active Record · migration · validation · query · association · Day 3 view · CSS · Hotwire · Day 4 Part 1 rich text · ไฟล์ · background job (ทำถึงบท 145) | 90–145 |
 
 ฝั่ง BACK แบ่งตามวันที่เรียน (Day 1–9) · ฝั่ง FRONT แบ่งตามชื่อไฟล์สไลด์
 เพราะอาจารย์ไม่ได้กำกับวันมาให้ · ฝั่ง RAILS เป็นคอร์สแยกที่แบ่งตามวันของตัวเอง (Rails Day 1–4)

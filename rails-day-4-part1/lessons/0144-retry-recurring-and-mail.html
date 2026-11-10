@@ -1,0 +1,1211 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 144 — retry, งานตามเวลา และอีเมลถึงผู้ติดตาม — ให้ระบบเผยแพร่โพสต์เอง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 144 · Rails · Day 4 Part 1</p>
+  <h1>retry, งานตามเวลา และอีเมลถึงผู้ติดตาม — ให้ระบบเผยแพร่โพสต์เอง</h1>
+  <p class="meta">~25 นาทีอ่าน + พิมพ์ตามอีก ~25 นาที (บทนี้ยาวกว่าปกติ เพราะต้องพาโค้ดไปถึงจุดที่ระบบทำงานเองได้) · ควรผ่าน
+    <a href="./0143-idempotency-solid-queue.html">บท 143</a> (Solid Queue · <code>PublishPostJob</code>) ·
+    <a href="./0142-background-jobs-exactly-once.html">บท 142</a> (exactly-once ไม่มีจริง) ·
+    Day 2 <a href="../../rails-day-2/lessons/0111-four-layers-and-uniqueness.html">บท 111</a> (unique index) มาก่อน</p>
+  <p class="standfirst">
+    ตอนจบบท 143 บทความที่ตั้งเวลาไว้ยัง<strong>ต้องมีคนกดปุ่ม</strong>ถึงจะเผยแพร่ และไม่มีใครรู้ว่ามีบทความใหม่ ·
+    บทนี้ทำให้ระบบ<strong>เดินตรวจเองทุกนาที</strong> เผยแพร่เมื่อถึงเวลา แล้ว<strong>ส่งอีเมลหาผู้ติดตามคนละฉบับพอดี</strong> แม้ job จะรันซ้ำ
+    <br>อ่านจบแล้วคุณจะ: เลือกได้ว่า error แบบไหนควร <strong>ลองใหม่ (retry)</strong> แบบไหนควร <strong>ทิ้ง (discard)</strong> และทำไมต้องเว้นระยะให้ห่างขึ้นเรื่อย ๆ ·
+    อธิบายได้ว่า <strong>deploy ตอน job กำลังรัน</strong> แล้วเกิดอะไร · ตั้ง <strong>งานตามเวลา</strong> ใน <code>config/recurring.yml</code> ให้ทำงานจริงในเครื่อง ·
+    ส่งอีเมลด้วย <strong>ActionMailer</strong> · และ<strong>เปิดดูคิว</strong>ด้วย SQL ได้
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — บทนี้ใช้คำพวกนี้</p>
+  <ul>
+    <li><strong>job · คิว · worker</strong> (<a href="./0142-background-jobs-exactly-once.html">บท 142</a>) — ใบงานหลังร้าน · กระดานแขวนใบงาน · พนักงานหลังร้านที่หยิบใบงานไปทำ · และ <strong>at-least-once</strong> = งานไม่หาย แต่<strong>อาจถูกทำซ้ำ</strong></li>
+    <li><strong><code>PublishPostJob</code></strong> (<a href="./0143-idempotency-solid-queue.html">บท 143</a>) — รับ <code>post_id</code> · ล็อกแถวด้วย <code>with_lock</code> · เผยแพร่เฉพาะเมื่อ <code>scheduled?</code> และถึงเวลาแล้ว (guard) · รันซ้ำแล้วไม่พัง · คิวคือตาราง <code>solid_queue_*</code> ใน Postgres · worker คือ <code>bin/jobs</code></li>
+    <li><strong>unique index</strong> (Day 2 <a href="../../rails-day-2/lessons/0111-four-layers-and-uniqueness.html">บท 111</a>) — สารบัญห้ามซ้ำของตู้ · ใส่ค่าซ้ำแล้ว Ruby ได้ error ชื่อ <code>ActiveRecord::RecordNotUnique</code> · <code>validates uniqueness</code> อย่างเดียวกันไม่ได้ถ้าสองคนมาพร้อมกัน</li>
+    <li><strong><code>normalizes</code></strong> (<a href="../../rails-day-2/lessons/0112-callbacks-and-logic.html">บท 112</a>) — ทำค่าให้เป็นรูปเดียวกันก่อนเก็บ เช่น อีเมลตัวเล็ก · <strong><code>dependent: :delete_all</code></strong> (<a href="../../rails-day-2/lessons/0116-dependent-and-helpers.html">บท 116</a>) — ลบแฟ้มแม่แล้วโกยแฟ้มลูกทิ้งด้วย SQL คำสั่งเดียว</li>
+    <li><strong>SIGTERM</strong> (Go <a href="../../day-6/lessons/0025-context.html">บท 25</a>) — สัญญาณที่ระบบส่งมาบอกโปรแกรมว่า "ขอให้ปิดตัวเองนะ"</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18 · solid_queue 1.7.0 (สไลด์และ repo ของอาจารย์เขียน Ruby 4.0.5–4.0.6 · Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน)
+    <br><strong>📍 โค้ดเริ่มจาก:</strong> ตอนจบ<a href="./0143-idempotency-solid-queue.html">บท 143</a> ที่ commit แล้ว (มี <code>status</code>/<code>scheduled_at</code>/<code>published_at</code> · Solid Queue · <code>PublishPostJob</code> · ปุ่ม "เผยแพร่ทันที" · บรรทัด <code>jobs: bin/jobs</code> ใน <code>Procfile.dev</code>) — <code>git status --short</code> ต้องว่าง ·
+    บทนี้<strong>เขียนโค้ดถาวร</strong> แล้ว commit ตอนท้าย
+    <br><strong>🖥 เปิดค้างไว้:</strong> <code>docker compose up -d</code> (ฐานข้อมูล + MinIO) · หน้าต่าง ① <code>bin/dev</code> (เว็บ + CSS + worker) · หน้าต่าง ② ไว้พิมพ์คำสั่ง ·
+    หน้าต่าง ③ ไว้ดู log ของ job — <strong>worker ไม่พิมพ์ log ออกหน้าต่าง <code>bin/dev</code></strong> (บท 143) ให้เปิดไฟล์ log แล้วกรองเฉพาะบรรทัดสำคัญ:
+  </p>
+<pre><code>tail -f log/development.log | grep -E "Enqueued|Performing|Performed|Delivered|Retrying|Discarded|Error performing"</code></pre>
+  <p>
+    <code>tail -f</code> = แสดงท้ายไฟล์แล้วรอดูบรรทัดใหม่ไปเรื่อย ๆ · <code>|</code> = ส่งต่อให้คำสั่งถัดไป · <code>grep -E "ก|ข"</code> = เอาเฉพาะบรรทัดที่มีคำใดคำหนึ่ง ·
+    ผลรันทุกกล่องมาจากเครื่องจริง · log ตัดบรรทัดที่ไม่เกี่ยวเป็น <code>…</code> · ตัดคอมเมนต์ <code>/*application=…*/</code> ท้าย SQL และชื่อเครื่องในเลขอีเมลออก ·
+    <strong>เวลา · Job ID · เลข id · ชื่อไฟล์ migration ของคุณจะต่าง</strong> · เวลาใน log ของ Rails ที่ลงท้าย <code>Z</code>/<code>UTC</code> และเวลาใน psql = เวลาสากล (ช้ากว่าไทย 7 ชั่วโมง)
+  </p>
+</div>
+
+<h2 id="sn-sec-1">เป้าหมายของบท — ตั้งเวลาไว้แล้วไปนอนได้</h2>
+
+<p>
+  ตอนนี้แอปมีสถานะ "ตั้งเวลาเผยแพร่" แล้ว แต่ยังมีสองช่องโหว่ · ① <strong>ถึงเวลาแล้วไม่มีใครมาทำ</strong> — <code>PublishPostJob</code> ทำงานเมื่อมีคนกด "เผยแพร่ทันที" เท่านั้น ·
+  ② <strong>ไม่มีใครรู้ว่ามีบทความใหม่</strong> — ยังไม่มีผู้ติดตาม ยังไม่มีอีเมล
+</p>
+<p>บทนี้เติมทีละชิ้นตามลำดับนี้ (ทุกขั้นยังรันซ้ำแล้วไม่พังเหมือนบท 143):</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ขั้น</th><th>ทำอะไร</th><th>ไฟล์หลัก</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>รายชื่อผู้ติดตาม</td><td><code>followers</code> (ตาราง + model + seeds)</td></tr>
+    <tr><td>2</td><td>หน้าตาอีเมล + ส่งอีเมลลงไฟล์ในเครื่อง</td><td><code>PostMailer</code> + view 2 ไฟล์ + <code>development.rb</code></td></tr>
+    <tr><td>3</td><td>สมุดจดว่าส่งใครไปแล้ว (กันส่งซ้ำ)</td><td><code>post_notifications</code></td></tr>
+    <tr><td>4</td><td>ให้ job ส่งอีเมลหลังเผยแพร่ + ลองใหม่ / ทิ้ง เมื่อพัง</td><td><code>publish_post_job.rb</code></td></tr>
+    <tr><td>5</td><td>ตัวเดินตรวจทุกนาที</td><td><code>publish_scheduled_posts_job.rb</code> + <code>config/recurring.yml</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-2">ขั้น 1 — ผู้ติดตาม: ตาราง <code>followers</code></h2>
+
+<p>
+  ผู้ติดตาม = คนที่อยากได้อีเมลเมื่อมีบทความใหม่ · เก็บแค่อีเมลพอ · <strong>บทนี้ไม่ทำหน้าสมัคร</strong> (หัวใจของบทคือ job) — ใส่รายชื่อ 3 คนผ่าน seeds ·
+  ชื่อตรงกับผู้ใช้ที่จะมาในบล็อก G (somchai · malee · boss)
+</p>
+
+<p>หน้าต่าง ② พิมพ์:</p>
+<pre><code>$ bin/rails generate model Follower email:string:uniq
+      invoke  active_record
+      create    db/migrate/20261110034734_create_followers.rb
+      create    app/models/follower.rb
+      invoke    test_unit
+      create      test/models/follower_test.rb
+      create      test/fixtures/followers.yml</code></pre>
+<ul>
+  <li><code>email:string:uniq</code> = ช่อง <code>email</code> เป็นข้อความ และ<strong>สร้างสารบัญห้ามซ้ำ</strong>ให้ด้วย (<code>:uniq</code>)</li>
+  <li>ไฟล์ใน <code>test/</code> สองไฟล์ <strong>ปล่อยไว้ตามที่ generator สร้าง</strong> ยังไม่แตะ (เรื่อง test เป็นของบล็อก J)</li>
+</ul>
+
+<p>เปิด migration ที่เพิ่งได้ (<code>db/migrate/…_create_followers.rb</code>) แก้ให้เป็นแบบนี้ — เติม <code>, null: false</code> กับคอมเมนต์หนึ่งบรรทัด:</p>
+<pre><code><span class="k">class</span> <span class="n">CreateFollowers</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">create_table</span> <span class="n">:followers</span> <span class="k">do</span> |t|
+      t.<span class="f">string</span> <span class="n">:email</span>, <span class="n">null:</span> <span class="k">false</span>
+
+      t.<span class="f">timestamps</span>
+    <span class="k">end</span>
+    <span class="c"># อีเมลซ้ำไม่ได้ (คู่กับ validates uniqueness ใน model)</span>
+    <span class="f">add_index</span> <span class="n">:followers</span>, <span class="n">:email</span>, <span class="n">unique:</span> <span class="k">true</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<ul>
+  <li><code>null: false</code> — ตู้ไม่ยอมเก็บแถวที่ไม่มีอีเมล (ชั้น DB · บท 111)</li>
+  <li><code>add_index … unique: true</code> — generator เขียนให้แล้วจาก <code>:uniq</code> · เราแค่เติมคอมเมนต์ข้างบน</li>
+</ul>
+
+<p>เปิด <code>app/models/follower.rb</code> แทนทั้งไฟล์:</p>
+<pre><code><span class="c"># ผู้ติดตาม: ได้อีเมลเมื่อมีบทความเผยแพร่ใหม่ (เพิ่มผ่าน db/seeds.rb หรือ console)</span>
+<span class="k">class</span> <span class="n">Follower</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="c"># เลิกติดตาม = ประวัติการส่งของคนนี้ไม่มีความหมายแล้ว ลบด้วย SQL คำสั่งเดียว</span>
+  <span class="f">has_many</span> <span class="n">:post_notifications</span>, <span class="n">dependent:</span> <span class="n">:delete_all</span>
+
+  <span class="c"># unique index เทียบตรงตัวอักษร → ทำเป็นตัวเล็กก่อนเก็บ (A@x.com กับ a@x.com คือคนเดียวกัน)</span>
+  <span class="f">normalizes</span> <span class="n">:email</span>, <span class="n">with:</span> -&gt;(email) { email.<span class="f">strip</span>.<span class="f">downcase</span> }
+
+  <span class="f">validates</span> <span class="n">:email</span>, <span class="n">presence:</span> <span class="k">true</span>, <span class="n">uniqueness:</span> <span class="k">true</span>, <span class="n">format:</span> { <span class="n">with:</span> <span class="n">URI</span>::<span class="n">MailTo</span>::<span class="n">EMAIL_REGEXP</span> }
+<span class="k">end</span></code></pre>
+<ul>
+  <li><code>has_many :post_notifications</code> — ประกาศไว้ก่อนว่าคนหนึ่งมี "บันทึกการส่ง" ได้หลายแถว · <strong>ตารางนี้จะสร้างในขั้น 3</strong> (ตอนนี้ยังไม่มีใครเรียกใช้ จึงยังไม่พัง)</li>
+  <li><code>normalizes :email, with: -&gt;(email) { … }</code> — <code>strip</code> ตัดช่องว่างหัวท้าย · <code>downcase</code> ทำเป็นตัวเล็ก · ทำก่อนเก็บและก่อนค้นทุกครั้ง</li>
+  <li><code>format: { with: URI::MailTo::EMAIL_REGEXP }</code> — รูปแบบอีเมลที่ Ruby มีมาให้ (มาตรฐานเดียวกับช่อง <code>&lt;input type="email"&gt;</code> ของเบราว์เซอร์)</li>
+</ul>
+
+<p>เปิด <code>db/seeds.rb</code> ต่อท้ายไฟล์ (ใต้บรรทัด <code>puts "categories: …"</code> เดิม):</p>
+<pre><code>
+<span class="c"># ผู้ติดตาม 3 คน — ได้อีเมลเมื่อมีบทความเผยแพร่ใหม่</span>
+<span class="s">%w[ somchai@example.com malee@example.com boss@example.com ]</span>.<span class="f">each</span> <span class="k">do</span> |email|
+  <span class="n">Follower</span>.<span class="f">find_or_create_by!</span>(<span class="n">email:</span> email)
+<span class="k">end</span>
+
+<span class="f">puts</span> <span class="s">"followers: #{Follower.count}"</span></code></pre>
+<ul>
+  <li><code>%w[ a b c ]</code> = เขียนรายการคำแบบย่อ ได้ <code>["a", "b", "c"]</code> · <code>find_or_create_by!</code> = มีแล้วไม่สร้างซ้ำ (seeds รันซ้ำได้ · บท 120)</li>
+</ul>
+
+<p>สร้างตารางแล้วใส่รายชื่อ:</p>
+<pre><code>$ bin/rails db:migrate
+== 20261110034734 CreateFollowers: migrating ==================================
+-- create_table(:followers)
+   -&gt; 0.0026s
+-- add_index(:followers, :email, {unique: true})
+   -&gt; 0.0007s
+== 20261110034734 CreateFollowers: migrated (0.0051s) =========================
+
+$ bin/rails db:seed
+categories: 5 · posts: 30
+followers: 3</code></pre>
+
+<div class="predict">
+  <p>เปิด <code>bin/rails console</code> แล้วลองเพิ่ม malee ซ้ำ แต่พิมพ์มีช่องว่างและตัวใหญ่ปน:</p>
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">Follower</span>.<span class="f">create!</span>(<span class="n">email:</span> <span class="s">"  Malee@Example.COM "</span>)</code></pre>
+  <p class="ask">คิดว่าได้ผู้ติดตามคนที่ 4 ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; Follower.pluck(:email)
+  Follower Pluck (0.4ms)  SELECT "followers"."email" FROM "followers"
+=&gt; ["somchai@example.com", "malee@example.com", "boss@example.com"]
+wongnok-blog-all-in-one(dev):002&gt; Follower.create!(email: "  Malee@Example.COM ")
+  TRANSACTION (0.3ms)  BEGIN
+  Follower Exists? (0.8ms)  SELECT 1 AS one FROM "followers" WHERE "followers"."email" = 'malee@example.com' LIMIT 1
+  TRANSACTION (0.3ms)  ROLLBACK
+(wongnok-blog-all-in-one):2:in '&lt;main&gt;': Validation failed: Email has already been taken (ActiveRecord::RecordInvalid)</code></pre>
+    <p><strong>ไม่ได้</strong> — บรรทัด <code>Follower Exists?</code> ค้นด้วย <code>'malee@example.com'</code> (ตัดช่องว่าง ตัวเล็กแล้ว) จึงเจอคนเดิม · ถ้าไม่มี <code>normalizes</code> ตู้จะเห็นเป็นคนละคน แล้ว malee ได้อีเมลสองฉบับต่อบทความ</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-3">ขั้น 2 — อีเมลใน Rails: ActionMailer</h2>
+
+<p>
+  <strong>ActionMailer</strong> คือส่วนของ Rails ที่ทำอีเมล · หน้าตาเหมือน controller + view ที่คุ้นแล้ว: มี <strong>method</strong> (เหมือน action) เตรียมข้อมูล แล้วมี <strong>view</strong> วาดเนื้ออีเมล ·
+  ต่างกันตรงที่ผลลัพธ์<strong>ไม่ได้กลับไปที่เบราว์เซอร์</strong> แต่ถูกส่งออกไปเป็นจดหมาย
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    ปกติคนจัดจาน (view) วางอาหารบนจานแล้วเสิร์ฟที่โต๊ะลูกค้าที่สั่ง · mailer คือคนจัดจาน<strong>ชุดเดิม แต่ใส่กล่องส่งไปรษณีย์</strong>ไปบ้านคนที่ไม่ได้มานั่งในร้าน ·
+    แม่พิมพ์ (ERB) เขียนแบบเดียวกัน · คนสั่งให้ทำคือพนักงานหลังร้าน (job) ไม่ใช่ลูกค้าที่โต๊ะ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ส่งออกไปแล้ว<strong>เรียกคืนไม่ได้</strong> (ส่งซ้ำ = ลูกค้าได้สองกล่องจริง ๆ) ·
+    และที่อยู่บนกล่องต้องเขียน<strong>เต็ม</strong> — ลิงก์ในอีเมลต้องเป็น <code>post_url</code> (มีชื่อโดเมน) ไม่ใช่ <code>post_path</code> เพราะอีเมลไม่ได้เปิดจากในร้าน ไม่รู้ว่า "ร้านเรา" อยู่ที่ไหน
+  </p>
+</div>
+
+<p>
+  <strong>เทียบของที่รู้:</strong> ใน Go ต้องประกอบเองด้วย <code>html/template</code> + ไลบรารีส่งเมล · ใน Next.js มักเรียก service ภายนอก ·
+  Rails มีมาในกล่อง และใช้ ERB/helper ชุดเดียวกับหน้าเว็บ (Day 3)
+</p>
+
+<p>สร้าง mailer ชื่อ <code>PostMailer</code> ที่มีอีเมลหนึ่งแบบชื่อ <code>published</code>:</p>
+<pre><code>$ bin/rails generate mailer PostMailer published
+      create  app/mailers/post_mailer.rb
+      invoke  tailwindcss
+      create    app/views/post_mailer
+      create    app/views/post_mailer/published.text.erb
+      create    app/views/post_mailer/published.html.erb
+      invoke  test_unit
+      create    test/mailers/post_mailer_test.rb
+      create    test/mailers/previews/post_mailer_preview.rb</code></pre>
+<ul>
+  <li>ได้ view <strong>สองไฟล์</strong>: <code>.text.erb</code> (ตัวหนังสือล้วน) กับ <code>.html.erb</code> (มีหัวข้อ ลิงก์) · อีเมลหนึ่งฉบับแนบทั้งสองแบบ โปรแกรมอ่านอีเมลเลือกโชว์แบบที่มันถนัด</li>
+  <li><code>previews/post_mailer_preview.rb</code> = หน้าดูตัวอย่างอีเมลในเบราว์เซอร์ (ไม่ได้ส่งจริง) · <code>post_mailer_test.rb</code> ปล่อยไว้ก่อน</li>
+</ul>
+
+<p>แทนทั้งไฟล์ <code>app/mailers/post_mailer.rb</code>:</p>
+<pre><code><span class="k">class</span> <span class="n">PostMailer</span> &lt; <span class="n">ApplicationMailer</span>
+  <span class="c"># อีเมลแจ้งผู้ติดตามว่ามีบทความใหม่ · เรียกจาก PublishPostJob เท่านั้น (ไม่ส่งใน callback ของ model)</span>
+  <span class="c"># ลิงก์สร้างตอนส่ง ไม่รับ URL หรือ token ที่สร้างไว้ก่อนเข้าคิว</span>
+  <span class="k">def</span> <span class="f">published</span>
+    @post = <span class="f">params</span>[<span class="n">:post</span>]
+    @follower = <span class="f">params</span>[<span class="n">:follower</span>]
+
+    <span class="f">mail</span> <span class="n">to:</span> @follower.email, <span class="n">subject:</span> <span class="s">"บทความใหม่: #{@post.title}"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<ul>
+  <li><code>params[:post]</code> — ของที่ยื่นมาตอนเรียก <code>PostMailer.with(post: …, follower: …)</code> (เห็นในขั้น 4) · ชื่อเหมือน <code>params</code> ของ controller แต่<strong>ไม่ได้มาจากฟอร์ม</strong></li>
+  <li><code>@post</code> <code>@follower</code> — ตัวแปร <code>@</code> ส่งต่อให้ view ได้ เหมือน controller</li>
+  <li><code>mail to: …, subject: …</code> — ประกอบซองจดหมาย: ผู้รับ หัวเรื่อง · ผู้ส่งมาจาก <code>ApplicationMailer</code> (<code>from@example.com</code> ที่ Rails ใส่ไว้ — ในเครื่องเราไม่เป็นไร)</li>
+</ul>
+
+<p>แทนทั้งไฟล์ <code>app/views/post_mailer/published.text.erb</code>:</p>
+<pre><code>มีบทความใหม่ใน Wongnok Blog
+
+&lt;%= @post.title %&gt;
+
+&lt;%= truncate(@post.plain_text, length: 200, separator: " ") %&gt;
+
+อ่านต่อ: &lt;%= post_url(@post) %&gt;
+
+ส่งถึง &lt;%= @follower.email %&gt; เพราะคุณติดตาม Wongnok Blog</code></pre>
+<p>และ <code>app/views/post_mailer/published.html.erb</code>:</p>
+<pre><code>&lt;p&gt;มีบทความใหม่ใน Wongnok Blog&lt;/p&gt;
+
+&lt;h1&gt;&lt;%= @post.title %&gt;&lt;/h1&gt;
+
+&lt;p&gt;&lt;%= truncate(@post.plain_text, length: 200, separator: " ") %&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;%= link_to "อ่านต่อ", post_url(@post) %&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;small&gt;ส่งถึง &lt;%= @follower.email %&gt; เพราะคุณติดตาม Wongnok Blog&lt;/small&gt;&lt;/p&gt;</code></pre>
+<ul>
+  <li><code>@post.plain_text</code> — เนื้อหาแบบตัวหนังสือล้วนที่เก็บไว้ตั้งแต่บท 137 · <code>truncate(…, length: 200, separator: " ")</code> = ตัดให้ไม่เกิน 200 ตัวอักษร ตัดตรงช่องว่าง</li>
+  <li><code>post_url(@post)</code> — ลิงก์<strong>เต็ม</strong> <code>http://localhost:3000/posts/…</code> · โดเมนมาจาก <code>default_url_options</code> ใน <code>development.rb</code> ที่ Rails ตั้งไว้ให้แล้ว</li>
+</ul>
+
+<p>แก้หน้าดูตัวอย่าง <code>test/mailers/previews/post_mailer_preview.rb</code> — ของเดิมเรียก <code>PostMailer.published</code> เฉย ๆ (ไม่ยื่นบทความกับผู้รับ เปิดแล้ว error) · แทนทั้งไฟล์:</p>
+<pre><code><span class="c"># Preview all emails at http://localhost:3000/rails/mailers/post_mailer</span>
+<span class="k">class</span> <span class="n">PostMailerPreview</span> &lt; <span class="n">ActionMailer</span>::<span class="n">Preview</span>
+  <span class="c"># Preview this email at http://localhost:3000/rails/mailers/post_mailer/published</span>
+  <span class="c"># ดูหน้าตาอีเมลในเบราว์เซอร์ (ไม่ได้ส่งจริง) ด้วยบทความล่าสุดกับผู้ติดตามคนแรก</span>
+  <span class="k">def</span> <span class="f">published</span>
+    <span class="n">PostMailer</span>.<span class="f">with</span>(<span class="n">post:</span> <span class="n">Post</span>.<span class="f">latest_published</span>.<span class="f">first</span>, <span class="n">follower:</span> <span class="n">Follower</span>.<span class="f">first</span>).<span class="f">published</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<h3 id="sn-sub-1">อีเมลในเครื่องเราไปไหน — เขียนลงไฟล์</h3>
+<p>
+  ในเครื่องเราไม่มีเซิร์ฟเวอร์อีเมล (สไลด์ใช้ Mailpit = กล่องจดหมายปลอมที่รันใน docker · คอร์สนี้ไม่ได้ติดตั้ง) ·
+  ทางที่ง่ายที่สุดคือสั่ง Rails <strong>เขียนอีเมลเป็นไฟล์</strong> · เปิด <code>config/environments/development.rb</code> หาสองบรรทัดนี้:
+</p>
+<pre><code>  <span class="c"># Don't care if the mailer can't send.</span>
+  config.action_mailer.raise_delivery_errors = <span class="k">false</span></code></pre>
+<p>แทนด้วย:</p>
+<pre><code>  <span class="c"># ส่งไม่ผ่านต้อง error → PublishPostJob ยกเลิกแถวที่จองไว้ แล้ว retry ได้</span>
+  config.action_mailer.raise_delivery_errors = <span class="k">true</span>
+
+  <span class="c"># อีเมลไม่ได้ส่งออกจริง: เขียนเป็นไฟล์ใน tmp/mails/ (1 ไฟล์ต่อผู้รับ · ฉบับใหม่ต่อท้ายไฟล์เดิม)</span>
+  <span class="c"># นับอีเมล: grep -c "^Subject:" tmp/mails/*   (ไม่ต้องลง service เพิ่มแบบ Mailpit)</span>
+  config.action_mailer.delivery_method = <span class="n">:file</span>
+  config.action_mailer.file_settings = { <span class="n">location:</span> <span class="n">Rails</span>.<span class="f">root</span>.<span class="f">join</span>(<span class="s">"tmp/mails"</span>) }</code></pre>
+<ul>
+  <li><code>raise_delivery_errors = true</code> — ส่งไม่ผ่านแล้ว<strong>ต้องโวยวาย</strong> (ค่าเดิม <code>false</code> = พังเงียบ) · ขั้น 4 จะเห็นว่าทำไมสำคัญ</li>
+  <li><code>delivery_method = :file</code> — "ส่ง" = เขียนไฟล์ · <code>tmp/</code> ไม่ถูก commit อยู่แล้ว (อยู่ใน <code>.gitignore</code>)</li>
+</ul>
+<p><strong>แก้ไฟล์ config แล้วต้องปิดเปิด <code>bin/dev</code> ใหม่</strong> (Ctrl+C แล้ว <code>bin/dev</code>) · ไฟล์ใน <code>app/</code> ไม่ต้อง — ทั้งเว็บและ worker โหลดโค้ดใหม่ให้เองในเครื่องเรา</p>
+
+<p>ลองประกอบอีเมลหนึ่งฉบับโดยยังไม่ส่ง (หน้าต่าง ②):</p>
+<pre><code>$ bin/rails runner 'm = PostMailer.with(post: Post.latest_published.first, follower: Follower.first).published; puts m.subject; puts m.to.inspect; puts m.from.inspect; puts "---"; puts m.text_part.decoded'
+บทความใหม่: นมเย็น
+["somchai@example.com"]
+["from@example.com"]
+---
+มีบทความใหม่ใน Wongnok Blog
+
+นมเย็น
+
+นมสีชมพูจากน้ำแดง หวานหอม เด็ก ๆ ชอบที่สุด เติมไข่มุกได้
+
+อ่านต่อ: http://localhost:3000/posts/30
+
+ส่งถึง somchai@example.com เพราะคุณติดตาม Wongnok Blog</code></pre>
+<ul>
+  <li><code>bin/rails runner '…'</code> = รันโค้ด Ruby หนึ่งก้อนในแอปแล้วจบ (ไม่ต้องเปิด console)</li>
+  <li><code>text_part.decoded</code> = หยิบส่วนตัวหนังสือล้วนมาอ่าน · <code>นมเย็น</code> คือบทความเผยแพร่ล่าสุดของ seeds</li>
+  <li>หรือเปิดเบราว์เซอร์ที่ <code>localhost:3000/rails/mailers/post_mailer/published</code> — หน้าดูตัวอย่างที่เพิ่งแก้ มีให้สลับดูแบบ HTML/ตัวหนังสือ</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>mailer (ActionMailer)</dt>
+    <dd>คลาสที่สร้างอีเมล · method หนึ่งตัว = อีเมลหนึ่งแบบ · พิมพ์บอก AI ได้ว่า "สร้าง PostMailer#published รับ post กับ follower ผ่าน <code>with</code>"</dd>
+    <dt>multipart (text + html)</dt>
+    <dd>อีเมลฉบับเดียวมีสองหน้าตา · ถาม senior ได้ว่า "ทีมเราต้องมีส่วน text ทุกฉบับไหมครับ"</dd>
+    <dt>delivery method</dt>
+    <dd>วิธีส่งจริง: <code>:smtp</code> (เซิร์ฟเวอร์อีเมล) · <code>:file</code> (ลงไฟล์) · <code>:test</code> (เก็บในหน่วยความจำ ใช้ตอนเขียน test) · ตั้งแยกตาม environment</dd>
+    <dt>mailer preview</dt>
+    <dd>หน้า <code>/rails/mailers/…</code> ดูอีเมลในเบราว์เซอร์โดยไม่ส่ง · มีเฉพาะตอน development</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">ขั้น 3 — สมุดจดว่าส่งใครไปแล้ว: ตาราง <code>post_notifications</code></h2>
+
+<p>
+  job ของเรา<strong>ต้องรันซ้ำได้</strong> (บท 142–143: คิวรับประกันแค่ "ไม่หาย แต่อาจซ้ำ") · การเปลี่ยนสถานะบทความซ้ำไม่เป็นไรเพราะมี guard ·
+  แต่<strong>อีเมลที่ส่งออกไปแล้วเรียกคืนไม่ได้</strong> — ต้องมีที่จดว่า "บทความนี้ ส่งถึงคนนี้แล้ว" แล้วให้ตู้เป็นคนตัดสินว่าจดซ้ำไม่ได้
+</p>
+<p>
+  ท่าที่ใช้คือท่าที่ 3 ของบท 143: <strong>กุญแจกันซ้ำ + unique index</strong> · กุญแจในที่นี้คือคู่ (บทความ, ผู้รับ) ·
+  และใช้ลำดับ<strong>"จองก่อนส่ง"</strong>: เขียนแถวลงสมุดก่อน → เขียนได้ = ได้สิทธิ์ส่ง · เขียนไม่ได้เพราะมีอยู่แล้ว = มีคนส่งไปแล้ว ข้าม
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    หลังร้านมี<strong>สมุดจดใบงานที่ทำแล้ว</strong>วางข้างประตู · พนักงานส่งของต้อง<strong>เขียน "จานนี้ → บ้านเลขที่นี้" ลงสมุดก่อน</strong>ออกไปส่ง ·
+    สมุดเล่มนี้พิเศษ: ถ้ามีบรรทัดเดียวกันอยู่แล้ว ปากกาเขียนไม่ติด → พนักงานรู้ทันทีว่ามีคนส่งไปแล้ว ไม่ต้องออกไป ·
+    ถ้าออกไปแล้วส่งไม่สำเร็จ (บ้านปิด) กลับมา<strong>ลบบรรทัดนั้นทิ้ง</strong> รอบหน้าจะได้มีคนส่งใหม่
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> "ปากกาเขียนไม่ติด" เป็นของจริงที่ตู้บังคับ แม้สองคนเขียนพร้อมกันวินาทีเดียวกัน คนที่สองก็ต้องรอแล้วเขียนไม่ติด (คนจริงอาจเขียนทับกันได้) ·
+    แต่ยังมีช่องเล็ก ๆ ที่ปิดไม่ได้: พนักงานส่งของถึงมือลูกค้าแล้ว <strong>เป็นลมก่อนกลับมายืนยันบรรทัดในสมุด</strong> → บรรทัดถูกลบเพราะไม่ได้ยืนยัน → คนใหม่ส่งซ้ำอีกหนึ่งกล่อง ·
+    เราเลือก "อาจซ้ำหนึ่งฉบับในกรณีหายาก" ดีกว่า "อาจหายเงียบ" (ประโยคข้อ ② ของวัน)
+  </p>
+</div>
+
+<p>สร้าง model:</p>
+<pre><code>$ bin/rails generate model PostNotification post:references follower:references
+      invoke  active_record
+      create    db/migrate/20261110034739_create_post_notifications.rb
+      create    app/models/post_notification.rb
+      invoke    test_unit
+      create      test/models/post_notification_test.rb
+      create      test/fixtures/post_notifications.yml</code></pre>
+
+<p>แทนทั้งไฟล์ migration ที่ได้ (<code>db/migrate/…_create_post_notifications.rb</code>):</p>
+<pre><code><span class="c"># หนึ่งแถว = "บทความนี้ส่งอีเมลแจ้งผู้ติดตามคนนี้แล้ว"</span>
+<span class="k">class</span> <span class="n">CreatePostNotifications</span> &lt; <span class="n">ActiveRecord</span>::<span class="n">Migration</span>[<span class="n">8.1</span>]
+  <span class="k">def</span> <span class="f">change</span>
+    <span class="f">create_table</span> <span class="n">:post_notifications</span> <span class="k">do</span> |t|
+      <span class="c"># ไม่ต้องมี index แยกของ post_id: unique index ข้างล่างขึ้นต้นด้วย post_id อยู่แล้ว</span>
+      t.<span class="f">references</span> <span class="n">:post</span>, <span class="n">null:</span> <span class="k">false</span>, <span class="n">foreign_key:</span> <span class="k">true</span>, <span class="n">index:</span> <span class="k">false</span>
+      t.<span class="f">references</span> <span class="n">:follower</span>, <span class="n">null:</span> <span class="k">false</span>, <span class="n">foreign_key:</span> <span class="k">true</span>
+
+      t.<span class="f">timestamps</span>
+    <span class="k">end</span>
+    <span class="c"># หัวใจของ "ไม่ส่งซ้ำ": บทความเดียวกัน + คนเดิม มีได้แถวเดียว</span>
+    <span class="c"># job รันซ้ำ หรือสอง worker ทำพร้อมกัน → ตัวที่มาทีหลังใส่แถวไม่ได้ (DB ตัดสิน ไม่ใช่โค้ด Ruby)</span>
+    <span class="f">add_index</span> <span class="n">:post_notifications</span>, [ <span class="n">:post_id</span>, <span class="n">:follower_id</span> ], <span class="n">unique:</span> <span class="k">true</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<ul>
+  <li><code>t.references :post</code> — ช่อง <code>post_id</code> ชี้ไปบทความ · <code>foreign_key: true</code> = ตู้ไม่ยอมให้ชี้ไปบทความที่ไม่มีอยู่</li>
+  <li><code>index: false</code> — ปกติ references สร้าง index ให้เอง · แต่ index คู่ข้างล่างขึ้นต้นด้วย <code>post_id</code> ค้นด้วย post_id ได้อยู่แล้ว ไม่ต้องมีสองอัน</li>
+  <li><code>add_index … [ :post_id, :follower_id ], unique: true</code> — สารบัญห้ามซ้ำ<strong>แบบคู่</strong>: บทความ 31 ส่งถึงคน 1 มีได้แถวเดียว · บทความ 31 ถึงคน 2 เป็นอีกแถว ได้</li>
+</ul>
+
+<p>แทนทั้งไฟล์ <code>app/models/post_notification.rb</code>:</p>
+<pre><code><span class="c"># บันทึกว่า "บทความนี้ส่งอีเมลแจ้งผู้ติดตามคนนี้แล้ว" — PublishPostJob ใส่แถวก่อนส่งเพื่อจองสิทธิ์</span>
+<span class="c"># ไม่มี validates uniqueness: ตัวกันซ้ำจริงคือ unique index ที่ DB (validation เช็กแล้วสอง worker ยังชนกันได้)</span>
+<span class="c"># อยากรู้ว่าแจ้งไปกี่คน → นับแถวในตารางนี้ ไม่เก็บตัวนับที่บวกเพิ่ม (job รันซ้ำแล้วเลขเพี้ยน)</span>
+<span class="k">class</span> <span class="n">PostNotification</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:post</span>
+  <span class="f">belongs_to</span> <span class="n">:follower</span>
+<span class="k">end</span></code></pre>
+<p>สองบรรทัด <code>belongs_to</code> generator เขียนให้แล้ว · เราเติมแค่คอมเมนต์ 3 บรรทัดบนสุด</p>
+
+<p>เปิด <code>app/models/post.rb</code> เพิ่ม 2 บรรทัดใต้ <code>has_many :comments, dependent: :destroy</code>:</p>
+<pre><code>  <span class="f">has_many</span> <span class="n">:comments</span>, <span class="n">dependent:</span> <span class="n">:destroy</span>
+  <span class="c"># ประวัติว่าส่งอีเมลแจ้งใครไปแล้ว · ลบบทความ = ไม่มีความหมายแล้ว ลบด้วย SQL คำสั่งเดียว</span>
+  <span class="f">has_many</span> <span class="n">:post_notifications</span>, <span class="n">dependent:</span> <span class="n">:delete_all</span></code></pre>
+
+<pre><code>$ bin/rails db:migrate
+== 20261110034739 CreatePostNotifications: migrating ==========================
+-- create_table(:post_notifications)
+   -&gt; 0.0029s
+-- add_index(:post_notifications, [:post_id, :follower_id], {unique: true})
+   -&gt; 0.0007s
+== 20261110034739 CreatePostNotifications: migrated (0.0050s) =================</code></pre>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>composite unique index</dt>
+    <dd>unique index หลายช่องรวมกัน · ถาม senior ได้ว่า "กันส่งอีเมลซ้ำด้วย unique index (post_id, follower_id) พอไหมครับ"</dd>
+    <dt>reserve-then-send (จองก่อนทำ)</dt>
+    <dd>ใส่แถวกันซ้ำก่อน แล้วค่อยทำงานที่ย้อนไม่ได้ · พิมพ์บอก AI ได้ว่า "insert แถว notification ก่อนส่ง ใน transaction เดียวกัน ถ้าชน RecordNotUnique ให้ข้าม"</dd>
+    <dt>race condition</dt>
+    <dd>ผลเพี้ยนเพราะสองงานทำพร้อมกัน · <code>exists?</code> แล้วค่อย <code>create</code> แพ้ race (เช็กพร้อมกันได้ "ยังไม่มี" ทั้งคู่) · unique index ไม่แพ้</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">ขั้น 4 — ให้ <code>PublishPostJob</code> ส่งอีเมลหลังเผยแพร่</h2>
+
+<p>เปิด <code>app/jobs/publish_post_job.rb</code> · <strong>ก)</strong> แก้คอมเมนต์สองบรรทัดบนสุดเป็น:</p>
+<pre><code><span class="c"># เผยแพร่บทความที่ตั้งเวลาไว้ เมื่อถึงเวลาแล้ว แล้วส่งอีเมลแจ้งผู้ติดตาม</span>
+<span class="c"># ห้ามสมมติว่ารันครั้งเดียว: กดปุ่มซ้ำ · ตัวกวาดส่งซ้ำ · retry · สอง worker หยิบงานพร้อมกัน → รันกี่รอบผลต้องเหมือนรอบเดียว</span></code></pre>
+<p><strong>ข)</strong> ใน <code>perform</code> ต่อจาก <code>end</code> ของบล็อก <code>post.with_lock</code> (ก่อน <code>end</code> ของ <code>perform</code>) เพิ่ม · แล้ว<strong>ค)</strong> ต่อท้ายคลาส (ก่อน <code>end</code> สุดท้ายของไฟล์) เพิ่ม <code>private</code> กับ method สองตัว:</p>
+<pre><code>    <span class="k">end</span>   <span class="c"># ← end ของ post.with_lock (มีอยู่แล้ว)</span>
+
+    <span class="c"># แจ้งทุกรอบที่บทความเผยแพร่แล้ว (ไม่ใช่แค่รอบที่เพิ่งเปลี่ยนสถานะ):</span>
+    <span class="c"># รอบก่อนพังกลางทาง → retry รอบนี้ส่งต่อให้คนที่ยังไม่ได้ · คนที่ได้แล้วถูกกันด้วย unique index</span>
+    <span class="f">notify_followers</span>(post) <span class="k">if</span> post.<span class="f">published?</span>
+  <span class="k">end</span>     <span class="c"># ← end ของ perform (มีอยู่แล้ว)</span>
+
+  <span class="k">private</span>
+    <span class="c"># เฉพาะคนที่ติดตามก่อนเวลาเผยแพร่: รันซ้ำทีหลังจะไม่ส่งบทความเก่าไปหาคนที่เพิ่งมาติดตาม</span>
+    <span class="k">def</span> <span class="f">notify_followers</span>(post)
+      <span class="n">Follower</span>.<span class="f">where</span>(<span class="n">created_at:</span> ..post.published_at).<span class="f">find_each</span> <span class="k">do</span> |follower|
+        <span class="f">notify</span>(post, follower)
+      <span class="k">end</span>
+    <span class="k">end</span>
+
+    <span class="k">def</span> <span class="f">notify</span>(post, follower)
+      <span class="n">PostNotification</span>.<span class="f">transaction</span> <span class="k">do</span>
+        <span class="c"># จองก่อนส่ง: ใส่แถว (post, follower) ได้ = ได้สิทธิ์ส่ง</span>
+        <span class="n">PostNotification</span>.<span class="f">create!</span>(<span class="n">post:</span> post, <span class="n">follower:</span> follower)
+        <span class="c"># ส่งพังอยู่ใน transaction → แถวที่จองถูกยกเลิกด้วย → retry รอบหน้าส่งใหม่ ไม่หายเงียบ</span>
+        <span class="n">PostMailer</span>.<span class="f">with</span>(<span class="n">post:</span> post, <span class="n">follower:</span> follower).<span class="f">published</span>.<span class="f">deliver_now</span>
+      <span class="k">end</span>
+    <span class="k">rescue</span> <span class="n">ActiveRecord</span>::<span class="n">RecordNotUnique</span>
+      <span class="c"># มีแถวอยู่แล้ว = ส่งไปแล้ว (รอบก่อน หรือ worker อีกตัว) → ข้าม</span>
+    <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<p>อ่านทีละส่วน:</p>
+<ul>
+  <li><code>notify_followers(post) if post.published?</code> — อยู่<strong>นอก</strong>บล็อก <code>with_lock</code> · ทำ<strong>ทุกรอบ</strong>ที่บทความเผยแพร่แล้ว ไม่ใช่แค่รอบที่เพิ่งเปลี่ยนสถานะ ·
+    เพราะถ้ารอบแรกส่งได้ครึ่งเดียวแล้วพัง รอบ retry ต้องส่งต่อให้คนที่เหลือ (ถ้าเขียน <code>return if post.published?</code> แบบสไลด์หน้า 19–20 คนที่เหลือจะไม่ได้อีเมลเลย)</li>
+  <li><code>private</code> — method ข้างล่างเรียกได้จากในคลาสเท่านั้น · ย่อหน้าเข้าไปอีกขั้นตามสไตล์ของ Rails</li>
+  <li><code>where(created_at: ..post.published_at)</code> — <code>..x</code> = "ไม่เกิน x" (SQL <code>&lt;=</code>) · เอาเฉพาะคนที่ติดตาม<strong>ก่อน</strong>บทความออก · ไม่งั้นรันซ้ำพรุ่งนี้ คนที่เพิ่งมาติดตามจะได้อีเมลบทความเก่า</li>
+  <li><code>find_each</code> — วนทีละแถว แต่ดึงจากตู้ทีละ 1,000 (ผู้ติดตามเป็นแสนก็ไม่กินหน่วยความจำ)</li>
+  <li><code>PostNotification.transaction do … end</code> — สองบรรทัดข้างในสำเร็จพร้อมกัน หรือยกเลิกพร้อมกัน</li>
+  <li><code>create!</code> แล้วค่อย <code>deliver_now</code> — จองก่อนส่ง · <code>deliver_now</code> = ส่งเดี๋ยวนี้ (เราอยู่ใน job อยู่แล้ว ไม่ต้องเข้าคิวอีกรอบ)</li>
+  <li><code>rescue ActiveRecord::RecordNotUnique</code> — จองไม่ได้เพราะมีแถวอยู่แล้ว → จับ error นี้ไว้แล้วไม่ทำอะไร = ข้ามคนนี้</li>
+</ul>
+
+<p>ล้างไฟล์อีเมลเก่า แล้วเปิด <code>bin/rails console</code> สร้างบทความที่ "ถึงเวลาแล้ว" หนึ่งบทความ จากนั้นสั่ง job <strong>สามรอบติดกัน</strong>:</p>
+<pre><code>$ rm -rf tmp/mails
+$ bin/rails console
+wongnok-blog-all-in-one(dev):001&gt; post = <span class="n">Post</span>.<span class="f">create!</span>(<span class="n">title:</span> <span class="s">"ทดลองรันซ้ำ"</span>, <span class="n">body:</span> <span class="s">"ทดลองส่งอีเมลหาผู้ติดตาม"</span>, <span class="n">category:</span> <span class="n">Category</span>.<span class="f">first</span>, <span class="n">status:</span> <span class="n">:scheduled</span>, <span class="n">scheduled_at:</span> <span class="n">1</span>.<span class="f">minute</span>.<span class="f">ago</span>); <span class="k">nil</span>
+wongnok-blog-all-in-one(dev):002&gt; <span class="n">3</span>.<span class="f">times</span> { <span class="n">PublishPostJob</span>.<span class="f">perform_now</span>(post.id) }</code></pre>
+<ul>
+  <li><code>; nil</code> ท้ายบรรทัดแรก = ให้ console ไม่พิมพ์บทความออกมายาว ๆ · <code>perform_now</code> = ทำเดี๋ยวนี้ในหน้าต่างนี้ ไม่ผ่านคิว (บท 143)</li>
+</ul>
+
+<div class="predict">
+  <p class="ask">ผู้ติดตาม 3 คน · job รัน 3 รอบ · คิดว่าในโฟลเดอร์ <code>tmp/mails</code> จะมีอีเมลรวมกี่ฉบับ? 3 หรือ 9?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>3 ฉบับ — คนละฉบับพอดี</strong> · console พิมพ์ log ยาวมาก (รวมเนื้ออีเมลทั้งฉบับ) ตัดเหลือบรรทัดสำคัญ:</p>
+<pre><code>Performing PublishPostJob (Job ID: ff976d23-…) from SolidQueue(default) with arguments: 35
+  …
+  Post Update (0.3ms)  UPDATE "posts" SET "updated_at" = '…', "status" = 'published', "published_at" = '2026-11-10 04:02:37.065475' WHERE "posts"."id" = 35
+  …
+  PostNotification Create (0.5ms)  INSERT INTO "post_notifications" ("post_id", "follower_id", "created_at", "updated_at") VALUES (35, 1, …) RETURNING "id"
+  …
+Delivered mail 6af2975d19675_4248af8-427@….mail (4.6ms)
+  …                                   (คนที่ 2 และ 3 เหมือนกัน)
+Performed PublishPostJob (Job ID: ff976d23-…) from SolidQueue(default) in 60.9ms
+Performing PublishPostJob (Job ID: 2e394268-…) from SolidQueue(default) with arguments: 35
+  …
+  PostNotification Create (1.0ms)  INSERT INTO "post_notifications" (…) VALUES (35, 1, …) RETURNING "id"
+  TRANSACTION (0.2ms)  ROLLBACK
+  PostNotification Create (0.7ms)  INSERT INTO "post_notifications" (…) VALUES (35, 2, …) RETURNING "id"
+  TRANSACTION (0.2ms)  ROLLBACK
+  PostNotification Create (0.6ms)  INSERT INTO "post_notifications" (…) VALUES (35, 3, …) RETURNING "id"
+  TRANSACTION (0.2ms)  ROLLBACK
+Performed PublishPostJob (Job ID: 2e394268-…) from SolidQueue(default) in 6.25ms
+  …                                   (รอบที่ 3 เหมือนรอบที่ 2)
+=&gt; 3
+wongnok-blog-all-in-one(dev):003&gt; post.reload.status
+=&gt; "published"
+wongnok-blog-all-in-one(dev):004&gt; post.post_notifications.count
+=&gt; 3</code></pre>
+<pre><code>$ grep -c "^Subject:" tmp/mails/*
+tmp/mails/boss@example.com:1
+tmp/mails/somchai@example.com:1
+tmp/mails/malee@example.com:1</code></pre>
+    <ul>
+      <li>รอบ 1: <code>Post Update</code> เปลี่ยนเป็น published · <code>INSERT</code> สำเร็จ 3 ครั้ง · <code>Delivered mail</code> 3 ครั้ง</li>
+      <li>รอบ 2–3: <strong>ไม่มี <code>Post Update</code></strong> (guard ของบท 143 เห็นว่าไม่ใช่ scheduled แล้ว) · แต่ยังเข้า <code>notify_followers</code> เพราะ published ·
+        <code>INSERT</code> ชนสารบัญห้ามซ้ำ → <code>ROLLBACK</code> → <code>rescue</code> ข้าม · <strong>ไม่มี <code>Delivered mail</code> เลย</strong></li>
+      <li><code>grep -c "^Subject:"</code> = นับบรรทัดที่ขึ้นต้นด้วย <code>Subject:</code> ในแต่ละไฟล์ = นับอีเมล (ไฟล์ละผู้รับ)</li>
+    </ul>
+    <p>ถ้าคุณได้ <code>:3</code> ทุกไฟล์ = <code>notify</code> ไม่ได้จองก่อนส่ง (เช่นลืม <code>create!</code> หรือวาง <code>deliver_now</code> ไว้นอก transaction) · ถ้าได้ไฟล์เดียวหรือไม่มีโฟลเดอร์เลย = ยังไม่ได้ปิดเปิด <code>bin/dev</code>/console หลังแก้ <code>development.rb</code></p>
+  </div>
+</div>
+
+<p>เปิดไฟล์อีเมลตรง ๆ จะอ่านไม่ออก เพราะภาษาไทยถูกแปลงเป็นรหัส (base64) ตามมาตรฐานอีเมล:</p>
+<pre><code>$ head -6 tmp/mails/malee@example.com
+Date: Tue, 10 Nov 2026 11:02:37 +0700
+From: from@example.com
+To: malee@example.com
+Message-ID: &lt;6af2975d1d089_4248af8-2e8@….mail&gt;
+Subject: =?UTF-8?Q?=E0=B8=9A=E0=B8=97=E0=B8=84=E0=B8=A7=E0=B8=B2=E0=B8=A1=E0=B9=83=E0=B8=AB=E0=B8=A1=E0=B9=88:?=
+ =?UTF-8?Q?_=E0=B8=97=E0=B8=94=E0=B8=A5=E0=B8=AD=E0=B8=87=E0=B8=A3=E0=B8=B1=E0=B8=99=E0=B8=8B=E0=B9=89=E0=B8=B3?=</code></pre>
+<p>อ่านเป็นภาษาคนได้ด้วย <code>bin/rails runner 'm = Mail.read("tmp/mails/malee@example.com"); puts m.subject; puts m.text_part.decoded'</code> (อ่านฉบับแรกของไฟล์) — ภารกิจท้ายบทใช้คำสั่งนี้</p>
+
+<h2 id="sn-sec-6">เมื่อ job พัง — <code>retry_on</code> กับ <code>discard_on</code></h2>
+
+<p>
+  job ที่ส่งอีเมลพังได้สองแบบที่ต่างกันมาก · <strong>แบบที่ปัญหาอาจหายเอง</strong> — เซิร์ฟเวอร์อีเมลต่อไม่ติดชั่วคราว ยุ่งอยู่ · รอแล้วลองใหม่ก็น่าจะผ่าน ·
+  <strong>แบบที่ลองใหม่ไปก็เท่านั้น</strong> — บทความถูกลบไปแล้วก่อนถึงคิว · ลองอีกร้อยรอบก็หาไม่เจอ · สไลด์หน้า 21 สรุปว่า <strong>retry กับ discard ต่างกันที่ความหวัง</strong>
+</p>
+<p>
+  และถ้าลองใหม่ ต้อง<strong>เว้นระยะให้ห่างขึ้นเรื่อย ๆ</strong> · ถ้าเซิร์ฟเวอร์อีเมลป่วยอยู่แล้ว job เป็นพันตัวลองใหม่ทุกวินาที = รุมกระหน่ำคนป่วยจนไม่มีวันฟื้น
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    พนักงานหลังร้านโทรสั่งของจากซัพพลายเออร์ แล้ว<strong>สายไม่ว่าง</strong> → วางสาย รอ 3 วินาทีโทรใหม่ · ยังไม่ว่าง รอ 18 วินาที · แล้ว 1 นาทีครึ่ง · แล้วราว 4 นาที (retry + backoff) ·
+    ครบ 5 ครั้งยังไม่ติด → แปะใบงานไว้ที่<strong>กระดาน "งานติดปัญหา"</strong> ให้ผู้จัดการมาดู ·
+    แต่ถ้าใบงานเขียนว่า "ส่งของให้โต๊ะ 12" แล้ว<strong>ลูกค้าโต๊ะ 12 ยกเลิกไปแล้ว</strong> → ฉีกใบงานทิ้งเลย ไม่ต้องโทรสักครั้ง (discard)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงฟังเสียงแล้วรู้ว่า "สายไม่ว่าง" หรือ "เบอร์นี้ยกเลิกแล้ว" · job <strong>ไม่รู้เอง</strong> — เราต้องบอกล่วงหน้าเป็น<strong>ชื่อ error</strong> ทีละชื่อ ·
+    error ที่เราไม่ได้ระบุ = ไม่ลองใหม่ ไม่ทิ้ง ไปกองที่กระดาน "งานติดปัญหา" ทันที
+  </p>
+</div>
+
+<p>เปิด <code>app/jobs/publish_post_job.rb</code> เพิ่มใต้บรรทัด <code>queue_as :default</code> (เว้นบรรทัดว่างคั่นตามนี้):</p>
+<pre><code>  <span class="f">queue_as</span> <span class="n">:default</span>
+
+  <span class="c"># ส่งอีเมลไม่ผ่านแบบชั่วคราว (เซิร์ฟเวอร์อีเมลต่อไม่ติด / ยุ่ง) → ลองใหม่ เว้นระยะถ่างออกเรื่อย ๆ</span>
+  <span class="c"># (ประมาณ 3 วิ · 18 วิ · 83 วิ · 258 วิ) · retry ได้อย่างปลอดภัยเพราะ job นี้รันซ้ำได้</span>
+  <span class="f">retry_on</span> <span class="n">Net</span>::<span class="n">OpenTimeout</span>, <span class="n">Net</span>::<span class="n">SMTPServerBusy</span>, <span class="n">wait:</span> <span class="n">:polynomially_longer</span>, <span class="n">attempts:</span> <span class="n">5</span>
+  <span class="c"># บทความถูกลบไปก่อนถึงคิว → ลองใหม่กี่รอบก็ไม่เจอ ทิ้งงานไปเลย</span>
+  <span class="f">discard_on</span> <span class="n">ActiveRecord</span>::<span class="n">RecordNotFound</span>
+
+  <span class="c"># รับแค่ id แล้วโหลดสดจาก DB: ได้สถานะ/เวลาล่าสุดเสมอ (ไม่ใช่ค่าเก่าตอนเข้าคิว)</span></code></pre>
+<ul>
+  <li><code>Net::OpenTimeout</code> — ต่อเซิร์ฟเวอร์ไม่ติดภายในเวลาที่รอ · <code>Net::SMTPServerBusy</code> — เซิร์ฟเวอร์อีเมลตอบว่า "ยุ่งอยู่ ลองใหม่ทีหลัง" · ทั้งคู่เป็น error ที่ไลบรารีส่งอีเมลของ Ruby โยนออกมา</li>
+  <li><code>wait: :polynomially_longer</code> — สูตรเว้นระยะของ Rails: <code>(ครั้งที่ลอง)⁴ + 2</code> วินาที บวกสุ่มเพิ่มไม่เกิน 15% ให้ job ที่พังพร้อมกันไม่ลองพร้อมกันอีก (ตารางข้างล่าง)</li>
+  <li><code>attempts: 5</code> — <strong>รวมรอบแรก</strong>ด้วย = ทำรอบแรก + ลองใหม่อีก 4 · ครั้งที่ 5 ยังพัง → ไปอยู่ตาราง <code>solid_queue_failed_executions</code></li>
+  <li><code>discard_on ActiveRecord::RecordNotFound</code> — error ที่ <code>Post.find</code> โยนเมื่อหาไม่เจอ → ทิ้งงาน เขียน log หนึ่งบรรทัด จบ</li>
+</ul>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ครั้งที่พัง</th><th>สูตร</th><th>รอ (ประมาณ)</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>1⁴ + 2</td><td>3 วินาที</td></tr>
+    <tr><td>2</td><td>2⁴ + 2</td><td>18 วินาที</td></tr>
+    <tr><td>3</td><td>3⁴ + 2</td><td>83 วินาที</td></tr>
+    <tr><td>4</td><td>4⁴ + 2</td><td>258 วินาที (~4 นาที)</td></tr>
+    <tr><td>5</td><td>—</td><td>ไม่ลองแล้ว → failed</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ไฟล์ทั้งไฟล์ตอนนี้ต้องเป็นแบบนี้ (เทียบทีละบรรทัดได้):</p>
+<pre><code><span class="c"># เผยแพร่บทความที่ตั้งเวลาไว้ เมื่อถึงเวลาแล้ว แล้วส่งอีเมลแจ้งผู้ติดตาม</span>
+<span class="c"># ห้ามสมมติว่ารันครั้งเดียว: กดปุ่มซ้ำ · ตัวกวาดส่งซ้ำ · retry · สอง worker หยิบงานพร้อมกัน → รันกี่รอบผลต้องเหมือนรอบเดียว</span>
+<span class="k">class</span> <span class="n">PublishPostJob</span> &lt; <span class="n">ApplicationJob</span>
+  <span class="f">queue_as</span> <span class="n">:default</span>
+
+  <span class="c"># ส่งอีเมลไม่ผ่านแบบชั่วคราว (เซิร์ฟเวอร์อีเมลต่อไม่ติด / ยุ่ง) → ลองใหม่ เว้นระยะถ่างออกเรื่อย ๆ</span>
+  <span class="c"># (ประมาณ 3 วิ · 18 วิ · 83 วิ · 258 วิ) · retry ได้อย่างปลอดภัยเพราะ job นี้รันซ้ำได้</span>
+  <span class="f">retry_on</span> <span class="n">Net</span>::<span class="n">OpenTimeout</span>, <span class="n">Net</span>::<span class="n">SMTPServerBusy</span>, <span class="n">wait:</span> <span class="n">:polynomially_longer</span>, <span class="n">attempts:</span> <span class="n">5</span>
+  <span class="c"># บทความถูกลบไปก่อนถึงคิว → ลองใหม่กี่รอบก็ไม่เจอ ทิ้งงานไปเลย</span>
+  <span class="f">discard_on</span> <span class="n">ActiveRecord</span>::<span class="n">RecordNotFound</span>
+
+  <span class="c"># รับแค่ id แล้วโหลดสดจาก DB: ได้สถานะ/เวลาล่าสุดเสมอ (ไม่ใช่ค่าเก่าตอนเข้าคิว)</span>
+  <span class="k">def</span> <span class="f">perform</span>(post_id)
+    post = <span class="n">Post</span>.<span class="f">find</span>(post_id)
+
+    <span class="c"># with_lock = SELECT ... FOR UPDATE แล้วโหลดแถวใหม่: worker ตัวที่สองต้องรอตัวแรกเสร็จก่อน</span>
+    <span class="c"># แล้วเห็นว่า published ไปแล้ว → ไม่ทำซ้ำ</span>
+    post.<span class="f">with_lock</span> <span class="k">do</span>
+      <span class="c"># guard สถานะ: เผยแพร่แล้ว เป็นฉบับร่าง หรือยังไม่ถึงเวลา (ผู้ใช้เลื่อนเวลาออกไป) → ไม่ทำอะไร</span>
+      <span class="k">if</span> post.<span class="f">scheduled?</span> &amp;&amp; post.scheduled_at &lt;= <span class="n">Time</span>.<span class="f">current</span>
+        post.<span class="f">update!</span>(<span class="n">status:</span> <span class="n">:published</span>, <span class="n">published_at:</span> <span class="n">Time</span>.<span class="f">current</span>)
+      <span class="k">end</span>
+    <span class="k">end</span>
+
+    <span class="c"># แจ้งทุกรอบที่บทความเผยแพร่แล้ว (ไม่ใช่แค่รอบที่เพิ่งเปลี่ยนสถานะ):</span>
+    <span class="c"># รอบก่อนพังกลางทาง → retry รอบนี้ส่งต่อให้คนที่ยังไม่ได้ · คนที่ได้แล้วถูกกันด้วย unique index</span>
+    <span class="f">notify_followers</span>(post) <span class="k">if</span> post.<span class="f">published?</span>
+  <span class="k">end</span>
+
+  <span class="k">private</span>
+    <span class="c"># เฉพาะคนที่ติดตามก่อนเวลาเผยแพร่: รันซ้ำทีหลังจะไม่ส่งบทความเก่าไปหาคนที่เพิ่งมาติดตาม</span>
+    <span class="k">def</span> <span class="f">notify_followers</span>(post)
+      <span class="n">Follower</span>.<span class="f">where</span>(<span class="n">created_at:</span> ..post.published_at).<span class="f">find_each</span> <span class="k">do</span> |follower|
+        <span class="f">notify</span>(post, follower)
+      <span class="k">end</span>
+    <span class="k">end</span>
+
+    <span class="k">def</span> <span class="f">notify</span>(post, follower)
+      <span class="n">PostNotification</span>.<span class="f">transaction</span> <span class="k">do</span>
+        <span class="c"># จองก่อนส่ง: ใส่แถว (post, follower) ได้ = ได้สิทธิ์ส่ง</span>
+        <span class="n">PostNotification</span>.<span class="f">create!</span>(<span class="n">post:</span> post, <span class="n">follower:</span> follower)
+        <span class="c"># ส่งพังอยู่ใน transaction → แถวที่จองถูกยกเลิกด้วย → retry รอบหน้าส่งใหม่ ไม่หายเงียบ</span>
+        <span class="n">PostMailer</span>.<span class="f">with</span>(<span class="n">post:</span> post, <span class="n">follower:</span> follower).<span class="f">published</span>.<span class="f">deliver_now</span>
+      <span class="k">end</span>
+    <span class="k">rescue</span> <span class="n">ActiveRecord</span>::<span class="n">RecordNotUnique</span>
+      <span class="c"># มีแถวอยู่แล้ว = ส่งไปแล้ว (รอบก่อน หรือ worker อีกตัว) → ข้าม</span>
+    <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<h3 id="sn-sub-2">ของจริงตอน retry — ส่งได้คนแรก พังคนที่สอง</h3>
+<p>
+  ในเครื่องเราเซิร์ฟเวอร์อีเมลไม่มีวันล่ม (เขียนไฟล์) · เพื่อให้เห็น retry ของจริง เครื่องที่ตรวจ<strong>แทรกโค้ดทดลองชั่วคราว</strong>ใน process ที่สั่ง <code>perform_now</code>
+  ให้การส่งฉบับที่ 2 ล้มด้วย <code>Net::OpenTimeout</code> (worker ที่เปิดอยู่ไม่โดนแทรก) · <strong>ไม่ต้องทำตาม</strong> — อ่าน log อย่างเดียว:
+</p>
+<pre><code>[ActiveJob] [PublishPostJob] [8d906f40-…] Performing PublishPostJob (Job ID: 8d906f40-…) from SolidQueue(default) with arguments: 32
+[ActiveJob] [PublishPostJob] [8d906f40-…]   PostNotification Create (0.5ms)  INSERT INTO "post_notifications" (…) VALUES (32, 1, …)
+[ActiveJob] [PublishPostJob] [8d906f40-…] Delivered mail 6af2944de176b_…mail (5.2ms)
+[ActiveJob] [PublishPostJob] [8d906f40-…]   PostNotification Create (1.0ms)  INSERT INTO "post_notifications" (…) VALUES (32, 2, …)
+[ActiveJob] [PublishPostJob] [8d906f40-…] Failed delivery of mail 6af2944de2f8b_…mail error_class=Net::OpenTimeout error_message="จำลองเซิร์ฟเวอร์อีเมลต่อไม่ติด"
+[ActiveJob] [PublishPostJob] [8d906f40-…]   TRANSACTION (0.4ms)  ROLLBACK
+[ActiveJob] [PublishPostJob] [8d906f40-…] Enqueued PublishPostJob (Job ID: 8d906f40-…) to SolidQueue(default) at 2026-11-10 03:49:36 UTC with arguments: 32
+[ActiveJob] [PublishPostJob] [8d906f40-…] Retrying PublishPostJob (Job ID: 8d906f40-…) after 1 attempts in 3 seconds, due to a Net::OpenTimeout (จำลองเซิร์ฟเวอร์อีเมลต่อไม่ติด).
+                                                   … 3 วินาทีต่อมา worker หยิบงานเดิมไปทำ …
+[ActiveJob] [PublishPostJob] [8d906f40-…] Performing PublishPostJob (Job ID: 8d906f40-…) from SolidQueue(default) enqueued at 2026-11-10T03:49:33.938501000Z with arguments: 32
+[ActiveJob] [PublishPostJob] [8d906f40-…]   PostNotification Create (0.7ms)  INSERT INTO "post_notifications" (…) VALUES (32, 1, …)
+[ActiveJob] [PublishPostJob] [8d906f40-…]   TRANSACTION (0.3ms)  ROLLBACK
+[ActiveJob] [PublishPostJob] [8d906f40-…]   PostNotification Create (0.9ms)  INSERT INTO "post_notifications" (…) VALUES (32, 2, …)
+[ActiveJob] [PublishPostJob] [8d906f40-…] Delivered mail 6af29452eec0b_…mail (2.8ms)
+[ActiveJob] [PublishPostJob] [8d906f40-…]   PostNotification Create (0.9ms)  INSERT INTO "post_notifications" (…) VALUES (32, 3, …)
+[ActiveJob] [PublishPostJob] [8d906f40-…] Delivered mail 6af29452f00bc_…mail (0.9ms)
+[ActiveJob] [PublishPostJob] [8d906f40-…] Performed PublishPostJob (Job ID: 8d906f40-…) from SolidQueue(default) in 104.94ms</code></pre>
+<ul>
+  <li>คน 1 ได้อีเมล · คน 2 <code>Failed delivery</code> → <code>ROLLBACK</code> = <strong>แถวที่จองให้คน 2 ถูกยกเลิก</strong> (เพราะอยู่ใน transaction เดียวกับการส่ง) · คน 3 ยังไม่ถึงคิว</li>
+  <li><code>Enqueued … at 03:49:36 UTC</code> + <code>Retrying … in 3 seconds</code> = <code>retry_on</code> จับ error ได้ แขวนใบงาน<strong>ใบเดิม</strong> (Job ID เดิม) กลับคิว นัดเวลา 3 วินาทีข้างหน้า</li>
+  <li>รอบ retry: คน 1 <code>ROLLBACK</code> (จองไม่ได้ ส่งไปแล้ว ข้าม) · คน 2 และ 3 ได้ · <strong>สรุปทุกคนได้หนึ่งฉบับพอดี</strong> (นับไฟล์แล้ว: เพิ่มคนละ 1)</li>
+  <li>ถ้า <code>raise_delivery_errors</code> ยังเป็น <code>false</code>: คน 2 ส่งพังแบบ<strong>เงียบ</strong> → แถวที่จองถูก commit → ระบบเชื่อว่าส่งแล้ว → <strong>คน 2 ไม่ได้อีเมลตลอดกาล</strong> · เหตุผลที่ต้องเปลี่ยนเป็น <code>true</code> ในขั้น 2</li>
+</ul>
+
+<h3 id="sn-sub-3">discard — ลองเองได้ (ใช้เวลา 1 นาที)</h3>
+<p>สั่ง job กับบทความเลขที่ไม่มีอยู่จริง (หน้าต่าง ② · <code>bin/dev</code> ต้องเปิดอยู่ เพราะ <code>perform_later</code> แขวนใบงานให้ worker):</p>
+<pre><code>$ bin/rails runner 'PublishPostJob.perform_later(999_999)'</code></pre>
+<p>หน้าต่าง ③ (log) ขึ้น:</p>
+<pre><code>[ActiveJob] Enqueued PublishPostJob (Job ID: 28a2a556-…) to SolidQueue(default) with arguments: 999999
+[ActiveJob] [PublishPostJob] [28a2a556-…] Performing PublishPostJob (Job ID: 28a2a556-…) from SolidQueue(default) enqueued at 2026-11-10T03:50:16.064812000Z with arguments: 999999
+[ActiveJob] [PublishPostJob] [28a2a556-…] Discarded PublishPostJob (Job ID: 28a2a556-…) due to a ActiveRecord::RecordNotFound (Couldn't find Post with 'id'=999999).</code></pre>
+<p><code>999_999</code> = เขียนเลข 999999 แบบมีขีดคั่นให้อ่านง่าย · <code>Discarded … due to a ActiveRecord::RecordNotFound</code> = ทิ้งใบงานตามที่สั่งไว้ ไม่มีอะไรค้าง</p>
+
+<div class="predict">
+  <p>ถ้าใส่ <code># </code> หน้าบรรทัด <code>discard_on</code> (ปิดไว้ชั่วคราว) แล้วสั่งคำสั่งเดิมอีกครั้ง</p>
+  <p class="ask">ใบงานไปอยู่ไหน? ทิ้งเอง? ลองใหม่ 5 รอบ? หรืออย่างอื่น?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ที่เครื่องตรวจลองแล้ว · log:</p>
+<pre><code>[ActiveJob] [PublishPostJob] [36188c8f-…] Performing PublishPostJob (Job ID: 36188c8f-…) from SolidQueue(default) enqueued at 2026-11-10T03:50:45.776026000Z with arguments: 999999
+[ActiveJob] [PublishPostJob] [36188c8f-…] Error performing PublishPostJob (Job ID: 36188c8f-…) from SolidQueue(default) in 116.29ms: ActiveRecord::RecordNotFound (Couldn't find Post with 'id'=999999):</code></pre>
+    <p><strong>ไม่ทิ้ง ไม่ลองใหม่</strong> — <code>RecordNotFound</code> ไม่อยู่ในรายชื่อของ <code>retry_on</code> จึงพังทันทีรอบเดียว แล้ว Solid Queue เก็บไว้ในตาราง<strong>งานที่ล้มเหลว</strong> (<code>solid_queue_failed_executions</code>) รอคนมาดู ·
+      หัวข้อ "มองคิวด้วย SQL" จะเปิดตารางนี้ให้ดู · ถ้าคุณลองตาม <strong>อย่าลืมเอา <code># </code> ออก</strong> (worker โหลดโค้ดใหม่เอง ไม่ต้องรีสตาร์ต)</p>
+  </div>
+</div>
+
+<p>
+  <strong>เทียบกับ Go:</strong> ถ้าเขียน worker เอง (บท 26) การลองใหม่คือ <code>for</code> + <code>time.Sleep</code> ที่ต้องคูณระยะเอง และต้องเก็บใบงานที่ล้มเหลวไว้ที่ไหนสักแห่งเอง ·
+  Active Job ให้มาเป็นสองบรรทัดประกาศบนหัวคลาส
+</p>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>transient error vs permanent error</dt>
+    <dd>error ชั่วคราว (ลองใหม่มีหวัง) กับ error ถาวร (ลองใหม่ไร้ประโยชน์) · ถาม senior ได้ว่า "error ตัวนี้นับเป็น transient ไหมครับ ควร retry_on หรือ discard_on"</dd>
+    <dt>exponential / polynomial backoff</dt>
+    <dd>เว้นระยะลองใหม่ให้ห่างขึ้นเรื่อย ๆ · Rails ใช้ <code>:polynomially_longer</code> · พิมพ์บอก AI ได้ว่า "retry_on Net::OpenTimeout ด้วย polynomially_longer ไม่เกิน 5 ครั้ง"</dd>
+    <dt>jitter</dt>
+    <dd>ระยะรอที่สุ่มเพิ่มเล็กน้อย ให้ job ที่พังพร้อมกันไม่ลองใหม่พร้อมกันจนรุมเซิร์ฟเวอร์ซ้ำ (thundering herd)</dd>
+    <dt>failed execution / dead letter</dt>
+    <dd>ใบงานที่ลองครบแล้วยังพัง เก็บไว้ให้คนตรวจ · ระบบคิวอื่นเรียก dead letter queue</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">deploy ตอน job กำลังรัน — SIGTERM และใบงานที่กลับเข้าคิว</h2>
+
+<p>
+  <strong>deploy</strong> (เอาโค้ดเวอร์ชันใหม่ขึ้นเครื่องจริง) ต้องปิดโปรแกรมเก่าก่อนเสมอ · ระบบจะส่ง <strong>SIGTERM</strong> ไปบอก worker ว่า "เก็บของ กำลังจะปิด" (เหมือน Go บท 25) ·
+  worker ที่ดี<strong>หยุดรับงานใหม่</strong> แล้วพยายามทำงานในมือให้จบ · ถ้าไม่จบในเวลาที่ให้ งานนั้นถูก<strong>แขวนกลับเข้าคิว</strong> → ตัวใหม่หยิบไป<strong>ทำใหม่ตั้งแต่ต้น</strong>
+</p>
+<p>กลับเข้าคิว = ถูกทำซ้ำ = <strong>idempotency ต้องทำงานตรงนี้แหละ</strong> (สไลด์หน้า 21)</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    ผู้จัดการประกาศ "<strong>อีก 5 วินาทีปิดครัวรีโนเวท</strong>" · พนักงานหลังร้านหยุดหยิบใบงานใหม่ · คนที่ถือใบงานอยู่รีบทำให้จบ ·
+    ครบ 5 วินาทียังไม่เสร็จ → <strong>แขวนใบงานกลับกระดาน</strong>แล้วออกจากร้าน · ครัวเปิดใหม่ พนักงานกะใหม่หยิบใบเดิมไปทำ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงจำได้ว่าทำไปถึงไหนแล้ว · job <strong>เริ่มใหม่ตั้งแต่บรรทัดแรก</strong> ไม่รู้ว่ารอบก่อนทำอะไรไปบ้าง (เว้นแต่ใช้ Continuations ข้างล่าง) ·
+    และถ้าโดน<strong>ดึงปลั๊กกะทันหัน</strong> (เครื่องดับ · <code>kill -9</code>) ไม่มีใครได้แขวนใบงานคืน — Solid Queue จะย้ายใบนั้นไปกองงานล้มเหลว ไม่ทำใหม่เอง (README ของ Solid Queue · หัวข้อ "Jobs interrupted by non-graceful process death")
+  </p>
+</div>
+
+<p>เครื่องที่ตรวจลองให้ดู (<strong>ไม่ต้องทำตาม</strong>) ด้วย job ทดลองที่ทำงาน 20 วินาที (ไฟล์ชั่วคราว ลบทิ้งหลังทดลอง):</p>
+<pre><code><span class="c"># ทดลองเท่านั้น: งานยาว 20 วินาที</span>
+<span class="k">class</span> <span class="n">SlowDemoJob</span> &lt; <span class="n">ApplicationJob</span>
+  <span class="k">def</span> <span class="f">perform</span>
+    <span class="f">logger</span>.<span class="f">info</span> <span class="s">"งานยาว: เริ่ม"</span>
+    <span class="n">20</span>.<span class="f">times</span> { |i| <span class="f">sleep</span> <span class="n">1</span> }
+    <span class="f">logger</span>.<span class="f">info</span> <span class="s">"งานยาว: เสร็จ"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<p>ส่งเข้าคิว · รอ 4 วินาที · ส่ง SIGTERM ให้ <code>bin/jobs</code> (<code>kill -TERM &lt;เลข process&gt;</code>) · log:</p>
+<pre><code>[ActiveJob] [SlowDemoJob] [c01f4042-…] Performing SlowDemoJob (Job ID: c01f4042-…) from SolidQueue(default) enqueued at 2026-11-10T03:53:42.465542000Z
+[ActiveJob] [SlowDemoJob] [c01f4042-…] งานยาว: เริ่ม
+SolidQueue-1.7.0 Deregister Dispatcher (9.0ms)  …
+SolidQueue-1.7.0 Deregister Scheduler (8.7ms)  …
+…
+SolidQueue-1.7.0 Supervisor terminated immediately (0.1ms)  process_id: 11, supervisor_pid: 14276, supervised_processes: [14312]
+SolidQueue-1.7.0 Supervisor wasn't terminated gracefully - shutdown timeout exceeded (5005.2ms)  …
+SolidQueue-1.7.0 Release claimed job (11.6ms)  job_id: 7, process_id: 12
+SolidQueue-1.7.0 Release claimed jobs (28.1ms)  size: 1
+SolidQueue-1.7.0 Deregister Worker (33.8ms)  …</code></pre>
+<ul>
+  <li><code>shutdown timeout exceeded (5005.2ms)</code> — รอให้งานจบ <strong>5 วินาที</strong> (ค่าเริ่มต้นของ Solid Queue) งานยังเหลืออีก ~11 วินาที · <code>terminated immediately</code> = สั่งปิดทันที</li>
+  <li><code>Release claimed job … job_id: 7</code> — <strong>คืนใบงานเข้าคิว</strong> ("claimed" = มีคนถือไว้ · "release" = ปล่อยคืน) · ไม่มีบรรทัด "งานยาว: เสร็จ"</li>
+</ul>
+<p>เปิด <code>bin/jobs</code> ใหม่ · worker หยิบใบเดิม (Job ID เดิม) ไปทำ<strong>ตั้งแต่ต้น</strong>:</p>
+<pre><code>[ActiveJob] [SlowDemoJob] [c01f4042-…] Performing SlowDemoJob (Job ID: c01f4042-…) from SolidQueue(default) enqueued at 2026-11-10T03:53:42.465542000Z
+[ActiveJob] [SlowDemoJob] [c01f4042-…] งานยาว: เริ่ม
+[ActiveJob] [SlowDemoJob] [c01f4042-…] งานยาว: เสร็จ
+[ActiveJob] [SlowDemoJob] [c01f4042-…] Performed SlowDemoJob (Job ID: c01f4042-…) from SolidQueue(default) in 20130.57ms</code></pre>
+<p>
+  <strong>"งานยาว: เริ่ม" ขึ้นสองครั้ง</strong> = บรรทัดก่อนจุดที่โดนตัด ถูกทำซ้ำ · ถ้าบรรทัดนั้นคือ "ส่งอีเมล" ลูกค้าได้สองฉบับ — เว้นแต่ job ออกแบบให้ทนแบบ <code>PublishPostJob</code> ของเรา
+</p>
+
+<h3 id="sn-sub-4">งานยาวมาก — Active Job Continuations (แค่รู้จัก)</h3>
+<p>
+  Rails 8.1 เพิ่มทางเลือกให้ job ยาว ๆ (เช่น ไล่แก้บทความแสนแถว) <strong>แบ่งเป็นขั้น และจดว่าทำถึงแถวไหนแล้ว</strong> · โดนปิดกลางทาง กลับมาทำต่อจากจุดเดิม ไม่ต้องเริ่มใหม่ ·
+  ตัวอย่างของสไลด์หน้า 21 (<strong>ไม่ต้องพิมพ์</strong> — แอปเราไม่มีคอลัมน์ <code>indexed</code> และไม่มี method <code>send_report</code> · ตรวจแล้วว่า <code>ActiveJob::Continuable</code>, <code>step</code>, <code>step.cursor</code>, <code>step.advance!(from:)</code> มีจริงใน Rails 8.1.4):
+</p>
+<pre><code><span class="k">class</span> <span class="n">BackfillJob</span> &lt; <span class="n">ApplicationJob</span>
+  <span class="f">include</span> <span class="n">ActiveJob</span>::<span class="n">Continuable</span>
+
+  <span class="k">def</span> <span class="f">perform</span>
+    <span class="f">step</span> <span class="n">:mark_posts</span> <span class="k">do</span> |step|
+      <span class="n">Post</span>.<span class="f">find_each</span>(<span class="n">start:</span> step.<span class="f">cursor</span>) <span class="k">do</span> |p|
+        p.<span class="f">update!</span>(<span class="n">indexed:</span> <span class="k">true</span>)
+        step.<span class="f">advance!</span>(<span class="n">from:</span> p.id)
+      <span class="k">end</span>
+    <span class="k">end</span>
+    <span class="f">step</span> <span class="n">:send_report</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<ul>
+  <li><code>step :mark_posts do |step|</code> — ขั้นที่ 1 · <code>step.cursor</code> = "ทำถึงแถวไหนแล้ว" (รอบแรกว่าง = เริ่มต้น) · <code>step.advance!(from: p.id)</code> = จดว่าทำถึงแถวนี้แล้ว และเป็นจุดที่ยอมให้หยุดได้</li>
+  <li><code>step :send_report</code> — ขั้นที่ 2 · เรียก method ชื่อเดียวกัน · ทำเมื่อขั้นที่ 1 จบ</li>
+  <li>แอปเรายังไม่มีงานยาวขนาดนั้น · <code>PublishPostJob</code> ทำเสร็จในไม่ถึงหนึ่งวินาที ใช้ "ทนการทำซ้ำ" ก็พอ</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>graceful shutdown</dt>
+    <dd>ปิดอย่างสุภาพ: หยุดรับงานใหม่ ทำงานในมือให้จบ แล้วค่อยปิด · ถาม senior ได้ว่า "deploy ของเราให้เวลา worker graceful shutdown กี่วินาทีครับ"</dd>
+    <dt>shutdown timeout</dt>
+    <dd>เวลาที่ยอมรอก่อนบังคับปิด · Solid Queue ค่าเริ่มต้น 5 วินาที (<code>SolidQueue.shutdown_timeout</code>)</dd>
+    <dt>claimed / released job</dt>
+    <dd>ใบงานที่ worker ถืออยู่ / ถูกปล่อยคืนเข้าคิว · ตาราง <code>solid_queue_claimed_executions</code></dd>
+    <dt>job continuation</dt>
+    <dd>job ที่แบ่งขั้นและจดความคืบหน้า กลับมาทำต่อได้ · พิมพ์บอก AI ได้ว่า "ทำ backfill เป็น ActiveJob::Continuable ใช้ step กับ cursor"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">กฎเขียน job 5 ข้อ — เทียบกับโค้ดของเรา</h2>
+
+<p>สไลด์หน้า 21 ให้กฎ 5 ข้อ · ใช้เป็น <strong>checklist ตรวจ job ทุกตัว</strong> รวมถึงที่ AI เขียนให้ (Lab บท 145 จะใช้):</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กฎ</th><th>เพราะ</th><th>ในโค้ดเรา</th></tr></thead>
+  <tbody>
+    <tr><td>① job ต้องสั้น — งานยาวแตกเป็นหลาย job หรือใช้ step</td><td>สั้น = โดนตัดกลางคันน้อย · ทำซ้ำก็เสียไม่มาก</td><td>ตัวกวาด (ขั้นถัดไป) ไม่เผยแพร่เอง แตกเป็น <code>PublishPostJob</code> หนึ่งตัวต่อบทความ</td></tr>
+    <tr><td>② ส่ง id อย่าส่งก้อนข้อมูลใหญ่หรือไฟล์</td><td>ข้อมูลในใบงานเก่าตั้งแต่ตอนเข้าคิว · id แล้วโหลดสดได้ค่าล่าสุด</td><td><code>perform_later(post.id)</code> · <code>Post.find(post_id)</code></td></tr>
+    <tr><td>③ อย่าส่งของที่หมดอายุได้ เช่น signed URL หรือ token</td><td>รอคิวนานหรือ retry ทีหลัง ของหมดอายุไปแล้ว (บท 139)</td><td>mailer สร้าง <code>post_url</code> <strong>ตอนส่ง</strong> ไม่รับลิงก์ที่ทำไว้ก่อน</td></tr>
+    <tr><td>④ สมมติเสมอว่าจะรันซ้ำ และรันช้ากว่าที่คิด</td><td>at-least-once · retry · deploy</td><td><code>post_notifications</code> + unique index · guard เช็ก "ถึงเวลาหรือยัง" ณ ตอนที่รันจริง</td></tr>
+    <tr><td>⑤ job ที่เขียนลง DB ต้องมี guard ทุกตัว</td><td>รอบซ้ำต้องไม่เขียนทับของที่ถูกแล้ว</td><td><code>if post.scheduled? &amp;&amp; post.scheduled_at &lt;= Time.current</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-9">งานตามเวลา — ตั้งนาฬิกาปลุก หรือ เดินตรวจทุกนาที</h2>
+
+<p>
+  ถึงตอนนี้ job ส่งอีเมลได้แล้ว แต่<strong>ใครจะสั่ง job ตอนถึงเวลา?</strong> สไลด์หน้า 22 ให้สองท่า ·
+  <strong>ท่า A</strong>: ตอนบันทึกบทความ แขวนใบงานพร้อมเวลานัด <code>PublishPostJob.set(wait_until: post.scheduled_at).perform_later(post.id)</code> — ใบงานนอนรอในคิวจนถึงเวลา ·
+  <strong>ท่า B</strong>: มี job อีกตัว<strong>ทำงานทุกนาที</strong> ค้นในตู้ว่าบทความไหนถึงเวลาแล้ว แล้วส่งต่อให้ <code>PublishPostJob</code>
+</p>
+<p>
+  <strong>ท่า B ทนกว่า</strong> · ท่า A ถ้าผู้ใช้<strong>เลื่อนเวลา</strong> ใบงานเก่ายังนัดเวลาเดิม (ไปถึงแล้ว guard บอก "ยังไม่ถึง" → ไม่ทำ → เวลาใหม่ไม่มีใครมา) · ถ้า<strong>คิวถูกล้าง</strong> ใบงานหายพร้อมกัน ·
+  ท่า B อ่านเวลา<strong>ล่าสุดจากตู้ทุกรอบ</strong> รอบนี้พลาด รอบหน้าก็เจอ
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    ท่า A = ตอนรับออเดอร์จัดเลี้ยง ติด<strong>นาฬิกาปลุก</strong>ไว้ที่ใบงานแต่ละใบ "ดังตอนบ่ายสอง" · ลูกค้าโทรมาเลื่อนเป็นบ่ายสาม — นาฬิกาเดิมยังดังบ่ายสอง ไม่มีใครตั้งใหม่ ·
+    ท่า B = มี<strong>พนักงานเดินดูสมุดออเดอร์ทุกนาที</strong> "ออเดอร์ไหนถึงเวลาแล้วบ้าง" · ลูกค้าเลื่อนเวลา ก็แค่แก้ในสมุด รอบหน้าพนักงานเห็นเวลาใหม่เอง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานเดินตรวจไม่มีวันเบื่อ แต่ก็<strong>ละเอียดได้แค่นาที</strong> (ตั้ง 10:30 จะออกช่วง 10:30:00–10:30:01 ไม่ใช่วินาทีที่ 30) ·
+    และถ้าพนักงานคนนี้<strong>ไม่ได้มาทำงาน</strong> (worker ปิด) ช่วงนั้นไม่มีใครเดินตรวจย้อนหลังให้ — แต่ออเดอร์ยังอยู่ในสมุด พอเขากลับมารอบแรกก็เจอเอง (ภารกิจท้ายบทพิสูจน์)
+  </p>
+</div>
+
+<p><strong>เทียบของที่รู้:</strong> ใน Go ต้องเขียน goroutine ที่วนรอบ + <code>time.Sleep(time.Minute)</code> เอง (บท 21) หรือพึ่ง cron ของเครื่อง · Solid Queue มีตัว <strong>Scheduler</strong> (คนเดินตรวจตามเวลา) อยู่ใน <code>bin/jobs</code> แล้ว แค่บอกในไฟล์ว่าจะให้ทำอะไรเมื่อไร</p>
+
+<h3 id="sn-sub-5">ตัวกวาด — <code>PublishScheduledPostsJob</code></h3>
+<pre><code>$ bin/rails generate job PublishScheduledPosts
+      invoke  test_unit
+      create    test/jobs/publish_scheduled_posts_job_test.rb
+      create  app/jobs/publish_scheduled_posts_job.rb</code></pre>
+<p>แทนทั้งไฟล์ <code>app/jobs/publish_scheduled_posts_job.rb</code>:</p>
+<pre><code><span class="c"># ตัวกวาด: config/recurring.yml สั่งให้รันทุกนาที · หาบทความที่ถึงเวลาแล้ว ส่งต่อให้ PublishPostJob ทีละบทความ</span>
+<span class="c"># ไม่ใช้ PublishPostJob.set(wait_until: scheduled_at) ตอนบันทึก เพราะผู้ใช้แก้เวลาได้</span>
+<span class="c"># (งานที่ตั้งไว้กับเวลาเก่าจะค้างในคิว) ตัวกวาดอ่านเวลาล่าสุดจาก DB ทุกรอบ</span>
+<span class="c"># รอบนี้พลาด รอบหน้าก็กวาดเจออีก · ส่งซ้ำก็ไม่เป็นไร เพราะ PublishPostJob รันซ้ำได้</span>
+<span class="k">class</span> <span class="n">PublishScheduledPostsJob</span> &lt; <span class="n">ApplicationJob</span>
+  <span class="f">queue_as</span> <span class="n">:default</span>
+
+  <span class="k">def</span> <span class="f">perform</span>
+    <span class="n">Post</span>.<span class="f">scheduled</span>.<span class="f">where</span>(<span class="n">scheduled_at:</span> ..<span class="n">Time</span>.<span class="f">current</span>).<span class="f">find_each</span> <span class="k">do</span> |post|
+      <span class="c"># แยกงานต่อบทความ + ส่งแค่ id: บทความหนึ่งพังไม่ลากบทความอื่น retry เฉพาะตัวที่พัง</span>
+      <span class="n">PublishPostJob</span>.<span class="f">perform_later</span>(post.id)
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<ul>
+  <li><code>Post.scheduled</code> — scope ที่ enum สร้างให้ (บท 143) = <code>WHERE status = 'scheduled'</code> · <code>where(scheduled_at: ..Time.current)</code> = เวลานัดไม่เกินตอนนี้</li>
+  <li><code>perform</code> ไม่รับอะไรเลย — ตัวกวาดไม่ต้องรู้ล่วงหน้าว่าจะเจอบทความไหน</li>
+  <li>บทความเดียวกันอาจถูกส่งเข้าคิวสองรอบ (เช่นรอบที่แล้วยังทำไม่เสร็จ) — ไม่เป็นไร เพราะ <code>PublishPostJob</code> รันซ้ำได้</li>
+</ul>
+
+<h3 id="sn-sub-6"><code>config/recurring.yml</code> — บอก Scheduler ว่าให้ทำอะไรเมื่อไร</h3>
+<p>ไฟล์นี้ Rails สร้างมาให้แล้ว · เปิดดูจะเห็นตัวอย่างที่ comment ไว้ และงานหนึ่งตัวใต้ <code>production:</code> · ลองทำ<strong>ตามสไลด์หน้า 22 ก่อน</strong> — เพิ่มงานของเราใต้ <code>production:</code>:</p>
+<pre><code>production:
+  publish_scheduled_posts:
+    class: PublishScheduledPostsJob
+    schedule: every minute
+  clear_solid_queue_finished_jobs:
+    command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
+    schedule: every hour at minute 12</code></pre>
+<ul>
+  <li><code>publish_scheduled_posts:</code> — ชื่องาน (ตั้งเอง) · <code>class:</code> — job ที่จะสั่ง · <code>schedule: every minute</code> — ทุกนาที (ต้นนาที · เขียนเป็นภาษาอังกฤษแบบนี้ได้ หรือรูปแบบ cron)</li>
+  <li><code>clear_solid_queue_finished_jobs</code> — งานที่ Rails ใส่มาให้: ลบประวัติใบงานที่เสร็จแล้วทุกชั่วโมง (นาทีที่ 12) ไม่ให้ตารางโตไม่หยุด · <code>command:</code> = สั่งโค้ด Ruby บรรทัดเดียวแทน job</li>
+</ul>
+<p><strong>Scheduler อ่านไฟล์นี้ตอนเริ่มเท่านั้น</strong> → ปิด <code>bin/dev</code> (Ctrl+C) แล้วเปิดใหม่ · จากนั้นถามว่ามีพนักงานกี่แบบทำงานอยู่:</p>
+<pre><code>$ bin/rails runner 'p SolidQueue::Process.pluck(:kind); p SolidQueue::RecurringTask.pluck(:key)'</code></pre>
+
+<div class="predict">
+  <p class="ask">คิดว่าจะเห็น <code>"Scheduler"</code> ในรายการไหม และงาน <code>publish_scheduled_posts</code> ถูกลงทะเบียนไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>["Supervisor(fork)", "Dispatcher", "Worker"]
+[]</code></pre>
+    <p><strong>ไม่มี Scheduler · ไม่มีงานตามเวลาเลยสักตัว · และไม่มี error</strong> — เพราะเครื่องเรารันเป็น <code>development</code> แต่ไฟล์มีแค่หัวข้อ <code>production:</code> ·
+      ไม่มีชื่อ environment ไหนในไฟล์ = environment นั้นไม่มีงานตามเวลา · อาการที่ผู้ใช้เห็น: <strong>ตั้งเวลาไว้แล้วรอเท่าไรก็ไม่เผยแพร่</strong> ·
+      (<code>Supervisor</code> = หัวหน้าที่คอยดูแลพนักงานคนอื่น · <code>Dispatcher</code> = คนย้ายใบงานที่ถึงเวลานัดขึ้นกระดาน · <code>Worker</code> = คนทำงาน)</p>
+  </div>
+</div>
+
+<p>แก้ให้มีหัวข้อ <code>development:</code> ด้วย · แทนทั้งไฟล์ <code>config/recurring.yml</code> (ลบตัวอย่างที่ comment ไว้ทิ้ง · เขียนซ้ำสองชุดตรง ๆ อ่านง่ายกว่าใช้ท่าย่อของ YAML):</p>
+<pre><code><span class="c"># งานที่ bin/jobs สั่งรันเองตามเวลา (ตัว scheduler ของ Solid Queue)</span>
+<span class="c"># แยกตาม environment: ไม่มีชื่อ environment ไหนในไฟล์ = environment นั้นไม่มีงานตามเวลาเลย</span>
+
+development:
+  <span class="c"># กวาดบทความที่ถึงเวลาเผยแพร่ทุกนาที</span>
+  publish_scheduled_posts:
+    class: PublishScheduledPostsJob
+    schedule: every minute
+
+production:
+  publish_scheduled_posts:
+    class: PublishScheduledPostsJob
+    schedule: every minute
+  clear_solid_queue_finished_jobs:
+    command: <span class="s">"SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"</span>
+    schedule: every hour at minute 12</code></pre>
+<ul>
+  <li>development ไม่ใส่งานลบประวัติ — ใบงานที่เสร็จแล้วสะสมนาทีละแถว ไม่เป็นไรในเครื่อง และได้เปิดดูประวัติด้วย SQL</li>
+</ul>
+<p>ปิดเปิด <code>bin/dev</code> อีกครั้ง แล้วถามซ้ำ:</p>
+<pre><code>$ bin/rails runner 'p SolidQueue::Process.pluck(:kind); p SolidQueue::RecurringTask.pluck(:key, :schedule, :class_name)'
+["Supervisor(fork)", "Worker", "Dispatcher", "Scheduler"]
+[["publish_scheduled_posts", "every minute", "PublishScheduledPostsJob"]]</code></pre>
+<p>มี <code>"Scheduler"</code> แล้ว (ลำดับในรายการของคุณอาจสลับกัน) — คนเดินตรวจมาทำงานแล้ว</p>
+
+<div class="warn">
+  <p><strong>อย่าก็อป <code>cleanup_orphan_blobs: class: CleanupBlobsJob</code> จากสไลด์หน้า 22 มาด้วย</strong> — แอปเราไม่มีคลาสนี้ · ลองแล้ว <code>bin/jobs</code> ไม่ยอมเริ่ม และ <code>bin/dev</code> ปิดทั้งชุด (เว็บด้วย):</p>
+<pre><code>11:00:58 jobs.1 | Invalid recurring tasks:
+11:00:58 jobs.1 | - cleanup_orphan_blobs: Class name doesn't correspond to an existing class
+11:00:58 jobs.1 | Exiting...
+11:00:59 jobs.1 | exited with code 1
+11:00:59 system | sending SIGTERM to all processes</code></pre>
+</div>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>recurring task (cron job)</dt>
+    <dd>งานที่ระบบสั่งเองตามรอบเวลา · ถาม senior ได้ว่า "งานนี้ควรเป็น recurring sweep หรือ schedule ทีละตัวด้วย wait_until ครับ"</dd>
+    <dt>sweeper / poller</dt>
+    <dd>job ที่วนตรวจหาของที่ถึงเวลา · พิมพ์บอก AI ได้ว่า "ทำ PublishScheduledPostsJob กวาดทุกนาที ส่งต่อทีละ id ห้ามเผยแพร่ในตัวกวาดเอง"</dd>
+    <dt>delayed job (<code>wait_until</code>)</dt>
+    <dd>ใบงานที่นัดเวลาไว้ล่วงหน้า (ท่า A) · เหมาะกับนัดที่ไม่มีวันเปลี่ยน เช่น "อีก 10 นาทีส่งอีเมลยืนยัน"</dd>
+    <dt>Scheduler · Dispatcher · Supervisor</dt>
+    <dd>สามบทบาทใน <code>bin/jobs</code> นอกจาก Worker: สั่งงานตามเวลา · ย้ายใบงานที่ถึงเวลานัดขึ้นกระดาน · ดูแลคนอื่น</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-10">ลองของจริง — ตั้งเวลาแล้วรอดูมันเผยแพร่เอง</h2>
+
+<ol>
+  <li>ล้างอีเมลเก่า: <code>rm -rf tmp/mails</code></li>
+  <li>เปิด <code>localhost:3000/posts/new</code> · หัวข้อ <code>ตั้งเวลา 1 นาที</code> · เนื้อหาอะไรก็ได้ · เลือกหมวด · ช่อง "การเผยแพร่" เลือก <strong>ตั้งเวลาเผยแพร่</strong> ·
+    "เวลาเผยแพร่" ใส่<strong>นาฬิกาตอนนี้ + 2 นาที</strong> (เผื่อเวลากรอก) · กดบันทึก</li>
+  <li>หน้าบทความขึ้นกล่องสีฟ้า "ตั้งเวลาเผยแพร่ไว้ … · ยังไม่โชว์ในหน้ารวม" · ดูหน้าต่าง ③ (log) แล้วรอ</li>
+</ol>
+<p>ของจริงที่เครื่องตรวจ (ตั้งไว้ 10:53 เวลาไทย = 03:53 เวลาสากล):</p>
+<pre><code>[ActiveJob] Enqueued PublishScheduledPostsJob (Job ID: 8ba7bb31-…) to SolidQueue(default)
+SolidQueue-1.7.0 Enqueued recurring task (55.3ms)  task: "publish_scheduled_posts", active_job_id: "8ba7bb31-…", at: "2026-11-10T03:52:00Z"
+[ActiveJob] [PublishScheduledPostsJob] [8ba7bb31-…] Performing PublishScheduledPostsJob (Job ID: 8ba7bb31-…) from SolidQueue(default) enqueued at 2026-11-10T03:52:00.046772000Z
+[ActiveJob] [PublishScheduledPostsJob] [8ba7bb31-…] Performed PublishScheduledPostsJob (Job ID: 8ba7bb31-…) from SolidQueue(default) in 110.12ms
+[ActiveJob] Enqueued PublishScheduledPostsJob (Job ID: afb4b25c-…) to SolidQueue(default)
+SolidQueue-1.7.0 Enqueued recurring task (29.3ms)  task: "publish_scheduled_posts", active_job_id: "afb4b25c-…", at: "2026-11-10T03:53:00Z"
+[ActiveJob] [PublishScheduledPostsJob] [afb4b25c-…] Performing PublishScheduledPostsJob (Job ID: afb4b25c-…) from SolidQueue(default) enqueued at 2026-11-10T03:53:00.015784000Z
+[ActiveJob] [PublishScheduledPostsJob] [afb4b25c-…] Enqueued PublishPostJob (Job ID: 13ed3d23-…) to SolidQueue(default) with arguments: 33
+[ActiveJob] [PublishScheduledPostsJob] [afb4b25c-…] Performed PublishScheduledPostsJob (Job ID: afb4b25c-…) from SolidQueue(default) in 13.67ms
+[ActiveJob] [PublishPostJob] [13ed3d23-…] Performing PublishPostJob (Job ID: 13ed3d23-…) from SolidQueue(default) enqueued at 2026-11-10T03:53:00.755667000Z with arguments: 33
+[ActiveJob] [PublishPostJob] [13ed3d23-…] Delivered mail 6af2951ccb3f9_…mail (5.9ms)
+[ActiveJob] [PublishPostJob] [13ed3d23-…] Delivered mail 6af2951cccbeb_…mail (0.9ms)
+[ActiveJob] [PublishPostJob] [13ed3d23-…] Delivered mail 6af2951ccdbb8_…mail (0.9ms)
+[ActiveJob] [PublishPostJob] [13ed3d23-…] Performed PublishPostJob (Job ID: 13ed3d23-…) from SolidQueue(default) in 74.17ms</code></pre>
+<ul>
+  <li><strong>รอบ 03:52</strong> — Scheduler สั่งตัวกวาด (<code>Enqueued recurring task … at: …03:52:00Z</code>) · ตัวกวาดทำงานแล้ว<strong>ไม่ส่งต่ออะไร</strong> เพราะบทความยังไม่ถึงเวลา</li>
+  <li><strong>รอบ 03:53</strong> — ตัวกวาดเจอบทความ 33 → <code>Enqueued PublishPostJob … with arguments: 33</code> (ส่งแค่ id) · ไม่ถึงวินาทีต่อมา <code>PublishPostJob</code> เผยแพร่และส่งอีเมล 3 ฉบับ</li>
+</ul>
+<pre><code>$ grep -c "^Subject:" tmp/mails/*
+tmp/mails/boss@example.com:1
+tmp/mails/malee@example.com:1
+tmp/mails/somchai@example.com:1</code></pre>
+<p>กลับไปหน้า <code>localhost:3000/posts</code> — บทความ "ตั้งเวลา 1 นาที" อยู่บนสุดของแท็บ "เผยแพร่แล้ว" · <strong>ไม่มีใครกดอะไรเลย</strong></p>
+
+<h2 id="sn-sec-11">มองคิวด้วย SQL — คิวคือตารางธรรมดา</h2>
+
+<p>
+  ข้อดีของ Solid Queue คือคิวอยู่ในตาราง Postgres · อยากรู้อะไรก็ถามด้วย SQL ได้เลย · สไลด์หน้า 22 เตือนว่า <strong>"ถ้าไม่มีใครดูคิว งาน fail เงียบ ๆ เป็นเดือนได้"</strong> ·
+  เปิด psql ในกล่อง Postgres ของ compose (หน้าต่าง ②):
+</p>
+<pre><code>docker compose exec postgres psql -U postgres -d wongnok_blog_all_in_one_development -c "SELECT key, schedule, class_name FROM solid_queue_recurring_tasks;"</code></pre>
+<p>คำสั่งยาวเหมือนกันทุกครั้ง เปลี่ยนแค่ SQL ในเครื่องหมายคำพูด · ผลจริง (เวลาเป็นเวลาสากล):</p>
+<pre><code>           key           |   schedule   |        class_name
+-------------------------+--------------+--------------------------
+ publish_scheduled_posts | every minute | PublishScheduledPostsJob
+(1 row)</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>อยากรู้</th><th>SQL</th></tr></thead>
+  <tbody>
+    <tr><td>ใครทำงานอยู่บ้าง (ไม่มีแถว = worker ปิด)</td><td><code>SELECT kind, pid, last_heartbeat_at FROM solid_queue_processes;</code></td></tr>
+    <tr><td>ใบงานล่าสุด เสร็จหรือยัง</td><td><code>SELECT id, class_name, finished_at FROM solid_queue_jobs ORDER BY id DESC LIMIT 2;</code></td></tr>
+    <tr><td>ตัวกวาดทำงานนาทีไหนบ้าง</td><td><code>SELECT task_key, run_at, job_id FROM solid_queue_recurring_executions ORDER BY run_at DESC LIMIT 3;</code></td></tr>
+    <tr><td>ใบงานรอบนกระดาน (ควรเป็น 0 เกือบตลอด)</td><td><code>SELECT COUNT(*) FROM solid_queue_ready_executions;</code></td></tr>
+    <tr><td><strong>งานที่ล้มเหลว</strong> (สไลด์บอกให้ตั้งเตือน)</td><td><code>SELECT COUNT(*) FROM solid_queue_failed_executions;</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ผลจริงของสองแถวแรก (หลังรอบ 03:57):</p>
+<pre><code>       kind       |  pid  |     last_heartbeat_at
+------------------+-------+----------------------------
+ Supervisor(fork) | 15008 | 2026-11-10 03:57:05.18314
+ Worker           | 15016 | 2026-11-10 03:57:05.220258
+ Dispatcher       | 15015 | 2026-11-10 03:57:05.220286
+ Scheduler        | 15017 | 2026-11-10 03:57:05.220494
+(4 rows)
+
+ id |        class_name        |        finished_at
+----+--------------------------+----------------------------
+  9 | PublishPostJob           | 2026-11-10 03:57:00.869085
+  8 | PublishScheduledPostsJob | 2026-11-10 03:57:00.798291
+(2 rows)</code></pre>
+<ul>
+  <li><code>last_heartbeat_at</code> = "เสียงหัวใจ" ล่าสุด · พนักงานทุกคนรายงานตัวเป็นระยะ ถ้าเวลานี้เก่ามาก = คนนั้นตายไปแล้ว</li>
+  <li><code>finished_at</code> มีค่า = เสร็จแล้ว · ว่าง = ยังรอหรือกำลังทำ</li>
+</ul>
+
+<p>และงานที่ล้มเหลวจากการทดลองปิด <code>discard_on</code> เมื่อกี้ (ถ้าคุณไม่ได้ลอง จะได้ <code>0</code>):</p>
+<pre><code> count
+-------
+     1
+(1 row)</code></pre>
+<p>ดูว่าพังเพราะอะไร แล้วทิ้งใบนั้น — ทำใน <code>bin/rails console</code> (คำสั่งจาก README ของ Solid Queue · <code>.retry</code> = ส่งกลับเข้าคิวใหม่ · <code>.discard</code> = ทิ้ง):</p>
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; SolidQueue::FailedExecution.count
+=&gt; 1
+wongnok-blog-all-in-one(dev):002&gt; SolidQueue::FailedExecution.last.error["message"]
+=&gt; "Couldn't find Post with 'id'=999999"
+wongnok-blog-all-in-one(dev):003&gt; SolidQueue::FailedExecution.last.discard
+…
+wongnok-blog-all-in-one(dev):004&gt; SolidQueue::FailedExecution.count
+=&gt; 0</code></pre>
+<p>
+  ทีมจริงไม่นั่งพิมพ์ SQL ทุกวัน · มี gem ชื่อ <strong>mission_control-jobs</strong> ทำหน้าเว็บดูคิว กด retry / ลบงานได้ (สไลด์หน้า 22 · คอร์สนี้ไม่ได้ติดตั้ง) ·
+  และควรตั้ง<strong>สัญญาณเตือน</strong>สองอย่าง: งานค้างบนกระดานเกิน N นาที · จำนวนงานที่ fail มากกว่า 0
+</p>
+
+<h2 id="sn-sec-12">commit</h2>
+<pre><code>$ git add .
+$ git commit -m "ผู้ติดตาม + อีเมลแจ้งบทความใหม่ (ไม่ส่งซ้ำ) + ตัวกวาดทุกนาที + retry/discard"
+[my-day4 c978426] ผู้ติดตาม + อีเมลแจ้งบทความใหม่ (ไม่ส่งซ้ำ) + ตัวกวาดทุกนาที + retry/discard
+ 21 files changed, 218 insertions(+), 15 deletions(-)</code></pre>
+<p>ต้องได้ <strong>21 ไฟล์ · +218 · −15</strong> พอดี (ชื่อ branch และเลข commit ของคุณจะต่าง) · ถ้าตัวเลขต่าง ให้ <code>git diff HEAD~1 --stat</code> แล้วเทียบทีละไฟล์กับบทนี้ ·
+  8 ไฟล์ใน <code>test/</code> เป็นของที่ generator สร้าง (แก้แค่ preview) — ใช้ในบล็อก J</p>
+
+<div class="task">
+  <h3 id="sn-sub-7">🎯 ภารกิจ — ระบบดับตอนถึงเวลา แล้วยังเผยแพร่ได้ไหม (~6 นาที)</h3>
+  <p>พิสูจน์ประโยค "ท่า B ทนกว่า" ด้วยมือตัวเอง: ให้เวลานัด<strong>ผ่านไปตอนที่ worker ไม่ได้ทำงาน</strong> · ต้อง commit หัวข้อก่อนหน้าแล้ว</p>
+  <ol>
+    <li>หน้าต่าง ① กด <strong>Ctrl+C</strong> ปิด <code>bin/dev</code> (ปิดทั้งเว็บและ worker) · รอ ~5 วินาที แล้วเช็ก: <code>bin/rails runner 'p SolidQueue::Process.count'</code> ต้องได้ <code>0</code></li>
+    <li>สร้างบทความที่เวลานัด<strong>ผ่านไปแล้ว 2 นาที</strong>:
+<pre><code>bin/rails runner 'p Post.create!(title: "ระบบดับตอนถึงเวลา", body: "ทดสอบตัวกวาด", category: Category.first, status: :scheduled, scheduled_at: 2.minutes.ago).id'</code></pre></li>
+    <li><code>rm -rf tmp/mails</code> แล้ว<strong>รอ 1 นาทีเต็ม</strong> · เช็กสถานะ: <code>bin/rails runner 'p Post.find_by!(title: "ระบบดับตอนถึงเวลา").status'</code></li>
+    <li>เปิด <code>bin/dev</code> ใหม่ · รอไม่เกิน 1 นาที แล้วเช็กสถานะอีกครั้ง + <code>grep -c "^Subject:" tmp/mails/*</code></li>
+    <li>อ่านอีเมลของ malee: <code>bin/rails runner 'm = Mail.read("tmp/mails/malee@example.com"); puts m.subject; puts m.text_part.decoded'</code></li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ข้อ 3 สถานะเป็นอะไร? ข้อ 4 หลังเปิดใหม่ บทความที่ "เลยเวลามาแล้วหลายนาที" ถูกเผยแพร่ไหม หรือหายไปเพราะพลาดรอบ?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงที่เครื่องตรวจ:</p>
+<pre><code>$ bin/rails runner 'p SolidQueue::Process.count'
+0
+$ bin/rails runner 'p Post.create!(title: "ระบบดับตอนถึงเวลา", …, scheduled_at: 2.minutes.ago).id'
+34
+          … รอ 70 วินาที (worker ปิด) …
+$ bin/rails runner 'p Post.find_by!(title: "ระบบดับตอนถึงเวลา").status'
+"scheduled"
+          … เปิด bin/jobs ตอน 10:56:04 · รอ 62 วินาที …
+$ bin/rails runner 'p Post.find_by!(title: "ระบบดับตอนถึงเวลา").status'
+"published"
+$ grep -c "^Subject:" tmp/mails/*
+tmp/mails/somchai@example.com:1
+tmp/mails/boss@example.com:1
+tmp/mails/malee@example.com:1
+$ bin/rails runner 'm = Mail.read("tmp/mails/malee@example.com"); puts m.subject; puts m.text_part.decoded'
+บทความใหม่: ระบบดับตอนถึงเวลา
+มีบทความใหม่ใน Wongnok Blog
+
+ระบบดับตอนถึงเวลา
+
+ทดสอบตัวกวาด
+
+อ่านต่อ: http://localhost:3000/posts/34
+
+ส่งถึง malee@example.com เพราะคุณติดตาม Wongnok Blog</code></pre>
+    <p>
+      ข้อ 3 <strong>ยัง <code>"scheduled"</code></strong> — ไม่มีคนเดินตรวจ ไม่มีอะไรเกิด · ข้อ 4 <strong>เผยแพร่ในรอบแรกหลังเปิด</strong> (ต้นนาที 10:57) พร้อมอีเมลคนละฉบับ ·
+      ตัวกวาดไม่ได้ "ย้อนกวาดนาทีที่พลาด" — มันแค่ถามตู้ว่า "อะไรถึงเวลาแล้วบ้าง" ซึ่งรวมของที่เลยเวลามาด้วย · นี่คือเหตุผลที่ท่า B ทนกว่า
+    </p>
+    <p>ตาราง <code>solid_queue_recurring_executions</code> ยืนยันว่านาทีที่ worker ปิดไม่มีการกวาดเลย (ไม่มีแถว 03:54–03:56 · ต่อจาก 03:53 ก็ 03:57 เลย):</p>
+<pre><code>        task_key         |       run_at        | job_id
+-------------------------+---------------------+--------
+ publish_scheduled_posts | 2026-11-10 03:57:00 |      8
+ publish_scheduled_posts | 2026-11-10 03:53:00 |      5
+ publish_scheduled_posts | 2026-11-10 03:52:00 |      4</code></pre>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>ข้อ 4 รอเกิน 2 นาทีแล้วยัง <code>"scheduled"</code></strong> — ไม่มีคนเดินตรวจ · รัน <code>bin/rails runner 'p SolidQueue::Process.pluck(:kind)'</code> ·
+        ไม่มี <code>"Scheduler"</code> = <code>recurring.yml</code> ไม่มีหัวข้อ <code>development:</code> (หรือสะกดผิด / ย่อหน้าผิด) · ได้ <code>[]</code> = worker ไม่ได้เปิด (เช็ก <code>Procfile.dev</code> ว่ามี <code>jobs: bin/jobs</code>)</li>
+      <li><strong>สถานะ published แต่ไม่มีโฟลเดอร์ <code>tmp/mails</code></strong> — <code>development.rb</code> ยังไม่มี <code>delivery_method = :file</code> หรือแก้แล้วยังไม่ได้ปิดเปิด <code>bin/dev</code> · หรือ seeds ยังไม่ได้รัน (<code>Follower.count</code> เป็น 0)</li>
+      <li><strong><code>bin/dev</code> ปิดเองทั้งชุดทันทีหลังเปิด</strong> — เลื่อนขึ้นดูบรรทัด <code>jobs.1 |</code> · ถ้าเห็น <code>Invalid recurring tasks</code> แปลว่ามีชื่อคลาสใน <code>recurring.yml</code> ที่ไม่มีอยู่จริง (กล่องเตือนข้างบน)</li>
+      <li><strong>ได้ <code>:2</code> ในบางไฟล์</strong> — ลืม <code>rm -rf tmp/mails</code> ในข้อ 3 (อีเมลจากหัวข้อก่อนยังอยู่) · ดูให้แน่ด้วย <code>bin/rails runner 'p Post.find_by!(title: "ระบบดับตอนถึงเวลา").post_notifications.count'</code> ต้องได้ <code>3</code></li>
+    </ul>
+    <p>บทความทดลองเก็บไว้ได้ (ไม่มีไฟล์โค้ดเปลี่ยน · <code>git status</code> ยังว่าง)</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-13">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">job สี่ตัวนี้ ถ้าถูกรันซ้ำ 3 รอบ <strong>ตัวไหนได้ผลเหมือนรันรอบเดียว</strong> (idempotent)?</p>
+  <div class="opts">
+    <button class="opt"><code>post.update(views: post.views + 1)</code></button>
+    <button class="opt"><code>post.update(views: post.page_views.count)</code></button>
+    <button class="opt"><code>Mailer.welcome(user).deliver_now</code></button>
+    <button class="opt"><code>account.update(balance: account.balance - 100)</code></button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — <strong>ตั้งค่า</strong>ให้เท่ากับจำนวนที่นับจากตู้ · รันกี่รอบก็ได้เลขเดียวกัน (เหมือน "ตั้งป้ายเป็นเปิดร้าน")</p>
+    <p>ตัวเลือกที่ 1 ผิด — <strong>บวกเพิ่ม</strong>จากค่าเดิม รัน 3 รอบได้ +3 · ตัวเลือกที่ 3 ผิด — ส่งจริงทุกรอบ ลูกค้าได้ 3 ฉบับ (ต้องมีสมุดจดแบบ <code>post_notifications</code>) ·
+       ตัวเลือกที่ 4 ผิด — หักเงินซ้ำ 3 รอบ = เสียหายจริง ·
+       สไลด์หน้า 23 มีข้อ ง. <code>user.update(welcomed_at: Time.current)</code> ด้วย — สถานะ "ต้อนรับแล้ว" เหมือนเดิม แต่เวลาเลื่อนไปทุกรอบ · ถ้าอยากให้เป๊ะ เติม guard <code>if user.welcomed_at.nil?</code></p>
+    <p><strong>จุดที่ต้องจำ:</strong> "ตั้งค่าให้เป็น X" ซ้ำได้ · "บวก/ลบเพิ่มจากค่าเดิม" และ "ส่งของออกนอกระบบ" ซ้ำไม่ได้ ต้องมี guard หรือสมุดจด</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">สถานการณ์ไหนควรใช้ <code>discard_on</code> (ทิ้งงาน) แทน <code>retry_on</code>?</p>
+  <div class="opts">
+    <button class="opt">API ปลายทางตอบช้าเกินเวลา (timeout)</button>
+    <button class="opt">ฐานข้อมูลเต็มชั่วคราวระหว่างย้ายเครื่อง</button>
+    <button class="opt">บทความที่ job จะใช้ ถูกลบไปแล้วก่อนถึงคิว</button>
+    <button class="opt">เซิร์ฟเวอร์อีเมลตอบว่ายุ่ง ให้ลองใหม่ทีหลัง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — ลองใหม่กี่รอบบทความก็ไม่กลับมา · ใน job เรา <code>discard_on ActiveRecord::RecordNotFound</code> (ลองแล้ว: log ขึ้น <code>Discarded</code> ไม่มีอะไรค้าง)</p>
+    <p>ตัวเลือกที่ 1, 2, 4 ผิด — ทั้งสามเป็นปัญหา<strong>ชั่วคราว</strong> รอแล้วมีหวังหาย → <code>retry_on</code> พร้อม backoff · ข้อ 4 คือ <code>Net::SMTPServerBusy</code> ที่เราใส่ไว้จริง ·
+       สไลด์หน้า 23 มีอีกข้อ "ส่งอีเมลไปที่อีเมลที่ไม่มีอยู่จริง" — ลองใหม่ก็ไม่มีวันมีจริง จึงเป็นฝั่ง discard</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ถามว่า "ถ้ารออีกสักพัก ปัญหานี้หายเองได้ไหม" · ได้ = retry (เว้นระยะห่างขึ้น) · ไม่ได้ = discard · ไม่ได้ระบุ = ไปกองงานล้มเหลวรอคนดู</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q"><code>config/recurring.yml</code> มีงานกวาดอยู่ใต้ <code>production:</code> อย่างเดียว · เปิด <code>bin/dev</code> ในเครื่องแล้วตั้งเวลาบทความ · เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">ไม่มี Scheduler บทความค้าง scheduled ไปตลอด และไม่มี error</button>
+    <button class="opt"><code>bin/jobs</code> ไม่ยอมเริ่ม ขึ้น error ว่าไม่มีหัวข้อ development</button>
+    <button class="opt">Scheduler ใช้หัวข้อ production แทนให้เอง บทความเผยแพร่ตามเวลา</button>
+    <button class="opt">บทความเผยแพร่ทันทีตอนบันทึก เพราะไม่มีงานตามเวลาให้รอ</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — ลองแล้ว: <code>["Supervisor(fork)", "Dispatcher", "Worker"]</code> ไม่มี <code>"Scheduler"</code> · <code>RecurringTask</code> เป็น <code>[]</code> · ไม่มีบรรทัด error สักบรรทัด</p>
+    <p>ตัวเลือกที่ 2 ผิด — ไม่มีหัวข้อ = ไม่มีงาน ไม่ใช่ error (คนละเรื่องกับใส่ชื่อคลาสที่ไม่มีจริง ซึ่ง <code>bin/jobs</code> ไม่ยอมเริ่ม) ·
+       ตัวเลือกที่ 3 ผิด — ไม่มีการยืมหัวข้อของ environment อื่น · ตัวเลือกที่ 4 ผิด — การบันทึกไม่เกี่ยวกับ recurring เลย บทความเป็น scheduled ตามที่เลือก</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ตั้งเวลาแล้ว "ไม่เกิดอะไรขึ้น" → เช็ก <code>SolidQueue::Process.pluck(:kind)</code> ก่อนอย่างอื่น · แก้ <code>recurring.yml</code> แล้วต้องปิดเปิด <code>bin/jobs</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ระหว่าง <code>PublishPostJob</code> ส่งอีเมลถึงผู้ติดตามคนที่ 1–2 เสร็จแล้ว มีการ deploy · worker รอ 5 วินาทีไม่ทัน ใบงานกลับเข้าคิวแล้วถูกทำใหม่ · ผลที่ผู้ติดตามได้คืออะไร?</p>
+  <div class="opts">
+    <button class="opt">คน 1–2 ได้อีเมลซ้ำอีกฉบับ เพราะ job เริ่มใหม่ตั้งแต่บรรทัดแรก</button>
+    <button class="opt">คน 3 ไม่ได้อีเมลเลย เพราะบทความเป็น published ไปแล้ว job จึงจบทันที</button>
+    <button class="opt">ไม่มีใครได้อีเมลเพิ่ม เพราะใบงานที่ถูกตัดกลางคันจะถูกทิ้งไป</button>
+    <button class="opt">คน 1–2 ไม่ได้ซ้ำ เพราะสมุดจดกันไว้ ส่วนคน 3 ได้ในรอบใหม่</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — job เริ่มใหม่จริง แต่คน 1–2 มีแถวใน <code>post_notifications</code> แล้ว → <code>INSERT</code> ชน → <code>ROLLBACK</code> → ข้าม · คน 3 จองได้ → ส่ง (เหมือนรอบ retry ใน log ข้างบน)</p>
+    <p>ตัวเลือกที่ 1 ผิด — เริ่มใหม่ตั้งแต่บรรทัดแรกจริง แต่การจองกันไว้ · ตัวเลือกที่ 2 ผิด — นั่นคือโค้ดแบบ <code>return if post.published?</code> ของสไลด์ · ของเราแจ้ง<strong>ทุกรอบ</strong>ที่ published ·
+       ตัวเลือกที่ 3 ผิด — SIGTERM แล้วไม่ทันคือ<strong>คืนเข้าคิว</strong> (log <code>Release claimed job</code>) ไม่ใช่ทิ้ง · กรณีหายาก: ถ้าถูกตัดตรงจังหวะที่คน 3 ส่งแล้วแต่ยังไม่ COMMIT คน 3 จะได้สองฉบับ — ซ้ำหนึ่งฉบับดีกว่าหาย</p>
+    <p><strong>จุดที่ต้องจำ:</strong> deploy · retry · สอง worker = ทางเข้าของ "การทำซ้ำ" ทั้งหมด · ป้องกันที่จุดเดียวคือทำ job ให้ซ้ำแล้วไม่เสียหาย</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-14">ถามกลับได้เลย</h2>
+<p>
+  ติดตรงไหนถามได้ทุกเรื่อง เช่น "ถ้าผู้ติดตามเป็นหมื่นคน job เดียวส่งไหวไหม" · "ทำไมไม่ใช้ <code>deliver_later</code>" · "ถ้าจะเพิ่มหน้าสมัครติดตามต้องแตะไฟล์ไหนบ้าง" ·
+  หรือวาง log จากหน้าต่าง ③ มาให้ดูด้วยกัน · บทถัดไป (Lab 145) จะให้ AI ทำงานแบบนี้ แล้วเราใช้กฎ 5 ข้อกับ <code>perform_now</code> ×3 ตรวจรับ
+</p>
+
+<h2 id="sn-sec-15">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · solid_queue 1.7.0 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>22</td><td><code>config/recurring.yml</code> มีแค่หัวข้อ <code>production:</code></td><td>เครื่องเราเป็น development → ไม่มี Scheduler ไม่กวาด ไม่มี error · ต้องเพิ่มหัวข้อ <code>development:</code></td><td><strong>สนใจ</strong></td></tr>
+    <tr><td>22</td><td><code>cleanup_orphan_blobs: class: CleanupBlobsJob</code></td><td>แอปเราไม่มีคลาสนี้ · ก็อปมาแล้ว <code>bin/jobs</code> ขึ้น <code>Invalid recurring tasks</code> และ <code>bin/dev</code> ปิดทั้งชุด</td><td><strong>สนใจ</strong> — อย่าก็อป</td></tr>
+    <tr><td>22</td><td><code>Post.where(published: false)</code> · <code>PublishPostJob.perform_later(p)</code></td><td>ไม่มีคอลัมน์ <code>published</code> (ได้ <code>PG::UndefinedColumn: ERROR:  column posts.published does not exist</code>) · ของเราใช้ <code>Post.scheduled</code> และส่ง <code>post.id</code> (ส่งทั้งแฟ้มแล้ว <code>Post.find</code> โยน ArgumentError)</td><td>ใช้โค้ดของบทนี้</td></tr>
+    <tr><td>21</td><td>"จบไม่ทันในเวลาที่ให้ มันจะโดนฆ่า แล้วงานนั้นกลับเข้าคิว"</td><td>จริงสำหรับ SIGTERM: Solid Queue รอ 5 วินาทีแล้วคืนงานเข้าคิว (ลองแล้ว) · แต่ถ้าโดนฆ่าแบบกระชาก (<code>kill -9</code> · เครื่องดับ) งานไปอยู่ <code>failed_executions</code> ไม่ทำใหม่เอง (README)</td><td>รู้ไว้</td></tr>
+    <tr><td>21</td><td>Continuations: <code>p.update!(indexed: true)</code> · <code>step :send_report</code></td><td>API มีจริงใน 8.1.4 · แอปเราไม่มีคอลัมน์ <code>indexed</code> และ method <code>send_report</code></td><td>ไม่ต้อง — แค่รู้จัก</td></tr>
+    <tr><td>22</td><td><code>worker: bin/jobs</code> ใน Procfile.dev · ใช้ Mailpit ดูอีเมล</td><td>ของเรา <code>jobs: bin/jobs</code> (บท 143 · ชื่อหน้าบรรทัดเป็นแค่ป้าย) · อีเมลเขียนลง <code>tmp/mails/</code> แทน Mailpit</td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0143-idempotency-solid-queue.html">← บทเรียน 143 · idempotency · Solid Queue</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0145-lab-vibe5-scheduled-posts.html">บทเรียน 145 → Lab Vibe 5</a>
+</nav>
+
+<h2 id="sn-sec-16">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_job_basics.html#retrying-or-discarding-failed-jobs">Rails Guides — Active Job Basics § 8.3 Retrying or Discarding Failed Jobs</a> —
+      ตัวอย่างสั้น ๆ ของ <code>retry_on</code> กับ <code>discard_on</code> · แล้วอ่าน § 8.4 Missing Records ต่อ (job ที่หาแฟ้มไม่เจอ) และ § 8.1 Mission Control (หน้าเว็บดูคิว)</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveJob/Exceptions/ClassMethods.html">Rails API — ActiveJob::Exceptions::ClassMethods</a> —
+      หัวข้อ <code>retry_on</code>: สูตร <code>:polynomially_longer</code> (~3s · ~18s · ~83s) · <code>attempts</code> นับรวมรอบแรก · <code>jitter</code> · และ <code>discard_on</code></li>
+  <li><a href="https://guides.rubyonrails.org/active_job_basics.html#recurring-tasks">Rails Guides — Active Job Basics § Recurring Tasks</a> —
+      รูปแบบ <code>config/recurring.yml</code> (<code>class</code> / <code>command</code> / <code>schedule</code>) · สังเกตว่าตัวอย่างก็มีแค่ <code>production:</code></li>
+  <li><a href="https://github.com/rails/solid_queue">rails/solid_queue (README)</a> —
+      อ่าน 3 หัวข้อ: <strong>Threads, processes, and signals</strong> (TERM รอ <code>shutdown_timeout</code> แล้วคืนงานเข้าคิว) · <strong>Failed jobs and retries</strong> (<code>FailedExecution#retry</code>/<code>#discard</code>) · <strong>Recurring tasks</strong></li>
+  <li><a href="https://guides.rubyonrails.org/active_job_basics.html#job-continuations">Rails Guides — Active Job Basics § Job Continuations</a> —
+      อ่านตัวอย่างแรก: <code>include ActiveJob::Continuable</code> · <code>step</code> แบบ block และแบบชื่อ method · ทำต่อจาก step ที่ค้าง</li>
+  <li><a href="https://guides.rubyonrails.org/action_mailer_basics.html#generate-the-mailer">Rails Guides — Action Mailer Basics § Generate the Mailer</a> —
+      แล้วกระโดดไป § <a href="https://guides.rubyonrails.org/action_mailer_basics.html#generating-urls-in-action-mailer-views">Generating URLs in Action Mailer Views</a> (ทำไมต้อง <code>*_url</code>) และ § <a href="https://guides.rubyonrails.org/action_mailer_basics.html#previewing-emails">Previewing Emails</a></li>
+  <li><a href="https://12factor.net/disposability">The Twelve-Factor App — IX. Disposability</a> —
+      ย่อหน้า "For a worker process": ปิดอย่างสุภาพต้องคืนงานเข้าคิว · ทุก job จึงต้อง idempotent</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

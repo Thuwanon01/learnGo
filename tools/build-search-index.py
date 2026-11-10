@@ -315,7 +315,7 @@ class PageParser(HTMLParser):
 # ---------------------------------------------------------------- เก็บข้อมูล
 
 # เลขกลุ่มของฝั่ง Frontend และ Rails — ต้องแจกเลขเอง (ฝั่ง Backend ใช้เลขวันตรง ๆ)
-# Frontend ใช้ช่วง 100+ · Rails ใช้ช่วง 200+ (rails-day-N → 200 + N)
+# Frontend ใช้ช่วง 100+ · Rails ใช้ช่วง 200+ (rails-day-N → 200 + N · Day 4 Part 1 = 204)
 # จะได้ไม่ชนกับเลขวันของฝั่ง Backend แม้คอร์สจะยาวถึง Day 99
 #
 # ⚠️ ค่านี้ต้องตรงกับฟิลด์ `d:` ของ FRONT และ RAILS ใน assets/nav.js
@@ -330,6 +330,7 @@ GROUP_ID = {
     "rails-day-1": 201,
     "rails-day-2": 202,
     "rails-day-3": 203,
+    "rails-day-4-part1": 204,
 }
 
 

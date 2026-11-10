@@ -1,0 +1,868 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 141 — Lab Vibe 4 — เนื้อหาเป็นของจริง: rich text + รูปปก</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 141 · Rails · Day 4 Part 1</p>
+  <h1>Lab Vibe 4 — เนื้อหาเป็นของจริง: rich text + รูปปก</h1>
+  <p class="meta">~30 นาทีอ่าน + ตรวจตามในเครื่องตัวเองอีก ~20 นาที (ในนั้นรอลายเซ็นหมดอายุ 5 นาที) · ควรผ่าน
+    <a href="./0137-action-text.html">บท 137</a>–<a href="./0140-variants-and-file-validation.html">140</a> (Action Text · MinIO · signed URL · variant · ตรวจไฟล์) มาก่อน</p>
+  <p class="standfirst">
+    บท 137–140 คุณสร้างของบล็อก D ครบแล้วทีละชิ้น · บทนี้<strong>ไม่มีโค้ดแอปใหม่</strong> แต่สวมบท "คนตรวจรับงาน" เหมือน<a href="../../rails-day-3/lessons/0135-lab-vibe3-hotwire.html">บท 135</a>:
+    เอาใบตรวจรับ 7 ข้อของสไลด์หน้า 14 มาไล่ทีละข้อด้วยของจริง (เบราว์เซอร์ · MinIO console · log · <code>curl</code>)
+    <br>อ่านจบแล้วคุณจะ <strong>ตรวจงาน rich text + อัปโหลดไฟล์ที่ใครก็ตามส่งมา (รวมถึง AI) ได้เอง</strong> · รู้ว่าเกณฑ์ข้อไหนมีกับดักซ่อนอยู่ ·
+    มีไฟล์ <code>prompts/04-content.md</code> กับกฎข้อ 13–15 ไว้สั่งงานครั้งหน้า · และตอบโจทย์ recap ของสไลด์หน้า 13 ได้ด้วยผลรันจริง
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — ทั้งบทใช้คำพวกนี้ ถ้าข้อไหนไม่คุ้นให้กลับไปบทนั้นก่อน</p>
+  <ul>
+    <li><strong>Action Text · <code>has_rich_text :body</code></strong> = ช่องเนื้อหาที่จัดตัวหนา/ลิงก์ได้ เก็บ HTML ไว้ใน<strong>ลิ้นชักกลาง "ข้อความยาว"</strong> (ตาราง <code>action_text_rich_texts</code>) · ล้าง HTML อันตราย (sanitize) <strong>ตอนจัดจาน</strong> ไม่ใช่ตอนรับออเดอร์ (<a href="./0136-rich-text-and-allowlist.html">บท 136</a>–<a href="./0137-action-text.html">137</a>)</li>
+    <li><strong>Active Storage + MinIO</strong> = ไฟล์ไปอยู่<strong>โกดังรับฝากของนอกร้าน</strong> · ในตู้แฟ้มเก็บแค่ใบรับฝาก (blob) กับป้ายว่าเป็นของบทความไหน (attachment) · bucket <code>wongnok-dev</code> เป็น private (<a href="./0138-files-object-storage-minio.html">บท 138</a>)</li>
+    <li><strong>signed URL · direct upload</strong> = บัตรผ่านมีลายเซ็นที่หมดอายุใน 5 นาที · ลูกค้าเอาของไปฝากโกดังเองด้วยใบอนุญาตที่ร้านออกให้ (<a href="./0139-signed-url-direct-upload.html">บท 139</a>)</li>
+    <li><strong>variant · ตรวจไฟล์จากเนื้อจริง · ไฟล์กำพร้า</strong> = รูปย่อ 400×300 · ไม่เชื่อฉลากที่ลูกค้าเขียนบนกล่อง เปิดดูของข้างใน · ของฝากที่ไม่มีใครมารับ (<a href="./0140-variants-and-file-validation.html">บท 140</a>)</li>
+    <li><strong>prompts/</strong> = แฟ้มใบสั่งงานให้ AI · <code>00-context.md</code> = กฎถาวรของร้าน ตอนนี้มี 12 ข้อ (<a href="../../rails-day-3/lessons/0121-prompts-and-claude-md.html">บท 121</a> · <a href="../../rails-day-3/lessons/0135-lab-vibe3-hotwire.html">บท 135</a>)</li>
+  </ul>
+  <p>
+    <strong>📍 โค้ดเริ่มจาก:</strong> ตอนจบ<a href="./0140-variants-and-file-validation.html">บท 140</a> ที่ commit แล้ว (<code>git status --short</code> ว่าง) — หน้า <code>/posts/new</code> มีช่องเนื้อหาแบบ Trix และช่องรูปปก · หน้า <code>/posts</code> โชว์รูปย่อ ·
+    บทนี้เพิ่มแค่สองไฟล์ใน <code>prompts/</code> · จบบทโค้ดของคุณคือ<strong>จุดเช็คพอยต์ D</strong> (ชื่อที่บทเรียนนี้ใช้เรียกจุดพักท้ายบล็อก D = จบเรื่อง Rich text + ไฟล์ · แบบเดียวกับจุดเช็คพอยต์ C ของบท 135)
+  </p>
+  <p>
+    <strong>🖥 เปิดค้างไว้:</strong> <code>docker compose up -d</code> (Postgres + MinIO — ต้องเห็น MinIO ที่ <code>localhost:9001</code>) · <code>bin/dev</code> หนึ่งหน้าต่าง (เว็บที่ <code>localhost:3000</code>) · อีกหน้าต่างไว้พิมพ์คำสั่ง · Chrome
+  </p>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18 · aws-sdk-s3 1.238.0 · libvips 8.18.7 · MinIO (image <code>pgsty/silo</code> ตัวเดียวกับ compose ของอาจารย์) · Chrome (สั่งด้วยสคริปต์ ไม่ได้กดเอง)
+    — สไลด์กับ repo ของอาจารย์เขียน Ruby 4.0.5–4.0.6 · Rails 8.1.3 เรื่องในบทนี้ไม่ต่างกัน
+  </p>
+  <p>
+    ผลรันทุกก้อนรันจริงแล้วก็อปมา · ค่าที่เปลี่ยนทุกครั้ง เช่น <strong>เวลา ms · เลข id · เลข commit · วันเวลา · ชื่อ object ใน MinIO (blob key) · ลายเซ็นใน URL</strong> ของคุณจะต่าง · log ตัดรหัสสีและ comment ท้าย SQL ออกแล้ว (ในหน้าต่าง <code>bin/dev</code> ทุกบรรทัดของ log จะมี <code>web.1 |</code> นำหน้า)
+  </p>
+</div>
+
+<h2 id="sn-sec-1">Lab นี้คือวันตรวจรับ ไม่ใช่วันสร้าง</h2>
+
+<p>
+  สไลด์หน้า 14 ให้ Lab นี้เป็น "เขียน prompt ให้ AI ทำทั้งบล็อก แล้วตรวจ" · เว็บนี้เลือก<strong>ให้คุณทำเองเป็นก่อน</strong> — ทุกบรรทัดของเป้าหมายและข้อกำหนดในหน้านั้นคุณทำไปแล้วในบท 137–140
+  · ที่เหลือคือส่วนที่สำคัญที่สุดของการทำงานกับ AI: <strong>ตรวจรับให้เป็น</strong>
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ข้อกำหนดในสไลด์หน้า 14</th><th>ทำไปแล้วในบท</th><th>ไฟล์หลักที่ได้</th></tr></thead>
+  <tbody>
+    <tr><td>ใช้ Action Text สำหรับเนื้อหา (<code>has_rich_text :body</code>)</td><td><a href="./0137-action-text.html">137</a></td><td><code>models/post.rb</code> · <code>posts/_form.html.erb</code> (<code>rich_textarea</code>)</td></tr>
+    <tr><td>ย้ายข้อมูลเดิมจาก description มา body แบบ expand-contract ไม่ลบคอลัมน์เก่า</td><td><a href="./0137-action-text.html">137</a> (ทวน <a href="../../rails-day-2/lessons/0109-safe-migrations.html">109</a>)</td><td><code>lib/tasks/posts.rake</code> · <code>before_save</code> ใน <code>post.rb</code> ที่ยังเขียน description คู่กัน</td></tr>
+    <tr><td>เพิ่มคอลัมน์ plain_text สำหรับค้นหาภายหลัง</td><td><a href="./0137-action-text.html">137</a></td><td>migration <code>AddPlainTextToPosts</code></td></tr>
+    <tr><td>รูปปกใช้ Active Storage → service minio</td><td><a href="./0138-files-object-storage-minio.html">138</a></td><td><code>config/storage.yml</code> · <code>config/environments/development.rb</code> · credentials ของ development</td></tr>
+    <tr><td>เปิด <code>direct_upload: true</code></td><td><a href="./0138-files-object-storage-minio.html">138</a>–<a href="./0139-signed-url-direct-upload.html">139</a></td><td><code>posts/_form.html.erb</code> · <code>application.js</code> (<code>ActiveStorage.start()</code>)</td></tr>
+    <tr><td>validate ชนิดไฟล์ (png/jpeg/webp) และขนาด ≤ 5MB</td><td><a href="./0140-variants-and-file-validation.html">140</a></td><td><code>models/post.rb</code> (<code>cover_must_be_small_image</code> ใช้ Marcel อ่านเนื้อไฟล์)</td></tr>
+    <tr><td>index ใช้ variant <code>resize_to_limit [400,300]</code></td><td><a href="./0140-variants-and-file-validation.html">140</a></td><td><code>posts/_post.html.erb</code></td></tr>
+    <tr><td>controller ต้องมี <code>with_attached_cover</code> และ <code>with_rich_text_body</code></td><td><a href="./0137-action-text.html">137</a> + <a href="./0140-variants-and-file-validation.html">140</a></td><td><code>posts_controller.rb</code> (index) · <code>config/application.rb</code> (<code>track_variants = false</code>)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Lab นี้มี 5 ขั้น — เหมือนบท 135 ทุกขั้น เปลี่ยนแค่ของที่ตรวจ:</p>
+
+<div class="diagram">ขั้น 1  เขียนใบสั่งงาน          prompts/04-content.md   (ทุกบรรทัดมาจากบท 137–140)
+  │
+ขั้น 2  ตรวจรับ 7 ข้อ            เบราว์เซอร์ + Network + MinIO console + log + curl
+  │
+ขั้น 3  ดูที่ AI พลาดประจำ 3 ข้อ    และโจทย์ recap หน้า 13 (raw ในอีเมล · body ใน JSON)
+  │
+ขั้น 4  เติมกฎ 13–15              prompts/00-context.md   (12 ข้อ → 15 ข้อ)
+  │
+ขั้น 5  เก็บเข้าโปรเจกต์            git commit
+  │
+(ทางเลือก) ให้ AI ทำบล็อก D ใหม่ทั้งหมด แล้วตรวจด้วย checklist ชุดเดียวกัน</div>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — วันตรวจรับร้านที่เพิ่งต่อสัญญากับโกดัง</span>
+  <p>
+    ช่างมาติดตั้งของใหม่ 4 รอบ: กระดานให้ลูกค้าเขียนข้อความบนหน้าเค้ก (rich text) · สัญญากับโกดังรับฝากของนอกร้าน · ระบบใบอนุญาตให้ลูกค้าเอาของไปฝากเอง · คนเปิดกล่องตรวจของก่อนรับฝาก ·
+    วันนี้เจ้าของร้านถือ<strong>ใบตรวจรับ 7 ข้อ</strong> เดินลองทีละข้อ: เขียนหน้าเค้กดูจริง · เดินไปโกดังดูว่าของเข้าห้องจริง · เอาบัตรผ่านไปลองใช้หลังหมดเวลา · ยื่นกล่องที่ฉลากโกหกให้ดูว่าโดนจับไหม
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ตรวจรับร้านจริงทำครั้งเดียวจบ · ของเราตรวจซ้ำได้ฟรีทุกครั้งที่โค้ดเปลี่ยน ·
+    และบางข้อ "ดูด้วยตาว่าผ่าน" ไม่พอ — เช่น ข้อ 3 ถ้าก๊อป URL ผิดตัว จะ<strong>ผ่านแบบหลอก ๆ</strong> (ดูขั้น 2)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของขั้นนี้</span>
+  <dl>
+    <dt>acceptance criteria (เกณฑ์ตรวจรับ)</dt>
+    <dd>รายการข้อที่ต้องจริงทุกข้อ งานถึงจะนับว่า "เสร็จ" (ทวน<a href="../../rails-day-3/lessons/0135-lab-vibe3-hotwire.html">บท 135</a>)
+      · พิมพ์บอก AI ได้ว่า "For each acceptance criterion, tell me the exact command or browser step I can run to verify it myself."</dd>
+    <dt>evidence (หลักฐาน)</dt>
+    <dd>สิ่งที่คนอื่นเปิดดูแล้วเห็นเหมือนเรา: บรรทัด log · ผล <code>curl</code> · รายการใน Network tab · ชื่อไฟล์ใน MinIO console — ไม่ใช่ประโยค "ผมลองแล้วใช้ได้"
+      · ถาม senior ได้ว่า "ตอนส่ง PR ควรแนบหลักฐานแบบไหน ถึงจะไม่ต้องให้พี่มาลองเองครับ"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">ขั้น 1 — ใบสั่งงาน <code>prompts/04-content.md</code>: ทุกบรรทัดมาจากบทไหน</h2>
+
+<p>
+  ไฟล์นี้คือใบสั่งงานที่<strong>จะส่งให้ AI ทำบล็อก D ทั้งหมดในครั้งเดียว</strong> · สี่ส่วนเหมือนไฟล์ 01–03: เป้าหมาย · ข้อกำหนด · ห้าม · เกณฑ์ตรวจรับ
+</p>
+
+<p>
+  ตอนนี้ <code>ls prompts</code> ควรเห็น 4 ไฟล์ (<code>00-context.md</code> · <code>01-views.md</code> · <code>02-styling.md</code> · <code>03-hotwire.md</code>) ·
+  สร้างไฟล์ <code>prompts/04-content.md</code> แล้วพิมพ์ตามนี้ (ทั้งไฟล์ — ก็อปจากสไลด์หน้า 14 แล้ว<strong>เพิ่มบรรทัดในวงเล็บหนึ่งบรรทัด</strong> ใต้เรื่องย้ายข้อมูล):
+</p>
+
+<pre><code><span class="k">## เป้าหมาย</span>
+
+เปลี่ยน description เป็น rich text แก้ไขได้
+เพิ่มรูปปกให้โพสต์ เก็บใน MinIO และโชว์รูปย่อในหน้า index
+
+<span class="k">## ข้อกำหนด</span>
+
+- ใช้ Action Text สำหรับเนื้อหา (has_rich_text :body)
+- ย้ายข้อมูลเดิมจาก description มา body
+  ใช้ท่า expand-contract ไม่ลบคอลัมน์เก่าในรอบนี้
+  (ย้ายด้วย rake task ที่รันซ้ำได้ ไม่ใช่ใน migration · escape ข้อความเดิมก่อนเป็น HTML)
+- รูปปกใช้ Active Storage -&gt; service minio
+- เปิด direct_upload: true
+- validate ชนิดไฟล์ (png/jpeg/webp) และขนาด &lt;= 5MB
+- index ใช้ variant resize_to_limit [400,300]
+- controller ต้องมี with_attached_cover
+  และ with_rich_text_body
+- เพิ่มคอลัมน์ plain_text สำหรับค้นหาภายหลัง
+
+<span class="k">## ห้าม</span>
+
+- raw หรือ html_safe กับ body ที่ไหนก็ตาม
+- ตั้ง bucket เป็น public
+- เชื่อ content_type ที่ client ส่งมาอย่างเดียว
+- เขียน access key ลง storage.yml ตรง ๆ
+- ลบคอลัมน์ description ในรอบนี้
+
+<span class="k">## เกณฑ์ตรวจรับ</span>
+
+- [ ] พิมพ์ตัวหนา ใส่ลิงก์ ในเนื้อหาได้
+- [ ] อัปรูปแล้วเปิด MinIO console เห็นไฟล์จริง
+- [ ] ก๊อป URL รูปไปเปิด incognito -&gt; ใช้ได้ แล้วรอหมดอายุ
+- [ ] Network tab: ไฟล์ขึ้นตรงไป :9000 ไม่ผ่าน :3000
+- [ ] log หน้า index ไม่เกิน 6 query
+- [ ] อัปไฟล์ .txt ที่เปลี่ยนนามสกุลเป็น .png -&gt; ต้องถูกปฏิเสธ
+- [ ] ข้อมูลเดิม 30 โพสต์ยังอ่านได้ครบ</code></pre>
+
+<p>
+  ทวนสัญลักษณ์: <code>##</code> = หัวข้อ · <code>- [ ]</code> = ช่องติ๊กที่ยังไม่ติ๊ก · <code>-&gt;</code> = ลูกศรธรรมดาที่สไลด์ใช้ ไม่ใช่คำสั่งอะไร ·
+  ไฟล์นี้ยาว 36 บรรทัดพอดี (นับด้วย <code>wc -l prompts/04-content.md</code>) · ทุกบรรทัดของข้อกำหนดกับข้อห้ามมาจากเรื่องที่คุณเจอมาแล้ว:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บรรทัดในใบสั่ง</th><th>เรียนในบท</th><th>ทำไมต้องเขียนบอก AI (ถ้าไม่เขียน AI มักทำแบบไหน)</th></tr></thead>
+  <tbody>
+    <tr><td>expand-contract · ไม่ลบคอลัมน์เก่า · <strong>บรรทัดในวงเล็บ</strong></td><td>137 (ทวน 109)</td><td>AI ชอบย้ายข้อมูลใน migration แล้วลบคอลัมน์ทิ้งในไฟล์เดียว "ให้จบ ๆ" · บรรทัดในวงเล็บเราเพิ่มเอง (กล่องเตือนข้างล่าง)</td></tr>
+    <tr><td>service minio · direct_upload</td><td>138–139</td><td>ไม่บอก AI จะใช้ <code>:local</code> (ไฟล์ลงดิสก์ของเครื่อง server) และให้ไฟล์วิ่งผ่าน Rails ทั้งก้อน</td></tr>
+    <tr><td>validate ชนิดไฟล์ + ขนาด</td><td>140</td><td>AI มักเช็คแค่นามสกุลหรือ <code>content_type</code> — ข้อห้ามข้อ 3 ปิดทางนี้ไว้อีกชั้น</td></tr>
+    <tr><td>variant 400×300</td><td>140</td><td>ไม่บอก AI จะโชว์รูปต้นฉบับเต็มไฟล์ในหน้ารวม (รูปละหลายร้อย KB × 10 ใบ)</td></tr>
+    <tr><td><code>with_attached_cover</code> · <code>with_rich_text_body</code></td><td>137 · 140</td><td>ลืมแล้วไม่มีอะไรพังให้เห็น หน้ายังโชว์ครบ แค่ query บวมเงียบ ๆ (ตาราง "AI พลาดประจำ")</td></tr>
+    <tr><td>ห้าม 5 ข้อ</td><td>136–140</td><td>ห้ามข้อ 1 = กันรู XSS (136) · ข้อ 2 + 4 = กุญแจโกดัง (138–139) · ข้อ 3 = ฉลากโกหก (140) · ข้อ 5 = expand-contract (137) · ตรวจทุกข้อในภารกิจท้ายบท</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="warn">
+  <p>
+    ⚠️ <strong>บรรทัดที่เพิ่มจากสไลด์:</strong> <code>(ย้ายด้วย rake task ที่รันซ้ำได้ ไม่ใช่ใน migration · escape ข้อความเดิมก่อนเป็น HTML)</code> — สไลด์ไม่ได้บอกว่าย้ายข้อมูลที่ไหน ·
+    เราใช้กฎของ<a href="../../rails-day-2/lessons/0109-safe-migrations.html">บท 109</a> (backfill อยู่ในงานแยก ไม่อยู่ใน migration) และ escape ข้อความเดิม กันคำว่า <code>&lt;script&gt;</code> ใน description เก่ากลายเป็นแท็กจริงตอนย้าย (บท 137)
+  </p>
+</div>
+
+<h2 id="sn-sec-3">ขั้น 2 — ตรวจรับ 7 ข้อของสไลด์หน้า 14 ด้วยของจริง</h2>
+
+<h3 id="sn-sub-1">เตรียมโต๊ะตรวจ</h3>
+
+<ol>
+  <li>terminal แท็บที่ 1: <code>bin/dev</code> · แท็บที่ 2 ไว้พิมพ์คำสั่ง</li>
+  <li>
+    ทำ "ไฟล์ปลอม" สำหรับข้อ 6 — ข้อความธรรมดาที่ตั้งชื่อลงท้าย <code>.png</code> (เก็บไว้ใน <code>tmp/</code> ของโปรเจกต์ git จะไม่เห็น):
+    <pre><code>echo "hello this is just text, not an image" &gt; tmp/fake.png
+ls -l tmp/fake.png</code></pre>
+    <code>&gt;</code> = เขียนผลของ <code>echo</code> ลงไฟล์ · ไฟล์ที่ได้ขนาด <strong>38 bytes</strong> (37 ตัวอักษร + ขึ้นบรรทัดใหม่ 1)
+  </li>
+  <li>เตรียมรูปจริงไว้หนึ่งรูป (jpg/png ไม่เกิน 5 MB) · ของผมเป็น <code>cover.jpg</code> 1600×1000 ขนาด 36,582 bytes</li>
+  <li>
+    เปิด Chrome ที่ <code>http://localhost:3000/posts/new</code> แล้วเปิด <strong>DevTools</strong> (Mac <kbd>Cmd</kbd>+<kbd>Option</kbd>+<kbd>I</kbd> · Windows <kbd>F12</kbd>) → แท็บ <strong>Network</strong> ·
+    ติ๊ก <strong>Preserve log</strong> (ไม่ให้รายการหายตอนเปลี่ยนหน้า) · Network tab คือ<strong>สมุดจดว่าเบราว์เซอร์คุยกับใครบ้าง</strong> ทุกคำขอ ทุกปลายทาง
+  </li>
+  <li>เปิดอีกแท็บที่ <code>http://localhost:9001</code> (MinIO console) → Username <code>minioadmin</code> · Password <code>minioadmin</code> → Login (ค่าทดลองจาก <code>compose.yaml</code> · บท 138)</li>
+</ol>
+
+<h3 id="sn-sub-2">ตารางตรวจรับ (ผลจริงที่ผมได้ บนโค้ดสถานะเดียวกับของคุณ · DB ใหม่จาก seeds)</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>เกณฑ์</th><th>ทำยังไง</th><th>ควรเห็น (ผลจริง)</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>พิมพ์ตัวหนา ใส่ลิงก์ ในเนื้อหาได้</td>
+      <td>หน้า <code>/posts/new</code> ช่องเนื้อหาพิมพ์ <code>ข้าวผัดปูเนื้อแน่น อ่านสูตรต่อที่ลิงก์นี้</code> · ลากเลือก "เนื้อแน่น" กดปุ่ม <strong>B</strong> · ลากเลือก "ลิงก์นี้" กดปุ่มลิงก์ (รูปโซ่) พิมพ์ <code>https://rubyonrails.org</code> กด <strong>Link</strong> · ใส่หัวข้อ เลือกหมวด เลือกรูปปก (ไฟล์จริง) · กด "บันทึก"</td>
+      <td>ไปหน้า <code>/posts/31</code> · "เนื้อแน่น" เป็นตัวหนา · "ลิงก์นี้" เป็นลิงก์สีหลักมีขีดเส้นใต้ · HTML ในหน้า (คลิกขวา → Inspect): <code>&lt;div&gt;ข้าวผัดปู&lt;strong&gt;เนื้อแน่น&lt;/strong&gt; อ่านสูตรต่อที่&lt;a href="https://rubyonrails.org"&gt;ลิงก์นี้&lt;/a&gt;&lt;/div&gt;</code></td></tr>
+    <tr><td>2</td><td>อัปรูปแล้วเปิด MinIO console เห็นไฟล์จริง</td>
+      <td>แท็บ MinIO console → เมนูซ้าย <strong>Buckets</strong> → <code>wongnok-dev</code> · ในเทอร์มินัลรัน <code>bin/rails runner 'p Post.last.cover.key'</code></td>
+      <td>runner ได้ <code>"fe20nsqraac0pyfnxqmith9brend"</code> · ใน console มีแถว <code>fe20nsqraac0pyfnxqmith9brend · Today, 10:20 · 35.7 KiB</code> (36,582 bytes = 35.7 KiB) · <strong>ชื่อไฟล์ในโกดังคือเลขใบรับฝาก ไม่ใช่ <code>cover.jpg</code></strong> (บท 138)</td></tr>
+    <tr><td>3</td><td>ก๊อป URL รูปไปเปิด incognito → ใช้ได้ แล้วรอหมดอายุ</td>
+      <td>⚠️ ก๊อปให้ถูกตัว — ดูหัวข้อถัดไป</td>
+      <td>URL ของ <code>:9000</code> เปิดในหน้าต่างใหม่ที่ไม่มี cookie ได้รูป 1600×1000 · เลย 5 นาทีแล้วได้ <code>Request has expired</code></td></tr>
+    <tr><td>4</td><td>Network tab: ไฟล์ขึ้นตรงไป :9000 ไม่ผ่าน :3000</td>
+      <td>ดูรายการใน Network ตอนกด "บันทึก" ในข้อ 1</td>
+      <td><code>PUT 200 http://localhost:9000/wongnok-dev/fe20nsq…</code> · ฟอร์มที่ส่งไป <code>:3000</code> มีแค่รหัสไฟล์ (รายการเต็มข้างล่าง)</td></tr>
+    <tr><td>5</td><td>log หน้า index ไม่เกิน 6 query</td>
+      <td>เปิด <code>/posts</code> แล้วดูแท็บ <code>bin/dev</code> หาบรรทัด <code>Completed 200 OK</code> ของ <code>GET "/posts"</code></td>
+      <td><code>(6 queries, 0 cached)</code> · ไม่มีกล่องเตือนของ Bullet</td></tr>
+    <tr><td>6</td><td>อัป .txt ที่เปลี่ยนนามสกุลเป็น .png → ต้องถูกปฏิเสธ</td>
+      <td><code>/posts/new</code> กรอกครบ แต่รูปปกเลือก <code>tmp/fake.png</code> · กดบันทึก</td>
+      <td>อยู่หน้าเดิม กล่องแดง <code>บันทึกไม่ได้ มี 1 จุดที่ต้องแก้:</code> / <code>Cover รองรับเฉพาะ PNG, JPEG, WebP</code> · Network: <code>POST 422 http://localhost:3000/posts</code></td></tr>
+    <tr><td>7</td><td>ข้อมูลเดิม 30 โพสต์ยังอ่านได้ครบ</td>
+      <td>คำสั่งวนเปิด 30 หน้า (ข้างล่าง)</td>
+      <td><code>30 1</code> = ทั้ง 30 หน้ามีกล่องเนื้อหา 1 กล่อง · หน้า index 1–3 มีการ์ด 10/10/10 และหน้า 4 มี 1 (บทความใหม่ทำให้รวมเป็น 31)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="sn-sub-3">ข้อ 3 — URL รูปมีสองตัว ก๊อปผิดตัวแล้ว "ผ่านแบบหลอก ๆ"</h3>
+
+<p>
+  ทวนบท 139: รูปในหน้าเว็บ<strong>ไม่ได้ชี้ไปที่ MinIO ตรง ๆ</strong> · <code>src</code> ของ <code>&lt;img&gt;</code> คือ URL ของ Rails · พอเบราว์เซอร์ขอ Rails ตอบ <strong>302</strong> (ไปที่อื่น) พร้อม URL ของ MinIO ที่เพิ่งเซ็นสด ๆ
+  · ดูด้วย <code>curl -I</code> (ขอแค่หัวคำตอบ ไม่เอาเนื้อ) กับ <code>src</code> ของรูปในหน้า <code>/posts/31</code> (ผลจริง · ตัดหัวที่ไม่เกี่ยวออก):
+</p>
+
+<pre><code>$ curl -sI "http://localhost:3000/rails/active_storage/blobs/redirect/eyJfcmFpbHMiOnsiZGF0YSI6MSwicHVyIjoiYmxvYl9pZCJ9fQ==--9cb571efe743a82b14364270d1427f3ec543ab59/cover.jpg"
+HTTP/1.1 302 Found
+date: Tue, 10 Nov 2026 03:22:28 GMT
+location: http://localhost:9000/wongnok-dev/fe20nsqraac0pyfnxqmith9brend?response-content-disposition=inline%3B%20filename%3D%22cover.jpg%22%3B%20filename%2A%3DUTF-8%27%27cover.jpg&amp;response-content-type=image%2Fjpeg&amp;X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=minioadmin%2F20261110%2Fus-east-1%2Fs3%2Faws4_request&amp;X-Amz-Date=20261110T032228Z&amp;X-Amz-Expires=300&amp;X-Amz-SignedHeaders=host&amp;X-Amz-Signature=75c7da6c4cc91c9980975faf6f8811b7f21dcd3e372cd2225be97594a9adf788
+cache-control: max-age=300, private</code></pre>
+
+<ul>
+  <li><code>-s</code> = เงียบ ไม่โชว์แถบความคืบหน้า · <code>-I</code> = ขอแค่หัว · ใส่ URL ใน <code>"…"</code> เพราะมีตัว <code>=</code> และ <code>-</code> ปนอยู่</li>
+  <li><code>location:</code> = "ไปเอาที่นี่" · เป็น URL ของ <code>:9000</code> (MinIO) · <code>X-Amz-Date=…T032228Z</code> = เซ็นตอน 03:22:28 เวลาโลก (= 10:22:28 เวลาไทย) · <code>X-Amz-Expires=300</code> = ใช้ได้ 300 วินาที = 5 นาที · <code>X-Amz-Signature</code> = ลายเซ็น</li>
+  <li><code>X-Amz-Credential=minioadmin…</code> = ชื่อกุญแจ (ไม่ใช่รหัสลับ) โผล่ใน URL ได้ · รหัสลับไม่เคยออกจาก server</li>
+  <li><code>cache-control: max-age=300, private</code> = บอกเบราว์เซอร์ว่า "จำคำตอบนี้ไว้ได้ 5 นาที" เท่าอายุลายเซ็นพอดี</li>
+</ul>
+
+<div class="predict">
+  <p>คุณมี URL สองตัวจากรูปเดียวกัน: (ก) <code>http://localhost:3000/rails/active_storage/blobs/redirect/…/cover.jpg</code> ที่ก๊อปจาก <code>src</code> · (ข) <code>http://localhost:9000/wongnok-dev/fe20nsq…?…X-Amz-Expires=300…</code> ที่ได้จาก <code>location:</code></p>
+  <p class="ask">ก๊อปทั้งสองไปเปิดในหน้าต่าง incognito <strong>หลังผ่านไปเกิน 5 นาที</strong> — ตัวไหนยังได้รูป?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>(ก) ตัว :3000 ยังได้รูป · (ข) ตัว :9000 ไม่ได้แล้ว</strong> — ผลจริงของผม:</p>
+    <ul>
+      <li>(ข) เซ็นตอน 10:22:28 · เปิด 10:22:38 ได้รูป 1600×1000 · เปิดอีกที 10:28:01 ได้ <code>Request has expired</code> (403)</li>
+      <li>(ก) เปิด 10:28:22 (หลัง (ข) หมดอายุแล้ว) ได้ <code>200 image/jpeg</code> ขนาด 36,582 bytes · เพราะ Rails ตอบ 302 พร้อม URL ใบใหม่ที่มี <code>X-Amz-Date=20261110T032822Z</code> (เซ็นใหม่ตอนนั้นเลย)</li>
+    </ul>
+    <p>
+      แปลว่า ถ้าก๊อป <code>src</code> ไปทดสอบ คุณจะรอ 5 นาทีแล้วเห็นรูปยังขึ้น แล้วสรุปผิดว่า "ลายเซ็นไม่หมดอายุ" · เกณฑ์ข้อ 3 ต้องทดสอบด้วย<strong>ตัว :9000</strong>
+    </p>
+  </div>
+</div>
+
+<div class="analogy">
+  <span class="label">🎫 เทียบให้เห็นภาพ — ใบบอกทางของร้าน vs บัตรผ่านเข้าโกดัง</span>
+  <p>
+    URL <code>:3000</code> = <strong>ใบบอกทางที่ร้านแจก</strong> "อยากได้ของชิ้นนี้ ถามเคาน์เตอร์ร้าน" — ใครถือมาเมื่อไหร่ เคาน์เตอร์ก็<strong>เขียนบัตรผ่านใบใหม่</strong>ให้ทุกครั้ง ·
+    URL <code>:9000</code> = <strong>บัตรผ่านเข้าโกดังที่มีลายเซ็นหมดอายุใน 5 นาที</strong> — ยามโกดังดูแค่ลายเซ็นกับเวลา ไม่สนว่าคุณเป็นใคร (หน้าต่าง incognito ไม่มี cookie ก็เข้าได้) · เลยเวลาแล้วยามไม่ให้เข้า
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> เคาน์เตอร์ร้านจริงมักถามว่า "คุณเป็นใคร" ก่อนออกบัตร · ของเราตอนนี้<strong>ไม่ถามเลย</strong> ใครมีใบบอกทางก็ได้บัตรใหม่ไปเรื่อย ๆ —
+    เพราะแอปยังไม่มีระบบ login (มาใน Part 2) · ข้อ 3 จึงพิสูจน์ได้แค่ว่า "บัตรผ่านหมดอายุจริง" ไม่ได้พิสูจน์ว่า "รูปเป็นความลับ"
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของข้อ 3</span>
+  <dl>
+    <dt>redirect URL (ของ Active Storage)</dt>
+    <dd>URL ถาวรของ Rails ที่ตอบ 302 ไปหา URL ที่เซ็นใหม่ทุกครั้ง · <strong>ไม่หมดอายุ</strong> · ถาม senior ได้ว่า "รูปที่ต้องเป็นความลับ ควรให้ redirect URL ของ Active Storage ตรวจสิทธิ์ก่อนไหมครับ"</dd>
+    <dt>presigned URL · expiry</dt>
+    <dd>URL ที่มีลายเซ็นและเวลาหมดอายุติดมาในตัว (<code>X-Amz-Expires</code>) · ค่าเริ่มต้นของ Rails 5 นาที (<code>ActiveStorage.service_urls_expire_in</code>) · พิมพ์บอก AI ได้ว่า "When I test URL expiry, which URL should I copy — the Rails redirect URL or the presigned S3 URL?"</dd>
+  </dl>
+</div>
+
+<p><strong>วิธีก๊อปตัวที่ถูก (ตัว :9000) ในเบราว์เซอร์:</strong></p>
+<ol>
+  <li>หน้า <code>/posts/31</code> คลิกขวาที่รูปปก → <strong>Open image in new tab</strong> · แถบที่อยู่ของแท็บใหม่จะเป็น <code>localhost:9000/wongnok-dev/…</code> แล้ว (เบราว์เซอร์ตาม 302 ให้เอง)</li>
+  <li>ก๊อป URL จากแถบที่อยู่นั้น → เปิดหน้าต่าง incognito (Mac <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> · Windows <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>) → วาง → เห็นรูป</li>
+  <li>จดเวลาไว้ · รอให้เลย 5 นาที → กด refresh ในหน้าต่าง incognito → เห็นข้อความ XML ว่าหมดอายุ</li>
+</ol>
+
+<p>ผลจริงของผม (เปิดใน Chrome โปรไฟล์ใหม่ที่ไม่มี cookie เลย — ผลเท่ากับ incognito เพราะ URL ที่เซ็นแล้วไม่ใช้ cookie):</p>
+
+<pre><code><span class="c"># 10:22:38 (10 วินาทีหลังเซ็น) — Chrome โปรไฟล์ใหม่ · cookie 0 ตัว</span>
+ได้รูป 1600×1000
+
+<span class="c"># 10:28:01 (5 นาที 33 วินาทีหลังเซ็น) — URL เดิมทุกตัวอักษร · curl ได้ HTTP 403</span>
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;Error&gt;&lt;Code&gt;AccessDenied&lt;/Code&gt;&lt;Message&gt;Request has expired&lt;/Message&gt;&lt;Key&gt;fe20nsqraac0pyfnxqmith9brend&lt;/Key&gt;&lt;BucketName&gt;wongnok-dev&lt;/BucketName&gt;&lt;Resource&gt;/wongnok-dev/fe20nsqraac0pyfnxqmith9brend&lt;/Resource&gt;&lt;RequestId&gt;18E6915195788FD3&lt;/RequestId&gt;&lt;HostId&gt;dd9025ba…&lt;/HostId&gt;&lt;/Error&gt;</code></pre>
+<p>
+  XML = ข้อความที่มีแท็กแบบ HTML แต่ใช้ส่ง<strong>ข้อมูล</strong> ไม่ได้ใช้ทำหน้าเว็บ — MinIO ตอบ error เป็นแบบนี้ ·
+  ใน Chrome จะขึ้นบรรทัด <code>This XML file does not appear to have any style information associated with it.</code> นำหน้า แล้วโชว์ XML เดียวกันแบบเป็นต้นไม้ — ไม่ต้องตกใจ แปลว่า "ไฟล์ XML ที่ไม่มีหน้าตา"
+</p>
+
+<p>
+  <code>AccessDenied</code> + <code>Request has expired</code> = "ลายเซ็นหมดอายุแล้ว" · ต่างจาก<strong>ไม่มีลายเซ็นเลย</strong> ที่ได้ <code>Access Denied.</code> เฉย ๆ (เดี๋ยวลองในภารกิจ) — อ่านคำใน <code>&lt;Message&gt;</code> ให้ออกว่าโดนปฏิเสธเพราะอะไร
+</p>
+
+<h3 id="sn-sub-4">ข้อ 4 — Network tab: ตัวไฟล์ไม่ผ่านร้านเลย</h3>
+
+<p>
+  รายการใน Network ตอนกด "บันทึก" ในข้อ 1 (ผลจริงจาก Chrome · เรียงตามเวลา · ย่อ URL ยาว ๆ ด้วย <code>…</code> ·
+  ตัดไฟล์ CSS/JS ไอคอน และบรรทัด <code>POST …/mini-profiler-resources/results</code> ออก — อันหลังเป็นของตัวจับเวลา rack-mini-profiler (บท 120) ไม่เกี่ยวกับการอัปไฟล์):
+</p>
+
+<pre><code>POST     200  http://localhost:3000/rails/active_storage/direct_uploads
+OPTIONS  204  http://localhost:9000/wongnok-dev/fe20nsqraac0pyfnxqmith9brend?X-Amz-Algorithm=…&amp;X-Amz-Expires=300&amp;X-Amz-SignedHeaders=content-length%3Bcontent-md5%3Bcontent-type%3Bhost&amp;…
+PUT      200  http://localhost:9000/wongnok-dev/fe20nsqraac0pyfnxqmith9brend?X-Amz-Algorithm=…&amp;X-Amz-Expires=300&amp;…
+POST     302  http://localhost:3000/posts
+GET      200  http://localhost:3000/posts/31
+GET      302  http://localhost:3000/rails/active_storage/blobs/redirect/…/cover.jpg
+GET      200  http://localhost:9000/wongnok-dev/fe20nsqraac0pyfnxqmith9brend?response-content-disposition=…&amp;X-Amz-Expires=300&amp;…</code></pre>
+
+<p>อ่านทีละบรรทัด (ภาพร้านอาหารของบท 139):</p>
+<ol>
+  <li><code>POST …/direct_uploads</code> — เบราว์เซอร์ขอ<strong>ใบอนุญาต</strong>จากร้าน · ส่งไปแค่ชื่อไฟล์ ชนิด ขนาด และ checksum (ตัวเลขสรุปเนื้อไฟล์ ไว้เช็คว่าไฟล์ไม่เสียระหว่างทาง) — ไม่มีตัวไฟล์ (ใน log ของ <code>bin/dev</code>: <code>{"filename" =&gt; "cover.jpg", "content_type" =&gt; "image/jpeg", "byte_size" =&gt; 36582, "checksum" =&gt; "aUg779RDG3S8ZQ8+Dczm1g=="}</code>)</li>
+  <li><code>OPTIONS 204</code> — เบราว์เซอร์ถามโกดังก่อนว่า "รับของที่ส่งมาจากเว็บ localhost:3000 ไหม" (ด่านถามสิทธิ์ข้ามเว็บ เรียกว่า CORS · บท 139) · 204 = รับ</li>
+  <li><strong><code>PUT 200 … :9000</code></strong> — <strong>ตัวไฟล์จริงวิ่งตรงเข้าโกดังบรรทัดนี้</strong> · นี่คือบรรทัดที่เกณฑ์ข้อ 4 ต้องการเห็น</li>
+  <li><code>POST 302 …/posts</code> — ส่งฟอร์มเข้าร้าน มีหัวข้อ + HTML ของเนื้อหา + <strong>รหัสไฟล์</strong> (signed id) ไม่มีตัวไฟล์ · บันทึกได้ → 302 ไปหน้าบทความ</li>
+  <li>สองบรรทัดสุดท้าย = เปิดรูปปก: ถามร้าน (302) → ไปเอาที่โกดังด้วยบัตรผ่านใบใหม่ (200)</li>
+</ol>
+
+<div class="warn">
+  <p>
+    ⚠️ ถ้าใน Network <strong>ไม่มีบรรทัด <code>PUT … :9000</code></strong> แต่บันทึกได้และรูปขึ้น = ไฟล์วิ่งผ่าน Rails ทั้งก้อน — ช่อง <code>file_field</code> ไม่มี <code>direct_upload: true</code>
+    หรือ <code>application.js</code> ไม่มี <code>ActiveStorage.start()</code> (บท 138) · ดูให้ชัดว่าตัวไหนหายด้วย <code>grep -rn "direct_upload" app/views</code> และ <code>grep -n "ActiveStorage" app/javascript/application.js</code>
+  </p>
+</div>
+
+<h3 id="sn-sub-5">ข้อ 5 — log หน้า index: นับ 6 query ให้เห็นกับตา</h3>
+
+<p>เปิด <code>/posts</code> แล้วดูแท็บ <code>bin/dev</code> (ผลจริง · หน้าแรกมีบทความใหม่ที่มีรูป 1 ชิ้น + บทความจาก seeds 9 ชิ้น · ตัดบรรทัด <code>↳</code> และ <code>Rendered</code> ออก):</p>
+
+<pre><code>Started GET "/posts" for ::1 at 2026-11-10 10:20:23 +0700
+Processing by PostsController#index as HTML
+  Post Count (1.1ms)  SELECT COUNT(*) FROM "posts"
+  Post Load (0.9ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."created_at" DESC LIMIT 10 OFFSET 0
+  Category Load (7.9ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" IN (1, 5, 4, 3, 2)
+  ActionText::RichText Load (1.3ms)  SELECT "action_text_rich_texts".* FROM "action_text_rich_texts" WHERE "action_text_rich_texts"."record_type" = 'Post' AND "action_text_rich_texts"."name" = 'body' AND "action_text_rich_texts"."record_id" IN (31, 30, 29, 28, 27, 26, 25, 24, 23, 22)
+  ActiveStorage::Attachment Load (0.8ms)  SELECT "active_storage_attachments".* FROM "active_storage_attachments" WHERE "active_storage_attachments"."record_type" = 'Post' AND "active_storage_attachments"."name" = 'cover' AND "active_storage_attachments"."record_id" IN (31, 30, 29, 28, 27, 26, 25, 24, 23, 22)
+  ActiveStorage::Blob Load (0.7ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 1
+Completed 200 OK in 27ms (Views: 20.1ms | ActiveRecord: 3.5ms (6 queries, 0 cached) | GC: 7.9ms)</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>query</th><th>มาจากไหน</th></tr></thead>
+  <tbody>
+    <tr><td>1 <code>Post Count</code> · 2 <code>Post Load … LIMIT 10</code></td><td><code>pagy</code> นับทั้งหมดเพื่อทำเลขหน้า แล้วหยิบมา 10 (<a href="../../rails-day-3/lessons/0126-lab-vibe1-views.html">บท 126</a>)</td></tr>
+    <tr><td>3 <code>Category Load … IN (…)</code></td><td><code>includes(:category)</code> (บท 114)</td></tr>
+    <tr><td>4 <code>ActionText::RichText Load … IN (31, 30, …)</code></td><td><code>with_rich_text_body</code> — เนื้อหาของทั้ง 10 บทความในใบเบิกเดียว (บท 137)</td></tr>
+    <tr><td>5 <code>ActiveStorage::Attachment Load</code> · 6 <code>ActiveStorage::Blob Load</code></td><td><code>with_attached_cover</code> — ป้ายของทั้งหน้า แล้วใบรับฝากของรูปที่มีจริง (บท 140) · หน้า 2 ที่ไม่มีบทความไหนมีรูปเลย ผมได้ <code>(5 queries, 0 cached)</code> (Rails ข้าม Blob เพราะไม่มี id ให้หา)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  บรรทัดสุดท้าย <code>Completed …</code> = สรุปทั้ง request · <code>Views</code> / <code>ActiveRecord</code> / <code>GC</code> = เวลาที่ใช้แต่ละส่วน (ไม่ต้องสนตอนนี้) ·
+  ตัวที่เกณฑ์ข้อ 5 ดูคือ <code>(6 queries, 0 cached)</code> = ถามตู้แฟ้มไป 6 ครั้ง
+</p>
+<p>
+  สังเกต: ทั้ง 6 บรรทัดไม่มีตัวไหนเกิด<strong>ซ้ำต่อบทความ</strong> (ไม่มี 10 บรรทัดหน้าตาเหมือนกัน) — นั่นคือหน้าตาของ "ไม่มี N+1"
+</p>
+<p>
+  ที่ได้ 6 ไม่ใช่ 8 ขึ้นไป เพราะบรรทัด <code>config.active_storage.track_variants = false</code> ใน <code>config/application.rb</code> (บท 140) —
+  ปิดการจดประวัติรูปย่อลงตาราง Rails เลยไม่ต้องเบิกตารางนั้นเพิ่ม · บรรทัดนี้<strong>ไม่อยู่ในสไลด์</strong> ถ้า AI ทำตามสไลด์อย่างเดียวจะไม่ผ่านข้อนี้
+</p>
+
+<h3 id="sn-sub-6">ข้อ 6 — ถูกปฏิเสธแล้ว แต่ไฟล์ปลอมยังนอนอยู่ในโกดัง</h3>
+
+<p>ใน log ตอนส่งไฟล์ปลอม (ผลจริง · ตัดมา) ดูสองจุด:</p>
+
+<pre><code>Started POST "/rails/active_storage/direct_uploads" for ::1 at 2026-11-10 10:20:23 +0700
+  Parameters: {"blob" =&gt; {"filename" =&gt; "fake.png", "content_type" =&gt; "image/png", "byte_size" =&gt; 38, "checksum" =&gt; "i6qWQX4nSMSe4tJLtV293Q=="}, …}
+…
+Started POST "/posts" for ::1 at 2026-11-10 10:20:23 +0700
+Completed 422 Unprocessable Content in 14ms (Views: 2.2ms | ActiveRecord: 3.4ms (3 queries, 0 cached) | GC: 0.4ms)</code></pre>
+
+<ul>
+  <li><code>"content_type" =&gt; "image/png"</code> — เบราว์เซอร์<strong>เดาจากนามสกุล</strong> แล้วเขียนฉลากว่าเป็นรูป · ถ้าเชื่อฉลากนี้ ไฟล์ปลอมผ่าน (ตาราง "AI พลาดประจำ")</li>
+  <li><code>422</code> — model อ่าน 4 KB แรกของไฟล์ด้วย Marcel (เปิดกล่องดูของข้างใน · บท 140) ไม่เจอลายนิ้วมือของรูป จึงไม่รับ</li>
+</ul>
+
+<p>
+  แต่<strong>ก่อน</strong> 422 นั้น Network มี <code>PUT 200 … :9000</code> ไปแล้ว — direct upload ส่งไฟล์เข้าโกดัง<strong>ก่อน</strong>ส่งฟอร์ม · ใน MinIO console ผมเห็นแถว <code>48d6zqf2kp2sluwcfi24iiiocdo2 · Today, 10:20 · 38.0 B</code> ·
+  และใน console ของ Rails (ผลจริง):
+</p>
+
+<pre><code>$ bin/rails console
+Loading development environment (Rails 8.1.4)
+wongnok-blog-all-in-one(dev):001&gt; ActiveStorage::Blob.unattached.pluck(:filename, :content_type, :byte_size)
+  ActiveStorage::Blob Pluck (0.5ms)  SELECT "active_storage_blobs"."filename", "active_storage_blobs"."content_type", "active_storage_blobs"."byte_size" FROM "active_storage_blobs" LEFT OUTER JOIN "active_storage_attachments" ON "active_storage_attachments"."blob_id" = "active_storage_blobs"."id" WHERE "active_storage_attachments"."id" IS NULL
+=&gt; [["fake.png", "image/png", 38]]</code></pre>
+
+<p>
+  บรรทัดที่ขึ้นต้นด้วย <code>ActiveStorage::Blob Pluck</code> = SQL ที่ Rails ส่งไปถามตู้แฟ้ม · <code>=&gt;</code> = คำตอบ: ใบรับฝาก 1 ใบ ชื่อ <code>fake.png</code> ขนาด 38 bytes
+</p>
+
+<p>
+  <code>unattached</code> = ใบรับฝากที่ไม่มีป้ายผูกกับบทความไหน = <strong>ของฝากที่ไม่มีใครมารับ</strong> (ไฟล์กำพร้า · บท 140) · ตรวจรับข้อ 6 <strong>ผ่าน</strong> (ปฏิเสธจริง) แต่ขยะในโกดังเป็นงานค้าง —
+  ต้องมีพนักงานหลังร้านมาเก็บกวาดเป็นรอบ ๆ ซึ่งคือเรื่องของบล็อก E (<a href="./0142-background-jobs-exactly-once.html">บท 142</a> เป็นต้นไป) · พิมพ์ <code>exit</code> ออกจาก console
+</p>
+
+<h3 id="sn-sub-7">ข้อ 7 — 30 บทความเดิมยังอ่านได้ครบ</h3>
+
+<p>ให้คอมพิวเตอร์เปิดทีละหน้าแทนเรา (รันในแท็บที่ 2 · ทั้งหมดบรรทัดเดียว):</p>
+
+<pre><code>for i in $(seq 1 30); do curl -s localhost:3000/posts/$i | grep -c 'class="trix-content"'; done | sort | uniq -c</code></pre>
+
+<ul>
+  <li><code>for i in $(seq 1 30); do … ; done</code> = ทำซ้ำโดยให้ <code>i</code> เป็น 1, 2, … 30 · <code>$i</code> = ค่าของรอบนั้น</li>
+  <li><code>grep -c 'class="trix-content"'</code> = นับว่าหน้านั้นมีกล่องเนื้อหาของ Action Text กี่กล่อง (หน้าปกติ = 1)</li>
+  <li><code>| sort | uniq -c</code> = รวมผล 30 บรรทัดให้เหลือ "ผลแบบนี้ มีกี่หน้า"</li>
+</ul>
+
+<p>ผลจริง:</p>
+<pre><code>     30 1</code></pre>
+<p>
+  อ่านว่า "ผล <code>1</code> มี <code>30</code> หน้า" = ครบ · ถ้ามีบรรทัด <code>0</code> โผล่ เช่น <code>2 0</code> แปลว่ามี 2 หน้าที่ไม่มีกล่องเนื้อหา — บทความพวกนั้นยังไม่มี body (ลืมรัน <code>bin/rails posts:backfill_body</code> ของบท 137)
+  หรือหน้านั้นพังเป็น error (เปิดในเบราว์เซอร์ดู) · ถ้า DB ของคุณเคยลบหรือเพิ่มบทความ เลข id อาจไม่ใช่ 1–30 พอดี ให้ดูที่ <code>bin/rails runner 'p Post.where(plain_text: nil).count'</code> ต้องได้ <code>0</code> แทน
+</p>
+
+<h2 id="sn-sec-4">ขั้น 3 — ที่ AI พลาดประจำ 3 ข้อ — อาการ · ตรวจยังไง · แก้ยังไง</h2>
+
+<p>
+  สไลด์หน้า 14 รวมไว้ 3 ข้อ · ผมใส่บั๊กแต่ละแบบเข้าไปในโค้ดที่ทำงานถูกแล้วทีละข้อ แล้วดูอาการจริง · สังเกตว่า<strong>สองข้อแรกหน้าเว็บไม่โชว์ error อะไรเลย</strong> ข้อสามพังก็ต่อเมื่อมีคนกดแก้บทความ:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>AI ทำแบบนี้</th><th>อาการที่เห็นจริง</th><th>ตรวจยังไง</th><th>แก้ยังไง</th></tr></thead>
+  <tbody>
+    <tr><td>ลืม <code>with_attached_cover</code> (ลบออกจาก <code>index</code> บรรทัดเดียว)</td>
+      <td>หน้าแรกโชว์ครบ ดูไม่ออก · log: <code>(15 queries, 0 cached)</code> จากเดิม 6 (มี <code>ActiveStorage::Attachment Load</code> ทีละบทความ 10 บรรทัด) · Bullet ขึ้น <code>USE eager loading detected</code> / <code>Post =&gt; [:cover_attachment]</code></td>
+      <td>เกณฑ์ข้อ 5 · <code>grep -rn "with_attached\|with_rich_text" app/controllers</code></td>
+      <td>ใส่ <code>with_attached_cover</code> กลับ · <strong>อย่าทำตามบรรทัด <code>Add to your query: .includes([:cover_attachment])</code> ของ Bullet ตรง ๆ</strong> — ได้ป้ายแต่ใบรับฝาก (blob) ยังเบิกทีละใบ · <code>with_attached_cover</code> เบิกทั้งสองอย่าง</td></tr>
+    <tr><td>validate ไฟล์ด้วยนามสกุล หรือ <code>content_type</code> (โค้ดในสไลด์หน้า 12 ก็เป็นแบบนี้)</td>
+      <td>ไฟล์ปลอม <code>fake.png</code> <strong>บันทึกผ่าน</strong> · ทั้ง <code>content_type</code> และนามสกุลบอกว่าเป็น png (ผลจริงข้างล่าง)</td>
+      <td>เกณฑ์ข้อ 6 · <code>grep -rn "Marcel\|content_type" app/models</code> ต้องเจอ <code>Marcel::MimeType.for(StringIO.new(…))</code></td>
+      <td>อ่านเนื้อไฟล์ช่วงต้นด้วย Marcel <strong>โดยไม่ส่งชื่อไฟล์หรือชนิดที่ client บอก</strong> (บท 140)</td></tr>
+    <tr><td>เสนอให้ลบคอลัมน์ description ในรอบเดียวกับที่ย้ายข้อมูล</td>
+      <td>ถ้าลบคอลัมน์ทั้งที่โค้ดยังเขียน description อยู่: แก้แค่หัวข้อบทความก็พัง <code>NoMethodError: undefined method 'description=' for an instance of Post</code> (ผลจริง · ทดลองใน transaction = ทำแล้วยกเลิกทั้งก้อน ข้อมูลจริงไม่เปลี่ยน) · และถ้าต้อง rollback โค้ดกลับไปเวอร์ชันก่อน โค้ดเก่าก็หาคอลัมน์ไม่เจอ</td>
+      <td>เกณฑ์ข้อ 7 · <code>grep -n '"description"' db/schema.rb</code> ต้องยังเจอ <code>t.text "description", null: false</code> · <code>grep -rn "remove_column" db/migrate</code> ต้องว่าง</td>
+      <td>ตอบ AI ว่า "ไม่ลบรอบนี้" — เป็นเฟส expand (บท 109 · 137) · รอบ contract ค่อยเลิกเขียน → ประกาศเลิกใช้ → ลบ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ผลจริงของแถวที่สอง — ถามฉลากกับถามเนื้อไฟล์ ได้คำตอบไม่ตรงกัน · <strong>ส่วนนี้แค่อ่านดูผลก็พอ ไม่ต้องพิมพ์ตาม</strong> ·
+  ผมเขียนไฟล์ <code>tmp/fake_test.rb</code> แล้วรันด้วย <code>bin/rails runner tmp/fake_test.rb</code> (สร้างบทความในหน่วยความจำ ยังไม่บันทึก จึงไม่มีไฟล์ขึ้นโกดัง):
+</p>
+
+<pre><code><span class="c"># tmp/fake_test.rb</span>
+post = <span class="n">Post</span>.<span class="f">new</span>(title: <span class="s">"ทดสอบไฟล์ปลอม"</span>, body: <span class="s">"&lt;div&gt;x&lt;/div&gt;"</span>, category: <span class="n">Category</span>.<span class="f">first</span>,
+                cover: { io: <span class="n">File</span>.<span class="f">open</span>(<span class="s">"tmp/fake.png"</span>), filename: <span class="s">"fake.png"</span>, content_type: <span class="s">"image/png"</span> })
+<span class="f">p</span> post.cover.content_type
+<span class="f">p</span> post.cover.filename.extension
+<span class="f">p</span> post.<span class="f">valid?</span>
+<span class="f">p</span> post.errors.full_messages
+<span class="f">p</span> <span class="n">Marcel</span>::<span class="n">MimeType</span>.<span class="f">for</span>(<span class="n">StringIO</span>.<span class="f">new</span>(<span class="n">File</span>.<span class="f">binread</span>(<span class="s">"tmp/fake.png"</span>)))</code></pre>
+
+<ul>
+  <li><code>cover: { io: …, filename: …, content_type: … }</code> = ยื่นไฟล์ให้ Active Storage พร้อม<strong>ฉลากที่เราเขียนเอง</strong> — แบบเดียวกับที่เบราว์เซอร์เขียนฉลาก <code>image/png</code> ให้ตอนอัป · <code>io:</code> = ตัวไฟล์ที่เปิดไว้</li>
+  <li><code>p</code> = พิมพ์ค่าออกมาดู · <code>post.cover.content_type</code> = ฉลาก · <code>filename.extension</code> = นามสกุล</li>
+  <li><code>post.valid?</code> = สั่ง validation ทุกตัวทำงาน<strong>โดยยังไม่บันทึก</strong> ได้ <code>true</code>/<code>false</code> · <code>errors.full_messages</code> = ข้อความ error ที่จะขึ้นในกล่องแดง</li>
+  <li>บรรทัดสุดท้าย: <code>File.binread</code> = อ่านเนื้อไฟล์ดิบทั้งก้อน · <code>StringIO.new(…)</code> = ห่อเนื้อนั้นให้หน้าตาเหมือนไฟล์ · ส่งให้ <code>Marcel::MimeType.for</code> ดู<strong>แค่เนื้อ</strong> ไม่ส่งชื่อไฟล์หรือฉลากไปด้วย</li>
+</ul>
+
+<pre><code>"image/png"
+"png"
+false
+["Cover รองรับเฉพาะ PNG, JPEG, WebP"]
+"application/octet-stream"</code></pre>
+
+<p>
+  บรรทัด 1–2: ฉลาก (<code>content_type</code>) กับนามสกุลบอกว่าเป็น png ทั้งคู่ → AI ที่ตรวจแบบนี้จะปล่อยผ่าน ·
+  บรรทัด 3–4: validation ของเรา (บท 140) ไม่ยอม · บรรทัด 5: Marcel อ่านเนื้อแล้วบอก <code>application/octet-stream</code> = "ข้อมูลอะไรไม่รู้ ไม่ใช่รูปแน่" ·
+  (ถ้าลองทำตามแล้ว ลบทิ้งด้วย <code>rm tmp/fake_test.rb</code>)
+</p>
+
+<div class="warn">
+  <p>
+    ⚠️ Bullet ยังมีเตือน<strong>ผิด</strong>อีกหนึ่งแบบที่ AI ชอบทำตาม: <code>AVOID eager loading … Post =&gt; ["rich_text_body"]</code> — บอกให้ลบ <code>with_rich_text_body</code> ทั้งที่ใช้จริง ·
+    บท 137 ปิดเสียงไว้แล้วด้วย <code>Bullet.add_safelist</code> ใน <code>config/environments/development.rb</code> · ถ้า AI ลบ safelist หรือลบ <code>with_rich_text_body</code> ตามคำเตือน → N+1 ของเนื้อหากลับมา (บท 137 วัดได้ 13 query)
+  </p>
+</div>
+
+<h2 id="sn-sec-5">โจทย์ recap หน้า 13 case 1 — <code>raw</code> ในอีเมล · <code>body.to_s</code> ใน JSON</h2>
+
+<p>
+  สไลด์หน้า 13 ให้โค้ดสองบรรทัดแล้วถามว่าปลอดภัยไหม — บรรทัดแรกในอีเมลสรุปรายสัปดาห์ · บรรทัดที่สองใน API ที่ส่งให้แอปมือถือ ·
+  ก่อนตอบ ต้องรู้ก่อนว่า <code>@post.body.to_s</code> ให้อะไรออกมา · ผมใส่ HTML อันตรายลงในเนื้อหาบทความ (แบบที่คนร้ายส่งตรงเข้าฟอร์มโดยไม่ผ่าน Trix · บท 136) แล้วลองจริงใน mailer ·
+  <strong>ส่วนนี้อ่านดูผลอย่างเดียว ไม่ต้องพิมพ์ตาม</strong> (อีเมลเป็นเรื่องของบล็อก E) · และลองแบบนี้ได้<strong>เฉพาะกับแอปในเครื่องตัวเอง</strong> ห้ามส่งของแบบนี้เข้าเว็บคนอื่น
+</p>
+
+<pre><code><span class="c"># ทดลองใน bin/rails runner · ทำใน transaction แล้วย้อนกลับ ข้อมูลจริงไม่เปลี่ยน</span>
+<span class="k">class</span> <span class="n">WeeklyTestMailer</span> &lt; <span class="n">ApplicationMailer</span>
+  <span class="k">def</span> <span class="f">digest</span>(post)
+    @post = post
+    <span class="f">mail</span>(to: <span class="s">"reader@example.com"</span>, subject: <span class="s">"สรุปรายสัปดาห์"</span>) <span class="k">do</span> |format|
+      format.<span class="f">html</span> { <span class="f">render</span> inline: <span class="s">"&lt;%= raw @post.body.to_s %&gt;"</span> }
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span>
+
+post.<span class="f">update!</span>(body: <span class="s">%(&lt;div&gt;สูตรเด็ด &lt;strong&gt;ตัวหนา&lt;/strong&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src="x" onerror="alert(2)"&gt;&lt;/div&gt;)</span>)</code></pre>
+
+<ul>
+  <li><code>ApplicationMailer</code> = แม่แบบของ "คนส่งจดหมาย" ที่มากับ <code>rails new</code> (ละเอียดในบล็อก E) · <code>mail(…)</code> = เขียนซองจดหมาย (ส่งถึงใคร หัวเรื่องอะไร)</li>
+  <li><code>do |format| format.html { … } end</code> = "อีเมลฉบับ HTML หน้าตาเป็นแบบนี้" · <code>render inline:</code> = ใช้ ERB ในเครื่องหมายคำพูดเป็นหน้าตาอีเมล — ตรงกับบรรทัดในสไลด์ <code>&lt;%= raw @post.body.to_s %&gt;</code></li>
+  <li><code>post</code> ในบรรทัดสุดท้าย = บทความหนึ่งตัวที่ผมหยิบมาจาก DB · <code>%(…)</code> = วิธีเขียน string ของ Ruby ที่ข้างในมี <code>"</code> ได้สบาย ๆ · <code>alert(1)</code> = payload ทดลองที่ไม่ทำอันตราย แค่เด้งกล่องข้อความ</li>
+  <li>จากนั้นสร้างอีเมลจาก mailer นี้ (ยังไม่ส่งจริง) แล้วเปิดดู HTML ข้างใน — ผลอยู่ในเฉลยข้างล่าง</li>
+</ul>
+
+<div class="predict">
+  <p>ใน HTML ของอีเมลที่ได้ <code>&lt;script&gt;</code> กับ <code>onerror</code> จะยังอยู่ไหม — ในเมื่อมี <code>raw</code> ครอบไว้?</p>
+  <p class="ask">คิดว่าได้อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง (ตัด comment <code>BEGIN</code>/<code>END</code> ที่ development ใส่ไว้บอกชื่อไฟล์ออก):</p>
+    <pre><code><span class="c">--- ที่เก็บในตาราง (post.body.body.to_html)</span>
+&lt;div&gt;สูตรเด็ด &lt;strong&gt;ตัวหนา&lt;/strong&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src="x" onerror="alert(2)"&gt;&lt;/div&gt;
+<span class="c">--- HTML ในอีเมล</span>
+&lt;div class="trix-content"&gt;
+  &lt;div&gt;สูตรเด็ด &lt;strong&gt;ตัวหนา&lt;/strong&gt;alert(1)&lt;img src="x"&gt;&lt;/div&gt;
+&lt;/div&gt;</code></pre>
+    <p>
+      <strong>ถูกล้างแล้ว</strong> ทั้งที่มี <code>raw</code> — แท็ก <code>&lt;script&gt;</code> หายเหลือแค่ตัวหนังสือ <code>alert(1)</code> · <code>onerror</code> หายจาก <code>&lt;img&gt;</code> ·
+      เพราะ <code>body.to_s</code> <strong>ผ่าน sanitize ของ Action Text ก่อนแล้ว</strong> (ตรวจตอนจัดจาน · บท 136) · <code>raw</code> แค่บอกว่า "ไม่ต้อง escape อีก" กับของที่ล้างมาแล้ว
+    </p>
+    <p>
+      แล้วทำไมยังห้าม? บรรทัดแรกของผลคือ<strong>ของดิบในตาราง</strong> — ยังมี script ครบ · ถ้าวันหนึ่งมีคน (หรือ AI) เปลี่ยน <code>to_s</code> เป็นของดิบ เช่น <code>raw @post.body.body.to_html</code>
+      <code>raw</code> จะปล่อย script เข้าอีเมลทันที · <code>raw</code> ที่ไม่มีประโยชน์ = <strong>ซองที่ถูกแกะรอไว้</strong> · เขียน <code>&lt;%= @post.body %&gt;</code> ได้ผลเท่ากันและไม่เปิดช่องนี้
+    </p>
+  </div>
+</div>
+
+<p>
+  ส่วนบรรทัดที่สอง <code>render json: { body: @post.body.to_s }</code> (API = ช่องที่ส่งข้อมูลเป็น JSON ให้แอปมือถือ) — ผมรันจริงกับบทความที่ใส่ HTML อันตรายแบบเดียวกัน
+  (รันใน runner เป็น <code>{ body: post.body.to_s }.to_json</code> ซึ่งคือสิ่งที่ <code>render json:</code> ทำ) · ได้ 2 อย่างที่ควรรู้:
+</p>
+<ul>
+  <li>ได้ <strong>HTML</strong> ที่ล้างแล้วเหมือนในอีเมล ห่อด้วยกล่อง <code>trix-content</code> — แอปมือถือต้องเอา HTML ไปวาดเอง · และใน development ยังติด comment บอก<strong>ที่อยู่ไฟล์ในเครื่อง server</strong> มาด้วย ซึ่งไม่ควรไปถึงลูกค้า</li>
+  <li>ถ้าแอปมือถือแค่โชว์ข้อความ ใช้ <code>post.body.to_plain_text</code> แทน — ผลจริงได้ <code>"สูตรเด็ด ตัวหนา"</code> (ทิ้งทั้งแท็กและเนื้อใน script) · API ของเราตอนนี้ (<code>_post.json.jbuilder</code>) ส่ง <code>description</code> ซึ่งเป็นข้อความล้วนอยู่แล้ว (บท 137)</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">✉️ เทียบให้เห็นภาพ — ซองใสที่ถูกตรวจมาแล้ว</span>
+  <p>
+    <code>body.to_s</code> = คนจัดจานเอาข้อความหน้าเค้กมาเทียบ<strong>รายการตัวตกแต่งที่ร้านอนุญาต</strong> ทิ้งของที่ไม่อยู่ในรายการแล้ว · <code>raw</code> = บอกพนักงานเสิร์ฟว่า "ไม่ต้องใส่ซองใสอีก ยกไปเลย" ·
+    วันนี้ปลอดภัยเพราะของผ่านการตรวจมาแล้ว — แต่ป้าย "ยกไปเลย" ติดอยู่ที่<strong>ช่องเสิร์ฟ</strong> ไม่ได้ติดที่ของ วันไหนมีคนเอาของที่ยังไม่ตรวจมาวางช่องนี้ มันก็ถูกยกไปเลยเหมือนกัน
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงยังมีตาเห็นว่า "จานนี้แปลก ๆ" · <code>raw</code> ไม่ดูอะไรเลย ไม่เตือน ไม่บ่น ·
+    และอีเมลไม่ได้อยู่ในเบราว์เซอร์ของเรา — โปรแกรมอ่านอีเมลแต่ละเจ้าจัดการ HTML ไม่เหมือนกัน เราจึงพึ่ง "ปลายทางจะกันให้" ไม่ได้
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ของ case 1</span>
+  <dl>
+    <dt>defense in depth</dt>
+    <dd>กันหลายชั้น ชั้นหนึ่งพลาดยังมีอีกชั้น · <code>raw</code> คือการถอดชั้น escape ทิ้งโดยไม่ได้อะไรกลับมา · ถาม senior ได้ว่า "ถ้า sanitize ของ Action Text ทำงานแล้ว เรายังต้องห้าม raw ทั้งโปรเจกต์ไหมครับ"</dd>
+    <dt>output context (HTML · email · JSON)</dt>
+    <dd>ของชิ้นเดียวกันต้องเตรียมต่างกันตามปลายทาง · พิมพ์บอก AI ได้ว่า "This API is consumed by a mobile app that displays plain text. Return <code>body.to_plain_text</code>, never raw HTML from Action Text."</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">ขั้น 4 — เติมกฎ 13–15 ลง <code>00-context.md</code>: คู่มือโตจาก 12 ข้อเป็น 15 ข้อ</h2>
+
+<p>
+  ใบสั่ง <code>04-content.md</code> ใช้ครั้งเดียวต่อบล็อก · ส่วน <code>00-context.md</code> คือ<strong>กฎถาวรของร้าน</strong>ที่ AI อ่านทุกครั้ง (โหลดผ่าน <code>CLAUDE.md</code> · บท 121) ·
+  บทเรียนที่ต้องใช้ซ้ำในงานอื่นจึงย้ายมาอยู่ที่นี่ · เปิด <code>prompts/00-context.md</code> แล้ว<strong>แทรกก้อนนี้ไว้ระหว่างกฎข้อ 12 กับหัวข้อ <code>## รูปแบบการตอบ</code></strong> ·
+  ให้มีบรรทัดว่าง 1 บรรทัดทั้งก่อนและหลังก้อนนี้ (แบบเดียวกับหัวข้ออื่นในไฟล์ — ลืมบรรทัดว่างหลังกฎข้อ 15 แล้วไฟล์จะไม่ตรงกับบทเรียน):
+</p>
+
+<pre><code><span class="k">## กฎเพิ่มจากบล็อค Rich text และไฟล์</span>
+
+13. attachment และ rich text ที่โชว์ในหน้ารวม ต้องมี with_attached_* / with_rich_text_* ใน controller
+    Bullet เตือน AVOID eager loading "rich_text_*" = เตือนผิด ห้ามลบ ให้ add_safelist ใน development.rb
+14. ตรวจชนิดไฟล์จากเนื้อไฟล์จริง (magic bytes) ไม่เชื่อ content_type หรือนามสกุลที่ client ส่งมา
+15. bucket เป็น private เสมอ ให้ดูไฟล์ผ่าน signed URL และ access key อยู่ใน credentials เท่านั้น
+</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>กฎ</th><th>มาจาก</th><th>ทำไมเป็นกฎถาวร ไม่ใช่แค่ในใบสั่ง</th></tr></thead>
+  <tbody>
+    <tr><td>13</td><td>พลาดประจำข้อ 1 + กับดัก Bullet (บท 137 · 140)</td><td>ทุกหน้ารวมในอนาคตที่มีรูปหรือ rich text (หน้าหมวด · หน้าค้นหา) เจอเรื่องเดียวกัน · บรรทัดที่สองกัน AI "ทำตาม Bullet" แล้วพัง</td></tr>
+    <tr><td>14</td><td>พลาดประจำข้อ 2 + ห้ามข้อ 3 (บท 140)</td><td>ใช้กับทุกช่องอัปโหลดในอนาคต (รูปโปรไฟล์ · ไฟล์แนบ) ไม่ใช่แค่รูปปก · <code>magic bytes</code> = ลายนิ้วมือช่วงต้นไฟล์ที่บอกชนิดจริง</td></tr>
+    <tr><td>15</td><td>ห้ามข้อ 2 + 4 (บท 138–139)</td><td>รวมสองข้อห้ามเรื่องกุญแจโกดังไว้ที่เดียว · bucket ใหม่ทุกอันในอนาคตต้อง private</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>ข้อห้ามสองข้อที่<strong>ไม่</strong>ย้ายมาเป็นกฎถาวร:</p>
+<ul>
+  <li>"ลบคอลัมน์ description ในรอบนี้" — เรื่องเฉพาะงานนี้ · หลักการทั่วไปมีอยู่แล้วในกฎข้อ 7 (expand-contract)</li>
+  <li>"raw หรือ html_safe" — ควรเป็นกฎถาวรด้วยซ้ำ แต่<strong>อย่าเพิ่งเติมเองตอนนี้</strong> · บทถัด ๆ ไปเติมกฎต่อจากเลข 15 · ถ้าไฟล์ของคุณมีกฎเกินมา เลขจะไม่ตรงกับบทเรียน เทียบยาก · ระหว่างนี้ข้อห้ามนี้อยู่ในใบสั่ง <code>04-content.md</code> แล้ว</li>
+</ul>
+
+<h2 id="sn-sec-7">ขั้น 5 — เก็บเข้าโปรเจกต์</h2>
+
+<p>ดูก่อนว่าจะเก็บอะไร (ผลจริง — ต้องมี<strong>แค่สองบรรทัดนี้</strong>):</p>
+
+<pre><code>$ git status --short
+ M prompts/00-context.md
+?? prompts/04-content.md</code></pre>
+
+<p>
+  <code>M</code> = แก้ไฟล์เดิม · <code>??</code> = ไฟล์ใหม่ · <code>tmp/fake.png</code> ไม่โผล่เพราะ <code>tmp/</code> อยู่ใน <code>.gitignore</code> ตั้งแต่ <code>rails new</code> ·
+  ถ้ามีไฟล์ใต้ <code>app/</code> หรือ <code>config/</code> โผล่มาด้วย แปลว่ายังมีของทดลองค้าง → <code>git diff</code> ดูก่อน แล้ว <code>git restore &lt;ไฟล์&gt;</code>
+</p>
+
+<pre><code>$ git add .
+$ git commit -m "prompts: ใบสั่งงาน rich text + รูปปก และกฎ 13–15"
+[my-day3 828d702] prompts: ใบสั่งงาน rich text + รูปปก และกฎ 13–15
+ 2 files changed, 43 insertions(+)
+ create mode 100644 prompts/04-content.md</code></pre>
+
+<p>
+  <code>43 insertions</code> = 7 บรรทัดใน 00-context (หัวข้อ · บรรทัดว่าง · กฎ 4 บรรทัด · บรรทัดว่าง) + 36 บรรทัดของไฟล์ใหม่ ·
+  ในวงเล็บเหลี่ยมคือชื่อ branch ที่คุณอยู่กับเลข commit — ของคุณจะต่าง
+</p>
+
+<div class="win">
+  <p>
+    ✅ <strong>จบ Lab:</strong> โค้ดของคุณตอนนี้คือ<strong>จุดเช็คพอยต์ D</strong> — บทความมีเนื้อหาแบบ rich text และรูปปกที่เก็บในโกดังนอกร้าน ·
+    สไลด์หน้า 2 บอกว่าตามไม่ทันก็ checkout branch สำเร็จรูปของอาจารย์ได้ (ของบล็อก D คือ <code>day3-d-done</code>) — ใช้ได้ แต่ไฟล์ข้างในต่างจากบทเรียนนี้ (ใช้ระบบแปลภาษา i18n · ชื่อ bucket · เลขกฎใน 00-context ไม่ตรงกัน) · แนะนำให้ไล่บท 137–140 มากกว่า
+  </p>
+</div>
+
+<h3 id="sn-sub-8">ทางเลือก: ลอง vibe จริง — ให้ AI ทำบล็อก D ใหม่ทั้งหมด แล้วตรวจด้วย checklist ชุดนี้</h3>
+
+<p>
+  ทำ<strong>หลัง</strong> commit ข้างบน · ไม่บังคับ · ขั้นตอนเหมือน<a href="../../rails-day-3/lessons/0135-lab-vibe3-hotwire.html">บท 135</a> หัวข้อ "ทางเลือก" ทุกข้อ ต่างแค่จุดเริ่มกับชื่อใบสั่ง ·
+  บทนี้ไม่โชว์ว่า AI ตอบอะไร (ของแต่ละคนต่างกันทุกครั้ง)
+</p>
+<ol>
+  <li><code>git log --oneline</code> → หาเลข commit <code>prompts: ใบสั่งงาน Hotwire + กฎ 9–12</code> (จบ Day 3 ก่อนเริ่มบล็อก D)</li>
+  <li><code>git switch -c ai-vibe4 &lt;เลข commit นั้น&gt;</code> → <code>git checkout @{-1} -- prompts/</code> (ก็อปโฟลเดอร์ <code>prompts/</code> ที่มีใบสั่ง 04 และกฎ 13–15 ตามมาด้วย · ทวนบท 135)</li>
+  <li>ปิด <code>bin/dev</code> → <code>bin/rails db:reset</code> → เปิด <code>bin/dev</code> ใหม่ — ตู้ต้องกลับไปเป็นแบบที่ยังไม่มีตาราง Action Text / Active Storage</li>
+  <li>สั่ง AI ประมาณ <em>"ทำตาม @prompts/04-content.md ทีละข้อกำหนด · เสร็จแต่ละข้อให้บอกว่าแก้ไฟล์ไหน และบอกวิธีตรวจเกณฑ์ที่เกี่ยวข้อง"</em></li>
+  <li>ตรวจเองครบ 7 ข้อ + ภารกิจท้ายบท + ตาราง "AI พลาดประจำ" · จ้องเป็นพิเศษ: AI เขียน <code>minioadmin</code> ลง <code>storage.yml</code> ตรง ๆ ไหม (ห้ามข้อ 4) · ใช้ <code>bundle add</code> แล้วได้ gem เวอร์ชันอื่นไหม (บท 138) · ลบ <code>with_rich_text_body</code> ตาม Bullet ไหม (กฎ 13)</li>
+  <li>กลับบ้าน: commit → <code>git switch my-day3</code> → ปิด <code>bin/dev</code> → <code>bin/rails db:reset</code> → เปิด <code>bin/dev</code> ใหม่</li>
+</ol>
+
+<h2 id="sn-sec-8">สรุปบล็อก D — ได้อะไรไปบ้าง</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บท</th><th>ภาพร้านอาหาร</th><th>ประโยคที่ควรอธิบายให้เพื่อนฟังได้</th></tr></thead>
+  <tbody>
+    <tr><td><a href="./0136-rich-text-and-allowlist.html">136</a></td><td>รายการตัวตกแต่งที่ร้านอนุญาต · ตรวจตอนจัดจาน</td><td>allowlist ปลอดภัยกว่า blocklist · sanitize ตอนแสดง กฎใหม่ใช้กับข้อมูลเก่าได้ทันที</td></tr>
+    <tr><td><a href="./0137-action-text.html">137</a></td><td>ลิ้นชักกลาง "ข้อความยาว"</td><td>เนื้อหาไม่อยู่ในตาราง posts แล้ว → หน้ารวมต้อง <code>with_rich_text_body</code> · ย้ายข้อมูลแบบ expand ไม่ลบของเก่า</td></tr>
+    <tr><td><a href="./0138-files-object-storage-minio.html">138</a></td><td>โกดังรับฝากของนอกร้าน · ใบรับฝาก + ป้าย</td><td>ไฟล์ไม่อยู่ในเครื่อง server · กุญแจโกดังอยู่ใน credentials</td></tr>
+    <tr><td><a href="./0139-signed-url-direct-upload.html">139</a></td><td>บัตรผ่านหมดอายุ 5 นาที · ลูกค้าไปฝากเอง</td><td>bucket private + signed URL · ไฟล์ไม่ผ่าน Rails (PUT ตรงไป :9000)</td></tr>
+    <tr><td><a href="./0140-variants-and-file-validation.html">140</a></td><td>หั่นชิ้นพอดีคำ · เปิดกล่องดูของข้างใน · ของฝากไม่มีคนรับ</td><td>รูปย่อสร้างครั้งแรกแล้วเก็บไว้ · ตรวจชนิดจากเนื้อไฟล์ · ไฟล์ที่ถูกปฏิเสธยังค้างในโกดัง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  งานค้างที่บล็อก D ทิ้งไว้ให้บล็อก E: <strong>ไฟล์กำพร้าต้องมีคนเก็บกวาด</strong> · และตอนอัปรูปในขั้น 2 log ของ <code>bin/dev</code> มีบรรทัด <code>[ActiveJob] Enqueued ActiveStorage::AnalyzeJob … to Async(default)</code> — Rails มี "ใบงานหลังร้าน" อยู่แล้วโดยที่เราไม่ได้สั่ง ·
+  <a href="./0142-background-jobs-exactly-once.html">บท 142</a> เริ่มเรื่องนี้
+</p>
+
+<h2 id="sn-sec-9">ภารกิจ: ตรวจข้อห้าม 5 ข้อด้วยคำสั่ง</h2>
+
+<div class="task">
+  <h3 id="sn-sub-9">🎯 ภารกิจ Lab Vibe 4 (~10 นาที)</h3>
+  <p>เกณฑ์ตรวจรับ 7 ข้อบอกว่า "ทำได้" · ส่วนข้อห้าม 5 ข้อบอกว่า "ไม่ได้ทำของอันตรายแถมมา" — ตรวจด้วยตาไม่ได้ ต้องใช้คำสั่ง · <code>bin/dev</code> เปิดค้างไว้ · แท็บที่ 2 รันทีละบรรทัด:</p>
+  <ol>
+    <li>ห้าม raw/html_safe:
+      <pre><code>grep -rnw -e raw -e html_safe app/views app/helpers app/controllers app/models</code></pre>
+      (<code>-w</code> = ต้องเป็นคำเต็ม กันไปเจอคำที่มี raw ซ่อนอยู่ข้างใน เช่น "d<strong>raw</strong>" หรือ "d<strong>raw</strong>er" ถ้าวันหลังมีในโค้ด · <code>-e</code> = หาหลายคำในครั้งเดียว)</li>
+    <li>ห้าม bucket public — เปิดไฟล์ในโกดังโดย<strong>ไม่มีลายเซ็น</strong> (ใช้ blob key ของคุณจากเกณฑ์ข้อ 2 แทน <code>&lt;key&gt;</code>):
+      <pre><code>curl -s -w '\nHTTP %{http_code}\n' http://localhost:9000/wongnok-dev/&lt;key&gt;</code></pre></li>
+    <li>ห้ามเชื่อ content_type: <pre><code>grep -rn "Marcel\|content_type" app/models</code></pre></li>
+    <li>ห้ามเขียน key ลง storage.yml: <pre><code>grep -n "access_key\|secret" config/storage.yml</code></pre></li>
+    <li>ห้ามลบ description: <pre><code>grep -n '"description"' db/schema.rb</code></pre></li>
+  </ol>
+  <p><strong>ควรเห็น:</strong> ข้อ 1 เจอ<strong>แค่บรรทัด comment</strong> <code>&lt;%# … ห้ามใส่ raw/html_safe %&gt;</code> · ข้อ 2 ได้ XML <code>AccessDenied</code> + <code>HTTP 403</code> ·
+    ข้อ 3 เจอ <code>Marcel::MimeType.for(StringIO.new(cover_head))</code> · ข้อ 4 ทุกบรรทัดที่ไม่ใช่ comment เป็น <code>Rails.application.credentials.dig(…)</code> · ข้อ 5 เจอ <code>t.text "description", null: false</code></p>
+  <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+  <ul>
+    <li>ข้อ 2 ได้<strong>เนื้อไฟล์รูปออกมาเป็นตัวอักษรมั่ว ๆ</strong> และ <code>HTTP 200</code> → bucket ถูกเปิด public (ใน console ไปที่ bucket → แท็บ Anonymous / Access มีกฎให้ใครก็อ่านได้) · ใครเดา key ได้ก็โหลดได้โดยไม่ต้องผ่านร้าน → ลบกฎนั้นทิ้ง</li>
+    <li>ข้อ 2 ได้แค่ <code>HTTP 000</code> ไม่มี XML เลย → ต่อ MinIO ไม่ติด (ไม่ได้รัน) · <code>-s</code> ซ่อนข้อความ error ไว้ ลบ <code>-s</code> ออกจะเห็น <code>curl: (7) Failed to connect to localhost port 9000 …</code> · <code>docker compose up -d</code> แล้วลองใหม่</li>
+    <li>⚠️ ข้อ 2 <strong>พิมพ์ key ผิดก็ได้ <code>AccessDenied</code> เหมือนกัน</strong> (ผลจริง: ลองกับ key มั่ว ๆ ได้ XML แบบเดียวกัน) — โกดังไม่บอกคนไม่มีบัตรว่ามีของชิ้นนั้นหรือไม่ · ข้อนี้จึงพิสูจน์แค่ว่า "ไม่มีลายเซ็นเข้าไม่ได้" ต้องใช้ key จริงจาก <code>bin/rails runner 'p Post.last.cover.key'</code> ถึงจะมีความหมาย</li>
+    <li>ข้อ 4 เจอบรรทัด <code>access_key_id: minioadmin</code> ตรง ๆ → กุญแจโกดังหลุดเข้า git ทุกคนที่ clone ได้ไป · ย้ายไป credentials (บท 138) และในงานจริงต้อง<strong>เปลี่ยนกุญแจใหม่</strong>ด้วย เพราะของเก่าอยู่ในประวัติ git แล้ว</li>
+  </ul>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงบนโค้ดจุดเช็คพอยต์ D (key ของคุณจะต่าง · <code>RequestId</code> กับ <code>HostId</code> เปลี่ยนทุกครั้ง):</p>
+    <pre><code>$ grep -rnw -e raw -e html_safe app/views app/helpers app/controllers app/models
+app/views/posts/_post.html.erb:20:      &lt;%# Action Text ล้าง HTML อันตราย (sanitize) ให้เองตอนแสดง — ห้ามใส่ raw/html_safe %&gt;
+$ curl -s -w '\nHTTP %{http_code}\n' http://localhost:9000/wongnok-dev/fe20nsqraac0pyfnxqmith9brend
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;Error&gt;&lt;Code&gt;AccessDenied&lt;/Code&gt;&lt;Message&gt;Access Denied.&lt;/Message&gt;&lt;Key&gt;fe20nsqraac0pyfnxqmith9brend&lt;/Key&gt;&lt;BucketName&gt;wongnok-dev&lt;/BucketName&gt;&lt;Resource&gt;/wongnok-dev/fe20nsqraac0pyfnxqmith9brend&lt;/Resource&gt;&lt;RequestId&gt;18E691191E004D90&lt;/RequestId&gt;&lt;HostId&gt;dd9025ba…&lt;/HostId&gt;&lt;/Error&gt;
+HTTP 403
+$ grep -rn "Marcel\|content_type" app/models
+app/models/post.rb:29:      # ชนิดไฟล์: ดูจากเนื้อไฟล์จริง (magic bytes ต้นไฟล์) ไม่ใช่ content_type หรือนามสกุลที่เบราว์เซอร์บอกมา
+app/models/post.rb:30:      real_type = Marcel::MimeType.for(StringIO.new(cover_head))
+$ grep -n "access_key\|secret" config/storage.yml
+18:  access_key_id: &lt;%= Rails.application.credentials.dig(:minio, :access_key_id) %&gt;
+19:  secret_access_key: &lt;%= Rails.application.credentials.dig(:minio, :secret_access_key) %&gt;
+21:# Use bin/rails credentials:edit to set the AWS secrets (as aws:access_key_id|secret_access_key)
+24:#   access_key_id: &lt;%= Rails.application.credentials.dig(:aws, :access_key_id) %&gt;
+25:#   secret_access_key: &lt;%= Rails.application.credentials.dig(:aws, :secret_access_key) %&gt;
+$ grep -n '"description"' db/schema.rb
+74:    t.text "description", null: false</code></pre>
+    <ul>
+      <li>ข้อ 1: บรรทัดเดียวที่เจอเป็น <code>&lt;%#</code> = comment ของ ERB ไม่ถูกรัน (บท 122) · ผ่าน</li>
+      <li>ข้อ 2: <code>Access Denied.</code> (ไม่ใช่ <code>Request has expired</code>) = "ไม่มีบัตรผ่านเลย" · โกดังไม่ให้เข้า · ผ่าน — เทียบกับข้อ 3 ของตรวจรับ: บัตรผ่านหมดอายุได้ข้อความอีกแบบ</li>
+      <li>ข้อ 3: Marcel อ่านจาก <code>cover_head</code> (4 KB แรกของไฟล์) · คำว่า content_type ที่เจอมีแค่ใน comment · ผ่าน</li>
+      <li>ข้อ 4: บรรทัด 18–19 ดึงจาก credentials · บรรทัด 21–25 ขึ้นต้นด้วย <code>#</code> = ตัวอย่างที่ <code>rails new</code> ใส่ไว้ให้ ไม่ทำงาน · ผ่าน</li>
+      <li>ข้อ 5: คอลัมน์ยังอยู่และยัง <code>NOT NULL</code> (โค้ดเขียนค่าลงทุกครั้งที่ save · บท 137) · ผ่าน</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">Quiz</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ข้อ 1 · (สไลด์หน้า 13 case 2) controller เขียน <code>@posts = Post.includes(:category).limit(20)</code> · ใน <code>_post.html.erb</code> มี <code>image_tag post.cover.variant(…)</code> และ <code>truncate(post.body.to_plain_text, length: 100)</code> · ต้องเติมอะไรใน controller?</p>
+  <div class="opts">
+    <button class="opt">ไม่ต้องเติม <code>includes(:category)</code> ครอบคลุมทุกอย่างที่ผูกกับ Post แล้ว</button>
+    <button class="opt">เติม <code>.with_attached_cover.with_rich_text_body</code> ให้เบิกรูปกับเนื้อหาทั้งหน้าทีเดียว</button>
+    <button class="opt">เติม <code>.includes(:cover_attachment)</code> ตามที่ Bullet แนะนำมาก็พอแล้ว</button>
+    <button class="opt">เปลี่ยน <code>limit(20)</code> เป็น <code>limit(10)</code> จำนวน query จะลดลงครึ่งหนึ่งเอง</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 2 ถูก · รูปปกอยู่ในตาราง attachments + blobs และเนื้อหาอยู่ในลิ้นชักกลาง action_text_rich_texts — ไม่มีอันไหนอยู่ในตาราง posts · ต้องสั่งเบิกทั้งสองอย่าง (เกณฑ์ข้อ 5: 6 query)</p>
+    <p>
+      ตัวเลือกที่ 1 ผิด — <code>includes(:category)</code> เบิกแค่หมวด · ตัวเลือกที่ 3 ได้แค่ครึ่งเดียว — ผลจริงตอนลืม <code>with_attached_cover</code> Bullet แนะนำ <code>.includes([:cover_attachment])</code> ซึ่งได้ป้ายแต่ใบรับฝาก (blob) ยังเบิกทีละใบ และยังไม่แก้ rich text ·
+      ตัวเลือกที่ 4 ลดจำนวนแต่ยังเป็น N+1 อยู่ (10 บทความก็ยังเบิกทีละบทความ)
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ของที่โชว์ในหน้ารวมแต่ไม่อยู่ในตารางหลัก = ต้องมี <code>with_attached_*</code> / <code>with_rich_text_*</code> (กฎ 13)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ข้อ 2 · เพื่อนตรวจเกณฑ์ข้อ 3 โดยก๊อป <code>src</code> ของรูปปก (<code>localhost:3000/rails/active_storage/blobs/redirect/…</code>) ไปเปิดใน incognito หลัง 10 นาที — ยังเห็นรูป · เขาสรุปว่า "signed URL ไม่หมดอายุ ระบบพัง" · คุณตอบว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">ถูกแล้ว ต้องลดอายุลายเซ็นจาก 5 นาทีให้สั้นลงกว่านี้</button>
+    <button class="opt">ถูกแล้ว เพราะ bucket <code>wongnok-dev</code> ถูกตั้งเป็น public ไว้</button>
+    <button class="opt">incognito ยังเก็บ cookie ไว้ ต้องปิดเบราว์เซอร์แล้วลองใหม่อีกรอบ</button>
+    <button class="opt">ตรวจผิดตัว URL ของ Rails ออกบัตรผ่านใหม่ให้ทุกครั้ง ต้องก๊อปตัว :9000</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 4 ถูก · URL <code>:3000</code> ตอบ <code>302</code> พร้อม URL ของ MinIO ที่เซ็น<strong>ใหม่</strong> (<code>X-Amz-Date</code> ใหม่) ทุกครั้งที่ถูกขอ · ตัวที่หมดอายุใน 5 นาทีคือตัว <code>:9000</code> (ผลจริงในขั้น 2: ได้ <code>Request has expired</code>)</p>
+    <p>
+      ตัวเลือกที่ 1 ไม่แก้อะไร — อายุสั้นแค่ไหน URL ของ Rails ก็ออกใบใหม่ได้ · ตัวเลือกที่ 2 ผิด — ภารกิจข้อ 2 พิสูจน์แล้วว่าไม่มีลายเซ็นได้ 403 ·
+      ตัวเลือกที่ 3 ผิด — URL ที่เซ็นแล้วไม่ใช้ cookie เลย (ผมเปิดจาก Chrome โปรไฟล์ใหม่ที่มี cookie 0 ตัว ก็ได้รูป)
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ก่อนสรุปว่าระบบพัง เช็คก่อนว่าตรวจถูกตัว — <code>curl -I</code> ดู <code>location:</code> แล้วทดสอบ URL ปลายทางนั้น</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">ข้อ 3 · (สไลด์หน้า 13 case 1) ในอีเมลสรุปรายสัปดาห์มี <code>&lt;%= raw @post.body.to_s %&gt;</code> · บทความหนึ่งมี <code>&lt;script&gt;</code> ที่คนร้ายส่งตรงเข้าฟอร์ม · ผลจริงคืออะไร และควรทำยังไง?</p>
+  <div class="opts">
+    <button class="opt">script ถูกล้างแล้วเพราะ <code>to_s</code> ผ่าน sanitize · แต่ลบ <code>raw</code> ทิ้ง ใช้ <code>&lt;%= @post.body %&gt;</code></button>
+    <button class="opt">script หลุดเข้าอีเมลทันที เพราะ <code>raw</code> ปิดการล้าง HTML ของ Action Text ทั้งหมด</button>
+    <button class="opt">อีเมลส่งไม่ออก เพราะ mailer ไม่ยอมรับ HTML ที่ผ่าน <code>raw</code> มาแล้ว</button>
+    <button class="opt">script ถูก escape เป็นตัวหนังสือ <code>&amp;lt;script&amp;gt;</code> ปลอดภัย ไม่ต้องแก้อะไรเลย</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 1 ถูก · ผลจริงในหัวข้อ recap: HTML ในอีเมลเหลือ <code>alert(1)</code> เป็นตัวหนังสือ · <code>onerror</code> หาย · เพราะ sanitize ทำงานใน <code>to_s</code> ก่อนถึง <code>raw</code> · แต่ <code>raw</code> ไม่ได้ช่วยอะไรและพร้อมปล่อยของดิบถ้ามีคนเปลี่ยนเป็น <code>body.body.to_html</code></p>
+    <p>
+      ตัวเลือกที่ 2 คิดว่า <code>raw</code> ปิด sanitize — ไม่จริง มันแค่ไม่ escape ซ้ำ · ตัวเลือกที่ 3 ผิด — อีเมลถูกสร้างได้ปกติ ·
+      ตัวเลือกที่ 4 ผิดสองจุด — แท็กถูก<strong>ถอดทิ้ง</strong> (sanitize) ไม่ใช่แปลงเป็นตัวหนังสือ (escape) และยังต้องแก้เพราะผิดข้อห้ามข้อ 1
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ปลอดภัยวันนี้เพราะบังเอิญ ≠ ปลอดภัยโดยการออกแบบ · ไม่มีเหตุผลต้องใช้ <code>raw</code> กับ body เลย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ข้อ 4 · ตรวจเกณฑ์ข้อ 6 ผ่าน (ไฟล์ปลอมถูกปฏิเสธ 422) · แต่เปิด MinIO console ยังเห็นไฟล์ขนาด <code>38.0 B</code> อยู่ใน bucket · หมายความว่าอะไร?</p>
+  <div class="opts">
+    <button class="opt">validation ไม่ทำงาน ไฟล์ปลอมถูกผูกกับบทความไปแล้ว ต้องแก้ model</button>
+    <button class="opt">MinIO ยังไม่ได้ลบให้ รอสักพักโกดังจะลบไฟล์ที่ถูกปฏิเสธทิ้งเอง</button>
+    <button class="opt">direct upload ส่งไฟล์ขึ้นโกดังก่อนตรวจ ไฟล์กลายเป็นกำพร้า ต้องมีงานเก็บกวาด</button>
+    <button class="opt">เบราว์เซอร์อัปไฟล์ซ้ำสองครั้ง ครั้งแรกถูกปฏิเสธ ครั้งที่สองผ่านเข้าไปได้</button>
+  </div>
+  <div class="explain">
+    <p>ตัวเลือกที่ 3 ถูก · Network: <code>PUT 200 … :9000</code> เกิดก่อน <code>POST 422 /posts</code> · ใน console ของ Rails <code>ActiveStorage::Blob.unattached</code> ได้ <code>[["fake.png", "image/png", 38]]</code> = ใบรับฝากที่ไม่มีป้ายผูกกับบทความไหน</p>
+    <p>
+      ตัวเลือกที่ 1 ผิด — ถ้าผูกแล้วจะไม่อยู่ใน <code>unattached</code> และหน้าจะ redirect ไม่ใช่ 422 · ตัวเลือกที่ 2 ผิด — MinIO ไม่รู้เรื่อง validation ของ Rails เลย ไม่มีใครลบให้ ·
+      ตัวเลือกที่ 4 ผิด — Network มี PUT ครั้งเดียวต่อการกดบันทึก
+    </p>
+    <p><strong>จุดที่ต้องจำ:</strong> ตรวจหลังอัป = มีของค้างเสมอ · ระบบที่รับไฟล์ต้องมีพนักงานหลังร้านเก็บกวาด (บล็อก E)</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง</th><th>ต้องสนใจไหม</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>14</td><td>"ก๊อป URL รูปไปเปิด incognito → ใช้ได้ แล้วรอหมดอายุ"</td><td>URL ใน <code>src</code> (<code>:3000</code>) ไม่หมดอายุ · ต้องก๊อปตัว <code>:9000</code> หลัง redirect</td><td>สนใจ — ขั้น 2 ข้อ 3</td></tr>
+    <tr><td>14</td><td>"log หน้า index ไม่เกิน 6 query" + ข้อกำหนด <code>with_attached_cover</code></td><td>ได้ 6 เพราะ <code>track_variants = false</code> (บท 140) ซึ่งไม่อยู่ในสไลด์ · ถ้าไม่มีบรรทัดนี้ได้ 8–10</td><td>สนใจ — ขั้น 2 ข้อ 5</td></tr>
+    <tr><td>14</td><td>"ย้ายข้อมูลเดิมจาก description มา body" (ไม่บอกย้ายที่ไหน)</td><td>ใบสั่งของเราเพิ่มบรรทัด: rake task ที่รันซ้ำได้ + escape ข้อความเดิม</td><td>สนใจ — ขั้น 1</td></tr>
+    <tr><td>13</td><td>case 1 <code>raw @post.body.to_s</code> (ให้คิดว่าอันตรายแค่ไหน)</td><td>Rails 8.1.4: <code>to_s</code> ล้างให้แล้ว script ไม่หลุด · แต่ <code>raw</code> ไร้ประโยชน์และเปิดทางพลาด</td><td>แค่รู้ไว้</td></tr>
+    <tr><td>13</td><td>case 3 (redirect / proxy) · case 4 (ลูกค้าขอให้ลบรูป)</td><td>อยู่ในบท 139 (redirect vs proxy) และบท 140 (<code>purge</code> · ไฟล์ใน MinIO + รูปย่อ)</td><td>แค่รู้ไว้</td></tr>
+    <tr><td>14</td><td>ป้าย "15 นาที"</td><td>เวลาสำหรับให้ AI ทำ · บทนี้ตรวจของจริงทีละข้อ ใช้ ~20 นาทีในเครื่อง (ข้อ 3 ต้องรอ 5 นาทีอยู่แล้ว)</td><td>แค่รู้ไว้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0140-variants-and-file-validation.html">← บทเรียน 140 · variant · ตรวจไฟล์</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0142-background-jobs-exactly-once.html">บทเรียน 142 → job · exactly-once</a>
+</nav>
+
+<h2 id="sn-sec-12">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#redirect-mode">Rails Guides — Active Storage: Redirect Mode</a> —
+      <strong>อ่านย่อหน้าแรก</strong>: URL ของ Rails คงที่ แล้ว redirect ไปหา URL ของ service ที่หมดอายุใน 5 นาที (ที่มาของกับดักข้อ 3)</li>
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#purging-unattached-uploads">Rails Guides — Active Storage: Purging Unattached Uploads</a> —
+      ไฟล์ที่อัปแล้วไม่ถูกผูก (เช่น ฟอร์มไม่ผ่าน) ค้างอยู่ใน storage · ตัวอย่างงานเก็บกวาดที่จะเข้าใจเต็ม ๆ ในบล็อก E</li>
+  <li><a href="https://guides.rubyonrails.org/action_text_overview.html#avoiding-n-1-queries">Rails Guides — Action Text: Avoiding N+1 Queries</a> —
+      สั้นมาก · ที่มาของ <code>with_rich_text_body</code> ในเกณฑ์ข้อ 5</li>
+  <li><a href="https://guides.rubyonrails.org/action_text_overview.html#rendering-rich-text-content">Rails Guides — Action Text: Rendering Rich Text Content</a> —
+      อ่านว่า Action Text sanitize เนื้อหาตอนแสดงผล (เหตุผลที่ <code>body.to_s</code> ใน case 1 ไม่มี script)</li>
+  <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html#file-signature-validation">OWASP File Upload Cheat Sheet — File Signature Validation</a> —
+      อ่านหัวข้อนี้กับ "Content-Type Validation" ข้างบนมัน: ทำไมเชื่อ Content-Type ไม่ได้ และต้องดู magic bytes (ที่มาของกฎ 14)</li>
+  <li><a href="https://github.com/rails/marcel">rails/marcel (GitHub)</a> — README ส่วน Usage: ส่งแค่เนื้อไฟล์ = ดูจากเนื้ออย่างเดียว · ส่ง <code>name:</code>/<code>declared_type:</code> ด้วย = ยอมถอยไปเชื่อชื่อไฟล์</li>
+  <li><a href="https://github.com/chonlawit-odds/wongnok-blog-all-in-one">repo ของอาจารย์ — wongnok-blog-all-in-one</a> —
+      เลือก branch <code>day3-d-done</code> ถ้าอยากเทียบกับเฉลยของอาจารย์ · จำไว้ว่าไฟล์ต่างจากบทเรียนนี้</li>
+</ul>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

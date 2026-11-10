@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 139 — signed URL และ direct upload — แอปออกใบอนุญาต ไม่ได้แบกไฟล์เอง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 139 · Rails · Day 4 Part 1</p>
+  <h1>signed URL และ direct upload — แอปออกใบอนุญาต ไม่ได้แบกไฟล์เอง</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="./0138-files-object-storage-minio.html">บทเรียน 138</a> (MinIO · Active Storage · รูปปก) มาก่อน · บทนี้ไม่เพิ่มโค้ดใหม่ — <strong>เปิดดูข้างในของที่บท 138 ติดตั้งไว้</strong></p>
+  <p class="standfirst">
+    บท 138 รูปปกขึ้นจอได้แล้ว · บทนี้ดูว่า<strong>ไฟล์วิ่งทางไหน</strong> — และทำไมทางที่ถูกคือ<strong>ไม่ผ่าน Rails</strong>
+    <br>อ่านจบบทนี้ คุณจะอ่าน URL ของรูปที่มี <code>X-Amz-Signature</code> ออกว่าแต่ละท่อนคืออะไร · รู้ว่ามันหมดอายุเมื่อไหร่และหมดแล้วเห็นอะไร ·
+    ชี้ใน Network ได้ว่าตอนอัปรูป<strong>ไฟล์ไปหา MinIO ตรง ๆ</strong> ส่วน Rails ได้แค่รหัส ·
+    เลือกได้ว่าเมื่อไหร่ให้ Rails <strong>บอกทาง</strong> (redirect) เมื่อไหร่ให้ Rails <strong>ส่งไฟล์เอง</strong> (proxy) ·
+    และรู้ว่าลบรูปแล้วต้องเช็คอะไรก่อนบอกเจ้าของว่า "ลบแล้ว"
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้</p>
+  <ul>
+    <li><strong>object storage · bucket · MinIO</strong> (<a href="./0138-files-object-storage-minio.html">บท 138</a>) — <strong>โกดังรับฝากของนอกร้าน</strong> · bucket <code>wongnok-dev</code> คือห้องหนึ่งในโกดัง ตั้งเป็น <strong>private</strong> (ห้ามคนนอกเข้า) · MinIO พูด "ภาษาเดียวกับ S3 ของ Amazon"</li>
+    <li><strong>blob · attachment</strong> (บท 138) — blob = <strong>ใบรับฝาก</strong> (ชื่อไฟล์ ขนาด ชนิด และ <code>key</code> = เลขช่องเก็บในโกดัง) · attachment = <strong>ป้ายว่าของชิ้นนี้ของแฟ้มไหน</strong> (โพสต์เลขอะไร ช่อง <code>cover</code>)</li>
+    <li><strong><code>direct_upload: true</code> · <code>ActiveStorage.start()</code></strong> (บท 138) — สองบรรทัดที่เปิดไว้ในฟอร์มกับ <code>application.js</code> · บทนี้ดูว่ามันทำอะไรจริง</li>
+    <li><strong>302 · <code>location:</code></strong> (<a href="../../rails-day-1/lessons/0102-rails-controller.html">บท 102</a>) — คำตอบที่บอกว่า "ของไม่อยู่ที่นี่ ไปเอาที่ <code>location</code>" · เบราว์เซอร์เดินตามเอง · <code>curl</code> ไม่เดินตาม</li>
+    <li><strong>DevTools แท็บ Network</strong> (<a href="../../rails-day-3/lessons/0130-hotwire-and-turbo-drive.html">บท 130</a>) — รายการทุกคำขอที่เบราว์เซอร์ยิงออกไป · <strong>CORS</strong> (<a href="../../day-8/lessons/0039-gin-binding-middleware.html">บท 39</a> ฝั่ง Go) — เบราว์เซอร์ถามเว็บปลายทางก่อนว่า "ยอมให้หน้าเว็บจากที่อื่นส่งของมาไหม"</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · aws-sdk-s3 1.238.0 · MinIO (image <code>pgsty/silo</code> ตัวเดียวกับ <code>compose.yaml</code> ของอาจารย์) · Chrome (สั่งด้วยสคริปต์) — สไลด์และ repo ของอาจารย์เขียน Ruby 4.0.5–4.0.6 · Rails 8.1.3 เรื่องในบทนี้ไม่ต่างกัน
+    <br><strong>📍 โค้ดเริ่มจาก:</strong> ตอนจบ<a href="./0138-files-object-storage-minio.html">บท 138</a> (รูปปก + direct upload · <code>git status --short</code> ว่าง) ·
+    บทนี้<strong>ทดลองแล้วคืนทิ้งตอนจบ</strong>ด้วย <code>git restore</code> — มีแก้ไฟล์แค่บรรทัดเดียวชั่วคราว (หัวข้อ proxy)
+    <br><strong>🖥 เปิดค้างไว้:</strong> <code>docker compose up -d</code> (Postgres + MinIO) · <code>bin/dev</code> หนึ่งหน้าต่าง (เว็บที่ <code>localhost:3000</code>) · อีกหน้าต่างไว้พิมพ์คำสั่ง · Chrome ที่เปิด DevTools ได้ ·
+    ผลรันทุกกล่องมาจากเครื่องจริง · <strong>key ของไฟล์ · ลายเซ็น · <code>signed_id</code> · วันเวลา · เลข ms · id ของ blob ของคุณจะไม่ตรงกับในบท</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">ประโยคเดียวของบทนี้: แอปออกใบอนุญาต ไม่ได้แบกไฟล์เอง</h2>
+
+<p>
+  ตอนนี้ไฟล์รูปอยู่ใน MinIO แล้ว · คำถามต่อไปคือ<strong>ใครเป็นคนขนไฟล์</strong>ระหว่างเบราว์เซอร์กับ MinIO ·
+  ถ้าให้ Rails ขนเอง รูปขนาด 600 KB ที่คนเปิดดู 1,000 ครั้ง = Rails ต้องอ่านไฟล์จาก MinIO แล้วส่งต่อ 600 MB
+</p>
+<p>
+  ระหว่างส่ง Rails ต้อง<strong>กันคนรับคำขอไว้หนึ่งคนจนกว่าจะส่งเสร็จ</strong> · และ Rails มีคนรับคำขอจำกัด
+  (Puma = โปรแกรมที่รับคำขอแทน Rails · ไฟล์ <code>config/puma.rb</code> ของเราตั้งไว้ 3 คน) ·
+  ถ้าคนรับคำขอทุกคนกำลังขนรูป คนที่แค่อยากเปิดหน้าบทความก็ต้องรอคิว
+</p>
+<p>
+  ทางที่ Active Storage ใช้คือ <strong>Rails ไม่ขนไฟล์ แต่ออก "ใบอนุญาต" ให้เบราว์เซอร์ไปคุยกับ MinIO เอง</strong> · ใช้สองทิศ:
+</p>
+
+<div class="diagram">ขาออก — มีคนเปิดดูรูป
+  เบราว์เซอร์ ──① ขอรูป────────────────────▶ Rails (:3000)
+  เบราว์เซอร์ ◀─② 302 + URL ที่เซ็นแล้ว───── Rails          (Rails แค่เซ็นชื่อ ไม่แตะไฟล์)
+  เบราว์เซอร์ ──③ ดึงไฟล์ตรง────────────────▶ MinIO (:9000)
+
+ขาเข้า — มีคนอัปรูป (direct upload)
+  เบราว์เซอร์ ──① ขอใบอนุญาต (ชื่อ ขนาด ลายนิ้วมือไฟล์)──▶ Rails
+  เบราว์เซอร์ ◀─② URL ที่เซ็นแล้ว สำหรับส่งไฟล์───────── Rails
+  เบราว์เซอร์ ──③ ส่งไฟล์ตรง──────────────────────────▶ MinIO
+  เบราว์เซอร์ ──④ ส่งฟอร์ม (มีแค่รหัสของไฟล์)─────────▶ Rails</div>
+
+<div class="analogy">
+  <span class="label">🍜 เทียบกับร้านอาหาร</span>
+  <p>
+    ร้านของเราฝากของไว้ที่<strong>โกดังรับฝากของนอกร้าน</strong> (MinIO) · ถ้าให้พนักงานเดินไปแบกของจากโกดังมาให้ลูกค้าทุกครั้ง หน้าร้านจะไม่มีคนรับออเดอร์ ·
+    ร้านจึงทำแค่<strong>ออกบัตรผ่านที่มีลายเซ็นของร้าน</strong>ให้ลูกค้าเดินไปที่โกดังเอง · คนเฝ้าโกดัง<strong>ตรวจลายเซ็นบนบัตร</strong>ได้เองโดยไม่ต้องโทรถามร้าน ·
+    บัตรเขียนไว้ว่าใช้ได้ <strong>5 นาที</strong> และใช้กับ<strong>ของชิ้นเดียว</strong>ที่ระบุไว้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> บัตรผ่านจริงมักมีชื่อคนถือ คนเฝ้าดูหน้าก่อนให้เข้า · URL ที่เซ็นแล้ว<strong>ไม่มีชื่อใคร</strong> — ใครถือ URL ก็เปิดได้ภายใน 5 นาที (ส่งต่อในแชตก็เปิดได้) ·
+    และ "ตรวจลายเซ็นเอง" ของ MinIO คือการคำนวณทางคณิตศาสตร์ด้วยรหัสลับที่ร้านกับโกดังรู้ร่วมกัน ไม่ใช่การดูลายมือ
+  </p>
+</div>
+
+<p>
+  <strong>เทียบของที่รู้:</strong> ถ้าเคยทำ JWT ใน <a href="../../day-9/lessons/0049-basic-auth-jwt.html">บท 49</a> (Go) — คือไอเดียเดียวกัน: ข้อมูลที่<strong>เซ็นแล้ว + มีเวลาหมดอายุ</strong> ฝั่งที่รับตรวจลายเซ็นเองได้โดยไม่ต้องถามฐานข้อมูล ·
+  ต่างกันแค่ JWT เป็น "บัตรที่บอกว่าคุณเป็นใคร" ส่วน URL ที่เซ็นแล้วเป็น "บัตรที่บอกว่าเปิดไฟล์นี้ได้"
+</p>
+
+<div class="jargon">
+  <span class="label">🏷 ศัพท์ไว้คุยกับ senior / AI</span>
+  <dl>
+    <dt>signed URL · presigned URL</dt>
+    <dd>URL ของไฟล์ใน storage ที่<strong>มีลายเซ็นและเวลาหมดอายุติดมาด้วย</strong> · AWS เรียก presigned URL · ถาม senior ได้ว่า "ไฟล์ของเราเสิร์ฟผ่าน presigned URL หรือ bucket เปิด public?"</dd>
+    <dt>direct upload</dt>
+    <dd>เบราว์เซอร์ส่งไฟล์ขึ้น storage ตรง ๆ แอปได้แค่รหัสของไฟล์ · พิมพ์บอก AI ได้ว่า "อัปโหลดแบบ direct upload ของ Active Storage ห้ามรับไฟล์ผ่าน controller"</dd>
+    <dt>offload</dt>
+    <dd>ย้ายงานหนัก (ขนไฟล์) ออกจากแอปไปให้ระบบที่ถนัดกว่าทำ · "เรา offload การเสิร์ฟไฟล์ไปที่ S3 แล้ว"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">ขาออก ① — <code>&lt;img&gt;</code> ของเราชี้ไปที่ไหน</h2>
+
+<p>
+  เปิดบทความที่มีรูปปก (บท 138 คุณอัปให้บทความไหนไว้ ใช้เลขนั้น · ในบทนี้ใช้บทความ 1 · ถ้ายังไม่มี ให้เข้า <code>/posts/1/edit</code> เลือกรูปแล้วกดบันทึกก่อน) ·
+  แล้วดูแท็ก <code>&lt;img&gt;</code> ที่ Rails ส่งมา ·
+  <code>curl -s</code> = ขอหน้าเว็บแบบเงียบ (ไม่โชว์แถบความคืบหน้า) · <code>grep -o</code> = ตัดมาเฉพาะส่วนที่ตรงกับรูปแบบ ·
+  รูปแบบ <code>'&lt;img[^&gt;]*&gt;'</code> อ่านว่า "ตั้งแต่ <code>&lt;img</code> ไปจนเจอ <code>&gt;</code> ตัวแรก" = แท็กรูปหนึ่งแท็ก:
+</p>
+
+<pre><code>$ curl -s localhost:3000/posts/1 | grep -o '&lt;img[^&gt;]*&gt;'
+&lt;img alt="" class="w-full max-h-96 object-cover rounded-box" src="http://localhost:3000/rails/active_storage/blobs/redirect/eyJfcmFpbHMiOnsiZGF0YSI6NCwicHVyIjoiYmxvYl9pZCJ9fQ==--e48eee28ac016f73b5f68e117da8de5324704ad9/cover.jpg" /&gt;</code></pre>
+
+<p>มาจากบรรทัดนี้ใน <code>app/views/posts/_post.html.erb</code> (บท 138):</p>
+
+<pre><code><span class="c">&lt;%# app/views/posts/_post.html.erb (ในกิ่ง if full) %&gt;</span>
+&lt;%= <span class="f">image_tag</span> post.cover, alt: <span class="s">""</span>, class: <span class="s">"w-full max-h-96 object-cover rounded-box"</span> <span class="k">if</span> post.cover.<span class="f">attached?</span> %&gt;</code></pre>
+
+<p><code>src</code> <strong>ไม่ได้ชี้ไปที่ MinIO</strong> · มันชี้กลับมาที่ Rails เอง แบ่งเป็น 4 ท่อน:</p>
+
+<ul>
+  <li><code>/rails/active_storage/blobs/redirect/</code> — ทางเข้า (route) ที่ Active Storage เพิ่มให้แอปเองตั้งแต่ติดตั้ง · คำว่า <code>redirect</code> บอกว่าทางนี้<strong>จะส่ง 302</strong></li>
+  <li><code>eyJfcmFp…fQ==</code> — ข้อมูลที่เข้ารหัสแบบ base64 (วิธีเขียนข้อมูลให้เป็นตัวอักษรล้วน ถอดกลับได้ ไม่ใช่การล็อก) · ลองถอดดู:
+<pre><code>$ echo 'eyJfcmFpbHMiOnsiZGF0YSI6NCwicHVyIjoiYmxvYl9pZCJ9fQ==' | base64 -d
+{"_rails":{"data":4,"pur":"blob_id"}}</code></pre>
+    (<code>|</code> = ส่งข้อความต่อให้คำสั่งถัดไป · <code>base64 -d</code> = ถอดกลับ) · ได้ว่า "<strong>blob เลข 4</strong> · ใช้เป็นรหัส blob" · ใครก็ถอดได้</li>
+  <li><code>--e48eee28…</code> — <strong>ลายเซ็นของ Rails</strong> (คำนวณจากรหัสลับของแอป) · ถ้าใครแก้ 4 เป็น 5 เพื่อแอบดูไฟล์ของคนอื่น ลายเซ็นจะไม่ตรง Rails ไม่ยอม (ลองแล้ว: แก้เลขแล้วขอ URL นั้น ได้ <code>404 Not Found</code> · log บอก <code>0 queries</code> = ลายเซ็นไม่ผ่านตั้งแต่ด่านแรก ไม่ได้ไปค้นตารางด้วยซ้ำ) · ทั้งก้อนสองท่อนนี้ Rails เรียกว่า <strong><code>signed_id</code></strong></li>
+  <li><code>cover.jpg</code> — ชื่อไฟล์ติดท้ายไว้ให้คนอ่านรู้เรื่อง · Rails ไม่ได้ใช้หาไฟล์</li>
+</ul>
+
+<h2 id="sn-sec-3">ขาออก ② — Rails ตอบ 302 แล้วชี้ไป MinIO</h2>
+
+<p>
+  ขอ URL นั้นด้วย <code>curl -I</code> (<code>-I</code> = ขอดูแค่<strong>หัวของคำตอบ</strong> ไม่เอาเนื้อ) · ใช้ <code>src</code> ของคุณเองแทน · หัวคำตอบยาว ข้างล่างตัดมาเฉพาะบรรทัดที่ต้องดู:
+</p>
+
+<pre><code>$ curl -I http://localhost:3000/rails/active_storage/blobs/redirect/eyJfcmFpbHMiOnsiZGF0YSI6NCwicHVyIjoiYmxvYl9pZCJ9fQ==--e48eee28ac016f73b5f68e117da8de5324704ad9/cover.jpg
+HTTP/1.1 302 Found
+…
+date: Tue, 10 Nov 2026 03:18:55 GMT
+location: http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi?response-content-disposition=inline%3B%20filename%3D%22cover.jpg%22%3B%20filename%2A%3DUTF-8%27%27cover.jpg&amp;response-content-type=image%2Fjpeg&amp;X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=minioadmin%2F20261110%2Fus-east-1%2Fs3%2Faws4_request&amp;X-Amz-Date=20261110T031855Z&amp;X-Amz-Expires=300&amp;X-Amz-SignedHeaders=host&amp;X-Amz-Signature=7731b001629a439069df22519f98af2188713a248d8dd88e20c4fc2f8572e52f
+content-type: text/html; charset=utf-8
+cache-control: max-age=300, private
+…
+content-length: 0</code></pre>
+
+<ul>
+  <li><code>302 Found</code> + <code>location: http://localhost:9000/…</code> — "รูปไม่ได้อยู่ที่ผม ไปเอาที่ MinIO ตามที่อยู่นี้" · เบราว์เซอร์เดินตามเอง ผู้ใช้ไม่เห็นอะไรเปลี่ยน</li>
+  <li><code>content-length: 0</code> — คำตอบของ Rails <strong>ไม่มีตัวไฟล์เลยสักไบต์</strong></li>
+  <li><code>cache-control: max-age=300, private</code> — บอกเบราว์เซอร์ว่า "จำทางนี้ไว้ได้ 300 วินาที (5 นาที) · เก็บไว้ในเครื่องของคุณเท่านั้น" · ตัวเลข 300 นี้จะโผล่อีกรอบในหัวข้อถัดไป</li>
+</ul>
+
+<p>ฝั่ง Rails ทำอะไรบ้าง ดูใน log (หน้าต่าง <code>bin/dev</code>) ของคำขอนั้น:</p>
+
+<pre><code>Started GET "/rails/active_storage/blobs/redirect/eyJfcmFp…/cover.jpg" for ::1 at 2026-11-10 10:18:55 +0700
+Processing by ActiveStorage::Blobs::RedirectController#show as JPEG
+  …
+  ActiveStorage::Blob Load (0.7ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 4 LIMIT 1 …
+  S3 Storage (0.6ms) Generated URL for file at key: 16r6iq1cr83g24mawphb39a7j0oi (http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi?…)
+Redirected to http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi?…
+Completed 302 Found in 9ms (ActiveRecord: 2.4ms (1 query, 0 cached) | GC: 0.0ms)</code></pre>
+
+<ul>
+  <li><code>Blob Load … "id" = 4</code> — เปิดใบรับฝากเลข 4 (เลขที่ได้จาก <code>signed_id</code>) เพื่อดู <code>key</code> = เลขช่องเก็บในโกดัง</li>
+  <li><code>S3 Storage (0.6ms) Generated URL</code> — <strong>เซ็น URL ใช้เวลาไม่ถึง 1 ms</strong> · เป็นการคำนวณในเครื่อง ไม่ได้คุยกับ MinIO เลย</li>
+  <li>ไม่มีบรรทัด <code>Downloaded file</code> — Rails <strong>ไม่ได้โหลดรูป</strong> · ตรงกับประโยคในสไลด์หน้า 10 "Rails ไม่เคยแตะตัวไฟล์เลย — มันแค่เซ็นชื่อแล้วชี้ทาง"</li>
+</ul>
+
+<h2 id="sn-sec-4">อ่าน URL ที่เซ็นแล้วทีละท่อน</h2>
+
+<p>
+  URL ใน <code>location:</code> ยาวมากแต่ไม่ได้ซับซ้อน · ผมตัดขึ้นบรรทัดใหม่ตรงเครื่องหมาย <code>?</code> และ <code>&amp;</code> ให้อ่านง่าย (ของจริงเป็นบรรทัดเดียว) ·
+  <code>%2F</code> <code>%3B</code> <code>%20</code> คือวิธีเขียน <code>/</code> <code>;</code> และช่องว่างใน URL
+</p>
+
+<pre><code>http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi
+?response-content-disposition=inline%3B%20filename%3D%22cover.jpg%22%3B%20filename%2A%3DUTF-8%27%27cover.jpg
+&amp;response-content-type=image%2Fjpeg
+&amp;X-Amz-Algorithm=AWS4-HMAC-SHA256
+&amp;X-Amz-Credential=minioadmin%2F20261110%2Fus-east-1%2Fs3%2Faws4_request
+&amp;X-Amz-Date=20261110T031855Z
+&amp;X-Amz-Expires=300
+&amp;X-Amz-SignedHeaders=host
+&amp;X-Amz-Signature=7731b001629a439069df22519f98af2188713a248d8dd88e20c4fc2f8572e52f</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ท่อน</th><th>แปลเป็นภาษาคน</th></tr></thead>
+  <tbody>
+    <tr><td><code>/wongnok-dev/16r6iq…</code></td><td>ห้อง <code>wongnok-dev</code> · ช่องเก็บเลข <code>16r6iq…</code> (= <code>key</code> ของ blob สุ่มมาตอนอัป · <strong>ไม่ใช่ชื่อ cover.jpg</strong>)</td></tr>
+    <tr><td><code>response-content-disposition</code> · <code>response-content-type</code></td><td>สั่ง MinIO ว่าตอนส่งไฟล์ ให้บอกเบราว์เซอร์ว่า "นี่คือรูป jpeg ชื่อ cover.jpg · <strong>เปิดโชว์ในหน้า</strong> (inline) ไม่ต้องดาวน์โหลด"</td></tr>
+    <tr><td><code>X-Amz-Algorithm</code></td><td>วิธีคำนวณลายเซ็น (มาตรฐานของ S3 ชื่อ Signature Version 4) · MinIO พูดภาษา S3 จึงใช้ชื่อขึ้นต้น <code>X-Amz-</code> (Amz = Amazon)</td></tr>
+    <tr><td><code>X-Amz-Credential</code></td><td>"ใครเซ็น" — <code>minioadmin</code> คือ <strong>access key id</strong> (ชื่อผู้ใช้ของโกดัง) + วันที่ + <code>us-east-1</code> (ค่า <code>region</code> ที่เขียนไว้ใน <code>config/storage.yml</code> บท 138 · S3 จริงใช้บอกว่าโกดังอยู่ประเทศไหน) · <strong>รหัสลับ (secret) ไม่อยู่ใน URL</strong></td></tr>
+    <tr><td><code>X-Amz-Date</code></td><td>เวลาที่เซ็น · <code>T031855Z</code> = 03:18:55 เวลาสากล (Z) = <strong>10:18:55 เวลาไทย</strong> (บวก 7 ชั่วโมง) — ตรงกับบรรทัด <code>date:</code> ของคำตอบ 302</td></tr>
+    <tr><td><code>X-Amz-Expires=300</code></td><td><strong>ใช้ได้ 300 วินาทีนับจาก X-Amz-Date</strong> = 5 นาที</td></tr>
+    <tr><td><code>X-Amz-SignedHeaders=host</code></td><td>ลายเซ็นครอบหัวคำขอตัวไหนด้วย · ตรงนี้แค่ <code>host</code> (= ต้องเรียกที่ <code>localhost:9000</code> เท่านั้น)</td></tr>
+    <tr><td><code>X-Amz-Signature</code></td><td><strong>ลายเซ็น</strong> · คำนวณจาก<strong>ทุกท่อนด้านบน</strong> + รหัสลับของ MinIO ที่อยู่ใน credentials ของเรา (บท 138)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  MinIO รู้รหัสลับตัวเดียวกัน · พอได้คำขอ มันคำนวณลายเซ็นซ้ำจากทุกท่อนในคำขอ ·
+  <strong>ถ้าตรงกับ <code>X-Amz-Signature</code></strong> = ร้านออกบัตรนี้จริงและไม่มีใครแก้ตัวอักษรสักตัว · แล้วค่อยเช็คว่ายังไม่หมดเวลา
+</p>
+
+<div class="predict">
+  <p>คนที่ได้ URL นี้ไปอยากเปิดได้นานขึ้น · เลยแก้ <code>X-Amz-Expires=300</code> เป็น <code>X-Amz-Expires=86400</code> (1 วัน) แล้วเปิดทันที (ยังไม่ถึง 5 นาที) ·
+     <code>-w '\n[%{http_code}]\n'</code> = ให้ curl พิมพ์เลข status ในวงเล็บเหลี่ยมตอนจบ:</p>
+<pre><code>$ curl -s "http://localhost:9000/wongnok-dev/16r6iq…&amp;X-Amz-Expires=86400&amp;X-Amz-SignedHeaders=host&amp;X-Amz-Signature=…" -w '\n[%{http_code}]\n'</code></pre>
+  <p>(การแก้ URL เล่นแบบนี้ ทำได้กับแอปในเครื่องตัวเองเท่านั้น · <strong>ห้ามลองกับเว็บหรือ storage ของคนอื่น</strong>)</p>
+  <p class="ask">ได้รูป และเปิดได้ 1 วัน · ได้รูปแต่ยังหมดใน 5 นาที · หรือไม่ได้อะไรเลย?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง (URL ที่เซ็นใหม่หลังเวลา 10:24 · ตัดท่อนกลางออก):</p>
+<pre><code>$ curl -s "http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi?…&amp;X-Amz-Date=20261110T032423Z&amp;<strong>X-Amz-Expires=86400</strong>&amp;X-Amz-SignedHeaders=host&amp;X-Amz-Signature=3da33dbc…" -w '\n[%{http_code}]\n'
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;SignatureDoesNotMatch&lt;/Code&gt;&lt;Message&gt;The request signature we calculated does not match the signature you provided. Check your key and signing method.&lt;/Message&gt;
+&lt;Key&gt;16r6iq1cr83g24mawphb39a7j0oi&lt;/Key&gt;&lt;BucketName&gt;wongnok-dev&lt;/BucketName&gt;…&lt;/Error&gt;
+[403]</code></pre>
+    <ul>
+      <li>คำตอบเป็น <strong>XML</strong> (ข้อความแบบมีแท็กคล้าย HTML · S3 และ MinIO ใช้รูปแบบนี้ตอบ error) · อ่านแค่ <code>&lt;Code&gt;</code> กับ <code>&lt;Message&gt;</code> พอ</li>
+      <li><code>SignatureDoesNotMatch</code> — "ลายเซ็นที่เราคำนวณ ไม่ตรงกับลายเซ็นที่คุณส่งมา" · เพราะ 300 เป็นหนึ่งในท่อนที่ถูกเอาไปคำนวณลายเซ็น แก้ตัวเดียวลายเซ็นก็ไม่ตรง</li>
+      <li><code>[403]</code> = ห้ามเข้า · ไม่ได้รูปเลยแม้จะยังไม่ถึง 5 นาที</li>
+      <li>ผมลองแก้อีกแบบคือเปลี่ยน key ของไฟล์ไปหนึ่งตัวอักษร (หวังแอบเปิดไฟล์ข้าง ๆ) → ได้ <code>SignatureDoesNotMatch</code> 403 เหมือนกัน</li>
+    </ul>
+    <p>สรุป: <strong>คนถือ URL แก้อะไรไม่ได้เลย</strong> ทำได้อย่างเดียวคือใช้ตามที่ร้านออกให้</p>
+  </div>
+</div>
+
+<div class="warn">
+  <p>
+    <strong>⚠️ <code>minioadmin</code> โผล่ในทุก URL ของรูป</strong> — ส่วนนั้นคือชื่อผู้ใช้ ไม่ใช่รหัสลับ จึงยังปลอดภัย ·
+    แต่เป็นเหตุผลอีกข้อที่ production (เว็บตัวจริงที่คนใช้) <strong>ไม่ควรใช้ผู้ใช้ root ของโกดัง</strong> (บัญชีแม่ที่ทำได้ทุกอย่าง) · ควรสร้าง access key แยกที่มีสิทธิ์แค่ bucket เดียว (บท 138)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🏷 ศัพท์ไว้คุยกับ senior / AI</span>
+  <dl>
+    <dt>signature (ลายเซ็น)</dt>
+    <dd>ค่าที่คำนวณจากข้อมูล + รหัสลับ · แก้ข้อมูลตัวเดียว ลายเซ็นไม่ตรงทันที · คนที่ไม่มีรหัสลับสร้างลายเซ็นใหม่ไม่ได้ · "URL นี้ถูกแก้ระหว่างทาง ได้ <code>SignatureDoesNotMatch</code>"</dd>
+    <dt>access key id · secret access key</dt>
+    <dd>คู่ "ชื่อผู้ใช้ + รหัสผ่าน" ของ S3/MinIO · id โผล่ใน URL ได้ · secret ห้ามหลุด · ถาม senior ได้ว่า "production ใช้ access key แยกที่มีสิทธิ์แค่ bucket นี้ใช่ไหม"</dd>
+    <dt>SigV4 (AWS Signature Version 4)</dt>
+    <dd>มาตรฐานการเซ็นคำขอของ S3 ที่ MinIO ก็ใช้ · คือที่มาของ <code>X-Amz-*</code> ทั้งหมด · พิมพ์ถาม AI ได้ว่า "อธิบาย query parameter ของ SigV4 presigned URL"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">5 นาทีมาจากไหน — และหมดแล้วเห็นอะไร</h2>
+
+<p>เราไม่เคยตั้งค่าเลข 5 นาทีที่ไหน · ถาม Rails ตรง ๆ ใน <code>bin/rails console</code> (พิมพ์ชื่อค่าตั้งแล้ว Enter = ถามว่าตอนนี้เป็นเท่าไร):</p>
+
+<pre><code>Loading development environment (Rails 8.1.4)
+wongnok-blog-all-in-one(dev):001&gt; ActiveStorage.service_urls_expire_in
+=&gt; 5 minutes
+wongnok-blog-all-in-one(dev):002&gt; ActiveStorage.urls_expire_in
+=&gt; nil
+wongnok-blog-all-in-one(dev):003&gt; exit</code></pre>
+
+<ul>
+  <li><code>service_urls_expire_in</code> → <code>5 minutes</code> — อายุของ URL <strong>ฝั่ง MinIO</strong> (ตัว <code>:9000</code>) · เป็นค่าเริ่มต้นที่ Active Storage ใส่ให้เองเมื่อเราไม่ได้ตั้ง ·
+    อยากเปลี่ยนให้เขียน <code>config.active_storage.service_urls_expire_in = 1.hour</code> ใน <code>config/environments/…</code> (บทนี้ไม่ต้องทำ)</li>
+  <li><code>urls_expire_in</code> → <code>nil</code> — อายุของ URL <strong>ฝั่ง Rails</strong> (ตัว <code>:3000</code> ใน <code>src</code>) · <code>nil</code> = <strong>ไม่หมดอายุ</strong></li>
+</ul>
+
+<p>
+  ลองของจริง: เก็บ URL ของ <code>:9000</code> ที่เซ็นตอน 10:18:55 ไว้ในตัวแปรของ shell (<code>URL="http://localhost:9000/wongnok-dev/…"</code> ทั้งเส้น) แล้วเปิดซ้ำตอนใกล้ครบ 5 นาที กับตอนเลย 5 นาที ·
+  (ไม่ต้องรอตามก็ได้ อ่านผลด้านล่างพอ)
+</p>
+<ul>
+  <li><code>date +%T;</code> = พิมพ์เวลาตอนนั้น · <code>;</code> = จบคำสั่งนี้แล้วรันคำสั่งถัดไปต่อเลย</li>
+  <li><code>-o /dev/null</code> = ทิ้งเนื้อไฟล์ ไม่พิมพ์ออกจอ · <code>-w '%{http_code} %{content_type} %{size_download}\n'</code> = ให้ curl พิมพ์ status · ชนิดไฟล์ · จำนวนไบต์ที่ได้</li>
+  <li><code>-i</code> = โชว์หัวคำตอบก่อนเนื้อ</li>
+</ul>
+
+<pre><code>$ date +%T; curl -s -o /dev/null -w &#x27;%{http_code} %{content_type} %{size_download}\n&#x27; &quot;$URL&quot;
+10:23:45
+200 image/jpeg 618479
+$ date +%T; curl -s -i &quot;$URL&quot;
+10:24:05
+HTTP/1.1 403 Forbidden
+…
+Content-Type: application/xml
+Server: Silo
+…
+
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;AccessDenied&lt;/Code&gt;&lt;Message&gt;Request has expired&lt;/Message&gt;&lt;Key&gt;16r6iq1cr83g24mawphb39a7j0oi&lt;/Key&gt;&lt;BucketName&gt;wongnok-dev&lt;/BucketName&gt;…&lt;/Error&gt;</code></pre>
+
+<ul>
+  <li>4 นาที 50 วินาที → <code>200 image/jpeg 618479</code> (ได้รูปครบ 618,479 ไบต์)</li>
+  <li>เลย 5 นาที → <code>403</code> + <code>&lt;Code&gt;AccessDenied&lt;/Code&gt;&lt;Message&gt;Request has expired&lt;/Message&gt;</code> · ลายเซ็นยังถูก แต่บัตรหมดเวลาแล้ว · ในเบราว์เซอร์จะเห็นข้อความ XML ก้อนนี้แทนรูป</li>
+  <li><code>Server: Silo</code> — ชื่อโปรแกรมที่ตอบ · คือ MinIO ตัวที่คอร์สใช้ (image <code>pgsty/silo</code>) ไม่ใช่ของแปลกปลอม</li>
+</ul>
+
+<p>แล้วหน้าบทความล่ะ — คนที่เปิดหน้าเว็บหลัง 5 นาทีจะเห็นรูปเสียไหม? ขอ URL ของ Rails (<code>:3000</code> ตัวเดิมใน <code>src</code>) อีกรอบ:</p>
+
+<pre><code><span class="c"># 10:24:23 — เลย 5 นาทีหลังเซ็นครั้งแรก (10:18:55)</span>
+$ curl -I http://localhost:3000/rails/active_storage/blobs/redirect/eyJfcmFpbHMiOnsiZGF0YSI6NCwicHVyIjoiYmxvYl9pZCJ9fQ==--e48eee28ac016f73b5f68e117da8de5324704ad9/cover.jpg
+HTTP/1.1 302 Found
+…
+date: Tue, 10 Nov 2026 03:24:23 GMT
+location: http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi?response-content-disposition=inline%3B%20filename%3D%22cover.jpg%22%3B%20filename%2A%3DUTF-8%27%27cover.jpg&amp;response-content-type=image%2Fjpeg&amp;X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=minioadmin%2F20261110%2Fus-east-1%2Fs3%2Faws4_request&amp;<strong>X-Amz-Date=20261110T032423Z</strong>&amp;X-Amz-Expires=300&amp;X-Amz-SignedHeaders=host&amp;X-Amz-Signature=3da33dbc0a09fda5a8e0b0ea97bbca49233b31e3ca88d8a18fb854e1a91b3073
+cache-control: max-age=300, private
+…</code></pre>
+
+<p>
+  ได้ 302 เหมือนเดิม แต่ <strong><code>X-Amz-Date</code> เป็นเวลาใหม่</strong> และลายเซ็นใหม่ · ทุกครั้งที่มีคนขอรูปผ่าน <code>:3000</code> Rails <strong>เซ็นบัตรใบใหม่ให้</strong> ·
+  สรุป: <strong>URL ของ MinIO หมดใน 5 นาที · URL ของ Rails ไม่หมด</strong> คนเปิดหน้าเว็บเมื่อไหร่ก็เห็นรูป
+</p>
+
+<div class="warn">
+  <p>
+    <strong>⚠️ URL <code>:3000</code> คือลิงก์ถาวร ใครได้ไปก็เปิดได้ ไม่ต้อง login</strong> — คอมเมนต์ใน source ของ Rails เตือนไว้เองว่า controller ของ Active Storage <strong>เปิดให้ทุกคนเข้าเป็นค่าเริ่มต้น</strong> ·
+    รูปปกบล็อกที่ทุกคนเห็นอยู่แล้วไม่มีปัญหา · แต่ไฟล์ที่ควรเห็นเฉพาะเจ้าของ (ใบเสร็จ · เอกสารส่วนตัว) <strong>ห้ามใช้ท่านี้เฉย ๆ</strong> ต้องมีด่านตรวจสิทธิ์ก่อนเซ็น (Rails Guides เรียก Authenticated Controllers · เรื่องสิทธิ์อยู่ใน Part 2 ของสไลด์)
+  </p>
+</div>
+
+<div class="analogy">
+  <span class="label">🍜 เทียบกับร้านอาหาร</span>
+  <p>
+    <code>src</code> ของ Rails คือ<strong>ป้ายหน้าร้านที่เขียนว่า "อยากได้ของในโกดัง ถามพนักงาน"</strong> — ป้ายนี้ตั้งถาวร ·
+    ลูกค้าเดินมาถามเมื่อไหร่ พนักงานก็<strong>ออกบัตรผ่านใบใหม่</strong>ที่มีอายุ 5 นาทีให้ · บัตรใบเก่าที่ตกอยู่บนพื้นหมดอายุไปแล้วใช้ไม่ได้ แต่ป้ายยังพาไปขอใบใหม่ได้เสมอ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานร้านจริงจะมองหน้าคนถามก่อนออกบัตร · พนักงานของ Active Storage <strong>ไม่ดูหน้าใครเลย</strong> ใครถามมาด้วยป้ายที่ถูกต้องก็ออกบัตรให้ทันที —
+    นั่นคือเหตุผลของกล่องเตือนด้านบน
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🏷 ศัพท์ไว้คุยกับ senior / AI</span>
+  <dl>
+    <dt><code>service_urls_expire_in</code></dt>
+    <dd>อายุของ URL ที่เซ็นแล้วของ storage (ค่าเริ่มต้น 5 นาที) · "รูปเปิดค้างนาน ๆ แล้วเสีย เพราะ <code>service_urls_expire_in</code> หมด ต้อง reload หน้า"</dd>
+    <dt><code>urls_expire_in</code> · permanent URL</dt>
+    <dd>อายุของ URL ฝั่ง Rails (ค่าเริ่มต้นไม่หมด) · ถาม senior ได้ว่า "ไฟล์ส่วนตัวเราใช้ authenticated controller หรือยัง เพราะ URL ของ Active Storage เป็น permanent"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-6">ทำไมไม่เปิด bucket เป็น public ไปเลย</h2>
+
+<p>
+  ถ้าเปิด bucket ให้ทุกคนอ่านได้ ก็ไม่ต้องเซ็นอะไร URL สั้นกว่า · สไลด์หน้า 10 ให้เหตุผลที่ไม่ทำ 4 ข้อ เล่าเป็นภาษาคน:
+</p>
+
+<ol>
+  <li><strong>URL หลุดแล้วเก็บคืนไม่ได้</strong> — สไลด์ยกตัวอย่างว่า URL ไปโผล่ใน log · ใน referrer (หัวคำขอที่บอกเว็บปลายทางว่ามาจากหน้าไหน) · ในแชต · ของ public เปิดได้ตลอด · ของที่เซ็นแล้วหลุดไปก็ตายใน 5 นาที</li>
+  <li><strong>ลบในแอปแล้วแต่ไฟล์ยังเปิดได้</strong> — ลบข้อมูลใน DB แล้วลืมลบไฟล์ = คนที่จำ URL ไว้ยังเปิดได้ตลอดกาล (หัวข้อท้ายบทจะเห็นว่าเรื่องนี้เกิดกับเราได้แม้ bucket ไม่ public)</li>
+  <li><strong>ของส่วนตัวกลายเป็นของสาธารณะเงียบ ๆ</strong> — วันหนึ่งมีคนอัปใบเสร็จ/บัตรประชาชนเข้า bucket เดียวกัน ไม่มีใครรู้ว่ามันเปิดให้โลกดู</li>
+  <li><strong>เครื่องมือค้นหาเก็บไปได้</strong> — Google อาจเก็บไฟล์ที่ไม่ควรถูกค้นเจอไปขึ้นผลค้นหา</li>
+</ol>
+
+<p>เทียบร้าน: bucket public = <strong>เปิดประตูห้องในโกดังทิ้งไว้</strong> ใครรู้เลขช่องก็หยิบของได้ ไม่ต้องมีบัตร และไม่มีวันหมดเวลา</p>
+
+<p>bucket ของเราเป็น private (บท 138) · ลองเปิดไฟล์เดียวกัน<strong>แบบไม่มีลายเซ็น</strong>:</p>
+
+<pre><code>$ curl -s http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;Error&gt;&lt;Code&gt;AccessDenied&lt;/Code&gt;&lt;Message&gt;Access Denied.&lt;/Message&gt;&lt;Key&gt;16r6iq1cr83g24mawphb39a7j0oi&lt;/Key&gt;&lt;BucketName&gt;wongnok-dev&lt;/BucketName&gt;…&lt;/Error&gt;</code></pre>
+
+<p>ไม่มีบัตร = ไม่ได้เข้า · นี่คือสิ่งที่เราต้องการ</p>
+
+<h2 id="sn-sec-7">ขาเข้า — direct upload ดูของจริงใน Network</h2>
+
+<p>
+  ทีนี้กลับทิศ: คนอัปรูป · บท 138 ใส่ <code>direct_upload: true</code> ไว้ในฟอร์ม · ผลของมันใน HTML ของหน้าแก้ไข:
+</p>
+
+<pre><code>$ curl -s localhost:3000/posts/1/edit | grep 'type="file"'
+    &lt;input class="file-input w-full mt-2" data-direct-upload-url="http://localhost:3000/rails/active_storage/direct_uploads" type="file" name="post[cover]" id="post_cover" /&gt;</code></pre>
+
+<p>
+  <code>data-direct-upload-url</code> คือป้ายที่ <code>ActiveStorage.start()</code> (JavaScript ใน <code>application.js</code> บท 138) มองหา ·
+  ช่องไฟล์ที่มีป้ายนี้ ตอนกดบันทึก JavaScript จะ<strong>ดักฟอร์มไว้ก่อน</strong> → ไปขอใบอนุญาตที่ URL นี้ → ส่งไฟล์ขึ้น MinIO → แล้วค่อยปล่อยฟอร์มไป
+</p>
+
+<p>
+  ผมเปิด <code>/posts/1/edit</code> ใน Chrome · เปิด Network · เลือกรูป <code>cover.jpg</code> (1600×1000 ขนาด 618,479 ไบต์) · กดบันทึก ·
+  ได้คำขอตามลำดับนี้ (ตัดแถว <code>mini-profiler-resources</code> ออก — เป็นของ rack-mini-profiler เครื่องมือวัดความเร็วที่ติดมากับแอป <a href="../../rails-day-3/lessons/0122-view-layer-and-erb.html">บท 122</a> · URL ยาวตัดด้วย …):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>method · ปลายทาง</th><th>status</th><th>อะไรวิ่ง</th></tr></thead>
+  <tbody>
+    <tr><td>①</td><td><code>POST localhost:3000/rails/active_storage/direct_uploads</code></td><td>200</td><td>เบราว์เซอร์ส่ง<strong>ข้อมูลของไฟล์</strong> (ไม่ใช่ตัวไฟล์) · ได้ใบอนุญาตกลับมา</td></tr>
+    <tr><td>②</td><td><code>OPTIONS localhost:9000/wongnok-dev/16r6iq…?X-Amz-…</code></td><td>204</td><td>เบราว์เซอร์ถาม MinIO ก่อนว่ายอมรับของจากหน้าเว็บ <code>localhost:3000</code> ไหม (CORS)</td></tr>
+    <tr><td>③</td><td><code>PUT localhost:9000/wongnok-dev/16r6iq…?X-Amz-…</code></td><td>200</td><td><strong>ตัวไฟล์ 618,479 ไบต์</strong> ไปหา MinIO ตรง ๆ</td></tr>
+    <tr><td>④</td><td><code>POST localhost:3000/posts/1</code> (ฟอร์ม <code>_method=patch</code>)</td><td>303 → <code>/posts/1</code></td><td>ฟอร์มที่มีหัวข้อ เนื้อหา และ<strong>รหัสของรูป</strong></td></tr>
+    <tr><td>⑤</td><td><code>GET localhost:3000/posts/1</code> → <code>GET …/blobs/redirect/…</code> 302 → <code>GET localhost:9000/…</code></td><td>200</td><td>หน้าบทความโหลดใหม่ แล้วรูปเดินทางขาออกแบบที่เพิ่งเรียน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<ul>
+  <li>แถว ④ เป็น <code>POST</code> ที่มีช่อง <code>_method=patch</code> — ฟอร์ม HTML ส่งได้แค่ GET กับ POST · Rails เลยแนบช่องลับ <code>_method</code> บอกว่า "จริง ๆ คือ PATCH (แก้ข้อมูล)"</li>
+  <li><code>303</code> — ญาติของ 302 (<a href="../../rails-day-2/lessons/0118-scaffold-reading.html">บท 118</a>): "บันทึกแล้ว ไปเปิดหน้า <code>/posts/1</code> ต่อ" · เบราว์เซอร์จึงโหลดหน้าบทความในแถว ⑤</li>
+</ul>
+
+<p>
+  สไลด์หน้า 11 วาดไว้ 3 ขั้น (ขอใบอนุญาต · คืน URL · ส่งไฟล์ตรง) = แถว ① กับ ③ · ของจริงมี ② (CORS) แทรก และ ④ ส่งฟอร์มตามหลัง · ดูทีละขั้น:
+</p>
+
+<h3 id="sn-sub-1">ขั้น ① ขอใบอนุญาต — ส่งแค่ "ข้อมูลของไฟล์"</h3>
+
+<p>สิ่งที่เบราว์เซอร์ส่งไป (กดแถว ① → แท็บ Payload):</p>
+
+<pre><code>{"blob":{"filename":"cover.jpg","content_type":"image/jpeg","byte_size":618479,"checksum":"hEZP+bedIshBmJnIpYWJig=="}}</code></pre>
+
+<ul>
+  <li><code>filename</code> · <code>byte_size</code> — ชื่อและขนาดไฟล์ (ไบต์)</li>
+  <li><code>content_type</code> — ชนิดไฟล์ที่<strong>เบราว์เซอร์บอกเอง</strong> (ดูจากนามสกุล .jpg) · Rails ไม่ได้เห็นไฟล์จึงตรวจไม่ได้ว่าจริงไหม — จำไว้ บท 140 จะจับเรื่องนี้</li>
+  <li><code>checksum</code> — <strong>ลายนิ้วมือของไฟล์</strong> (ค่า MD5 ที่ JavaScript คำนวณจากเนื้อไฟล์ทั้งก้อน) · ไฟล์ต่างกันแค่ไบต์เดียว ลายนิ้วมือก็ต่าง</li>
+</ul>
+
+<p>สิ่งที่ Rails ตอบกลับ (แท็บ Response · จัดบรรทัดให้อ่านง่าย · ตัดท่อน <code>attachable_sgid</code> ที่ยาวออก):</p>
+
+<pre><code>{
+    "id": 4,
+    "key": "16r6iq1cr83g24mawphb39a7j0oi",
+    "filename": "cover.jpg",
+    "content_type": "image/jpeg",
+    "metadata": {},
+    "service_name": "minio",
+    "byte_size": 618479,
+    "checksum": "hEZP+bedIshBmJnIpYWJig==",
+    "created_at": "2026-11-10T10:18:40.613+07:00",
+    "attachable_sgid": "…",
+    "signed_id": "eyJfcmFpbHMiOnsiZGF0YSI6NCwicHVyIjoiYmxvYl9pZCJ9fQ==--e48eee28ac016f73b5f68e117da8de5324704ad9",
+    "direct_upload": {
+        "url": "http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi?X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=minioadmin%2F20261110%2Fus-east-1%2Fs3%2Faws4_request&amp;X-Amz-Date=20261110T031840Z&amp;X-Amz-Expires=300&amp;X-Amz-SignedHeaders=content-length%3Bcontent-md5%3Bcontent-type%3Bhost&amp;X-Amz-Signature=6d0a145959a4b155fcc93af4bac1034cec9fbdb6dff8bb2df7611afdf4838b19",
+        "headers": {
+            "Content-Type": "image/jpeg",
+            "Content-MD5": "hEZP+bedIshBmJnIpYWJig==",
+            "Content-Disposition": "inline; filename=\"cover.jpg\"; filename*=UTF-8''cover.jpg"
+        }
+    }
+}</code></pre>
+
+<ul>
+  <li><code>"id": 4</code> · <code>"key": "16r6iq…"</code> — Rails <strong>เขียนใบรับฝาก (blob) ลงตารางแล้ว</strong> ตั้งแต่ขั้นนี้ ทั้งที่ไฟล์ยังไม่มาถึงโกดัง · ใน log เห็น <code>ActiveStorage::Blob Create … INSERT INTO "active_storage_blobs"</code> ของคำขอนี้</li>
+  <li><code>"metadata": {}</code> — ข้อมูลเสริมของไฟล์ (เช่นความกว้าง-สูงของรูป) · ตอนนี้ยังว่าง เพราะ Rails ยังไม่เห็นไฟล์ · จะถูกเติมทีหลัง (ดูย่อหน้า AnalyzeJob ด้านล่าง)</li>
+  <li><code>"service_name": "minio"</code> — เก็บที่ storage ชื่อ <code>minio</code> ใน <code>config/storage.yml</code> (บท 138) · <code>attachable_sgid</code> ที่ตัดออกเป็นรหัสอีกแบบไว้แปะรูปในเนื้อหา rich text ไม่ต้องสนใจ</li>
+  <li><code>"signed_id"</code> — ตัวเดียวกับที่เห็นใน <code>src</code> ของรูป · เดี๋ยวฟอร์มจะส่งตัวนี้</li>
+  <li><code>"direct_upload" → "url"</code> — <strong>ใบอนุญาต</strong> = URL ที่เซ็นแล้วแบบเดียวกับขาออก แต่ใช้สำหรับ <code>PUT</code> (ส่งของเข้า) · หมดใน 300 วินาทีเหมือนกัน</li>
+  <li><code>X-Amz-SignedHeaders=content-length;content-md5;content-type;host</code> — ต่างจากขาออกตรงนี้: ลายเซ็น<strong>ครอบขนาดไฟล์ ลายนิ้วมือ และชนิดไฟล์ไว้ด้วย</strong> · เอาใบอนุญาตนี้ไปส่งไฟล์อื่นไม่ได้ · ผมลองส่งไฟล์ขนาดเท่ากันแต่เนื้อต่างกันด้วยใบอนุญาตแบบนี้ → MinIO ตอบ <code>400</code> ไม่รับ · ส่งไฟล์ที่ตรง → <code>200</code></li>
+  <li><code>"headers"</code> — หัวคำขอที่ JavaScript ต้องแนบตอน PUT ให้ตรงกับที่เซ็นไว้</li>
+</ul>
+
+<h3 id="sn-sub-2">ขั้น ② ③ ส่งไฟล์ตรงไป MinIO — และเรื่อง CORS</h3>
+
+<p>
+  หน้าเว็บอยู่ที่ <code>localhost:3000</code> แต่จะส่งของไป <code>localhost:9000</code> (คนละพอร์ต = คนละ "ที่มา" ในสายตาเบราว์เซอร์) ·
+  เบราว์เซอร์จึงยิง <code>OPTIONS</code> ไปถามก่อน (CORS แบบที่บท 39 ทำให้ Gin ตอบ) · ผมยิงคำถามเดียวกันด้วย curl ให้เห็นคำตอบของ MinIO:
+</p>
+
+<pre><code>$ curl -s -i -X OPTIONS "http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi" \
+    -H "Origin: http://localhost:3000" -H "Access-Control-Request-Method: PUT" \
+    -H "Access-Control-Request-Headers: content-disposition,content-md5,content-type"
+HTTP/1.1 204 No Content
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Headers: content-disposition,content-md5,content-type
+Access-Control-Allow-Methods: PUT
+Access-Control-Allow-Origin: http://localhost:3000
+Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
+Date: Tue, 10 Nov 2026 03:23:11 GMT</code></pre>
+
+<ul>
+  <li><code>-X OPTIONS</code> = ใช้ method OPTIONS · <code>-H</code> = แนบหัวคำขอ (สามบรรทัดนี้ลอกจากที่ Chrome ส่งจริง: "ผมมาจาก <code>localhost:3000</code> · จะ <code>PUT</code> · พร้อมหัวพวกนี้") · <code>\</code> ท้ายบรรทัด = คำสั่งยังไม่จบ ต่อบรรทัดถัดไป</li>
+  <li><code>Access-Control-Allow-Origin: http://localhost:3000</code> + <code>Allow-Methods: PUT</code> — "ยอม · ส่งมาได้" → เบราว์เซอร์จึงยิง <code>PUT</code> ตัวจริงต่อ (แถว ③ ได้ 200) · บรรทัดที่เหลือ (<code>Allow-Credentials</code> · <code>Vary</code> · <code>Date</code>) ข้ามได้</li>
+</ul>
+
+<div class="warn">
+  <p>
+    <strong>⚠️ MinIO ในคอร์สไม่ต้องตั้ง CORS — แต่ S3 ของจริงต้องตั้ง</strong> · MinIO ตัวนี้ตอบ "ยอม" ให้ทุกที่มา (ผมลอง <code>Origin: http://example.com</code> ก็ได้ 204) ·
+    ถ้าวันหนึ่งย้ายไป S3 ของ Amazon แล้วอัปรูปไม่ขึ้น เห็นแถว PUT แดงพร้อมคำว่า CORS ใน Console = ต้องไปตั้ง CORS ของ bucket ให้ยอม <code>PUT</code> กับหัว <code>Content-Type</code> · <code>Content-MD5</code> · <code>Content-Disposition</code> (Rails Guides มีตัวอย่าง)
+  </p>
+</div>
+
+<h3 id="sn-sub-3">ขั้น ④ ส่งฟอร์ม — Rails ได้แค่รหัส</h3>
+
+<p>เนื้อของฟอร์มที่ส่งไป Rails ในแถว ④ (ตัดช่องหัวข้อกับเนื้อหาให้สั้น):</p>
+
+<pre><code>------WebKitFormBoundaryiYgQeghA911I9ZZ4
+Content-Disposition: form-data; name="_method"
+
+patch
+…
+Content-Disposition: form-data; name="post[cover]"
+
+eyJfcmFpbHMiOnsiZGF0YSI6NCwicHVyIjoiYmxvYl9pZCJ9fQ==--e48eee28ac016f73b5f68e117da8de5324704ad9
+…</code></pre>
+
+<p>
+  บรรทัด <code>------WebKitFormBoundary…</code> คือเส้นคั่นระหว่างช่องของฟอร์ม · แต่ละช่องมีบรรทัด <code>name="…"</code> บอกชื่อช่อง เว้นบรรทัด แล้วตามด้วยค่า
+</p>
+<p>
+  ช่อง <code>post[cover]</code> ไม่มีรูป · มีแค่ <code>signed_id</code> ตัวที่ได้จากขั้น ① · ฝั่ง <code>PostsController#update</code> รับไปแปะป้ายให้โพสต์ (<code>Attachment Create</code> ใน log) จบ ·
+  เทียบให้เห็นชัด: ผมลองปิด <code>ActiveStorage.start()</code> ชั่วคราว (JavaScript ไม่ดักฟอร์ม · ไฟล์เลยถูกส่งไปกับฟอร์มแบบปกติ) แล้วอัปรูปเดิม · log ของคำขอส่งฟอร์มสองแบบต่างกันแบบนี้:
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <p><strong>❌ ไม่มี direct upload — ไฟล์วิ่งผ่าน Rails</strong></p>
+<pre><code>Parameters: {… "cover" =&gt; #&lt;ActionDispatch::Http::UploadedFile:0x0000000133ea9168 @tempfile=#&lt;Tempfile:/var/folders/…/RackMultipart20261110-94567-txj1vu.jpg&gt;, @content_type="image/jpeg", @original_filename="cover.jpg", …
+S3 Storage (13.7ms) Uploaded file to key: ivhoccqk8o86gm81qbgcggyldl8s (checksum: hEZP+bedIshBmJnIpYWJig==)</code></pre>
+    <p><code>#&lt;ActionDispatch::Http::UploadedFile …&gt;</code> = ก้อนข้อมูลไฟล์ที่ Rails รับมา (Ruby เขียน object แบบนี้เวลาพิมพ์ออก log) ·
+       Rails ได้<strong>ไฟล์ทั้งก้อน</strong> (เก็บพักไว้ในไฟล์ชั่วคราว Tempfile) แล้ว<strong>ส่งต่อขึ้น MinIO เอง</strong> (<code>Uploaded file</code>) — คนรับคำขอติดงานนี้จนเสร็จ</p>
+  </div>
+  <div class="side good">
+    <p><strong>✅ direct upload — Rails ได้แค่รหัส</strong></p>
+<pre><code>Parameters: {… "cover" =&gt; "eyJfcmFpbHMiOnsiZGF0YSI6NCwicHVyIjoiYmxvYl9pZCJ9fQ==--e48eee28ac016f73b5f68e117da8de5324704ad9", "category_id" =&gt; "1"}, …
+ActiveStorage::Attachment Create (0.9ms)  INSERT INTO "active_storage_attachments" ("name", "record_type", "record_id", "blob_id", "created_at") VALUES ('cover', 'Post', 1, 4, …)</code></pre>
+    <p><code>cover</code> เป็นตัวอักษรสั้น ๆ · <strong>ไม่มีบรรทัด <code>Uploaded file</code></strong> · Rails แค่แปะป้าย "blob 4 เป็นรูปปกของโพสต์ 1"</p>
+  </div>
+</div>
+
+<p>
+  ข้อสังเกตเดียวที่ Rails แตะไฟล์: หลังบันทึกเสร็จ log มี <code>[ActiveJob] [ActiveStorage::AnalyzeJob] … S3 Storage (12.9ms) Downloaded file from key: 16r6iq…</code> ·
+  นี่คือ<strong>งานหลังร้าน</strong> (background job — งานที่ Rails ทำทีหลังโดยผู้ใช้ไม่ต้องยืนรอ · เรื่องของบท 142) ที่โหลดรูปไปอ่านความกว้าง-สูงหนึ่งครั้ง · ไม่ได้เกิดระหว่างที่ผู้ใช้รอหน้าเว็บ
+</p>
+
+<div class="analogy">
+  <span class="label">🍜 เทียบกับร้านอาหาร</span>
+  <p>
+    ลูกค้าอยากฝากของ · บอกพนักงานว่า "กล่องหนึ่งใบ หนัก 618 กรัม ตราประทับบนกล่องเป็นแบบนี้" ·
+    พนักงาน<strong>เขียนใบรับฝากไว้ก่อน</strong> แล้วออก<strong>ใบอนุญาตฝากของ</strong>ที่ระบุน้ำหนักและตราประทับไว้ · ลูกค้า<strong>แบกกล่องไปโกดังเอง</strong> ·
+    คนเฝ้าโกดังรับเฉพาะกล่องที่ตรงกับใบอนุญาต · ลูกค้ากลับมาที่ร้านยื่นแค่<strong>เลขใบรับฝาก</strong> พนักงานแปะป้าย "ของโต๊ะนี้" จบ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงคงไม่เขียนใบรับฝากก่อนเห็นของ · Active Storage เขียน blob ลงตาราง<strong>ตั้งแต่ขั้น ①</strong> ·
+    ถ้าลูกค้าเลือกไฟล์ กดบันทึก แล้วปิดแท็บก่อนส่งฟอร์มเสร็จ จะเหลือใบรับฝากที่ไม่มีป้ายแปะแฟ้มไหนเลย — "ไฟล์กำพร้า" ที่บท 140 จะตามเก็บ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🏷 ศัพท์ไว้คุยกับ senior / AI</span>
+  <dl>
+    <dt>preflight request</dt>
+    <dd>คำขอ <code>OPTIONS</code> ที่เบราว์เซอร์ยิงถามก่อนส่งของข้ามที่มา · "PUT ไป S3 พังเพราะ preflight ไม่ผ่าน ต้องตั้ง CORS ของ bucket"</dd>
+    <dt>checksum (MD5)</dt>
+    <dd>ลายนิ้วมือของไฟล์ ใช้ยืนยันว่าไฟล์ที่ถึงปลายทางตรงกับไฟล์ต้นทางทุกไบต์ · Active Storage ส่งเป็นหัว <code>Content-MD5</code></dd>
+    <dt><code>signed_id</code></dt>
+    <dd>รหัส blob ที่ Rails เซ็นกันปลอมไว้ · ฟอร์มส่งตัวนี้แทนไฟล์ · พิมพ์บอก AI ได้ว่า "controller รับ <code>signed_id</code> จาก direct upload ไม่ต้องรับไฟล์"</dd>
+    <dt>multipart/form-data</dt>
+    <dd>รูปแบบเนื้อฟอร์มที่แบ่งเป็นช่อง ๆ คั่นด้วย <code>------WebKitFormBoundary…</code> · ฟอร์มที่มีช่องไฟล์ใช้แบบนี้เสมอ แม้ direct upload จะทำให้ช่องไฟล์เหลือแค่ตัวอักษร</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">redirect vs proxy — บอกทางให้ไปรับเอง หรือเดินไปหยิบมาให้</h2>
+
+<p>
+  ขาออกที่เราใช้อยู่เรียกว่า <strong>redirect mode</strong> (ค่าเริ่มต้น) · Active Storage มีอีกโหมดชื่อ <strong>proxy</strong> = Rails <strong>โหลดไฟล์จาก MinIO แล้วส่งต่อให้เบราว์เซอร์เอง</strong> ·
+  ฟังดูขัดกับประโยคของบท แต่มีที่ใช้ · ลองดูของจริงก่อน: แก้บรรทัดรูปใน <code>app/views/posts/_post.html.erb</code> <strong>ชั่วคราว</strong>
+</p>
+
+<pre><code><span class="c">&lt;%# ก่อน %&gt;</span>
+&lt;%= <span class="f">image_tag</span> post.cover, alt: <span class="s">""</span>, class: <span class="s">"…"</span> <span class="k">if</span> post.cover.<span class="f">attached?</span> %&gt;
+<span class="c">&lt;%# หลัง (ทดลอง) %&gt;</span>
+&lt;%= <span class="f">image_tag</span> <span class="f">rails_storage_proxy_path</span>(post.cover), alt: <span class="s">""</span>, class: <span class="s">"…"</span> <span class="k">if</span> post.cover.<span class="f">attached?</span> %&gt;</code></pre>
+
+<p><code>rails_storage_proxy_path(…)</code> = helper ที่ให้ URL แบบ proxy ของไฟล์นั้น · บันทึก แล้วดู <code>&lt;img&gt;</code> ใหม่:</p>
+
+<pre><code>$ curl -s localhost:3000/posts/1 | grep -o '&lt;img[^&gt;]*&gt;'
+&lt;img alt="" class="w-full max-h-96 object-cover rounded-box" src="/rails/active_storage/blobs/proxy/eyJfcmFpbHMiOnsiZGF0YSI6NCwicHVyIjoiYmxvYl9pZCJ9fQ==--e48eee28ac016f73b5f68e117da8de5324704ad9/cover.jpg" /&gt;</code></pre>
+
+<p><code>redirect</code> ใน URL เปลี่ยนเป็น <code>proxy</code> · <code>signed_id</code> ตัวเดิม · ขอ URL นี้ (<code>-o /dev/null</code> = ทิ้งเนื้อไฟล์ · <code>-D -</code> = โชว์หัวคำตอบ · <code>-w</code> = พิมพ์ขนาดที่โหลดได้ตอนจบ):</p>
+
+<pre><code>$ curl -s -o /dev/null -D - http://localhost:3000/rails/active_storage/blobs/proxy/eyJfcmFp…/cover.jpg -w 'downloaded %{size_download}\n'
+HTTP/1.1 200 OK
+last-modified: Fri, 31 Dec 2010 17:00:00 GMT
+accept-ranges: bytes
+content-type: image/jpeg
+content-disposition: inline; filename="cover.jpg"; filename*=UTF-8''cover.jpg
+cache-control: no-store, must-revalidate, private, max-age=0
+…
+x-miniprofiler-original-cache-control: max-age=3155695200, public, immutable
+…
+transfer-encoding: chunked
+
+downloaded 618479</code></pre>
+
+<ul>
+  <li><code>200 OK</code> + <code>downloaded 618479</code> — <strong>ไม่มี 302</strong> · Rails ส่งรูปให้เองครบทุกไบต์</li>
+  <li><code>last-modified</code> · <code>accept-ranges</code> · <code>transfer-encoding</code> — หัวมาตรฐานของการส่งไฟล์ ข้ามได้ · ที่ต้องดูคือสองบรรทัด cache ด้านล่าง</li>
+  <li><code>x-miniprofiler-original-cache-control: max-age=3155695200, public, immutable</code> — หัวที่ Rails <strong>ตั้งใจส่ง</strong>: เก็บไว้ได้ 3,155,695,200 วินาที (= 100 ปี) · <code>public</code> = ใครระหว่างทางก็เก็บสำเนาได้ · <code>immutable</code> = ไฟล์นี้ไม่มีวันเปลี่ยน</li>
+  <li><code>cache-control: no-store, …</code> — ใน development rack-mini-profiler (บท 122) เขียนทับเป็น "ห้ามเก็บ" แล้วย้ายค่าเดิมไปไว้ในหัว <code>x-miniprofiler-original-…</code> · production ไม่มี mini-profiler หัวจริงคือบรรทัดข้างบน</li>
+</ul>
+
+<p>log ของคำขอนี้:</p>
+
+<pre><code>Started GET "/rails/active_storage/blobs/proxy/eyJfcmFp…/cover.jpg" for ::1 at …
+Processing by ActiveStorage::Blobs::ProxyController#show as JPEG
+  …
+  S3 Storage (5.3ms) Downloaded file from key: 16r6iq1cr83g24mawphb39a7j0oi
+Completed 200 OK in 8ms (ActiveRecord: 0.6ms (1 query, 0 cached) | GC: 0.0ms)</code></pre>
+
+<p>
+  <code>Downloaded file from key</code> — <strong>ไฟล์วิ่งผ่าน Rails</strong> (MinIO → Rails → เบราว์เซอร์) · ในเครื่องเรา log บอกว่าใช้ 5.3 ms เพราะ MinIO อยู่เครื่องเดียวกัน ·
+  ของจริงที่ storage อยู่อีกที่และไฟล์ใหญ่ เวลานี้คือเวลาที่คนรับคำขอหนึ่งคนของ Rails ติดอยู่
+</p>
+
+<p>
+  แล้ว proxy มีไว้ทำไม? คำตอบอยู่ที่ <code>public</code> + 100 ปี · ถ้ามี <strong>CDN</strong> (บริการที่มีเครื่องเก็บสำเนาไฟล์กระจายอยู่ใกล้ผู้ใช้ทั่วโลก คั่นอยู่หน้าเว็บของเรา) ·
+  URL proxy <strong>คงที่ทุกครั้ง</strong> CDN เก็บสำเนาไว้แล้วตอบแทนเราได้นานตามที่ Rails บอก — คำขอมาถึง Rails เฉพาะตอนที่ CDN ยังไม่มีสำเนา ·
+  ส่วน URL ปลายทางของ redirect เปลี่ยนทุก 5 นาที (เห็นแล้วว่า <code>X-Amz-Date</code> ใหม่ทุกรอบ) และ 302 ของ Rails บอกว่า <code>private</code> · CDN ช่วยได้น้อย
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>redirect (ค่าเริ่มต้น)</th><th>proxy</th></tr></thead>
+  <tbody>
+    <tr><td>เขียนใน view</td><td><code>image_tag post.cover</code></td><td><code>image_tag rails_storage_proxy_path(post.cover)</code></td></tr>
+    <tr><td>Rails ตอบ</td><td>302 + URL ที่เซ็นแล้ว · <code>content-length: 0</code></td><td>200 + ตัวไฟล์ทั้งก้อน</td></tr>
+    <tr><td>ไฟล์ผ่าน Rails ไหม</td><td>ไม่ผ่าน (log ไม่มี <code>Downloaded</code>)</td><td>ผ่าน (log มี <code>Downloaded file from key</code>)</td></tr>
+    <tr><td>cache</td><td><code>max-age=300, private</code> · ปลายทางเปลี่ยนทุกรอบ</td><td><code>max-age=3155695200, public, immutable</code> · URL คงที่</td></tr>
+    <tr><td>เหมาะกับ</td><td>ไฟล์ใหญ่ · ไฟล์ส่วนตัว · <strong>ไม่แน่ใจ = ใช้อันนี้</strong></td><td>รูปเล็กที่ทุกคนเห็นเหมือนกัน คนดูเยอะ และมี CDN คั่นหน้า</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  วิธีเลือกของสไลด์หน้า 11 สรุปได้ประโยคเดียว: <strong>เริ่มด้วย redirect · เปลี่ยนเป็น proxy เมื่อวัดได้แล้วว่ารูปเล็กยอดนิยมเป็นคอขวด และมี CDN</strong> ·
+  proxy ที่<strong>ไม่มี CDN</strong> = ให้ Rails แบกไฟล์ทุกครั้งเปล่า ๆ
+</p>
+
+<div class="analogy">
+  <span class="label">🍜 เทียบกับร้านอาหาร</span>
+  <p>
+    <strong>redirect</strong> = พนักงาน<strong>บอกทางและให้บัตรผ่าน</strong> ลูกค้าไปรับของเองที่โกดัง · พนักงานว่างทันที ·
+    <strong>proxy</strong> = พนักงาน<strong>เดินไปหยิบของจากโกดังมาให้ที่โต๊ะ</strong> · ลูกค้าสบาย แต่พนักงานหายไปจากหน้าร้านช่วงหนึ่ง ·
+    proxy จะคุ้มก็ต่อเมื่อมี<strong>ตู้กดของหน้าร้าน</strong> (CDN) ที่พนักงานเติมของครั้งเดียว แล้วลูกค้าทุกคนกดเอาจากตู้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ตู้กดของจริงต้องมีคนเติมเรื่อย ๆ · CDN เก็บสำเนาไว้เองตามที่ Rails บอก (100 ปี) — <strong>ข้อเสียคือเอาออกยาก</strong>: ถ้าลบรูปในแอป สำเนาในตู้ยังอยู่จนกว่าจะสั่งตู้ให้ทิ้ง (หัวข้อถัดไป)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🏷 ศัพท์ไว้คุยกับ senior / AI</span>
+  <dl>
+    <dt>redirect mode · proxy mode</dt>
+    <dd>สองวิธีเสิร์ฟไฟล์ของ Active Storage · ถาม senior ได้ว่า "รูป avatar เราใช้ proxy mode หลัง CDN หรือ redirect?"</dd>
+    <dt>CDN (Content Delivery Network)</dt>
+    <dd>เครือข่ายเครื่องเก็บสำเนาไฟล์ใกล้ผู้ใช้ · "ใส่ CDN หน้า proxy ของ Active Storage เพื่อลดโหลดของแอป"</dd>
+    <dt><code>Cache-Control: public, immutable</code></dt>
+    <dd>หัวคำตอบที่บอกว่าใครก็เก็บสำเนาได้และไฟล์ไม่เปลี่ยน · คู่กับ <code>private</code> = เก็บได้เฉพาะเบราว์เซอร์ของผู้ใช้คนนั้น</dd>
+  </dl>
+</div>
+
+<p><strong>คืนไฟล์ก่อนไปต่อ:</strong> <code>git restore app/views/posts/_post.html.erb</code> แล้ว <code>git status --short</code> ต้องว่าง</p>
+
+<h2 id="sn-sec-9">ลูกค้าขอให้ลบรูป — ต้องเช็คอะไรก่อนบอกว่า "ลบแล้ว"</h2>
+
+<p>
+  สไลด์หน้า 13 (case 4): ลูกค้าโทรมาว่า "ช่วยลบรูปนี้ให้หน่อย ผมอัปผิด" · ข้อมูลรูปหนึ่งรูปอยู่หลายที่: <strong>แถว attachment · แถว blob · ไฟล์ใน MinIO · URL ที่เคยแจกออกไป</strong> ·
+  ลองลบของจริงด้วย <code>purge</code> (= ลบทั้งป้าย ใบรับฝาก และของในโกดัง) ใน <code>bin/rails console</code> · ก่อนลบ ผมเก็บ URL <code>:9000</code> ที่เพิ่งเซ็น (ยังไม่หมด 5 นาที) ไว้ลองเปิดหลังลบ:
+</p>
+
+<pre><code>Loading development environment (Rails 8.1.4)
+wongnok-blog-all-in-one(dev):001&gt; post = Post.find(1)
+  Post Load (0.6ms)  SELECT &quot;posts&quot;.* FROM &quot;posts&quot; WHERE &quot;posts&quot;.&quot;id&quot; = 1 LIMIT 1
+=&gt; 
+#&lt;Post:0x00000001271518c8
+...
+wongnok-blog-all-in-one(dev):002&gt; post.cover.purge
+  ActiveStorage::Attachment Load (0.5ms)  SELECT &quot;active_storage_attachments&quot;.* FROM &quot;active_storage_attachments&quot; WHERE &quot;active_storage_attachments&quot;.&quot;record_id&quot; = 1 AND &quot;active_storage_attachments&quot;.&quot;record_type&quot; = &#x27;Post&#x27; AND &quot;active_storage_attachments&quot;.&quot;name&quot; = &#x27;cover&#x27; LIMIT 1
+  TRANSACTION (0.3ms)  BEGIN
+  ActiveStorage::Attachment Destroy (0.7ms)  DELETE FROM &quot;active_storage_attachments&quot; WHERE &quot;active_storage_attachments&quot;.&quot;id&quot; = 4
+  Post Update (0.3ms)  UPDATE &quot;posts&quot; SET &quot;updated_at&quot; = &#x27;2026-11-10 03:24:32.275796&#x27; WHERE &quot;posts&quot;.&quot;id&quot; = 1
+  TRANSACTION (0.4ms)  COMMIT
+  ActiveStorage::Blob Load (0.5ms)  SELECT &quot;active_storage_blobs&quot;.* FROM &quot;active_storage_blobs&quot; WHERE &quot;active_storage_blobs&quot;.&quot;id&quot; = 4 LIMIT 1
+  TRANSACTION (0.3ms)  BEGIN
+  ActiveStorage::Blob Destroy (0.5ms)  DELETE FROM &quot;active_storage_blobs&quot; WHERE &quot;active_storage_blobs&quot;.&quot;id&quot; = 4
+  TRANSACTION (0.5ms)  COMMIT
+  S3 Storage (6.6ms) Deleted file from key: 16r6iq1cr83g24mawphb39a7j0oi
+  S3 Storage (2.5ms) Deleted files by key prefix: variants/16r6iq1cr83g24mawphb39a7j0oi/
+=&gt; nil
+wongnok-blog-all-in-one(dev):003&gt; post.cover.attached?
+=&gt; false
+wongnok-blog-all-in-one(dev):004&gt; exit</code></pre>
+
+<ul>
+  <li><code>...</code> ใต้ <code>#&lt;Post:0x…</code> — console ย่อรายละเอียดของโพสต์ไว้ ข้ามได้ · ที่ต้องดูคือคำสั่งที่สอง · (ผมตัดคอมเมนต์ <code>/*application='WongnokBlogAllInOne'*/</code> ที่ต่อท้าย SQL ทุกบรรทัดออกให้สั้นลง ของคุณจะเห็นอยู่)</li>
+  <li><code>Attachment Destroy</code> — ลบ<strong>ป้าย</strong> (แถวใน <code>active_storage_attachments</code>) · ถัดมา <code>Post Update … "updated_at"</code> = Rails แตะเวลาแก้ล่าสุดของโพสต์ให้ด้วย</li>
+  <li><code>Blob Destroy</code> — ลบ<strong>ใบรับฝาก</strong> (แถวใน <code>active_storage_blobs</code>) · ผมตัดบรรทัด SELECT ที่ Rails เช็คของเกี่ยวข้องก่อนลบออกไป 3 บรรทัด</li>
+  <li><code>S3 Storage … Deleted file from key</code> — ลบ<strong>ของในโกดัง</strong> · ทำหลัง <code>COMMIT</code> (ลบในตารางสำเร็จแล้วค่อยลบไฟล์)</li>
+  <li><code>Deleted files by key prefix: variants/16r6iq…/</code> — ลบ<strong>รูปย่อทุกขนาด</strong>ที่เคยทำจากรูปนี้ด้วย (ตอนนี้ยังไม่มี · บท 140 จะเริ่มทำ)</li>
+  <li><code>post.cover.attached?</code> → <code>false</code> — โพสต์ไม่มีรูปปกแล้ว</li>
+</ul>
+
+<p>แล้ว URL ที่เคยแจกไป:</p>
+
+<pre><code>$ curl -s &quot;http://localhost:9000/wongnok-dev/16r6iq1cr83g24mawphb39a7j0oi?…&amp;X-Amz-Date=20261110T032423Z&amp;X-Amz-Expires=300&amp;…&quot; -w &#x27;\n[%{http_code}]\n&#x27;
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;Error&gt;&lt;Code&gt;NoSuchKey&lt;/Code&gt;&lt;Message&gt;The specified key does not exist.&lt;/Message&gt;&lt;Key&gt;16r6iq1cr83g24mawphb39a7j0oi&lt;/Key&gt;&lt;BucketName&gt;wongnok-dev&lt;/BucketName&gt;…&lt;/Error&gt;
+[404]
+$ curl -I http://localhost:3000/rails/active_storage/blobs/redirect/eyJfcmFpbHMiOnsiZGF0YSI6NCwicHVyIjoiYmxvYl9pZCJ9fQ==--e48eee28ac016f73b5f68e117da8de5324704ad9/cover.jpg
+HTTP/1.1 404 Not Found
+…
+$ curl -s -o /dev/null -w &#x27;proxy %{http_code}\n&#x27; http://localhost:3000/rails/active_storage/blobs/proxy/eyJfcmFp…/cover.jpg
+proxy 404</code></pre>
+
+<ul>
+  <li>URL <code>:9000</code> ที่<strong>ยังไม่หมดอายุ</strong> → <code>NoSuchKey</code> 404 — ลายเซ็นยังถูก แต่ช่องเก็บว่างแล้ว · บัตรผ่านใช้ได้ แต่ไม่มีของให้รับ</li>
+  <li>URL <code>:3000</code> ทั้ง redirect และ proxy → <code>404</code> — Rails หาใบรับฝากเลขนั้นไม่เจอแล้ว</li>
+</ul>
+
+<div class="warn">
+  <p>
+    <strong>⚠️ <code>detach</code> ไม่ใช่การลบ</strong> — <code>post.cover.detach</code> ลบแค่<strong>ป้าย</strong> (attachment) · ผมลองกับอีกโพสต์แล้ว: ใบรับฝากกับไฟล์ใน MinIO <strong>ยังอยู่</strong> ·
+    URL <code>:3000</code> เดิมยังได้ 302 → รูป 200 · หน้าบทความไม่มีรูปแล้ว แต่<strong>ใครที่เก็บลิงก์ไว้ยังเปิดได้</strong> — ลูกค้าจะคิดว่าลบแล้ว ทั้งที่ยังไม่ได้ลบ ·
+    เทียบร้าน: <code>detach</code> = <strong>ถอดป้ายออกจากแฟ้ม</strong> แต่ใบรับฝากกับของในโกดังยังอยู่ครบ · <code>purge</code> = ถอดป้าย ฉีกใบรับฝาก และเอาของออกจากโกดัง
+  </p>
+</div>
+
+<p>เช็คลิสต์ก่อนตอบลูกค้า (คำตอบของ case 4):</p>
+
+<ol>
+  <li><strong>ใช้ <code>purge</code> (หรือ <code>purge_later</code> = ให้งานหลังร้านลบทีหลัง ผู้ใช้ไม่ต้องรอ) ไม่ใช่ <code>detach</code></strong> — ดู log ให้เห็น <code>Deleted file from key</code></li>
+  <li><strong>URL ที่เคยแจก</strong> — แบบ redirect ตายทันทีที่ไฟล์หาย (404) · ต่อให้ลืมลบไฟล์ URL <code>:9000</code> ก็หมดเองใน 5 นาที แต่ URL <code>:3000</code> ไม่หมด</li>
+  <li><strong>รูปย่อ (variant)</strong> — รูปขนาดเล็กที่ทำจากรูปเดิม (บท 140) เก็บไว้ใต้ <code>variants/&lt;key&gt;/</code> · <code>purge</code> ลบให้ด้วย (บรรทัด <code>Deleted files by key prefix</code>)</li>
+  <li><strong>สำเนานอกโกดัง</strong> — ถ้าใช้ proxy + CDN สำเนาที่ CDN เก็บไว้ (Rails บอกให้เก็บ 100 ปี) <strong>ไม่หายตาม</strong> ต้องสั่งลบที่ CDN เอง · แท็บเบราว์เซอร์ที่เปิดค้างไว้ก็ยังเห็นรูปบนจอจนกว่าจะ refresh</li>
+</ol>
+
+<div class="task">
+  <h3 id="sn-sub-4">🎯 ภารกิจ — พิสูจน์ด้วยตาว่าไฟล์ไม่ผ่าน Rails และบัตรแก้ไม่ได้ (~10 นาที)</h3>
+  <p>ทำบนโค้ดตอนจบบท 138 (<code>git status --short</code> ว่าง) · <code>bin/dev</code> และ <code>docker compose</code> เปิดอยู่</p>
+  <ol>
+    <li>Chrome เปิด <code>http://localhost:3000/posts/2/edit</code> → DevTools → แท็บ <strong>Network</strong> → ติ๊ก <strong>Preserve log</strong> (ไม่ให้รายการหายตอนเปลี่ยนหน้า) → กดล้างรายการ 🚫</li>
+    <li>เลือกรูปอะไรก็ได้ในช่อง "รูปปก" → กด<strong>บันทึก</strong></li>
+    <li>ในรายการ หาแถวที่ปลายทางเป็น <code>localhost:9000</code> · ดูคอลัมน์ <strong>Size</strong> ของแถว <code>direct_uploads</code> เทียบกับขนาดไฟล์รูป</li>
+    <li>ในเทอร์มินัล (โฟลเดอร์โปรเจกต์) ดูว่า Rails คุยกับ MinIO เรื่องอะไรบ้าง: <code>grep "S3 Storage" log/development.log | tail -n 3</code>
+        (<code>grep</code> = เลือกเฉพาะบรรทัดที่มีคำนี้จากไฟล์ log · <code>tail -n 3</code> = เอาแค่ 3 บรรทัดสุดท้าย)</li>
+    <li>บนหน้าบทความ คลิกขวาที่รูป → <strong>Open image in new tab</strong> → แถบที่อยู่จะเป็น <code>localhost:9000/…</code> แล้ว · แก้ <code>X-Amz-Expires=300</code> เป็น <code>3000</code> แล้วกด Enter
+        (แก้ URL ได้เฉพาะของแอปในเครื่องตัวเอง)</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: มีกี่แถวที่ไป <code>:9000</code> · แถวไหนพาไฟล์ไป · log มีคำว่า <code>Uploaded</code> ไหม · ข้อ 5 ได้อะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <ul>
+      <li><strong>แถวที่ไป <code>:9000</code> ตอนอัป = 2 แถว</strong>: <code>OPTIONS</code> 204 (ถาม CORS) และ <code>PUT</code> 200 ที่พาไฟล์ไป · ตอนหน้าบทความโหลดจะมีอีกแถวคือ <code>GET</code> รูปจาก <code>:9000</code></li>
+      <li><strong>แถว <code>direct_uploads</code> เล็กมาก</strong> — ของผมคำขอเป็น JSON 118 ตัวอักษร (ชื่อ ชนิด ขนาด checksum) · คำตอบราว 2.4 kB รวมหัว · เพราะส่งแค่ข้อมูลของไฟล์ ขนาดแถวนี้จึงไม่ขึ้นกับขนาดรูป</li>
+      <li><strong>log</strong> — บรรทัด <code>S3 Storage</code> ที่เกิดจากการอัปหนึ่งครั้งของผม (ตัดจาก log จริง · key ของคุณต่าง · ถ้าเปิดหน้าอื่นที่มีรูปหลังอัป จะมีบรรทัด <code>Generated URL</code> ใหม่ดันบรรทัดเหล่านี้ขึ้นไป ให้เปลี่ยนเป็น <code>tail -n 10</code>):
+<pre><code>  S3 Storage (7.6ms) Generated URL for file at key: 16r6iq1cr83g24mawphb39a7j0oi (http://localhost:9000/wongnok-dev/16r6iq…?…)
+[ActiveJob] [ActiveStorage::AnalyzeJob] […]   S3 Storage (12.9ms) Downloaded file from key: 16r6iq1cr83g24mawphb39a7j0oi
+  S3 Storage (1.1ms) Generated URL for file at key: 16r6iq1cr83g24mawphb39a7j0oi (http://localhost:9000/wongnok-dev/16r6iq…?…)</code></pre>
+        บรรทัดแรก = เซ็นใบอนุญาต PUT (ขั้น ①) · บรรทัดสอง = งานหลังร้าน AnalyzeJob โหลดไปอ่านขนาดรูป · บรรทัดสาม = เซ็น URL ขาออกตอนหน้าบทความขอรูป · <strong>ไม่มี <code>Uploaded file</code></strong></li>
+      <li><strong>ข้อ 5</strong> — ได้ XML <code>&lt;Code&gt;SignatureDoesNotMatch&lt;/Code&gt;</code> แทนรูป (ผลเดียวกับกล่องทายผลด้านบน) · แก้กลับเป็น 300 ก็เปิดได้อีกครั้ง ถ้ายังไม่เลย 5 นาที</li>
+    </ul>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>ไม่มีแถว <code>direct_uploads</code> เลย แต่รูปก็ขึ้น · และ log มี <code>Uploaded file to key</code></strong> — JavaScript ของ direct upload ไม่ทำงาน ไฟล์วิ่งผ่าน Rails (แบบฝั่ง ❌ ในหัวข้อ direct upload) · เช็คว่า <code>application.js</code> มี <code>ActiveStorage.start()</code> และ <code>config/importmap.rb</code> มี pin <code>@rails/activestorage</code> (บท 138) แล้วกด refresh หน้าแก้ไขใหม่</li>
+      <li><strong>แก้กลับเป็น 300 แล้วได้ <code>Request has expired</code></strong> — ปกติ · เลย 5 นาทีนับจากตอนที่หน้าบทความขอรูปแล้ว บัตรใบนั้นหมดอายุ · กลับไปหน้าบทความ refresh แล้วเปิดรูปใน tab ใหม่ จะได้บัตรใบใหม่</li>
+      <li><strong>แถว <code>PUT</code> แดง และ Console มีคำว่า CORS</strong> — ไม่ได้ใช้ MinIO ของคอร์ส (เช่นไปต่อ S3 จริง) · ต้องตั้ง CORS ของ bucket ตามกล่องเตือนในหัวข้อ direct upload</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="0">
+  <p class="q">(สไลด์หน้า 13 case 3) ไฟล์ 4 แบบ — ใช้ <strong>redirect</strong> · <strong>proxy</strong> หรือ<strong>ไม่ใช่งานของ Active Storage</strong>: ① รูป avatar 40×40 ที่โผล่ทุกหน้า ② PDF ใบเสร็จของลูกค้า ③ วิดีโอสอน 800 MB ④ โลโก้เว็บที่ไม่เคยเปลี่ยน</p>
+  <div class="opts">
+    <button class="opt">① proxy (+ CDN) · ② redirect · ③ redirect · ④ ไม่ใช่ Active Storage ใส่ใน app/assets</button>
+    <button class="opt">① redirect · ② proxy เพื่อให้ Rails คุม · ③ proxy เพราะไฟล์ใหญ่ · ④ redirect</button>
+    <button class="opt">① proxy (+ CDN) · ② proxy (+ CDN) · ③ redirect · ④ proxy (+ CDN) ให้ cache 100 ปี</button>
+    <button class="opt">① redirect · ② redirect · ③ proxy ให้ผ่าน Rails · ④ ไม่ใช่ Active Storage ใส่ใน app/assets</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — avatar เล็ก ทุกคนเห็นเหมือนกัน คนดูเยอะ = งานของ proxy + CDN · ใบเสร็จเป็นของส่วนตัว ห้ามให้ CDN เก็บแบบ <code>public</code> = redirect (และยังต้องมีด่านตรวจสิทธิ์ เพราะ URL <code>:3000</code> ใครได้ไปก็เปิดได้) · วิดีโอใหญ่ห้ามให้ Rails แบก = redirect · โลโก้เป็นส่วนหนึ่งของแอป ไม่ใช่ของที่ผู้ใช้อัป → ไฟล์ใน <code>app/assets</code> ที่มีเลขรุ่นต่อท้าย (บท 127)</p>
+    <p>ตัวเลือกที่ 2 — proxy ไม่ได้ "คุมสิทธิ์" ให้ · และวิดีโอ 800 MB ผ่าน proxy = คนรับคำขอของ Rails ติดอยู่นานมาก ·
+       ตัวเลือกที่ 3 — ใบเสร็จได้ <code>public, immutable</code> 100 ปี = ใครระหว่างทางก็เก็บสำเนาใบเสร็จได้ ·
+       ตัวเลือกที่ 4 — avatar เป็นงานที่ redirect ทำได้แต่ไม่ได้ช่วยเรื่อง CDN · และวิดีโอผ่าน Rails ผิดเหมือนตัวเลือกที่ 2</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ใหญ่หรือส่วนตัว → redirect · เล็ก ยอดนิยม มี CDN → proxy · เป็นส่วนของแอปเอง → asset ไม่ใช่ Active Storage</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">เพื่อนก็อป URL รูปปกจาก <code>src</code> ของหน้าบทความ (ขึ้นต้น <code>http://localhost:3000/rails/active_storage/blobs/redirect/…</code>) ส่งเข้ากลุ่มแชต · อีกวันมีคนกดเปิด จะเกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">ได้หน้า XML <code>Request has expired</code> เพราะ URL ทุกตัวของ Active Storage หมดใน 5 นาที</button>
+    <button class="opt">ได้ <code>SignatureDoesNotMatch</code> เพราะคนเปิดไม่ใช่คนเดียวกับที่ Rails เซ็นให้ตอนแรก</button>
+    <button class="opt">เห็นรูป เพราะ Rails เซ็น URL ของ MinIO ใบใหม่ให้ทุกครั้งที่มีคนเปิด URL ตัวนี้</button>
+    <button class="opt">เห็นรูป เพราะ bucket <code>wongnok-dev</code> เปิดให้ทุกคนอ่านได้อยู่แล้วตั้งแต่บท 138</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — URL <code>:3000</code> มี <code>urls_expire_in</code> = <code>nil</code> (ไม่หมด) · ลองแล้ว: เปิดหลัง 5 นาทีได้ 302 ที่มี <code>X-Amz-Date</code> ใหม่</p>
+    <p>ตัวเลือกที่ 1 — ที่หมดใน 5 นาทีคือ URL <strong><code>:9000</code></strong> หลัง redirect เท่านั้น ·
+       ตัวเลือกที่ 2 — ลายเซ็นไม่ผูกกับคน · ใครถือ URL ก็ใช้ได้ (และ <code>signed_id</code> ไม่ได้ถูกแก้) ·
+       ตัวเลือกที่ 4 — bucket เป็น private · เปิดไม่มีลายเซ็นได้ <code>AccessDenied</code> 403</p>
+    <p><strong>จุดที่ต้องจำ:</strong> URL ของ Rails = ลิงก์ถาวร · URL ของ storage = บัตร 5 นาที · ไฟล์ส่วนตัวต้องมีด่านตรวจสิทธิ์ก่อนถึง URL ของ Rails</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ฟอร์มที่มี <code>direct_upload: true</code> · ผู้ใช้เลือกรูป 5 MB แล้วกดบันทึก · ตอน <code>PostsController#update</code> ทำงาน Rails ได้อะไรมาในช่อง <code>post[cover]</code>?</p>
+  <div class="opts">
+    <button class="opt">ตัวไฟล์ 5 MB ที่ Rails เก็บพักไว้ในไฟล์ชั่วคราว ก่อนส่งต่อขึ้น MinIO ตอนบันทึก</button>
+    <button class="opt">ตัวอักษรสั้น ๆ คือ <code>signed_id</code> ของ blob ที่ไฟล์ถูกส่งขึ้น MinIO ไปเรียบร้อยแล้ว</button>
+    <button class="opt">URL ของ MinIO ที่เซ็นแล้ว เพื่อให้ Rails เอาไปดาวน์โหลดไฟล์มาตรวจก่อนบันทึก</button>
+    <button class="opt">ไม่ได้อะไรเลย เพราะ direct upload ส่งไฟล์ไป MinIO แล้ว ฟอร์มจึงไม่มีช่องนี้</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — log จริง: <code>"cover" =&gt; "eyJfcmFp…--e48e…"</code> · ไฟล์ขึ้นไปก่อนในแถว <code>PUT</code> · ฟอร์มส่งแค่รหัสมาให้แปะป้าย</p>
+    <p>ตัวเลือกที่ 1 — คือแบบที่<strong>ไม่มี</strong> direct upload (<code>UploadedFile</code> + <code>Tempfile</code> + <code>Uploaded file to key</code>) ·
+       ตัวเลือกที่ 3 — URL ที่เซ็นแล้วอยู่ในคำตอบของขั้น ① และใช้ <code>PUT</code> ไม่ได้ส่งกลับมาในฟอร์ม ·
+       ตัวเลือกที่ 4 — ช่องยังอยู่ ไม่งั้น Rails จะไม่รู้ว่ารูปไหนเป็นของโพสต์ไหน</p>
+    <p><strong>จุดที่ต้องจำ:</strong> direct upload = ไฟล์ไป storage · รหัสไป Rails</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">(case 4) ลูกค้าขอให้ลบรูปปก · ทีมรัน <code>post.cover.detach</code> แล้วเปิดหน้าบทความดู รูปหายแล้ว · บอกลูกค้าว่า "ลบแล้ว" ได้หรือยัง?</p>
+  <div class="opts">
+    <button class="opt">ได้ เพราะหน้าบทความไม่โชว์รูปแล้ว และ URL ของรูปทุกตัวหมดอายุเองใน 5 นาที</button>
+    <button class="opt">ได้ เพราะ <code>detach</code> ลบทั้งแถวในตารางและไฟล์ใน MinIO ให้ในคำสั่งเดียว</button>
+    <button class="opt">ยัง ต้องรอ 5 นาทีให้ URL ที่เคยแจกหมดอายุก่อน แล้วค่อยบอกลูกค้าได้เลย</button>
+    <button class="opt">ยัง <code>detach</code> ลบแค่ป้าย ไฟล์ยังอยู่และลิงก์ <code>:3000</code> เดิมยังเปิดได้ ต้อง <code>purge</code></button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — ลองแล้ว: หลัง <code>detach</code> URL <code>:3000</code> เดิมยังได้ 302 → รูป 200 · ต้อง <code>purge</code> (log ขึ้น <code>Deleted file from key</code>) แล้ว URL เดิมเป็น 404</p>
+    <p>ตัวเลือกที่ 1 — URL <code>:3000</code> ไม่หมดอายุ · ลิงก์ที่ใครเก็บไว้ยังพาไปขอบัตรใบใหม่ได้ ·
+       ตัวเลือกที่ 2 — นั่นคือ <code>purge</code> · <code>detach</code> ลบแค่แถว attachment ·
+       ตัวเลือกที่ 3 — รอเท่าไรก็ไม่ช่วย เพราะไฟล์กับใบรับฝากยังอยู่</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ลบจริง = <code>purge</code> · แล้วเช็ค URL เก่า · variant · และสำเนาใน CDN ถ้าใช้ proxy</p>
+  </div>
+</div>
+
+<div class="note">
+  <p><strong>🧹 ก่อนไปบทถัดไป:</strong> <code>git status --short</code> ต้องว่าง (ถ้ายังเห็น <code>_post.html.erb</code> ให้ <code>git restore app/views/posts/_post.html.erb</code>) ·
+     รูปปกที่อัปในภารกิจเก็บไว้ได้ ไม่กระทบบทต่อไป · บท 140 จะใช้รูปเหล่านี้ทำรูปย่อ</p>
+</div>
+
+<h2 id="sn-sec-11">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>10</td><td>ตัวอย่าง URL <code>https://minio/wongnok/abc123?X-Amz-Expires=300&amp;X-Amz-Signature=9f2e...</code></td><td>ของจริงยาวกว่ามาก มี 8 ท่อน (ตารางในหัวข้อ "อ่าน URL ที่เซ็นแล้ว") · path คือ <code>/wongnok-dev/&lt;key สุ่ม&gt;</code> ไม่ใช่ชื่อไฟล์</td><td>ไม่ต้อง</td></tr>
+    <tr><td>10</td><td>"Rails ไม่เคยแตะตัวไฟล์เลย"</td><td>จริงสำหรับขาออกแบบ redirect · แต่หลังอัป งานหลังร้าน <code>AnalyzeJob</code> โหลดไฟล์หนึ่งครั้งไปอ่านขนาดรูป (log มี <code>Downloaded file from key</code>)</td><td>ไม่ต้อง</td></tr>
+    <tr><td>10</td><td>"ลบ attachment ใน DB แล้ว แต่ URL เก่ายังเปิดได้ตลอดกาล" (เป็นเหตุผลที่ไม่เปิด bucket public)</td><td>bucket private ก็เจอได้: <code>detach</code> ลบแค่แถว attachment แล้ว URL <code>:3000</code> เดิมยังเปิดได้ · ต้อง <code>purge</code></td><td><strong>สนใจ</strong></td></tr>
+    <tr><td>11</td><td>direct upload 3 ขั้น (ขอใบอนุญาต · คืน URL · ส่งไฟล์ตรง)</td><td>ใน Network มี <code>OPTIONS</code> (CORS) ก่อน <code>PUT</code> และมีการส่งฟอร์มที่มีแค่ <code>signed_id</code> ตามหลัง · MinIO ในคอร์สไม่ต้องตั้ง CORS · S3 จริงต้องตั้ง</td><td>สนใจถ้าจะใช้ S3 จริง</td></tr>
+    <tr><td>11</td><td>redirect: "CDN cache ยาก เพราะ URL ปลายทางเปลี่ยนทุกครั้ง" · proxy: "URL คงที่"</td><td>URL <code>:3000</code> คงที่ทั้งสองโหมด · ที่เปลี่ยนคือ URL <code>:9000</code> หลัง 302 (<code>X-Amz-Date</code> ใหม่ทุกรอบ) และ 302 ของ Rails ติด <code>private</code></td><td>ไม่ต้อง</td></tr>
+    <tr><td>13</td><td>case 3 · case 4 ไม่มีเฉลย</td><td>case 3 = quiz ข้อแรก · case 4 = หัวข้อ "ลูกค้าขอให้ลบรูป" (case 1–2 อยู่ใน<a href="./0137-action-text.html">บท 137</a> และ<a href="./0140-variants-and-file-validation.html">บท 140</a>)</td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0138-files-object-storage-minio.html">← บทเรียน 138 · object storage · Active Storage</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0140-variants-and-file-validation.html">บทเรียน 140 → variant · ตรวจไฟล์</a>
+</nav>
+
+<h2 id="sn-sec-12">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#redirect-mode">Rails Guides — Active Storage Overview § Redirect Mode</a> —
+      <strong>อ่านหัวข้อนี้ต่อด้วย Proxy Mode และ Putting a CDN in Front of Active Storage</strong> (สั้นทั้งสาม) · ที่มาของ <code>rails_storage_proxy_path</code> และเหตุผลว่าทำไม CDN ต้องใช้ proxy</li>
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#direct-uploads">Rails Guides — Active Storage Overview § Direct Uploads</a> —
+      <strong>อ่านหัวข้อย่อย Usage</strong> — บรรทัด <code>pin "@rails/activestorage"</code> กับ <code>direct_upload: true</code> คือของที่บท 138 ใส่ไว้ · ถัดไปคือหัวข้อ CORS ที่บอกว่า S3 ต้องยอมหัวอะไรบ้าง</li>
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#removing-files">Rails Guides — Active Storage Overview § Removing Files</a> —
+      ย่อหน้าเดียว · <code>purge</code> กับ <code>purge_later</code> · หน้านี้ไม่พูดถึง <code>detach</code> เลย → ดูข้อถัดไป</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveStorage/Attached/One.html#method-i-detach">Rails API — ActiveStorage::Attached::One#detach</a> —
+      <strong>อ่านคำอธิบายของ <code>detach</code> เทียบกับ <code>purge</code> ที่อยู่ถัดลงมา</strong> · สองบรรทัดที่บอกว่าอันไหนลบไฟล์จริง</li>
+  <li><a href="https://guides.rubyonrails.org/configuring.html#config-active-storage-service-urls-expire-in">Rails Guides — Configuring Rails § config.active_storage.service_urls_expire_in</a> —
+      ค่าเริ่มต้น 5 นาที · <strong>ดูข้อถัดไปด้วย</strong> (<code>urls_expire_in</code>) ที่อธิบายว่าทำไม URL ของ Rails ไม่หมด</li>
+  <li><a href="https://github.com/rails/rails/blob/v8.1.4/activestorage/app/controllers/active_storage/blobs/redirect_controller.rb">rails/rails v8.1.4 — redirect_controller.rb</a> —
+      ไฟล์สั้นราว 30 บรรทัด · <strong>อ่านคอมเมนต์ด้านบน</strong>: URL ถาวรโดยตั้งใจ และคำเตือนว่า controller ของ Active Storage เปิดให้ทุกคนเข้า</li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS">MDN — Cross-Origin Resource Sharing (CORS)</a> —
+      <strong>อ่านหัวข้อ Preflighted requests</strong> · คือแถว <code>OPTIONS</code> ที่เห็นก่อน <code>PUT</code></li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Glossary/CDN">MDN Glossary — CDN</a> — นิยามสั้นสามบรรทัด</li>
+</ul>
+
+<p>ติดตรงไหน หรือผลของคุณต่างจากในบท — ก็อปผลจริงทั้งก้อน (ตัดลายเซ็นยาว ๆ ออกได้) ไปถาม AI หรือเพื่อนได้เลย โดยบอกว่ามาจากบท 139 ขั้นไหน</p>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

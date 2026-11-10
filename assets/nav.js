@@ -217,6 +217,19 @@
       { n: '133', f: 'rails-day-3/lessons/0133-broadcast-and-turbo-limits.html', t: 'broadcast — เด้งทุกแท็บ' },
       { n: '134', f: 'rails-day-3/lessons/0134-stimulus.html', t: 'Stimulus — HTML สั่ง JS' },
       { n: '135', f: 'rails-day-3/lessons/0135-lab-vibe3-hotwire.html', t: 'Lab Vibe 3 — ตรวจรับงาน Hotwire' }
+    ]},
+    { key: 'rails-day-4-part1', btn: 'Day 4.1', where: 'Rails Day 4 · Part 1',
+      d: 204, lessons: [   // ทำถึงบท 145 · ยังไม่มี cheat sheet (ผู้เรียนสั่งตัดจบ)
+      { n: '136', f: 'rails-day-4-part1/lessons/0136-rich-text-and-allowlist.html', t: 'Rich text · allowlist' },
+      { n: '137', f: 'rails-day-4-part1/lessons/0137-action-text.html', t: 'Action Text' },
+      { n: '138', f: 'rails-day-4-part1/lessons/0138-files-object-storage-minio.html', t: 'object storage · MinIO · Active Storage' },
+      { n: '139', f: 'rails-day-4-part1/lessons/0139-signed-url-direct-upload.html', t: 'signed URL · direct upload' },
+      { n: '140', f: 'rails-day-4-part1/lessons/0140-variants-and-file-validation.html', t: 'ย่อรูป · ตรวจไฟล์จากเนื้อจริง' },
+      { n: '141', f: 'rails-day-4-part1/lessons/0141-lab-vibe4-content.html', t: 'Lab Vibe 4 — rich text + รูปปก' },
+      { n: '142', f: 'rails-day-4-part1/lessons/0142-background-jobs-exactly-once.html', t: 'Background jobs · exactly-once' },
+      { n: '143', f: 'rails-day-4-part1/lessons/0143-idempotency-solid-queue.html', t: 'idempotency · Solid Queue' },
+      { n: '144', f: 'rails-day-4-part1/lessons/0144-retry-recurring-and-mail.html', t: 'retry · งานตามเวลา · อีเมล' },
+      { n: '145', f: 'rails-day-4-part1/lessons/0145-lab-vibe5-scheduled-posts.html', t: 'Lab Vibe 5 — ตั้งเวลาเผยแพร่' }
     ]}
   ];
 
@@ -227,7 +240,8 @@
   function group(o) {
     return {
       key: o.key, btn: o.btn, where: o.where, d: o.d,
-      sheet: o.key + '/reference/cheatsheet.html',
+      // กลุ่มที่ยังไม่มี cheat sheet ไม่ต้องใส่ sheetLabel → ไม่มีลิงก์ 📄
+      sheet: o.sheetLabel ? o.key + '/reference/cheatsheet.html' : null,
       sheetLabel: o.sheetLabel,
       lessons: o.lessons,
       track: null            // เติมทีหลังตอนประกอบ TRACKS
@@ -931,7 +945,7 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
         for (var j = 0; j < g.lessons.length; j++) {
           if (isHere(g.lessons[j].f)) return { track: TRACKS[t], group: g, lesson: g.lessons[j] };
         }
-        if (isHere(g.sheet)) return { track: TRACKS[t], group: g, lesson: null, sheet: true };
+        if (g.sheet && isHere(g.sheet)) return { track: TRACKS[t], group: g, lesson: null, sheet: true };
       }
     }
     return null;
@@ -950,12 +964,14 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
       if (isHere(ls.f)) a.setAttribute('aria-current', 'page');
       box.appendChild(a);
     });
-    var sh = el('a', 'sn-link sn-sheet');
-    sh.href = url(g.sheet);
-    sh.appendChild(el('span', 'sn-num', '📄'));
-    sh.appendChild(el('span', 'sn-t', g.sheetLabel));
-    if (isHere(g.sheet)) sh.setAttribute('aria-current', 'page');
-    box.appendChild(sh);
+    if (g.sheet) {
+      var sh = el('a', 'sn-link sn-sheet');
+      sh.href = url(g.sheet);
+      sh.appendChild(el('span', 'sn-num', '📄'));
+      sh.appendChild(el('span', 'sn-t', g.sheetLabel));
+      if (isHere(g.sheet)) sh.setAttribute('aria-current', 'page');
+      box.appendChild(sh);
+    }
     return box;
   }
 
@@ -1908,10 +1924,12 @@ h1[id], h2[id], h3[id], h4[id], [id]:target {
       if (isHere(ls.f)) { c.setAttribute('aria-current', 'page'); activeChip = c; }
       chips.appendChild(c);
     });
-    var cs = el('a', 'sn-chip sn-chip-sheet', '📄 Cheat sheet');
-    cs.href = url(d.sheet);
-    if (isHere(d.sheet)) { cs.setAttribute('aria-current', 'page'); activeChip = cs; }
-    chips.appendChild(cs);
+    if (d.sheet) {
+      var cs = el('a', 'sn-chip sn-chip-sheet', '📄 Cheat sheet');
+      cs.href = url(d.sheet);
+      if (isHere(d.sheet)) { cs.setAttribute('aria-current', 'page'); activeChip = cs; }
+      chips.appendChild(cs);
+    }
     subin.appendChild(chips);
 
     /* dropdown "ในบทนี้" — ลิสต์ <h2> ของหน้านั้นเอง

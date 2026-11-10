@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 138 — ไฟล์ไม่ควรอยู่ในแอป — object storage, MinIO และ Active Storage</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 138 · Rails · Day 4 Part 1</p>
+  <h1>ไฟล์ไม่ควรอยู่ในแอป — object storage, MinIO และ Active Storage</h1>
+  <p class="meta">~30 นาที (มีขั้นติดตั้งหลายขั้น) · ควรผ่าน <a href="./0137-action-text.html">บทเรียน 137</a> (Action Text) และ <a href="../../rails-day-3/lessons/0120-day3-setup.html">บทเรียน 120</a> (<code>docker compose</code>) มาก่อน</p>
+  <p class="standfirst">
+    บทนี้เราจะให้บทความมี<strong>รูปปก</strong> · คำถามแรกไม่ใช่ "เขียนโค้ดยังไง" แต่เป็น "<strong>ไฟล์ควรไปอยู่ที่ไหน</strong>"
+    <br>อ่านจบบทนี้ คุณจะอธิบายได้ว่า<strong>ทำไมไฟล์ไม่ควรเก็บไว้ในเครื่องที่รันแอป</strong> · รู้จัก object storage กับ MinIO ·
+    ตั้ง Active Storage ให้ส่งไฟล์ไปเก็บใน MinIO โดย<strong>ไม่เขียนรหัสผ่านลงไฟล์</strong> (Rails credentials) · แล้วอัปรูปปกจริงพร้อมตามไปดูว่าไฟล์อยู่ไหน
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้</p>
+  <ul>
+    <li><strong><code>docker compose</code></strong> (<a href="../../rails-day-3/lessons/0120-day3-setup.html">บท 120</a>) — เปิดโปรแกรมหลายตัวใน<strong>กล่องแยก (container)</strong> ตามไฟล์ <code>compose.yaml</code> · ตอนนั้นเห็น <code>minio:</code> ที่บอกว่า "วันนี้ยังไม่ใช้" — <strong>วันนี้ใช้แล้ว</strong></li>
+    <li><strong>Action Text</strong> (<a href="./0137-action-text.html">บท 137</a>) — ตอนรัน <code>action_text:install</code> มันแอบสร้างตารางของ Active Storage ไว้ให้ด้วย (ปุ่มคลิปแนบไฟล์ของ Trix ใช้มัน) · <strong>polymorphic</strong> = ตารางเดียวเก็บของได้หลายแผนก โดยจด "แผนกไหน + แฟ้มเลขที่เท่าไร"</li>
+    <li><strong><code>params.expect</code></strong> (<a href="../../rails-day-2/lessons/0117-rest-and-strong-params.html">บท 117</a>) — รายชื่อช่องในฟอร์มที่รับได้ · ช่องใหม่ต้องเพิ่มชื่อเอง</li>
+    <li><strong>12-Factor · ไฟล์ <code>.env</code> ห้าม commit</strong> (Go <a href="../../day-8/lessons/0044-env-config.html">บท 44</a> · <a href="../../day-9/lessons/0046-dotenv-godotenv.html">บท 46</a>) — แนวคิดว่าแอปที่ดีควรหน้าตาแบบไหน · และรหัสผ่านห้ามขึ้น Git</li>
+    <li><strong>schema.rb</strong> (<a href="../../rails-day-2/lessons/0108-migration-basics.html">บท 108</a>) — ภาพรวมทุกตารางในฐานข้อมูล อ่านง่ายกว่าไล่ migration ทีละไฟล์</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18 · aws-sdk-s3 1.238.0 · MinIO (image <code>pgsty/silo</code> ตัวเดียวกับ compose ของอาจารย์) · Chrome (สั่งด้วยสคริปต์) — สไลด์และ repo ของอาจารย์เขียน Ruby 4.0.5–4.0.6 · Rails 8.1.3 เรื่องในบทนี้ไม่ต่างกัน
+    <br><strong>📍 โค้ดเริ่มจาก:</strong> ตอนจบ<a href="./0137-action-text.html">บท 137</a> ที่ commit แล้ว (<code>git status --short</code> ว่าง) · บทความมีช่อง <code>body</code> แบบ rich text ·
+    บทนี้<strong>แก้โค้ดจริงแล้ว commit ตอนจบ</strong> (ไม่คืนทิ้ง)
+    <br><strong>🖥 เปิดค้างไว้:</strong> <code>docker compose up -d</code> — <strong>ครั้งนี้ต้องมีทั้ง postgres และ minio</strong> (ดูด้วย <code>docker compose ps</code> ว่ามีชื่อ minio ในรายการ) · <code>bin/dev</code> หนึ่งหน้าต่าง (เว็บที่ <code>localhost:3000</code>) · อีกหน้าต่างไว้พิมพ์คำสั่ง ·
+    ผลรันทุกกล่องมาจากเครื่องจริง · <strong>เวลา ms · วันเวลา · ชื่อไฟล์สุ่มในโกดัง · ลายเซ็นยาว ๆ ใน URL · id ของคุณจะไม่ตรงกับในบท</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">ตอนนี้ไฟล์ที่อัปโหลดไปอยู่ไหน</h2>
+
+<p>
+  ในบท 137 ถ้าคุณกดปุ่มคลิปของ Trix แล้วแนบรูป รูปนั้นไปอยู่ใน<strong>โฟลเดอร์ <code>storage/</code> ของโปรเจกต์</strong> · เพราะ Rails ตั้งค่าเริ่มต้นไว้แบบนี้:
+</p>
+
+<pre><code><span class="c"># config/environments/development.rb (ตอนเริ่มบท)</span>
+  <span class="c"># Store uploaded files on the local file system (see config/storage.yml for options).</span>
+  config.active_storage.service = <span class="n">:local</span>
+
+<span class="c"># config/storage.yml (ตอนเริ่มบท · ตัดมาเฉพาะส่วนนี้)</span>
+local:
+  service: Disk
+  root: &lt;%= <span class="n">Rails</span>.<span class="f">root</span>.<span class="f">join</span>(<span class="s">"storage"</span>) %&gt;</code></pre>
+
+<ul>
+  <li><code>service = :local</code> — "ไฟล์ที่ผู้ใช้อัปมา ให้ใช้ที่เก็บชื่อ <code>local</code>"</li>
+  <li><code>local:</code> → <code>service: Disk</code> — ที่เก็บชื่อ local คือ<strong>ดิสก์ของเครื่องนี้</strong> · <code>root:</code> = โฟลเดอร์ <code>storage/</code> ในโปรเจกต์ (<code>&lt;%= %&gt;</code> ในไฟล์ yml คือ ERB แบบเดียวกับใน view · Rails คำนวณให้เป็นที่อยู่เต็มของโฟลเดอร์)</li>
+</ul>
+
+<p>
+  ตอนผมลองอัปรูปด้วยค่านี้ ไฟล์ไปโผล่ที่ <code>storage/65/er/65eryelme20ify18xoi0sa9d1z7e</code> — <strong>อยู่ในโฟลเดอร์ของแอป บนเครื่องที่รันแอป</strong> ·
+  บนโน้ตบุ๊กเราไม่มีปัญหา · แต่พอเอาแอปขึ้นให้คนใช้จริง (production) จะพังสี่แบบ (สไลด์หน้า 8):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>เหตุการณ์</th><th>เกิดอะไรกับไฟล์ใน <code>storage/</code></th></tr></thead>
+  <tbody>
+    <tr><td><strong>restart · deploy ใหม่</strong></td><td>production มักรัน Rails ใน<strong>กล่องแยก (container)</strong> แบบเดียวกับที่เรารัน Postgres · deploy (เอาโค้ดใหม่ขึ้น) = <strong>สร้างกล่องใหม่จากแม่แบบ แล้วทิ้งกล่องเก่า</strong> → โฟลเดอร์ในกล่องเริ่มจากศูนย์ <strong>รูปหายหมด</strong></td></tr>
+    <tr><td><strong>scale</strong> (เปิดแอปหลายเครื่องช่วยกันรับคน)</td><td>ผู้ใช้อัปรูปผ่านเครื่อง A → ไฟล์อยู่ใน A เครื่องเดียว · คนที่เปิดหน้าเดียวกันแล้วไปตกเครื่อง B หรือ C <strong>เห็นรูปพัง</strong></td></tr>
+    <tr><td><strong>backup</strong></td><td>สำรองฐานข้อมูลแล้ว แต่ไฟล์อยู่อีกที่ ต้องจำไปสำรองแยก · กู้คืนทีหนึ่งต้องกู้สองที่ให้ตรงกัน</td></tr>
+    <tr><td><strong>ไฟล์ใหญ่วิ่งผ่าน Rails</strong></td><td>ตลอดเวลาที่ไฟล์กำลังส่งเข้ามา Rails ต้องมีคนคอยรับหนึ่งคน · server ของเราตอนเปิดพิมพ์ <code>Min threads: 3</code> <code>Max threads: 3</code> = <strong>รับงานพร้อมกันได้ 3 งาน</strong> · สไลด์ยกตัวอย่างว่า 10 คนอัปไฟล์ 500 MB พร้อมกัน = คนรับงานหมด คนที่แค่จะอ่านบทความก็เปิดเว็บไม่ได้</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ใน Go <a href="../../day-8/lessons/0044-env-config.html">บท 44</a> คุณเจอ <strong>12-Factor</strong> ข้อ III (config) มาแล้ว · ข้อที่เกี่ยวกับบทนี้คือ <strong>ข้อ VI</strong>:
+  <strong>แอปต้องไม่เก็บของที่ต้องอยู่ถาวรไว้กับตัว</strong> — ของแบบนั้นให้ไปอยู่ใน<strong>บริการข้างนอก</strong> แบบที่ข้อมูลบทความไปอยู่ใน Postgres
+</p>
+
+<div class="analogy">
+  <span class="label">🍳 เทียบให้เห็นภาพ — วางของฝากของลูกค้าไว้ในครัว</span>
+  <p>
+    ลูกค้าฝากรูปปกไว้กับร้าน แล้วพนักงานเอาไปวาง<strong>ในครัว</strong> · วันหนึ่งครัว<strong>รีโนเวท</strong> (deploy) ช่างรื้อทุกอย่างแล้วสร้างครัวใหม่ตามแบบ → ของฝากหาย ·
+    พอร้านเปิด<strong>สามสาขา</strong> (scale) ของฝากอยู่ครัวสาขาเดียว ลูกค้าไปอีกสาขาก็ไม่เจอ ·
+    และระหว่างที่พนักงานต้อนรับ<strong>แบกกล่องใหญ่</strong>ของลูกค้าเข้าครัว เขาก็รับออเดอร์โต๊ะอื่นไม่ได้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงรีโนเวทปีละครั้ง และช่างอาจเก็บของไว้ให้ ·
+    แอปจริง deploy ได้<strong>วันละหลายรอบ</strong> และกล่องใหม่<strong>ไม่มีอะไรจากกล่องเก่าติดมาเลย</strong> ทุกครั้ง ไม่มีใครเก็บของให้
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับที่รู้:</strong> แอป Go ใน <a href="../../day-6/lessons/0027-project-layout-gorm.html">บท 27</a> ก็ไม่เก็บบทความไว้ในตัวโปรแกรม แต่ส่งไป Postgres ด้วย GORM · ปิดเปิดโปรแกรม Go ใหม่ ข้อมูลยังอยู่ · บทนี้ทำแบบเดียวกันกับ<strong>ไฟล์</strong>
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>stateless process</dt>
+    <dd>โปรแกรมที่ไม่เก็บของถาวรไว้กับตัว ปิดทิ้งแล้วเปิดใหม่กี่ตัวก็ได้ไม่เสียอะไร (12-Factor ข้อ VI) ·
+        <strong>ถาม senior ได้ว่า "แอปเรา stateless หรือยัง มีอะไรเขียนลงดิสก์ของ container บ้าง"</strong></dd>
+    <dt>backing service</dt>
+    <dd>บริการข้างนอกที่แอปเรียกใช้ผ่านเครือข่าย เช่น Postgres หรือที่เก็บไฟล์ (12-Factor ข้อ IV) · สลับตัวได้แค่แก้ config ·
+        <strong>พิมพ์บอก AI ได้ว่า "treat file storage as a backing service; never write uploads to the container's disk"</strong></dd>
+    <dt>scale out · horizontal scaling</dt>
+    <dd>เพิ่มจำนวนเครื่องที่รันแอปตัวเดียวกันเพื่อรับคนได้มากขึ้น · ทำได้ก็ต่อเมื่อแอป stateless ·
+        <strong>ถาม senior ได้ว่า "ถ้าเรา scale out เป็น 3 เครื่องตอนนี้ อะไรจะพังก่อน"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">object storage — โกดังเก็บไฟล์ที่พูดภาษา S3</h2>
+
+<p>
+  <strong>object storage</strong> คือที่เก็บไฟล์ที่อยู่บนเครือข่าย · แอปส่งไฟล์ไป<strong>ทั้งก้อน</strong> พร้อมบอก<strong>ชื่อ</strong>ที่จะใช้เรียกคืน · อยากได้คืนก็ขอด้วยชื่อนั้น ·
+  มันไม่ได้อยู่ในเครื่องที่รันแอป → deploy กี่รอบ เปิดกี่เครื่อง ทุกเครื่องเห็นไฟล์ชุดเดียวกัน
+</p>
+<ul>
+  <li><strong>bucket</strong> — กล่องใหญ่ที่ตั้งชื่อไว้ เก็บไฟล์ได้ไม่จำกัด · แอปเราจะใช้ bucket ชื่อ <code>wongnok-dev</code></li>
+  <li><strong>object</strong> — ไฟล์หนึ่งชิ้นใน bucket · <strong>key</strong> = ชื่อที่ใช้เรียกมัน (เหมือนเลขที่ใบฝากของ)</li>
+  <li><strong>S3</strong> — บริการ object storage ของ Amazon · ชุดคำสั่งที่ใช้คุยกับมัน<strong>กลายเป็นภาษากลาง</strong> หลายเจ้าเลยพูดภาษาเดียวกัน (เรียกว่า S3-compatible)</li>
+  <li><strong>MinIO</strong> — โปรแกรม object storage ที่พูดภาษา S3 และ<strong>รันในเครื่องเราได้</strong> · ตอนพัฒนาใช้ MinIO · ตอนขึ้นจริงจะเปลี่ยนไปใช้ S3 ก็แค่แก้ config ไม่ต้องแก้โค้ด</li>
+</ul>
+
+<p>MinIO อยู่ใน <code>compose.yaml</code> ของ repo ตั้งแต่บท 120 แล้ว · ดูส่วนของมัน (ไม่ต้องแก้):</p>
+
+<pre><code><span class="c"># compose.yaml (ส่วนของ minio)</span>
+  minio:
+    image: pgsty/silo
+    command: server /data --console-address <span class="s">":9001"</span>
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports: [<span class="s">"9000:9000"</span>, <span class="s">"9001:9001"</span>]
+    volumes: [<span class="s">"miniodata:/data"</span>]</code></pre>
+
+<ul>
+  <li><code>image: pgsty/silo</code> — ตัวโปรแกรม · หน้า login ของมันเขียนว่า "MinIO fork maintained by PGSTY" = MinIO ฉบับที่อีกทีมดูแลต่อ ใช้งานเหมือนกัน · ชื่อบนหน้าจอจะเป็น <strong>SILO</strong></li>
+  <li><code>command: server /data …</code> — สั่งให้เก็บไฟล์ไว้ที่ <code>/data</code> ในกล่อง · <code>--console-address ":9001"</code> = เปิดหน้าเว็บจัดการที่ประตู 9001</li>
+  <li><code>MINIO_ROOT_USER</code> · <code>MINIO_ROOT_PASSWORD</code> — ชื่อและรหัสของ<strong>ผู้ดูแลสูงสุด</strong> · <code>minioadmin</code> เป็นค่าทดลองในเครื่อง ห้ามใช้กับระบบจริง</li>
+  <li><code>ports</code> — <strong>9000</strong> = ประตูที่โปรแกรมคุยกัน (ภาษา S3 · Rails และเบราว์เซอร์จะส่งไฟล์มาที่นี่) · <strong>9001</strong> = หน้าเว็บ console ให้คนกดดู</li>
+  <li><code>volumes: miniodata:/data</code> — เก็บ <code>/data</code> ไว้<strong>นอกกล่อง</strong> (แบบ <code>pgdata</code> ของ Postgres บท 120) · MinIO เองก็เป็นกล่อง แต่ปิดเปิดใหม่แล้วไฟล์ไม่หายเพราะบรรทัดนี้</li>
+</ul>
+
+<div class="analogy">
+  <span class="label">🏬 เทียบให้เห็นภาพ — โกดังรับฝากของนอกร้าน</span>
+  <p>
+    ร้านเลิกวางของฝากในครัว แล้วไปเช่า<strong>โกดังรับฝากของนอกร้าน</strong> · ครัวรีโนเวทกี่รอบ ของในโกดังก็อยู่ · ร้านเปิดสามสาขา ทุกสาขาไปเบิกจากโกดังเดียวกัน ·
+    ในโกดังแบ่งเป็น<strong>ห้อง</strong> (bucket) · ของแต่ละชิ้นมี<strong>เลขที่ใบฝาก</strong> (key) · บริษัทโกดังหลายเจ้าใช้<strong>แบบฟอร์มฝาก-เบิกแบบเดียวกัน</strong> (ภาษา S3) ร้านจะย้ายเจ้าก็ไม่ต้องสอนพนักงานใหม่ ·
+    MinIO คือ<strong>โกดังจำลองหลังบ้านเรา</strong> ที่ใช้แบบฟอร์มเดียวกันเป๊ะ ไว้ซ้อมก่อนไปเช่าของจริง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> โกดังจริงอยู่ไกล ไปทีกินเวลา · object storage อยู่บนเครือข่าย ส่งไฟล์ไปกลับในเสี้ยววินาที ·
+    และโกดังจริงเปิดกล่องแก้ของข้างในได้ · object storage <strong>แก้ไฟล์ครึ่งชิ้นไม่ได้</strong> ต้องส่งชิ้นใหม่ไปแทนทั้งชิ้น
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับที่รู้:</strong> MinIO เป็นกล่องหนึ่งใน <code>compose.yaml</code> แบบเดียวกับ <code>postgres</code> ของบท 120 ·
+  Postgres รับ<strong>แถวข้อมูล</strong>ทางประตู 5432 · MinIO รับ<strong>ไฟล์ทั้งก้อน</strong>ทางประตู 9000 ·
+  ทั้งคู่อยู่นอกแอป Rails ปิดเปิดแอปกี่รอบของก็ยังอยู่
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>object storage · object · key</dt>
+    <dd>ที่เก็บไฟล์บนเครือข่าย · ไฟล์หนึ่งชิ้น · ชื่อที่ใช้เรียกไฟล์ ·
+        <strong>ถาม senior ได้ว่า "ไฟล์ที่ผู้ใช้อัปโหลดของระบบเราเก็บใน object storage ตัวไหน bucket อะไร"</strong></dd>
+    <dt>bucket</dt>
+    <dd>กล่องใหญ่ที่ตั้งชื่อไว้เก็บ object · มักแยก bucket ตาม environment เช่น <code>wongnok-dev</code> กับของ production ·
+        <strong>พิมพ์บอก AI ได้ว่า "use a separate private bucket per environment"</strong></dd>
+    <dt>S3-compatible · MinIO</dt>
+    <dd>บริการที่พูดภาษาเดียวกับ Amazon S3 · MinIO เป็นตัวที่รันเองได้ เหมาะกับเครื่อง dev ·
+        <strong>พิมพ์บอก AI ได้ว่า "we use MinIO locally as an S3-compatible store; configure Active Storage's S3 service with a custom endpoint"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">เปิดโกดัง แล้วสร้างห้อง <code>wongnok-dev</code></h2>
+
+<p>bucket ไม่มีใครสร้างให้ · เราสร้างผ่านหน้าเว็บ console ของ MinIO:</p>
+
+<ol>
+  <li>เปิด <code>http://localhost:9001</code> · เจอหน้า login ที่มีโลโก้ <strong>SILO</strong> ใต้โลโก้เขียน "OBJECT STORAGE CONSOLE" ·
+      ช่อง <strong>Username</strong> พิมพ์ <code>minioadmin</code> · ช่อง <strong>Password</strong> พิมพ์ <code>minioadmin</code> (ค่าจาก <code>compose.yaml</code>) → ปุ่ม <strong>Login</strong> · จะไปหน้า Overview</li>
+  <li>เมนูซ้าย <strong>Buckets</strong> → ปุ่ม <strong>Create bucket</strong> (มุมขวาบน) → หน้า "Create Bucket"</li>
+  <li>ช่อง <strong>Bucket Name*</strong> พิมพ์ <code>wongnok-dev</code> (<strong>ตรงตัวอักษร</strong> เดี๋ยวต้องใส่ชื่อนี้ใน config) · Versioning · Object Locking · Quota ปล่อย Off → ปุ่ม <strong>Create Bucket</strong></li>
+  <li>หน้าจอเด้งไปที่ห้องใหม่ ขึ้นว่า "This location is empty, please try uploading a new file" = ห้องว่าง พร้อมใช้</li>
+</ol>
+
+<p>
+  แท็บ <strong>Summary</strong> ของ bucket จะเขียน <strong>Access Policy: private</strong> = คนนอกเปิดไฟล์ในห้องนี้ตรง ๆ ไม่ได้ ต้องมีใบอนุญาตจากแอปเท่านั้น · ค่าเริ่มต้นนี้แหละที่เราต้องการ
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>อย่าเปลี่ยน bucket เป็น public</strong> แม้จะทำให้รูปขึ้นง่ายกว่า — ใครเดาชื่อไฟล์ได้ก็เปิดได้หมด · บท 139 จะเห็นว่าแอปออก "ใบอนุญาตชั่วคราว" ให้เบราว์เซอร์แทน</p>
+</div>
+
+<h2 id="sn-sec-4">Active Storage — ระบบบัตรรับฝากของร้าน</h2>
+
+<p>
+  <strong>Active Storage</strong> คือส่วนของ Rails ที่ทำสามอย่างให้: <strong>ส่งไฟล์ไปเก็บ</strong> (ในเครื่องหรือโกดังไหนก็ได้ตาม config) ·
+  <strong>จดลงฐานข้อมูล</strong>ว่าไฟล์อะไรเป็นของบทความไหน · และ<strong>สร้างลิงก์</strong>ให้เบราว์เซอร์เปิดไฟล์ได้ ·
+  สไลด์หน้า 9 สั่งให้ติดตั้งด้วยคำสั่งนี้ — ลองพิมพ์ดู:
+</p>
+
+<pre><code>$ bin/rails active_storage:install
+$ bin/rails db:migrate
+$ git status --short
+$</code></pre>
+
+<p>
+  <strong>เงียบทั้งสามคำสั่ง</strong> (ผลจริง ไม่ใช่ตัดออก) · เพราะบท 137 ตอน <code>action_text:install</code> มันก็อป migration ของ Active Storage มาให้แล้ว
+  (ไฟล์ <code>db/migrate/…_create_active_storage_tables.active_storage.rb</code> · เลขหน้าชื่อไฟล์ของคุณต่างจากของผม) และ migrate ไปแล้ว ·
+  ดูตารางที่มันสร้างใน <code>db/schema.rb</code> (ตัดมาเฉพาะสองตารางหลัก):
+</p>
+
+<pre><code><span class="c"># db/schema.rb</span>
+  create_table <span class="s">"active_storage_attachments"</span>, force: <span class="n">:cascade</span> <span class="k">do</span> |t|
+    t.<span class="f">string</span> <span class="s">"name"</span>, null: <span class="k">false</span>
+    t.<span class="f">string</span> <span class="s">"record_type"</span>, null: <span class="k">false</span>
+    t.<span class="f">bigint</span> <span class="s">"record_id"</span>, null: <span class="k">false</span>
+    t.<span class="f">bigint</span> <span class="s">"blob_id"</span>, null: <span class="k">false</span>
+    t.<span class="f">datetime</span> <span class="s">"created_at"</span>, null: <span class="k">false</span>
+    t.<span class="f">index</span> [<span class="s">"blob_id"</span>], name: <span class="s">"index_active_storage_attachments_on_blob_id"</span>
+    t.<span class="f">index</span> [<span class="s">"record_type"</span>, <span class="s">"record_id"</span>, <span class="s">"name"</span>, <span class="s">"blob_id"</span>], name: <span class="s">"index_active_storage_attachments_uniqueness"</span>, unique: <span class="k">true</span>
+  <span class="k">end</span>
+
+  create_table <span class="s">"active_storage_blobs"</span>, force: <span class="n">:cascade</span> <span class="k">do</span> |t|
+    t.<span class="f">string</span> <span class="s">"key"</span>, null: <span class="k">false</span>
+    t.<span class="f">string</span> <span class="s">"filename"</span>, null: <span class="k">false</span>
+    t.<span class="f">string</span> <span class="s">"content_type"</span>
+    t.<span class="f">text</span> <span class="s">"metadata"</span>
+    t.<span class="f">string</span> <span class="s">"service_name"</span>, null: <span class="k">false</span>
+    t.<span class="f">bigint</span> <span class="s">"byte_size"</span>, null: <span class="k">false</span>
+    t.<span class="f">string</span> <span class="s">"checksum"</span>
+    t.<span class="f">datetime</span> <span class="s">"created_at"</span>, null: <span class="k">false</span>
+    t.<span class="f">index</span> [<span class="s">"key"</span>], name: <span class="s">"index_active_storage_blobs_on_key"</span>, unique: <span class="k">true</span>
+  <span class="k">end</span></code></pre>
+
+<p>(บรรทัด <code>t.index … unique: true</code> = กฎ "ห้ามซ้ำ" ระดับฐานข้อมูลแบบ unique index ของ<a href="../../rails-day-2/lessons/0111-four-layers-and-uniqueness.html">บท 111</a> · ที่เหลือเป็นหน้าตาปกติของ schema.rb)</p>
+<p><strong><code>active_storage_blobs</code></strong> — หนึ่งแถว = <strong>ไฟล์หนึ่งชิ้น</strong> (blob = "ก้อนข้อมูล"):</p>
+<ul>
+  <li><code>key</code> — ชื่อของไฟล์<strong>ในโกดัง</strong> · Rails สุ่มให้ · <code>unique: true</code> = ห้ามซ้ำ</li>
+  <li><code>filename</code> — ชื่อเดิมที่ผู้ใช้อัปมา เช่น <code>khaosoi.jpg</code> · <code>content_type</code> — ชนิดไฟล์ เช่น <code>image/jpeg</code> (บท 140 จะเห็นว่าเชื่อช่องนี้ไม่ได้)</li>
+  <li><code>metadata</code> — ข้อมูลเสริม เช่นกว้าง × ยาวของรูป · <code>byte_size</code> — ขนาดเป็นไบต์</li>
+  <li><code>service_name</code> — ไฟล์นี้<strong>อยู่โกดังไหน</strong> (<code>local</code> หรือ <code>minio</code>)</li>
+  <li><code>checksum</code> — <strong>ลายนิ้วมือของไฟล์</strong> คำนวณจากเนื้อไฟล์ · ไว้ตรวจว่าไฟล์ไม่เพี้ยนระหว่างส่ง</li>
+</ul>
+<p><strong><code>active_storage_attachments</code></strong> — หนึ่งแถว = <strong>ป้ายบอกว่าไฟล์ไหนเป็นของใคร</strong>:</p>
+<ul>
+  <li><code>name</code> — ชื่อช่อง เช่น <code>"cover"</code> (รูปปก)</li>
+  <li><code>record_type</code> + <code>record_id</code> — <strong>ของแฟ้มไหน เลขที่เท่าไร</strong> เช่น <code>"Post"</code> + <code>1</code> · นี่คือ <strong>polymorphic</strong> แบบเดียวกับ <code>action_text_rich_texts</code> ของบท 137 · ตารางเดียวใช้ได้กับทุก model</li>
+  <li><code>blob_id</code> — ชี้ไปแถวใน <code>active_storage_blobs</code></li>
+</ul>
+<p>
+  ตารางที่สาม <code>active_storage_variant_records</code> (ไม่ได้ตัดมาโชว์) ใช้จดรูปย่อ — รอบท 140 ·
+  สังเกตว่า<strong>ไม่มีตารางไหนเก็บตัวไฟล์</strong> · ฐานข้อมูลเก็บแค่<strong>ข้อมูลเกี่ยวกับไฟล์</strong> ตัวไฟล์อยู่ในโกดัง
+</p>
+
+<div class="analogy">
+  <span class="label">🎫 เทียบให้เห็นภาพ — ระบบบัตรรับฝากของร้าน</span>
+  <p>
+    ทุกครั้งที่ของเข้าโกดัง ร้านออก<strong>ใบรับฝาก</strong> (blob): เลขที่ฝาก ชื่อของ ขนาด ฝากไว้โกดังไหน แล้วเก็บใบนี้ในตู้แฟ้ม ·
+    แยกจากนั้นมี<strong>ป้ายติดแฟ้ม</strong> (attachment): "รูปปกของแฟ้มบทความเลขที่ 1 → ดูใบรับฝากเลข 1" ·
+    เพราะใบรับฝากกับป้ายแยกกัน ใบเดียวจึงถูกป้ายหลายอันชี้มาได้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงให้ลูกค้าถือใบรับฝากกลับบ้าน · ที่นี่ทั้งใบและป้ายอยู่ในตู้แฟ้มของร้าน (ฐานข้อมูล) ลูกค้าไม่ได้ถืออะไร ·
+    และเลขที่ฝากของจริงมักเรียง 1 2 3 · ของ Active Storage เป็น<strong>ตัวอักษรสุ่ม</strong> ใครก็เดาเลขของคนอื่นไม่ได้
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับที่รู้:</strong> คล้าย <code>has_many :comments</code> (บท 115) ที่เก็บคอมเมนต์แยกตาราง แล้วจดว่าเป็นของบทความไหน ·
+  ต่างกันตรงที่ Active Storage ใช้สองตารางนี้<strong>ร่วมกันทุก model</strong> ไม่ต้องสร้างตารางใหม่ต่อ model
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>Active Storage</dt>
+    <dd>ระบบแนบไฟล์ที่มากับ Rails · เก็บไฟล์ใน "service" ที่ตั้งไว้ และจดข้อมูลลงสองตาราง ·
+        <strong>พิมพ์บอก AI ได้ว่า "use Active Storage for uploads, not a custom file column"</strong></dd>
+    <dt>blob</dt>
+    <dd>แถวใน <code>active_storage_blobs</code> = ข้อมูลของไฟล์หนึ่งชิ้น (key · ชื่อ · ชนิด · ขนาด · checksum) ·
+        <strong>ถาม senior ได้ว่า "blob ที่ไม่มี attachment ชี้มาเลย เรากวาดทิ้งตอนไหน"</strong> (เรื่องของบท 140)</dd>
+    <dt>attachment</dt>
+    <dd>แถวใน <code>active_storage_attachments</code> = ป้ายบอกว่า blob นี้แนบกับ record ไหน ช่องชื่ออะไร</dd>
+    <dt>service (ของ Active Storage)</dt>
+    <dd>ที่เก็บไฟล์หนึ่งแห่งที่ตั้งชื่อไว้ใน <code>config/storage.yml</code> เช่น <code>local</code> (ดิสก์) หรือ <code>minio</code> (S3) ·
+        <strong>ถาม senior ได้ว่า "production ใช้ Active Storage service ตัวไหน"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">ติดตั้งตัวพูดภาษา S3 — gem <code>aws-sdk-s3</code></h2>
+
+<p>
+  Active Storage <strong>รู้ว่าต้องทำอะไร</strong> แต่<strong>พูดภาษา S3 เองไม่เป็น</strong> · ต้องมี gem ของ Amazon ที่รวมคำสั่งคุยกับ S3 ไว้ให้ ·
+  เปิด <code>Gemfile</code> แล้ว<strong>พิมพ์ต่อท้ายไฟล์</strong>:
+</p>
+
+<pre><code><span class="c"># Gemfile (ต่อท้ายไฟล์)</span>
+
+<span class="c"># Active Storage ต่อ MinIO/S3 · require: false เพราะ Active Storage require เองตอนใช้ service S3</span>
+<span class="f">gem</span> <span class="s">"aws-sdk-s3"</span>, <span class="s">"~&gt; 1.238"</span>, require: <span class="k">false</span></code></pre>
+
+<ul>
+  <li><code>"~&gt; 1.238"</code> — ใช้รุ่น 1.238 ขึ้นไป แต่ไม่ถึง 2.0</li>
+  <li><code>require: false</code> — ไม่ต้องโหลดตอนเปิดแอป · Active Storage จะโหลดเองตอนต้องคุยกับ S3</li>
+</ul>
+
+<pre><code>$ bundle install
+Resolving dependencies...
+Bundle complete! 29 Gemfile dependencies, 138 gems now installed.
+Use `bundle info [gemname]` to see where a bundled gem is installed.
+1 installed gem you directly depend on is looking for funding.
+  Run `bundle fund` for details</code></pre>
+
+<p>
+  เครื่องผมมี gem ครบแล้ว (รันแบบ <code>--local</code> = ใช้ของในเครื่อง) · <strong>ของคุณจะมีบรรทัด <code>Fetching …</code> · <code>Installing …</code> ก่อน</strong> (<code>Gemfile.lock</code> ได้ gem เพิ่ม 8 ตัว: <code>aws-sdk-s3</code> กับอีก 7 ตัวที่มันต้องใช้) ·
+  เลขรุ่นใน <code>Gemfile.lock</code> ของคุณอาจใหม่กว่าของผม (ผมได้ <code>aws-sdk-s3 (1.238.0)</code>) เพราะ bundler หยิบรุ่นล่าสุดที่เข้ากับ <code>"~&gt; 1.238"</code> — ไม่เป็นไร ·
+  ลงท้ายด้วย <code>Bundle complete!</code> = ผ่าน
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>พิมพ์บรรทัดใน Gemfile เอง อย่าใช้ <code>bundle add aws-sdk-s3</code></strong> — คำสั่งนั้นดึง<strong>รุ่นล่าสุด ณ วันที่รัน</strong> แล้วเขียนเลขรุ่นนั้นลง Gemfile (ตอนเราลองได้ 1.240.0) โค้ดจะไม่ตรงกับในบท · server ที่เปิดอยู่ยังไม่รู้จัก gem ใหม่ — <strong>ยังไม่ต้องปิด</strong> เราจะปิดเปิด <code>bin/dev</code> ทีเดียวตอนจบขั้นต่อรูปปก</p>
+</div>
+
+<h2 id="sn-sec-6">กุญแจโกดังห้ามเขียนลงไฟล์ — Rails credentials</h2>
+
+<p>
+  Rails ต้องมี<strong>ชื่อผู้ใช้กับรหัส</strong>ของ MinIO ถึงจะส่งไฟล์ได้ · ถ้าเขียนลง <code>config/storage.yml</code> ตรง ๆ ไฟล์นั้นขึ้น Git → <strong>ทุกคนที่เห็น repo ได้กุญแจโกดังไปด้วย</strong> (Go บท 44 สอนเกณฑ์ไว้แล้ว: "เปิด repo เป็น public ตอนนี้ได้ไหม")
+</p>
+<p>
+  ทางของ Rails เรียกว่า <strong>credentials</strong>: เก็บรหัสในไฟล์ที่<strong>เข้ารหัสแล้ว</strong> (<code>.yml.enc</code> · commit ได้ อ่านไม่ออก) คู่กับ<strong>ไฟล์กุญแจถอดรหัส</strong> (<code>.key</code> · <strong>ห้าม commit</strong>) ·
+  repo นี้มี <code>config/credentials.yml.enc</code> ของอาจารย์อยู่แล้ว แต่เราไม่มีกุญแจของมัน → เราสร้าง<strong>ชุดแยกสำหรับ development</strong> ของเราเอง
+</p>
+
+<pre><code>$ EDITOR=nano bin/rails credentials:edit --environment development</code></pre>
+
+<ul>
+  <li><code>EDITOR=nano</code> — บอกว่าจะเปิดไฟล์ด้วยโปรแกรมแก้ข้อความในเทอร์มินัลชื่อ nano (บน macOS คำสั่งนี้เปิดโปรแกรม <strong>pico</strong> ที่หน้าตาและปุ่มเหมือนกัน หัวจอจะเขียนว่า PICO ไม่ต้องตกใจ) · ใช้ VS Code ได้ด้วย <code>EDITOR="code --wait"</code> (<code>--wait</code> สำคัญ ไม่งั้นมันปิดทันทีแล้วไม่ได้บันทึกอะไร)</li>
+  <li><code>credentials:edit</code> — ถอดรหัสไฟล์ ให้แก้ แล้วเข้ารหัสกลับตอนปิด · <code>--environment development</code> = ทำชุดของ development</li>
+</ul>
+
+<p>ผลจริงตอนเริ่ม (ผมตัดกลางกุญแจออกเป็น <code>…</code> · <strong>ของคุณเป็นเลขสุ่มชุดอื่น</strong>):</p>
+
+<pre><code>Adding config/credentials/development.key to store the encryption key: 3feb7854…1b33cf03
+
+Save this in a password manager your team can access.
+
+If you lose the key, no one, including you, can access anything encrypted with it.
+
+      create  config/credentials/development.key
+      append  .gitignore
+
+Configured Git diff driver for credentials.
+Editing config/credentials/development.yml.enc...</code></pre>
+
+<ul>
+  <li><code>Adding config/credentials/development.key …</code> — สร้าง<strong>กุญแจ</strong>ให้ · ข้อความถัดมาเตือนว่า<strong>ให้เก็บไว้ใน password manager ของทีม</strong> (โปรแกรมเก็บรหัสผ่านที่แชร์กันในทีมได้อย่างปลอดภัย) และถ้ากุญแจหาย ไม่มีใครเปิดไฟล์ได้อีก รวมถึงตัวคุณเอง</li>
+  <li><code>append .gitignore</code> — เพิ่มบรรทัดลง <code>.gitignore</code> ให้ Git <strong>ไม่สนไฟล์กุญแจ</strong> (ดูข้างล่าง)</li>
+  <li><code>Configured Git diff driver …</code> — ตั้งให้ <code>git diff</code> ถอดรหัสไฟล์ <code>.enc</code> โชว์เป็นข้อความได้ (บนเครื่องที่มีกุญแจ) · ไม่ต้องทำอะไร</li>
+  <li><code>Editing …</code> — แล้ว nano ก็เปิดขึ้นมา</li>
+</ul>
+
+<p>ใน nano จะเห็นตัวอย่างที่ Rails ใส่ไว้ (ทุกบรรทัดขึ้นต้นด้วย <code>#</code> = ไม่มีผล):</p>
+
+<pre><code><span class="c"># smtp:</span>
+<span class="c">#   user_name: my-smtp-user</span>
+<span class="c">#   password: my-smtp-password</span>
+<span class="c">#</span>
+<span class="c"># aws:</span>
+<span class="c">#   access_key_id: 123</span>
+<span class="c">#   secret_access_key: 345</span></code></pre>
+
+<p>ลบทิ้งทั้งหมด แล้วพิมพ์ 3 บรรทัดนี้ (เว้นวรรคหน้าบรรทัด 2–3 ด้วยช่องว่าง 2 ตัว ห้ามใช้ Tab):</p>
+
+<pre><code>minio:
+  access_key_id: minioadmin
+  secret_access_key: minioadmin</code></pre>
+
+<p>
+  บันทึกใน nano: <strong>Ctrl+O</strong> แล้ว <strong>Enter</strong> · ออก: <strong>Ctrl+X</strong> · เทอร์มินัลจะพิมพ์ต่อว่า <code>File encrypted and saved.</code> ·
+  (<code>minioadmin</code> คือผู้ดูแลสูงสุดของ MinIO จาก compose — ง่ายสำหรับเครื่อง dev · ระบบจริงควรสร้างกุญแจแยกที่มีสิทธิ์แค่ bucket เดียว)
+</p>
+
+<p>ตรวจว่า Rails อ่านได้:</p>
+
+<pre><code>$ bin/rails runner <span class="s">'p Rails.application.credentials.dig(:minio, :access_key_id)'</span>
+"minioadmin"</code></pre>
+
+<ul>
+  <li><code>bin/rails runner '…'</code> — รันโค้ด Ruby หนึ่งบรรทัดในแอป แล้วจบ (ไม่ต้องเปิด console)</li>
+  <li><code>credentials.dig(:minio, :access_key_id)</code> — เปิดหัวข้อ <code>minio</code> แล้วหยิบ <code>access_key_id</code> (<code>dig</code> = ขุดลงไปทีละชั้น ถ้าไม่มีก็ได้ <code>nil</code> ไม่ error) · <code>p</code> = พิมพ์ออกมา</li>
+</ul>
+
+<p>แล้วพิสูจน์ว่า Git ไม่เห็นกุญแจ:</p>
+
+<pre><code>$ git check-ignore -v config/credentials/development.key
+.gitignore:43:/config/credentials/*.key	config/credentials/development.key</code></pre>
+
+<p>
+  แปลว่า "ไฟล์นี้ถูกเมินเพราะ <code>.gitignore</code> บรรทัด 43 กฎ <code>/config/credentials/*.key</code>" ·
+  ส่วน <code>development.yml.enc</code> จะ commit ไปด้วย — เปิดดูก็เห็นแต่ตัวอักษรมั่ว ๆ เช่น <code>KwCmT8+U3+TCUnal…</code>
+</p>
+
+<div class="warn">
+  <p>⚠️ ถ้าลืมใส่ <code>EDITOR=…</code> Rails จะสร้างกุญแจ ไฟล์ <code>.yml.enc</code> และเพิ่มบรรทัดใน <code>.gitignore</code> ไปก่อน (ข้อความ <code>Adding …</code> ขึ้นเหมือนข้างบน) แล้วจบด้วย <code>No $VISUAL or $EDITOR to open file in. Assign one like this:</code> โดยยังไม่ได้เปิดให้แก้ ·
+     ไม่เสียหาย — พิมพ์คำสั่งใหม่พร้อม <code>EDITOR=nano</code> ข้างหน้า รอบนี้จะขึ้นแค่ <code>Editing config/credentials/development.yml.enc...</code> (กุญแจมีแล้ว ไม่สร้างซ้ำ) แล้ว nano ก็เปิด</p>
+</div>
+
+<div class="analogy">
+  <span class="label">🔐 เทียบให้เห็นภาพ — ตู้เซฟใส่กุญแจโกดัง</span>
+  <p>
+    ร้านเอากุญแจโกดังใส่<strong>ตู้เซฟ</strong> (<code>.yml.enc</code>) · ตู้เซฟนี้ยกไปสาขาไหนก็ได้ วางโชว์ก็ได้ เพราะไม่มีใครเปิดออก ·
+    <strong>รหัสเปิดตู้เซฟ</strong> (<code>.key</code>) จดแยก ส่งให้คนในทีมแบบตัวต่อตัว · <strong>ไม่เคยแปะไว้ข้างตู้</strong> (ไม่ขึ้น Git)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ตู้เซฟจริงลืมรหัสยังเรียกช่างมางัดได้ · ไฟล์ <code>.enc</code> <strong>ไม่มีใครงัดได้ แม้แต่เจ้าของ</strong> — ทำกุญแจหายต้องสร้างชุดใหม่แล้วใส่รหัสทุกตัวใหม่หมด ·
+    และใครได้รหัสไป เปิดได้<strong>ทุกอย่าง</strong>ในเซฟ ไม่ใช่แค่กุญแจโกดัง
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับที่รู้:</strong> Go บท 46 เก็บรหัสในไฟล์ <code>.env</code> <strong>ตัวหนังสือธรรมดา</strong>แล้วซ่อนทั้งไฟล์จาก Git · Next.js ก็ใช้ <code>.env.local</code> แบบเดียวกัน ·
+  Rails กลับด้าน: <strong>commit ไฟล์รหัสได้เพราะมันเข้ารหัสแล้ว</strong> ซ่อนแค่กุญแจไฟล์เดียว · คนในทีมได้รหัสชุดใหม่ผ่าน Git แค่ต้องมีกุญแจ
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>credentials (encrypted credentials)</dt>
+    <dd>ไฟล์รหัสลับของ Rails ที่เข้ารหัสแล้ว commit ได้ · เปิดแก้ด้วย <code>bin/rails credentials:edit</code> ·
+        <strong>พิมพ์บอก AI ได้ว่า "put secrets in Rails credentials, never in config/*.yml or the code"</strong></dd>
+    <dt>master key · environment key</dt>
+    <dd>ไฟล์กุญแจถอดรหัส · <code>config/master.key</code> สำหรับชุดหลัก · <code>config/credentials/development.key</code> สำหรับชุดของ development · ห้าม commit ·
+        <strong>ถาม senior ได้ว่า "ทีมส่ง credentials key ให้คนใหม่ทางไหน และ production อ่านกุญแจจากที่ไหน"</strong></dd>
+    <dt>access key id · secret access key</dt>
+    <dd>คู่ "ชื่อผู้ใช้ + รหัสผ่าน" สำหรับโปรแกรมที่คุยภาษา S3 · ตัวแรกเปิดเผยได้บ้าง ตัวหลังเป็นความลับ ·
+        <strong>พิมพ์บอก AI ได้ว่า "create a dedicated access key scoped to one bucket instead of using the MinIO root user"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">บอก Rails ว่าโกดังอยู่ไหน — <code>storage.yml</code> และ <code>development.rb</code></h2>
+
+<p>เปิด <code>config/storage.yml</code> แล้ว<strong>เพิ่มก้อนนี้ต่อจาก <code>local:</code></strong> (ก่อนบรรทัด <code># Use bin/rails credentials:edit …</code>):</p>
+
+<pre><code><span class="c"># MinIO จาก compose.yaml (พูดภาษา S3 · console http://localhost:9001)</span>
+<span class="c"># key อยู่ใน credentials ของ development (bin/rails credentials:edit --environment development) ห้ามเขียนลงไฟล์นี้</span>
+<span class="c"># bucket เป็น private — เบราว์เซอร์ดูไฟล์ได้ผ่าน URL ที่เซ็นแล้วและหมดอายุเท่านั้น</span>
+minio:
+  service: S3
+  endpoint: http://localhost:9000
+  force_path_style: <span class="k">true</span>
+  region: us-east-1
+  bucket: wongnok-dev
+  access_key_id: &lt;%= <span class="n">Rails</span>.<span class="f">application</span>.<span class="f">credentials</span>.<span class="f">dig</span>(<span class="n">:minio</span>, <span class="n">:access_key_id</span>) %&gt;
+  secret_access_key: &lt;%= <span class="n">Rails</span>.<span class="f">application</span>.<span class="f">credentials</span>.<span class="f">dig</span>(<span class="n">:minio</span>, <span class="n">:secret_access_key</span>) %&gt;
+</code></pre>
+
+<ul>
+  <li><code>minio:</code> — ชื่อ service ที่<strong>เราตั้งเอง</strong> (ตั้งอะไรก็ได้ แต่ต้องตรงกับที่ <code>development.rb</code> เรียก)</li>
+  <li><code>service: S3</code> — ใช้ตัวคุยภาษา S3 (gem ที่เพิ่งติดตั้ง)</li>
+  <li><code>endpoint: http://localhost:9000</code> — <strong>ที่อยู่ของโกดัง</strong>ที่ Rails จะไปคุยด้วย · ตรงนี้<strong>ไม่ใช่ Amazon</strong> แต่เป็น MinIO ในเครื่องเรา ประตู 9000 · ผมลองตัดบรรทัดนี้ออกแล้วให้ Rails สร้างที่อยู่ไฟล์ดู ได้ <code>https://s3.amazonaws.com/wongnok-dev/…</code> = วิ่งไปหา Amazon</li>
+  <li><code>force_path_style: true</code> — เขียนที่อยู่ไฟล์แบบ <code>http://localhost:9000/wongnok-dev/ชื่อไฟล์</code> (ชื่อ bucket อยู่ใน<strong>ทาง</strong>หลัง <code>/</code>) · ตัดออกแล้วได้ <code>http://wongnok-dev.localhost:9000/ชื่อไฟล์</code> (ชื่อ bucket ไปอยู่<strong>หน้าชื่อเครื่อง</strong> แบบที่ Amazon ใช้) · กับ MinIO ในเครื่อง ใช้แบบแรกตรงไปตรงมาที่สุด</li>
+  <li><code>region: us-east-1</code> — ภาษา S3 บังคับให้มีชื่อภูมิภาค · MinIO ไม่สน แต่ต้องใส่สักค่า</li>
+  <li><code>bucket: wongnok-dev</code> — ต้องตรงกับห้องที่สร้างใน console <strong>ทุกตัวอักษร</strong></li>
+  <li><code>&lt;%= … %&gt;</code> — ใช่ ERB แบบเดียวกับใน view · Rails รัน ERB ในไฟล์ yml ก่อนอ่าน → ตรงนี้กลายเป็นค่าจาก credentials ตอนแอปเปิด</li>
+</ul>
+
+<p>แล้วเปิด <code>config/environments/development.rb</code> แก้สองบรรทัดนี้ (บรรทัดคอมเมนต์กับบรรทัดค่า):</p>
+
+<div class="compare">
+  <div class="side bad">
+<pre><code>  <span class="c"># Store uploaded files on the local file system (see config/storage.yml for options).</span>
+  config.active_storage.service = <span class="n">:local</span></code></pre>
+  </div>
+  <div class="side good">
+<pre><code>  <span class="c"># เก็บไฟล์ที่อัปโหลดใน MinIO (service minio ใน config/storage.yml)</span>
+  config.active_storage.service = <span class="n">:minio</span></code></pre>
+  </div>
+</div>
+
+<p>
+  <code>:minio</code> คือชื่อก้อนที่เพิ่งเขียนใน <code>storage.yml</code> · ใช้เฉพาะ development ·
+  ตอนรัน test ยังใช้ <code>test:</code> (ดิสก์ใน <code>tmp/storage</code>) ไม่ต้องมี MinIO · production เราไม่แตะ
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>ค่าใหม่ยังไม่มีผลจนกว่าจะปิด <code>bin/dev</code> แล้วเปิดใหม่</strong> — ไฟล์ใน <code>config/</code> ถูกอ่านครั้งเดียวตอนเปิด server · เราจะปิดเปิดทีเดียวตอนจบ 5 ขั้นข้างล่าง ·
+     ผมลองไม่ปิด: อัปรูปผ่าน แต่ไฟล์ไปลง <code>storage/</code> เหมือนเดิม และ blob ถูกจดว่า <code>service_name: "local"</code></p>
+</div>
+
+<h2 id="sn-sec-8">ต่อรูปปกเข้ากับบทความ — 5 ขั้น</h2>
+
+<p>ภาพรวมก่อนลงมือ: ① model บอกว่าบทความมีรูปปก → ② controller ยอมรับช่องรูปปก → ③ ฟอร์มมีช่องเลือกไฟล์ → ④ เปิด JavaScript ที่ส่งไฟล์ขึ้นโกดัง → ⑤ หน้าบทความโชว์รูป · แต่ละขั้นแก้ไฟล์เดียว ยกเว้นขั้น ④ ที่แก้สองไฟล์</p>
+
+<p><strong>① model</strong> — <code>app/models/post.rb</code> เพิ่มสองบรรทัดต่อจาก <code>has_rich_text :body</code>:</p>
+
+<pre><code>  <span class="c"># เนื้อหาแบบ rich text เก็บในตาราง action_text_rich_texts (ไม่ได้อยู่ในตาราง posts)</span>
+  <span class="f">has_rich_text</span> <span class="n">:body</span>
+  <span class="c"># รูปปก: ตัวไฟล์อยู่ใน MinIO · ข้อมูลไฟล์อยู่ในตาราง active_storage_blobs / active_storage_attachments</span>
+  <span class="f">has_one_attached</span> <span class="n">:cover</span></code></pre>
+
+<p>
+  <code>has_one_attached :cover</code> = "บทความหนึ่งชิ้นมีไฟล์แนบได้<strong>หนึ่งไฟล์</strong> ในช่องชื่อ <code>cover</code>" ·
+  <strong>ไม่ต้องสร้าง migration</strong> และ<strong>ตาราง <code>posts</code> ไม่มีคอลัมน์ <code>cover</code></strong> — ข้อมูลไปอยู่สองตารางเมื่อกี้ โดยแถว attachment จด <code>name: "cover"</code> ·
+  ได้ method มาใช้ เช่น <code>post.cover.attached?</code> (มีรูปหรือยัง)
+</p>
+
+<p><strong>② controller</strong> — <code>app/controllers/posts_controller.rb</code> ใน method <code>post_params</code> เพิ่ม <code>:cover</code> ในรายชื่อ (บท 117 · ไม่เพิ่ม = Rails ทิ้งช่องนี้):</p>
+
+<pre><code>      params.<span class="f">expect</span>(post: [ <span class="n">:title</span>, <span class="n">:body</span>, <span class="n">:cover</span>, <span class="n">:category_id</span> ])</code></pre>
+
+<p><strong>③ ฟอร์ม</strong> — <code>app/views/posts/_form.html.erb</code> เพิ่มก้อนนี้<strong>ก่อน</strong>ก้อนช่อง "หมวด":</p>
+
+<pre><code>  &lt;div class="my-5"&gt;
+    &lt;%= form.<span class="f">label</span> <span class="n">:cover</span>, <span class="s">"รูปปก"</span>, class: <span class="s">"block font-medium"</span> %&gt;
+    &lt;%# direct_upload: เบราว์เซอร์ส่งไฟล์ขึ้น MinIO (:9000) ตรง ๆ ไม่ผ่าน Rails · ฟอร์มส่งแค่รหัสของไฟล์ %&gt;
+    &lt;%= form.<span class="f">file_field</span> <span class="n">:cover</span>, direct_upload: <span class="k">true</span>, class: <span class="s">"file-input w-full mt-2"</span> %&gt;
+  &lt;/div&gt;
+</code></pre>
+
+<ul>
+  <li><code>form.file_field :cover</code> — ช่อง "เลือกไฟล์" (<code>&lt;input type="file"&gt;</code>) · <code>file-input</code> = หน้าตาของ daisyUI (บท 128)</li>
+  <li><code>direct_upload: true</code> — <strong>ให้เบราว์เซอร์ส่งไฟล์ตรงไปโกดังเอง</strong> ไม่ผ่าน Rails (แก้ปัญหาข้อ 4 ในตารางแรก · สไลด์หน้า 8 สรุปว่า "แอปควรเป็นคนออกใบอนุญาต ไม่ใช่คนขนของ") · บทนี้แค่เปิดไว้ วิธีทำงานละเอียดอยู่<a href="./0139-signed-url-direct-upload.html">บท 139</a></li>
+</ul>
+
+<p>HTML ที่ Chrome ได้จริง:</p>
+
+<pre><code>&lt;input class="file-input w-full mt-2" data-direct-upload-url="http://localhost:3000/rails/active_storage/direct_uploads" type="file" name="post[cover]" id="post_cover"&gt;</code></pre>
+
+<p>
+  <code>data-direct-upload-url</code> = ที่อยู่ที่ JavaScript จะไปขอ "ใบอนุญาต" ก่อนส่งไฟล์ (ได้มาจาก <code>direct_upload: true</code>) ·
+  และ <code>form_with</code> ใส่ <code>enctype="multipart/form-data"</code> (แบบฟอร์มที่แนบไฟล์ได้) ให้<code>&lt;form&gt;</code>เองเพราะเห็นว่ามีช่องไฟล์
+</p>
+
+<p><strong>④ JavaScript ที่ทำให้ <code>direct_upload</code> ทำงาน</strong> — <code>config/importmap.rb</code> เพิ่มบรรทัดท้ายไฟล์:</p>
+
+<pre><code><span class="f">pin</span> <span class="s">"@rails/activestorage"</span>, to: <span class="s">"activestorage.esm.js"</span></code></pre>
+
+<p>และ <code>app/javascript/application.js</code> ต่อท้ายไฟล์:</p>
+
+<pre><code>
+<span class="c">// direct upload: ช่อง file_field ที่มี direct_upload: true ส่งไฟล์ขึ้น MinIO ตรง ๆ ก่อน submit ฟอร์ม</span>
+<span class="k">import</span> * <span class="k">as</span> <span class="n">ActiveStorage</span> <span class="k">from</span> <span class="s">"@rails/activestorage"</span>
+<span class="n">ActiveStorage</span>.<span class="f">start</span>()</code></pre>
+
+<ul>
+  <li><code>pin …</code> — บอก importmap ว่าชื่อ <code>@rails/activestorage</code> คือไฟล์ <code>activestorage.esm.js</code> ที่<strong>มากับ Rails อยู่แล้ว</strong> (บท 127)</li>
+  <li><code>ActiveStorage.start()</code> — เริ่มคอยดักฟอร์ม · พอกดบันทึก มันส่งไฟล์ในช่อง <code>direct_upload</code> ขึ้นโกดังก่อน แล้วค่อยส่งฟอร์ม</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ <strong>อย่ารัน <code>bin/importmap pin @rails/activestorage</code></strong> — คำสั่งนั้นไปดาวน์โหลดไฟล์จากเว็บข้างนอกมาเก็บ · เราใช้ไฟล์ที่อยู่ใน Rails แล้ว พิมพ์บรรทัด <code>pin</code> เองพอ</p>
+</div>
+
+<p><strong>⑤ แสดงรูป</strong> — <code>app/views/posts/_post.html.erb</code> ในก้อน <code>&lt;% if full %&gt;</code> เพิ่ม<strong>ก่อน</strong>บรรทัดคอมเมนต์ "แก้หัวข้อในหน้าเดิม":</p>
+
+<pre><code>    &lt;% <span class="k">if</span> full %&gt;
+      &lt;%# รูปปก: src เป็น URL ของ Rails ที่ redirect (302) ไป URL ของ MinIO ที่เซ็นแล้ว (หมดอายุใน 5 นาที) %&gt;
+      &lt;%= <span class="f">image_tag</span> post.cover, alt: <span class="s">""</span>, class: <span class="s">"w-full max-h-96 object-cover rounded-box"</span> <span class="k">if</span> post.cover.<span class="f">attached?</span> %&gt;
+
+      &lt;%# แก้หัวข้อในหน้าเดิม: id ต้องตรงกับ posts/edit.html+turbo_frame.erb %&gt;</code></pre>
+
+<ul>
+  <li><code>image_tag post.cover</code> — สร้าง <code>&lt;img&gt;</code> ที่ชี้ไปรูปปก (Rails สร้างลิงก์ให้)</li>
+  <li><code>if post.cover.attached?</code> — <code>if</code> ท้ายบรรทัด (<a href="../../rails-day-1/lessons/0094-ruby-truthiness-and-nil.html">บท 94</a>) = ทำบรรทัดนี้เฉพาะเมื่อเงื่อนไขจริง → โชว์เฉพาะบทความที่มีรูป · ไม่ใส่ = บทความที่ไม่มีรูปพังทั้งหน้า</li>
+  <li><code>alt: ""</code> — รูปปกเป็นภาพประกอบ ไม่ได้มีข้อมูลที่ต้องอ่าน · <code>object-cover</code> = ตัดรูปให้เต็มกรอบโดยไม่บิดสัดส่วน</li>
+  <li>คอมเมนต์บรรทัดแรกพูดถึง "redirect" (ส่งเบราว์เซอร์ต่อไปอีกที่อยู่) กับ "URL ที่เซ็นแล้ว" (ลิงก์ที่มี<strong>ลายเซ็น</strong>ของแอปต่อท้าย ใครแก้ลิงก์ลายเซ็นก็ไม่ตรง และใช้ได้แค่ 5 นาที) — คือวิธีที่รูปเดินทางจากโกดังมาถึงเบราว์เซอร์ · พิมพ์ไว้ก่อน อธิบายเต็ม ๆ ใน<a href="./0139-signed-url-direct-upload.html">บท 139</a></li>
+</ul>
+
+<p><strong>ตอนนี้ปิด <code>bin/dev</code> (Ctrl+C) แล้วเปิดใหม่</strong> — ครั้งเดียวพอ ได้ทั้ง gem ใหม่และ config ใหม่</p>
+
+<h2 id="sn-sec-9">ลองอัปรูปปก แล้วตามไปดูว่าไฟล์อยู่ไหน</h2>
+
+<p>
+  เปิด <code>http://localhost:3000/posts/1/edit</code> · ช่อง "รูปปก" กดเลือกรูปอะไรก็ได้ (ผมใช้ <code>khaosoi.jpg</code> ขนาด 1600×1000 · 49,262 ไบต์) → กด <strong>บันทึก</strong> ·
+  หน้าบทความขึ้น "บันทึกการแก้ไขแล้ว" และ<strong>รูปปกโผล่เหนือหัวข้อ</strong>
+</p>
+
+<div class="predict">
+  <p>ก่อนดูผล ทายสองข้อ:</p>
+  <p class="ask">① ตอนกดบันทึก ช่อง <code>cover</code> ที่ฟอร์มส่งให้ Rails มีอะไรอยู่ — ตัวรูปทั้งไฟล์ หรืออย่างอื่น? ② ใน bucket <code>wongnok-dev</code> ไฟล์นี้ชื่ออะไร — <code>khaosoi.jpg</code> หรือเปล่า?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>① ไม่ใช่ตัวรูป</strong> · log ของ <code>bin/dev</code> ตอนกดบันทึก (ผลจริง ตัดมาเฉพาะ 3 บรรทัดที่เกี่ยว):</p>
+<pre><code>Started POST "/rails/active_storage/direct_uploads" for ::1 at 2026-11-10 10:24:47 +0700
+  Parameters: {"blob" =&gt; {"filename" =&gt; "khaosoi.jpg", "content_type" =&gt; "image/jpeg", "byte_size" =&gt; 49262, "checksum" =&gt; "1Om72JYgL5Ud+uPFLdQiWA=="}, "direct_upload" =&gt; {"blob" =&gt; {"filename" =&gt; "khaosoi.jpg", "content_type" =&gt; "image/jpeg", "byte_size" =&gt; 49262, "checksum" =&gt; "1Om72JYgL5Ud+uPFLdQiWA=="}}}
+  ActiveStorage::Blob Create (3.0ms)  INSERT INTO "active_storage_blobs" ("key", "filename", "content_type", "metadata", "service_name", "byte_size", "checksum", "created_at") VALUES ('l79czbrb5id3zw723b3nbxrllau6', 'khaosoi.jpg', 'image/jpeg', NULL, 'minio', 49262, '1Om72JYgL5Ud+uPFLdQiWA==', '2026-11-10 03:24:47.360505') RETURNING "id" /*action='create',application='WongnokBlogAllInOne',controller='direct_uploads'*/</code></pre>
+    <ul>
+      <li><code>for ::1</code> = คำขอมาจากเครื่องตัวเอง · <code>Parameters</code> พิมพ์ข้อมูลชุดเดียวกันซ้ำสองรอบ (ใต้ <code>"blob"</code> และ <code>"direct_upload"</code>) เป็นนิสัยของ Rails ไม่ต้องสนใจ</li>
+      <li>JavaScript ขอ Rails ก่อน ส่งแค่<strong>ข้อมูลเกี่ยวกับไฟล์</strong> (ชื่อ ชนิด ขนาด ลายนิ้วมือ) · Rails <strong>สร้าง blob</strong> สุ่ม key ให้ <code>'l79czbrb5id3zw723b3nbxrllau6'</code> และจด <code>'minio'</code></li>
+      <li>จากนั้นเบราว์เซอร์ส่งตัวไฟล์ไป <code>http://localhost:9000/wongnok-dev/l79czbrb5id3zw723b3nbxrllau6?…</code> <strong>ตรง ๆ</strong> (Chrome เห็นคำขอนี้ · log ของ Rails ไม่มี เพราะไม่ได้ผ่าน Rails)</li>
+    </ul>
+    <p>แล้วค่อยส่งฟอร์ม:</p>
+<pre><code>Started PATCH "/posts/1" for ::1 at 2026-11-10 10:24:47 +0700
+  Parameters: {"authenticity_token" =&gt; "[FILTERED]", "post" =&gt; {"title" =&gt; "ต้มยำกุ้งน้ำข้น", "body" =&gt; "&lt;div&gt;ต้มยำกุ้งแบบน้ำข้นใส่นมข้นจืด รสเปรี้ยวเผ็ดกลมกล่อม กุ้งแม่น้ำตัวใหญ่ หอมตะไคร้ ข่า ใบมะกรูด กินกับข้าวสวยร้อน ๆ ได้ทั้งถ้วย ร้านนี้เปิดมาสามสิบปีแล้ว คิวยาวทุกวันเสาร์อาทิตย์&lt;/div&gt;", "cover" =&gt; "eyJfcmFpbHMiOnsiZGF0YSI6MSwicHVyIjoiYmxvYl9pZCJ9fQ==--6dbdb6321336bba41059e6f6cc2dd6707974be18", "category_id" =&gt; "1"}, "commit" =&gt; "บันทึก", "id" =&gt; "1"}</code></pre>
+    <p>
+      (<code>authenticity_token</code> = ตั๋วกัน CSRF ของ<a href="../../rails-day-3/lessons/0124-view-helpers-and-form-with.html">บท 124</a> · Rails ซ่อนค่าใน log เป็น <code>[FILTERED]</code>) ·
+      <code>"cover" =&gt; "eyJf…--6dbd…"</code> คือ<strong>รหัสอ้างถึง blob ที่ Rails เซ็นกำกับไว้</strong> (ส่วนหลัง <code>--</code> คือลายเซ็น · ปลอมไม่ได้) ไม่ใช่รูป · Rails เอารหัสนี้ไปสร้างแถว attachment ·
+      ฟอร์มที่วิ่งผ่าน Rails จึงเล็กนิดเดียว ไม่ว่ารูปจะใหญ่แค่ไหน
+    </p>
+    <p><strong>② ไม่ใช่ <code>khaosoi.jpg</code></strong> · เปิด console <code>http://localhost:9001</code> → Buckets → <code>wongnok-dev</code> เห็นแถวนี้ (ผลจริง):</p>
+<pre><code>Name                            Last Modified    Size
+l79czbrb5id3zw723b3nbxrllau6    Today, 10:24     48.1 KiB</code></pre>
+    <p>ชื่อในโกดัง = <strong>key ที่สุ่ม</strong> ตรงกับใน INSERT ข้างบน · ชื่อ <code>khaosoi.jpg</code> อยู่ในคอลัมน์ <code>filename</code> ของฐานข้อมูล · 48.1 KiB = 49,262 ไบต์ ÷ 1024</p>
+  </div>
+</div>
+
+<p>ดูฝั่งฐานข้อมูลใน <code>bin/rails console</code>:</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">Post</span>.<span class="f">find</span>(<span class="n">1</span>).<span class="f">cover</span>.<span class="f">blob</span>
+  Post Load (0.4ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 1 LIMIT 1 /*application='WongnokBlogAllInOne'*/
+  ActiveStorage::Attachment Load (0.4ms)  SELECT "active_storage_attachments".* FROM "active_storage_attachments" WHERE "active_storage_attachments"."record_id" = 1 AND "active_storage_attachments"."record_type" = 'Post' AND "active_storage_attachments"."name" = 'cover' LIMIT 1 /*application='WongnokBlogAllInOne'*/
+  ActiveStorage::Blob Load (0.4ms)  SELECT "active_storage_blobs".* FROM "active_storage_blobs" WHERE "active_storage_blobs"."id" = 1 LIMIT 1 /*application='WongnokBlogAllInOne'*/
+=&gt;
+#&lt;ActiveStorage::Blob:0x0000000128be2a20
+ id: 1,
+ key: "l79czbrb5id3zw723b3nbxrllau6",
+ filename: "khaosoi.jpg",
+ content_type: "image/jpeg",
+ metadata:
+  {"identified" =&gt; true, "width" =&gt; 1600, "height" =&gt; 1000, "analyzed" =&gt; true},
+ service_name: "minio",
+ byte_size: 49262,
+ checksum: "1Om72JYgL5Ud+uPFLdQiWA==",
+ created_at: "2026-11-10 10:24:47.360505000 +0700"&gt;
+wongnok-blog-all-in-one(dev):002&gt; <span class="n">Post</span>.<span class="f">find</span>(<span class="n">1</span>).<span class="f">cover</span>.<span class="f">attachment</span>
+  Post Load (1.6ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 1 LIMIT 1 /*application='WongnokBlogAllInOne'*/
+  ActiveStorage::Attachment Load (0.8ms)  SELECT "active_storage_attachments".* FROM "active_storage_attachments" WHERE "active_storage_attachments"."record_id" = 1 AND "active_storage_attachments"."record_type" = 'Post' AND "active_storage_attachments"."name" = 'cover' LIMIT 1 /*application='WongnokBlogAllInOne'*/
+=&gt;
+#&lt;ActiveStorage::Attachment:0x000000012fa70c80
+ id: 1,
+ name: "cover",
+ record_type: "Post",
+ record_id: 1,
+ blob_id: 1,
+ created_at: "2026-11-10 10:24:47.427634000 +0700"&gt;</code></pre>
+
+<ul>
+  <li>SQL บรรทัด <code>Attachment Load</code> — หาป้ายที่ <code>record_type = 'Post'</code> · <code>record_id = 1</code> · <code>name = 'cover'</code> = "รูปปกของบทความ 1" (polymorphic ทำงานแบบนี้)</li>
+  <li>SQL บรรทัด <code>Blob Load</code> — ได้ <code>blob_id</code> จากป้าย แล้วไปหยิบใบรับฝากเลข 1 · <strong>หนึ่งรูปปก = SQL สองบรรทัด</strong> (ถ้าวนโชว์หลายบทความจะเป็น N+1 — บท 140 แก้)</li>
+  <li><code>metadata: {… "width" =&gt; 1600, "height" =&gt; 1000 …}</code> — Rails เปิดรูปวัดขนาดให้เองเป็น<strong>งานเบื้องหลัง</strong>หลังบันทึก (log มีบรรทัด <code>Enqueued ActiveStorage::AnalyzeJob</code> · เรื่องงานเบื้องหลังรอบท 142)</li>
+  <li><code>service_name: "minio"</code> — ไฟล์นี้อยู่โกดัง minio · <code>blob_id: 1</code> ในป้าย = ชี้ใบรับฝากนี้</li>
+</ul>
+
+<p>สุดท้าย ดูว่าโฟลเดอร์ <code>storage/</code> ในโปรเจกต์ไม่มีอะไรเพิ่ม:</p>
+
+<pre><code>$ ls -A storage
+.keep</code></pre>
+
+<p>
+  มีแค่ <code>.keep</code> (ไฟล์เปล่าที่ทำให้ Git เก็บโฟลเดอร์ไว้) = <strong>รูปไม่ได้อยู่ในแอปแล้ว</strong> ·
+  (ถ้าคุณเคยแนบรูปใน Trix ตอนบท 137 จะเห็นโฟลเดอร์ชื่อสองตัวอักษรของรูปพวกนั้นค้างอยู่ — เป็นของเก่าก่อนเปลี่ยนโกดัง)
+</p>
+
+<h2 id="sn-sec-10">commit ก่อนไปต่อ</h2>
+
+<pre><code>$ git status --short
+ M .gitignore
+ M Gemfile
+ M Gemfile.lock
+ M app/controllers/posts_controller.rb
+ M app/javascript/application.js
+ M app/models/post.rb
+ M app/views/posts/_form.html.erb
+ M app/views/posts/_post.html.erb
+ M config/environments/development.rb
+ M config/importmap.rb
+ M config/storage.yml
+?? config/credentials/
+$ git add -A
+$ git commit -m <span class="s">"รูปปกบทความเก็บใน MinIO ด้วย Active Storage"</span>
+[my-day3 eda25ae] รูปปกบทความเก็บใน MinIO ด้วย Active Storage
+ 12 files changed, 70 insertions(+), 3 deletions(-)
+ create mode 100644 config/credentials/development.yml.enc
+$ git ls-files config/credentials
+config/credentials/development.yml.enc</code></pre>
+
+<p>
+  <code>?? config/credentials/</code> = โฟลเดอร์ใหม่ · <code>create mode … development.yml.enc</code> กับบรรทัดสุดท้ายพิสูจน์ว่าที่เข้า Git มีแค่ <code>.yml.enc</code> · <strong><code>development.key</code> ไม่เข้า</strong> ·
+  (ชื่อ branch กับเลข <code>eda25ae</code> ของคุณจะต่าง) ·
+  ไฟล์ <code>.yml.enc</code> ของคุณ<strong>ต่างจากของทุกคน</strong> เพราะกุญแจสุ่มไม่ซ้ำกัน — เป็นไฟล์เดียวในบทนี้ที่ไม่ควรเหมือนของคนอื่น
+</p>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ — แนบรูปปกให้บทความที่ 2 แล้วพิสูจน์ว่ารูปไม่ได้อยู่ในแอป (~8 นาที)</h3>
+  <ol>
+    <li>เปิด <code>http://localhost:3000/posts/2/edit</code> · เลือกรูปอะไรก็ได้<strong>ที่ไม่ใช่รูปเดิม</strong> → บันทึก · ต้องเห็นรูปในหน้าบทความ</li>
+    <li><strong>ก่อนพิมพ์ข้อ 3</strong> เขียนลงกระดาษ: key จะหน้าตาแบบไหน · service_name จะเป็นอะไร · ชื่อไฟล์เดิมยังอยู่ไหม</li>
+    <li>ใน <code>bin/rails console</code>:
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">Post</span>.<span class="f">find</span>(<span class="n">2</span>).<span class="f">cover</span>.<span class="f">blob</span>.<span class="f">key</span>
+wongnok-blog-all-in-one(dev):002&gt; <span class="n">Post</span>.<span class="f">find</span>(<span class="n">2</span>).<span class="f">cover</span>.<span class="f">blob</span>.<span class="f">service_name</span>
+wongnok-blog-all-in-one(dev):003&gt; <span class="n">Post</span>.<span class="f">find</span>(<span class="n">2</span>).<span class="f">cover</span>.<span class="f">filename</span>.<span class="f">to_s</span></code></pre></li>
+    <li>ก็อป key ไปวางในช่อง "Start typing to filter objects in the bucket" ของหน้า bucket ใน console :9001 · ดูขนาดไฟล์</li>
+    <li><code>ls -A storage</code> อีกครั้ง</li>
+  </ol>
+  <p class="ask">key หน้าตาแบบไหน · service_name คืออะไร · ใน console เจอไหม · <code>storage/</code> มีอะไรเพิ่มหรือเปล่า?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริงของผม (อัป <code>somtam.png</code> 800×500):</p>
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; Post.find(2).cover.blob.key
+=&gt; "p0vw4mf4zvtnpbu01i83piqar3qi"
+wongnok-blog-all-in-one(dev):002&gt; Post.find(2).cover.blob.service_name
+=&gt; "minio"
+wongnok-blog-all-in-one(dev):003&gt; Post.find(2).cover.filename.to_s
+=&gt; "somtam.png"</code></pre>
+    <p>(ตัดบรรทัด SQL ออก) · console :9001 เจอแถว <code>p0vw4mf4zvtnpbu01i83piqar3qi · Today, 10:28 · 2.5 KiB</code> · <code>ls -A storage</code> ยังได้ <code>.keep</code> ตัวเดียว</p>
+    <ul>
+      <li><strong>key</strong> = ตัวอักษรเล็กกับตัวเลขสุ่ม 28 ตัว · ของคุณจะต่าง แต่ยาวเท่ากันและไม่มีชื่อไฟล์ปน</li>
+      <li><strong>service_name</strong> = <code>"minio"</code> · <strong>ชื่อไฟล์เดิม</strong>ยังอยู่ แต่อยู่ในฐานข้อมูล ไม่ได้อยู่ในโกดัง (<code>.to_s</code> = แปลงเป็นข้อความธรรมดา ไม่งั้น console โชว์เป็นกล่อง <code>#&lt;ActiveStorage::Filename …&gt;</code>)</li>
+    </ul>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong> (ทุกข้อผมทำพังให้ดูจริง)</p>
+    <ul>
+      <li><strong>เบราว์เซอร์เด้งกล่อง <code>Error storing "ชื่อไฟล์". Status: 404</code></strong> แล้วยังค้างอยู่หน้าแก้ไข — ยังไม่ได้สร้าง bucket หรือชื่อใน <code>storage.yml</code> ไม่ตรงกับใน console · Rails ออกใบอนุญาตให้แล้ว แต่โกดังตอบว่า "ไม่มีห้องนี้"</li>
+      <li><strong>กล่อง <code>Error creating Blob for "ชื่อไฟล์". Status: 500</code></strong> และ log มี <code>Aws::Sigv4::Errors::MissingCredentialsError (missing credentials, …</code> — Rails ไม่มีรหัส MinIO · ไฟล์ <code>config/credentials/development.key</code> หาย หรือพิมพ์ใน credentials ผิดชื่อ (เช็คด้วยคำสั่ง <code>runner</code> ต้องได้ <code>"minioadmin"</code> ไม่ใช่ <code>nil</code>)</li>
+      <li><strong>รูปขึ้น แต่ <code>service_name</code> เป็น <code>"local"</code> และมีโฟลเดอร์ใหม่ใน <code>storage/</code></strong> — ยังไม่ได้ปิดเปิด <code>bin/dev</code> หลังแก้ <code>development.rb</code> · ถ้าเปิดแท็บ Network ของ DevTools ใน Chrome จะเห็นไฟล์ถูกส่งไป <code>localhost:3000/rails/active_storage/disk/…</code> แทน <code>:9000</code></li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">แอปเก็บรูปไว้ใน <code>storage/</code> แล้วทีมเพิ่มเครื่องรันแอปเป็น 3 เครื่องช่วยกันรับคน · ผู้ใช้บ่นว่า "รูปปกขึ้นบ้างไม่ขึ้นบ้าง" · เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">แต่ละเครื่องบีบอัดรูปไม่เหมือนกัน เบราว์เซอร์จึงอ่านบางไฟล์ไม่ออก</button>
+    <button class="opt">รูปอยู่ในดิสก์ของเครื่องที่รับอัปโหลด อีกสองเครื่องไม่มีไฟล์นั้น</button>
+    <button class="opt">ฐานข้อมูลจดชื่อไฟล์ผิดเมื่อหลายเครื่องเขียนพร้อมกันในเวลาเดียว</button>
+    <button class="opt">เบราว์เซอร์จำรูปจากเครื่องแรกไว้ แล้วไม่ยอมโหลดจากเครื่องอื่นอีก</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ฐานข้อมูลมีเครื่องเดียวทุกเครื่องเห็นตรงกัน แต่ <code>storage/</code> เป็นโฟลเดอร์ของแต่ละเครื่อง · คนที่เปิดหน้าแล้วไปตกเครื่องที่ไม่ใช่เครื่องที่รับอัปโหลดจะไม่เจอไฟล์</p>
+    <p>ตัวเลือกที่ 1 — Active Storage ไม่ได้บีบอัดรูปตอนเก็บ ไฟล์เป็นแบบที่อัปมา ·
+       ตัวเลือกที่ 3 — แถว blob ถูกจดถูกต้อง ปัญหาคือตัวไฟล์ไม่อยู่ในเครื่องที่ถูกถาม ·
+       ตัวเลือกที่ 4 — ถ้าเบราว์เซอร์จำรูปไว้ รูปจะ<strong>ขึ้น</strong> ไม่ใช่หาย</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ของถาวรต้องอยู่นอกตัวแอป (12-Factor ข้อ VI) · ไฟล์ไปโกดังกลาง ข้อมูลไปฐานข้อมูลกลาง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ใน bucket ไฟล์ชื่อ <code>l79czbrb5id3zw723b3nbxrllau6</code> · แล้วชื่อ <code>khaosoi.jpg</code> ที่ผู้ใช้อัปมาถูกเก็บไว้ที่ไหน?</p>
+  <div class="opts">
+    <button class="opt">ในชื่อไฟล์ใน bucket เหมือนกัน แต่ console ของ MinIO ซ่อนไว้ไม่โชว์</button>
+    <button class="opt">ในคอลัมน์ <code>cover</code> ของตาราง <code>posts</code> ที่ <code>has_one_attached</code> สร้างให้</button>
+    <button class="opt">ในตาราง <code>active_storage_attachments</code> แถวที่ <code>name</code> เป็น <code>cover</code></button>
+    <button class="opt">ในตาราง <code>active_storage_blobs</code> คอลัมน์ <code>filename</code> แถวเดียวกับ key</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — blob คือใบรับฝาก จดทั้ง key (ชื่อในโกดัง) และ filename (ชื่อเดิม) ไว้แถวเดียวกัน · console เห็น <code>filename: "khaosoi.jpg"</code> คู่กับ <code>key: "l79c…"</code></p>
+    <p>ตัวเลือกที่ 1 — ชื่อใน bucket คือ key ล้วน ไม่มีส่วนที่ซ่อน ·
+       ตัวเลือกที่ 2 — <code>has_one_attached</code> ไม่สร้างคอลัมน์ ไม่มี migration · ตาราง <code>posts</code> ไม่มีช่อง cover ·
+       ตัวเลือกที่ 3 — attachment จดแค่ "ของใคร ช่องไหน ชี้ blob ไหน" (<code>name · record_type · record_id · blob_id</code>) ไม่มีชื่อไฟล์</p>
+    <p><strong>จุดที่ต้องจำ:</strong> โกดังเก็บตัวไฟล์ใต้ชื่อสุ่ม · ฐานข้อมูลเก็บ "ข้อมูลเกี่ยวกับไฟล์" (blob) กับ "ไฟล์นี้ของใคร" (attachment)</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">เพื่อน clone repo ไปแล้วอัปรูปปกไม่ได้ เด้ง <code>Status: 500</code> และ log มี <code>MissingCredentialsError</code> · วิธีไหนแก้ถูกทางที่สุด?</p>
+  <div class="opts">
+    <button class="opt">ส่ง <code>development.key</code> ให้เพื่อนแบบปลอดภัย ไปวางใน <code>config/credentials/</code></button>
+    <button class="opt">ลบกฎ <code>*.key</code> ออกจาก <code>.gitignore</code> แล้ว commit กุญแจขึ้น repo ให้ทุกคน</button>
+    <button class="opt">เขียน <code>minioadmin</code> ลงใน <code>config/storage.yml</code> ตรง ๆ แทนการดึงจาก credentials</button>
+    <button class="opt">ให้เพื่อนรัน <code>credentials:edit</code> เอง แล้วไฟล์ <code>.yml.enc</code> เดิมจะเปิดได้</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — เพื่อนได้ <code>.yml.enc</code> มากับ Git แล้ว ขาดแค่กุญแจ · ส่งกุญแจแบบที่ Rails แนะนำ (ที่เก็บรหัสของทีม ไม่ใช่แชตกลุ่ม) แล้ว Rails อ่านรหัสได้ทันที</p>
+    <p>ตัวเลือกที่ 2 — กุญแจขึ้น Git = ใครเห็น repo ก็ถอดรหัสได้ทุกอย่าง เท่ากับไม่ได้เข้ารหัส ·
+       ตัวเลือกที่ 3 — รหัสโผล่ในไฟล์ที่ commit แบบตัวหนังสือธรรมดา คือสิ่งที่บทนี้หลีกเลี่ยง ·
+       ตัวเลือกที่ 4 — ผมลองแล้ว: Rails สร้าง<strong>กุญแจใหม่</strong>ให้ แล้วฟ้อง <code>Couldn't decrypt config/credentials/development.yml.enc. Perhaps you passed the wrong key?</code> เพราะกุญแจใหม่ไม่ใช่ตัวที่ล็อกไฟล์นั้น</p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>.yml.enc</code> ขึ้น Git ได้ · <code>.key</code> ห้ามขึ้น และต้องส่งให้ทีมแยกทางอย่างปลอดภัย</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">แก้ <code>development.rb</code> เป็น <code>:minio</code> แล้ว แต่อัปรูปเสร็จ ใน bucket ไม่มีไฟล์ใหม่ กลับมีโฟลเดอร์ใหม่ใน <code>storage/</code> · เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">bucket ตั้งเป็น private ไว้ จึงซ่อนไฟล์ที่เพิ่งอัปไม่ให้ console เห็น</button>
+    <button class="opt"><code>has_one_attached</code> ต้องเขียน <code>service: :minio</code> ใน model ถึงจะไปโกดัง</button>
+    <button class="opt">server ยังรันด้วยค่าตอนเปิดครั้งแรก ต้องปิด <code>bin/dev</code> แล้วเปิดใหม่</button>
+    <button class="opt"><code>direct_upload: true</code> จะเก็บไฟล์ลงเครื่องก่อน แล้วค่อยย้ายไปโกดังทีหลัง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — ไฟล์ใน <code>config/environments/</code> ถูกอ่านครั้งเดียวตอนเปิด server · ผมลองแล้ว blob ถูกจด <code>service_name: "local"</code> จนกว่าจะเปิด server ใหม่</p>
+    <p>ตัวเลือกที่ 1 — private แปลว่าคน<strong>นอก</strong>เปิดไม่ได้ · console ล็อกอินด้วยผู้ดูแลเห็นทุกไฟล์ ·
+       ตัวเลือกที่ 2 — <code>service:</code> ใน model มีจริงแต่<strong>ไม่บังคับ</strong> ไม่ใส่ก็ใช้ค่าจาก config · ของเราไม่ใส่และไฟล์ไปโกดังได้ ·
+       ตัวเลือกที่ 4 — direct upload ส่งจากเบราว์เซอร์ไปที่เก็บตามที่ server ตั้งค่าอยู่ตอนนั้นทีเดียว ไม่มีขั้นย้ายทีหลัง</p>
+    <p><strong>จุดที่ต้องจำ:</strong> แก้อะไรใน <code>config/</code> หรือ <code>Gemfile</code> → ปิดเปิด server ใหม่เสมอ · เช็คด้วย <code>blob.service_name</code></p>
+  </div>
+</div>
+
+<h2 id="sn-sec-12">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>9</td><td><code>bin/rails active_storage:install &amp;&amp; bin/rails db:migrate</code></td><td>ในแอปเรา<strong>เงียบทั้งคู่</strong> เพราะบท 137 สร้างตารางไปแล้ว · สไลด์สมมติว่ายังไม่มี Action Text</td><td>ไม่ต้อง</td></tr>
+    <tr><td>9</td><td>"2 ตารางที่มันสร้างให้"</td><td>มี 3 ตาราง · ตัวที่สาม <code>active_storage_variant_records</code> ใช้กับรูปย่อ (<a href="./0140-variants-and-file-validation.html">บท 140</a>)</td><td>ไม่ต้อง</td></tr>
+    <tr><td>9</td><td>"แยกสองตารางเพราะไฟล์เดียวกันแนบได้หลายที่ โดยเก็บจริงครั้งเดียว (ดูจาก checksum)"</td><td>ผมอัปรูปเดิมสองครั้ง ได้ blob <strong>สองแถว checksum เท่ากัน แต่ key ต่างกัน</strong> = ไฟล์สองชิ้นในโกดัง · Rails ไม่ได้รวมให้เองจาก checksum · blob เดียวแนบหลายที่ได้จริง <strong>เฉพาะเมื่อโค้ดสั่งแนบ blob ตัวเดิม</strong> (ลองแล้ว ได้ attachment สองแถว blob_id เดียวกัน)</td><td>ไม่ต้อง</td></tr>
+    <tr><td>9</td><td><code>config/storage.yml</code> มีแค่บรรทัด <code>access_key_id</code></td><td>สไลด์ตัดจอ · ต้องมีบรรทัด <code>secret_access_key</code> ด้วย ไม่งั้นได้ <code>MissingCredentialsError</code> แบบในภารกิจ</td><td><strong>สนใจ</strong> ถ้าพิมพ์ตาม</td></tr>
+    <tr><td>9</td><td><code>has_many_attached :gallery</code></td><td>แอปเราทำแค่รูปปกรูปเดียว (<code>has_one_attached :cover</code>) · <code>has_many_attached</code> = แนบได้หลายไฟล์ในช่องเดียว</td><td>ไม่ต้อง</td></tr>
+    <tr><td>8</td><td>"ไฟล์ 500 MB … 10 คนอัปพร้อมกัน = worker หมด"</td><td>เป็นตัวอย่างคิดเลข ไม่ได้วัด · "worker" ในหน้านี้ = คนรับงานของ server (คนละอย่างกับ worker ของ job ใน<a href="./0142-background-jobs-exactly-once.html">บท 142</a>) · server ของเราใน development รับพร้อมกันได้ 3 งาน (<code>Min threads: 3</code> · <code>Max threads: 3</code>)</td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0137-action-text.html">← บทเรียน 137 · Action Text</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0139-signed-url-direct-upload.html">บทเรียน 139 → signed URL · direct upload</a>
+</nav>
+
+<h2 id="sn-sec-13">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#setup">Rails Guides — Active Storage Overview § Setup</a> —
+      <strong>อ่านหัวข้อ Setup กับ S3 Service</strong> (ถัดลงไป) · ตาราง 3 ตาราง · ตัวอย่าง <code>storage.yml</code> · บรรทัด <code>gem "aws-sdk-s3", require: false</code> · และตัวอย่าง <code>endpoint:</code> สำหรับเจ้าที่พูดภาษา S3 แบบเดียวกับ MinIO</li>
+  <li><a href="https://guides.rubyonrails.org/active_storage_overview.html#attaching-files-to-records-has-one-attached">Rails Guides — Active Storage Overview § has_one_attached</a> —
+      ตัวอย่าง model + ฟอร์ม + controller ครบชุดแบบเดียวกับบทนี้ · <strong>อ่านแค่หัวข้อนี้หัวข้อเดียว</strong></li>
+  <li><a href="https://guides.rubyonrails.org/security.html#custom-credentials">Rails Guides — Securing Rails Applications § Custom Credentials</a> —
+      ทำไมไฟล์ <code>.enc</code> ขึ้น Git ได้ แต่กุญแจต้องเก็บดี ๆ · <strong>อ่านสามย่อหน้าแรก</strong> ·
+      เรื่อง credentials แยกต่อ environment (แบบที่บทนี้ใช้) พิมพ์ <code>bin/rails credentials:help</code> แล้วดูหัวข้อ "Environment Specific Credentials"</li>
+  <li><a href="https://12factor.net/processes">The Twelve-Factor App — VI. Processes</a> —
+      หน้าสั้น · <strong>อ่านสองย่อหน้าที่ขึ้นต้นว่า "Twelve-factor processes are stateless…"</strong> ตรงกับปัญหา "เก็บไฟล์ในเครื่องที่รันแอป" ของบทนี้ · ถ้าว่างอ่าน <a href="https://12factor.net/backing-services">IV. Backing services</a> ต่อ</li>
+  <li><a href="https://docs.min.io/community/minio-object-store/administration/minio-console.html">MinIO — Console UI</a> —
+      อธิบาย <code>--console-address ":9001"</code> ใน compose ของเรา และหน้า login · <strong>อ่านแค่สองหัวข้อแรก</strong></li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveStorage/Attached/Model.html#method-i-has_one_attached">Rails API — ActiveStorage::Attached::Model#has_one_attached</a> —
+      รายการ option ทั้งหมด (รวม <code>service:</code> ที่พูดถึงใน quiz ข้อ 4) · ใช้เปิดดูตอนต้องการ ไม่ต้องอ่านทั้งหน้า</li>
+</ul>
+
+<p>ติดตรงไหน หรือผลของคุณต่างจากในบท — ก็อปผลจริงทั้งก้อน (log ของ <code>bin/dev</code> หรือข้อความที่เด้ง) ไปถาม AI หรือเพื่อนได้เลย โดยบอกว่ามาจากบท 138 ขั้นไหน</p>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

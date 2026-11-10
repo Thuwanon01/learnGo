@@ -71,8 +71,8 @@ PREFIX = {'2': 'sn-sec-', '3': 'sn-sub-'}
 # โฟลเดอร์ที่ถือว่าเป็น "กลุ่มบทเรียน"
 #   day-N  = ฝั่ง Backend (สไลด์กำกับวันมาให้)
 #   fe-*   = ฝั่ง Frontend (สไลด์ไม่ได้กำกับวัน จึงตั้งชื่อตามสไลด์)
-#   rails-day-N = ฝั่ง Ruby on Rails (คอร์สแยก สไลด์กำกับวันมา)
-GROUP_DIR = re.compile(r'(?:day-\d+|fe-[a-z0-9-]+|rails-day-\d+)$')
+#   rails-day-N = ฝั่ง Ruby on Rails (คอร์สแยก สไลด์กำกับวันมา) · rails-day-N-partM ถ้าวันนั้นมาเป็นหลายไฟล์
+GROUP_DIR = re.compile(r'(?:day-\d+|fe-[a-z0-9-]+|rails-day-\d+(?:-part\d+)?)$')
 
 
 def target_files():
@@ -88,7 +88,7 @@ def target_files():
         if d.startswith('day-'):
             return (0, int(d.split('-')[1]), '')
         if d.startswith('rails-day-'):
-            return (2, int(d.split('-')[2]), '')
+            return (2, int(d.split('-')[2]), d)
         return (1, 0, d)
 
     out = []

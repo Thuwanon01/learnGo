@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 142 — Background jobs — งานที่ผู้ใช้ไม่ควรรอ และทำไม "ทำพอดีครั้งเดียว" ไม่มีจริง</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 142 · Rails · Day 4 Part 1</p>
+  <h1>Background jobs — งานที่ผู้ใช้ไม่ควรรอ และทำไม "ทำพอดีครั้งเดียว" ไม่มีจริง</h1>
+  <p class="meta">~20 นาทีอ่าน + ทดลองตามอีก ~10 นาที · ควรผ่าน
+    <a href="./0141-lab-vibe4-content.html">บท 141</a> (จบบล็อก D) ·
+    Day 2 <a href="../../rails-day-2/lessons/0112-callbacks-and-logic.html">บท 112</a> (callback) ·
+    และ Go <a href="../../day-6/lessons/0021-goroutine-waitgroup.html">บท 21</a> · <a href="../../day-6/lessons/0026-worker-pool.html">บท 26</a> มาก่อน</p>
+  <p class="standfirst">
+    ตอนนี้ถ้าการกด "บันทึก" ต้องส่งอีเมล ย่อรูป และอื่น ๆ ไปด้วย ผู้ใช้จะยืนรอหน้าขาวจนครบทุกอย่าง · บทนี้จะทำให้หน้าค้าง 9 วินาทีให้เห็นกับตา แล้วแก้ให้เหลือราว 0.1 วินาทีด้วย <strong>background job</strong>
+    <br>อ่านจบแล้วคุณจะ <strong>ตัดสินได้ว่างานไหนควรให้ผู้ใช้รอ งานไหนไม่ควร</strong> · สร้าง job และสั่ง <code>perform_later</code> ได้ ·
+    อธิบายได้ว่าทำไมงานในคิว <strong>หายได้หรือซ้ำได้ แต่รับประกัน "พอดีครั้งเดียว" ไม่ได้</strong> — ประโยคข้อ ② ใน "3 ประโยคของวัน" ที่บท 136 บอกให้จำ
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — บทนี้ใช้คำพวกนี้</p>
+  <ul>
+    <li><strong>log ของ request</strong> — บรรทัด <code>Started POST …</code> ถึง <code>Completed 302 Found in …ms</code> คือหนึ่งใบสั่งอาหาร · ตัวเลข ms คือลูกค้ายืนรอนานแค่ไหน (Day 2–3)</li>
+    <li><strong>callback</strong> (<a href="../../rails-day-2/lessons/0112-callbacks-and-logic.html">บท 112</a>) — โค้ดที่ Rails เรียกเองตอนบันทึก · กฎในบทนั้น: <strong>callback ควรดูแลแค่แฟ้มของตัวเอง</strong> งานที่ต้องคุยกับคนอื่น (อีเมล ระบบอื่น) ให้คิดก่อนว่าควรอยู่ใน callback จริงไหม · และบอกว่าอีเมลแจ้งผู้ติดตาม "ฝากให้ job ส่งทีหลัง"</li>
+    <li><strong>goroutine</strong> (Go <a href="../../day-6/lessons/0021-goroutine-waitgroup.html">บท 21</a>) — <code>go f()</code> แยกงานไปทำพร้อมกัน · <strong>main จบ = goroutine ที่ค้างตายหมดแบบเงียบ ๆ</strong></li>
+    <li><strong>worker pool</strong> (Go <a href="../../day-6/lessons/0026-worker-pool.html">บท 26</a>) — งานกองรวมใน channel <code>jobs</code> แล้วมีคนงานหลายตัวมาหยิบไปทำ</li>
+    <li><strong>idempotency</strong> (Go <a href="../../day-8/lessons/0036-rest-naming-idempotency.html">บท 36</a>) — ยิงซ้ำกี่ครั้งผลก็เหมือนเดิม · และ <code>find_or_create_by!</code> ใน seeds (<a href="../../rails-day-3/lessons/0120-day3-setup.html">บท 120</a>) ที่รันซ้ำแล้วข้อมูลไม่เบิ้ล</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18 (สไลด์และ repo ของอาจารย์เขียน Ruby 4.0.5–4.0.6 · Rails 8.1.3 — เรื่องในบทนี้ไม่ต่างกัน)
+    <br><strong>📍 โค้ดเริ่มจาก:</strong> ตอนจบ<a href="./0141-lab-vibe4-content.html">บท 141</a> (rich text + รูปปก + <code>prompts/04-content.md</code>) ที่ commit แล้ว — <code>git status --short</code> ต้องว่าง ·
+    บทนี้<strong>ทดลองแล้วคืนทิ้งตอนจบ</strong> (ภารกิจท้ายบทพาเก็บกวาด) · ของจริงที่อยู่ถาวรเริ่มใน<a href="./0143-idempotency-solid-queue.html">บท 143</a>
+    <br><strong>🖥 เปิดค้างไว้:</strong> <code>docker compose up -d</code> (ฐานข้อมูล + MinIO) · <code>bin/dev</code> หนึ่งหน้าต่าง — <strong>บทนี้อ่าน log จากหน้าต่างนี้ตลอด</strong> · อีกหน้าต่างไว้พิมพ์คำสั่ง · เบราว์เซอร์ที่ <code>localhost:3000</code> · <strong>ยังไม่ต้องเปิดโปรแกรมทำ job แยก</strong> (เริ่มต้องเปิดในบท 143)
+  </p>
+  <p>
+    ผลรันทุกกล่องมาจากเครื่องจริง (สร้างบทความผ่านฟอร์มใน Chrome) · log ตัดบรรทัดที่ไม่เกี่ยว (SQL · บรรทัด <code>↳</code> · การโหลดหน้า) เป็น <code>…</code> และตัดคอมเมนต์ <code>/*action=…*/</code> ท้าย SQL ออก ·
+    บรรทัด <code>css.1  | Done in …</code> (ตัวสร้าง CSS ของ Tailwind) จะแทรกขึ้นมาเป็นระยะในหน้าต่างของคุณ — ไม่เกี่ยวกับบทนี้ ตัดออกหมด ·
+    <strong>เวลา · เลข ms · Job ID · เลข id ของบทความ ของคุณจะต่าง</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">เปิดบล็อก E — งานเบื้องหลัง และประโยคข้อ ② ของวัน</h2>
+
+<p>
+  บล็อก D (บท 136–141) ทำให้บทความมีเนื้อหาจริง · บล็อก E มีเป้าหมายเดียว: <strong>ตั้งเวลาเผยแพร่บทความ</strong> แล้วให้ระบบเผยแพร่เองพร้อมส่งอีเมลหาผู้ติดตาม ·
+  ก่อนจะทำแบบนั้นได้ ต้องรู้จัก "งานที่ทำทีหลัง โดยไม่มีใครยืนรอ" ก่อน — นั่นคือบทนี้
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บท</th><th>เรื่อง</th></tr></thead>
+  <tbody>
+    <tr><td><strong>142</strong> (บทนี้)</td><td>ทำไมต้องมีงานเบื้องหลัง · job ตัวแรก · ทำไม "ทำพอดีครั้งเดียว" ไม่มีจริง — <strong>ยังไม่มีโค้ดถาวร</strong></td></tr>
+    <tr><td>143</td><td>ออกแบบ job ให้รันซ้ำแล้วไม่พัง · คิวที่เก็บในฐานข้อมูล (Solid Queue)</td></tr>
+    <tr><td>144</td><td>ลองใหม่เมื่อพัง · งานตามเวลา · อีเมลถึงผู้ติดตาม</td></tr>
+    <tr><td>145</td><td>Lab — ระบบตั้งเวลาเผยแพร่ที่รันซ้ำแล้วไม่พัง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ประโยคข้อ ② ของวัน (สไลด์หน้า 32): <strong>"exactly-once ไม่มีอยู่จริง ออกแบบให้ทำซ้ำได้แทน"</strong> ·
+  ภาษาคน: ไม่มีระบบไหนรับประกันได้ว่างานจะถูกทำ <strong>พอดีหนึ่งครั้ง</strong> · ครึ่งหลังของบทนี้จะพิสูจน์ว่าทำไม
+</p>
+
+<h2 id="sn-sec-2">ลองทำให้หน้าค้างเอง — งาน 9 วินาทีใน request เดียว</h2>
+
+<p>
+  สไลด์หน้า 16 ยกตัวอย่าง action <code>create</code> ที่บันทึกบทความแล้วทำต่ออีกสามอย่าง: ส่งอีเมลแจ้งผู้ติดตาม (3 วิ) · ส่งเข้าระบบค้นหา (2 วิ) · ย่อรูปปก (4 วิ) ·
+  แอปเรายังไม่มีทั้งสามอย่าง เลย<strong>จำลองด้วย <code>sleep</code></strong> (สั่งให้โปรแกรมหยุดรอ N วินาที) — ความช้าเท่ากัน แค่ไม่ได้ทำงานจริง
+</p>
+
+<p><strong>ขั้น 1</strong> · เปิด <code>app/controllers/posts_controller.rb</code> หา action <code>create</code> แล้วเติมสามบรรทัด <code>sleep</code> ใต้ <code>if @post.save</code>:</p>
+<pre><code>  <span class="k">def</span> <span class="f">create</span>
+    @post = <span class="n">Post</span>.<span class="f">new</span>(post_params)
+
+    respond_to <span class="k">do</span> |format|
+      <span class="k">if</span> @post.<span class="f">save</span>
+        <span class="f">sleep</span> <span class="n">3</span> <span class="c"># จำลอง: ส่งอีเมลแจ้งผู้ติดตาม</span>
+        <span class="f">sleep</span> <span class="n">2</span> <span class="c"># จำลอง: ส่งเข้าระบบค้นหา</span>
+        <span class="f">sleep</span> <span class="n">4</span> <span class="c"># จำลอง: ย่อรูปปก</span>
+        format.<span class="f">html</span> { <span class="f">redirect_to</span> @post, <span class="n">notice:</span> <span class="s">"สร้างบทความแล้ว"</span> }
+        <span class="c"># … บรรทัดที่เหลือเหมือนเดิม</span></code></pre>
+<ul>
+  <li>บรรทัด <code>sleep 3</code> — หยุดรอ 3 วินาที แทน "ส่งอีเมล" · อีกสองบรรทัดเหมือนกัน รวม 9 วินาที</li>
+  <li>ทั้งสามบรรทัดอยู่<strong>หลัง</strong> <code>@post.save</code> — บทความถูกบันทึกลงตู้เรียบร้อยก่อนจะเริ่มรอ</li>
+  <li>และอยู่<strong>ก่อน</strong> <code>redirect_to</code> — ผู้ใช้จะยังไม่ได้หน้าถัดไปจนกว่าจะรอครบ</li>
+</ul>
+
+<p><strong>ขั้น 2</strong> · บันทึกไฟล์ (<code>bin/dev</code> โหลดโค้ดใหม่ให้เอง) · เปิด <code>localhost:3000/posts/new</code> กรอกหัวข้อ <code>ทดลองงานช้า</code> พิมพ์เนื้อหาอะไรก็ได้ เลือกหมวด (ไม่ต้องใส่รูป) แล้วกด <strong>บันทึก</strong></p>
+
+<p>
+  หน้าจอจะนิ่งไปนานจนน่าสงสัยว่าเว็บพัง · ในเครื่องที่ตรวจ Chrome ใช้เวลา <strong>9,181 ms</strong> นับจากกดปุ่มถึงเห็นหน้าบทความ ·
+  log ในหน้าต่าง <code>bin/dev</code> (<code>10:20:50 web.1  |</code> หน้าบรรทัด = เวลา + มาจากตัวเว็บ):
+</p>
+<pre><code>10:20:50 web.1  | Started POST "/posts" for ::1 at 2026-11-10 10:20:50 +0700
+10:20:50 web.1  | Processing by PostsController#create as TURBO_STREAM
+10:20:50 web.1  |   Parameters: {"authenticity_token" =&gt; "[FILTERED]", "post" =&gt; {"title" =&gt; "ทดลองงานช้า", "body" =&gt; "&lt;div&gt;ทดลองงานหลังร้าน&lt;/div&gt;", "category_id" =&gt; "1"}, "commit" =&gt; "บันทึก"}
+10:20:50 web.1  |   TRANSACTION (1.7ms)  BEGIN
+10:20:50 web.1  |   …
+10:20:50 web.1  |   Post Create (1.6ms)  INSERT INTO "posts" ("title", "description", "category_id", "created_at", "updated_at", "plain_text") VALUES ('ทดลองงานช้า', …) RETURNING "id"
+10:20:50 web.1  |   …
+10:20:50 web.1  |   TRANSACTION (0.9ms)  COMMIT
+10:20:59 web.1  | Redirected to http://localhost:3000/posts/31
+10:20:59 web.1  | ↳ app/controllers/posts_controller.rb:35:in 'block (2 levels) in PostsController#create'
+10:20:59 web.1  | Completed 302 Found in 9049ms (ActiveRecord: 9.4ms (5 queries, 0 cached) | GC: 0.0ms)</code></pre>
+<ul>
+  <li><code>for ::1</code> = ใบสั่งมาจากเครื่องตัวเอง (<code>::1</code> คือ localhost) · <code>Parameters</code> = ของที่กรอกในฟอร์ม · ทั้งคู่เห็นมาตั้งแต่ Day 2–3</li>
+  <li><code>COMMIT</code> เกิดตอน <strong>10:20:50</strong> — ตู้ยืนยันแล้วว่าบทความเลข 31 อยู่ในตู้ งานของผู้ใช้<strong>เสร็จตั้งแต่วินาทีแรก</strong></li>
+  <li><code>Redirected</code> เกิดตอน <strong>10:20:59</strong> — 9 วินาทีหลังจากนั้น ผู้ใช้เพิ่งได้หน้าถัดไป · บรรทัด <code>↳ …posts_controller.rb:35</code> ใต้มัน = คำสั่ง redirect มาจากบรรทัด 35 ของ controller</li>
+  <li><code>Completed 302 Found in 9049ms</code> คือเวลาที่ลูกค้ายืนรอทั้งหมด · <code>ActiveRecord: 9.4ms</code> คือเวลาที่ใช้กับตู้จริง ๆ — <strong>ไม่ถึง 0.2% ของเวลารอ</strong></li>
+</ul>
+
+<p>
+  นี่คือประโยคใต้โค้ดของสไลด์หน้า 16: ผู้ใช้หน้าค้าง 9 วินาที ทั้งที่งานของเขาเสร็จไปตั้งแต่วินาทีแรก ·
+  และถ้าระบบอีเมลล่มตอนนั้น ผู้ใช้จะได้หน้า error ทั้งที่บทความบันทึกไปแล้ว — คิดว่าไม่สำเร็จ แล้วกดบันทึกซ้ำ ได้บทความสองชิ้น
+</p>
+
+<div class="warn">
+  <p><strong>ยังไม่ต้องลบ <code>sleep</code></strong> · หัวข้อถัดไปจะย้ายมันไปอยู่ที่ใหม่ · ถ้าคุณกดบันทึกซ้ำเพราะคิดว่าเว็บค้าง จะได้บทความ "ทดลองงานช้า" สองชิ้น — ปล่อยไว้ ภารกิจท้ายบทพาลบ</p>
+</div>
+
+<h2 id="sn-sec-3">เส้นแบ่ง — "ถ้างานนี้ยังไม่เสร็จ ผู้ใช้เห็นหน้าถัดไปได้ไหม"</h2>
+
+<p>สไลด์หน้า 16 ให้คำถามข้อเดียวไว้ตัดสินทุกงานที่อยู่ใน action:</p>
+<ul>
+  <li><strong>ได้</strong> → ไม่ต้องให้ผู้ใช้รอ · <strong>ส่งไปทำเบื้องหลัง</strong></li>
+  <li><strong>ไม่ได้</strong> → ต้องทำให้เสร็จใน request (ในใบสั่งนี้) ก่อนตอบ</li>
+</ul>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>งาน</th><th>ยังไม่เสร็จ ผู้ใช้เห็นหน้าถัดไปได้ไหม</th><th>ไปไหน</th></tr></thead>
+  <tbody>
+    <tr><td>บันทึกบทความลงตู้</td><td><strong>ไม่ได้</strong> — หน้าถัดไปคือหน้าบทความ ยังไม่มีบทความก็ไม่มีอะไรให้ดู</td><td>ใน request</td></tr>
+    <tr><td>ตรวจว่าหัวข้อไม่ว่าง (validation)</td><td><strong>ไม่ได้</strong> — ต้องรู้ก่อนว่าจะโชว์หน้าบทความหรือโชว์ error</td><td>ใน request</td></tr>
+    <tr><td>ส่งอีเมลแจ้งผู้ติดตาม</td><td><strong>ได้</strong> — ช้าไป 5 วินาทีก็ไม่มีใครรู้</td><td>เบื้องหลัง</td></tr>
+    <tr><td>ส่งเข้าระบบค้นหา</td><td><strong>ได้</strong> — ค้นเจอช้าไปไม่กี่วินาทีไม่มีใครเดือดร้อน</td><td>เบื้องหลัง</td></tr>
+    <tr><td>ย่อรูปปกหลายขนาด</td><td><strong>ได้</strong> — หน้าบทความโชว์รูปเดิมไปก่อนได้</td><td>เบื้องหลัง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>ทวนบท 112:</strong> ตอนเรียน callback เราได้กฎว่า "callback ควรดูแลแค่แฟ้มของตัวเอง" · และบอกว่าอีเมลแจ้งผู้ติดตาม "ฝากให้ job ส่งทีหลัง" แต่ยังไม่ได้เล่าว่า job คืออะไร
+  (บท 112 เขียนว่า "เรื่องของ Day 3" — ของจริงมาถึงตอนนี้) · <strong>job คือปลายทางของคำว่า "ฝาก"</strong> นั่นเอง
+</p>
+
+<p>
+  สไลด์ให้เหตุผลข้อที่สองด้วย: งานที่อยู่ใน job พังแล้ว<strong>ลองใหม่ได้</strong> · งานที่อยู่ใน request พังแล้วหายไปเลย ·
+  ประโยคนี้จริง<strong>เมื่อคิวเก็บงานไว้ถาวรและตั้งให้ลองใหม่</strong> — สองอย่างที่บท 143–144 จะตั้ง · ในบทนี้คุณจะเห็นว่ายังไม่จริง
+</p>
+
+<h2 id="sn-sec-4">background job คืออะไร — ใบงานหลังร้าน</h2>
+
+<p>
+  <strong>background job</strong> คือ "งานที่จดไว้ให้ทำทีหลัง" · controller ไม่ทำเอง แค่<strong>เขียนใบงานแขวนไว้</strong> แล้วตอบผู้ใช้ทันที ·
+  จะมีโปรแกรมอีกตัวมาหยิบใบงานไปทำตอนว่าง โดยไม่มีผู้ใช้คนไหนยืนรอ
+</p>
+<p>
+  ที่แขวนใบงานเรียกว่า <strong>คิว</strong> (queue = แถวรอ ใครมาก่อนได้ทำก่อน) · โปรแกรมที่มาหยิบใบงานไปทำเรียกว่า <strong>worker</strong> (คนงาน)
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    ลูกค้าสั่งข้าวผัด (request) · หัวหน้าเชฟผัดเสร็จ ยกจานให้ลูกค้า (response) — จบสำหรับลูกค้า ·
+    แต่ร้านยังมีงานที่ต้องทำต่อ: ล้างกระทะ · โทรสั่งวัตถุดิบ · ส่งข้าวกล่องไปบ้านลูกค้าอีกคน
+  </p>
+  <p>
+    เชฟ<strong>ไม่ทำเองตอนนั้น</strong> แค่เขียน<strong>ใบงานหลังร้าน</strong>แขวนไว้บน<strong>กระดาน</strong> (คิว) แล้วกลับไปรับออเดอร์ต่อ ·
+    <strong>พนักงานหลังร้าน</strong> (worker) เดินมาหยิบใบงานไปทำทีละใบ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงถ้าไม่มีพนักงานหลังร้าน ใบงานก็แขวนอยู่เฉย ๆ ไม่มีใครทำ — กับ Rails ก็เป็นแบบนั้นจริงในบท 143 (ต้องเปิด worker แยก) ·
+    แต่<strong>ในบทนี้</strong> Rails ยังใช้ทางลัดที่ให้ "หัวหน้าเชฟพกผู้ช่วยติดตัวมาเอง" (หัวข้อหลังจากนี้) · และพนักงานในร้านจริงจำได้ว่าทำอะไรไปแล้ว ส่วน worker จำอะไรไม่ได้นอกจากที่เขียนบนใบงาน
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go</strong> (<a href="../../day-6/lessons/0026-worker-pool.html">บท 26 worker pool</a>): channel <code>jobs</code> ที่กองงานไว้ = คิว · goroutine ที่วนรับงานจาก <code>jobs</code> = worker ·
+  ความต่างคือ worker pool ของ Go อยู่ในโปรแกรมเดียวกับคนส่งงาน · คิวของจริงที่ใช้ใน production (บท 143) อยู่<strong>นอก</strong>โปรแกรมเว็บ — ต่างกันตรงนี้แหละที่ทำให้งานไม่หาย
+</p>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>background job</dt>
+    <dd>งานที่แยกออกจาก request ไปทำทีหลัง ผู้ใช้ไม่ต้องรอ · ถาม senior ได้ว่า "งานนี้ควรอยู่ใน request หรือทำเป็น background job ครับ"</dd>
+    <dt>queue (คิว)</dt>
+    <dd>ที่เก็บงานที่รอทำ เรียงตามลำดับ · คำที่ได้ยินบ่อย: "job ค้างในคิว" = ใบงานแขวนอยู่ ยังไม่มีใครหยิบ</dd>
+    <dt>worker</dt>
+    <dd>โปรแกรมที่หยิบงานจากคิวไปทำ · "worker ล่ม" = ไม่มีใครทำงาน ใบงานกองสูงขึ้นเรื่อย ๆ</dd>
+    <dt>enqueue</dt>
+    <dd>เอางานเข้าคิว (แขวนใบงาน) · พิมพ์บอก AI ได้ว่า "move the email sending out of the request and enqueue a background job instead"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">job ตัวแรก — ย้าย 9 วินาทีออกไปหลังร้าน</h2>
+
+<p><strong>ขั้น 1 · สร้างไฟล์ job</strong> ด้วยตัวสร้างไฟล์ของ Rails (รันในโฟลเดอร์โปรเจกต์):</p>
+<pre><code>$ bin/rails generate job slow_work
+      invoke  test_unit
+      create    test/jobs/slow_work_job_test.rb
+      create  app/jobs/slow_work_job.rb</code></pre>
+<p>
+  ได้สองไฟล์ · ไฟล์ test ปล่อยไว้ก่อน (เรื่อง test อยู่ใน Part 2 ของสไลด์) · ชื่อ <code>slow_work</code> กลายเป็นคลาส <code>SlowWorkJob</code> (Rails เติมคำว่า Job ท้ายชื่อให้เอง)
+</p>
+
+<p><strong>ขั้น 2 · เขียนงาน</strong> — เปิด <code>app/jobs/slow_work_job.rb</code> แก้ทั้งไฟล์เป็น:</p>
+<pre><code><span class="k">class</span> <span class="n">SlowWorkJob</span> &lt; <span class="n">ApplicationJob</span>
+  <span class="f">queue_as</span> <span class="n">:default</span>
+
+  <span class="k">def</span> <span class="f">perform</span>(post_id)
+    post = <span class="n">Post</span>.<span class="f">find</span>(post_id)
+    <span class="f">sleep</span> <span class="n">3</span> <span class="c"># จำลอง: ส่งอีเมลแจ้งผู้ติดตาม</span>
+    <span class="f">sleep</span> <span class="n">2</span> <span class="c"># จำลอง: ส่งเข้าระบบค้นหา</span>
+    <span class="f">sleep</span> <span class="n">4</span> <span class="c"># จำลอง: ย่อรูปปก</span>
+    <span class="n">Rails</span>.logger.<span class="f">info</span> <span class="s">"งานหลังร้านของบทความ #{post.id} เสร็จแล้ว"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+<ul>
+  <li><code>&lt; ApplicationJob</code> — สืบทอดจากแม่แบบของ job ทุกตัวในแอป (เหมือน model สืบจาก <code>ApplicationRecord</code>) · แม่แบบนี้มาจาก <strong>Active Job</strong> = ชุดเครื่องมือทำ job ที่มากับ Rails (บท 143 เล่าต่อ)</li>
+  <li><code>queue_as :default</code> — แขวนใบงานไว้บน<strong>กระดานชื่อ default</strong> · แอปเล็ก ๆ ใช้กระดานเดียวพอ</li>
+  <li><code>def perform(post_id)</code> — <strong>สิ่งที่ worker ทำ</strong>เมื่อหยิบใบงานนี้ไป · ชื่อ <code>perform</code> บังคับ</li>
+  <li><code>Post.find(post_id)</code> — ใบงานจดแค่<strong>เลข id</strong> ของบทความ worker ต้องไปหยิบแฟ้มจากตู้เอง (ทำไมจดแค่เลข — บท 143)</li>
+  <li><code>sleep</code> สามบรรทัด — ย้ายมาจาก controller ตรง ๆ</li>
+  <li><code>Rails.logger.info "…"</code> — เขียนหนึ่งบรรทัดลง log ตอนทำครบ · เราจะใช้บรรทัดนี้เป็น<strong>หลักฐานว่างานเสร็จจริง</strong></li>
+</ul>
+
+<p><strong>ขั้น 3 · ให้ controller แขวนใบงานแทนทำเอง</strong> — กลับไปที่ <code>create</code> ลบ <code>sleep</code> สามบรรทัด ใส่บรรทัดเดียวแทน:</p>
+<div class="compare">
+  <div class="side bad">
+    <h4>ก่อน — ทำเองใน request</h4>
+<pre><code>      <span class="k">if</span> @post.<span class="f">save</span>
+        <span class="f">sleep</span> <span class="n">3</span> <span class="c"># จำลอง: ส่งอีเมล…</span>
+        <span class="f">sleep</span> <span class="n">2</span> <span class="c"># จำลอง: ส่งเข้า…</span>
+        <span class="f">sleep</span> <span class="n">4</span> <span class="c"># จำลอง: ย่อรูปปก</span>
+        format.<span class="f">html</span> { … }</code></pre>
+  </div>
+  <div class="side good">
+    <h4>หลัง — แขวนใบงาน</h4>
+<pre><code>      <span class="k">if</span> @post.<span class="f">save</span>
+        <span class="n">SlowWorkJob</span>.<span class="f">perform_later</span>(@post.id)
+        format.<span class="f">html</span> { … }</code></pre>
+  </div>
+</div>
+<ul>
+  <li><code>perform_later</code> — "<strong>ทำทีหลัง</strong>" · เขียนใบงาน (ชื่อ job + เลข id) แขวนเข้าคิว แล้ว<strong>กลับมาทันที</strong> ไม่รอให้ <code>perform</code> ทำ</li>
+  <li><code>(@post.id)</code> — ของที่ส่งไปจะกลายเป็น <code>post_id</code> ใน <code>perform</code></li>
+  <li>บรรทัดนี้อยู่หลัง <code>save</code> สำเร็จเท่านั้น — บันทึกไม่ผ่านก็ไม่มีใบงาน (ไม่มีอีเมลเรื่องบทความที่ไม่มีอยู่จริง)</li>
+</ul>
+
+<div class="predict">
+  <p>บันทึกไฟล์ทั้งสอง แล้วสร้างบทความใหม่หัวข้อ <code>ทดลองใบงาน</code> ผ่านฟอร์มเหมือนเดิม · ดู log ในหน้าต่าง <code>bin/dev</code></p>
+  <p class="ask">คิดว่า ① บรรทัด <code>Completed 302 Found in …ms</code> จะได้ประมาณเท่าไร ② บรรทัด "งานหลังร้านของบทความ … เสร็จแล้ว" จะโผล่<strong>ก่อน</strong>หรือ<strong>หลัง</strong>บรรทัด Completed และห่างกันกี่วินาที?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง (Chrome ใช้เวลา <strong>108 ms</strong> นับจากกดปุ่มถึงเห็นหน้าบทความ · Job ID ตัดให้สั้นเป็น <code>16307e4e-…</code>):</p>
+<pre><code>10:21:06 web.1  | Started POST "/posts" for ::1 at 2026-11-10 10:21:06 +0700
+10:21:06 web.1  | Processing by PostsController#create as TURBO_STREAM
+10:21:06 web.1  |   …
+10:21:06 web.1  |   TRANSACTION (1.2ms)  COMMIT
+10:21:06 web.1  | [ActiveJob] Enqueued SlowWorkJob (Job ID: 16307e4e-…) to Async(default) with arguments: 32
+10:21:06 web.1  | [ActiveJob] ↳ app/controllers/posts_controller.rb:32:in 'block in PostsController#create'
+10:21:06 web.1  | Redirected to http://localhost:3000/posts/32
+10:21:06 web.1  | Completed 302 Found in 28ms (ActiveRecord: 6.3ms (5 queries, 0 cached) | GC: 0.6ms)
+10:21:06 web.1  | [ActiveJob] [SlowWorkJob] [16307e4e-…] Performing SlowWorkJob (Job ID: 16307e4e-…) from Async(default) enqueued at 2026-11-10T03:21:06.636126000Z with arguments: 32
+10:21:06 web.1  | Started GET "/posts/32" for ::1 at 2026-11-10 10:21:06 +0700
+10:21:06 web.1  |   …   (หน้าบทความ 32 วาดเสร็จ)
+10:21:06 web.1  | Completed 200 OK in 28ms (Views: 15.2ms | ActiveRecord: 4.5ms (6 queries, 0 cached) | GC: 11.9ms)
+10:21:06 web.1  |   …
+10:21:15 web.1  | [ActiveJob] [SlowWorkJob] [16307e4e-…] งานหลังร้านของบทความ 32 เสร็จแล้ว
+10:21:15 web.1  | [ActiveJob] [SlowWorkJob] [16307e4e-…] Performed SlowWorkJob (Job ID: 16307e4e-…) from Async(default) in 9031.67ms</code></pre>
+    <ul>
+      <li><strong>① <code>Completed 302 Found in 28ms</code></strong> — จาก 9,049 ms เหลือ 28 ms · ผู้ใช้ได้หน้าบทความทันที</li>
+      <li><code>Enqueued SlowWorkJob … with arguments: 32</code> — <strong>แขวนใบงาน</strong>แล้ว (บทความเลข 32) · บรรทัด <code>↳ …posts_controller.rb:32</code> บอกว่าแขวนจากบรรทัด 32 ของ controller</li>
+      <li><code>Performing SlowWorkJob</code> — มีคนหยิบใบงานไปทำแล้ว · ทำพร้อม ๆ กับที่เบราว์เซอร์ขอหน้าบทความ (<code>Started GET "/posts/32"</code>)</li>
+      <li><strong>② "เสร็จแล้ว" โผล่ทีหลัง ตอน 10:21:15</strong> — 9 วินาทีหลังผู้ใช้ได้หน้าไปแล้ว · <code>Performed … in 9031.67ms</code> = งานใช้เวลาเท่าเดิม แค่<strong>ไม่มีใครต้องยืนรอ</strong></li>
+      <li><code>Async(default)</code> — ชื่อกระดาน <code>default</code> จาก <code>queue_as</code> · ส่วนคำว่า <code>Async</code> คือหัวข้อถัดไป</li>
+    </ul>
+    <p>งานไม่ได้เร็วขึ้นเลย — แค่<strong>ย้ายไปทำตอนที่ไม่มีใครรอ</strong></p>
+  </div>
+</div>
+
+<h2 id="sn-sec-6">ตอนนี้ใบงานแขวนอยู่ที่ไหน — <code>Async</code> คือคิวในหน่วยความจำ</h2>
+
+<p>
+  เราไม่ได้ตั้งค่าคิวเลย แต่ job ก็ทำงาน · ถามแอปได้ว่าตอนนี้ใช้คิวแบบไหน (หน้าต่างที่สอง):
+</p>
+<pre><code>$ bin/rails runner 'p ActiveJob::Base.queue_adapter_name'
+"async"</code></pre>
+<p>
+  <code>bin/rails runner '…'</code> = รันโค้ด Ruby หนึ่งบรรทัดในแอปแล้วจบ (ไม่ต้องเปิด console) · <code>p</code> = พิมพ์ค่าออกมา · <code>ActiveJob::Base</code> = แม่แบบตัวบนสุดของ job ทุกตัว (<code>::</code> อ่านว่า "ที่อยู่ใน") · ได้ <code>"async"</code> ·
+  <strong>adapter</strong> คือ "ตัวเสียบ" ที่บอกว่าใบงานไปเก็บที่ไหน · development ถ้าไม่ตั้งอะไร ได้ <code>async</code> ·
+  ส่วน <code>config/environments/production.rb</code> (ค่าตั้งของ production = เครื่องจริงที่ผู้ใช้ใช้) ของเรามีบรรทัดนี้อยู่แล้ว:
+</p>
+<pre><code>  <span class="c"># Replace the default in-process and non-durable queuing backend for Active Job.</span>
+  config.active_job.queue_adapter = <span class="n">:solid_queue</span></code></pre>
+<p>
+  คอมเมนต์บรรทัดบนบอกนิสัยของ <code>async</code> ไว้สองคำ: <strong>in-process</strong> (อยู่ใน process เดียวกับเว็บ — ตัวโปรแกรมที่กำลังรันอยู่ตัวเดียวกัน) และ
+  <strong>non-durable</strong> (ไม่ทนทาน — ไม่ได้เขียนเก็บลงที่ไหน) · เอกสาร Rails เขียนตรง ๆ ว่า <strong>ถ้า process ดับหรือเครื่องรีเซ็ต งานที่ค้างอยู่หายหมด</strong> (ดูลิงก์ท้ายบท)
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    <code>async</code> เหมือนหัวหน้าเชฟ<strong>จดใบงานลงกระดาษโน้ตในกระเป๋าเสื้อ</strong> แล้วพา<strong>ผู้ช่วยติดตัวมาเอง</strong>ยืนทำอยู่ข้าง ๆ ในครัวเดียวกัน ·
+    สะดวก ไม่ต้องติดกระดาน ไม่ต้องจ้างพนักงานหลังร้าน
+  </p>
+  <p>
+    แต่ถ้า<strong>ปิดครัว</strong> (หยุด server) เชฟเดินออก — โน้ตกับผู้ช่วยหายไปพร้อมกัน ใบงานที่ยังไม่เสร็จไม่มีใครรู้ว่าเคยมี ·
+    บท 143 จะเปลี่ยนเป็น <strong>Solid Queue</strong> = ติดกระดานไว้ในตู้แฟ้ม (ตารางใน PostgreSQL) ปิดครัวแล้วกระดานยังอยู่
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ผู้ช่วยของ <code>async</code> ไม่ได้มีคนเดียว — เป็นกลุ่มคนงานหลายคนในโปรแกรมเดียวกัน (ทำหลายใบงานพร้อมกันได้) ·
+    และ "ปิดครัว" ในโลกจริงไม่ได้เกิดแค่ตอนคุณกด Ctrl+C — <strong>ทุกครั้งที่ deploy (เอาเวอร์ชันใหม่ขึ้นเครื่องจริง) server ถูกปิดแล้วเปิดใหม่</strong> นั่นคือเหตุที่ production ห้ามใช้ <code>async</code>
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ Go</strong> (<a href="../../day-6/lessons/0021-goroutine-waitgroup.html">บท 21</a>): <code>async</code> ก็คือ <code>go f()</code> ดี ๆ นี่เอง · ถ้าใน handler ของ Gin เราเขียน (ตัดมาสองบรรทัด ไม่ใช่ไฟล์เต็ม):
+</p>
+<pre><code><span class="k">go</span> <span class="f">sendEmail</span>(post.ID) <span class="c">// แยกไปส่งอีเมล ไม่รอ</span>
+c.<span class="f">JSON</span>(<span class="n">201</span>, post)     <span class="c">// ตอบผู้ใช้ทันที</span></code></pre>
+<p>
+  ผู้ใช้ได้คำตอบเร็วเหมือนกัน · แต่กฎของบท 21 ยังอยู่: <strong>โปรแกรมจบ = goroutine ที่ค้างตายเงียบ ๆ</strong> · และถ้า <code>sendEmail</code> พัง ไม่มีใครลองใหม่ให้ ·
+  <code>go f()</code> แก้ปัญหา "ผู้ใช้ต้องรอ" ได้ แต่<strong>ไม่ได้แก้ "งานหาย"</strong> — สิ่งที่คิวจริงต้องมีคือที่เก็บใบงานที่อยู่<strong>นอก</strong>โปรแกรม
+</p>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>perform_later</dt>
+    <dd>สั่งให้ job ไปเข้าคิว ทำทีหลัง แล้วกลับมาทันที · คู่กับ <code>perform</code> ที่เป็นตัวงานจริง · log ฝั่งคนสั่งขึ้น <code>Enqueued</code> · ฝั่งคนทำขึ้น <code>Performing</code> / <code>Performed</code></dd>
+    <dt>queue adapter</dt>
+    <dd>ตัวเสียบที่กำหนดว่าคิวจริงอยู่ที่ไหน (ในหน่วยความจำ · ในฐานข้อมูล · ใน Redis) · โค้ด job ไม่ต้องแก้เมื่อเปลี่ยน adapter · ถาม senior ได้ว่า "production เราใช้ queue adapter ตัวไหนครับ"</dd>
+    <dt>async adapter (in-process)</dt>
+    <dd>adapter ค่าเริ่มต้นของ development · ทำ job ด้วยคนงานในโปรแกรมเว็บเอง · restart แล้วงานค้างหาย · พิมพ์บอก AI ได้ว่า "don't rely on the async adapter in production, jobs are lost on restart"</dd>
+    <dt>durable</dt>
+    <dd>"ทนทาน" = เก็บงานไว้ในที่ที่รอดจากการปิดเปิดโปรแกรม (เช่น ตารางในฐานข้อมูล) · คิวที่ durable คือสิ่งที่บท 143 ตั้ง</dd>
+  </dl>
+</div>
+
+<p>
+  ถึงตรงนี้คิดว่าแก้ได้แล้ว: แค่เปลี่ยนไปใช้คิวที่ durable งานก็ไม่หาย · <strong>ไม่หาย — แต่ได้ปัญหาใหม่มาแทน</strong> · ครึ่งหลังของบทว่าด้วยเรื่องนี้
+</p>
+
+<h2 id="sn-sec-7">exactly-once ไม่มีจริง — เลือกได้แค่ "อาจหาย" หรือ "อาจซ้ำ"</h2>
+
+<p>
+  ใบงานหนึ่งใบต้องผ่านสองฝั่ง: <strong>คิว</strong> (ที่แขวนใบงาน) กับ <strong>worker</strong> (คนทำ) · สองฝั่งนี้คุยกันผ่านเครือข่ายหรือฐานข้อมูล ซึ่งขาดได้ และ worker ตายได้ทุกเมื่อ ·
+  คำถามคือ: <strong>คิวจะขีดฆ่าใบงาน (ถือว่าจบ) ตอนไหน</strong> — ก่อน worker ทำ หรือหลัง worker ทำ · มีแค่สองทาง (สไลด์หน้า 17):
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>at-most-once<br>"ไม่เกิน 1 ครั้ง"</th><th>at-least-once<br>"อย่างน้อย 1 ครั้ง"</th><th>exactly-once<br>"พอดี 1 ครั้ง"</th></tr></thead>
+  <tbody>
+    <tr><td>ลำดับ</td><td>ขีดฆ่าใบงานออกจากคิว<strong>ก่อน</strong> แล้วค่อยทำ</td><td>ทำให้เสร็จ<strong>ก่อน</strong> แล้วค่อยบอกคิวว่าเสร็จ</td><td>สองฝั่งต้องรู้ตรงกันเป๊ะทุกครั้ง</td></tr>
+    <tr><td>worker ตายกลางทาง</td><td>ใบงานถูกฆ่าไปแล้ว → <strong>งานหาย</strong></td><td>คิวยังไม่ได้ยินว่าเสร็จ → แจกใหม่ → <strong>งานซ้ำ</strong></td><td>ทำไม่ได้ เมื่อสายขาดได้หรือ worker ตายได้</td></tr>
+    <tr><td>เหมาะกับ</td><td>งานที่หายได้ เช่น นับคลิก</td><td><strong>ค่าเริ่มต้นของคิวเกือบทุกตัว</strong> (สไลด์อ้าง)</td><td>ไม่มีอยู่จริง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  แล้วที่คนชอบพูดว่า "ระบบเรา exactly-once" คืออะไร · สไลด์ตอบว่า <strong>at-least-once + งานที่ทำซ้ำแล้วผลเหมือนเดิม</strong> — คิวส่งซ้ำได้ แต่ทำซ้ำแล้วไม่มีอะไรเสีย ผลรวมเลย<strong>ดูเหมือน</strong>ทำครั้งเดียว
+</p>
+
+<div class="analogy">
+  <span class="label">เทียบกับร้านอาหาร</span>
+  <p>
+    ใบงาน "ส่งข้าวกล่องไปบ้านคุณสมชาย" แขวนบนกระดาน · พนักงานส่งของหยิบไป <strong>ส่งถึงมือแล้ว</strong> เดินกลับมาจะติ๊กกระดานว่าเสร็จ — แต่<strong>เป็นลมล้มไปก่อนติ๊ก</strong> ·
+    พนักงานคนใหม่มาเห็นใบงานยังไม่ติ๊ก ก็หยิบไปส่งอีกรอบ · คุณสมชายได้ข้าวสองกล่อง = <strong>at-least-once</strong> ·
+    ถ้าร้านเปลี่ยนกฎเป็น "ติ๊กก่อนออกจากร้าน" แล้วพนักงานเป็นลมกลางทาง — กระดานบอกว่าเสร็จ แต่คุณสมชายไม่ได้ข้าวเลย = <strong>at-most-once</strong>
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริงคุณสมชายโทรมาบอกได้ว่า "ได้แล้ว อย่าส่งอีก" · ในระบบจริงไม่มีใครโทรมาบอก — อีเมลที่ส่งออกไปแล้วเรียกคืนไม่ได้ ·
+    และคนใหม่ไม่ได้รู้ว่าคนเก่าเป็นลม เขาแค่เห็นว่า<strong>นานเกินกำหนดแล้วยังไม่ติ๊ก</strong> (คิวรอจนหมดเวลา)
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">ศัพท์ที่เอาไปคุยต่อได้</span>
+  <dl>
+    <dt>at-most-once</dt>
+    <dd>รับประกันว่าไม่ซ้ำ แต่อาจหาย · ใช้กับงานที่หายได้ไม่เป็นไร</dd>
+    <dt>at-least-once</dt>
+    <dd>รับประกันว่าไม่หาย แต่อาจซ้ำ · ถาม senior ได้ว่า "คิวเราเป็น at-least-once ใช่ไหมครับ job ต้อง idempotent ทุกตัวหรือเปล่า"</dd>
+    <dt>exactly-once (delivery)</dt>
+    <dd>"ส่งพอดีครั้งเดียว" — เมื่อเครือข่ายขาดได้ ทำไม่ได้จริง · ถ้าเห็นเครื่องมือไหนโฆษณาคำนี้ ให้ถามว่า "หมายถึง at-least-once บวก dedup (กรองของซ้ำ) หรือ idempotency ใช่ไหม"</dd>
+    <dt>ack (acknowledge)</dt>
+    <dd>สัญญาณที่ worker บอกคิวว่า "ทำเสร็จแล้ว ขีดฆ่าได้" = การติ๊กกระดาน · คำถามทั้งหัวข้อนี้คือ "ack ก่อนทำ หรือหลังทำ"</dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">worker ตายตอนไหน งานถึงซ้ำ — ช่องว่างที่ปิดไม่ได้</h2>
+
+<p>ไล่ตามเวลาแบบสไลด์หน้า 18 · คิวแบบ at-least-once (ทำก่อน แล้วค่อยบอกคิว) · ใบงานคือ "ส่งอีเมลแจ้งผู้ติดตาม":</p>
+
+<div class="diagram">t1  คิวส่งใบงานให้ worker
+t2  worker ส่งอีเมลออกไปแล้ว               ┐
+t3  worker กำลังจะบอกคิวว่าเสร็จ             ┘ ← ช่องว่าง: งานทำไปแล้ว แต่ยังไม่มีใครรู้
+t4  worker ตาย  (deploy · หน่วยความจำเต็ม · เครื่องดับ)
+t5  คิวรอจนหมดเวลา → คิดว่างานยังไม่เสร็จ
+t6  คิวส่งใบงานเดิมให้ worker ตัวใหม่
+t7  ลูกค้าได้อีเมลฉบับที่สอง</div>
+
+<ul>
+  <li><strong>ช่องว่างระหว่าง t2 กับ t3 ปิดไม่ได้</strong> — "ส่งอีเมล" กับ "บอกคิว" เป็นสองการกระทำ ต่อให้เขียนโค้ดเร็วแค่ไหน ระหว่างกลางก็กว้างกว่าศูนย์เสมอ · worker ตายพอดีตรงนั้น = ซ้ำ</li>
+  <li><strong>t4 ไม่ใช่เรื่องไกลตัว</strong> — deploy ทุกครั้งคือการปิด worker เก่าแล้วเปิดตัวใหม่ · ระบบที่ deploy วันละหลายรอบเจอจังหวะนี้แน่นอนสักวัน</li>
+</ul>
+
+<p>
+  <strong>สลับลำดับก็ไม่ช่วย:</strong> ถ้าบอกคิวว่าเสร็จก่อน (t3 ขึ้นมาก่อน t2) แล้ว worker ตายตรงกลาง — คิวคิดว่าเสร็จ แต่อีเมลไม่เคยออก ·
+  เราแค่ย้ายจากปัญหา "<strong>ซ้ำ</strong>" ไปเป็นปัญหา "<strong>หาย</strong>" · <strong>เลือกได้แค่ว่าจะเจ็บทางไหน</strong>
+</p>
+
+<h2 id="sn-sec-9">คำถามที่ถูก — "ถ้าซ้ำแล้ว จะไม่เป็นไรได้ยังไง"</h2>
+
+<p>
+  งานส่วนใหญ่หายไม่ได้ (อีเมลยืนยัน · เผยแพร่บทความตามเวลา) → เลือก <strong>at-least-once</strong> ซึ่งแปลว่า<strong>ต้องยอมรับว่างานจะถูกทำซ้ำ</strong> ·
+  คำถามจึงเปลี่ยนจาก "จะกันไม่ให้ซ้ำยังไง" (ทำไม่ได้) เป็น <strong>"ถ้าซ้ำแล้วจะไม่เป็นไรได้ยังไง"</strong>
+</p>
+
+<div class="compare">
+  <div class="side bad">
+    <h4>ซ้ำแล้วพัง</h4>
+    <p>"<strong>บวก</strong>ยอดวิวของบทความอีก 100" · รันครั้งเดียว +100 · รันซ้ำ +200 — ผลเปลี่ยนทุกครั้งที่ทำ</p>
+  </div>
+  <div class="side good">
+    <h4>ซ้ำได้ไม่เป็นไร</h4>
+    <p>"<strong>ตั้ง</strong>สถานะบทความเป็นเผยแพร่แล้ว" · รันครั้งเดียวหรือสิบครั้ง ผลเหมือนเดิม — เหมือนพลิกป้ายหน้าร้านเป็น "เปิด" ซ้ำ ป้ายก็ยังเป็น "เปิด"</p>
+  </div>
+</div>
+
+<p>
+  ฝั่งขวาคือ <strong>idempotent</strong> — คำเดียวกับที่เจอใน Go <a href="../../day-8/lessons/0036-rest-naming-idempotency.html">บท 36</a> (<code>PUT</code> ยิงซ้ำได้ <code>POST</code> ยิงซ้ำแล้วได้ของเบิ้ล) และ <code>find_or_create_by!</code> ใน seeds ·
+  แต่ "ส่งอีเมล" ไม่มีทางทำให้เป็นแบบฝั่งขวาโดยธรรมชาติ — ส่งสองครั้งก็สองฉบับ · <strong>3 ท่าที่ใช้จริงในการทำให้ job แบบนี้ซ้ำได้</strong> คือเรื่องของ<a href="./0143-idempotency-solid-queue.html">บท 143</a>
+</p>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ — ปิดครัวกลางงาน แล้วดูว่าใบงานไปไหน (~10 นาที)</h3>
+  <p>พิสูจน์ด้วยตาว่า <code>async</code> เป็น "งานที่หายได้" · ต้องทำหัวข้อ "job ตัวแรก" ครบแล้ว (controller มี <code>perform_later</code> · job มี <code>sleep</code> รวม 9 วินาที)</p>
+  <ol>
+    <li>สร้างบทความใหม่หัวข้อ <code>ทดลองกด Ctrl+C</code> ผ่านฟอร์ม</li>
+    <li>ทันทีที่เห็นหน้าบทความ (<strong>ภายใน 5 วินาที</strong>) สลับไปหน้าต่าง <code>bin/dev</code> แล้วกด <strong>Ctrl+C</strong> · อ่านบรรทัดท้าย ๆ ให้ครบ</li>
+    <li>เปิดใหม่ด้วย <code>bin/dev</code> · รอ 20 วินาที ไม่ต้องทำอะไร · ดูว่ามีบรรทัด <code>[ActiveJob]</code> ขึ้นไหม</li>
+    <li>เปิด <code>localhost:3000/posts</code> ดูว่าบทความ <code>ทดลองกด Ctrl+C</code> อยู่ไหม</li>
+    <li><strong>เก็บกวาด</strong> (หน้าต่างที่สอง):
+<pre><code>$ git restore app/controllers/posts_controller.rb
+$ rm app/jobs/slow_work_job.rb test/jobs/slow_work_job_test.rb
+$ git status --short</code></pre>
+      <code>git status --short</code> ต้อง<strong>ไม่แสดงอะไรเลย</strong> · แล้วลบบทความทดลองทุกชิ้น (หัวข้อขึ้นต้นด้วย "ทดลอง") ด้วยปุ่ม <strong>ลบบทความ</strong> ในหน้าบทความ</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: ข้อ 2 จะเห็นบรรทัด "งานหลังร้าน… เสร็จแล้ว" ไหม · จะเห็นคำว่า <code>Performed</code> ไหม · ข้อ 3 เปิดใหม่แล้วงานจะกลับมาทำต่อไหม · ข้อ 4 บทความอยู่ไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p><strong>ข้อ 2</strong> — ผลจริง (กด Ctrl+C หลังงานเริ่ม 2 วินาที · Job ID ตัดสั้น):</p>
+<pre><code>10:22:41 web.1  | [ActiveJob] Enqueued SlowWorkJob (Job ID: 7ffe7c1f-…) to Async(default) with arguments: 34
+10:22:41 web.1  |   …
+10:22:41 web.1  | Completed 302 Found in 34ms (ActiveRecord: 7.4ms (5 queries, 0 cached) | GC: 0.0ms)
+10:22:41 web.1  | [ActiveJob] [SlowWorkJob] [7ffe7c1f-…] Performing SlowWorkJob (Job ID: 7ffe7c1f-…) from Async(default) enqueued at 2026-11-10T03:22:41.978400000Z with arguments: 34
+10:22:41 web.1  |   …   (หน้าบทความ 34 วาดเสร็จ)
+10:22:44 system | SIGINT received, starting shutdown
+10:22:44 web.1  | - Gracefully stopping, waiting for requests to finish
+10:22:44 web.1  | === puma shutdown: 2026-11-10 10:22:44 +0700 ===
+10:22:44 web.1  | - Goodbye!
+10:22:44 web.1  | Exiting
+10:22:44 web.1  | [ActiveJob] [SlowWorkJob] [7ffe7c1f-…] Performed SlowWorkJob (Job ID: 7ffe7c1f-…) from Async(default) in 2158.22ms
+10:22:44 system | sending SIGTERM to all processes
+10:22:44 css.1  | exited with code 0
+10:22:44 web.1  | exited with code 0</code></pre>
+    <ul>
+      <li><strong>ไม่มีบรรทัด "งานหลังร้านของบทความ 34 เสร็จแล้ว"</strong> — งานโดนตัดกลางคัน</li>
+      <li><strong>แต่มีคำว่า <code>Performed … in 2158.22ms</code></strong> — ทำไปได้แค่ 2 วินาที (ยังอยู่ใน <code>sleep 3</code> แรก) แล้ว Rails เขียนบรรทัดปิดงานให้ตอนโปรแกรมปิด ·
+        ลองแล้ว 3 ครั้ง ได้แบบนี้ทุกครั้ง · <strong>อย่าเชื่อคำว่า Performed อย่างเดียว</strong> ดูหลักฐานว่างานทำครบจริง</li>
+      <li><code>SIGINT received</code> — SIGINT คือสัญญาณ "ขอให้หยุด" ที่ Ctrl+C ส่งไป · บรรทัดที่ขึ้นต้นด้วย <code>system</code> คือตัว <code>bin/dev</code> เอง (foreman ที่เปิดทุกโปรแกรมพร้อมกัน — บท 120)</li>
+      <li><code>sending SIGTERM to all processes</code> — SIGTERM คือสัญญาณ "ปิดตัวได้แล้ว" อีกแบบหนึ่ง · <code>bin/dev</code> ส่งให้ทุกโปรแกรมที่มันเปิดไว้ · <code>css.1</code> คือตัวคอยสร้างไฟล์ Tailwind ใหม่ ปิดไปพร้อมกัน</li>
+      <li><code>Gracefully stopping, waiting for requests to finish</code> — Puma (ตัวรับ request) รอให้ <strong>request</strong> ที่ค้างเสร็จ · <strong>ไม่ได้รอ job</strong></li>
+    </ul>
+    <p><strong>ข้อ 3 — ไม่กลับมา</strong> · ผลจริง: เปิดใหม่ถึงบรรทัด <code>Use Ctrl-C to stop</code> แล้วรอ 25 วินาที ไม่มีบรรทัด <code>[ActiveJob]</code> สักบรรทัด · ใบงานอยู่ในหน่วยความจำของโปรแกรมที่ปิดไปแล้ว ไม่มีที่ไหนจำไว้ว่าเคยมี</p>
+    <p><strong>ข้อ 4 — บทความอยู่</strong> · บันทึกเสร็จ (<code>COMMIT</code>) ก่อนแขวนใบงาน · ผลคือ <strong>บทความมี แต่งานหลังร้านของมันหายไปเงียบ ๆ</strong> — ถ้าเป็นอีเมลจริง ผู้ติดตามจะไม่ได้อีเมลและไม่มีใครรู้ ·
+      นี่คือ "งานหาย" แบบเดียวกับ <code>go f()</code> ที่ main จบก่อน · บท 143 แก้ด้วยคิวที่เก็บใบงานในฐานข้อมูล</p>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>เห็น "งานหลังร้านของบทความ … เสร็จแล้ว" ก่อนบรรทัด <code>SIGINT received</code></strong> — กด Ctrl+C ช้ากว่า 9 วินาที งานเลยเสร็จทัน · ลองใหม่ให้ไวขึ้น</li>
+      <li><strong><code>git status --short</code> ยังเห็น <code>?? test/jobs/</code></strong> — ยังลบไฟล์ test ไม่ครบ · ดูชื่อไฟล์ใน <code>test/jobs/</code> แล้วลบให้หมด (ห้ามใช้ <code>git restore .</code> หรือ <code>git clean</code> แบบทั้งโฟลเดอร์ ถ้ายังมีงานอื่นที่ไม่ได้ commit)</li>
+      <li><strong>กดบันทึกแล้วได้หน้า error · log มี <code>NameError (uninitialized constant PostsController::SlowWorkJob)</code></strong> — ลบไฟล์ job ไปแล้วแต่ controller ยังเรียกอยู่ · ทำบรรทัดแรกของข้อ 5 (<code>git restore</code>) ·
+        ลองแล้ว: บทความ<strong>ถูกบันทึกไปแล้ว</strong>ก่อนพัง (พังตอนแขวนใบงาน หลัง COMMIT) ลบทิ้งด้วยปุ่มได้เลย</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-10">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ใน action <code>create</code> ของบทความ งานไหน<strong>ควรย้ายไปเป็น background job</strong>?</p>
+  <div class="opts">
+    <button class="opt">บันทึกบทความลงตู้ เพราะ INSERT ใช้เวลาพอสมควร</button>
+    <button class="opt">ตรวจว่าหัวข้อไม่ว่าง จะได้ตอบผู้ใช้เร็วขึ้นอีกนิด</button>
+    <button class="opt">ส่งอีเมลแจ้งผู้ติดตามว่ามีบทความใหม่ออกแล้ว</button>
+    <button class="opt">สร้าง URL ของหน้าบทความที่จะ redirect ผู้ใช้ไป</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — อีเมลยังไม่ออก ผู้ใช้ก็เห็นหน้าบทความได้ตามปกติ</p>
+    <p>ตัวเลือกที่ 1 ผิด — ไม่มีบทความในตู้ หน้าถัดไปก็ไม่มีอะไรให้ดู (และจริง ๆ ใช้แค่ไม่กี่ ms — log บอก <code>ActiveRecord: 9.4ms</code>) ·
+       ตัวเลือกที่ 2 ผิด — ต้องรู้ผลก่อนว่าจะโชว์หน้าบทความหรือโชว์ error ·
+       ตัวเลือกที่ 4 ผิด — redirect ต้องรู้ URL ตอนตอบ จะทำทีหลังไม่ได้</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ถามว่า "ถ้างานนี้ยังไม่เสร็จ ผู้ใช้เห็นหน้าถัดไปได้ไหม" · ได้ = ส่งเข้า job · ไม่ได้ = ทำใน request</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">development ใช้ adapter <code>async</code> · job กำลังทำได้ครึ่งทาง แล้วคุณกด Ctrl+C ที่ <code>bin/dev</code> แล้วเปิดใหม่ · เกิดอะไรขึ้น?</p>
+  <div class="opts">
+    <button class="opt">เปิดใหม่แล้ว job เริ่มทำใหม่ตั้งแต่ต้องเองอัตโนมัติ</button>
+    <button class="opt">job หายเงียบ ๆ ส่วนบทความที่บันทึกไปแล้วยังอยู่ครบ</button>
+    <button class="opt">บทความถูกยกเลิกไปด้วย เพราะงานของมันยังไม่ครบ</button>
+    <button class="opt">Puma รอให้ job ทำจนเสร็จก่อน แล้วค่อยปิดตัวเอง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ภารกิจพิสูจน์แล้ว: ไม่มีบรรทัด "เสร็จแล้ว" · เปิดใหม่ 25 วินาทีไม่มี <code>[ActiveJob]</code> · แต่บทความอยู่</p>
+    <p>ตัวเลือกที่ 1 ผิด — <code>async</code> เก็บใบงานในหน่วยความจำ ปิดโปรแกรมแล้วไม่มีที่ไหนจำ · ตัวเลือกที่ 3 ผิด — บทความ COMMIT ไปแล้วก่อนแขวนใบงาน สองเรื่องนี้ไม่ผูกกัน ·
+       ตัวเลือกที่ 4 ผิด — log บอก <code>waiting for requests to finish</code> คือรอ request ไม่ใช่ job (และ log ยังขึ้น <code>Performed … in 2158.22ms</code> ทั้งที่งานไม่ครบ)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> <code>async</code> = <code>go f()</code> ของ Rails · เร็ว ใช้ง่าย แต่โปรแกรมดับ = งานหาย → ห้ามใช้ใน production</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">คิวแบบ at-least-once · worker ส่งอีเมลสำเร็จ แล้ว<strong>ดับไปก่อนบอกคิวว่าเสร็จ</strong> · ผลคืออะไร?</p>
+  <div class="opts">
+    <button class="opt">อีเมลไม่ออก เพราะคิวยังไม่ได้ยืนยันว่างานเสร็จ</button>
+    <button class="opt">คิวรู้เองว่าอีเมลออกไปแล้ว เลยขีดฆ่าใบงานให้</button>
+    <button class="opt">อีเมลที่ส่งไปแล้วถูกเรียกคืนเมื่อ worker ดับลง</button>
+    <button class="opt">คิวแจกใบงานเดิมให้ worker ใหม่ ลูกค้าได้อีเมลสองฉบับ</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — คือ t2 → t4 → t7 ในแผนภาพ · ช่องว่างระหว่าง "ทำแล้ว" กับ "บอกแล้ว" ปิดไม่ได้</p>
+    <p>ตัวเลือกที่ 1 ผิด — อีเมลออกไปแล้วตั้งแต่ t2 การยืนยันกับคิวไม่เกี่ยวกับอีเมล · ตัวเลือกที่ 2 ผิด — คิวรู้แค่ว่ายังไม่มีใครบอกว่าเสร็จ ไม่รู้ว่าข้างนอกเกิดอะไร ·
+       ตัวเลือกที่ 3 ผิด — อีเมลที่ส่งออกไปแล้วเรียกคืนไม่ได้ (ที่ไม่เหมือนกันของภาพพนักงานส่งของ)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> at-least-once = ไม่หายแต่อาจซ้ำ · คิวเกือบทุกตัวเลือกแบบนี้ → job ต้องทนการทำซ้ำได้</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">เพื่อนเสนอว่า "งั้นให้ worker บอกคิวว่าเสร็จ<strong>ก่อน</strong> แล้วค่อยส่งอีเมล จะได้ไม่ซ้ำ" · ข้อไหนอธิบายถูก?</p>
+  <div class="opts">
+    <button class="opt">ไม่ซ้ำจริง แต่ถ้า worker ดับตรงกลาง อีเมลจะหายไปเลย</button>
+    <button class="opt">แก้ได้ครบทั้งสองปัญหา เพราะคิวรู้สถานะก่อนทำงานเสมอ</button>
+    <button class="opt">ยังซ้ำเหมือนเดิม เพราะคิวจะส่งใบงานเดิมซ้ำอยู่ดี</button>
+    <button class="opt">ทำไม่ได้ เพราะ Rails บังคับลำดับให้ทำงานก่อนบอกคิวเสมอ</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — สลับลำดับ = เปลี่ยนจาก at-least-once เป็น at-most-once · ย้ายปัญหาจาก "ซ้ำ" ไปเป็น "หาย"</p>
+    <p>ตัวเลือกที่ 2 ผิด — ช่องว่างยังอยู่ แค่ย้ายไปอยู่อีกฝั่ง · ตัวเลือกที่ 3 ผิด — คิวได้ยินว่าเสร็จแล้วจึงไม่แจกซ้ำ ปัญหาคือหาย ไม่ใช่ซ้ำ ·
+       ตัวเลือกที่ 4 ผิด — ลำดับนี้เป็นเรื่องการออกแบบคิว ไม่ใช่กฎบังคับของ Rails · ประเด็นคือไม่ว่าลำดับไหน "พอดีครั้งเดียว" ก็ไม่มี</p>
+    <p><strong>จุดที่ต้องจำ:</strong> เลือกได้แค่ว่าจะเจ็บทางไหน · งานที่หายไม่ได้ → ยอมซ้ำ แล้วออกแบบให้ "ซ้ำแล้วไม่เป็นไร" (บท 143)</p>
+  </div>
+</div>
+
+<h2 id="sn-sec-11">ถามกลับได้เลย</h2>
+<p>
+  ติดตรงไหนถามได้ทุกเรื่อง เช่น "ถ้า job ไปแก้บทความที่ผู้ใช้เพิ่งลบไปแล้วจะเกิดอะไร" · "แล้ว job ที่พังกลางทางไปไหน" (บท 144 ตอบเต็ม ๆ) ·
+  หรือวาง log ของคุณมาให้ดูด้วยกัน
+</p>
+
+<h2 id="sn-sec-12">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>15</td><td>"Solid Queue — ทำไม Rails 8 ใช้ตารางใน DB เป็นคิว"</td><td>บทนี้ยังเป็น <code>async</code> (development ค่าเริ่มต้น) · production ของเราตั้ง <code>:solid_queue</code> ไว้แล้ว · ติดตั้งจริงบท 143</td><td>ไม่ต้อง</td></tr>
+    <tr><td>16</td><td><code>NotifyMailer.new_post(@post).deliver_now # 3 วิ</code> · <code>SearchIndex.push</code> · <code>variant(...).processed</code></td><td>แอปเรายังไม่มี mailer และระบบค้นหา · ตัวเลข 3/2/4 วิ เป็นตัวอย่าง · บทนี้จำลองด้วย <code>sleep</code> และวัดได้ 9,049 ms จริง</td><td>ไม่ต้อง — อย่าพิมพ์ตาม (ได้ <code>uninitialized constant</code>)</td></tr>
+    <tr><td>16</td><td><code>NotifyFollowersJob.perform_later(@post)</code> (ส่งทั้งแฟ้ม)</td><td>บทนี้ส่ง <code>@post.id</code> · เหตุผลอยู่ในบท 143</td><td>ยังไม่ต้อง</td></tr>
+    <tr><td>16</td><td>"งานที่อยู่ใน job พังแล้ว retry ได้"</td><td>จริงเมื่อคิวเก็บงานถาวรและตั้งให้ลองใหม่ (บท 143–144) · ตอนนี้ (<code>async</code>) ปิดโปรแกรมแล้วงานหาย — ภารกิจพิสูจน์แล้ว</td><td><strong>สนใจ</strong></td></tr>
+    <tr><td>16</td><td>"ย้อนกลับไปวันพฤหัส … เดี๋ยววันเสาร์จะเล่าว่า job คืออะไร"</td><td>เว็บนี้คือ Day 2 <a href="../../rails-day-2/lessons/0112-callbacks-and-logic.html">บท 112</a> (บทนั้นเขียนว่า "Day 3") → ตอนนี้ Day 4</td><td>ไม่ต้อง</td></tr>
+    <tr><td>17</td><td>"ค่าเริ่มต้นของคิวเกือบทุกตัวในโลก" (at-least-once)</td><td>บทนี้ไม่ได้ตรวจคิวทุกตัว · เขียนว่า "สไลด์อ้าง" · ส่วน Solid Queue ดูในบท 143–144</td><td>ไม่ต้อง</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0141-lab-vibe4-content.html">← บทเรียน 141 · Lab Vibe 4</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0143-idempotency-solid-queue.html">บทเรียน 143 → idempotency · Solid Queue</a>
+</nav>
+
+<h2 id="sn-sec-13">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/active_job_basics.html#what-is-active-job-questionmark">Rails Guides — Active Job Basics § What is Active Job?</a> —
+      <strong>อ่านสองย่อหน้าแรก</strong>: เป้าหมายของ background job คือย้ายงานยาว ๆ ออกจากวงจร request–response ให้หน้าเว็บตอบไว · แล้วอ่านหัวข้อ "Creating Jobs" ต่อ (ตรงกับขั้น generate ของบทนี้)</li>
+  <li><a href="https://guides.rubyonrails.org/active_job_basics.html#development-environment">Rails Guides — Active Job Basics § Development Environment</a> —
+      ย่อหน้าเดียว: adapter ของ development เก็บงานในหน่วยความจำ · process ดับหรือเครื่องรีเซ็ต งานที่ค้างหายหมด — สิ่งที่ภารกิจพิสูจน์</li>
+  <li><a href="https://api.rubyonrails.org/classes/ActiveJob/QueueAdapters/AsyncAdapter.html">Rails API — ActiveJob::QueueAdapters::AsyncAdapter</a> —
+      อ่านแค่ย่อหน้าแรก: ทำ job ด้วยกลุ่มคนงานในโปรแกรมเดียวกัน · เหมาะกับ dev/test · ไม่เหมาะกับ production เพราะทิ้งงานค้างตอน restart</li>
+  <li><a href="https://12factor.net/disposability">The Twelve-Factor App — IX. Disposability</a> —
+      อ่านย่อหน้าที่ขึ้นต้นด้วย "For a worker process": ตอนปิดอย่างสุภาพ worker ต้องคืนงานเข้าคิว · ทุก job จึงต้องทนการทำซ้ำ (idempotent) · และย่อหน้าถัดไปเรื่อง "sudden death"</li>
+  <li><a href="https://github.com/rails/solid_queue">rails/solid_queue (README)</a> —
+      ยังไม่ต้องอ่านตอนนี้ · เก็บไว้เปิดคู่กับบท 143 (คิวที่เก็บงานในฐานข้อมูล ปิดโปรแกรมแล้วงานไม่หาย)</li>
+</ul>
+
+</main>
+
+<div class="scorebar"><span class="count"></span><span class="track"><span class="fill"></span></span><span class="pct"></span></div>
+
+</body>
+</html>

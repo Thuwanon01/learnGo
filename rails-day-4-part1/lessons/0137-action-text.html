@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 137 — Action Text — ช่องเนื้อหาแบบ rich text ที่มากับ Rails</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 137 · Rails · Day 4 Part 1</p>
+  <h1>Action Text — ช่องเนื้อหาแบบ rich text ที่มากับ Rails</h1>
+  <p class="meta">~30 นาที (บทนี้ติดตั้งของจริงและแก้ 10 กว่าไฟล์ — ยาวกว่าบทปกติ) · ควรผ่าน <a href="./0136-rich-text-and-allowlist.html">บทเรียน 136</a> (allowlist · sanitize ตอนโชว์) · <a href="../../rails-day-2/lessons/0109-safe-migrations.html">บทเรียน 109</a> (expand-contract) และ <a href="../../rails-day-3/lessons/0125-xss-and-n-plus-one-in-views.html">บทเรียน 125</a> (XSS · N+1 ใน view) มาก่อน</p>
+  <p class="standfirst">
+    บท 136 เราประกอบ rich text เองด้วยมือเพื่อดูกลไก · บทนี้ติดตั้ง<strong>ของสำเร็จรูปที่มากับ Rails</strong> ชื่อ Action Text ให้ช่องเนื้อหาของบทความมีปุ่ม <strong>B</strong> ลิงก์ และรายการ
+    <br>อ่านจบบทนี้ คุณจะติดตั้ง Action Text ได้ · รู้ว่าเนื้อหาไป<strong>อยู่ตารางไหน</strong> และทำไมค้นด้วย <code>WHERE body</code> ไม่ได้ ·
+    <strong>ย้ายเนื้อหา 30 บทความเดิมมาครบโดยไม่ลบของเก่า</strong> (expand) · และกัน N+1 ตัวใหม่ที่ Action Text แอบพามา — จบบทด้วย commit
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้</p>
+  <ul>
+    <li><strong>allowlist · sanitize ตอนโชว์</strong> (<a href="./0136-rich-text-and-allowlist.html">บท 136</a>) — เก็บเฉพาะแท็กที่อยู่ในรายการที่อนุญาต ถอดที่เหลือ · ทำ<strong>ตอนแสดงผลทุกครั้ง</strong> ไม่ใช่ตอนบันทึก · ช่อง plain text ไว้ค้นหาโดยไม่มีชื่อแท็กปน</li>
+    <li><strong>expand-contract</strong> (<a href="../../rails-day-2/lessons/0109-safe-migrations.html">บท 109</a>) — เปลี่ยนโครงตารางทีละเฟส: ทำของใหม่ก่อน → ย้ายข้อมูล (backfill) ในงานแยก → ค่อยลบของเก่ารอบหลัง</li>
+    <li><strong><code>before_save</code> · <code>private</code></strong> (<a href="../../rails-day-2/lessons/0112-callbacks-and-logic.html">บท 112</a>) — สั่งให้ทำอะไรก่อนบันทึกทุกครั้ง ทั้งตอนสร้างและตอนแก้</li>
+    <li><strong>N+1 · <code>includes</code> · bullet</strong> (<a href="../../rails-day-2/lessons/0114-n-plus-one.html">บท 114</a> · <a href="../../rails-day-3/lessons/0125-xss-and-n-plus-one-in-views.html">บท 125</a>) — เดินไปตู้ทีละแผ่น vs ใบเบิกทีเดียวทั้งตะกร้า · ดู <code>(N queries)</code> ท้ายบรรทัด <code>Completed</code> ใน log</li>
+    <li><strong><code>params.expect</code></strong> (<a href="../../rails-day-2/lessons/0117-rest-and-strong-params.html">บท 117</a>) — รายชื่อช่องในฟอร์มที่ controller ยอมรับ</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18 · action_text-trix 2.1.19 (มากับ Rails แล้ว ไม่ต้องติดตั้ง gem เพิ่ม) — สไลด์และ repo ของอาจารย์เขียน Ruby 4.0.5–4.0.6 · Rails 8.1.3 เรื่องในบทนี้ไม่ต่างกัน
+    <br><strong>📍 โค้ดเริ่มจาก:</strong> ตอนจบ Day 3 (branch <code>my-day3</code>) ที่<strong>คืนของทดลองบท 136 แล้ว</strong> (<code>git status --short</code> ว่าง) · หมวด 5 · บทความ 30 ชิ้น ·
+    บทนี้<strong>ทำของจริงแล้ว commit ตอนจบ</strong>
+    <br><strong>🖥 เปิดค้างไว้:</strong> <code>docker compose up -d</code> (ฐานข้อมูล) · <code>bin/dev</code> หนึ่งหน้าต่าง (เว็บที่ <code>localhost:3000</code>) · อีกหน้าต่างไว้พิมพ์คำสั่ง ·
+    ผลรันทุกกล่องมาจากเครื่องจริง · <strong>เวลา ms · วันเวลา · เลข <code>0x…</code> · id · เลขหน้าชื่อไฟล์ migration ของคุณจะไม่ตรงกับในบท</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">Action Text คืออะไร — และบทนี้จะทำ 6 ขั้น</h2>
+
+<p>
+  <strong>Action Text</strong> คือชิ้นส่วนที่มากับ Rails ให้ช่องเนื้อหามี<strong>ปุ่มจัดรูปแบบ</strong> (ตัวหนา ลิงก์ หัวข้อ รายการ) แล้วเก็บผลเป็น HTML ให้ ·
+  ตอนโชว์มัน <strong>sanitize ให้เองทุกครั้ง</strong> แบบที่บท 136 สอน · เราจึงไม่ต้องประกอบเองอีก
+</p>
+<p>
+  ช่องพิมพ์ที่มีปุ่มนั้นเรียกว่า <strong>editor</strong> · ตัวที่มากับ Action Text ชื่อ <strong>Trix</strong> (โปรแกรม JavaScript ที่วาดแถบปุ่มและช่องพิมพ์ในเบราว์เซอร์) ·
+  (ถ้าได้ยินชื่อ <strong>Lexxy</strong> — เป็น editor ตัวใหม่ที่เป็น gem แยก ไม่ได้ติดมากับ Rails 8.1.4 · บทนี้ใช้ Trix)
+</p>
+
+<div class="analogy">
+  <span class="label">🎂 เทียบให้เห็นภาพ — ชุดแต่งหน้าเค้กสำเร็จรูป</span>
+  <p>
+    บท 136 ร้านทำทุกอย่างเองด้วยมือ: ทำกระดาษให้ลูกค้าเขียนข้อความหน้าเค้ก · หาที่เก็บใบสั่ง · จดรายการตัวตกแต่งที่อนุญาต · ตรวจตอนจัดจาน ·
+    Action Text คือ<strong>ชุดสำเร็จรูปกล่องเดียว</strong>ที่มีครบ: กระดาษพร้อมปุ่มตัวหนา (editor) · ลิ้นชักเก็บใบสั่ง (ตาราง) · คนตรวจตอนจัดจาน (sanitize)
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ชุดสำเร็จรูปจริงแกะกล่องแล้วใช้ได้เลย · Action Text ยังต้อง<strong>ปรับให้เข้ากับร้านเรา</strong> —
+    ย้ายเนื้อหา 30 บทความเดิมเข้าลิ้นชักใหม่ · จัด CSS ให้เข้ากับ Tailwind · กันการเดินไปลิ้นชักทีละแผ่น · ซึ่งก็คือเนื้อหาเกือบทั้งบทนี้
+  </p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ขั้น</th><th>ทำอะไร</th><th>ไฟล์หลักที่แตะ</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>ติดตั้ง Action Text + สร้างตาราง</td><td>installer สร้างให้</td></tr>
+    <tr><td>2</td><td>บอก model ว่าบทความมีช่อง <code>body</code> แบบ rich text</td><td><code>app/models/post.rb</code></td></tr>
+    <tr><td>3</td><td>เพิ่มคอลัมน์ <code>plain_text</code> + ให้ model เขียนทั้งช่องใหม่และช่องเก่า (expand)</td><td>migration · <code>post.rb</code></td></tr>
+    <tr><td>4</td><td>ย้ายเนื้อหา 30 บทความเดิมจาก <code>description</code> ไป <code>body</code></td><td><code>lib/tasks/posts.rake</code></td></tr>
+    <tr><td>5</td><td>เปลี่ยนฟอร์มและหน้าแสดงผลไปใช้ <code>body</code> + จัด CSS ของ Trix</td><td><code>_form</code> · <code>_post</code> · controller · CSS</td></tr>
+    <tr><td>6</td><td>กัน N+1 ในหน้ารวม + แก้ seeds + commit</td><td>controller · <code>development.rb</code> · <code>seeds.rb</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  <strong>เทียบกับของที่รู้:</strong> ฝั่ง Next.js (บท 69–78) ไม่มี editor แบบนี้ติดมา ต้องเลือก library มาเองแล้วต่อกับ backend เอง ·
+  Rails ให้มาครบทั้ง editor · ตารางเก็บข้อมูล · การ sanitize ตอนโชว์ — ติดตั้งด้วยคำสั่งเดียว
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>rich text editor (WYSIWYG editor)</dt>
+    <dd>ช่องพิมพ์ที่มีปุ่มจัดรูปแบบและเห็นผลทันที (WYSIWYG = what you see is what you get) · ผลที่ได้จริงคือ HTML ·
+        <strong>ถาม senior ได้ว่า "editor ของโปรเจกต์เราคือตัวไหน และ HTML ที่มันส่งมาถูก sanitize ที่ไหน"</strong></dd>
+    <dt>Action Text · Trix</dt>
+    <dd>Action Text = ชิ้นส่วนของ Rails สำหรับ rich text (ตาราง + model + helper) · Trix = editor ที่มากับมัน ·
+        <strong>พิมพ์บอก AI ได้ว่า "use Rails Action Text with the default Trix editor; do not add another editor library"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-2">ขั้น 1 · ติดตั้ง — <code>bin/rails action_text:install</code></h2>
+
+<p>รันในหน้าต่างที่สอง (โฟลเดอร์โปรเจกต์) — ผลจริง:</p>
+
+<pre><code>$ bin/rails action_text:install
+Installing JavaScript dependencies
+      append  app/javascript/application.js
+      append  config/importmap.rb
+      create  app/assets/stylesheets/actiontext.css
+      create  app/views/active_storage/blobs/_blob.html.erb
+      create  app/views/layouts/action_text/contents/_content.html.erb
+       rails  railties:install:migrations FROM=active_storage,action_text
+Copied migration 20261110034320_create_active_storage_tables.active_storage.rb from active_storage
+Copied migration 20261110034321_create_action_text_tables.action_text.rb from action_text
+      invoke  test_unit
+      create    test/fixtures/action_text/rich_texts.yml</code></pre>
+
+<p>ทีละบรรทัด (<code>append</code> = ต่อท้ายไฟล์เดิม · <code>create</code> = สร้างไฟล์ใหม่):</p>
+
+<ul>
+  <li><code>Installing JavaScript dependencies</code> — <strong>แค่หัวข้อ ไม่ได้ดาวน์โหลดอะไร</strong> · installer จะเรียก yarn/bun (ตัวติดตั้ง package ของ JavaScript แบบเดียวกับ npm) เฉพาะโปรเจกต์ที่มี <code>package.json</code> · โปรเจกต์เราใช้ importmap (บท 127) ไม่มีไฟล์นี้ จึงข้ามไป</li>
+  <li><code>application.js</code> + <code>importmap.rb</code> — เพิ่มบรรทัดโหลด Trix กับตัวเชื่อม Trix ↔ Rails · ทั้งคู่<strong>ชี้ไฟล์ที่อยู่ใน gem ของ Rails</strong> ไม่ใช่ CDN (ดูข้างล่าง)</li>
+  <li><code>actiontext.css</code> — หน้าตาของแถบปุ่มและเนื้อหา (440 บรรทัด) · <strong>เดี๋ยวขั้น 5 ต้องย้ายที่</strong> ไม่งั้นชนกับ Tailwind</li>
+  <li><code>_blob.html.erb</code> — แม่พิมพ์ของรูป/ไฟล์ที่แนบในเนื้อหา (เรื่องไฟล์เริ่มบท 138) · <code>_content.html.erb</code> — <strong>กรอบ <code>&lt;div class="trix-content"&gt;</code> ที่ห่อเนื้อหาทุกครั้งที่โชว์</strong></li>
+  <li><code>railties:install:migrations</code> — คำสั่งที่ installer เรียกต่อเอง: <strong>ก็อปไฟล์ migration ที่มากับ gem มาใส่ <code>db/migrate/</code> ของเรา</strong> (ยังไม่สร้างตาราง) · ได้มา 2 ไฟล์ · <strong>ไฟล์แรกเป็นของ Active Storage</strong> (ระบบเก็บไฟล์ของ Rails — บท 138) เพราะรูปที่แนบในเนื้อหาต้องเก็บด้วยระบบนั้น</li>
+  <li><code>rich_texts.yml</code> — ไฟล์ข้อมูลตัวอย่างสำหรับ test (มีแต่ comment ไม่มีผลอะไร · เรื่อง test อยู่ Part 2)</li>
+</ul>
+
+<p>สองไฟล์ที่ถูก <code>append</code> — ดูด้วย <code>git diff</code> (ผลจริง ตัดหัว diff ออก):</p>
+
+<pre><code><span class="c"># app/javascript/application.js</span>
+ import "@hotwired/turbo-rails"
+ import "controllers"
++
++import "trix"
++import "@rails/actiontext"
+
+<span class="c"># config/importmap.rb</span>
+ pin_all_from "app/javascript/controllers", under: "controllers"
++pin "trix"
++pin "@rails/actiontext", to: "actiontext.esm.js"</code></pre>
+
+<ul>
+  <li><code>+</code> หน้าบรรทัด = บรรทัดที่เพิ่ม · <code>import "trix"</code> = โหลดโปรแกรม editor · <code>import "@rails/actiontext"</code> = ตัวเชื่อมที่ทำให้ลากรูปใส่เนื้อหาแล้วอัปโหลดได้ (บท 139)</li>
+  <li><code>pin "trix"</code> — บอก importmap ว่าชื่อ <code>trix</code> หมายถึงไฟล์ <code>trix.js</code> ที่อยู่ใน gem <code>action_text-trix</code> (ติดมากับ Rails แล้ว) · ไม่มีการโหลดจากเว็บอื่น</li>
+</ul>
+
+<p>แล้วสร้างตาราง — ผลจริง:</p>
+
+<pre><code>$ bin/rails db:migrate
+== 20261110034320 CreateActiveStorageTables: migrating ========================
+-- create_table(:active_storage_blobs, {id: :primary_key})
+   -&gt; 0.0033s
+-- create_table(:active_storage_attachments, {id: :primary_key})
+   -&gt; 0.0029s
+-- create_table(:active_storage_variant_records, {id: :primary_key})
+   -&gt; 0.0018s
+== 20261110034320 CreateActiveStorageTables: migrated (0.0095s) ===============
+
+== 20261110034321 CreateActionTextTables: migrating ===========================
+-- create_table(:action_text_rich_texts, {id: :primary_key})
+   -&gt; 0.0021s
+== 20261110034321 CreateActionTextTables: migrated (0.0033s) ==================</code></pre>
+
+<ul>
+  <li>สามตารางแรก (<code>active_storage_…</code>) — ของ Active Storage · <strong>ยังไม่ได้ใช้ในบทนี้</strong> · จำไว้ว่า "มีแล้ว" เพราะบท 138 จะไม่ต้องสร้างซ้ำ</li>
+  <li><code>action_text_rich_texts</code> — <strong>ตารางที่เก็บเนื้อหา rich text</strong> · หัวข้อถัดไปดูข้างใน</li>
+</ul>
+
+<p>หลังติดตั้งแล้ว <strong>ปิด <code>bin/dev</code> (Ctrl+C) แล้วเปิดใหม่</strong> หนึ่งรอบ ให้แน่ใจว่าเว็บรู้จักไฟล์ JavaScript ที่เพิ่งเพิ่ม</p>
+
+<h2 id="sn-sec-3">ขั้น 2 · เนื้อหาไม่ได้อยู่ในตาราง posts</h2>
+
+<p>เปิด <code>db/schema.rb</code> (ไฟล์ที่สรุปโครงทุกตาราง — บท 108) หาตารางใหม่:</p>
+
+<pre><code>  <span class="f">create_table</span> <span class="s">"action_text_rich_texts"</span>, force: <span class="n">:cascade</span> <span class="k">do</span> |t|
+    t.<span class="f">string</span> <span class="s">"name"</span>, null: <span class="k">false</span>
+    t.<span class="f">text</span> <span class="s">"body"</span>
+    t.<span class="f">string</span> <span class="s">"record_type"</span>, null: <span class="k">false</span>
+    t.<span class="f">bigint</span> <span class="s">"record_id"</span>, null: <span class="k">false</span>
+    t.<span class="f">datetime</span> <span class="s">"created_at"</span>, null: <span class="k">false</span>
+    t.<span class="f">datetime</span> <span class="s">"updated_at"</span>, null: <span class="k">false</span>
+    t.<span class="f">index</span> [<span class="s">"record_type"</span>, <span class="s">"record_id"</span>, <span class="s">"name"</span>], name: <span class="s">"index_action_text_rich_texts_uniqueness"</span>, unique: <span class="k">true</span>
+  <span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>body</code> — <strong>ตัว HTML ของเนื้อหา</strong> (ชื่อคอลัมน์บังเอิญตรงกับชื่อช่องที่เราจะตั้ง แต่คนละที่กัน)</li>
+  <li><code>name</code> — ชื่อช่อง เช่น <code>"body"</code> · เผื่อ model หนึ่งมี rich text หลายช่อง (เช่น เนื้อหา + บทสรุป)</li>
+  <li><code>record_type</code> + <code>record_id</code> — <strong>เนื้อหานี้เป็นของแถวไหน ในตารางไหน</strong> เช่น <code>"Post"</code> + <code>5</code> = บทความเลข 5</li>
+  <li><code>index … unique: true</code> — กันไม่ให้แถวเดียวกันมีช่องชื่อเดียวกันซ้ำสองอัน (index ไม่ซ้ำ — บท 111)</li>
+</ul>
+
+<p>
+  ต่างจากที่เคยเห็นตรงไหน? ตาราง <code>comments</code> ของเรามีคอลัมน์ <code>post_id</code> (บท 115) — <strong>รู้อยู่แล้วว่าชี้ไปตาราง posts</strong> ·
+  ตารางนี้ชี้ได้<strong>ทุกตาราง</strong> จึงต้องเก็บสองช่อง: ชื่อ model (<code>record_type</code>) กับเลขแถว (<code>record_id</code>) · การชี้แบบนี้เรียกว่า <strong>polymorphic</strong> (แปลตรง ๆ ว่า "รับได้หลายแบบ")
+</p>
+<p>
+  คำว่า polymorphic เคยผ่านตาในชื่อ <code>polymorphic_path</code> (บท 117) แต่การเก็บแบบสองช่องนี้เพิ่งเจอครั้งแรก · บท 138 จะเจออีกที่ตาราง <code>active_storage_attachments</code> ซึ่งมี <code>record_type</code> + <code>record_id</code> แบบเดียวกัน
+</p>
+
+<div class="analogy">
+  <span class="label">🗄 เทียบให้เห็นภาพ — ลิ้นชักกลาง "ข้อความยาว" ใบเดียวของทุกแผนก</span>
+  <p>
+    แฟ้มบทความในลิ้นชัก <code>posts</code> ไม่มีที่เขียนเนื้อหายาว ๆ แล้ว · เนื้อหาไปอยู่<strong>ลิ้นชักกลาง "ข้อความยาว"</strong> ที่ทุกแผนกใช้ร่วมกัน ·
+    ทุกแผ่นในลิ้นชักกลางติดป้ายว่า "<strong>ของแผนกไหน · แฟ้มเลขที่เท่าไร · ช่องอะไร</strong>" เช่น "แผนกบทความ · แฟ้ม 5 · เนื้อหา"
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ลิ้นชักจริง พนักงานเห็นป้ายแล้วรู้ว่าแผนกนั้นมีจริงไหม · ฐานข้อมูล<strong>ตรวจไม่ได้</strong>ว่า <code>record_type</code> + <code>record_id</code> ชี้ไปแถวที่มีอยู่จริง
+    (ไม่มี foreign key แบบ <code>post_id</code> — เพราะชี้ได้หลายตาราง) · Rails เป็นคนดูแลให้แทน เช่นลบบทความแล้วลบแผ่นในลิ้นชักกลางตามให้
+  </p>
+</div>
+
+<p>
+  บอก model ว่าบทความมีช่อง rich text ชื่อ <code>body</code> — เปิด <code>app/models/post.rb</code> เติม 2 บรรทัดใต้ <code>has_many :comments</code> (ส่วนอื่นยังไม่แตะ):
+</p>
+
+<pre><code><span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:category</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>, dependent: <span class="n">:destroy</span>
+  <span class="c"># เนื้อหาแบบ rich text เก็บในตาราง action_text_rich_texts (ไม่ได้อยู่ในตาราง posts)</span>
+  <span class="f">has_rich_text</span> <span class="n">:body</span>
+  …</code></pre>
+
+<ul>
+  <li><code>has_rich_text :body</code> — "บทความมีช่อง rich text ชื่อ <code>body</code> เก็บในลิ้นชักกลาง" · ได้ <code>post.body</code> มาใช้เหมือนคอลัมน์ธรรมดา ·
+      เบื้องหลังมันคือ <code>has_one</code> (บท 115) ชื่อ <code>rich_text_body</code> ที่ตั้ง <code>dependent: :destroy</code> ไว้ให้ = ลบบทความแล้วเนื้อหาหายตาม</li>
+  <li><strong>ไม่ต้องเขียน migration เพิ่มคอลัมน์ <code>body</code> ในตาราง posts</strong> — ตารางกลางมีอยู่แล้ว</li>
+</ul>
+
+<div class="predict">
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; post = <span class="n">Post</span>.<span class="f">first</span>
+wongnok-blog-all-in-one(dev):002&gt; post.body
+wongnok-blog-all-in-one(dev):003&gt; post.body.<span class="f">to_s</span></code></pre>
+  <p class="ask">บทความเลข 1 มีเนื้อหาเรื่องต้มยำกุ้งยาวเกือบสองบรรทัดอยู่ในช่อง <code>description</code> · เพิ่ม <code>has_rich_text :body</code> แล้ว — <code>post.body</code> จะได้เนื้อหาต้มยำกุ้งไหม?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง (เปิด <code>bin/rails console</code>):</p>
+<pre><code>wongnok-blog-all-in-one(dev):002&gt; post.body
+  ActionText::RichText Load (0.5ms)  SELECT "action_text_rich_texts".* FROM "action_text_rich_texts" WHERE "action_text_rich_texts"."record_id" = 1 AND "action_text_rich_texts"."record_type" = 'Post' AND "action_text_rich_texts"."name" = 'body' LIMIT 1 /*application='WongnokBlogAllInOne'*/
+=&gt;
+#&lt;ActionText::RichText:0x0000000129e2aa20
+ id: nil,
+ name: "body",
+ body: nil,
+ record_type: "Post",
+ record_id: 1,
+ created_at: nil,
+ updated_at: nil&gt;
+wongnok-blog-all-in-one(dev):003&gt; post.body.to_s
+=&gt; ""
+wongnok-blog-all-in-one(dev):004&gt; ActionText::RichText.count
+  ActionText::RichText Count (2.4ms)  SELECT COUNT(*) FROM "action_text_rich_texts" /*application='WongnokBlogAllInOne'*/
+=&gt; 0</code></pre>
+    <ul>
+      <li><strong>ไม่ได้</strong> — <code>SELECT … WHERE record_id = 1 AND record_type = 'Post' AND name = 'body'</code> = ไปหาในลิ้นชักกลาง <strong>ไม่เจอ</strong></li>
+      <li><code>id: nil</code> · <code>body: nil</code> — Rails เลยหยิบ<strong>กระดาษเปล่า</strong>ที่ยังไม่ได้บันทึกมาให้ (ไม่ error) · <code>to_s</code> ได้ข้อความว่าง</li>
+      <li><code>RichText.count</code> = <code>0</code> — ลิ้นชักกลางว่างทั้งลิ้นชัก · เนื้อหาเดิมยังอยู่ใน <code>description</code> ครบ <strong>แต่ไม่มีใครย้ายให้</strong> → ขั้น 3–4 ทำเรื่องนี้</li>
+    </ul>
+  </div>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>polymorphic association</dt>
+    <dd>ความสัมพันธ์ที่แถวหนึ่งชี้ไปได้หลายตาราง โดยเก็บ <code>…_type</code> (ชื่อ class) คู่กับ <code>…_id</code> · ไม่มี foreign key ในฐานข้อมูล ·
+        <strong>ถาม senior ได้ว่า "ตาราง polymorphic ตัวนี้ ใครรับผิดชอบลบแถวกำพร้าเวลาแถวแม่ถูกลบ"</strong></dd>
+    <dt><code>has_rich_text</code></dt>
+    <dd>บอก model ว่ามีช่อง rich text · ได้ method ชื่อเดียวกับช่อง + scope <code>with_rich_text_ชื่อช่อง</code> (ขั้น 6) ·
+        <strong>พิมพ์บอก AI ได้ว่า "add has_rich_text :body to Post; do not add a body column to the posts table"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-4">ขั้น 3 · แผนย้ายข้อมูล — expand ก่อน ยังไม่ลบ description</h2>
+
+<p>
+  เนื้อหา 30 บทความอยู่ใน <code>description</code> ต้องย้ายไป <code>body</code> · นี่คือการย้ายข้อมูลจริงแบบที่บท 109 สอน ·
+  ข้อกำหนดของสไลด์หน้า 14 เขียนชัดว่า <strong>รอบนี้ห้ามลบคอลัมน์ description</strong> — เพิ่มของใหม่ก่อน ย้ายข้อมูล แล้วปล่อยของเก่าไว้ ค่อยลบรอบหน้า
+</p>
+
+<div class="analogy">
+  <span class="label">🔨 เทียบให้เห็นภาพ — เปลี่ยนแบบฟอร์มโดยไม่โยนแฟ้มเก่าทิ้ง (ภาพเดียวกับบท 109)</span>
+  <p>
+    ร้านเปลี่ยนมาเขียนเนื้อหาบนกระดาษในลิ้นชักกลาง · <strong>แต่ช่อง "เนื้อหา" บนแฟ้มเดิมยังอยู่</strong> และสั่งพนักงานว่า "ช่วงนี้<strong>เขียนทั้งสองที่</strong>" ·
+    ถ้าระบบใหม่มีปัญหาแล้วต้องถอยกลับไปใช้คู่มือเก่า แฟ้มทุกแผ่นยังมีข้อมูลครบ · พอมั่นใจแล้วค่อยประกาศเลิกใช้ช่องเดิม แล้วลบรอบหน้า
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงลืมเขียนที่สองได้ · ในโค้ด "เขียนสองที่" คือ <strong>callback บรรทัดเดียว</strong>ที่ทำให้ทุกครั้งที่บันทึก ไม่มีวันลืม ·
+    แต่ถ้ามีใครแก้ข้อมูลด้วย SQL ตรง ๆ (ไม่ผ่าน model) callback ก็ไม่ทำงาน — สองช่องจะไม่ตรงกัน
+  </p>
+</div>
+
+<p>ของใหม่อีกชิ้นที่ต้องเพิ่มคือคอลัมน์ <code>plain_text</code> (ตัวหนังสือล้วน ไว้ค้นหา — บท 136) · คอลัมน์นี้<strong>อยู่ในตาราง posts</strong> ตามปกติ:</p>
+
+<pre><code>$ bin/rails generate migration AddPlainTextToPosts plain_text:text
+      invoke  active_record
+      create    db/migrate/20261110034341_add_plain_text_to_posts.rb
+$ bin/rails db:migrate
+== 20261110034341 AddPlainTextToPosts: migrating ==============================
+-- add_column(:posts, :plain_text, :text)
+   -&gt; 0.0009s
+== 20261110034341 AddPlainTextToPosts: migrated (0.0023s) =====================</code></pre>
+
+<p>
+  ไฟล์ migration ที่ได้<strong>ไม่ต้องแก้</strong> (<code>add_column :posts, :plain_text, :text</code> บรรทัดเดียว — ชื่อแบบ <code>AddXxxToPosts</code> ทำให้ generator เขียนให้เองตามบท 108) ·
+  เป็นคอลัมน์ใหม่ที่ว่างได้ ไม่มีค่าเริ่มต้น = ปลอดภัยตามกฎบท 109
+</p>
+
+<p>แล้วแก้ model <strong>ทั้งไฟล์</strong> เป็นแบบนี้ — <code>app/models/post.rb</code>:</p>
+
+<pre><code><span class="k">class</span> <span class="n">Post</span> &lt; <span class="n">ApplicationRecord</span>
+  <span class="f">belongs_to</span> <span class="n">:category</span>
+  <span class="f">has_many</span> <span class="n">:comments</span>, dependent: <span class="n">:destroy</span>
+  <span class="c"># เนื้อหาแบบ rich text เก็บในตาราง action_text_rich_texts (ไม่ได้อยู่ในตาราง posts)</span>
+  <span class="f">has_rich_text</span> <span class="n">:body</span>
+
+  <span class="f">validates</span> <span class="n">:title</span>, presence: <span class="k">true</span>, length: { maximum: <span class="n">120</span> }
+  <span class="f">validates</span> <span class="n">:body</span>, presence: <span class="k">true</span>
+
+  <span class="c"># ทุกครั้งที่บันทึก: เก็บข้อความล้วนของ body ไว้ใน plain_text (ไว้ค้นหาทีหลัง)</span>
+  <span class="c"># และเขียนลง description ด้วย (expand-contract: คอลัมน์เก่ายังอยู่ เขียนทั้งสองช่องไปก่อน)</span>
+  <span class="f">before_save</span> <span class="n">:copy_body_to_plain_text</span>
+
+  <span class="f">scope</span> <span class="n">:recent</span>, -&gt; { <span class="f">order</span>(created_at: <span class="n">:desc</span>) }
+
+  <span class="k">private</span>
+    <span class="k">def</span> <span class="f">copy_body_to_plain_text</span>
+      <span class="k">self</span>.plain_text = body.<span class="f">to_plain_text</span>
+      <span class="k">self</span>.description = plain_text
+    <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>validates :body, presence: true</code> — <strong>แทน</strong> <code>validates :description</code> เดิม · ตอนนี้ช่องที่ผู้ใช้ต้องกรอกคือ body</li>
+  <li><code>before_save :copy_body_to_plain_text</code> — ก่อนบันทึกทุกครั้ง เรียก method ข้างล่าง (บท 112)</li>
+  <li><code>body.to_plain_text</code> — ถอดแท็กทิ้ง เหลือตัวหนังสือล้วน (แบบ <code>strip_tags</code> ในบท 136 · ขึ้นบรรทัดใหม่ยังเป็น <code>\n</code>) → เก็บลง <code>plain_text</code></li>
+  <li><code>self.description = plain_text</code> — <strong>เขียนลงช่องเก่าด้วย</strong> (= "เขียนทั้งสองที่") · เหตุผลที่สองคือคอลัมน์ <code>description</code> ในฐานข้อมูลตั้งไว้ว่า<strong>ห้ามว่าง</strong> (<code>null: false</code>) · ถ้าไม่เติมให้ บทความใหม่จะบันทึกไม่ได้</li>
+</ul>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>dual write (เขียนสองที่)</dt>
+    <dd>ช่วง expand ที่โค้ดเขียนค่าลงทั้งคอลัมน์ใหม่และคอลัมน์เก่า เพื่อให้ถอยโค้ดกลับได้โดยข้อมูลไม่ขาด ·
+        <strong>ถาม senior ได้ว่า "เราจะเลิก dual write แล้วลบคอลัมน์เก่าเมื่อไหร่ ใครเป็นคนตัดสิน"</strong></dd>
+    <dt><code>to_plain_text</code></dt>
+    <dd>method ของ rich text ที่คืนตัวหนังสือล้วน (ไม่มีแท็ก) ไว้ค้นหา ตัดคำโปรย หรือส่งไปที่ที่ไม่ใช่หน้าเว็บ ·
+        <strong>พิมพ์บอก AI ได้ว่า "keep a plain_text column filled from body.to_plain_text in a before_save callback"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">ขั้น 4 · ย้าย 30 บทความเดิมด้วย rake task</h2>
+
+<p>
+  กฎจากบท 109: <strong>การย้ายข้อมูลอยู่ในงานแยก ไม่ใช่ในไฟล์ migration</strong> · งานแยกแบบหนึ่งคือ <strong>rake task</strong> = คำสั่งที่เราเขียนเพิ่มเอง แล้วรันด้วย <code>bin/rails ชื่องาน</code> ·
+  ให้ generator สร้างโครงให้ (<code>posts</code> = กลุ่มของงาน · <code>backfill_body</code> = ชื่องาน):
+</p>
+
+<pre><code>$ bin/rails generate task posts backfill_body
+      create  lib/tasks/posts.rake</code></pre>
+
+<p>ไฟล์ที่ได้เป็นงานเปล่า ๆ (<code>desc "TODO"</code> + <code>task backfill_body: :environment do … end</code>) · เขียนทับทั้งไฟล์เป็น — <code>lib/tasks/posts.rake</code>:</p>
+
+<pre><code><span class="k">namespace</span> <span class="n">:posts</span> <span class="k">do</span>
+  <span class="f">desc</span> <span class="s">"ย้าย description (ข้อความล้วน) ไปเป็น body (rich text) ให้บทความที่ยังไม่มี body — รันซ้ำได้"</span>
+  <span class="f">task</span> backfill_body: <span class="n">:environment</span> <span class="k">do</span>
+    <span class="c"># เลือกเฉพาะบทความที่ยังไม่มีแถวใน action_text_rich_texts → รันรอบสองจะไม่ทับของที่ย้ายแล้ว</span>
+    <span class="n">Post</span>.<span class="f">where</span>.<span class="f">missing</span>(<span class="n">:rich_text_body</span>).<span class="f">find_each</span> <span class="k">do</span> |post|
+      <span class="c"># escape ก่อน: ถ้าใน description มีคำว่า &lt;script&gt; ให้โชว์เป็นตัวอักษร ไม่กลายเป็นแท็ก</span>
+      text = <span class="n">ERB::Util</span>.<span class="f">html_escape</span>(post.description)
+      <span class="c"># ขึ้นบรรทัดใหม่ → &lt;br&gt; แบบเดียวกับที่ Trix เก็บ</span>
+      post.<span class="f">update!</span>(body: <span class="s">"&lt;div&gt;#{text.gsub(/\r?\n/, "&lt;br&gt;")}&lt;/div&gt;"</span>)
+    <span class="k">end</span>
+
+    <span class="f">puts</span> <span class="s">"บทความทั้งหมด #{Post.count} · ยังไม่มี body #{Post.where.missing(:rich_text_body).count}"</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre>
+
+<ul>
+  <li><code>namespace :posts</code> + <code>task backfill_body:</code> — ได้ชื่อคำสั่ง <code>posts:backfill_body</code> · <code>desc</code> = คำอธิบายที่โชว์ใน <code>bin/rails -T</code> · <code>:environment</code> = โหลดแอปก่อน (ไม่งั้นใช้ <code>Post</code> ไม่ได้)</li>
+  <li><code>where.missing(:rich_text_body)</code> — <strong>"บทความที่ยังไม่มีแผ่นในลิ้นชักกลาง"</strong> (<code>rich_text_body</code> คือชื่อ <code>has_one</code> ที่ <code>has_rich_text :body</code> สร้างให้) · ทำให้<strong>รันซ้ำได้</strong>: รอบสองไม่เหลือใครให้ย้าย</li>
+  <li><code>find_each</code> — วนทีละกองแทนโหลดทั้งตารางเข้าหน่วยความจำ (บท 114)</li>
+  <li><code>ERB::Util.html_escape</code> — <strong>ใส่ซองใส</strong>แบบเดียวกับ <code>&lt;%= %&gt;</code> · description เดิมเป็นตัวหนังสือล้วน ถ้าในนั้นมีคำว่า <code>&lt;b&gt;</code> ต้องโชว์เป็นตัวอักษร ไม่ใช่กลายเป็นตัวหนาหลังย้าย</li>
+  <li><code>gsub(/\r?\n/, "&lt;br&gt;")</code> — เปลี่ยนการขึ้นบรรทัดใหม่เป็นแท็ก <code>&lt;br&gt;</code> (<code>/…/</code> = รูปแบบที่จะค้น · <code>\r?\n</code> = ขึ้นบรรทัดใหม่ทั้งแบบ Windows และ Mac)</li>
+  <li><code>update!</code> — บันทึกผ่าน model → <code>before_save</code> ทำงาน → <code>plain_text</code> ถูกเติมไปพร้อมกัน · <code>!</code> = พังให้เห็นถ้าบันทึกไม่ได้ (บท 107)</li>
+</ul>
+
+<p>
+  <strong>เทียบกับของที่รู้:</strong> rake task คล้าย <code>"scripts"</code> ใน <code>package.json</code> ฝั่ง Next.js ที่สั่งด้วย <code>npm run ชื่อ</code> —
+  เป็นงานที่ตั้งชื่อไว้ แล้วใครในทีมก็สั่งด้วยชื่อเดียวกันได้ · ต่างกันตรงที่ rake task โหลดแอปทั้งตัว (<code>:environment</code>) จึงใช้ model ได้เลย
+</p>
+
+<div class="analogy">
+  <span class="label">🗂 เทียบให้เห็นภาพ — ใบคำสั่งงานพิเศษที่ตั้งชื่อไว้</span>
+  <p>
+    หัวหน้าเขียนใบคำสั่ง "ย้ายเนื้อหาลงลิ้นชักกลาง" เก็บไว้ในแฟ้มงานพิเศษของร้าน · ใครจะสั่งก็เรียกชื่อเดียว พนักงานทำตามขั้นที่เขียนไว้เหมือนกันทุกครั้ง ·
+    ในใบเขียนไว้ด้วยว่า "<strong>ข้ามแฟ้มที่มีแผ่นในลิ้นชักกลางแล้ว</strong>" ใครเผลอสั่งซ้ำก็ไม่เกิดเรื่อง
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> พนักงานจริงเห็นแฟ้มที่ย้ายแล้วก็รู้เองว่าข้ามได้ · rake task รู้แค่ที่เราเขียน — <code>where.missing</code> คือบรรทัดที่ทำให้มันข้าม ·
+    ถ้าลืมบรรทัดนี้ รอบสองจะเอา <code>description</code> (ตัวหนังสือล้วน) ไป<strong>ทับ body ที่ผู้ใช้จัดตัวหนาไว้แล้ว</strong>
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>rake task · backfill</dt>
+    <dd>rake task = คำสั่งที่เราเขียนเพิ่มเองใน <code>lib/tasks/*.rake</code> · backfill = เติมข้อมูลให้แถวเก่าหลังเพิ่มของใหม่ ·
+        <strong>พิมพ์บอก AI ได้ว่า "write the backfill as an idempotent rake task (safe to run twice), not inside the migration"</strong></dd>
+  </dl>
+</div>
+
+<p>ก่อนรัน ดูสถานะใน console — ผลจริง:</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">Post</span>.<span class="f">where</span>.<span class="f">missing</span>(<span class="n">:rich_text_body</span>).<span class="f">count</span>
+  Post Count (0.8ms)  SELECT COUNT(*) FROM "posts" LEFT OUTER JOIN "action_text_rich_texts" "rich_text_body" ON "rich_text_body"."record_type" = 'Post' AND "rich_text_body"."name" = 'body' AND "rich_text_body"."record_id" = "posts"."id" WHERE "rich_text_body"."id" IS NULL /*application='WongnokBlogAllInOne'*/
+=&gt; 30
+wongnok-blog-all-in-one(dev):002&gt; <span class="n">Post</span>.<span class="f">where</span>(plain_text: <span class="k">nil</span>).<span class="f">count</span>
+  Post Count (0.6ms)  SELECT COUNT(*) FROM "posts" WHERE "posts"."plain_text" IS NULL /*application='WongnokBlogAllInOne'*/
+=&gt; 30</code></pre>
+
+<ul>
+  <li><code>LEFT OUTER JOIN … WHERE "rich_text_body"."id" IS NULL</code> — SQL ของ <code>where.missing</code>: "เอาบทความทุกชิ้นไปจับคู่กับแผ่นในลิ้นชักกลาง แล้วเลือกเฉพาะชิ้นที่<strong>หาคู่ไม่เจอ</strong>"</li>
+  <li><code>30</code> ทั้งสองบรรทัด — ยังไม่มีบทความไหนมี body หรือ plain_text เลย</li>
+</ul>
+
+<p>ออกจาก console (<code>exit</code>) แล้วรันงาน<strong>สองรอบติดกัน</strong> — ผลจริง:</p>
+
+<pre><code>$ bin/rails posts:backfill_body
+บทความทั้งหมด 30 · ยังไม่มี body 0
+$ bin/rails posts:backfill_body
+บทความทั้งหมด 30 · ยังไม่มี body 0</code></pre>
+
+<p>รอบสองได้บรรทัดเดิม ไม่พัง ไม่สร้างซ้ำ · ตรวจใน console อีกที — ผลจริง:</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">Post</span>.<span class="f">where</span>.<span class="f">missing</span>(<span class="n">:rich_text_body</span>).<span class="f">count</span>
+  …
+=&gt; 0
+wongnok-blog-all-in-one(dev):002&gt; <span class="n">Post</span>.<span class="f">where</span>(plain_text: <span class="k">nil</span>).<span class="f">count</span>
+  …
+=&gt; 0
+wongnok-blog-all-in-one(dev):003&gt; <span class="n">ActionText</span>::<span class="n">RichText</span>.<span class="f">count</span>
+  ActionText::RichText Count (2.7ms)  SELECT COUNT(*) FROM "action_text_rich_texts" /*application='WongnokBlogAllInOne'*/
+=&gt; 30
+wongnok-blog-all-in-one(dev):004&gt; <span class="n">ActionText</span>::<span class="n">RichText</span>.<span class="f">first</span>
+  …
+=&gt;
+#&lt;ActionText::RichText:0x000000012cc315b8
+ id: 1,
+ name: "body",
+ body: #&lt;ActionText::Content "&lt;div&gt;ต้มยำกุ้งแบบน้ำข้..."&gt;,
+ record_type: "Post",
+ record_id: 1,
+ created_at: "2026-11-10 10:43:59.970055000 +0700",
+ updated_at: "2026-11-10 10:43:59.970055000 +0700"&gt;</code></pre>
+
+<ul>
+  <li><code>0</code> · <code>0</code> · <code>30</code> — <strong>ทุกบทความมี body และ plain_text แล้ว · ลิ้นชักกลางมี 30 แผ่นพอดี</strong> (ไม่ซ้ำแม้รันสองรอบ)</li>
+  <li>แผ่นแรก: <code>record_type: "Post"</code> + <code>record_id: 1</code> = เนื้อหาของบทความเลข 1 · <code>body</code> ขึ้นต้นด้วย <code>&lt;div&gt;ต้มยำกุ้ง…</code> ตามที่ task ห่อไว้ ·
+      เวลา <code>created_at</code> และเลข <code>0x…</code> ของคุณจะต่างจากนี้</li>
+  <li><code>description</code> <strong>ยังอยู่ครบทุกแถว</strong> — ไม่มีคำสั่งไหนในบทนี้ลบมัน</li>
+</ul>
+
+<div class="note">
+  <p>📝 ผมลองใส่บทความทดสอบที่ description เป็น <code>บรรทัดแรก</code> + ขึ้นบรรทัดใหม่ + <code>&lt;b&gt;หนา&lt;/b&gt; &amp; จบ</code> แล้วรันงานนี้ · body ที่ได้คือ
+    <code>&lt;div&gt;บรรทัดแรก&lt;br&gt;&amp;lt;b&amp;gt;หนา&amp;lt;/b&amp;gt; &amp;amp; จบ&lt;/div&gt;</code> = แท็กกลายเป็นตัวอักษร (escape แล้ว) และขึ้นบรรทัดใหม่เป็น <code>&lt;br&gt;</code> · ลบบทความทดสอบทิ้งแล้ว</p>
+</div>
+
+<h2 id="sn-sec-6">ขั้น 5 · ฟอร์มและหน้าแสดงผล</h2>
+
+<p>ตอนนี้ข้อมูลพร้อม แต่หน้าเว็บยังใช้ <code>description</code> อยู่ · แก้ 3 ไฟล์</p>
+
+<p><strong>① ฟอร์ม</strong> — <code>app/views/posts/_form.html.erb</code> ก้อนช่องเนื้อหา (ก้อน <code>&lt;div class="my-5"&gt;</code> ที่สอง) เปลี่ยนเป็น:</p>
+
+<pre><code>  &lt;div class="my-5"&gt;
+    &lt;%= form.<span class="f">label</span> <span class="n">:body</span>, <span class="s">"เนื้อหา"</span>, class: <span class="s">"block font-medium"</span> %&gt;
+    <span class="c">&lt;%# rich_textarea = ช่องพิมพ์ของ Trix (ตัวหนา ลิงก์ หัวข้อ) ส่งค่าเป็น HTML ไปที่ post[body] %&gt;</span>
+    &lt;%= form.<span class="f">rich_textarea</span> <span class="n">:body</span>, class: [<span class="s">"mt-2 min-h-40"</span>, {<span class="s">"border-error"</span>: post.errors[<span class="n">:body</span>].<span class="f">any?</span>}] %&gt;
+  &lt;/div&gt;</code></pre>
+
+<ul>
+  <li>เดิม: <code>form.label :description …</code> + <code>form.textarea :description, rows: 4, class: ["textarea w-full mt-2", …]</code> · ใหม่: เปลี่ยนเป็น <code>:body</code> และ <code>rich_textarea</code></li>
+  <li><code>rich_textarea</code> — ชื่อจริงใน Rails 8.1 (ชื่อเก่า <code>rich_text_area</code> ยังใช้ได้ · ตรวจในโค้ดของ Rails แล้ว) · วาดช่อง Trix แทนกล่องข้อความธรรมดา</li>
+  <li><code>min-h-40</code> = สูงอย่างน้อย 160px · <code>{"border-error": …}</code> = กรอบแดงเมื่อช่องนี้มี error (แบบเดียวกับช่องอื่นใน Day 3) · ไม่ใส่คลาส <code>textarea</code> ของ daisyUI เพราะ Trix มีกรอบของตัวเอง</li>
+</ul>
+
+<p><strong>② controller</strong> — <code>app/controllers/posts_controller.rb</code> บรรทัดท้ายไฟล์ (รายชื่อช่องที่รับ):</p>
+
+<pre><code>      params.<span class="f">expect</span>(post: [ <span class="n">:title</span>, <span class="n">:body</span>, <span class="n">:category_id</span> ])</code></pre>
+
+<p>เปลี่ยน <code>:description</code> เป็น <code>:body</code> · <strong>ลืมบรรทัดนี้ = พิมพ์เนื้อหาแล้วยังขึ้น <code>Body can't be blank</code></strong> (ลองแล้ว) เพราะ controller ทิ้งช่อง body ก่อนถึง model</p>
+
+<p><strong>③ แม่พิมพ์บทความ</strong> — <code>app/views/posts/_post.html.erb</code> แก้ 2 จุด:</p>
+
+<pre><code>      <span class="c">&lt;%# Action Text ล้าง HTML อันตราย (sanitize) ให้เองตอนแสดง — ห้ามใส่ raw/html_safe %&gt;</span>
+      &lt;div class="leading-relaxed"&gt;&lt;%= post.body %&gt;&lt;/div&gt;
+  …
+      &lt;p class="text-base-content/80"&gt;&lt;%= <span class="f">truncate</span>(post.body.<span class="f">to_plain_text</span>, length: <span class="n">80</span>, separator: <span class="s">" "</span>) %&gt;&lt;/p&gt;</code></pre>
+
+<ul>
+  <li>จุดแรก (หน้าเต็ม <code>full</code>) — เดิม <code>&lt;p class="leading-relaxed whitespace-pre-line"&gt;&lt;%= post.description %&gt;&lt;/p&gt;</code> · ใหม่เป็น <strong><code>&lt;div&gt;</code></strong> เพราะเนื้อหามี <code>&lt;div&gt;</code> <code>&lt;ul&gt;</code> ข้างใน (ใส่ใน <code>&lt;p&gt;</code> ไม่ได้) · <code>whitespace-pre-line</code> ไม่ต้องแล้ว เพราะขึ้นบรรทัดใหม่เป็น <code>&lt;br&gt;</code></li>
+  <li><code>&lt;%= post.body %&gt;</code> — <strong>ไม่ต้องใส่ <code>sanitize</code> หรือ <code>raw</code></strong> · Action Text sanitize ให้ตอนวาดเอง (หัวข้อถัดไปพิสูจน์)</li>
+  <li>จุดที่สอง (การ์ดหน้ารวม) — เดิม <code>truncate(post.description, …)</code> · ใหม่ตัดคำโปรยจาก <code>post.body.to_plain_text</code> (ตัวหนังสือล้วน ไม่มีแท็กปน) ·
+      ผลของ <code>to_plain_text</code> <strong>ไม่ได้ผ่านการล้าง</strong> (เอกสาร Rails เตือนว่าไม่รับประกันว่าปลอดภัยถ้าเอาไปใส่เป็น HTML) แต่ <code>&lt;%= %&gt;</code> ใส่ซองใสให้ จึงปลอดภัย — <strong>ห้ามครอบด้วย <code>raw</code></strong></li>
+</ul>
+
+<p>เปิด <code>localhost:3000/posts/new</code> · ดู HTML ที่เบราว์เซอร์ได้รับ — ผลจริง (บรรทัดเดียวยาว ๆ):</p>
+
+<pre><code>$ curl -s localhost:3000/posts/new | grep -n 'trix-editor'
+85:    &lt;input type="hidden" name="post[body]" id="post_body_trix_input_post" /&gt;&lt;trix-editor class="mt-2 min-h-40" id="post_body" input="post_body_trix_input_post" data-direct-upload-url="http://localhost:3000/rails/active_storage/direct_uploads" data-blob-url-template="http://localhost:3000/rails/active_storage/blobs/redirect/:signed_id/:filename"&gt;&lt;/trix-editor&gt;</code></pre>
+
+<ul>
+  <li><code>curl -s</code> = ขอหน้าเว็บแบบไม่โชว์แถบความคืบหน้า · <code>| grep -n 'trix-editor'</code> = เก็บเฉพาะบรรทัดที่มีคำนี้ พร้อมเลขบรรทัด (<code>85:</code> — หลังย้าย CSS ในหัวข้อถัดไปจะเหลือ <code>84:</code> เพราะ <code>&lt;link&gt;</code> ของ <code>actiontext.css</code> หายไปหนึ่งบรรทัด)</li>
+  <li><code>&lt;input type="hidden" name="post[body]"&gt;</code> — <strong>ช่องที่ถูกส่งไปจริง</strong> แต่ซ่อนไว้ · ทุกครั้งที่พิมพ์ Trix เขียน HTML ลงช่องนี้</li>
+  <li><code>&lt;trix-editor … input="post_body_trix_input_post"&gt;</code> — ช่องที่ผู้ใช้เห็นและพิมพ์ · <code>input="…"</code> บอกว่าให้เขียนผลลงช่องซ่อนตัวไหน</li>
+  <li><code>data-direct-upload-url</code> — ที่อยู่สำหรับอัปโหลดไฟล์ที่แนบในเนื้อหา · เรื่องของบท 139</li>
+</ul>
+
+<p>
+  ผมพิมพ์ "ร้านนี้ <strong>อร่อยมาก</strong> แนะนำ" (กดปุ่ม B ตรงคำกลาง) ใน Chrome จริง · ช่องซ่อนได้ค่า <code>&lt;div&gt;ร้านนี้&amp;nbsp;&lt;strong&gt;อร่อยมาก&lt;/strong&gt; แนะนำ&lt;/div&gt;</code> ·
+  กดบันทึกแล้วหน้าบทความโชว์ตัวหนาจริง · (<code>&amp;nbsp;</code> = ช่องว่างแบบที่ Trix ใส่บางจุด ไม่ต้องสนใจ)
+</p>
+
+<h3 id="sn-sub-1">CSS ของ Trix ต้องย้ายเข้า Tailwind</h3>
+
+<p>
+  installer วาง <code>actiontext.css</code> ไว้ที่ <code>app/assets/stylesheets/</code> · ผมลองปล่อยไว้ที่เดิม แล้ววัดใน Chrome: <strong>ช่องพิมพ์สูงแค่ 80px</strong> (ไม่สน <code>min-h-40</code>) ·
+  และ<strong>ลิงก์ในเนื้อหาสีเดียวกับตัวหนังสือ ไม่มีขีดเส้นใต้</strong> มองไม่ออกว่าเป็นลิงก์
+</p>
+<p>
+  สาเหตุมีสองข้อ · ① ไฟล์นี้ไม่ได้อยู่ใน "ชั้น" ของ Tailwind จึงชนะคลาส Tailwind ทุกตัว · ② Tailwind ล้างหน้าตาของหัวข้อ / รายการ / ลิงก์ทิ้งทั้งเว็บตั้งแต่ต้น (บท 128 ใช้คลาสแทน) — เนื้อหาที่ผู้ใช้จัดมาจึงโชว์แบนหมด
+</p>
+
+<p>แก้ด้วยการย้ายไฟล์ แล้วสั่งให้ Tailwind โหลดเข้า "ชั้นของ component":</p>
+
+<pre><code>$ mv app/assets/stylesheets/actiontext.css app/assets/tailwind/actiontext.css</code></pre>
+
+<p><code>app/assets/tailwind/application.css</code> ทั้งไฟล์:</p>
+
+<pre><code>@import "tailwindcss";
+<span class="c">/* ไฟล์ CSS ของ Trix ที่ action_text:install สร้าง (ย้ายมาจาก app/assets/stylesheets)
+   ใส่ไว้ใน layer components → utility class อย่าง min-h-40 / border-error ยังทับได้ */</span>
+@import "./actiontext.css" layer(components);
+@source not "./daisyui{,*}.mjs";
+@plugin "./daisyui.mjs" {
+  themes: light --default, dark --prefersdark;
+}
+
+@theme {
+  --font-sans: "Noto Sans Thai", ui-sans-serif, system-ui, sans-serif;
+}
+
+<span class="c">/* Tailwind ล้าง style ของหัวข้อ / list / ลิงก์ทิ้งทั้งเว็บ → คืนให้เฉพาะในเนื้อหา rich text */</span>
+.trix-content h1 { font-weight: 700; }
+.trix-content ul { list-style: disc; }
+.trix-content ol { list-style: decimal; }
+.trix-content a { color: var(--color-primary); text-decoration: underline; }
+
+<span class="c">/* ไอคอนบนแถบเครื่องมือของ Trix เป็นสีดำตายตัว → ให้พื้นขาวเสมอ ธีมมืดจะได้ยังมองเห็น */</span>
+trix-toolbar .trix-button-group { background-color: white; }
+trix-toolbar .trix-dialog { color: black; }</code></pre>
+
+<ul>
+  <li>บรรทัดที่เพิ่ม: 3 บรรทัดหลัง <code>@import "tailwindcss";</code> และทุกอย่างหลังก้อน <code>@theme</code> · ที่เหลือเป็นของเดิมจาก Day 3</li>
+  <li><code>@import "./actiontext.css" layer(components);</code> — โหลดไฟล์ของ Trix เข้า<strong>ชั้นที่คลาส Tailwind ทับได้</strong> · ไม่ต้องแก้เนื้อในไฟล์ 440 บรรทัดนั้นเลย</li>
+  <li><code>.trix-content …</code> — คืนตัวหนาให้หัวข้อ จุดหน้ารายการ และสี+ขีดเส้นใต้ให้ลิงก์ <strong>เฉพาะในกรอบเนื้อหา</strong> (กรอบที่ <code>_content.html.erb</code> ห่อให้) · ส่วนอื่นของเว็บไม่โดน</li>
+  <li><code>trix-toolbar …</code> — ไอคอนบนแถบปุ่มเป็นรูปสีดำ · ธีมมืดของ Day 3 จะมองไม่เห็น จึงให้พื้นขาวเสมอ</li>
+</ul>
+
+<p><code>bin/dev</code> สร้าง CSS ใหม่ให้เอง · วัดซ้ำใน Chrome: ช่องพิมพ์ <strong>160px</strong> · ลิงก์เป็น<strong>สี primary + ขีดเส้นใต้</strong></p>
+
+<h2 id="sn-sec-7">Action Text ล้างของอันตรายให้ตอนโชว์</h2>
+
+<div class="predict">
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; post = <span class="n">Post</span>.<span class="f">create!</span>(title: <span class="s">"ทดลอง rich text"</span>, category: <span class="n">Category</span>.<span class="f">first</span>, body: <span class="s">%(&lt;div&gt;ร้านนี้&lt;strong&gt;อร่อยมาก&lt;/strong&gt; &lt;a href="/posts" onclick="alert(1)"&gt;ดูร้านอื่น&lt;/a&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;/div&gt;)</span>)</code></pre>
+  <p class="ask">
+    สร้างบทความที่เนื้อหามีทั้งของดี (<code>&lt;strong&gt;</code> · ลิงก์) และของร้าย (<code>onclick</code> · <code>&lt;script&gt;</code>) โดยไม่ผ่านหน้าเว็บ ·
+    (<code>%(…)</code> = อีกวิธีเขียนข้อความใน Ruby ใช้เมื่อข้างในมี <code>"</code> เยอะ · <code>alert(1)</code> แค่เด้งกล่อง ไม่ทำอะไรเสียหาย) ·
+    คิดว่า<strong>ในฐานข้อมูล</strong>จะเก็บ <code>&lt;script&gt;</code> ไว้ไหม · แล้ว<strong>หน้าเว็บ</strong>จะส่งอะไรออกไป?
+  </p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>log ตอนบันทึก (ผลจริง ตัดเหลือบรรทัดที่สำคัญ):</p>
+<pre><code>  ActionText::RichText Create (0.4ms)  INSERT INTO "action_text_rich_texts" ("name", "body", "record_type", "record_id", "created_at", "updated_at") VALUES ('body', '&lt;div&gt;ร้านนี้&lt;strong&gt;อร่อยมาก&lt;/strong&gt; &lt;a href="/posts" onclick="alert(1)"&gt;ดูร้านอื่น&lt;/a&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;/div&gt;', 'Post', 31, …)
+…
+wongnok-blog-all-in-one(dev):002&gt; post.id
+=&gt; 31
+wongnok-blog-all-in-one(dev):003&gt; post.plain_text
+=&gt; "ร้านนี้อร่อยมาก ดูร้านอื่น"</code></pre>
+    <p><strong>ฐานข้อมูลเก็บทุกตัวอักษร รวม <code>onclick</code> และ <code>&lt;script&gt;</code></strong> · ทีนี้ดูหน้าเว็บ (ผลจริง · ผมตัดเส้นทางยาวของไฟล์ใน gem เป็น <code>…</code>):</p>
+<pre><code>$ curl -s localhost:3000/posts/31 | grep -n -A3 'trix-content'
+95:--&gt;&lt;div class="trix-content"&gt;
+96-  &lt;!-- BEGIN …/actiontext-8.1.4/app/views/action_text/contents/_content.html.erb
+97---&gt;&lt;div&gt;ร้านนี้&lt;strong&gt;อร่อยมาก&lt;/strong&gt; &lt;a href="/posts"&gt;ดูร้านอื่น&lt;/a&gt;alert(1)&lt;/div&gt;
+98-&lt;!-- END …/actiontext-8.1.4/app/views/action_text/contents/_content.html.erb --&gt;&lt;/div&gt;</code></pre>
+    <ul>
+      <li><code>grep -A3</code> = เอาบรรทัดที่เจอ + อีก 3 บรรทัดถัดไป (บรรทัดที่ตามมามีขีด <code>-</code> แทน <code>:</code> หลังเลข)</li>
+      <li>บรรทัด 95 — <code>&lt;div class="trix-content"&gt;</code> มาจาก <code>layouts/action_text/contents/_content.html.erb</code> ที่ installer สร้าง (กรอบที่ CSS ข้างบนใช้)</li>
+      <li>บรรทัด 96 / 98 — comment <code>BEGIN</code>/<code>END</code> = ป้ายชื่อแม่พิมพ์ที่ Rails แปะให้ใน development (บท 120) · production ไม่มี</li>
+      <li>บรรทัด 97 — <code>&lt;strong&gt;</code> และ <code>&lt;a href&gt;</code> <strong>รอด</strong> · <code>onclick</code> <strong>ถูกตัด</strong> · แท็ก <code>&lt;script&gt;</code> <strong>ถูกถอด</strong> เหลือแค่ตัวหนังสือ <code>alert(1)</code> ที่ไม่รัน — ผลเดียวกับ <code>sanitize</code> ในบท 136</li>
+      <li><code>plain_text</code> ไม่มี <code>alert(1)</code> เลย — <code>to_plain_text</code> ทิ้งเนื้อในของ <code>&lt;script&gt;</code> ด้วย</li>
+    </ul>
+  </div>
+</div>
+
+<p>
+  นี่คือ "sanitize ตอนโชว์" ของบท 136 ที่ Action Text ทำให้ทุกครั้งที่เขียน <code>&lt;%= post.body %&gt;</code> ·
+  ข้อเสียที่ต้องจำ: <strong>ของสกปรกยังอยู่ใน DB</strong> · ทางไหนที่ไม่ผ่าน <code>&lt;%= post.body %&gt;</code> (JSON · อีเมล) ต้องระวังเอง ·
+  แอปเรามีหน้า JSON ที่ scaffold สร้างไว้ (<code>app/views/posts/_post.json.jbuilder</code> — เปิด <code>/posts/1.json</code> ดูได้) ซึ่งส่ง <code>description</code> (ตัวหนังสือล้วน) จึงไม่มี HTML หลุดออกไป
+</p>
+
+<div class="analogy">
+  <span class="label">🎂 เทียบให้เห็นภาพ — ข้อความบนหน้าเค้ก ตรวจตอนจัดจานทุกครั้ง</span>
+  <p>
+    ลูกค้าเขียนข้อความบนหน้าเค้กเองได้ · ร้านมี<strong>รายการตัวตกแต่งที่อนุญาต</strong> (ตัวหนา · ลิงก์ · รายการ) ไม่อยู่ในรายการ = ไม่ใส่ ·
+    ร้านเก็บใบสั่งของลูกค้าไว้ตามที่เขียนมาทุกตัว แล้ว<strong>ตรวจตอนจัดจานทุกครั้ง</strong> · วันไหนร้านเพิ่มของต้องห้ามในรายการ ใบสั่งเก่าทุกใบก็โดนกฎใหม่ทันทีตอนเสิร์ฟครั้งถัดไป
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ร้านจริงตรวจครั้งเดียวก็จำได้ · Rails <strong>ตรวจใหม่ทุกครั้งที่มีคนเปิดหน้า</strong> (เสียแรงซ้ำ — บล็อก F จะแก้ด้วย cache) ·
+    และคนจัดจานจริงไม่ปล่อยใบสั่งอันตรายออกทางอื่น แต่ใบสั่งใน DB ยังสกปรกอยู่ ใครหยิบออกไปทางอื่นโดยไม่ผ่านคนจัดจานก็ได้ของสกปรกไปทั้งก้อน
+  </p>
+</div>
+
+<p>
+  รายการแท็กที่อนุญาตอยู่ที่ไหน? สไลด์หน้า 6 ให้ดูที่ <code>ActionText::ContentHelper.allowed_tags</code> · ลองใน console — ผลจริง:
+</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">ActionText</span>::<span class="n">ContentHelper</span>.allowed_tags
+=&gt; nil
+wongnok-blog-all-in-one(dev):002&gt; helper.<span class="f">sanitizer_allowed_tags</span>.<span class="f">size</span>
+=&gt; 46
+wongnok-blog-all-in-one(dev):003&gt; helper.<span class="f">sanitizer_allowed_tags</span>.<span class="f">include?</span>(<span class="s">"script"</span>)
+=&gt; false
+wongnok-blog-all-in-one(dev):004&gt; helper.<span class="f">sanitizer_allowed_tags</span>.<span class="f">include?</span>(<span class="s">"table"</span>)
+=&gt; false
+wongnok-blog-all-in-one(dev):005&gt; <span class="n">ActionText</span>::<span class="n">ContentHelper</span>.allowed_tags += [<span class="s">"table"</span>, <span class="s">"tr"</span>, <span class="s">"td"</span>]
+(wongnok-blog-all-in-one):5:in '&lt;main&gt;': undefined method '+' for nil (NoMethodError)</code></pre>
+
+<ul>
+  <li><code>allowed_tags</code> → <code>nil</code> — "<strong>ยังไม่มีใครตั้งค่าเอง</strong>" · ไม่ได้แปลว่าไม่มีรายการ</li>
+  <li><code>helper.</code> — ใน console ใช้ <code>helper</code> เรียก method ที่ view ใช้ได้ (บท 104) · <code>.size</code> = นับจำนวน · <code>.include?("script")</code> = "ในรายการมีคำนี้ไหม"</li>
+  <li><code>helper.sanitizer_allowed_tags</code> — method ใน Action Text ที่คืน<strong>รายการที่ใช้จริง</strong>: ถ้า <code>allowed_tags</code> เป็น nil ก็ใช้รายการเริ่มต้นของ sanitize (บท 125) + แท็กสำหรับไฟล์แนบ 3 ตัว · รวม <strong>46 แท็ก</strong> · ไม่มี <code>script</code> · ไม่มี <code>table</code></li>
+  <li>บรรทัด 5 — โค้ดของสไลด์ <code>allowed_tags += [...]</code> = "เอาค่าเดิม <strong>บวก</strong> ของใหม่" แต่ค่าเดิมคือ nil บวกไม่ได้ → พัง</li>
+</ul>
+
+<p>ถ้าวันหนึ่งต้องเพิ่มแท็กจริง ๆ ต้องเอา<strong>รายการที่ใช้อยู่</strong>มาบวก แล้ว<strong>กำหนดใหม่ทั้งก้อน</strong> — ลองใน console (ผลจริง · ตัดรายการยาวออก):</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):006&gt; <span class="n">ActionText</span>::<span class="n">ContentHelper</span>.allowed_tags = helper.<span class="f">sanitizer_allowed_tags</span> + [<span class="s">"table"</span>, <span class="s">"tr"</span>, <span class="s">"td"</span>]
+=&gt;
+Set["a",
+…
+wongnok-blog-all-in-one(dev):007&gt; helper.<span class="f">sanitizer_allowed_tags</span>.<span class="f">size</span>
+=&gt; 49
+wongnok-blog-all-in-one(dev):008&gt; helper.<span class="f">sanitizer_allowed_tags</span>.<span class="f">include?</span>(<span class="s">"table"</span>)
+=&gt; true</code></pre>
+
+<p>
+  (<code>Set[…]</code> = รายการแบบที่ไม่มีของซ้ำ ใช้แบบ Array ได้) ·
+  ค่าที่ตั้งใน console <strong>หายเมื่อปิด console</strong> · โปรเจกต์เรา<strong>ไม่เพิ่มอะไร</strong> (ไม่มีไฟล์ <code>config/initializers/action_text.rb</code>) — ตามบท 136: ขยาย allowlist เท่าที่จำเป็นเท่านั้น
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>อย่าพิมพ์ตามสไลด์หน้า 6</strong> (<code>allowed_tags += [...]</code>) — ใน Rails 8.1.4 ค่านี้เริ่มต้นเป็น <code>nil</code> แอปจะพังตั้งแต่เปิด · และอย่าเพิ่ม <code>script</code> · <code>iframe</code> · <code>style</code> ลงรายการเด็ดขาด</p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>render-time sanitization (output sanitization)</dt>
+    <dd>ล้าง HTML ตอนส่งออกไปหน้าเว็บทุกครั้ง แทนการล้างตอนรับเข้า · กฎใหม่มีผลกับข้อมูลเก่าทันที · แต่ DB ยังเก็บของดิบ ·
+        <strong>ถาม senior ได้ว่า "rich text ของเราออกไปทางไหนบ้างที่ไม่ผ่าน view (JSON · อีเมล · export)"</strong></dd>
+    <dt><code>allowed_tags</code> · <code>sanitizer_allowed_tags</code></dt>
+    <dd>ค่าที่เราตั้งเอง (เริ่มต้น nil) · กับรายการที่ใช้จริง (46 แท็ก) ·
+        <strong>พิมพ์บอก AI ได้ว่า "do not change ActionText allowed_tags unless I ask; if needed, start from sanitizer_allowed_tags instead of +=, because the default is nil"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">ค้นหาจาก plain_text — ไม่ใช่จาก body</h2>
+
+<p>สไลด์หน้า 5 เตือนว่า "ค้นหาด้วย <code>WHERE body LIKE</code> ไม่ได้" · ลองให้เห็นกับตาใน console เดิมต่อจากข้างบน (บทความทดลองเลข 31 ยังอยู่) — ผลจริง (ตัด error ยาว ๆ ด้านล่างออก):</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):009&gt; <span class="n">Post</span>.<span class="f">where</span>(<span class="s">"body ILIKE ?"</span>, <span class="s">"%อร่อยมาก%"</span>).<span class="f">count</span>
+  Post Count (0.6ms)  SELECT COUNT(*) FROM "posts" WHERE (body ILIKE '%อร่อยมาก%') /*application='WongnokBlogAllInOne'*/
+(wongnok-blog-all-in-one):9:in '&lt;main&gt;': PG::UndefinedColumn: ERROR:  column "body" does not exist (ActiveRecord::StatementInvalid)
+…
+wongnok-blog-all-in-one(dev):010&gt; <span class="n">Post</span>.<span class="f">where</span>(<span class="s">"plain_text ILIKE ?"</span>, <span class="s">"%อร่อยมาก%"</span>).<span class="f">pluck</span>(<span class="n">:id</span>)
+  Post Pluck (0.5ms)  SELECT "posts"."id" FROM "posts" WHERE (plain_text ILIKE '%อร่อยมาก%') /*application='WongnokBlogAllInOne'*/
+=&gt; [31]
+wongnok-blog-all-in-one(dev):011&gt; <span class="n">Post</span>.<span class="f">where</span>(<span class="s">"plain_text ILIKE ?"</span>, <span class="s">"%strong%"</span>).<span class="f">pluck</span>(<span class="n">:id</span>)
+  Post Pluck (0.4ms)  SELECT "posts"."id" FROM "posts" WHERE (plain_text ILIKE '%strong%') /*application='WongnokBlogAllInOne'*/
+=&gt; []</code></pre>
+
+<ul>
+  <li><code>ILIKE</code> = ค้นคำแบบไม่สนตัวพิมพ์เล็ก/ใหญ่ (ของ PostgreSQL — บท 136) · <code>%…%</code> = "มีคำนี้อยู่ตรงไหนก็ได้" · <code>?</code> = ช่องที่ Rails เอาค่าถัดไปมาใส่ให้อย่างปลอดภัย</li>
+  <li>บรรทัด 9 — <code>column "body" does not exist</code> · <strong>ตาราง posts ไม่มีคอลัมน์ body</strong> (body ของเราอยู่ในลิ้นชักกลาง)</li>
+  <li>บรรทัด 10 — ค้นจาก <code>plain_text</code> เจอบทความทดลอง (เลข 31 · <strong>ของคุณจะเป็นเลขเดียวกับ <code>post.id</code> ตอนสร้าง</strong>)</li>
+  <li>บรรทัด 11 — ค้นคำว่า strong <strong>ไม่เจอ</strong> ทั้งที่ HTML ของบทความนั้นมี <code>&lt;strong&gt;</code> · บท 136 ค้นจาก HTML แล้วเจอเพราะชื่อแท็กปน · plain_text แก้ปัญหานั้นแล้ว</li>
+</ul>
+
+<p>
+  <code>plain_text</code> ถูกอัปเดต<strong>ทุกครั้งที่บันทึกผ่าน model</strong> (callback ในขั้น 3) — ทั้งตอนสร้าง แก้ และตอน backfill ·
+  เสร็จแล้วลบบทความทดลอง: <code>Post.find(31).destroy</code> (ใช้เลขของคุณ) · log จะมี <code>ActionText::RichText Destroy</code> ตามด้วย <code>Post Destroy</code> = ลบแผ่นในลิ้นชักกลางให้ด้วย
+</p>
+
+<h2 id="sn-sec-9">ขั้น 6 · N+1 ตัวใหม่ — และ bullet ที่เตือนผิด</h2>
+
+<p>
+  การ์ดหน้ารวมเรียก <code>post.body.to_plain_text</code> ทุกใบ · <code>post.body</code> แต่ละครั้ง = <strong>เดินไปลิ้นชักกลาง 1 รอบ</strong> (เห็นแล้วใน predict ขั้น 2) ·
+  เปิด <code>localhost:3000/posts</code> แล้วดู log ของใบสั่งนี้ — ผลจริง (ตัดบรรทัด <code>Rendered</code> ออก):
+</p>
+
+<pre><code>Processing by PostsController#index as HTML
+  Post Count (9.0ms)  SELECT COUNT(*) FROM "posts" …
+  Post Load (1.1ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."created_at" DESC LIMIT 10 OFFSET 0 …
+  Category Load (0.9ms)  SELECT "categories".* FROM "categories" WHERE "categories"."id" IN (5, 4, 3, 2, 1) …
+  ActionText::RichText Load (1.0ms)  SELECT "action_text_rich_texts".* FROM "action_text_rich_texts" WHERE "action_text_rich_texts"."record_id" = 30 AND "action_text_rich_texts"."record_type" = 'Post' AND "action_text_rich_texts"."name" = 'body' LIMIT 1 …
+  ↳ app/views/posts/_post.html.erb:24
+  ActionText::RichText Load (1.1ms)  SELECT "action_text_rich_texts".* FROM "action_text_rich_texts" WHERE "action_text_rich_texts"."record_id" = 29 AND … LIMIT 1 …
+  ↳ app/views/posts/_post.html.erb:24
+  …  (record_id = 28 ลงไปถึง 21 อีก 8 ครั้ง)
+Completed 200 OK in 96ms (Views: 47.2ms | ActiveRecord: 13.5ms (13 queries, 0 cached) | GC: 9.5ms)
+…
+USE eager loading detected
+  Post =&gt; [:rich_text_body]
+  Add to your query: .includes([:rich_text_body])</code></pre>
+
+<ul>
+  <li><code>GC:</code> ท้ายบรรทัด <code>Completed</code> = เวลาที่ Ruby เก็บกวาดหน่วยความจำ ไม่ต้องสนใจ</li>
+  <li><code>ActionText::RichText Load … record_id = 30</code> · <code>= 29</code> · … — <strong>บรรทัดเดียวกันซ้ำ 10 ครั้ง ต่างแค่เลข</strong> = N+1 (บท 114)</li>
+  <li><code>_post.html.erb:24</code> ลบหนึ่ง = บรรทัด 23 = บรรทัด <code>truncate(post.body.to_plain_text …)</code> ที่เพิ่งแก้ (กฎ "ไฟล์ .erb ลบหนึ่ง" จากบท 113)</li>
+  <li><code>(13 queries)</code> = 3 ตัวปกติ + 10 ตัวของ rich text · bullet (บท 125) จับได้และบอกให้ <code>includes</code></li>
+</ul>
+
+<p>
+  แก้ที่ controller (ไม่ใช่ view) — Action Text เตรียม scope ไว้ให้แล้วชื่อ <code>with_rich_text_body</code> (= <code>with_rich_text_</code> + ชื่อช่อง) ·
+  <code>app/controllers/posts_controller.rb</code> action <code>index</code>:
+</p>
+
+<pre><code>  <span class="k">def</span> <span class="f">index</span>
+    <span class="c"># with_rich_text_body = ดึง body ของทั้งหน้ามาในคำสั่งเดียว (ไม่งั้น N+1 ทีละบทความ)</span>
+    @pagy, @posts = <span class="f">pagy</span>(<span class="n">Post</span>.<span class="f">includes</span>(<span class="n">:category</span>).<span class="f">with_rich_text_body</span>.<span class="f">recent</span>, limit: <span class="n">10</span>)
+  <span class="k">end</span></code></pre>
+
+<p>รีเฟรช — ผลจริง:</p>
+
+<pre><code>  ActionText::RichText Load (0.7ms)  SELECT "action_text_rich_texts".* FROM "action_text_rich_texts" WHERE "action_text_rich_texts"."record_type" = 'Post' AND "action_text_rich_texts"."name" = 'body' AND "action_text_rich_texts"."record_id" IN (30, 29, 28, 27, 26, 25, 24, 23, 22, 21) …
+Completed 200 OK in 22ms (Views: 13.7ms | ActiveRecord: 4.3ms (4 queries, 0 cached) | GC: 0.0ms)
+…
+AVOID eager loading detected
+  Post =&gt; ["rich_text_body"]
+  Remove from your query: .includes([:rich_text_body])</code></pre>
+
+<ul>
+  <li><code>record_id IN (30, 29, …, 21)</code> — <strong>ไปลิ้นชักกลางรอบเดียว หยิบมาทั้ง 10 แผ่น</strong> · <code>13 → 4 queries</code></li>
+  <li>แต่ bullet กลับตะโกน <code>AVOID eager loading</code> = "หยิบมาล่วงหน้าแล้ว<strong>ไม่ได้ใช้</strong> เอาออกซะ" · <strong>คำเตือนนี้ผิด</strong> — ตัวเลขใน log บอกชัดว่าใช้จริง (ถ้าเอาออกจะกลับไป 13)</li>
+</ul>
+
+<p>
+  ทำไมเตือนผิด: ในโค้ดของ Action Text scope นี้เขียนชื่อเป็น<strong>ข้อความ</strong> <code>"rich_text_body"</code> ·
+  แต่ bullet นับการใช้งานเป็น<strong>สัญลักษณ์</strong> <code>:rich_text_body</code> (บท 92) · สองอย่างนี้หน้าตาคล้ายกันแต่ไม่นับเป็นตัวเดียวกัน — สังเกตใน log: <code>["rich_text_body"]</code> มีเครื่องหมายคำพูด
+</p>
+
+<div class="analogy">
+  <span class="label">📋 เทียบให้เห็นภาพ — ผู้ตรวจที่เทียบลายมือกับป้ายพิมพ์</span>
+  <p>
+    เราเขียนใบเบิก "แผ่นเนื้อหาของบทความทั้ง 10 ชิ้น" ไปทีเดียว (แก้ N+1 แล้ว) · ผู้ตรวจ (bullet) เอาใบเบิกที่<strong>เขียนด้วยลายมือ</strong>ไปเทียบกับรายการของที่ใช้ซึ่ง<strong>พิมพ์ด้วยเครื่อง</strong> ·
+    ตัวอักษรเหมือนกันทุกตัว แต่ผู้ตรวจถือว่าคนละรายการ จึงสรุปว่า "เบิกมาแล้วไม่ได้ใช้"
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ผู้ตรวจจริงเห็นของวางอยู่บนโต๊ะก็รู้ว่าใช้แล้ว · bullet ไม่ได้ดูผลลัพธ์ มันดูแค่ชื่อ ·
+    เราจึงต้อง<strong>เชื่อตัวเลข <code>(N queries)</code> มากกว่าคำเตือน</strong> แล้วบอก bullet ว่า "เรื่องนี้ไม่ต้องเตือน"
+  </p>
+</div>
+
+<p>บอก bullet ให้เงียบเฉพาะเรื่องนี้ — <code>config/environments/development.rb</code> ในก้อน <code>config.after_initialize do</code> ใต้ <code>Bullet.add_footer = true</code>:</p>
+
+<pre><code>    <span class="c"># with_rich_text_body ใช้ชื่อ "rich_text_body" แบบ string แต่ Bullet นับการใช้งานเป็น symbol</span>
+    <span class="c"># จึงเตือน AVOID eager loading ทั้งที่ใช้จริง (เตือนผิด) — ห้ามลบ with_rich_text_body ตามคำเตือนนี้</span>
+    <span class="n">Bullet</span>.<span class="f">add_safelist</span> type: <span class="n">:unused_eager_loading</span>, class_name: <span class="s">"Post"</span>, association: <span class="n">:rich_text_body</span></code></pre>
+
+<ul>
+  <li><code>add_safelist</code> — "รายการยกเว้น" ของ bullet · <code>type: :unused_eager_loading</code> = เฉพาะคำเตือนแบบ AVOID · <code>class_name</code> + <code>association</code> = เฉพาะ Post กับ rich_text_body · คำเตือนอื่นยังทำงานครบ</li>
+  <li>comment สองบรรทัดสำคัญพอ ๆ กับโค้ด — กัน<strong>คนหรือ AI รุ่นหลัง</strong>ทำตามคำเตือนแล้วลบ <code>with_rich_text_body</code> ทิ้ง</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ <strong>แก้ไฟล์ใน <code>config/environments/</code> แล้วต้องปิด-เปิด <code>bin/dev</code> ใหม่</strong> — ผมลองรีเฟรชโดยไม่ restart: AVOID ยังขึ้น · restart แล้ว: ไม่มีคำเตือน และยัง <code>4 queries</code></p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt><code>with_rich_text_body</code> (eager loading ของ rich text)</dt>
+    <dd>scope ที่ Action Text สร้างให้ = <code>includes(:rich_text_body)</code> · มีอีกตัว <code>with_rich_text_body_and_embeds</code> สำหรับตอนโชว์ไฟล์แนบด้วย ·
+        <strong>พิมพ์บอก AI ได้ว่า "any list page that reads post.body must use Post.with_rich_text_body in the controller"</strong></dd>
+    <dt>false positive</dt>
+    <dd>เครื่องมือเตือนว่ามีปัญหาทั้งที่ไม่มี · แก้ด้วยการยกเว้นเฉพาะจุด + เขียนเหตุผลไว้ ไม่ใช่ปิดเครื่องมือทั้งตัว ·
+        <strong>ถาม senior ได้ว่า "เราเก็บรายการยกเว้นของ linter/bullet ไว้ที่ไหน และใครทบทวน"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-10">ปิดงาน — seeds แล้ว commit</h2>
+
+<p>
+  เหลือไฟล์สุดท้าย: <code>db/seeds.rb</code> (ข้อมูลตั้งต้นที่ <code>bin/rails db:seed</code> ใส่ให้ — Day 3) ยังสร้างบทความด้วย <code>description</code> ·
+  ถ้าเพื่อนสร้าง DB ใหม่จาก seeds จะได้บทความที่ไม่มี body · แก้ในก้อน <code>Post.find_or_create_by!</code> ท้ายไฟล์:
+</p>
+
+<pre><code>    title, text = POSTS[slug][round]
+    <span class="n">Post</span>.<span class="f">find_or_create_by!</span>(title: title) <span class="k">do</span> |post|
+      <span class="c"># เนื้อหาอยู่ใน body (Action Text) แล้ว · description กับ plain_text ถูกเติมให้เองตอน save (ดู app/models/post.rb)</span>
+      post.body        = text
+      post.category    = categories[slug]
+      post.created_at  = (<span class="n">30</span> - position).days.ago
+    <span class="k">end</span></code></pre>
+
+<ul>
+  <li>เดิม: <code>title, description = …</code> และ <code>post.description = description</code> · ใหม่: ตั้งชื่อตัวแปรว่า <code>text</code> แล้วใส่ลง <code>post.body</code> · <code>description</code>/<code>plain_text</code> มาจาก callback เอง</li>
+  <li>ใส่ตัวหนังสือล้วนลง body ตรง ๆ ได้เพราะข้อความใน seeds ไม่มี <code>&lt;</code> <code>&gt;</code> <code>&amp;</code> · seeds ไม่แตะบทความที่มีอยู่แล้ว (ค้นด้วย title) → <strong>DB เดิมของคุณยังต้องพึ่ง <code>posts:backfill_body</code></strong> ที่รันไปแล้ว</li>
+</ul>
+
+<p>ดูว่าแตะอะไรไปบ้าง แล้ว commit — ผลจริง:</p>
+
+<pre><code>$ git add -A
+$ git status --short
+A  app/assets/tailwind/actiontext.css
+M  app/assets/tailwind/application.css
+M  app/controllers/posts_controller.rb
+M  app/javascript/application.js
+M  app/models/post.rb
+A  app/views/active_storage/blobs/_blob.html.erb
+A  app/views/layouts/action_text/contents/_content.html.erb
+M  app/views/posts/_form.html.erb
+M  app/views/posts/_post.html.erb
+M  config/environments/development.rb
+M  config/importmap.rb
+A  db/migrate/20261110034320_create_active_storage_tables.active_storage.rb
+A  db/migrate/20261110034321_create_action_text_tables.action_text.rb
+A  db/migrate/20261110034341_add_plain_text_to_posts.rb
+M  db/schema.rb
+M  db/seeds.rb
+A  lib/tasks/posts.rake
+A  test/fixtures/action_text/rich_texts.yml
+$ git commit -m "Action Text: เนื้อหาเป็น rich text (body) + ย้ายข้อมูลจาก description แบบ expand"
+[my-day3 381409b] Action Text: เนื้อหาเป็น rich text (body) + ย้ายข้อมูลจาก description แบบ expand
+ 18 files changed, 651 insertions(+), 10 deletions(-)
+ create mode 100644 app/assets/tailwind/actiontext.css
+ create mode 100644 app/views/active_storage/blobs/_blob.html.erb
+ create mode 100644 app/views/layouts/action_text/contents/_content.html.erb
+ create mode 100644 db/migrate/20261110034320_create_active_storage_tables.active_storage.rb
+ create mode 100644 db/migrate/20261110034321_create_action_text_tables.action_text.rb
+ create mode 100644 db/migrate/20261110034341_add_plain_text_to_posts.rb
+ create mode 100644 lib/tasks/posts.rake
+ create mode 100644 test/fixtures/action_text/rich_texts.yml</code></pre>
+
+<ul>
+  <li><strong>18 ไฟล์</strong> — <code>A</code> = ไฟล์ใหม่ · <code>M</code> = แก้ของเดิม · ไม่มี <code>D</code> (ไม่ได้ลบอะไร) · <code>app/assets/stylesheets/actiontext.css</code> ไม่อยู่ในรายการเพราะย้ายไปก่อนเคย commit</li>
+  <li>เลขหน้าชื่อ migration · เลข commit (<code>381409b</code>) ของคุณต่างจากนี้ได้ · บรรทัด <code>create mode</code> = รายชื่อไฟล์ใหม่ 8 ไฟล์ (ตรงกับตัว <code>A</code> ข้างบน) · ถ้าจำนวนไฟล์ไม่ใช่ 18 ให้เทียบรายการด้านบนว่าขาดหรือเกินตัวไหน</li>
+</ul>
+
+<h2 id="sn-sec-11">ให้ AI ช่วย — แต่ตรวจด้วย checklist นี้</h2>
+
+<p>
+  งานแบบนี้ (เปลี่ยนช่องข้อความเป็น rich text บน model อื่น เช่นช่อง bio ของผู้ใช้) ให้ AI ทำได้เมื่อคุณทำเองเป็นแล้ว · ตัวอย่าง prompt
+  (บท 141 จะเขียนฉบับเต็มเก็บใน <code>prompts/04-content.md</code>):
+</p>
+
+<pre><code>อ่าน prompts/00-context.md ก่อน
+เปลี่ยน Shop#description (ข้อความล้วน) เป็น rich text ด้วย Action Text (has_rich_text :body)
+- ห้ามลบคอลัมน์ description ในรอบนี้ (expand-contract) · ให้ model เขียนลง description ด้วยทุกครั้งที่ save
+- เพิ่มคอลัมน์ plain_text ที่เติมจาก body.to_plain_text ตอน before_save
+- ย้ายข้อมูลเดิมด้วย rake task ที่รันซ้ำได้ (ห้ามทำใน migration) · escape ข้อความเดิมก่อนห่อเป็น HTML
+- หน้ารายการที่อ่าน body ต้องใช้ with_rich_text_body
+- ห้ามใช้ raw หรือ html_safe กับ body · ห้ามแก้ allowed_tags
+บอกรายการไฟล์ที่จะแก้ก่อนลงมือ</code></pre>
+
+<p>(<code>Shop</code> เป็นชื่อสมมติ — แอปเราไม่มี model นี้ · ใช้เป็นแบบเขียน prompt เท่านั้น) · ตรวจงานที่ AI ส่งกลับมาด้วยข้อพวกนี้:</p>
+
+<ol>
+  <li><code>git diff</code> ต้องไม่มี <code>remove_column :…, :description</code> และไม่มี migration ที่เรียก model ข้างใน</li>
+  <li>รัน rake task <strong>สองรอบ</strong> · รอบสองต้องไม่สร้างแถวซ้ำ (<code>ActionText::RichText.count</code> เท่าเดิม)</li>
+  <li><code>grep -rn "raw\|html_safe" app/views</code> (<code>-r</code> = ค้นทุกไฟล์ในโฟลเดอร์ · <code>\|</code> = "หรือ") ต้องไม่เจอที่ใช้กับ body</li>
+  <li>เปิดหน้ารายการ ดู <code>(N queries)</code> ใน log · ถ้า AI ลบ <code>with_rich_text_body</code> ตามคำเตือน AVOID ของ bullet → ตัวเลขจะพุ่งกลับ</li>
+  <li>ลองบันทึกเนื้อหาที่มี <code>&lt;script&gt;alert(1)&lt;/script&gt;</code> ใน console แล้ว <code>curl</code> หน้า show ต้องไม่เห็นแท็ก script</li>
+</ol>
+
+<div class="task">
+  <h3 id="sn-sub-2">🎯 ภารกิจ — เขียนบทความผ่านหน้าเว็บ แล้วตามไปดูว่าแต่ละส่วนไปอยู่ไหน (~10 นาที)</h3>
+  <p>ใช้โค้ดที่ commit แล้ว · <code>bin/dev</code> เปิดอยู่</p>
+  <ol>
+    <li>เปิด <code>localhost:3000/posts/new</code> · หัวข้อ <code>ร้านลับย่านบางรัก</code> · หมวดอะไรก็ได้</li>
+    <li>ในช่องเนื้อหา: กดปุ่ม <strong>B</strong> พิมพ์ <code>เมนูเด็ด</code> กด <strong>B</strong> อีกครั้งให้ปิด · Enter · กดปุ่มรายการแบบจุด (ไอคอนสามขีดมีจุด) พิมพ์ <code>ต้มยำ</code> · Enter · พิมพ์ <code>แกงเขียวหวาน</code> · กด "บันทึก"</li>
+    <li>เปิด <code>bin/rails console</code> แล้วพิมพ์ทีละบรรทัด:
+<pre><code>post = <span class="n">Post</span>.<span class="f">last</span>
+<span class="n">ActionText</span>::<span class="n">RichText</span>.<span class="f">last</span>.body.<span class="f">to_html</span>
+post.plain_text
+post.<span class="f">destroy</span>
+<span class="n">ActionText</span>::<span class="n">RichText</span>.<span class="f">count</span></code></pre></li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย ทายสามข้อ: ① ลิ้นชักกลางเก็บแท็กอะไรบ้าง ② <code>plain_text</code> หน้าตาเป็นยังไง (รายการแบบจุดจะเหลืออะไร) ③ ลบบทความแล้ว <code>RichText.count</code> เหลือเท่าไร</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง (ตัดบรรทัด SQL บางส่วน):</p>
+<pre><code>wongnok-blog-all-in-one(dev):003&gt; ActionText::RichText.last.body.to_html
+=&gt; "&lt;div&gt;&lt;strong&gt;เมนูเด็ด&lt;/strong&gt;&lt;/div&gt;&lt;ul&gt;&lt;li&gt;ต้มยำ&lt;/li&gt;&lt;li&gt;แกงเขียวหวาน&lt;/li&gt;&lt;/ul&gt;"
+wongnok-blog-all-in-one(dev):004&gt; post.plain_text
+=&gt; "เมนูเด็ด\n• ต้มยำ\n• แกงเขียวหวาน"
+wongnok-blog-all-in-one(dev):005&gt; post.destroy
+  …
+  ActionText::RichText Destroy (0.6ms)  DELETE FROM "action_text_rich_texts" WHERE "action_text_rich_texts"."id" = 33 …
+  Post Destroy (0.7ms)  DELETE FROM "posts" WHERE "posts"."id" = 33 …
+  …
+wongnok-blog-all-in-one(dev):006&gt; ActionText::RichText.count
+=&gt; 30</code></pre>
+    <ul>
+      <li>① <code>&lt;div&gt;</code> <code>&lt;strong&gt;</code> <code>&lt;ul&gt;</code> <code>&lt;li&gt;</code> — ทั้งหมดอยู่ในรายการ 46 แท็กที่อนุญาต จึงโชว์ครบ · หน้าบทความเห็นจุดหน้ารายการเพราะบรรทัด <code>.trix-content ul { list-style: disc; }</code></li>
+      <li>② ตัวหนาหายเหลือแต่คำ · รายการกลายเป็น <code>• </code> นำหน้า · คั่นด้วย <code>\n</code> (ขึ้นบรรทัดใหม่) — พร้อมค้นหา</li>
+      <li>③ กลับเป็น <strong>30</strong> — <code>RichText Destroy</code> มาก่อน <code>Post Destroy</code> = Rails ลบแผ่นในลิ้นชักกลางให้เอง (<code>dependent: :destroy</code> ที่ <code>has_rich_text</code> ตั้งไว้) · เลข id ของคุณต่างจากนี้ได้</li>
+    </ul>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>พิมพ์เนื้อหาแล้ว แต่ขึ้น <code>Body can't be blank</code></strong> — <code>params.expect</code> ใน controller ยังเป็น <code>:description</code> (ลองแล้วได้อาการนี้จริง) · เปลี่ยนเป็น <code>:body</code></li>
+      <li><strong>หน้า <code>/posts</code> การ์ดทั้ง 10 ใบไม่มีข้อความย่อ</strong> — ยังไม่ได้รัน <code>bin/rails posts:backfill_body</code> (ผมลองลบ body ทั้งหมดแล้วเปิดหน้า ได้การ์ดว่าง 10 ใบจริง) · รันแล้วรีเฟรช</li>
+      <li><strong>ใส่ safelist แล้ว bullet ยังขึ้น AVOID</strong> — ยังไม่ได้ปิด-เปิด <code>bin/dev</code> ใหม่</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-12">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="1">
+  <p class="q">หลังติดตั้ง Action Text แล้ว เพื่อนเขียน <code>Post.where("body ILIKE ?", "%ต้มยำ%")</code> เพื่อค้นบทความ · ผลคืออะไร และควรค้นแบบไหน?</p>
+  <div class="opts">
+    <button class="opt">ได้บทความที่มีคำนั้นครบ เพราะ <code>has_rich_text</code> เพิ่มคอลัมน์ body ให้ตาราง posts</button>
+    <button class="opt">error ว่าไม่มีคอลัมน์ body ในตาราง posts · ควรค้นจากคอลัมน์ <code>plain_text</code> แทน</button>
+    <button class="opt">ได้ผลว่างเสมอ เพราะ body เก็บเป็น HTML · ควรค้นด้วยคำว่า <code>&lt;div&gt;ต้มยำ</code> แทน</button>
+    <button class="opt">ได้ผลถูก แต่ช้าเพราะเกิด N+1 · ควรเติม <code>with_rich_text_body</code> หน้าคำสั่ง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — ผลจริง: <code>PG::UndefinedColumn: ERROR: column "body" does not exist</code> · เนื้อหาอยู่ในตาราง <code>action_text_rich_texts</code> (ลิ้นชักกลาง) · ค้นจาก <code>plain_text</code> ได้ผลและไม่มีชื่อแท็กปน</p>
+    <p>ตัวเลือกที่ 1 — <code>has_rich_text</code> <strong>ไม่ได้</strong>เพิ่มคอลัมน์ในตาราง posts (เราไม่ได้เขียน migration เพิ่ม body เลย) ·
+       ตัวเลือกที่ 3 — ไม่ถึงขั้นได้ผลว่าง มัน error ตั้งแต่ไม่มีคอลัมน์ และค้นจาก HTML ก็เจอชื่อแท็กปน (บท 136) ·
+       ตัวเลือกที่ 4 — <code>with_rich_text_body</code> ช่วยเรื่อง<strong>โหลด</strong>มาโชว์ ไม่ได้ทำให้ <code>WHERE body</code> ใช้ได้</p>
+    <p><strong>จุดที่ต้องจำ:</strong> rich text อยู่อีกตาราง · ค้นหา = <code>plain_text</code> · โชว์ = <code>post.body</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">AI เสนอว่า "ให้ sanitize body ตอน save แล้วเลิก sanitize ตอนแสดง หน้าเว็บจะเร็วขึ้น" · ข้อไหนตอบได้ดีที่สุด?</p>
+  <div class="opts">
+    <button class="opt">ดี เพราะ DB จะสะอาด และ Action Text ไม่ได้ sanitize ตอนแสดงอยู่แล้ว</button>
+    <button class="opt">ดี เพราะตรวจครั้งเดียวพอ ข้อมูลเก่าใน DB ไม่มีทางมีปัญหาเพิ่ม</button>
+    <button class="opt">ไม่ดี เพราะ sanitize ตอน save ทำให้ตัวหนาและลิงก์หายไปหมดทุกครั้ง</button>
+    <button class="opt">ไม่ดี เพราะถ้ากฎ allowlist เปลี่ยน ของเก่าใน DB จะไม่โดนกฎใหม่จนกว่าจะย้ายใหม่</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — ตรวจตอนโชว์ = ใบสั่งเก่าทุกใบโดนกฎใหม่ทันทีตอนเสิร์ฟครั้งถัดไป (สไลด์หน้า 6) · Action Text ทำแบบนี้ให้อยู่แล้ว (เห็นในหัวข้อ "ล้างของอันตรายให้ตอนโชว์": DB มี <code>&lt;script&gt;</code> แต่หน้าเว็บไม่มี)</p>
+    <p>ตัวเลือกที่ 1 — Action Text <strong>sanitize ตอนแสดงอยู่แล้ว</strong> (<code>onclick</code> ถูกตัดใน curl) ·
+       ตัวเลือกที่ 2 — "ไม่มีทางมีปัญหาเพิ่ม" ผิด เพราะช่องโหว่แบบใหม่ถูกค้นพบเรื่อย ๆ · ตรวจครั้งเดียวด้วยกฎเก่าไม่พอ ·
+       ตัวเลือกที่ 3 — sanitize ไม่ได้ลบตัวหนาหรือลิงก์ มันเก็บแท็กในรายการไว้ (<code>&lt;strong&gt;</code> <code>&lt;a href&gt;</code> รอด)</p>
+    <p><strong>จุดที่ต้องจำ:</strong> เก็บดิบ ล้างตอนโชว์ทุกครั้ง · ห้ามใส่ <code>raw</code>/<code>html_safe</code> ครอบ <code>post.body</code></p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">หน้ารวมใช้ <code>with_rich_text_body</code> แล้ว log ขึ้น <code>(4 queries)</code> แต่ bullet ขึ้น <code>AVOID eager loading … Remove from your query: .includes([:rich_text_body])</code> · ควรทำอย่างไร?</p>
+  <div class="opts">
+    <button class="opt">เก็บ <code>with_rich_text_body</code> ไว้ แล้วเพิ่ม safelist ให้ bullet พร้อม comment เหตุผล</button>
+    <button class="opt">ลบ <code>with_rich_text_body</code> ตามคำเตือน เพราะ bullet เห็นการใช้งานจริงในหน้า</button>
+    <button class="opt">ปิด bullet ทั้งตัวใน development เพราะเครื่องมือที่เตือนผิดเชื่อไม่ได้</button>
+    <button class="opt">ย้าย <code>with_rich_text_body</code> ไปเขียนใน view แทน controller ให้ bullet นับถูก</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — ตัวเลขจริง: ไม่มี <code>with_rich_text_body</code> = 13 queries · มี = 4 · คำเตือนผิดเพราะ scope ใช้ชื่อแบบข้อความ <code>"rich_text_body"</code> แต่ bullet นับแบบสัญลักษณ์ · safelist เฉพาะจุด + comment กันคนรุ่นหลังลบ</p>
+    <p>ตัวเลือกที่ 2 — ทำตามแล้ว N+1 กลับมาทันที (13 queries) · bullet ไม่ได้ "เห็น" การใช้งานจริง มันเทียบแค่ชื่อ ·
+       ตัวเลือกที่ 3 — เสียผู้ช่วยที่จับ N+1 ตัวอื่นได้ไปทั้งตัว ทั้งที่ผิดแค่จุดเดียว ·
+       ตัวเลือกที่ 4 — การหยิบล่วงหน้าต้องอยู่ที่ใบเบิกใน controller (บท 125) · view ไม่ใช่ที่ของมัน</p>
+    <p><strong>จุดที่ต้องจำ:</strong> เชื่อ <code>(N queries)</code> ใน log มากกว่าคำเตือน · ยกเว้นเฉพาะจุดพร้อมเหตุผล ไม่ปิดทั้งเครื่องมือ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ย้ายเนื้อหาไป body ครบแล้ว ทำไมรอบนี้ model ยัง<strong>เขียนลง description ด้วย</strong>ทุกครั้งที่บันทึก แทนที่จะลบคอลัมน์ description ทิ้งเลย?</p>
+  <div class="opts">
+    <button class="opt">เพราะ Action Text อ่านเนื้อหาจาก description เป็นหลัก ถ้าลบไปหน้าเว็บจะว่าง</button>
+    <button class="opt">เพราะ Rails ห้ามลบคอลัมน์ที่มีข้อมูลอยู่ ต้องเขียนค่าว่างให้ครบก่อน</button>
+    <button class="opt">เพราะถ้าต้องถอยไปโค้ดเก่า มันยังอ่าน description ได้ครบ และคอลัมน์นี้ห้ามว่าง</button>
+    <button class="opt">เพราะ description เร็วกว่า body เวลาโชว์ในหน้ารวม จึงต้องเก็บไว้ใช้ตลอด</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — นี่คือเฟส expand ของบท 109: ของใหม่มาแล้ว ของเก่ายังอยู่และถูกเขียนคู่กัน · ถ้า deploy แล้วต้องถอยโค้ดกลับ บทความใหม่ก็ยังมี description ให้โค้ดเก่าอ่าน · อีกเหตุผลคือคอลัมน์ตั้ง <code>null: false</code> · ลบจริงในรอบ contract</p>
+    <p>ตัวเลือกที่ 1 — Action Text อ่านจากลิ้นชักกลางล้วน ๆ (predict ขั้น 2: description เต็มแต่ <code>post.body</code> ว่าง) ·
+       ตัวเลือกที่ 2 — Rails ไม่ได้ห้ามลบคอลัมน์ที่มีข้อมูล (มีแค่ strong_migrations ที่โปรเจกต์ติดตั้งไว้คอยเตือน — บท 109) และไม่มีกฎให้เขียนค่าว่างก่อนลบ ·
+       ตัวเลือกที่ 4 — หน้ารวมของเราไม่ได้ใช้ description แล้ว มันตัดคำโปรยจาก <code>post.body.to_plain_text</code></p>
+    <p><strong>จุดที่ต้องจำ:</strong> expand = เพิ่มใหม่ + ย้าย + เขียนคู่ · ลบของเก่าเป็นอีกรอบ (contract) หลังมั่นใจแล้ว</p>
+  </div>
+</div>
+
+<div class="note">
+  <p><strong>✅ ก่อนไปบทถัดไป:</strong> <code>git status --short</code> ต้องว่าง (commit แล้ว) · ลบบทความทดลองใน console แล้ว บทความต้องเหลือ <strong>30 ชิ้น</strong> (<code>Post.count</code>) และ <code>ActionText::RichText.count</code> = <strong>30</strong> ·
+    บท 138 จะเก็บ<strong>รูปปก</strong>ของบทความ — ตาราง Active Storage ที่สร้างไปแล้วในบทนี้จะได้ใช้</p>
+</div>
+
+<h2 id="sn-sec-13">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>5</td><td><code>action_text:install</code> "สร้างตาราง + ใส่ JS ให้"</td><td>สร้างตาราง <strong>Active Storage 3 ตาราง</strong>ด้วย และสร้าง <code>actiontext.css</code> ที่ต้องย้ายเข้า Tailwind (ไม่งั้นคลาส Tailwind ไม่มีผลกับ editor · ลิงก์ไม่มีสี)</td><td><strong>สนใจ</strong> — ทำตามขั้น 5</td></tr>
+    <tr><td>5</td><td>"polymorphic association — เราคุยคำนี้กันวันพฤหัส"</td><td>เว็บนี้ยังไม่เคยสอน · อธิบายครั้งแรกในบทนี้ (ลิ้นชักกลาง)</td><td>ไม่ต้อง</td></tr>
+    <tr><td>5</td><td>"แก้ด้วย <code>Post.with_rich_text_body</code>"</td><td>ถูก (13 → 4 queries) · แต่ bullet เตือน AVOID ผิด ต้อง safelist</td><td><strong>สนใจ</strong> — อย่าลบตามคำเตือน</td></tr>
+    <tr><td>6</td><td><code>ActionText::ContentHelper.allowed_tags += [...]</code></td><td>ค่าเริ่มต้นเป็น <code>nil</code> → <code>undefined method '+' for nil</code> · ถ้าจำเป็นต้องเริ่มจาก <code>helper.sanitizer_allowed_tags</code></td><td><strong>สนใจ</strong> ถ้าพิมพ์ตาม</td></tr>
+    <tr><td>6</td><td>"Lexxy เป็นตัวใหม่ของ 8.1"</td><td>ไม่ได้มากับ Rails 8.1.4 (ไม่มีใน <code>Gemfile.lock</code> และโค้ดของ Action Text) · เป็น gem แยก · editor ที่มากับ Rails คือ Trix</td><td>ไม่ต้อง</td></tr>
+    <tr><td>14</td><td>"ห้ามลบคอลัมน์ description ในรอบนี้"</td><td>โค้ดของคอร์สทำเพิ่มอีกขั้น: model <strong>เขียนลง description ทุกครั้ง</strong>ที่บันทึก (เขียนคู่) เพราะคอลัมน์ห้ามว่าง และให้ถอยโค้ดกลับได้</td><td>ไม่ต้อง — ทำตามบทนี้ก็ครบ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="./0136-rich-text-and-allowlist.html">← บทเรียน 136 · rich text · allowlist</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0138-files-object-storage-minio.html">บทเรียน 138 → object storage · Active Storage</a>
+</nav>
+
+<h2 id="sn-sec-14">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/action_text_overview.html#installation">Rails Guides — Action Text Overview § Installation</a> —
+      <strong>อ่าน Installation ต่อถึง Creating Rich Text Content</strong> · ตรงกับขั้น 1–2 และ 5 ของบทนี้ (<code>has_rich_text</code> · <code>rich_textarea</code> · params)</li>
+  <li><a href="https://guides.rubyonrails.org/action_text_overview.html#rendering-rich-text-content">Rails Guides — Action Text Overview § Rendering Rich Text Content</a> —
+      <strong>อ่านหัวข้อนี้หัวข้อเดียว (สั้น)</strong>: ยืนยันว่า <code>&lt;%= @article.content %&gt;</code> ปลอดภัยเพราะ sanitize แล้ว · และเตือนว่า <code>to_plain_text</code> ไม่ได้ล้าง · หัวข้อถัดไป (5.1) บอกที่มาของกรอบ <code>trix-content</code></li>
+  <li><a href="https://guides.rubyonrails.org/action_text_overview.html#avoiding-n-1-queries">Rails Guides — Action Text Overview § Avoiding N+1 Queries</a> —
+      หัวข้อสั้น ๆ ท้ายหน้า · <code>with_rich_text_content</code> กับ <code>…_and_embeds</code></li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionText/Attribute.html#method-i-has_rich_text">Rails API — ActionText::Attribute#has_rich_text</a> —
+      <strong>อ่านตัวอย่างและ Options</strong> · เห็นว่ามันสร้าง <code>has_one</code> + scope <code>with_rich_text_…</code> ให้</li>
+  <li><a href="https://github.com/rails/rails/blob/v8.1.4/actiontext/app/helpers/action_text/content_helper.rb">GitHub — rails/rails v8.1.4 · action_text/content_helper.rb</a> —
+      ไฟล์สั้น · <strong>ดู method <code>sanitizer_allowed_tags</code> ท้ายไฟล์</strong> ว่าทำไม <code>allowed_tags</code> เป็น nil แต่ยังมีรายการ 46 แท็ก</li>
+  <li><a href="https://guides.rubyonrails.org/association_basics.html#polymorphic-associations">Rails Guides — Active Record Associations § Polymorphic Associations</a> —
+      <strong>อ่านแค่ย่อหน้าแรกกับตัวอย่าง Picture</strong> · เทียบ <code>imageable_type</code>/<code>imageable_id</code> กับ <code>record_type</code>/<code>record_id</code> ของเรา</li>
+  <li><a href="https://guides.rubyonrails.org/command_line.html#custom-rake-tasks">Rails Guides — The Rails Command Line § Custom Rake Tasks</a> —
+      ที่มาของ <code>namespace</code> · <code>desc</code> · <code>task …: :environment</code> ใน <code>lib/tasks/posts.rake</code></li>
+</ul>
+
+<p>ติดตรงไหน หรือผลของคุณต่างจากในบท — ก็อปผลจริงทั้งก้อนไปถาม AI หรือเพื่อนได้เลย โดยบอกว่ามาจากบท 137 ขั้นไหน</p>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>

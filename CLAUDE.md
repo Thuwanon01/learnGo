@@ -7,17 +7,17 @@
 
 เว็บบทเรียนภาษาไทย **static ล้วน ไม่มี build step ไม่มี dependency**
 เรียบเรียงจากสไลด์คอร์ส PEA DevPool — Enterprise Go Engineering with AI Integration
-ตอนนี้มี **135 บท** แบ่งเป็นสามฝั่ง · deploy จริงให้เพื่อนร่วมคอร์สใช้ที่
+ตอนนี้มี **145 บท** แบ่งเป็นสามฝั่ง · deploy จริงให้เพื่อนร่วมคอร์สใช้ที่
 <https://learndevpool69.vercel.app/> (Vercel · push ขึ้น `main` แล้วขึ้นเองอัตโนมัติ)
 
 | ฝั่ง | เนื้อหา | โฟลเดอร์ | บท |
 |---|---|---|---|
 | **BACK** | Go — พื้นฐาน · testing · concurrency · database · Gin · Keycloak | `day-1/` … `day-9/` | 01–55 |
 | **FRONT** | HTML/CSS · Functional Programming with TypeScript · Next.js · Next.js App · Agentic Workflow | `fe-html-css/` · `fe-ts-fp/` · `fe-nextjs/` · `fe-nextjs-app/` · `fe-agentic/` | 56–89 |
-| **RAILS** | Ruby on Rails — Day 1 Ruby · โครงสร้าง · routing · controller · view · Day 2 Active Record · migration · validation · query · association · Day 3 view · CSS · Hotwire | `rails-day-1/` `rails-day-2/` `rails-day-3/` | 90–135 |
+| **RAILS** | Ruby on Rails — Day 1 Ruby · โครงสร้าง · routing · controller · view · Day 2 Active Record · migration · validation · query · association · Day 3 view · CSS · Hotwire · Day 4 Part 1 rich text · ไฟล์ · background job (ทำถึงบท 145) | `rails-day-1/` … `rails-day-3/` · `rails-day-4-part1/` | 90–145 |
 
 **ฝั่ง FRONT แบ่งกลุ่มตามชื่อไฟล์สไลด์ ไม่ใช่ตามวัน** เพราะอาจารย์ไม่ได้กำกับวันมาให้ ·
-**ฝั่ง RAILS เป็นคอร์สแยก** ที่นับวันของตัวเอง (Rails Day 1–4) จึงใช้ `rails-day-N/` ไม่ใช่ `day-N/` ·
+**ฝั่ง RAILS เป็นคอร์สแยก** ที่นับวันของตัวเอง (Rails Day 1–4) จึงใช้ `rails-day-N/` ไม่ใช่ `day-N/` · Day 4 มาเป็นสไลด์สองไฟล์จึงใช้ `rails-day-4-part1/` (ทำถึงบท 145 แล้วผู้เรียนสั่งตัดจบ · ไม่มี cheat sheet · Part 2 ไม่ได้ทำ) ·
 **เลขบทต่อเนื่องกันทั้งเว็บ ห้ามรีเซ็ตตามฝั่ง** (เลขบทคือคีย์ของ localStorage)
 รีโปนี้เป็น **teaching workspace ของ skill `/teach`** (โครง MISSION / RESOURCES /
 learning-records / lessons / reference / assets / NOTES)
@@ -73,7 +73,7 @@ learning-records / lessons / reference / assets / NOTES)
 1  สไลด์กำกับวันมา → mkdir -p day-N/lessons day-N/reference
    ไม่ได้กำกับวัน  → mkdir -p fe-<slug>/lessons fe-<slug>/reference   (slug จากชื่อสไลด์)
    สไลด์ Rails     → mkdir -p rails-day-N/lessons rails-day-N/reference
-2  เขียนบทต่อจากเลขล่าสุด (ตอนนี้จบที่ 0135) + cheat sheet ของกลุ่ม
+2  เขียนบทต่อจากเลขล่าสุด (ตอนนี้จบที่ 0145) + cheat sheet ของกลุ่ม
 3  index.html      → section กลุ่มใหม่ + data-id + data-track + เลขรวม
 4  บทสุดท้ายของกลุ่มก่อน → แก้ nav ให้ชี้มาบทแรกของกลุ่มใหม่
 5  assets/nav.js   → เพิ่มลง DAYS (back) · FRONT (front) · RAILS (rails)

